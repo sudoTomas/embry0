@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { detailMessages } from "@/api/errorDetail";
+import { toastApiError } from "@/api/errorToast";
 import { BindingsDrawer } from "@/components/credentials/BindingsDrawer";
 import { CredentialModal } from "@/components/credentials/CredentialModal";
 import { CredentialTable } from "@/components/credentials/CredentialTable";
@@ -17,20 +17,13 @@ import {
   useUpdateCredential,
   useVerifyCredential,
 } from "@/hooks/useCredentials";
+import { useModelsCatalog } from "@/hooks/useProvider";
 import type { Credential, CredentialCreate, ImportEnvReport } from "@/lib/types/credentials";
 import { useAuthStore } from "@/stores/authStore";
 
 const DOCS_HREF = "https://github.com/sudoTomas/embry0/blob/main/docs/credentials.md";
 
 type OpenModal = { mode: "create" } | { mode: "rotate"; credential: Credential };
-
-function errorDetail(error: unknown): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  const parts = detailMessages(detail);
-  if (parts.length > 0) return parts.join(" ");
-  if (error instanceof Error && error.message) return error.message;
-  return "Request failed";
-}
 
 function importSummary(report: ImportEnvReport): string {
   return `Imported ${report.created.length} created, ${report.bound.length} bound, ${report.skipped.length} skipped.`;
@@ -39,7 +32,7 @@ function importSummary(report: ImportEnvReport): string {
 function ReportList({ title, items }: { title: string; items: string[] }) {
   return (
     <div>
-      <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</h3>
+      <h3 className="label-caps">{title}</h3>
       {items.length === 0 ? (
         <p className="mt-1 text-sm text-muted-foreground">None</p>
       ) : (
@@ -57,17 +50,21 @@ function AdminButton({
   isAdmin,
   disabled = false,
   onClick,
+  variant = "default",
   children,
 }: {
   isAdmin: boolean;
   disabled?: boolean;
   onClick: () => void;
+  /** One primary per header: the second action is secondary. */
+  variant?: "default" | "secondary";
   children: string;
 }) {
   const button = (
     <Button
       type="button"
       size="sm"
+      variant={variant}
       disabled={!isAdmin || disabled}
       className={!isAdmin ? "pointer-events-none" : undefined}
       onClick={onClick}
@@ -91,6 +88,8 @@ export function CredentialsPage() {
   const verifyCredential = useVerifyCredential();
   const deleteCredential = useDeleteCredential();
   const importEnv = useImportEnvCredentials();
+  // The providers page's catalog: which LLM providers the create dialog can take.
+  const catalog = useModelsCatalog();
 
   const [modal, setModal] = useState<OpenModal | null>(null);
   const [bindingsFor, setBindingsFor] = useState<Credential | null>(null);
@@ -106,7 +105,7 @@ export function CredentialsPage() {
       setImportReport(report);
       toast.success(importSummary(report));
     } catch (error) {
-      toast.error(errorDetail(error));
+      toastApiError(error);
     }
   }
 
@@ -130,7 +129,7 @@ export function CredentialsPage() {
         toast.success(row.verified_login ? `Verified as ${row.verified_login}` : "Verified");
       },
       onError: (error) => {
-        toast.error(errorDetail(error));
+        toastApiError(error);
       },
       onSettled: () => setVerifyingId((current) => (current === credential.id ? null : current)),
     });
@@ -144,7 +143,7 @@ export function CredentialsPage() {
         onSuccess: () => {
           toast.success(status === "ok" ? `Enabled "${credential.label}"` : `Disabled "${credential.label}"`);
         },
-        onError: (error) => toast.error(errorDetail(error)),
+        onError: (error) => toastApiError(error),
       },
     );
   }
@@ -153,7 +152,7 @@ export function CredentialsPage() {
     if (!window.confirm(`Delete credential "${credential.label}"?`)) return;
     deleteCredential.mutate(credential.id, {
       onSuccess: () => toast.success(`Deleted "${credential.label}"`),
-      onError: (error) => toast.error(errorDetail(error)),
+      onError: (error) => toastApiError(error),
     });
   }
 
@@ -186,14 +185,14 @@ export function CredentialsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Credentials</h1>
+          <h1 className="title-pixel text-xl font-bold">Credentials</h1>
           <p className="mt-1 max-w-xl text-sm text-muted-foreground">
             Accounts embry0 acts as. Secrets are write-only; the env tokens are an import source.{" "}
             <a
               href={DOCS_HREF}
               target="_blank"
               rel="noreferrer"
-              className="text-primary underline-offset-4 hover:underline"
+              className="text-fg underline-offset-4 hover:text-primary hover:underline"
             >
               docs/credentials.md
             </a>
@@ -203,6 +202,7 @@ export function CredentialsPage() {
           {isAdmin ? replaceControl : <Tooltip content="Admin scope required">{replaceControl}</Tooltip>}
           <AdminButton
             isAdmin={isAdmin}
+            variant="secondary"
             disabled={importEnv.isPending}
             onClick={() => {
               void runImport(replaceSecrets);
@@ -251,6 +251,7 @@ export function CredentialsPage() {
         <CredentialModal
           modeSpec={modal}
           gitlabHost={null}
+          catalogProviders={catalog.data?.providers}
           onSubmit={onModalSubmit}
           onDeviceLoginDone={() => {
             void credentialsQuery.refetch();

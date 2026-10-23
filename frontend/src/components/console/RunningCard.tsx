@@ -1,10 +1,13 @@
 import { memo } from "react";
 import { useLiveDuration } from "@/hooks/useLiveDuration";
-import { formatDuration, getColors } from "@/lib/agentVisuals";
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { useLiveJobSummary } from "@/hooks/useLiveJobSummary";
-import { formatCost } from "@/lib/utils";
+import { formatCost, formatDuration } from "@/lib/utils";
 import type { JobResponse } from "@/lib/types";
+import { agentOfStage } from "./agentOfStage";
 import { ConsoleCardShell } from "./ConsoleCardShell";
+import { RunningLight } from "./RunningLight";
 
 /** Budget-meter thresholds per the board spec: amber from 80% of cap, red at
  * overrun. Intentionally louder-later than getCostBarColor (which warns at
@@ -40,7 +43,10 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
   const stageLabel = summary.currentNode
     ? `${summary.currentNode}#${summary.attempt}`
     : job.current_stage ?? null;
-  const stageColors = getColors(summary.currentNode ?? job.current_stage ?? "");
+  // The badge shows the raw stage; the sprite (and the badge colour) show the agent it names, if any.
+  const stageType = summary.currentAgent ?? agentOfStage(summary.currentNode) ?? agentOfStage(job.current_stage);
+  const stageIdentity = useAgentIdentity(stageType);
+  const stageColors = stageIdentity.classes;
   const spentUsd = summary.latestCost > 0 ? summary.latestCost : job.total_cost_usd;
   const cap = maxBudgetUsd != null && maxBudgetUsd > 0 ? maxBudgetUsd : null;
   const budgetRatio = cap != null ? spentUsd / cap : null;
@@ -48,18 +54,24 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
   return (
     <ConsoleCardShell
       job={job}
+      className="relative"
       headerRight={
         <span data-testid="live-indicator" className="inline-flex items-center gap-1.5 text-[10px]">
           <span
-            className={`h-1.5 w-1.5 rounded-full ${summary.isConnected ? "bg-green-400 animate-pulse" : "bg-white/20"}`}
+            className={`h-1.5 w-1.5 rounded-full ${summary.isConnected ? "bg-success motion-breathe" : "bg-white/20"}`}
           />
-          <span className={summary.isConnected ? "text-green-400" : "text-white/30"}>
+          <span className={summary.isConnected ? "text-success" : "text-white/30"}>
             {summary.isConnected ? "Live" : "Polling"}
           </span>
         </span>
       }
     >
       <div className="mt-2 flex items-center gap-2 min-w-0">
+        {stageType && (
+          <span data-testid="stage-sprite" className="shrink-0">
+            <AgentAvatar identity={stageIdentity} size={32} state={summary.toolOpen ? "tool" : "thinking"} />
+          </span>
+        )}
         {stageLabel && (
           <span
             data-testid="stage-badge"
@@ -78,6 +90,9 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
         </span>
         {job.started_at && <span>{formatDuration(elapsedMs)}</span>}
       </div>
+      {/* The light runs while the job does: once the stream reports the end,
+          it stops before the next poll moves the card to its lane. */}
+      {!summary.isComplete && <RunningLight />}
       {budgetRatio != null && (
         <div data-testid="budget-meter" className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[0.06]">
           <div

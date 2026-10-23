@@ -15,6 +15,7 @@ from langgraph.types import Command
 # this module. The self-import is safe: the package __init__ binds the seams
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
+from embry0.execution import events
 from embry0.orchestration.nodes.agent import (
     USER_RETRY_ROUNDS_CAP,
 )
@@ -26,7 +27,7 @@ async def retry_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
     """Inject review feedback into state and increment retry count."""
     writer = _nodes.get_stream_writer()
     retry_count = state.get("retry_count", 0) + 1
-    writer({"type": "progress", "message": f"Retry {retry_count}: addressing review feedback"})
+    writer(events.progress(message=f"Retry {retry_count}: addressing review feedback", node="retry"))
     logger.info("retry_developer", retry_count=retry_count)
 
     # Extract feedback from the latest review output
@@ -176,7 +177,7 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         else:
             summary["latest_review"] = review_outputs[-1].get("output", "")[:1000]
 
-    writer({"type": "interrupt", "node": "max_retries", "reason": "max_retries", "summary": summary})
+    writer(events.interrupt(node="max_retries", reason="max_retries", summary=summary))
     logger.info("max_retries_reached", retry_count=retry_count)
 
     user_choice = _nodes.interrupt(summary)
@@ -273,10 +274,10 @@ async def ask_user_interrupt(state: dict[str, Any], config: RunnableConfig) -> C
             current_stage=state.get("current_stage"),
         )
         writer(
-            {
-                "type": "error",
-                "message": "ask_user_interrupt reached with zero pending questions — failing instead of pausing on nothing",
-            }
+            events.error(
+                message="ask_user_interrupt reached with zero pending questions — failing instead of pausing on nothing",
+                node="ask_user_interrupt",
+            )
         )
         return Command(
             goto=END,
@@ -289,7 +290,7 @@ async def ask_user_interrupt(state: dict[str, Any], config: RunnableConfig) -> C
 
     asking_node = questions[0].get("asking_node", "developer")
 
-    writer({"type": "agent_paused_for_input", "node": asking_node, "count": len(questions)})
+    writer(events.agent_paused_for_input(node=asking_node, count=len(questions)))
     logger.info("agent_ask_user_interrupt", node=asking_node, count=len(questions))
 
     # _nodes.interrupt() raises; the graph halts here until Command(resume=...) arrives.

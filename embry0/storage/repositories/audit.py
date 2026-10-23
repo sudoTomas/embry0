@@ -85,6 +85,26 @@ class AuditRepository:
         row = await self._db.fetchrow(f"SELECT COUNT(*) AS n FROM audit_log{where}", *args)
         return int(row["n"]) if row else 0
 
+    async def latest_entry(self, action: str, *, detail_key: str, detail_value: str) -> dict[str, Any] | None:
+        """The newest ``action`` row whose ``details[detail_key]`` equals ``detail_value``, or None.
+
+        idx_audit_log_action covers (action, created_at DESC), the filter and the
+        order. Same explicit column list as ``list_entries``.
+        """
+        row = await self._db.fetchrow(
+            """
+            SELECT id, action, actor, details, issue_id, created_at
+            FROM audit_log
+            WHERE action = $1 AND details ->> $2::text = $3
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            action,
+            detail_key,
+            detail_value,
+        )
+        return dict(row) if row else None
+
     async def delete_older_than(self, cutoff: datetime) -> int:
         result = await self._db.execute("DELETE FROM audit_log WHERE created_at < $1", cutoff)
         # result is a command tag like "DELETE 5"

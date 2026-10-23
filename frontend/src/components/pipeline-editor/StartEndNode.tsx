@@ -8,12 +8,13 @@ const ROLE_CONFIG = {
 } as const;
 
 /**
- * Sentinel pipeline-graph node — circular sphere in gold (text-primary)
- * matching the geodesic identity. Renders as a smaller sibling of the
- * agent sphere: ring + cardinal dots + equator + a single pole accent
- * (start = north pole, end = south pole).
+ * Sentinel pipeline-graph node — circular sphere in the muted foreground,
+ * never gold: a pipeline's start and end need no person, and gold marks
+ * only what does. Renders as a smaller sibling of the agent sphere: ring +
+ * cardinal dots + equator + a single pole accent (start = north pole,
+ * end = south pole).
  *
- * §3.2 — sentinels sit on the equator at ±1.4R in circular layout.
+ * §3.2 — sentinels sit on the equator, at least ±1.4R out, in circular layout.
  */
 export function StartEndNode({ data, selected }: NodeProps) {
   const role = (data.nodeRole as "start" | "end") ?? "start";
@@ -21,26 +22,25 @@ export function StartEndNode({ data, selected }: NodeProps) {
   const poleY = role === "start" ? 18 : 46;
 
   return (
-    <div className="flex flex-col items-center gap-1 select-none">
+    <div className="flex flex-col items-center gap-1 select-none text-fg-muted">
       <div
         className="relative transition-all duration-200 hover:-translate-y-0.5"
         style={{
           width: SPHERE_PX,
           height: SPHERE_PX,
-          filter: selected ? "drop-shadow(0 0 10px rgba(212, 175, 55, 0.55))" : undefined,
         }}
       >
         {handle === "target" && (
           <Handle
             type="target"
             position={Position.Left}
-            className="!w-2 !h-2 !bg-[#0f1419]"
-            style={{ border: "2px solid #d4af37", top: "50%" }}
+            className="!w-2 !h-2 !bg-card !border-2 !border-border-strong"
+            style={{ top: "50%" }}
           />
         )}
 
         <svg
-          className="absolute inset-0 w-full h-full text-primary"
+          className="absolute inset-0 w-full h-full"
           viewBox="0 0 64 64"
           aria-hidden="true"
         >
@@ -67,18 +67,31 @@ export function StartEndNode({ data, selected }: NodeProps) {
             opacity="0.55"
           />
           <circle cx="32" cy={poleY} r="3.6" fill="currentColor" opacity="0.9" />
+          {/* Selected: a thin ring in the node's own colour just outside its
+              cardinal dots, never a glow. */}
+          {selected && (
+            <circle
+              data-testid="node-selected-ring"
+              cx="32"
+              cy="32"
+              r="27"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+          )}
         </svg>
 
         {handle === "source" && (
           <Handle
             type="source"
             position={Position.Right}
-            className="!w-2 !h-2 !bg-[#0f1419]"
-            style={{ border: "2px solid #d4af37", top: "50%" }}
+            className="!w-2 !h-2 !bg-card !border-2 !border-border-strong"
+            style={{ top: "50%" }}
           />
         )}
       </div>
-      <span className="text-[10px] font-bold tracking-[0.2em] text-primary/85">
+      <span className="text-[10px] font-bold tracking-[0.2em]">
         {label}
       </span>
     </div>

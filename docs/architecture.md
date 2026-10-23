@@ -6,7 +6,7 @@ Detailed technical documentation of the embry0 agent orchestration engine.
 
 ## System Overview
 
-embry0 is a general-purpose agent orchestration engine built on LangGraph and Claude Agent SDK. GitHub issues or API requests create issues which are triaged by an LLM agent, questions are dispatched to the user via multiple channels (Dashboard, Telegram, GitHub, Linear), agents execute inside Docker sandboxes, and on success a PR is opened automatically. Customer code never persists on the host — it lives only inside ephemeral sandbox containers.
+embry0 is a general-purpose agent orchestration engine built on LangGraph and Claude Agent SDK. GitHub issues or API requests create issues which are triaged by an LLM agent, questions are dispatched to the user via multiple channels (Dashboard, Telegram, GitHub, Linear), agents execute inside Docker sandboxes, and on success a PR is opened automatically. Agents work on customer code only inside ephemeral sandbox containers; the copies that outlive them (job events, saved agent sessions, pre-built QA images and per-repo volumes) and the settings that bound them are listed in [SECURITY.md](../SECURITY.md#data-retention).
 
 ```mermaid
 graph TB
@@ -227,7 +227,7 @@ The full mapping of each DinD mechanism is in
 | Service | Image | Purpose | Resources |
 |---------|-------|---------|-----------|
 | Frontend | `embry0-frontend` | nginx serving React SPA, reverse proxy | — |
-| Orchestrator | `embry0-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never touches customer code. | configurable via `.env` |
+| Orchestrator | `embry0-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never checks out customer code; stores job events and agent sessions, which carry it ([Data retention](../SECURITY.md#data-retention)). | configurable via `.env` |
 | PostgreSQL | `postgres:16` | Application data + LangGraph checkpoints | configurable via `.env` |
 | DinD | `docker:dind` | Runs sandbox containers (privileged) | configurable via `.env` |
 | MinIO | `pgsty/silo` (Silo, the community fork of MinIO) | S3-compatible artifact store. `qa-artifacts` bucket holds QA `result.json`, screenshots, traces, and `logs/full.log` per `<job_id>/<attempt_n>/...`. | configurable via `.env` |
@@ -439,7 +439,7 @@ stateDiagram-v2
 | `retry` | No | — | Inject review feedback into state, increment counter |
 | `max_retries` | No | — | `interrupt()` — ask user: continue, merge as-is, or abandon |
 | `init_orchestrator` | No | — | (QA gate, when `needs_qa=true`) In a short-lived `slim` bootstrap sandbox: clone, compute the diff, load the stored `repo_qa_configs` document into `state["qa"]` |
-| `orchestrate_qa` | Yes (per app) | The QA agent: Read, Glob, Grep, Bash, Edit, plus the selected browser backend's MCP tools (Playwright: 22, Vibium: 49 — see `workflows/qa/browser_backends.py`) | Fan out one sub-task per affected app (the sub-task graph, see QA Pipeline), aggregate the results, set `qa.final_status` |
+| `orchestrate_qa` | Yes (per app) | The QA agent: Read, Glob, Grep, Bash, Edit, plus the selected browser backend's MCP tools (Playwright: 23, Vibium: 49 — see `workflows/qa/browser_backends.py`) | Fan out one sub-task per affected app (the sub-task graph, see QA Pipeline), aggregate the results, set `qa.final_status` |
 | `qa_report` | No | — | Write the sticky QA PR comment with the aggregate verdict and per-app breakdown |
 | `qa_failure_bookkeeping` | No | — | Increment `qa.failure_rounds` when `final_status=failed` |
 | `qa_exhausted` | No | — | Terminal node when `failure_rounds` hits the cap; sets `error_code=ERR_QA_FAILURES_UNRESOLVED` |
@@ -456,7 +456,7 @@ The LLM triage node outputs a pipeline configuration.
 | `pipeline_config.sandbox_profile` | `str` | Sandbox profile name |
 | `pipeline_config.agent_models` | `dict[str, str]` | Model per agent |
 | `pipeline_config.agent_tools` | `dict[str, list[str]]` | Per-agent tool allowlist overrides |
-| `pipeline_config.agent_skills` | `dict[str, list[str]]` | Per-agent Claude Code skills to load |
+| `pipeline_config.agent_skills` | `dict[str, list[str] \| {"add", "remove"}]` | Per-agent Claude Code skills: a delta (`add`, `remove` or `"*"`) over the agent's configured skills, or a bare list that replaces them |
 | `pipeline_config.max_feedback_loops` | `int` | Review → retry cycles (default: 3) |
 | `pipeline_config.reviewer_enabled` | `bool` | Whether review is included (default: true) |
 | `pipeline_config.validator_modes` | `list[str]` | Which validators to run (test, lint, typecheck) |
@@ -612,7 +612,7 @@ Triage emits two distinct decisions inline in its JSON output (parsed via `Triag
 
 ## Sandbox Container Architecture
 
-Each job gets one Docker sandbox inside DinD. The sandbox clones the repo, agents execute inside it, and all git/GitHub operations happen within. When destroyed, all customer code is deleted.
+Each job gets one Docker sandbox inside DinD. The sandbox clones the repo, agents execute inside it, and all git/GitHub operations happen within. When destroyed, its checkout is deleted; [Data retention](../SECURITY.md#data-retention) lists what outlives it.
 
 ```mermaid
 graph LR
@@ -662,11 +662,21 @@ graph LR
 | Image | A profile's `base_image` names an image in embry0's own registry, without a registry host; it is pulled by its digest pin when one is installed (#523, #553) |
 | Credentials | Forge tokens are injected by the proxies (see Proxy Services) and never enter the sandbox. **The LLM credential does:** `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, and `XAI_API_KEY`, are in the sandbox env, because the Claude CLI reads its credential from there and subscription OAuth stays supported ([ADR 0008](adr/0008-llm-credential-in-sandbox-env.md)). Any code in the sandbox can read them. Only the xAI subscription token stays in `xai-proxy`. |
 | Command blocking | Ring 3: 41 regex patterns on Bash commands (`embry0/safety/patterns.py`), after NFKC normalization. Ring 2: the CLI's permission rules; embry0's own copy of that check, for the direct xAI executor, normalizes paths lexically and does not resolve symlinks. Defence in depth: neither binds a program the agent writes and runs |
-| Code retention | None — repo cloned inside container, deleted on teardown |
+| Code retention | The checkout is deleted with the container. Job events, saved agent sessions, pre-built QA images and per-repo volumes keep copies until `JOB_LOG_RETENTION_DAYS`, `AGENT_SESSION_RETENTION_DAYS` and `QA_IMAGE_RETENTION_DAYS` remove them; all three are unset by default ([Data retention](../SECURITY.md#data-retention)) |
 | LLM credentials | Resolved by the credential registry for each job and passed to the sandbox env (see the Credentials row above) |
 | Ring-3 enforcement | Asserted where the hook runs: the sandbox image builds fail, and `SdkAgentExecutor.run` returns an error before `query()`, if the sandbox's `claude_agent_sdk` does not declare `hooks` or the `PreToolUse` event (`embry0/agents/sdk_support.py`, #497). The orchestrator never runs an agent, so it no longer checks its own SDK. Per-run hook attachment is unconditional — no fall-back. The in-process executor fallback was removed in 2026-04 hardening. |
 
 **Sandbox env surface:** The container env holds the LLM credential (see the Credentials row above), the global and repository environment variables, secrets included, and orchestrator config such as `EMBRY0_GIT_PROXY_URL`. No forge token. The per-sandbox proxy bearer is in files (git's config, the xAI and context-proxy token files), not the env. See [`SECURITY.md`](../SECURITY.md#what-does-not-hold) for what that exposes.
+
+### Skills store and mounts
+
+Skills reach a sandbox as Agent SDK plugins from a store the orchestrator fills ([API](api.md#skills)). The store is the `skills-store` compose volume, mounted at `/skills` in `orchestrator` (read-write) and in `dind` (`:ro`), because the bind mounts below are resolved in the sandbox daemon's namespace. Each source has `/skills/<source_id>/<resolved_sha>/`, a plugin root (`.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`), and `/skills/<source_id>/current`, one line naming the tree sandboxes mount. A sync fills a staging directory beside the tree, renames it into place and rewrites `current`; a failed sync leaves the previous tree and `current` as they were. A sync requested while one of the same source runs is coalesced, not dropped: the running sync runs once more when it finishes, reading the row afresh, so the newest ref or inline content is what ends up published. Older trees stay while a sandbox may mount them: after each publish and at startup, `SandboxManager.gc_skill_trees` reads the mount sources of every container on the sandbox daemon (`docker ps -aq`, then one `docker inspect`), adds the trees of any create still inside `docker run`, and removes only the stale trees outside that set; when the daemon cannot be listed it removes nothing. `SKILLS_STORE_PATH` (default `/skills`) is the orchestrator's path and `SKILLS_STORE_DAEMON_PATH` (default: the same) the daemon's, which under the rootless overlay is the host directory that daemon sees ([configuration](configuration.md)).
+
+**Mounts.** Every sandbox gets `-v /skills/<id>/<sha>:/opt/embry0/skills/<id>:ro` for each enabled source whose `current` tree exists, read at create time; `status` is informational, so a source whose latest re-sync failed keeps its previous tree mounted. A source with no tree on disk is skipped with `skill_source_mount_missing` rather than failing `docker run`, and startup re-syncs every enabled source whose `current` is missing, retrying the ones still missing after 60 s, 300 s and 900 s and then leaving them to an admin. A source that becomes ready after a sandbox was created is not visible to that job. `agent_started` events carry `skill_sources: [<source ids>]`, the sources that sandbox mounted; after an orchestrator restart they are read from the container's own mounts (`docker inspect`), and the current manifest stands in only when that inspect fails (`skill_mounts_inspect_failed`).
+
+**SDK options.** `build_sdk_options` passes `plugins=[{"type": "local", "path": "/opt/embry0/skills/<id>"}]` for each mounted source whose plugin name prefixes at least one skill in the agent's effective list (`<plugin>:<skill>`; a bare name is one of the repository's own skills and selects no plugin), and `skills=<effective list>` as the allowlist. With an empty list it passes no plugins and `skills=None`, so only the target repository's own `.claude/skills` load, unfiltered. A mounted plugin's hooks run for the agents that list its skills, which is how the plugin behaves in Claude Code too. `setting_sources` stays `["project"]`. `embry0/agents/config_builder.py`, `embry0/agents/invocation.py` and `embry0/sandbox/runner.py` are baked into the sandbox images, so the sandbox images must be rebuilt ([recipe](ops/deploy.md#images-registry-pins-and-rebuilds)) before these options take effect; until then the trees are mounted and unused. The direct xAI executor does not load skills.
+
+**What the orchestrator runs.** A git source is the one place the orchestrator runs git itself, on a public tree an admin pinned. It runs with hooks (`core.hooksPath=/dev/null`), every transport but https (`protocol.allow=never`), redirects, submodules, fsmonitor, and system and global config disabled, no terminal prompt, a throwaway `HOME`, and a 120 s timeout that kills git's whole process group. Before cloning it resolves the url's host and refuses it unless every address is global and not multicast. git is then pinned to the addresses that were checked (`-c http.curloptResolve=<host>:<port>:<address>[,<address>]`), so it never connects to a second DNS answer (rebinding). The checked-out tree loses its `.git`, must stay under 64 MiB and carry at least one `skills/*/SKILL.md`, and a symlink anywhere in it fails the sync. Skill names must match `^[a-z0-9][a-z0-9._-]{0,63}$` and the plugin name `^[a-z0-9][a-z0-9_-]{0,63}$` (the SDK refuses a colon, comma, parenthesis or whitespace), and a plugin name another source already uses as its id or plugin name fails the sync. A `path` source must resolve inside `SKILLS_PATH_ROOT` ([configuration](configuration.md)); with that unset every `path` source is refused. It is copied with links kept as links, so the same check refuses them, and regular files only (a FIFO, device or socket fails the sync), counted against the cap during the copy; files come out `0644` (`0755` when the owner could execute them) and directories `0755`. The copy, the checks, the hash and the publish run off the event loop. One gap remains: an IPv6 answer in the IPv4-compatible or IPv4-translated forms counts as global, so an internal IPv4 address behind one of those prefixes is not refused; NAT64 (`64:ff9b::/96`) is refused, and an IPv4-mapped (`::ffff:`) answer is judged by the IPv4 address it carries. For a git source the size cap is checked on the finished checkout, not during the transfer. Inside the sandbox a plugin's files are in the same trust domain as the target repository's `.claude/` directory: they run as the agent user under the same Ring 2 and Ring 3 enforcement.
 
 ### Sandbox Image Management
 
@@ -676,7 +686,7 @@ The `SandboxImageManager` handles image lifecycle inside DinD:
 - **Profile-specific images** — `embry0-sandbox:{profile_name}` extends the base image with additional packages/commands
 - **QA sandbox variant** — `embry0-sandbox-qa:latest` is a separate image (built from `infra/Dockerfile.sandbox.qa`) with the superset needed by the QA agent: JDK 21 (Adoptium Temurin), Docker CLI + compose plugin (talks to DinD daemon over TCP+TLS), Chromium + headless-shell pre-installed at `/opt/playwright`, the `playwright-mcp` global binary, the `vibium` CLI pinned at 26.8.21 with Chrome for Testing pre-baked at `/opt/vibium` (the second browser backend — agent-owned cache dir because the vibium daemon chmods its socket dir), and the qa-compose / qa-ready-check helpers in `/usr/local/bin`. Selected by sandbox profile `qa-jvm` — whose `dind_enabled` only asks for the shared Docker daemon: `SandboxManager` mounts the DinD client certs and sets `DOCKER_HOST` only when the repo also holds an admin's Docker access grant (`repos.docker_access`, #522), and refuses the sandbox otherwise, because code holding those certs controls the daemon that runs the credential proxies and every other sandbox — and by `qa-external` — the deployed-target variant that pairs the same browser image with `sandbox-internet` egress and `dind_enabled: false`, for driving an app that runs *outside* the sandbox. DinD NAT egress is by-IP only, so deployments clone `qa-external` and set the profile's `extra_hosts` (hostname → IP, emitted as `--add-host`) to reach Host-header-routed vhosts by name; the `dind` alias stays orchestrator-owned. The Chromium revision is pinned to whatever `@playwright/mcp`'s bundled `playwright-core` expects — installing via the standalone `playwright` package's CLI gives a different revision and breaks MCP launches.
 - **Which containers are sandboxes** — both the reaper and the start-up sweep select the `embry0.role=sandbox` label (#620), so a container on the daemon that embry0 did not create is never touched, whatever its name. A sandbox created before the label existed (#616) has none; it is still found when its name starts with `sandbox-` and it was created before 2026-10-10 (`embry0/execution/sandbox_listing.py`).
-- **Container reaper** — background task destroys sandbox containers older than 24 hours, **unless the matching job is still active in the DB**. Active-status lookup failures fail closed (the reaper does nothing rather than risk killing live work). The reaper also sweeps DinD-side QA orphans — containers with `com.docker.compose.project=qa_*` OR `embry0.qa_job_id=*` whose owning job is no longer active.
+- **Container reaper** — background task destroys sandbox containers older than 24 hours, **unless the matching job is still active in the DB**. Active-status lookup failures fail closed (the reaper does nothing rather than risk killing live work). The reaper also sweeps DinD-side QA orphans — containers with `com.docker.compose.project=qa_*` OR `embry0.qa_job_id=*` whose owning job is no longer active. It tears a sandbox down through `SandboxManager.destroy`, the one teardown path the start-up sweep and every finished job use, so the proxy unenroll, the egress rules and the bearer release come with it: `destroy` first resolves the short ID `docker ps` prints, or a container name, to the full ID `create` enrolled the sandbox and kept its bearers under. A docker command that times out still reaches the forced `rm`. Each of its three steps (stale sandboxes, QA orphans, paused-job expiry) runs on its own, so one that fails costs only itself that tick.
 - **Start-up sweep** — on start, after boot recovery has failed the jobs it could not take back (and left the ones it resumes `running`, #307), the orchestrator destroys the sandbox containers the previous process left behind, **except those of jobs still active in the DB** (the reaper's set: pending, running, awaiting input, paused). A paused or awaiting-input job's checkpoint names its container and the resume reuses it (#484). Without the active set it destroys nothing; the reaper removes true orphans later.
 
 ---
@@ -698,7 +708,7 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 | github-proxy | 9103 | GitHub REST API — read calls on the job's repository only (per-enrollment scope), strict forward-header allowlist | `Authorization: Bearer` header |
 | gitlab-proxy | 9105 | GitLab REST v4 API — read calls on the job's project only (per-enrollment scope), strict forward-header allowlist (#166) | `PRIVATE-TOKEN` (PAT) or `Authorization: Bearer` (OAuth2) |
 | xai-proxy | 9106 | grok models on `api.x.ai` (EMB-45) | Rotating SuperGrok access token (pushed via `/admin/token`) |
-| context-proxy | 9107 | Watcher and developer log drill-down → orchestrator `GET /api/v1/logs/query` (allowlist + per-sandbox scope + clamps + per-job quota; every result redacted, #294) | Orchestrator API key (service-scoped) |
+| context-proxy | 9107 | Watcher and developer log drill-down → orchestrator `GET /api/v1/logs/query` (allowlist of exact names or glob patterns for per-release names such as blue/green slots, a pattern admitting plain names only + per-sandbox scope + clamps + per-job quota; every result redacted, #294) | Orchestrator API key (service-scoped) |
 | embry0 API Proxy | 9102 (deferred) | embry0 internal API (per-job) | Scoped to current issue/job |
 | minio-proxy | 9100 (DinD-side) | QA agent → MinIO PUT/GET via DNS-resolvable name | None — only forwards to host MinIO |
 | presign-proxy | 9104 (DinD-side) | QA agent → orchestrator `POST /api/v1/internal/qa/presign` to mint additional URLs at runtime | Per-sandbox bearer (same scheme as the credential proxies) |
@@ -788,7 +798,7 @@ graph TB
         ISS["/issues — CRUD, triage, sync, activity,<br/>inputs answer/skip"]
         JOB["/jobs — create/list/get/cancel/resume,<br/>inputs answer, events-token,<br/>logs/events, qa/services"]
         DLV["/deliverables — typed job outputs"]
-        QUE["/queue"] 
+        QUE["/queue"]
         STA["/stats"]
         TRC["/traces"]
         LOG["/logs/query — Loki log proxy"]
@@ -1200,6 +1210,15 @@ erDiagram
 
 LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are managed by `langgraph-checkpoint-postgres` and provide pause/resume, time-travel debugging, and state inspection.
 
+### Skill Storage
+
+Two tables, both from migration 101; the trees themselves live in the skills store ([Skills store and mounts](#skills-store-and-mounts)), not in Postgres.
+
+| Table | Holds |
+|---|---|
+| `skill_sources` | One row per source (`git`, `path` or `inline`): url and requested `ref`, the `resolved_sha` the store holds, the `plugin_name` that prefixes its skill names, the `skills` catalog read at sync, `status` (`pending`, `ready`, `error`) with the redacted `error`, `enabled`, `is_builtin`, and `credential_id`, reserved and always null |
+| `inline_skills` | SKILL.md documents written through the API (`name`, `description`, `body`), rendered into the builtin `local` source |
+
 ### Environment Variable Storage (Plan J)
 
 Per-repo and global environment variables are stored in `global_environment` / `repo_environment`. Variables of type `secret` are Fernet-encrypted at rest using a key derived from `ENVIRONMENT_SECRET_KEY` via PBKDF2-HMAC-SHA256. Responses mask secret values (`****`); a separate `/reveal` endpoint returns plaintext and emits an `environment.secret_revealed` audit event.
@@ -1302,6 +1321,37 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 73 | what became of a job's pull request, apart from how the job ended (#279, #280) | `jobs.delivery_state` (`none`/`pr_open`/`merged`/`closed`, seeded from `status` + `pr_url`), `jobs.delivery_state_at` (the forge's time; `jobs.updated_at` preserved) |
 | 74 | bound the analyses a full draft cap no longer bounds (#283) | `watcher_runs.analysed_under_full_cap` |
 | 75 | pre-built QA image base digest; exactly one active image per repo — deactivates all but the newest active row per repo, deletes nothing (#334) | `qa_image_tags.base_image`, `.base_image_digest`, `ck_qa_image_tags_base_pair`, `uq_qa_image_tags_one_active_per_repo` |
+| 76 | deterministic log clustering memory: one row per (signature, repo) behind "is this new?" and "is this getting worse?" (#289) | `log_signatures`, `idx_log_signatures_repo_last_seen`, `idx_log_signatures_repo_count` |
+| 77 | the daily digest is sent once per UTC day: the sender claims the day before it sends and keeps what it sent | `digest_deliveries` |
+| 78 | "merge this PR?" from the chat: one row per ask, pinned to the PR's head sha; the `merge` API key scope | `merge_approvals`, `uq_merge_approvals_one_pending_per_pr`, `idx_merge_approvals_job`, `api_keys_scope_check` (admits `merge`) |
+| 79 | the ask is posted once the PR's CI settles and retires itself: `closed` when the PR is merged or closed on the forge, `expired` when left untouched | `merge_approvals.posted_at`, `merge_approvals_status_check` (adds `closed`, `expired`), `idx_merge_approvals_pending_posted` |
+| 80 | data-only: unwrap the double-encoded JSON `ask` strings 78 and 79 wrote; idempotent | `merge_approvals.ask` |
+| 81 | data-only: the same unwrap for the digest payload and the clustering sample lines (#382) | `digest_deliveries.payload`, `log_signatures.sample_lines` |
+| 82 | watcher runs, known patterns and tick attempts are scoped to a stack, the ticket columns are tracker-neutral, and one open healing case per tracker ticket (#378, #317) | `watcher_runs.{repo, tracker, tracker_key, tracker_url}` (drops `linear_issue_identifier`), `idx_watcher_runs_repo_created`, `watcher_known_patterns` pkey `(fingerprint, repo)`, `watcher_tick_attempts.repo` as pkey (drops `id`), `idx_healing_cases_open_tracker` |
+| 83 | what embry0 watches, one row per stack: its LogQL, where findings are filed, and the settings that differ from the global defaults (#378, #297) | `watcher_stacks` |
+| 84 | a case accepted, attempted and given up closes as `abandoned` (#410) | `healing_cases_resolution_path_check` |
+| 85 | data-only: stamp `released_at` from `accepted_at` on drafts a human already accepted (#415) | `watcher_runs.released_at` |
+| 86 | credential registry: the accounts embry0 acts as, which one a repo, owner, host or the deployment uses per role, and the per-job ledger (spec 2026-09-29) | `credentials`, `credential_bindings`, `credential_bindings_single`, `credential_uses`, `credential_uses_job`, `credential_uses_cred` |
+| 87 | the shared Docker daemon is an admin grant per repo; a repo already on a `dind_enabled` profile keeps it (#522) | `repos.docker_access` |
+| 88 | per-key repository allowlist: NULL is any repository, an empty array is refused | `api_keys.allowed_repos`, `api_keys_allowed_repos_not_empty` |
+| 89 | data-only: `finished_at` for terminal rows written without one, from `updated_at`, with the `updated_at` trigger disabled for the pass (#345) | `jobs.finished_at` |
+| 90 | data-only: drop per-job volume rows whose job has ended or has no jobs row (#328) | `qa_volume_state` |
+| 91 | drop the per-template model map nothing read (#468) | `pipeline_templates.agent_models` (dropped) |
+| 92 | a restart recovers jobs instead of failing them (#307) | `jobs.interrupted_at`, `jobs.resume_attempts`, `jobs.launch` |
+| 93 | drop the QA trace URL column nothing set (#644) | `qa_app_results.trace_url` (dropped) |
+| 94 | how the watcher chose a case's signature: the proposal's own evidence, or the loudest cluster as the fallback (#657) | `healing_cases.signature_source` |
+| 95 | job_logs correlation columns lifted out of the JSON; a trace row is written at run start as `running` (#36) | `job_logs.{run_id, node, event_type}` (drops `agent_id`), `idx_job_logs_job_event_type`, `idx_job_logs_run_id` |
+| 96 | review a pull request when it is ready: one row per review a trigger asked for, deduped on `trigger_key` (#30) | `repo_preferences.pr_review`, `pr_reviews`, `idx_pr_reviews_trigger_key`, `idx_pr_reviews_repo_number` |
+| 97 | the forge owners embry0 maintains as a whole: forge, the credential it acts with and the probed `access` (ADR 0010) | `organizations` |
+| 98 | what discovery found under an owner: one fact row per repository, replaced on every run, plus the runs ledger (ADR 0010) | `org_repo_facts`, `idx_org_repo_facts_owner`, `org_discovery_runs`, `idx_org_discovery_runs_owner` |
+| 99 | what embry0 still needs to maintain an owner, keyed by (owner, kind, signature) so an answer survives rediscovery (ADR 0011) | `org_needs`, `idx_org_needs_owner`, `org_needs_synced` |
+| 100 | the machines that run the code, which repositories run on each, and the `tailnet_api_key` credential kind (ADR 0013) | `hosts`, `hosts_name_unique`, `repo_hosts`, `idx_repo_hosts_host`, `credentials.metadata`, `credentials_kind_check`, `credentials_provider_check`, `credential_bindings_role_check` |
+| 101 | agent identity (`display_name`, `avatar`, `color`, `tagline`, with the builtins' values written for rows still at the defaults), skill sources and inline skills | `agent_definitions.{display_name, avatar, color, tagline}`, `skill_sources`, `inline_skills` |
+| 102 | an owner's versioned standards and each repository's place under them: one active version per owner and kind, superseded versions as history (ADR 0014) | `standards`, `standards_one_active`, `repo_standard_state`, `idx_repo_standard_state_owner`, `idx_repo_standard_state_audit_job` |
+| 103 | `credentials.provider` takes the OpenAI-compatible LLM providers (openai, openrouter, google, groq, deepseek, custom; ADR 0018) | `credentials_provider_check` |
+| 104 | every change to a repository's stored test setup and preferences, newest 100 per repo and surface, outliving the repository (ADR 0019) | `repo_config_revisions`, `idx_repo_config_revisions_repo` |
+| 105 | agent-proposed test setups a person applies, one running or pending proposal per repository (ADR 0019) | `repo_setup_proposals`, `idx_repo_setup_proposals_repo`, `uq_repo_setup_proposals_live` |
+| 106 | the eight specialist agents' identity (`display_name`, `avatar`, `color`, `tagline`) written for rows still at the defaults, as 101 did for the core agents | `agent_definitions` rows |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 
@@ -1315,9 +1365,9 @@ The `IssueExecutor` (`embry0/services/issue_executor.py`) owns the lifecycle of 
 
 **Restarts: drain and recovery (#307).** Sandboxes outlive the orchestrator (they run on the agent runtime) and LangGraph checkpoints every node, so a restart stops jobs rather than losing them.
 
-- *Drain.* The lifespan's shutdown first calls `IssueExecutor.drain(SHUTDOWN_DRAIN_SECONDS)`, before any background task is cancelled. From then on `_run_in_slot` starts nothing: a job dispatched during the drain, or one waiting for a run slot (cancelled at once), stays `pending`; `schedule_resume` raises `ExecutorDraining`. A running issue-to-PR job stops at its next node boundary: `_process_stream` raises `ShutdownInterrupt` (a `BaseException`, so no failure path sees it) once a node's update has streamed, and closes the stream so the next node is cancelled and the pending checkpoint writes are flushed. QA and onboard jobs are let run to the deadline. Jobs still running then are cancelled. Each job stopped or held back gets `jobs.interrupted_at`, and `SandboxManager.stop_agent` kills the runner it left in its sandbox: killing the `docker exec` client does not.
-- *Launch records.* Every dispatch entry point (`execute`, `submit_job`, `start_job`, `start_onboard_job`) passes `_track_task` a `launch` dict — the runner kind and its arguments — which `_run_in_slot` stores in `jobs.launch` before the job waits for anything. `relaunch(job)` starts the job again from it.
-- *Recovery.* At boot, `orchestration/restart.py`'s `take_back_jobs` reads every `running`/`pending` row and `plan_recovery` decides: a `running` job with a checkpoint, on a resumable pipeline (not `qa`/`onboard`), is resumed; a `pending` job, or a `running` one whose graph never began, with a launch record, is launched again; anything else is left to `fail_orphaned`, which now stamps `finished_at` and words a drained job as `ERR_INTERRUPTED_BY_SHUTDOWN`. Recovered jobs are started at the end of startup, once the executor and the proxies exist: `resume_after_restart` runs `resume(..., after_restart=True)`, which streams `None` (go on from the checkpoint) after `_reclaim_sandbox_after_restart` kills the stale agent and re-enrolls the sandbox (or, with no sandbox in the checkpoint, removes a half-made `sandbox-<job_id>` so `init` creates it again). LangGraph re-runs only the node that had not finished.
+- *Drain.* The lifespan's shutdown first calls `IssueExecutor.drain(SHUTDOWN_DRAIN_SECONDS)`, before any background task is cancelled. From then on `_run_in_slot` starts nothing: a job dispatched during the drain, or one waiting for a run slot (cancelled at once), stays `pending`; `schedule_resume` raises `ExecutorDraining`. A running issue-to-PR job stops at its next node boundary: `_process_stream` raises `ShutdownInterrupt` (a `BaseException`, so no failure path sees it) once a node's update has streamed, and closes the stream so the next node is cancelled and the pending checkpoint writes are flushed. QA, onboard and pr-review jobs are let run to the deadline. Jobs still running then are cancelled. Each job stopped or held back gets `jobs.interrupted_at`, and `SandboxManager.stop_agent` kills the runner it left in its sandbox: killing the `docker exec` client does not.
+- *Launch records.* Every dispatch entry point (`execute`, `submit_job`, `start_job`, `start_onboard_job`, `start_pr_review_job`) passes `_track_task` a `launch` dict — the runner kind and its arguments — which `_run_in_slot` stores in `jobs.launch` before the job waits for anything. `relaunch(job)` starts the job again from it.
+- *Recovery.* At boot, `orchestration/restart.py`'s `take_back_jobs` reads every `running`/`pending` row and `plan_recovery` decides: a `running` job with a checkpoint, on a resumable pipeline (not `qa`/`onboard`/`pr-review`), is resumed; a `pending` job, or a `running` one whose graph never began, with a launch record, is launched again; anything else is left to `fail_orphaned`, which now stamps `finished_at` and words a drained job as `ERR_INTERRUPTED_BY_SHUTDOWN`. Recovered jobs are started at the end of startup, once the executor and the proxies exist: `resume_after_restart` runs `resume(..., after_restart=True)`, which streams `None` (go on from the checkpoint) after `_reclaim_sandbox_after_restart` kills the stale agent and re-enrolls the sandbox (or, with no sandbox in the checkpoint, removes a half-made `sandbox-<job_id>` so `init` creates it again). LangGraph re-runs only the node that had not finished.
 - *Bound.* A recovery after an unclean stop (no `interrupted_at`) spends one `jobs.resume_attempts`; at `MAX_RESUME_ATTEMPTS` boot fails the job with `ERR_RESUME_LIMIT`. Recovery clears `interrupted_at`, so each stop is judged on its own. Migration 92 adds the three columns.
 
 **Trace ID threading (Plan H).** Every job is assigned a `trace_id` (format `trc-<12hex>`) at creation; the id is bound to structlog contextvars for the duration of `_run_workflow` and persisted onto every `audit_log` row written in that span. Use it as a grep key to reconstruct an issue's full timeline across logs and audit events.
@@ -1330,7 +1380,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 
 | Code | Meaning |
 |------|---------|
-| `ERR_AGENT_TIMEOUT` | Agent SDK call exceeded its configured timeout. |
+| `ERR_AGENT_TIMEOUT` | Agent SDK call exceeded its configured timeout. The runner kills the agent inside the sandbox as well as its `docker exec` client, since the job pauses with its sandbox kept; `agent_runner_wall_clock_timeout` records whether that kill landed (`runner_stopped`). |
 | `ERR_NO_RESULT` | Sandbox produced no final `ResultMessage`. |
 | `ERR_BUDGET_OVERRUN` | The job ran and its per-job cap stopped it in-run (`overrun_mode=hard`). It spent money, so it counts toward its actor's rate limit and toward dispatch-attempt caps. Rows written before #331 also carry this code for gate refusals; readers tell those apart by evidence (no `traces` row and `budget_overrun_usd = 0`). |
 | `ERR_BUDGET_REFUSED` | The dispatch gate refused the job before any agent ran — a daily/monthly cap or the per-actor rate limit (#331). The only outcome exempt from rate-limit and attempt counts; the one definition is `gate_refusal_sql` (`embry0/storage/repositories/gate_refusal.py`). |
@@ -1370,9 +1420,11 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_SANDBOX_IMAGE_BUILD` / `ERR_WORKSPACE_PROVIDER` / `ERR_PROXY_ENROLLMENT` / `ERR_MCP_SERVER_FAILED` | The named piece of sandbox infrastructure failed. |
 | `ERR_QA_FAILED` / `ERR_QA_INFRA` / `ERR_QA_INCONCLUSIVE` | Standalone QA job outcome: an app failed its criteria / could not be judged (boot, seed, sandbox) / ended with neither a pass nor a hard failure. Precedence when several apply: infra, failed, inconclusive. |
 | `ERR_QA_CONFIG_INVALID` | The stored qa.yaml or the job's overrides were rejected before fan-out. |
+| `ERR_QA_NO_APPS` | A QA run selected no app and had no change context: the diff was empty, or could not be computed (fetch or merge base failed), and no declared app is always on. Opt in with `qa_required: always`, `force_all_apps`, or an app without `prefixes`. |
 | `ERR_QA_NO_VERDICT` / `ERR_QA_BUDGET_EXHAUSTED` / `ERR_QA_IDLE` / `ERR_QA_RESULT_INVALID` | The QA graph ended without a verdict / spent its retry budget on infra failures / idled out / never wrote a valid `result.json`. |
 | `ERR_ONBOARD_FAILED` | The onboard pipeline ended without a valid qa.yaml in the config store. |
-| `ERR_UNEXPECTED_INTERRUPT` | A graph that never asks questions (QA, onboard) paused on an interrupt. |
+| `ERR_PR_REVIEW_INIT_FAILED` / `ERR_PR_REVIEW_NO_VERDICT` / `ERR_PR_REVIEW_PUBLISH_FAILED` | A pull request review could not set up its sandbox or check out the head (gone after a force-push) / ended without a readable verdict / was refused by the forge (after the GitHub 422 fallback; writes are not retried on 5xx or timeouts). Nothing is posted for the first two; for the third, GitLab inline comments posted before the failure stay, and the message counts them. |
+| `ERR_UNEXPECTED_INTERRUPT` | A graph that never asks questions (QA, onboard, pr-review) paused on an interrupt. |
 | `ERR_UNKNOWN` | The classifier's explicit last resort. Every occurrence logs `failure_unclassified` with the exception class and stage — alert on it, then add the mapping. |
 
 This table lists the codes dashboards most commonly encounter; the authoritative, complete enum lives in `embry0/safety/error_codes.py`.
@@ -1511,6 +1563,8 @@ service actor (`embry0/orchestration/dispatch_actors.py`):
 | `embry0:auto-retriage` | triage re-run with auto-answered questions folded in | exempt |
 | `embry0:answer-resume` | fresh run after the last blocking answer arrived on a channel that names nobody | exempt |
 | `embry0:pr-comment` | PR follow-up whose comment named no author | limited |
+| `embry0:master-key` | an API request made with the master key (`API_KEY`) | limited |
+| `embry0:anonymous` | an API request with no identity, which only `AUTH_DEV_MODE` lets in | limited |
 | `linear-reconciler` | the Linear dispatch reconciler | limited |
 
 The per-author limit throttles people. The three exempt actors skip layer 3

@@ -19,6 +19,16 @@ retired `apps/<name>/.embry0/app.yaml` tree files).
 > and onboarding/bootstrap (below). A repo with no stored config fails QA
 > runs with a clear "no QA config stored in embry0" error.
 >
+> **Checking it first.** `POST /api/v1/repos/{owner}/{repo}/qa-config/check`
+> takes the same raw body and stores nothing. Beyond the schema, it reports
+> what every run would stop on: a `sandbox_profile` that does not exist or
+> has no browser, a `workspace_provider.type` that is not installed, and an
+> app with no ready check. It answers `{ok, problems, warnings, summary}`.
+> The warnings name what a person should confirm first, such as an address
+> outside the test computer or a missing Docker access grant. A refused
+> `PUT` leads its 422 detail with one plain sentence per error, then
+> `Technical details:` and the schema's own text.
+>
 > **Onboarding an existing repo (EMB-50):** `embry0 onboard <owner/repo>`
 > runs the onboarding agent — it analyzes the repo, drafts this document,
 > validates it (schema + a boot/ready-check smoke run), and stores it in
@@ -44,8 +54,13 @@ retired `apps/<name>/.embry0/app.yaml` tree files).
    base and computes the **affected set** — which declared apps changed, directly
    or via a changed shared package.
 4. With `qa_required: auto`, only the affected apps are QA'd; the orchestrator
-   validates the affected set against your `apps:` keys (any affected app **not**
-   declared under `apps:` is silently skipped), then fans out up to
+   validates the affected set against your `apps:` keys (an affected app **not**
+   declared under `apps:` is skipped; when that leaves nothing selected, the QA
+   comment and a `qa_no_apps_to_qa` log line name the undeclared apps; a run
+   that selects nothing fails with `ERR_QA_NO_APPS` when its diff is empty or
+   could not be computed, because the fetch or the merge base failed; a branch
+   job whose selection was only deployed targets passes instead when the config
+   declares no managed app), then fans out up to
    `parallelism.max_concurrent_apps` at a time. Each app is booted with its
    `boot_command`, waited on via `ready_checks`, optionally seeded and e2e-tested,
    then the QA agent drives `frontend_url` against the acceptance criteria.
@@ -58,7 +73,7 @@ retired `apps/<name>/.embry0/app.yaml` tree files).
 version: 2                       # required, must be the integer 2
 
 workspace_provider:              # required — how the affected set is computed
-  type: npm-workspaces-turbo     # the only shipped provider today
+  type: npm-workspaces-turbo     # or static-apps (the two shipped providers)
   config: { ... }                # provider-specific (see below)
 
 defaults: { ... }                # baseline applied to every app
@@ -96,6 +111,9 @@ workspace_provider:
 #   config: { apps: [hub, leads] }
 ```
 
+The `apps:` keys must be the names declared here (`hub`, `leads` above). A key
+the provider does not declare fails the run with `ERR_QA_CONFIG_INVALID`.
+
 `npm-workspaces-turbo` `config` keys (see the toy-monorepo fixture):
 
 | Key | Example | Meaning |
@@ -110,7 +128,7 @@ workspace_provider:
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `mode` | `process` \| `dind` | `process` | **Repo-wide** — there is no per-app `mode`. `process` for plain dev servers; `dind` when boot needs Docker — that also needs a DinD profile and an admin's Docker access grant for the repo, see [Docker access](#docker-access-mode-dind). |
-| `sandbox_profile` | str | `slim` | e.g. `slim`, `qa-jvm`, `qa-external` (browser + LAN egress, no DinD — for QA against an externally deployed instance; clone it to set `extra_hosts` vhost aliases). A profile with DinD (`qa-jvm`) is refused for a repo without the [Docker access](#docker-access-mode-dind) grant. |
+| `sandbox_profile` | str | `slim` | e.g. `slim`, `qa-jvm`, `qa-external` (browser + LAN egress, no DinD. Tests an app it starts as a process, or one deployed elsewhere. Clone it to set `extra_hosts` vhost aliases). A profile with DinD (`qa-jvm`) is refused for a repo without the [Docker access](#docker-access-mode-dind) grant. |
 | `ready_checks` | list of check | `[]` | See below. An app whose merged ready_checks end up empty **by omission** fails validation (`infra_error` — boot would "pass" with zero verification). To deliberately skip verification, set `ready_checks: []` explicitly on the app or its app-local config (acknowledged opt-out). `deployed` apps always require non-empty checks. |
 | `boot_timeout_seconds` | int 1..3600 | `600` | |
 | `seed_command` | str \| null | none | Optional data seed after boot. |
@@ -118,7 +136,7 @@ workspace_provider:
 | `e2e` | e2e block \| null | none | See below. |
 | `auth` | auth block \| null | none | Pre-authenticate the QA browser via a Playwright storageState — see the `auth:` section below. |
 | `acceptance_criteria_template` | list of str | `[]` | Default criteria the QA agent drives per app. |
-| `browser_backend` | str \| null | none | Browser backend the QA agent drives (`playwright` today; `vibium` when #233 lands — validated against the backend registry, unknown names are parse errors). Unset inherits the deployment default (`qa_browser_backend_default`, itself `playwright`). Full precedence: job override > `app_local` > `apps.<name>` > `defaults` > deployment default. |
+| `browser_backend` | str \| null | none | Browser backend the QA agent drives (`playwright` or `vibium`, both baked into the QA image — validated against the backend registry, unknown names are parse errors). Unset inherits the deployment default (`qa_browser_backend_default`, itself `playwright`). Full precedence: job override > `app_local` > `apps.<name>` > `defaults` > deployment default. |
 | `guardrails` | list of str | `[]` | EMB-31: absolute DO-NOT rules for the QA agent (e.g. "never click Send"). Injected into `job.json` and enforced by the agent's system prompt; violations are reported as `anomalies[]` with `category: guardrail_violation` and surfaced prominently on the dashboard. **Merged as a UNION** with per-app/app-local guardrails — a narrower layer can add rules but never remove inherited ones (unlike acceptance criteria, which replace). |
 
 ### Docker access (`mode: dind`)
@@ -462,7 +480,7 @@ workspace_provider:
 
 defaults:
   mode: process                       # Next.js dev servers — no Docker
-  sandbox_profile: slim
+  sandbox_profile: qa-external        # slim has no browser
   ready_checks:
     - http: "http://localhost:${port}"
       expect_status: [200, 302, 401, 403]   # auth-gated: server is up even when / redirects
@@ -524,7 +542,10 @@ config noise doesn't.
 
 - **Unknown keys fail.** `extra="forbid"` everywhere — a typo is a parse error.
 - **`app_name` must match the provider.** A declared app the provider never
-  reports is inert; an affected app you didn't declare is silently skipped.
+  reports is inert; an affected app you didn't declare is skipped. When that
+  leaves nothing selected, the comment and a `qa_no_apps_to_qa` log line name
+  the undeclared apps, and on a run whose diff is empty or could not be
+  computed the run fails with `ERR_QA_NO_APPS`.
 - **`frontend_url` resolves inside the sandbox.** In `dind`, use a container
   hostname, not `localhost:<host_port>`.
 - **`ready_checks`/`acceptance_criteria` replace, they don't merge.** Re-state

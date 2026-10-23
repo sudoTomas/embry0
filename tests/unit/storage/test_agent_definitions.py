@@ -12,18 +12,21 @@ pytestmark = pytest.mark.requires_postgres
 @pytest.fixture
 async def agent_repo(db_with_migrations: DatabasePool) -> AgentDefinitionsRepository:
     # Migrations seed triage/developer/review. Everything else in BUILTIN_SEED
-    # arrives at app startup (embry0/api/app.py): qa and onboarding have their
-    # own force-syncing seeders, and seed_missing_builtin_agents inserts the
-    # rest — the non-code agents (research/analysis/ops, RAV-604). Mirror all
-    # three here so BUILTIN_SEED ⊆ list_all() holds; omitting the last one is
+    # arrives at app startup (embry0/api/app.py): qa, onboarding and
+    # pr-reviewer have their own insert-if-missing seeders, and
+    # seed_missing_builtin_agents inserts the rest — the non-code agents
+    # (research/analysis/ops, RAV-604). Mirror all four here so
+    # BUILTIN_SEED ⊆ list_all() holds; omitting the last one is
     # why this fixture went stale when the non-code agents were added.
     from embry0.storage.seeds.agents_builtin import seed_missing_builtin_agents
     from embry0.workflows.onboard.agent_seed import seed_onboarding_agent
+    from embry0.workflows.pr_review.agent_seed import seed_pr_reviewer_agent
     from embry0.workflows.qa.agent_seed import seed_qa_agent
 
     repo = AgentDefinitionsRepository(db_with_migrations)
     await seed_qa_agent(repo)
     await seed_onboarding_agent(repo)
+    await seed_pr_reviewer_agent(repo)
     await seed_missing_builtin_agents(repo)
     return repo
 
@@ -223,3 +226,86 @@ def test_builtin_seed_skill_counts_match_design_2026_05_04():
             f"  expected: {sorted(want)}\n"
             f"  got:      {sorted(got)}"
         )
+
+
+async def test_create_stores_identity_and_defaults(db_with_migrations) -> None:
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    row = await repo.create(agent_type="cartographer", description="maps", model="claude-sonnet-5")
+    assert (row["display_name"], row["avatar"], row["color"], row["tagline"]) == ("", "golem", "slate", "")
+    row = await repo.create(
+        agent_type="lantern",
+        description="lights",
+        model="claude-sonnet-5",
+        display_name="Lantern",
+        avatar="bard",
+        color="sky",
+        tagline="Sings the changelog.",
+    )
+    assert (row["display_name"], row["avatar"], row["color"]) == ("Lantern", "bard", "sky")
+
+
+async def test_update_accepts_identity_fields(db_with_migrations) -> None:
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await repo.create(agent_type="lantern", description="lights", model="claude-sonnet-5")
+    row = await repo.update("lantern", display_name="Lantern", avatar="rogue", color="rose", tagline="t")
+    assert (row["display_name"], row["avatar"], row["color"], row["tagline"]) == ("Lantern", "rogue", "rose", "t")
+
+
+async def test_reset_restores_builtin_identity(db_with_migrations) -> None:
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await repo.update("developer", display_name="Renamed", avatar="golem", color="slate", tagline="x")
+    row = await repo.reset("developer")
+    assert (row["display_name"], row["avatar"], row["color"]) == ("Developer", "smith", "amber"), (
+        "reset must restore the seeded identity with the rest of the row"
+    )
+
+
+async def test_every_builtin_row_carries_its_identity(agent_repo: AgentDefinitionsRepository) -> None:
+    """All seventeen builtin rows (nine core agents, eight specialists) match BUILTIN_IDENTITY
+    after the startup seeders run, whether migration 101 wrote the identity or a seeder inserted the row."""
+    from embry0.agents.identity import BUILTIN_IDENTITY
+
+    rows = {r["type"]: r for r in await agent_repo.list_all()}
+    mismatched = {
+        agent_type: {k: rows.get(agent_type, {}).get(k) for k in ident}
+        for agent_type, ident in BUILTIN_IDENTITY.items()
+        if {k: rows.get(agent_type, {}).get(k) for k in ident} != ident
+    }
+    assert len(BUILTIN_IDENTITY) == 17, "nine core agents and eight specialists"
+    assert mismatched == {}, f"builtin rows whose identity differs from BUILTIN_IDENTITY: {mismatched}"
+
+
+def _insert_if_missing_seeders():
+    from embry0.workflows.onboard.agent_seed import seed_onboarding_agent
+    from embry0.workflows.pr_review.agent_seed import seed_pr_reviewer_agent
+    from embry0.workflows.qa.agent_seed import seed_qa_agent
+
+    return [
+        pytest.param("qa", seed_qa_agent, id="qa"),
+        pytest.param("onboarding", seed_onboarding_agent, id="onboarding"),
+        pytest.param("pr-reviewer", seed_pr_reviewer_agent, id="pr-reviewer"),
+    ]
+
+
+@pytest.mark.parametrize(("agent_type", "seeder"), _insert_if_missing_seeders())
+async def test_reseeding_keeps_identity_and_skill_edits(db_with_migrations, agent_type, seeder) -> None:
+    """A seeder leaves an existing row alone: an operator's identity edits and added skills survive a
+    reboot like every other field (test_builtin_agent_edits_stick.py); POST /agents/{type}/reset is
+    the explicit restore path for all of them."""
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await seeder(repo)
+    seeded_skills = list(BUILTIN_SEED[agent_type]["skills"])
+    added = [*seeded_skills, "superpowers:brainstorming"]
+    await repo.update(
+        agent_type, display_name="Renamed", avatar="rogue", color="rose", description="edited", skills=added
+    )
+    await seeder(repo)
+    row = await repo.get(agent_type)
+    assert row is not None
+    assert (row["display_name"], row["avatar"], row["color"]) == ("Renamed", "rogue", "rose"), (
+        f"re-running the {agent_type} seeder reverted the operator's identity edits"
+    )
+    assert row["skills"] == added, f"re-running the {agent_type} seeder undid an added skill: {row['skills']}"
+    assert row["description"] == "edited", "the seeder must leave an existing row's description alone"
+    reset = await repo.reset(agent_type)
+    assert reset["skills"] == seeded_skills, "reset returns the skills to the seed"

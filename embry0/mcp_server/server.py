@@ -4,10 +4,15 @@ Run via the ``embry0-mcp`` console script (stdio transport). Configure with
 ``EMBRY0_API_URL`` (default ``http://localhost:8200``) and ``EMBRY0_API_KEY``.
 
 Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
-``job_answer``, ``agent_update``, ``agent_reset``, ``env_set``, ``env_delete``,
-``merge_decide``, ``case_accept``, ``case_close``, ``repo_register``,
-``qa_config_set``, ``credential_bind``) require ``confirm=true``; without it
-they return an instructive refusal instead of acting.
+``job_answer``, ``agent_create``, ``agent_update``, ``agent_delete``,
+``agent_reset``, ``env_set``, ``env_delete``, ``merge_decide``, ``case_accept``,
+``case_close``, ``repo_register``, ``org_register``, ``org_webhook_install``,
+``org_act``, ``qa_config_set``, ``credential_bind``, ``host_import_tailnet``,
+``skill_source_add``, ``skill_source_update``, ``skill_source_sync``,
+``skill_source_remove``, ``inline_skill_put``, ``inline_skill_remove``,
+``agent_skill_add``, ``agent_skill_remove``, ``standard_set``,
+``standard_audit``) require ``confirm=true``; without it they return an
+instructive refusal instead of acting.
 """
 
 from __future__ import annotations
@@ -32,13 +37,17 @@ mcp = MCPServer(
         "Tools for driving the embry0 issue-to-PR / QA / research automation platform: "
         "issues, jobs (create/wait/logs/deliverables), agent definitions, pipeline "
         "templates, the log watcher, healing cases, merge approvals, per-repo environment "
-        "variables, and forge credentials (list, resolve, bind). "
+        "variables, forge credentials (list, resolve, bind), the hosts that run the "
+        "code (list, get, probe, import from a tailnet), "
+        "skills (catalog, sources, inline skills, per-agent add/remove), the tool catalog, "
+        "and an owner's standards (get, set, audit a repository against one). "
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '
-        "case_list(awaiting_decision=true) is the watcher's draft tickets waiting for a "
-        "person to accept or reject. case_list(open_only=true) is neither: it is every "
-        "finding not yet closed, including ones already merged, deployed and verified."
+        "case_list(awaiting_decision=true) is what waits for a person: the watcher's draft "
+        "tickets to accept or reject, and organization needs to answer or dismiss. "
+        "case_list(open_only=true) is neither: it is every finding not yet closed, "
+        "including ones already merged, deployed and verified."
     ),
 )
 
@@ -378,7 +387,12 @@ async def job_deliverables(job_id: str) -> list[dict[str, Any]]:
 
 @_tool
 async def agent_list() -> list[dict[str, Any]]:
-    """List all agent definitions (type, description, model, tools, skills, execution mode)."""
+    """List all agent definitions (type, description, model, tools, skills, execution mode).
+
+    ``model`` is the stored one. ``effective_model`` and ``effective_provider``
+    are what a job that names no model runs it on: a deployment default model
+    replaces the stored one (``effective_model_source`` says which applied).
+    """
     return await _get_client().agent_list()
 
 
@@ -399,10 +413,16 @@ async def agent_update(
     execution_mode: str | None = None,
     auth_mode: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
+    display_name: str | None = None,
+    avatar: str | None = None,
+    color: str | None = None,
+    tagline: str | None = None,
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Update an agent definition (only provided fields change). execution_mode: sdk|cli;
-    auth_mode: api_key|oauth. Requires confirm=true (changes live pipeline behavior)."""
+    auth_mode: api_key|oauth; avatar and color are roster and palette ids. skills: only names the agent
+    does not have yet are checked, and a bare name (no colon) is the target repository's own skill.
+    Requires confirm=true (changes live pipeline behavior)."""
     if not confirm:
         return _confirmation_refusal("agent_update", f"update agent definition {agent_type!r}")
     return await _get_client().agent_update(
@@ -415,7 +435,57 @@ async def agent_update(
         execution_mode=execution_mode,
         auth_mode=auth_mode,
         mcp_servers=mcp_servers,
+        display_name=display_name,
+        avatar=avatar,
+        color=color,
+        tagline=tagline,
     )
+
+
+@_tool
+async def agent_create(
+    agent_type: str,
+    description: str,
+    model: str,
+    tools: list[str] | None = None,
+    skills: list[str] | None = None,
+    system_prompt: str = "",
+    execution_mode: str | None = None,
+    auth_mode: str | None = None,
+    mcp_servers: dict[str, Any] | None = None,
+    display_name: str = "",
+    avatar: str = "golem",
+    color: str = "slate",
+    tagline: str = "",
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Create a custom agent definition. avatar is one of the roster ids and color one of the palette ids
+    (see GET /agents for the builtins' values). Requires confirm=true (adds a runnable agent)."""
+    if not confirm:
+        return _confirmation_refusal("agent_create", f"create agent definition {agent_type!r}")
+    return await _get_client().agent_create(
+        agent_type,
+        description=description,
+        model=model,
+        tools=tools,
+        skills=skills,
+        system_prompt=system_prompt,
+        execution_mode=execution_mode,
+        auth_mode=auth_mode,
+        mcp_servers=mcp_servers,
+        display_name=display_name,
+        avatar=avatar,
+        color=color,
+        tagline=tagline,
+    )
+
+
+@_tool
+async def agent_delete(agent_type: str, confirm: bool = False) -> dict[str, Any]:
+    """Delete a custom agent definition (builtins answer 403). Requires confirm=true (destructive)."""
+    if not confirm:
+        return _confirmation_refusal("agent_delete", f"delete agent definition {agent_type!r}")
+    return await _get_client().agent_delete(agent_type)
 
 
 @_tool
@@ -425,6 +495,130 @@ async def agent_reset(agent_type: str, confirm: bool = False) -> dict[str, Any]:
     if not confirm:
         return _confirmation_refusal("agent_reset", f"reset agent definition {agent_type!r} to defaults")
     return await _get_client().agent_reset(agent_type)
+
+
+@_tool
+async def agent_skill_add(agent_type: str, skill_name: str, confirm: bool = False) -> dict[str, Any]:
+    """Add one skill (a `plugin:skill` name from skill_list, or a bare name for the target repository's own
+    skill, which is not checked) to an agent definition; adding one it already has is a no-op. An unknown
+    name answers 422 with the closest known names; one from a source not ready yet is added and listed in
+    `warnings`. Returns the agent. Requires confirm=true (changes live pipeline behavior)."""
+    if not confirm:
+        return _confirmation_refusal("agent_skill_add", f"add skill {skill_name!r} to agent {agent_type!r}")
+    return await _get_client().agent_skill_add(agent_type, skill_name)
+
+
+@_tool
+async def agent_skill_remove(agent_type: str, skill_name: str, confirm: bool = False) -> dict[str, Any]:
+    """Remove one skill from an agent definition; removing one it does not have is a no-op.
+    Returns the agent. Requires confirm=true (changes live pipeline behavior)."""
+    if not confirm:
+        return _confirmation_refusal("agent_skill_remove", f"remove skill {skill_name!r} from agent {agent_type!r}")
+    return await _get_client().agent_skill_remove(agent_type, skill_name)
+
+
+# ------------------------------------------------------------------- skills
+
+
+@_tool
+async def skill_list() -> list[dict[str, Any]]:
+    """List the skill catalog: every `plugin:skill` name the skill sources provide, with its source,
+    description, and whether it is available (its source is ready and enabled)."""
+    return await _get_client().skill_list()
+
+
+@_tool
+async def skill_source_list() -> list[dict[str, Any]]:
+    """List the skill sources (git, path, inline) with status, resolved sha, plugin name, synced_at and
+    the last sync error."""
+    return await _get_client().skill_source_list()
+
+
+@_tool
+async def skill_source_add(
+    source_id: str,
+    kind: str,
+    url: str = "",
+    ref: str = "",
+    enabled: bool = True,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Add a skill source and start its first sync; it answers in status `pending`. kind: git|path.
+    git: url is a public https repository and ref a tag, branch or commit sha (the pin is the trust
+    decision); path: url is a directory inside the orchestrator container. Inline skills go through
+    inline_skill_put. Requires confirm=true (code the agents will load)."""
+    if not confirm:
+        return _confirmation_refusal("skill_source_add", f"add {kind} skill source {source_id!r}")
+    return await _get_client().skill_source_add(source_id, kind=kind, url=url, ref=ref, enabled=enabled)
+
+
+@_tool
+async def skill_source_get(source_id: str) -> dict[str, Any]:
+    """One skill source: kind, url, ref, resolved sha, status and error, and the skills it lists."""
+    return await _get_client().skill_source_get(source_id)
+
+
+@_tool
+async def skill_source_update(
+    source_id: str, ref: str | None = None, enabled: bool | None = None, confirm: bool = False
+) -> dict[str, Any]:
+    """Change a skill source's ref (git sources; starts a sync) or enable or disable it. Only the given
+    fields change; built-in sources accept enabled only. Requires confirm=true (changes what agents load)."""
+    if not confirm:
+        return _confirmation_refusal("skill_source_update", f"update skill source {source_id!r}")
+    return await _get_client().skill_source_update(source_id, ref=ref, enabled=enabled)
+
+
+@_tool
+async def skill_source_sync(source_id: str, confirm: bool = False) -> dict[str, Any]:
+    """Re-sync a skill source in the background (409 while a sync of it runs); watch skill_source_list
+    for the result. Requires confirm=true (replaces the tree new sandboxes mount)."""
+    if not confirm:
+        return _confirmation_refusal("skill_source_sync", f"re-sync skill source {source_id!r}")
+    return await _get_client().skill_source_sync(source_id)
+
+
+@_tool
+async def skill_source_remove(source_id: str, confirm: bool = False) -> dict[str, Any]:
+    """Delete a skill source and its stored tree. Builtins answer 403; a source whose skills an agent or
+    template still names answers 409 listing them. Requires confirm=true (destructive)."""
+    if not confirm:
+        return _confirmation_refusal("skill_source_remove", f"delete skill source {source_id!r}")
+    return await _get_client().skill_source_remove(source_id)
+
+
+@_tool
+async def inline_skill_list() -> list[dict[str, Any]]:
+    """The inline skills (name, description, body, timestamps); agents name each one `local:<name>`."""
+    return await _get_client().inline_skill_list()
+
+
+@_tool
+async def inline_skill_put(name: str, description: str, body: str, confirm: bool = False) -> dict[str, Any]:
+    """Create or replace an inline skill, published as `local:<name>`. body is the SKILL.md content
+    below the frontmatter. Re-syncs the `local` source. Requires confirm=true (changes what agents load)."""
+    if not confirm:
+        return _confirmation_refusal("inline_skill_put", f"write inline skill {name!r}")
+    return await _get_client().inline_skill_put(name, description=description, body=body)
+
+
+@_tool
+async def inline_skill_remove(name: str, confirm: bool = False) -> dict[str, Any]:
+    """Delete an inline skill; 409 while an agent or template names `local:<name>`.
+    Requires confirm=true (destructive)."""
+    if not confirm:
+        return _confirmation_refusal("inline_skill_remove", f"delete inline skill {name!r}")
+    return await _get_client().inline_skill_remove(name)
+
+
+# -------------------------------------------------------------------- tools
+
+
+@_tool
+async def tool_list() -> list[dict[str, Any]]:
+    """List the tool names an agent definition can name: Claude Code builtins, each browser backend's
+    MCP tools (source `mcp:<backend>`) and the log tool (source `mcp:context`)."""
+    return await _get_client().tool_list()
 
 
 # ---------------------------------------------------------------- templates
@@ -464,25 +658,34 @@ async def logs_query(
     investigation. container: Docker container name substring (e.g. "api");
     search: regex line filter (e.g. "(?i)error|exception"); since_minutes: lookback
     window (max 1440); limit: max lines (default 200, max 1000); logql: raw LogQL
-    override for advanced queries. Keep limit modest — lines land in your context."""
+    override for advanced queries. Keep limit modest — lines land in your context.
+    Needs an operate-scope key or above. Lines come back redacted (secrets, e-mail
+    addresses and the operator's personal-data fields replaced) and cut at 2000
+    characters."""
     return await _get_client().logs_query(
         container=container, search=search, since_minutes=since_minutes, limit=limit, logql=logql
     )
 
 
 @_tool
-async def watcher_runs(limit: int = 50) -> list[dict[str, Any]]:
-    """List recent log-watcher runs (anomaly scans that file draft tickets)."""
-    return await _get_client().watcher_runs(limit=limit)
+async def watcher_runs(limit: int = 50, stack: str | None = None) -> list[dict[str, Any]]:
+    """List recent log-watcher runs (anomaly scans that file draft tickets), newest
+    first. stack (the watched repo, "group/name" or a GitLab subgroup path) narrows
+    to one watched stack; omitted, every stack's runs are interleaved and each
+    row's repo names its stack."""
+    return await _get_client().watcher_runs(limit=limit, stack=stack)
 
 
 @_tool
-async def watcher_trigger(timeout: float = 900.0) -> dict[str, Any]:
-    """Trigger one log-watcher tick now and return its summary. Safe: proposal caps,
-    dedup, and the human gate still apply. A tick runs an LLM analysis job
-    synchronously and takes minutes — timeout (seconds) bounds the wait; the tick
-    keeps running server-side even if it elapses."""
-    return await _get_client().watcher_trigger(timeout=timeout)
+async def watcher_trigger(timeout: float = 900.0, stack: str | None = None) -> dict[str, Any]:
+    """Trigger a log-watcher tick now and return its summary. Safe: proposal caps,
+    dedup, and the human gate still apply. stack (a watched repo, as watcher_runs
+    names it) ticks that stack; omitted while several are watched, every stack
+    ticks and the summary lists each one's result under "stacks" (each may run
+    one paid analysis). A tick runs an LLM analysis job synchronously and takes
+    minutes — timeout (seconds) bounds the wait; the tick keeps running
+    server-side even if it elapses."""
+    return await _get_client().watcher_trigger(timeout=timeout, stack=stack)
 
 
 # -------------------------------------------------------------------- cases
@@ -508,13 +711,15 @@ async def case_list(
     case can be verified or closed with no fix at all (self_resolved, non_code).
 
     Filters: repo ("group/name"), stage (detected|tracked|accepted|pr_open|merged|
-    deployed|verified|closed), origin (watcher|human|webhook|alert|ci), resolution_path
+    deployed|verified|closed), origin (watcher|human|webhook|alert|ci|org), resolution_path
     (embry0|out_of_band|cancelled|non_code|self_resolved|abandoned), healed_verdict
     (pending|healed|not_healed|inconclusive|regressed), fix_deployed (true/false — use
     THIS, not stage=verified, to find findings a shipped fix healed), awaiting_decision
     (use THIS for "what needs a decision?": watcher drafts with a ticket that nobody has
-    accepted or rejected, and findings whose shipped fix did not heal them, sent back
-    for a retry nobody has accepted yet), open_only (every case whose stage is not closed — that
+    accepted or rejected, findings whose shipped fix did not heal them, sent back for a
+    retry nobody has accepted yet, and organization needs waiting for a person, origin
+    org: org_needs reads them, closing the case dismisses one, none is ever accepted),
+    open_only (every case whose stage is not closed — that
     includes merged, deployed and verified cases, alerts and findings with no ticket, so
     it answers neither "what is open on the dashboard?", which is
     issue_list(status="open"), nor "what needs a decision?"). limit max 200."""
@@ -583,8 +788,9 @@ async def case_close(
     given up), "non_code" (nothing to change in code), "cancelled" (the finding was
     withdrawn), "self_resolved" (it stopped by itself), "embry0" (embry0's own merge).
     embry0 refuses (409) a case that is already closed. Closing is terminal but keeps
-    history: a later recurrence opens a new case pointing at this one. Requires
-    confirm=true."""
+    history: a later recurrence opens a new case pointing at this one. A case with
+    origin "org" is an organization need: closing it dismisses the need and needs an
+    admin-scope key. Requires confirm=true."""
     if not confirm:
         return _confirmation_refusal("case_close", f"close case {case_id} as {resolution_path or 'its existing path'}")
     return await _get_client().case_close(case_id, resolution_path=resolution_path, note=note, closed_by=closed_by)
@@ -633,7 +839,9 @@ async def merge_decide(
 async def env_list(repo: str | None = None) -> dict[str, Any]:
     """List environment variables — global set by default, or a repo's set when repo
     ("group/name", or a GitLab subgroup path like "group/subgroup/project") is given.
-    Secret values are always masked as "****"; there is no tool to read secret values."""
+    Secret values are always masked as "****"; there is no tool to read secret values.
+    A secret's masked_preview shows at most its last 2 characters, and only for a
+    secret of 12 characters or more."""
     return await _get_client().env_list(repo=repo)
 
 
@@ -670,6 +878,181 @@ async def env_delete(key: str, repo: str | None = None, confirm: bool = False) -
 
 
 @_tool
+async def org_list(include_removed: bool = False) -> dict[str, Any]:
+    """List the organizations embry0 maintains: forge owners with the credential
+    embry0 acts with and what the probe found it can do there (ADR 0010)."""
+    return await _get_client().org_list(include_removed=include_removed)
+
+
+@_tool
+async def org_get(owner: str) -> dict[str, Any]:
+    """One organization by owner: forge, credential, probe result, repo count, status."""
+    return await _get_client().org_get(owner)
+
+
+@_tool
+async def org_needs(owner: str) -> dict[str, Any]:
+    """What embry0 still needs to maintain one organization, from its newest
+    discovery run: each need's kind (not_registered, no_webhook,
+    onboarding_candidate, not_watched, no_qa_config, access_limited,
+    env_values_needed, no_log_source, no_deploy_marker, count_gap,
+    hook_origin_unknown), the repositories it covers, the action that answers
+    it, its status (open, done, dismissed) and its healing case. Read-only."""
+    return await _get_client().org_needs(owner)
+
+
+@_tool
+async def org_register(
+    owner: str,
+    forge: str = "github",
+    credential_id: str = "",
+    display_name: str = "",
+    probe: bool = True,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Register a forge owner (a GitHub organization or user, or a GitLab group)
+    so embry0 can discover and maintain every repository under it. With
+    ``probe`` on (default) the forge is asked what the credential can do there
+    first; an owner the credential cannot list is refused. ``credential_id``
+    names a forge_token in the registry; empty uses the environment token for
+    that owner. Idempotent. Requires confirm=true (creates platform state)."""
+    if not confirm:
+        return _confirmation_refusal("org_register", f"register organization {owner!r} on {forge}")
+    return await _get_client().org_register(
+        owner, forge=forge, credential_id=credential_id, display_name=display_name, probe=probe
+    )
+
+
+@_tool
+async def host_list(source: str | None = None, include_removed: bool = False) -> dict[str, Any]:
+    """List the hosts: the machines that run the code embry0 maintains (ADR 0013). Each has a
+    name, an address, a transport (tailnet, ssh or http), roles, a log source, tags, a status
+    (active, unreachable or removed), when it was last seen, and the repositories it serves
+    with the role it plays for each. source: "manual" or "tailnet" keeps only hosts added
+    that way. include_removed=true also shows removed hosts."""
+    return await _get_client().host_list(source=source, include_removed=include_removed)
+
+
+@_tool
+async def host_get(host_id: str) -> dict[str, Any]:
+    """One host ("host-..."): address, transport, roles, log source, status, last seen, and
+    the repositories it serves."""
+    return await _get_client().host_get(host_id)
+
+
+@_tool
+async def host_probe(host_id: str, credential_id: str = "") -> dict[str, Any]:
+    """Check whether a host ("host-...") is reachable over its transport, and record the answer
+    as its status and last-seen time. A tailnet host is looked up in the tailnet's device list
+    by address or name, and is reachable when the tailnet reports it connected; an ssh or http
+    host gets a TCP connect to its port, with nothing sent. A tailnet is read with the
+    tailnet_api_key ``credential_id``, or the one bound at global scope with role tailnet when
+    empty. Returns the probe (reachable, detail) and the updated host. Changes nothing a person
+    configured. Never returns the key."""
+    return await _get_client().host_probe(host_id, credential_id=credential_id)
+
+
+@_tool
+async def host_import_tailnet(credential_id: str = "", confirm: bool = False) -> dict[str, Any]:
+    """Create or update one host per device of the tailnet, read with a tailnet_api_key
+    credential: ``credential_id``, or the one bound at global scope with role tailnet when
+    empty. A new device becomes a tailnet host; a host an earlier import made gets its address,
+    status and last-seen time refreshed; a manual host with the same name, or a host a person
+    removed, is skipped. Idempotent: a second import reports every host unchanged. Never
+    returns the key. Requires confirm=true (creates platform state)."""
+    if not confirm:
+        return _confirmation_refusal("host_import_tailnet", "import hosts from the tailnet's devices")
+    return await _get_client().host_import_tailnet(credential_id=credential_id)
+
+
+@_tool
+async def standard_get(owner: str, kind: str) -> dict[str, Any]:
+    """The active version of a forge owner's standard of one ``kind`` ("design") (ADR 0014): its
+    schema (the token roles, type scale and component rules every standard of the kind shares), its
+    values (this owner's fill of the roles), prose, references and version number. 404s when the
+    owner holds none of that kind. Read-only."""
+    return await _get_client().standard_get(owner, kind)
+
+
+@_tool
+async def standard_set(
+    owner: str,
+    kind: str,
+    schema: dict[str, Any],
+    values: dict[str, Any],
+    prose: str = "",
+    references: list[str] | None = None,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Write a new version of a forge owner's standard of one ``kind`` ("design") and supersede the
+    active one (ADR 0014). The call is the whole version, so read it with standard_get first and
+    send back what you keep. ``schema`` holds ``roles`` (role name to an object describing the
+    role), ``type_scale`` (step name to an object) and ``rules`` (objects with an ``id`` and a
+    ``text``); every key of ``values`` must be a role the schema declares. ``references`` are
+    repositories or URLs where the standard is held best. Needs an admin-scope key. Requires
+    confirm=true (changes what every repository under the owner is audited against)."""
+    if not confirm:
+        return _confirmation_refusal("standard_set", f"write a new version of the {kind} standard of {owner!r}")
+    return await _get_client().standard_set(
+        owner, kind, schema=schema, values=values, prose=prose, references=list(references or [])
+    )
+
+
+@_tool
+async def standard_audit(owner: str, kind: str, repo: str, confirm: bool = False) -> dict[str, Any]:
+    """Start a read-only audit job of one repository under ``owner`` ("group/name", or a GitLab
+    subgroup path like "group/subgroup/project") against the owner's active standard of ``kind``
+    ("design"). Refused unless an admin put the repository in mode advise or enforce, the owner holds
+    an active standard of the kind, its pipeline template (design-audit) exists, and no audit of the
+    repository is pending or running: a retry while one runs is refused with that job's id, which
+    is the one to follow. When the job
+    completes, its report's score (0 to 100) and finding count are stored on the repository's
+    standards state, which repo_get shows. Returns the job id: follow it with job_wait and
+    job_deliverables. Requires confirm=true (starts a paid job)."""
+    if not confirm:
+        return _confirmation_refusal("standard_audit", f"start a {kind} audit of {repo!r} against {owner!r}")
+    return await _get_client().standard_audit(owner, kind, repo)
+
+
+@_tool
+async def org_webhook_install(owner: str, confirm: bool = False) -> dict[str, Any]:
+    """Install one GitHub webhook on the organization itself, firing for every
+    repository under ``owner`` (present and future) and pointing at this
+    deployment's public webhook route, signed with its webhook secret. Refused
+    unless the stored credential was probed able to manage hooks. Idempotent:
+    a hook already pointing here answers outcome=already. Requires confirm=true
+    (writes to the forge)."""
+    if not confirm:
+        return _confirmation_refusal("org_webhook_install", f"install an organization webhook on {owner!r}")
+    return await _get_client().org_webhook_install(owner)
+
+
+@_tool
+async def org_act(
+    owner: str, action: str, repos: list[str], dry_run: bool = False, force: bool = False, confirm: bool = False
+) -> dict[str, Any]:
+    """Run one organization action over repositories discovery saw under
+    ``owner``: register (the repo registry), hook (a forge webhook pointing at
+    WEBHOOK_PUBLIC_URL), onboard (the onboard job, for registered repositories
+    with a boot hint), watch (a disabled watcher stack) or deactivate (the
+    registry row goes inactive: the answer to a repository that left the
+    listing). One outcome per repository: done, already (the state exists),
+    skipped (detail says why) or failed. Idempotent: the same call twice
+    reports already for every repository the first one changed, and
+    changes nothing. dry_run=true reports what would happen without touching
+    anything. force=true lets onboard start another job where the last one
+    completed without storing a QA config. A call that changed anything
+    starts a rediscovery (``rediscovery`` in the result). Requires
+    confirm=true for every call, dry runs included, like every other gated
+    tool: a real call creates registrations, webhooks, jobs or watcher
+    stacks, or deactivates registrations."""
+    if not confirm:
+        verb = "preview" if dry_run else "run"
+        return _confirmation_refusal("org_act", f"{verb} {action} on {len(repos)} repositories under {owner!r}")
+    return await _get_client().org_act(owner, action, repos, dry_run=dry_run, force=force)
+
+
+@_tool
 async def repo_list(include_inactive: bool = False) -> list[dict[str, Any]]:
     """List registered target repos (the embry0 repo registry) with a
     has_qa_config flag per repo. include_inactive=true also shows deactivated repos."""
@@ -680,8 +1063,9 @@ async def repo_list(include_inactive: bool = False) -> list[dict[str, Any]]:
 async def repo_get(repo: str) -> dict[str, Any]:
     """Unified view of one registered repo — "group/name", or a GitLab
     subgroup path like "group/subgroup/project": registry row, has_qa_config
-    + last config update, preferences (sandbox profile etc.), and env
-    var/secret counts. 404s when the repo is not registered."""
+    + last config update, preferences (sandbox profile etc.), env
+    var/secret counts, and the hosts its code runs on. 404s when the repo is
+    not registered."""
     return await _get_client().repo_get(repo)
 
 

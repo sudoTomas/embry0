@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -33,12 +34,14 @@ from embry0.api.schemas.credentials import (
     XaiDeviceLoginStarted,
 )
 from embry0.api.schemas.repo_path import validate_repo_path
+from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.safety.redaction import register_known_secrets
 from embry0.services.credentials.import_env import import_from_env
 from embry0.services.credentials.preview import masked_preview
-from embry0.services.credentials.providers import default_host
+from embry0.services.credentials.providers import base_url_host, default_host, llm_providers
 from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
+from embry0.services.hosts import TAILNET_API_BASE
 from embry0.storage.repositories.credentials import (
     BindingValidationError,
     CredentialBoundError,
@@ -47,6 +50,8 @@ from embry0.storage.repositories.credentials import (
 from embry0.storage.repositories.repos import UnregisteredRepoError
 
 router = APIRouter()
+
+TAILNET_API_HOST = urlparse(TAILNET_API_BASE).hostname or ""
 
 
 def _state(request: Request) -> Any:
@@ -61,15 +66,19 @@ def _repo_path(value: str) -> str:
         raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
-def _expected_host(config: Any, provider: str) -> str:
-    if provider in ("anthropic", "xai"):
+def _expected_host(config: Any, provider: str, metadata: Mapping[str, Any] | None = None) -> str:
+    if provider == "custom":
+        return base_url_host(str((metadata or {}).get("base_url") or ""))
+    if provider in llm_providers():
         return default_host(provider)
+    if provider == "tailscale":
+        return TAILNET_API_HOST
     if provider == "gitlab":
         return (urlparse(str(getattr(config, "gitlab_url", "") or "")).hostname or "gitlab.com").lower()
     return "github.com"
 
 
-async def _audit(request: Request, action: str, details: dict[str, Any]) -> None:
+async def _audit(request: Request, action: AuditAction, details: dict[str, Any]) -> None:
     await emit_audit(
         _state(request).db,
         action,
@@ -165,7 +174,7 @@ async def list_credentials(request: Request) -> list[CredentialOut]:
 @router.post("/credentials", response_model=CredentialOut, status_code=201, dependencies=[require_admin])
 async def create_credential(req: CredentialCreate, request: Request) -> CredentialOut:
     st = _state(request)
-    expected = _expected_host(st.config, req.provider)
+    expected = _expected_host(st.config, req.provider, req.metadata)
     host = (req.host.strip() or expected).lower()
     if host != expected:
         raise HTTPException(status_code=422, detail=f"host for {req.provider} must be {expected!r} in this deployment")
@@ -180,6 +189,7 @@ async def create_credential(req: CredentialCreate, request: Request) -> Credenti
             created_by=request_actor(request),
             git_author_name=req.git_author_name,
             git_author_email=req.git_author_email,
+            metadata=req.metadata,
         )
     except asyncpg.UniqueViolationError:
         raise HTTPException(
@@ -545,7 +555,8 @@ async def verify_credential(credential_id: str, request: Request) -> CredentialO
         else:
             from embry0.services.provider_probe import STATUS_OK, probe_llm_secret
 
-            check = await probe_llm_secret(row["provider"], row["kind"], secret)
+            base_url = str((row.get("metadata") or {}).get("base_url") or "")
+            check = await probe_llm_secret(row["provider"], row["kind"], secret, base_url=base_url)
             if check.status != STATUS_OK:
                 raise RuntimeError(check.status)
             login = "ok"
@@ -594,7 +605,7 @@ async def get_repo_credentials(full_repo: str, request: Request) -> dict[str, An
     except (CredentialMissingError, CredentialUnavailableError, UnregisteredRepoError) as exc:
         effective["forge"] = {"error": str(exc)}
     llm: dict[str, Any] = {}
-    for provider in ("anthropic", "xai"):
+    for provider in llm_providers():
         try:
             resolved = await st.credential_resolver.resolve_llm(scope_value, provider)
         except CredentialMissingError:
@@ -626,23 +637,41 @@ async def set_repo_credentials(full_repo: str, req: BindingsSet, request: Reques
         except ValueError as exc:  # DEFAULT_FORGE empty: the repo needs an explicit forge first
             raise HTTPException(status_code=422, detail=str(exc)) from None
     try:
-        await st.credentials_repo.replace_bindings(
-            "repo",
-            full_repo.lower(),
+        await bind_repo_credentials(
+            request,
+            full_repo,
             [b.model_dump() for b in req.bindings],
-            created_by=request_actor(request),
             repo_forge=row["forge"],
+            actor=request_actor(request),
         )
     except BindingValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    await _audit(
-        request,
+    return await get_repo_credentials(full_repo, request)
+
+
+async def bind_repo_credentials(
+    request: Request, full_repo: str, bindings: list[dict[str, Any]], *, repo_forge: str, actor: str
+) -> None:
+    """Replace one repository's credential bindings, audit it and drop the
+    resolver's cache.
+
+    The one path a repository binding takes: this API, and a webhook delivery
+    that auto-registers a repository under an organization (ADR 0012). Raises
+    :class:`BindingValidationError`, having written nothing, when a binding
+    does not fit the repository.
+    """
+    scope_value = full_repo.lower()
+    st = _state(request)
+    await st.credentials_repo.replace_bindings("repo", scope_value, bindings, created_by=actor, repo_forge=repo_forge)
+    await emit_audit(
+        st.db,
         "credential.bound",
-        {
+        actor=actor,
+        details={
             "scope_kind": "repo",
-            "scope_value": full_repo.lower(),
-            "credential_ids": [b.credential_id for b in req.bindings],
+            "scope_value": scope_value,
+            "credential_ids": [b["credential_id"] for b in bindings],
         },
+        audit_log_path=st.config.audit_log_path,
     )
     _invalidate_resolver(request)
-    return await get_repo_credentials(full_repo, request)

@@ -11,6 +11,12 @@ async function flushConnect() {
   await act(async () => {});
 }
 import { useJobLogs } from "../useJobLogs";
+import { fetchJobLogEvents } from "@/api/logs";
+
+// Mock the REST fallback so tests control what persisted events exist
+vi.mock("@/api/logs", () => ({
+  fetchJobLogEvents: vi.fn().mockResolvedValue([]),
+}));
 
 // ---------------------------------------------------------------------------
 // WebSocket mock
@@ -177,41 +183,67 @@ describe("useJobLogs", () => {
     expect((result.current.events[1] as { text: string }).text).toBe("world");
   });
 
-  it("marks isComplete and flushes events immediately on stream_end", async () => {
+  it("marks isComplete and flushes events immediately on job_finished", async () => {
     const { result } = renderHook(() => useJobLogs("job-abc"));
     await flushConnect();
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", text: "partial" });
-      lastCreatedWs!.simulateMessage({ type: "stream_end", timestamp: "t2" });
+      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", text: "partial", event_seq: 1 });
+      lastCreatedWs!.simulateMessage({
+        type: "job_finished",
+        timestamp: "t2",
+        status: "completed",
+        error_code: null,
+        error_message: null,
+        pr_url: null,
+        total_cost_usd: 0,
+        event_seq: 2,
+      });
     });
 
-    // stream_end triggers an immediate flush without needing to advance timers
+    // job_finished triggers an immediate flush without needing to advance timers
     expect(result.current.isComplete).toBe(true);
-    expect(result.current.events).toHaveLength(1);
+    expect(result.current.events).toHaveLength(2);
     expect((result.current.events[0] as { text: string }).text).toBe("partial");
+    expect(result.current.events[1].type).toBe("job_finished");
   });
 
-  it("marks isComplete and flushes events immediately on complete event", async () => {
+  it("marks isComplete and flushes a cost_update immediately when job_finished follows", async () => {
     const { result } = renderHook(() => useJobLogs("job-abc"));
     await flushConnect();
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
       lastCreatedWs!.simulateMessage({
-        type: "complete",
+        type: "cost_update",
         timestamp: "t1",
         cost_usd: 0.05,
+        duration_ms: 1000,
+        duration_api_ms: 800,
+        num_turns: 3,
         tokens_in: 100,
         tokens_out: 200,
-        turns: 3,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        event_seq: 1,
+      });
+      lastCreatedWs!.simulateMessage({
+        type: "job_finished",
+        timestamp: "t2",
+        status: "completed",
+        error_code: null,
+        error_message: null,
+        pr_url: null,
+        total_cost_usd: 0.05,
+        event_seq: 2,
       });
     });
 
     expect(result.current.isComplete).toBe(true);
-    expect(result.current.events).toHaveLength(1);
-    expect(result.current.events[0].type).toBe("complete");
+    expect(result.current.events).toHaveLength(2);
+    expect(result.current.events[0].type).toBe("cost_update");
+    expect(result.current.events[1].type).toBe("job_finished");
   });
 
   it("preserves accumulated events across reconnect after close", async () => {
@@ -222,8 +254,8 @@ describe("useJobLogs", () => {
     // Initial connection with some events
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", text: "msg1" });
-      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t2", text: "msg2" });
+      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", text: "msg1", event_seq: 1 });
+      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t2", text: "msg2", event_seq: 2 });
     });
     await flushBatch();
 
@@ -246,11 +278,12 @@ describe("useJobLogs", () => {
     // New socket should be created
     expect(allCreatedWs.length).toBe(initialWsCount + 1);
     const newWs = lastCreatedWs!;
+    expect(newWs.url).toBe("ws://localhost:3001/ws/jobs/job-abc/events?since_seq=2");
 
     // Simulate new connection opening and receiving more events
     await act(async () => {
       newWs.simulateOpen();
-      newWs.simulateMessage({ type: "text", timestamp: "t3", text: "msg3" });
+      newWs.simulateMessage({ type: "text", timestamp: "t3", text: "msg3", event_seq: 3 });
     });
     await flushBatch();
 
@@ -261,14 +294,23 @@ describe("useJobLogs", () => {
     expect((result.current.events[2] as { text: string }).text).toBe("msg3");
   });
 
-  it("does not reconnect after stream_end close (isComplete=true)", async () => {
+  it("does not reconnect after job_finished close (isComplete=true)", async () => {
     renderHook(() => useJobLogs("job-abc"));
     await flushConnect();
     const wsCount = allCreatedWs.length;
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "stream_end", timestamp: "t1" });
+      lastCreatedWs!.simulateMessage({
+        type: "job_finished",
+        timestamp: "t1",
+        status: "completed",
+        error_code: null,
+        error_message: null,
+        pr_url: null,
+        total_cost_usd: 0,
+        event_seq: 1,
+      });
       lastCreatedWs!.simulateClose();
     });
 
@@ -297,48 +339,97 @@ describe("useJobLogs", () => {
     expect(lastCreatedWs).toBeNull();
   });
 
-  it("tracks cost fields from cost_update event", async () => {
+  it("sums cost_update deltas across runs instead of keeping the last one", async () => {
     const { result } = renderHook(() => useJobLogs("job-abc"));
     await flushConnect();
 
+    const costUpdate = (run: string, cost: number, tin: number, tout: number) => ({
+      type: "cost_update", timestamp: "t1", run_id: run, cost_usd: cost, tokens_in: tin, tokens_out: tout,
+      num_turns: 1, duration_ms: 1, duration_api_ms: 1, cache_read_tokens: 0, cache_creation_tokens: 0,
+    });
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({
-        type: "cost_update",
-        timestamp: "t1",
-        cost_usd: 0.123,
-        tokens_in: 500,
-        tokens_out: 250,
-        num_turns: 7,
-      });
+      lastCreatedWs!.simulateMessage(costUpdate("run-1", 0.1, 500, 250));
+      lastCreatedWs!.simulateMessage(costUpdate("run-2", 0.2, 100, 50));
+      // cost_update is a delta, so a second one for run-1 adds to it
+      lastCreatedWs!.simulateMessage(costUpdate("run-1", 0.05, 10, 5));
     });
+    await flushBatch();
 
-    expect(result.current.latestCost).toBe(0.123);
-    expect(result.current.latestTokensIn).toBe(500);
-    expect(result.current.latestTokensOut).toBe(250);
-    expect(result.current.latestTurns).toBe(7);
+    expect(result.current.latestCost).toBeCloseTo(0.35, 6);
+    expect(result.current.latestTokensIn).toBe(610);
+    expect(result.current.latestTokensOut).toBe(305);
   });
 
-  it("tracks cost fields from complete event", async () => {
+  it("adds turn_usage partials until the run's cost_update lands", async () => {
     const { result } = renderHook(() => useJobLogs("job-abc"));
     await flushConnect();
 
+    const usage = { type: "turn_usage", timestamp: "t1", run_id: "run-1", cost_usd: 0.02, input_tokens: 300,
+      output_tokens: 30, cache_read_tokens: 0, cache_creation_tokens: 0, model: "m" };
     await act(async () => {
       lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage(usage);
+      lastCreatedWs!.simulateMessage({ ...usage, cost_usd: null, input_tokens: 200, output_tokens: 20 });
+    });
+    await flushBatch();
+
+    expect(result.current.latestCost).toBeCloseTo(0.02, 6);
+    expect(result.current.latestTokensIn).toBe(500);
+    expect(result.current.latestTokensOut).toBe(50);
+
+    await act(async () => {
       lastCreatedWs!.simulateMessage({
-        type: "complete",
-        timestamp: "t1",
-        cost_usd: 0.042,
-        tokens_in: 1000,
-        tokens_out: 400,
-        turns: 5,
+        type: "cost_update", timestamp: "t2", run_id: "run-1", cost_usd: 0.05, tokens_in: 600, tokens_out: 60,
+        num_turns: 2, duration_ms: 1, duration_api_ms: 1, cache_read_tokens: 0, cache_creation_tokens: 0,
       });
     });
+    await flushBatch();
 
-    expect(result.current.latestCost).toBe(0.042);
-    expect(result.current.latestTokensIn).toBe(1000);
-    expect(result.current.latestTokensOut).toBe(400);
-    expect(result.current.latestTurns).toBe(5);
+    expect(result.current.latestCost).toBeCloseTo(0.05, 6);
+    expect(result.current.latestTokensIn).toBe(600);
+    expect(result.current.latestTokensOut).toBe(60);
+  });
+
+  it("latestTurns counts top-level turn_start per run", async () => {
+    const { result } = renderHook(() => useJobLogs("job-abc"));
+    await flushConnect();
+
+    const turn = (run: string, n: number, extra: Record<string, unknown> = {}) =>
+      ({ type: "turn_start", timestamp: "t1", run_id: run, turn_number: n, model: "m", ...extra });
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage(turn("run-1", 1));
+      lastCreatedWs!.simulateMessage(turn("run-1", 2));
+      lastCreatedWs!.simulateMessage(turn("run-1", 7, { parent_tool_use_id: "toolu-parent" }));
+      lastCreatedWs!.simulateMessage(turn("run-2", 1));
+    });
+    await flushBatch();
+
+    expect(result.current.latestTurns).toBe(3);
+  });
+
+  it("sums totals over the REST fallback events when the WS never connects", async () => {
+    vi.mocked(fetchJobLogEvents).mockResolvedValue([
+      { type: "cost_update", timestamp: "t1", run_id: "run-1", cost_usd: 0.1, tokens_in: 100, tokens_out: 10,
+        num_turns: 1, duration_ms: 1, duration_api_ms: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      { type: "turn_start", timestamp: "t2", run_id: "run-2", turn_number: 1, model: "m" },
+      { type: "cost_update", timestamp: "t3", run_id: "run-2", cost_usd: 0.2, tokens_in: 200, tokens_out: 20,
+        num_turns: 1, duration_ms: 1, duration_api_ms: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+    ] as never);
+
+    const { result } = renderHook(() => useJobLogs("job-done"));
+    await flushConnect();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1100);
+    });
+
+    expect(fetchJobLogEvents).toHaveBeenCalledWith("job-done", 0);
+    expect(result.current.events).toHaveLength(3);
+    expect(result.current.latestCost).toBeCloseTo(0.3, 6);
+    expect(result.current.latestTokensIn).toBe(300);
+    expect(result.current.latestTokensOut).toBe(30);
+    expect(result.current.latestTurns).toBe(1);
   });
 
   it("does not update cost for non-cost event types", async () => {
@@ -406,8 +497,19 @@ describe("useJobLogs", () => {
         tokens_out: 100,
         turns: 2,
       });
-      lastCreatedWs!.simulateMessage({ type: "stream_end", timestamp: "t2" });
+      lastCreatedWs!.simulateMessage({
+        type: "job_finished",
+        timestamp: "t2",
+        status: "completed",
+        error_code: null,
+        error_message: null,
+        pr_url: null,
+        total_cost_usd: 0.5,
+        event_seq: 2,
+      });
     });
+
+    await flushBatch();
 
     expect(result.current.isComplete).toBe(true);
     expect(result.current.latestCost).toBe(0.5);

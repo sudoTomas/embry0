@@ -105,6 +105,9 @@ class WorkspaceProvider(Protocol):
     def validate(self, apps_declared_in_qa_config: list[str]) -> list[str]:
         """Cross-check the user's qa.yaml `apps:` keys against reality.
 
-        Returns a list of human-readable warning/error strings. Empty list
-        means clean. Used by the orchestrator to fail-fast at run start.
+        Returns a list of human-readable strings, each starting with
+        ``error:`` or ``warning:`` (case-insensitive). Empty list means
+        clean. The orchestrator fails the run on errors, shows warnings in
+        the QA comment, and treats a message with neither prefix as an
+        error so a provider that forgets the prefix cannot be ignored.
         """

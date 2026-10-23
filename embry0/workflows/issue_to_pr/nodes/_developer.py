@@ -16,9 +16,11 @@ from langgraph.types import Command
 # `embry0.workflows.issue_to_pr.nodes.<seam>` reach this module. The self-import is safe: the package __init__ binds the seams
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
+from embry0.execution import events
 from embry0.orchestration.nodes.agent import (
     BRAINSTORMING_ASK_USER_CAP,
     DEFAULT_ASK_USER_CAP,
+    agent_attempt,
 )
 from embry0.workflows.issue_to_pr.nodes._common import (
     _extract_ask_user_events,
@@ -809,7 +811,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     based on the executor output, pending agent questions, and budget state.
     """
     writer = _nodes.get_stream_writer()
-    writer({"type": "node_started", "node": "developer", "agent": "developer"})
+    attempt = agent_attempt(state, "developer")
+    writer(events.node_started(node="developer", agent="developer", attempt=attempt))
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
@@ -918,13 +921,14 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         logger.info(
             "developer_log_tool_granted", job_id=state.get("job_id"), containers=state.get("case_log_containers")
         )
+    developer_template_config = step_template_config(state, "developer")
     result = await _nodes.run_agent_node(
         state=state,
         agent_runner=agent_runner,
         agent_type="developer",
         prompt=prompt,
         agent_definition=developer_definition,
-        template_config=step_template_config(state, "developer"),
+        template_config=developer_template_config,
         timeout_seconds=1800,
         on_event=_forward_event,
         credentials=credentials,
@@ -1019,9 +1023,9 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         branch = branch_name
 
     if pr_url:
-        writer({"type": "pr_created", "pr_url": pr_url, "branch": branch})
+        writer(events.pr_created(pr_url=pr_url, branch=branch))
 
-    writer({"type": "node_completed", "node": "developer"})
+    writer(events.node_completed(node="developer", agent="developer", attempt=attempt))
 
     updates: dict[str, Any] = {
         **result,
@@ -1040,12 +1044,17 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         updates["developer_summary"] = developer_summary
 
     if pending_questions:
+        from embry0.agents.skills import effective_skills
         from embry0.orchestration.nodes.agent import _enforce_ask_user_cap
 
         # Brainstorming sessions can legitimately need many turns of design
-        # back-and-forth. Bump the cap when triage attached the brainstorming
-        # skill; everything else stays at the default of 5.
-        skills_for_dev = (state.get("pipeline_config", {}) or {}).get("agent_skills", {}).get("developer", [])
+        # back-and-forth. Bump the cap when the developer's effective skills
+        # carry brainstorming (the row, then the template node's delta, then
+        # triage's, as the resolver applies them); everything else stays at the
+        # default of 5.
+        template_skills = ((developer_template_config or {}).get("agent_skills") or {}).get("developer")
+        triage_skills = ((state.get("pipeline_config", {}) or {}).get("agent_skills") or {}).get("developer")
+        skills_for_dev = effective_skills(developer_definition.get("skills") or [], template_skills, triage_skills)
         ask_cap = BRAINSTORMING_ASK_USER_CAP if "superpowers:brainstorming" in skills_for_dev else DEFAULT_ASK_USER_CAP
 
         exhausted, cap_updates = _enforce_ask_user_cap(

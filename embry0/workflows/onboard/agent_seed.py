@@ -2,7 +2,8 @@
 
 Mirrors the qa agent seed pattern (embry0/workflows/qa/agent_seed.py):
 SYSTEM_PROMPT is the DB-seeded system prompt; seed_onboarding_agent()
-idempotently upserts the row at orchestrator startup.
+inserts the row at orchestrator startup when it is missing. An edit to the
+row is kept; POST /agents/onboarding/reset restores this seed.
 
 The agent runs inside a sandbox with the target repo cloned read-only at
 /workspace and must write a schema-v2 qa.yaml draft to
@@ -14,6 +15,8 @@ with the failure details, so the prompt teaches iteration, not perfection.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+
+from embry0.agents.identity import BUILTIN_IDENTITY
 
 if TYPE_CHECKING:
     # Lazy at runtime — BUILTIN_SEED imports SYSTEM_PROMPT from this module,
@@ -130,25 +133,21 @@ ONBOARDING_AGENT_SEED: dict[str, Any] = {
     "execution_mode": None,
     "auth_mode": None,
     "mcp_servers": {},
+    **BUILTIN_IDENTITY["onboarding"],
 }
 
 
 async def seed_onboarding_agent(repo: AgentDefinitionsRepository) -> None:
-    """Idempotently upsert the onboarding agent definition (qa-seed pattern)."""
-    existing = await repo.get("onboarding")
-    if existing is None:
-        await repo.create(
-            agent_type="onboarding",
-            description=ONBOARDING_AGENT_SEED["description"],
-            model=ONBOARDING_AGENT_SEED["model"],
-            tools=ONBOARDING_AGENT_SEED["tools"],
-            skills=ONBOARDING_AGENT_SEED["skills"],
-            system_prompt=ONBOARDING_AGENT_SEED["system_prompt"],
-            execution_mode=ONBOARDING_AGENT_SEED["execution_mode"],
-            auth_mode=ONBOARDING_AGENT_SEED["auth_mode"],
-        )
-    await repo.update(
-        "onboarding",
+    """Insert the onboarding agent definition when it is missing (qa-seed pattern).
+
+    Identity included: an operator's edits and the skills added through
+    POST /agents/{type}/skills survive a reboot, and POST /agents/{type}/reset
+    is the explicit restore path.
+    """
+    if await repo.get("onboarding") is not None:
+        return
+    await repo.create(
+        agent_type="onboarding",
         description=ONBOARDING_AGENT_SEED["description"],
         model=ONBOARDING_AGENT_SEED["model"],
         tools=ONBOARDING_AGENT_SEED["tools"],
@@ -157,6 +156,10 @@ async def seed_onboarding_agent(repo: AgentDefinitionsRepository) -> None:
         execution_mode=ONBOARDING_AGENT_SEED["execution_mode"],
         auth_mode=ONBOARDING_AGENT_SEED["auth_mode"],
         mcp_servers=ONBOARDING_AGENT_SEED["mcp_servers"],
+        display_name=ONBOARDING_AGENT_SEED["display_name"],
+        avatar=ONBOARDING_AGENT_SEED["avatar"],
+        color=ONBOARDING_AGENT_SEED["color"],
+        tagline=ONBOARDING_AGENT_SEED["tagline"],
     )
     # is_builtin is deliberately outside update()'s allowed fields — only
     # seeders may mark rows builtin, via direct SQL (same as seed_qa_agent).

@@ -2,26 +2,31 @@ import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
+// The family button: 6px radius, 14px 600, 30-36px tall. One accent: the
+// primary is gold with near-black text; secondary sits on the overlay.
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 cursor-pointer",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 cursor-pointer",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        default: "bg-primary text-primary-foreground hover:bg-primary-hover",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:
-          "border border-white/[0.1] bg-transparent hover:bg-white/[0.04] hover:text-accent-foreground hover:border-cyan-500/20",
+          "border border-border-strong bg-transparent text-fg hover:bg-overlay",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
+          "bg-overlay text-fg hover:bg-white/[0.12]",
+        ghost: "text-fg-secondary hover:bg-overlay hover:text-fg",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-10 px-4 py-2",
-        sm: "h-9 rounded-md px-3",
-        lg: "h-11 rounded-md px-8",
-        icon: "h-10 w-10",
+        default: "h-9 px-3.5",
+        sm: "h-[30px] px-[11px]",
+        lg: "h-10 px-5",
+        icon: "h-9 w-9",
+        // Inside a dense table row (about 36px), so the row keeps its height.
+        xs: "h-7 px-2.5 text-xs",
+        "icon-sm": "h-7 w-7",
       },
     },
     defaultVariants: {

@@ -61,6 +61,7 @@ _BY_CODE: dict[str, str] = {
     ErrorCode.QA_INFRA: "QA could not run because the test environment did not start",
     ErrorCode.QA_INCONCLUSIVE: "QA could not reach a verdict",
     ErrorCode.QA_CONFIG_INVALID: "the QA configuration stored for this repository is not valid",
+    ErrorCode.QA_NO_APPS: "QA selected no app to run: the branch has no changes against its base and no app is always on",
 }
 
 

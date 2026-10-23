@@ -99,7 +99,7 @@ async def test_subtype_success_with_result_text_is_a_failure(tmp_path) -> None:
     assert out.is_error is True, "subtype success on an is_error result must not be a successful run"
     assert out.error_message == API_ERROR, out.error_message
     assert "error result: success" not in out.error_message
-    assert any(event.get("type") == "error" and API_ERROR in event.get("error", "") for event in events)
+    assert any(event.get("type") == "error" and API_ERROR in event.get("message", "") for event in events)
 
 
 @pytest.mark.asyncio

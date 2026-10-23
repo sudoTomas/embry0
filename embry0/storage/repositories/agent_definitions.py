@@ -5,6 +5,7 @@ from typing import Any
 
 import structlog
 
+from embry0.agents.identity import BUILTIN_IDENTITY, DEFAULT_AVATAR, DEFAULT_COLOR
 from embry0.storage.database import DatabasePool
 from embry0.workflows.issue_to_pr.noncode_agents import (
     ANALYSIS_SYSTEM_PROMPT as _ANALYSIS_SYSTEM_PROMPT,
@@ -15,7 +16,9 @@ from embry0.workflows.issue_to_pr.noncode_agents import (
 from embry0.workflows.issue_to_pr.noncode_agents import (
     RESEARCH_SYSTEM_PROMPT as _RESEARCH_SYSTEM_PROMPT,
 )
+from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_SYSTEM_PROMPTS as _SPECIALIST_PROMPTS
 from embry0.workflows.onboard.agent_seed import SYSTEM_PROMPT as _ONBOARDING_SYSTEM_PROMPT
+from embry0.workflows.pr_review.agent_seed import PR_REVIEWER_AGENT_SEED as _PR_REVIEWER_AGENT_SEED
 from embry0.workflows.qa.agent_seed import QA_AGENT_SEED as _QA_AGENT_SEED
 
 logger = structlog.get_logger(__name__)
@@ -103,6 +106,11 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "auth_mode": None,
         "mcp_servers": {},
     },
+    # #30: a copy of embry0/workflows/pr_review/agent_seed.py's seed, so the
+    # two cannot drift; a copy, so editing this entry leaves the seed alone
+    # (test_builtin_seed_holds_a_copy_of_the_reviewer_seed). is_builtin is
+    # set by seed_pr_reviewer_agent's trailing direct SQL.
+    "pr-reviewer": copy.deepcopy(_PR_REVIEWER_AGENT_SEED),
     # RAV-604: non-code agents. These run on the generic agent node
     # (workflows/issue_to_pr/generic_agent.py) — behavior lives in the
     # system prompt, not in node code. research/analysis are read-only by
@@ -151,7 +159,137 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "auth_mode": None,
         "mcp_servers": {},
     },
+    # The specialists: read-only agents on the generic node, each built
+    # around one method (specialist_agents.py). No Write or Edit: Bash runs
+    # the repository's checks and the scripts that prove a claim, and the
+    # prompts keep its scratch files under /tmp. The two that weigh the most
+    # judgment, kintsugi and interrogator, run on the developer's model.
+    "kintsugi": {
+        "description": (
+            "Traces the cracks in a repository by running its own gates and "
+            "reading code against its docs, and returns a ledger of proven "
+            "cracks, each graded and paired with the seal that would mend it. "
+            "Read-only."
+        ),
+        "model": "claude-opus-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["kintsugi"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "gardener": {
+        "description": (
+            "Finds one provable weed (dead code, a stale doc line, an unused "
+            "dependency, a duplicate helper) that can be pulled with no behavior "
+            "change, and returns it as a weed card with its proof, the exact diff "
+            "and the check that shows nothing changed. Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["gardener"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "interrogator": {
+        "description": (
+            "Reviews a branch or pull request diff from four independent angles "
+            "(adversarial, quality, mechanical, architecture) and returns "
+            "evidence-backed findings, sorted by a lead judgment, with a verdict. "
+            "Read-only."
+        ),
+        "model": "claude-opus-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": ["superpowers:requesting-code-review"],
+        "system_prompt": _SPECIALIST_PROMPTS["interrogator"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "why": {
+        "description": (
+            "Answers why code is the way it is from git history, decision "
+            "records, docs and the issue or pull request text in the job, as a "
+            "cited account of decisions and tradeoffs with each claim's "
+            "confidence marked. Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["why"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "how": {
+        "description": (
+            "Explains how a subsystem works before someone changes it: entry "
+            "points, runtime flow, ownership and layering, and a file:line map. "
+            "Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["how"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "blast-radius": {
+        "description": (
+            "Finds what a change could break beyond its diff, names the one fact "
+            "it is safe because of, and proves that fact by running real code in "
+            "the sandbox or marks it unproven. Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": ["superpowers:verification-before-completion"],
+        "system_prompt": _SPECIALIST_PROMPTS["blast-radius"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "comment-sicko": {
+        "description": (
+            "Reviews a diff for comments that narrate, banners, commented-out "
+            "code and workaround sermons, and returns the deletions plus the "
+            "check or test that should replace each claimed constraint. "
+            "Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["comment-sicko"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "design-auditor": {
+        "description": (
+            "Measures a repository's frontend against a design standard with a "
+            "deterministic script (font families, font sizes, radii, raw colors, "
+            "accents, tables versus cards) and returns ranked findings with two "
+            "reproducible 0 to 100 scores: conformance to the standard and code "
+            "hygiene. Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["design-auditor"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
 }
+
+# Every builtin carries its identity (embry0/agents/identity.py). Merged here so
+# the entries above keep their hand-written form; qa and pr-reviewer are deep
+# copies, so this touches the copies only (their own seeds carry it too).
+for _agent_type, _ident in BUILTIN_IDENTITY.items():
+    BUILTIN_SEED[_agent_type].update(_ident)
 
 _ALLOWED_UPDATE_FIELDS = {
     "description",
@@ -162,6 +300,10 @@ _ALLOWED_UPDATE_FIELDS = {
     "execution_mode",
     "auth_mode",
     "mcp_servers",
+    "display_name",
+    "avatar",
+    "color",
+    "tagline",
 }
 
 
@@ -194,14 +336,18 @@ class AgentDefinitionsRepository:
         execution_mode: str | None = None,
         auth_mode: str | None = None,
         mcp_servers: dict[str, Any] | None = None,
+        display_name: str = "",
+        avatar: str = DEFAULT_AVATAR,
+        color: str = DEFAULT_COLOR,
+        tagline: str = "",
     ) -> dict[str, Any]:
         """Insert a new custom agent definition."""
         row = await self._db.fetchrow(
             """
             INSERT INTO agent_definitions
                 (type, description, model, tools, skills, system_prompt, is_builtin, execution_mode, auth_mode,
-                 mcp_servers)
-            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9)
+                 mcp_servers, display_name, avatar, color, tagline)
+            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $13)
             RETURNING *
             """,
             agent_type,
@@ -213,6 +359,10 @@ class AgentDefinitionsRepository:
             execution_mode,
             auth_mode,
             mcp_servers or {},
+            display_name,
+            avatar,
+            color,
+            tagline,
         )
         logger.info("agent_definition_created", agent_type=agent_type)
         assert row is not None, "INSERT ... RETURNING must return a row"
@@ -273,8 +423,12 @@ class AgentDefinitionsRepository:
                 execution_mode = $6,
                 auth_mode = $7,
                 mcp_servers = $8,
+                display_name = $9,
+                avatar = $10,
+                color = $11,
+                tagline = $12,
                 updated_at = NOW()
-            WHERE type = $9
+            WHERE type = $13
             RETURNING *
             """,
             seed["description"],
@@ -285,6 +439,10 @@ class AgentDefinitionsRepository:
             seed["execution_mode"],
             seed["auth_mode"],
             seed["mcp_servers"],
+            seed["display_name"],
+            seed["avatar"],
+            seed["color"],
+            seed["tagline"],
             agent_type,
         )
         if row is None:

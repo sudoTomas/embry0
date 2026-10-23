@@ -22,6 +22,7 @@ ARCHITECTURE = ROOT / "docs" / "architecture.md"
 
 HOLDS = "### What holds"
 DOES_NOT_HOLD = "### What does not hold"
+RETENTION = "## Data retention"
 
 
 def _section(text: str, heading: str) -> str:
@@ -111,12 +112,14 @@ def test_security_md_lists_every_blocked_egress_range() -> None:
 
 def _sandbox_env_llm_keys() -> dict[tuple[str, str], list[str]]:
     """For each LLM provider and credential kind, the env keys a sandbox is created with."""
+    from embry0.agents.providers import OPENAI_COMPATIBLE
     from embry0.execution.sandbox_manager import SandboxManager
-    from embry0.services.credentials.providers import LLM_PROVIDERS
+    from embry0.services.credentials.providers import llm_providers
     from embry0.services.credentials.resolver import ResolvedCredential
 
+    every = {"OPENAI_COMPATIBLE_PROVIDERS": ",".join(p.name for p in OPENAI_COMPATIBLE)}
     keys: dict[tuple[str, str], list[str]] = {}
-    for provider, spec in LLM_PROVIDERS.items():
+    for provider, spec in llm_providers(every).items():
         for kind in spec.kinds:
             secret = f"probe-secret-{provider}-{kind}"
             cred = ResolvedCredential(
@@ -177,6 +180,7 @@ _TIER_CLAIMS = [
     ("PUT", "/api/v1/sandbox-profiles/{name}", "operator", HOLDS, "Sandbox profiles are operator tier"),
     ("PUT", "/api/v1/repos/{full_repo:path}/qa-config", "operator", DOES_NOT_HOLD, "`boot_command`"),
     ("PUT", "/api/v1/repos/{full_repo:path}/environment", "operator", DOES_NOT_HOLD, "`npm_config_registry`"),
+    ("GET", "/api/v1/admin/retention/preview", "admin", RETENTION, "admin tier"),
 ]
 
 
@@ -204,6 +208,22 @@ def test_security_md_tier_claims_match_the_routes() -> None:
         if actual != claimed:
             problems.append(f"SECURITY.md treats {method} {path} as {claimed} tier; the route is {actual}")
     assert not problems, "\n".join(problems)
+
+
+def test_security_md_names_metrics_among_the_routes_without_auth() -> None:
+    """/metrics takes no credential, so 'API authentication' must list it."""
+    from embry0.api.app import create_app
+    from embry0.api.deps import _admin_dependency, _auth_dependency
+    from embry0.config import Embry0Config
+    from tests.fixtures.routes import app_routes
+
+    app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
+    routes = [route for route in app_routes(app) if route.path == "/metrics"]
+    assert routes, "the app serves no /metrics route"
+    calls = {d.call for route in routes if route.dependant is not None for d in route.dependant.dependencies}
+    assert not calls & {_admin_dependency, _auth_dependency}, "/metrics takes auth now; update SECURITY.md"
+    para = _paragraph(_security_section(HOLDS), "API authentication.")
+    assert "`/metrics`" in para, "SECURITY.md 'API authentication' leaves out /metrics, which takes no credential"
 
 
 def test_security_md_states_the_profile_isolation_rules() -> None:
@@ -372,3 +392,27 @@ def test_adr_0008_is_indexed() -> None:
     assert "0008-llm-credential-in-sandbox-env.md" in (ROOT / "docs" / "adr" / "README.md").read_text(), (
         "ADR 0008 is not in the ADR index"
     )
+
+
+def test_docs_say_code_outlives_the_sandbox_and_name_each_store() -> None:
+    """ADR 0017: the docs promised code lived only in the sandbox while job events, saved sessions
+    and QA images kept it forever. Data retention must name every store a setting bounds, the
+    settings themselves (read from the config, so a new one has to be documented) and the tools
+    whose inputs the job log sweep removes."""
+    from embry0.config import Embry0Config
+    from embry0.services.job_log_retention import CODE_INPUT_FIELDS
+
+    retention = _security_section(RETENTION)
+    for store in ("`job_logs`", "`agent_sessions`", "`qa_image_tags`", "in-stack registry", "backup"):
+        assert store in retention, f"SECURITY.md 'Data retention' does not name {store}"
+    settings = [f"`{name.upper()}`" for name in Embry0Config.model_fields if name.endswith("_retention_days")]
+    code_settings = [s for s in settings if s != "`AUDIT_RETENTION_DAYS`"]
+    assert len(code_settings) >= 3, f"found only {code_settings}; the config scan is no longer reading the settings"
+    missing = [s for s in code_settings if s not in retention]
+    assert not missing, f"SECURITY.md 'Data retention' does not name {missing}"
+    tools = [t for t in sorted(CODE_INPUT_FIELDS) if f"`{t}`" not in retention]
+    assert not tools, f"SECURITY.md 'Data retention' does not say the job log sweep removes {tools} inputs"
+    for doc in (README, SECURITY, ARCHITECTURE):
+        text = doc.read_text()
+        for promise in ("no customer code retention", "the code is gone", "never persists on the host"):
+            assert promise not in text, f"{doc.name} still promises {promise!r}; code outlives the sandbox (ADR 0017)"

@@ -286,7 +286,7 @@ async def test_paused_job_expiry_without_a_jobs_repo_stamps_finished_at(jobs_rep
     await db.execute("ALTER TABLE jobs ENABLE TRIGGER trg_jobs_updated_at")
     runtime = MagicMock()
     runtime.client.run_cmd = AsyncMock()
-    reaper = ContainerReaper(runtime, db=db, paused_ttl_hours=1, jobs_repo=None)
+    reaper = ContainerReaper(runtime, db=db, paused_ttl_hours=1, jobs_repo=None, sandbox_manager=AsyncMock())
 
     await reaper._expire_paused_jobs()
 

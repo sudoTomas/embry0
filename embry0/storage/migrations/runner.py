@@ -38,8 +38,10 @@ logger = structlog.get_logger(__name__)
 # but FIXED: changing it breaks mutual exclusion against replicas still
 # running the old value mid-rollout. Advisory-lock keys share one global,
 # database-wide namespace, so any future advisory lock in embry0 MUST pick a
-# different key and be registered here (grep `pg_advisory` for the roster —
-# this is currently the only one).
+# different key and be registered here (grep `pg_advisory` for the roster).
+# The others hash a prefixed text key with hashtextextended:
+# `qa_image_tags:<repo>`, `org_needs:<owner>`, `standards:<owner>:<kind>` and
+# `org_discovery:<owner>`.
 MIGRATIONS_ADVISORY_LOCK_KEY = 0x656D62727930
 
 # Acquisition is usually instantaneous; anything slower means another replica
@@ -2588,6 +2590,465 @@ MIGRATIONS: list[tuple[int, str, str]] = [
 
         COMMENT ON COLUMN healing_cases.signature_source IS
             '#657: how the watcher chose signature_id. evidence = a window cluster the proposal quotes; fallback = nothing it quotes is in the window, so the window''s loudest line (confirm-healed answers inconclusive). NULL = not a watcher anchor, or opened before #657.';
+        """,
+    ),
+    (
+        95,
+        "job_logs correlation columns — run_id, node, event_type; traces.result admits running (#36)",
+        # Every event already lands in job_logs as JSON text. These columns
+        # are the same fields lifted out so a run, a node or a type can be
+        # indexed without scanning the JSON; agent_id was never written. A
+        # trace row is now written at run start as 'running' and finalized
+        # at the end, so the column's vocabulary gains that value (no CHECK
+        # existed; this documents it).
+        """
+        ALTER TABLE job_logs ADD COLUMN IF NOT EXISTS run_id TEXT;
+        ALTER TABLE job_logs ADD COLUMN IF NOT EXISTS node TEXT;
+        ALTER TABLE job_logs ADD COLUMN IF NOT EXISTS event_type TEXT;
+        ALTER TABLE job_logs DROP COLUMN IF EXISTS agent_id;
+        CREATE INDEX IF NOT EXISTS idx_job_logs_job_event_type ON job_logs (job_id, event_type);
+        CREATE INDEX IF NOT EXISTS idx_job_logs_run_id ON job_logs (run_id) WHERE run_id IS NOT NULL;
+
+        COMMENT ON COLUMN traces.result IS
+            '#36: success | error | running (written at run start, replaced at run end)';
+        """,
+    ),
+    (
+        96,
+        "pr_reviews + repo_preferences.pr_review — review a pull request when it is ready (#30)",
+        # One row per review a trigger asked for. trigger_key is the dedupe
+        # key — ready:<repo>#<number>@<sha> for a ready event,
+        # command:<forge>:<comment id> for a /embry0 review comment — and the
+        # unique index makes a redelivered webhook a no-op across restarts.
+        # job_id is SET NULL when a job row is purged, so the earlier review's
+        # verdict outlives it and the next review can still read it.
+        """
+        ALTER TABLE repo_preferences ADD COLUMN IF NOT EXISTS pr_review JSONB;
+        COMMENT ON COLUMN repo_preferences.pr_review IS
+            '#30: pull request review settings {"enabled": bool, "depth": "full"|"targeted"|"read_only", "model": str|null, "ready_authors": "team"|"anyone"}. NULL = never configured, which means off; a missing ready_authors means team.';
+
+        CREATE TABLE IF NOT EXISTS pr_reviews (
+            id          TEXT PRIMARY KEY,
+            repo        TEXT NOT NULL,
+            number      INTEGER NOT NULL,
+            head_sha    TEXT NOT NULL,
+            trigger     TEXT NOT NULL CHECK (trigger IN ('ready', 'command')),
+            trigger_key TEXT NOT NULL,
+            job_id      TEXT REFERENCES jobs(job_id) ON DELETE SET NULL,
+            verdict     JSONB,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            posted_at   TIMESTAMPTZ
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_reviews_trigger_key ON pr_reviews (trigger_key);
+        CREATE INDEX IF NOT EXISTS idx_pr_reviews_repo_number ON pr_reviews (repo, number, created_at DESC);
+        COMMENT ON COLUMN pr_reviews.verdict IS
+            '#30: the reviewer''s parsed verdict, kept whether or not it was posted. The next review of the same pull request reads it.';
+        COMMENT ON COLUMN pr_reviews.posted_at IS
+            '#30: when the review landed on the forge. NULL = not (yet) posted.';
+        """,
+    ),
+    (
+        97,
+        "organizations — the forge owners embry0 maintains as a whole (ADR 0010)",
+        # Every sense embry0 has (webhook or tracker intake, log watching, QA)
+        # is switched on per repository, so an owner with dozens of
+        # repositories is dozens of decisions nobody takes. The organization
+        # is the row that makes the owner the unit: its forge, the credential
+        # embry0 acts with, and what that credential can do there (`access`,
+        # written by the probe). Discovery, the needs list and the wizard
+        # hang from it.
+        #
+        # `owner` is stored lowercase, the way the forges compare it. The
+        # credential is a soft reference: deleting the credential leaves the
+        # organization, with no way to act, which the needs list reports.
+        """
+        CREATE TABLE IF NOT EXISTS organizations (
+            owner          TEXT PRIMARY KEY,
+            forge          TEXT NOT NULL CHECK (forge IN ('github', 'gitlab')),
+            credential_id  TEXT REFERENCES credentials(id) ON DELETE SET NULL,
+            display_name   TEXT,
+            settings       JSONB NOT NULL DEFAULT '{}'::jsonb,
+            access         JSONB NOT NULL DEFAULT '{}'::jsonb,
+            repo_count     INTEGER,
+            discovered_at  TIMESTAMPTZ,
+            status         TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active', 'paused', 'removed')),
+            created_by     TEXT,
+            created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        COMMENT ON TABLE organizations IS
+            'ADR 0010: a forge owner embry0 maintains as a whole. access = what the credential can do there, from the probe; settings = defaults for repositories under it.';
+        """,
+    ),
+    (
+        98,
+        "org_repo_facts and org_discovery_runs — what discovery found under an owner (ADR 0010, slice 2)",
+        # One fact row per repository, replaced on every run (the forge is the
+        # source of truth, so history lives in the runs ledger, not in old
+        # facts). `repo` is the key every other table scopes by, so a
+        # repository that moves owners keeps one row. `facts` holds what a
+        # person needs to decide: boot hint, frontend, tests, CI, env keys,
+        # webhook visibility and presence, and embry0's own state (registered,
+        # QA config, watcher stack, tracker mapping).
+        """
+        CREATE TABLE IF NOT EXISTS org_repo_facts (
+            owner           TEXT NOT NULL,
+            repo            TEXT PRIMARY KEY,
+            run_id          TEXT,
+            archived        BOOLEAN NOT NULL DEFAULT FALSE,
+            private         BOOLEAN NOT NULL DEFAULT FALSE,
+            fork            BOOLEAN NOT NULL DEFAULT FALSE,
+            default_branch  TEXT,
+            language        TEXT,
+            pushed_at       TIMESTAMPTZ,
+            open_issues     INTEGER,
+            facts           JSONB NOT NULL DEFAULT '{}'::jsonb,
+            seen_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_repo_facts_owner ON org_repo_facts (owner, pushed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS org_discovery_runs (
+            id           TEXT PRIMARY KEY,
+            owner        TEXT NOT NULL,
+            status       TEXT NOT NULL CHECK (status IN ('running', 'done', 'error')),
+            repos_total  INTEGER,
+            repos_seen   INTEGER NOT NULL DEFAULT 0,
+            summary      JSONB NOT NULL DEFAULT '{}'::jsonb,
+            error        TEXT,
+            started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            finished_at  TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_discovery_runs_owner ON org_discovery_runs (owner, started_at DESC);
+        """,
+    ),
+    (
+        99,
+        "org_needs — what embry0 still needs to maintain an owner (ADR 0011)",
+        # A need is derived from the newest run's fact rows every time; the
+        # row exists so a person's answer survives rediscovery. The key is
+        # (owner, kind, signature), the signature being the set of
+        # repositories the need covers: the same question again finds its row
+        # and keeps its status and case; a different set is a new question.
+        # case_id is the healing case (origin 'org') that puts the need on
+        # the awaiting-decision list; deleting a case clears it and keeps
+        # the need. org_needs_synced names the run each owner's needs were
+        # last synced from: a run syncs them when it finishes, and a read
+        # catches up only when the newest finished run is not that one.
+        """
+        CREATE TABLE IF NOT EXISTS org_needs (
+            id          TEXT PRIMARY KEY,
+            owner       TEXT NOT NULL,
+            run_id      TEXT,
+            kind        TEXT NOT NULL,
+            signature   TEXT NOT NULL,
+            title       TEXT NOT NULL,
+            detail      TEXT NOT NULL DEFAULT '',
+            repos       JSONB NOT NULL DEFAULT '[]'::jsonb,
+            action      JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status      TEXT NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open', 'done', 'dismissed')),
+            case_id     TEXT REFERENCES healing_cases(id) ON DELETE SET NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (owner, kind, signature)
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_needs_owner ON org_needs (owner, status);
+
+        CREATE TABLE IF NOT EXISTS org_needs_synced (
+            owner       TEXT PRIMARY KEY,
+            run_id      TEXT NOT NULL,
+            synced_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        COMMENT ON TABLE org_needs IS
+            'ADR 0011: one need per owner, kind and repository set, derived from the newest discovery run; status and case_id are the person''s answer and survive rediscovery.';
+        """,
+    ),
+    (
+        100,
+        "hosts, repo_hosts and the tailnet_api_key credential kind — the machines that run the code (ADR 0013)",
+        # A host is where a repository's code runs: the facts a maintainer
+        # needs after a merge (the logs, whether the deploy landed) live on
+        # machines, not in repositories. `name` is unique ignoring case, so
+        # a tailnet import can find the host it made before; a removed host
+        # keeps its row, so an import does not bring it back. `log_source`
+        # is {kind: journald|docker|loki, selector} or NULL.
+        #
+        # repo_hosts says which repositories a host serves and as what
+        # (`role`); `repo` is the lowercase path, the form credential
+        # bindings use.
+        #
+        # The credential registry gains the `tailnet_api_key` kind (provider
+        # `tailscale`), bound at global scope with the `tailnet` role, and a
+        # `metadata` column for non-secret settings that go with a secret:
+        # the tailnet a key reads. The CHECKs on kind, provider and role are
+        # the auto-named column constraints of migration 86.
+        """
+        CREATE TABLE IF NOT EXISTS hosts (
+            id            TEXT PRIMARY KEY,
+            name          TEXT NOT NULL,
+            address       TEXT NOT NULL DEFAULT '',
+            transport     TEXT NOT NULL CHECK (transport IN ('tailnet', 'ssh', 'http')),
+            roles         JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(roles) = 'array'),
+            log_source    JSONB CHECK (
+                log_source IS NULL
+                OR (jsonb_typeof(log_source) = 'object' AND log_source->>'kind' IN ('journald', 'docker', 'loki'))
+            ),
+            tags          JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(tags) = 'array'),
+            source        TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'tailnet')),
+            last_seen_at  TIMESTAMPTZ,
+            status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'unreachable', 'removed')),
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS hosts_name_unique ON hosts (lower(name));
+
+        CREATE TABLE IF NOT EXISTS repo_hosts (
+            repo        TEXT NOT NULL,
+            host_id     TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+            role        TEXT NOT NULL DEFAULT 'app',
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (repo, host_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_hosts_host ON repo_hosts (host_id);
+
+        COMMENT ON TABLE hosts IS
+            'ADR 0013: a machine that runs code embry0 maintains. transport = how embry0 reaches it; log_source = where its logs come from; source = manual or a tailnet import.';
+
+        ALTER TABLE credentials ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_kind_check;
+        ALTER TABLE credentials ADD CONSTRAINT credentials_kind_check
+            CHECK (kind IN ('forge_token', 'llm_oauth', 'llm_api_key', 'ssh_key', 'tailnet_api_key'));
+        ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_provider_check;
+        ALTER TABLE credentials ADD CONSTRAINT credentials_provider_check
+            CHECK (provider IN ('github', 'gitlab', 'anthropic', 'xai', 'ssh', 'tailscale'));
+        ALTER TABLE credential_bindings DROP CONSTRAINT IF EXISTS credential_bindings_role_check;
+        ALTER TABLE credential_bindings ADD CONSTRAINT credential_bindings_role_check
+            CHECK (role IN ('forge', 'llm', 'deploy', 'tailnet'));
+        """,
+    ),
+    (
+        101,
+        "agent identity columns, skill_sources and inline_skills (agent identity and skills spec 3.1, 3.2)",
+        # Identity: display_name ('' = show the slug), avatar and color from the
+        # fixed vocabularies in embry0/agents/identity.py, tagline. The UPDATE
+        # writes the builtin identities for rows still at the defaults so an
+        # upgraded deployment shows the roster without a reseed; the seeders
+        # carry the same values for a fresh database.
+        #
+        # skill_sources: where skills come from (spec 3.2). credential_id is
+        # reserved and always NULL in this release. inline_skills: SKILL.md
+        # documents written in the dashboard, rendered into the `local` source.
+        """
+        ALTER TABLE agent_definitions ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
+        ALTER TABLE agent_definitions ADD COLUMN IF NOT EXISTS avatar TEXT NOT NULL DEFAULT 'golem';
+        ALTER TABLE agent_definitions ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT 'slate';
+        ALTER TABLE agent_definitions ADD COLUMN IF NOT EXISTS tagline TEXT NOT NULL DEFAULT '';
+
+        UPDATE agent_definitions SET display_name = v.display_name, avatar = v.avatar, color = v.color, tagline = v.tagline
+        FROM (VALUES
+            ('triage',      'Triage',      'seer',      'violet',  'Reads the issue, sets the course.'),
+            ('developer',   'Developer',   'smith',     'amber',   'Forges the change.'),
+            ('review',      'Reviewer',    'warden',    'rose',    'Guards the gate.'),
+            ('qa',          'QA',          'alchemist', 'emerald', 'Proves it in the vessel.'),
+            ('onboarding',  'Onboarding',  'herald',    'sky',     'Announces a new repository.'),
+            ('pr-reviewer', 'PR Reviewer', 'arbiter',   'cyan',    'Weighs a pull request.'),
+            ('research',    'Research',    'scholar',   'gold',    'Reads everything first.'),
+            ('analysis',    'Analysis',    'oracle',    'violet',  'Finds the pattern.'),
+            ('ops',         'Ops',         'engineer',  'amber',   'Keeps it running.')
+        ) AS v(type, display_name, avatar, color, tagline)
+        WHERE agent_definitions.type = v.type AND agent_definitions.display_name = '';
+
+        CREATE TABLE IF NOT EXISTS skill_sources (
+            id             TEXT PRIMARY KEY,
+            kind           TEXT NOT NULL CHECK (kind IN ('git', 'path', 'inline')),
+            url            TEXT NOT NULL DEFAULT '',
+            ref            TEXT NOT NULL DEFAULT '',
+            resolved_sha   TEXT NOT NULL DEFAULT '',
+            plugin_name    TEXT NOT NULL DEFAULT '',
+            skills         JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(skills) = 'array'),
+            status         TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready', 'error')),
+            error          TEXT NOT NULL DEFAULT '',
+            enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+            is_builtin     BOOLEAN NOT NULL DEFAULT FALSE,
+            credential_id  TEXT,
+            synced_at      TIMESTAMPTZ,
+            created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        COMMENT ON TABLE skill_sources IS
+            'Where agent skills come from: a pinned public git repository, a directory in the orchestrator container, or the inline SKILL.md rows. Synced into the skills store and mounted read-only into sandboxes.';
+
+        CREATE TABLE IF NOT EXISTS inline_skills (
+            name         TEXT PRIMARY KEY,
+            description  TEXT NOT NULL,
+            body         TEXT NOT NULL,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        COMMENT ON TABLE inline_skills IS
+            'SKILL.md documents written in the dashboard; rendered into the `local` skill source.';
+        """,
+    ),
+    (
+        102,
+        "standards and repo_standard_state — an owner's versioned standards and each repository's place under them (ADR 0014)",
+        # A standard is one version of an owner's standard of one kind: the
+        # schema (the roles, type scale and rules every standard of the kind
+        # names) and the values (this owner's fill of the roles), with prose
+        # and the references it was measured from. A write makes a new
+        # version and supersedes the active one; the partial unique index
+        # keeps one active version per owner and kind, and the superseded
+        # versions are the history. `owner` is the forge owner, lowercase as
+        # organizations store it, with no foreign key: a standard may be
+        # written before its organization is registered.
+        #
+        # repo_standard_state is a repository's place under its owner's
+        # standard of a kind: a mode (off until an admin says otherwise, so
+        # nothing changes for any repository), the newest audit started, and
+        # the score and finding count of the newest audit that completed.
+        # last_audit_job_id is SET NULL when its job row is purged, so the
+        # score outlives the job.
+        """
+        CREATE TABLE IF NOT EXISTS standards (
+            id            TEXT PRIMARY KEY,
+            owner         TEXT NOT NULL,
+            kind          TEXT NOT NULL CHECK (kind IN ('design')),
+            version       INTEGER NOT NULL CHECK (version >= 1),
+            status        TEXT NOT NULL CHECK (status IN ('draft', 'active', 'superseded')),
+            schema        JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(schema) = 'object'),
+            values        JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(values) = 'object'),
+            prose         TEXT NOT NULL DEFAULT '',
+            "references"  JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof("references") = 'array'),
+            created_by    TEXT,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (owner, kind, version)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS standards_one_active ON standards (owner, kind) WHERE status = 'active';
+
+        CREATE TABLE IF NOT EXISTS repo_standard_state (
+            repo               TEXT NOT NULL,
+            owner              TEXT NOT NULL,
+            kind               TEXT NOT NULL CHECK (kind IN ('design')),
+            mode               TEXT NOT NULL DEFAULT 'off' CHECK (mode IN ('off', 'advise', 'enforce')),
+            last_audit_at      TIMESTAMPTZ,
+            last_audit_job_id  TEXT REFERENCES jobs(job_id) ON DELETE SET NULL,
+            score              INTEGER CHECK (score IS NULL OR score BETWEEN 0 AND 100),
+            findings_open      INTEGER NOT NULL DEFAULT 0 CHECK (findings_open >= 0),
+            exceptions         JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(exceptions) = 'array'),
+            created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (repo, kind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_standard_state_owner ON repo_standard_state (owner, kind);
+        CREATE INDEX IF NOT EXISTS idx_repo_standard_state_audit_job
+            ON repo_standard_state (last_audit_job_id) WHERE last_audit_job_id IS NOT NULL;
+
+        COMMENT ON TABLE standards IS
+            'ADR 0014: one version of an owner''s standard of one kind. schema = the shape every standard of the kind shares (roles, type scale, rules); values = this owner''s fill of the roles. One active version per owner and kind.';
+        COMMENT ON TABLE repo_standard_state IS
+            'ADR 0014: a repository''s place under its owner''s standard of one kind. mode off = never audited; score and findings_open = the newest completed audit, at last_audit_at; last_audit_job_id = the newest audit started.';
+        """,
+    ),
+    (
+        103,
+        "credentials.provider takes the OpenAI-compatible LLM providers (docs/providers.md)",
+        # An API key for openai, openrouter, google, groq, deepseek or a custom
+        # OpenAI-compatible endpoint is a credentials row like an xAI key. Only
+        # the provider CHECK widens: kind, bindings and uses already allow any
+        # LLM provider name.
+        """
+        ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_provider_check;
+        ALTER TABLE credentials ADD CONSTRAINT credentials_provider_check
+            CHECK (provider IN ('github', 'gitlab', 'anthropic', 'xai', 'ssh', 'tailscale',
+                                'openai', 'openrouter', 'google', 'groq', 'deepseek', 'custom'));
+        """,
+    ),
+    (
+        104,
+        "repo_config_revisions: every change to a repo's test setup and preferences (ADR 0019)",
+        # One row per write that changed a repository's stored test setup
+        # (surface qa_config: the yaml text) or its preferences row (surface
+        # preferences: the row without updated_at). before is NULL when the
+        # write created the row and after is NULL when it removed it. The
+        # storage classes append in the write's own transaction and keep the
+        # newest 100 rows per repo and surface. No foreign key to repos, so
+        # the history outlives a repository's removal.
+        """
+        CREATE TABLE IF NOT EXISTS repo_config_revisions (
+            id          BIGSERIAL PRIMARY KEY,
+            repo        TEXT NOT NULL,
+            surface     TEXT NOT NULL CHECK (surface IN ('qa_config', 'preferences')),
+            before      JSONB,
+            after       JSONB,
+            actor       TEXT NOT NULL DEFAULT '',
+            source      TEXT NOT NULL DEFAULT 'person'
+                        CHECK (source IN ('person', 'bootstrap', 'onboard', 'proposal', 'restore')),
+            reason      TEXT NOT NULL DEFAULT '',
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_config_revisions_repo ON repo_config_revisions (repo, surface, id DESC);
+        """,
+    ),
+    (
+        105,
+        "repo_setup_proposals: agent-proposed test setups a person applies (ADR 0019)",
+        # The onboarding agent in propose mode stores its validated and
+        # smoke-tested draft here instead of in repo_qa_configs. A row is
+        # running while its job runs, then pending or failed; a person moves
+        # a pending row to applied or rejected, and a pending row whose base
+        # changed becomes stale. base_updated_at is repo_qa_configs.updated_at
+        # when the run started (NULL: no setup yet), for a compare-and-set
+        # apply. The partial unique index allows one running or pending row
+        # per repo, so it is also the lock against two setup runs at once.
+        """
+        CREATE TABLE IF NOT EXISTS repo_setup_proposals (
+            id               TEXT PRIMARY KEY,
+            repo             TEXT NOT NULL,
+            job_id           TEXT,
+            status           TEXT NOT NULL
+                             CHECK (status IN ('running', 'pending', 'applied', 'rejected', 'stale', 'failed')),
+            base_updated_at  TIMESTAMPTZ,
+            proposed_yaml    TEXT,
+            notes_md         TEXT NOT NULL DEFAULT '',
+            smoke            JSONB,
+            failure          TEXT NOT NULL DEFAULT '',
+            created_by       TEXT NOT NULL DEFAULT '',
+            decided_by       TEXT,
+            decided_at       TIMESTAMPTZ,
+            created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_setup_proposals_repo ON repo_setup_proposals (repo, created_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_repo_setup_proposals_live
+            ON repo_setup_proposals (repo) WHERE status IN ('running', 'pending');
+        """,
+    ),
+    (
+        106,
+        "specialist agent identities for rows still at the defaults (docs/specialist-agents.md)",
+        # Migration 101 wrote the nine core agents' identity. The eight
+        # read-only specialists are seeded rows too, and a deployment that
+        # seeded them before identity existed shows them as slug / golem /
+        # slate until each is reset. Same shape as 101: only rows still at
+        # the defaults (display_name = '') are written, so an operator's edit
+        # survives; the values are BUILTIN_IDENTITY in embry0/agents/identity.py
+        # (tests/unit/storage/test_migration_106.py pins the two in sync).
+        """
+        UPDATE agent_definitions SET display_name = v.display_name, avatar = v.avatar, color = v.color, tagline = v.tagline
+        FROM (VALUES
+            ('kintsugi',       'Kintsugi',       'monk',     'gold',    'Finds every crack, proves it, writes the seal.'),
+            ('gardener',       'Gardener',       'skiller',  'emerald', 'Pulls one weed per run, provably.'),
+            ('interrogator',   'Interrogator',   'rogue',    'rose',    'Four angles on a diff, then a verdict.'),
+            ('why',            'Why',            'mystic',   'violet',  'Finds the forces that shaped the code.'),
+            ('how',            'How',            'bard',     'sky',     'Explains a subsystem before you change it.'),
+            ('blast-radius',   'Blast Radius',   'scout',    'amber',   'Finds what a change breaks beyond the diff.'),
+            ('comment-sicko',  'Comment Sicko',  'pirate',   'cyan',    'Deletes the comments that do the code''s job badly.'),
+            ('design-auditor', 'Design Auditor', 'archmage', 'gold',    'Measures a frontend against its standard.')
+        ) AS v(type, display_name, avatar, color, tagline)
+        WHERE agent_definitions.type = v.type AND agent_definitions.display_name = '';
         """,
     ),
 ]

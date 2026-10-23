@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Dialog } from "@/components/ui/Dialog";
+import { Switch } from "@/components/ui/Switch";
 import {
   EMPTY_ADVANCED,
   JobAdvancedFields,
@@ -14,6 +15,7 @@ import {
 } from "@/components/jobs/JobAdvancedFields";
 import { toast } from "sonner";
 import type { JobContextType, JobCreateRequest } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 interface CreateJobDialogProps {
   onClose: () => void;
@@ -71,22 +73,20 @@ export function CreateJobDialog({ onClose }: CreateJobDialogProps) {
         toast.success("Job created");
         onClose();
       },
-      onError: (err) => toast.error(`Failed: ${err.message}`),
+      onError: (err) => toastApiError(err, "Failed"),
     });
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Create New Job</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <Dialog onClose={onClose} title="Create New Job" dismissOnBackdrop={false} className="max-w-2xl">
+      <div className="p-5">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="context-type">Context</Label>
               <Select
                 id="context-type"
+                data-autofocus
                 value={contextType}
                 onChange={(e) => setContextType(e.target.value as JobContextType)}
               >
@@ -175,13 +175,7 @@ export function CreateJobDialog({ onClose }: CreateJobDialogProps) {
           </div>
 
           <div className="flex items-center gap-3">
-            <input
-              type="checkbox"
-              id="show-advanced"
-              checked={showAdvanced}
-              onChange={(e) => setShowAdvanced(e.target.checked)}
-              className="h-4 w-4 rounded border-input"
-            />
+            <Switch id="show-advanced" checked={showAdvanced} onCheckedChange={setShowAdvanced} />
             <Label htmlFor="show-advanced">Advanced options</Label>
           </div>
           {showAdvanced && <JobAdvancedFields value={advanced} onChange={setAdvanced} />}
@@ -195,7 +189,7 @@ export function CreateJobDialog({ onClose }: CreateJobDialogProps) {
             </Button>
           </div>
         </form>
-      </CardContent>
-    </Card>
+      </div>
+    </Dialog>
   );
 }

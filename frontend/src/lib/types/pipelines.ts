@@ -1,3 +1,5 @@
+import type { SkillsDelta } from "@/lib/skills";
+
 export interface NodePosition {
   x: number;
   y: number;
@@ -6,6 +8,21 @@ export interface NodePosition {
 export interface SandboxConfig {
   image?: string | null;
   environment?: Record<string, string>;
+}
+
+/** A template node's per-node overrides (backend `node_config`, route_plan.py). */
+export interface AgentNodeConfig {
+  model?: string | null;
+  max_budget_usd?: number | null;
+  max_turns?: number | null;
+  effort?: string | null;
+  tools?: string[] | null;
+  skills?: SkillsDelta | string[] | null;
+  prompt_prepend?: string | null;
+  prompt_append?: string | null;
+  custom_prompt?: string | null;
+  custom_tools?: string[] | null;
+  sandbox?: SandboxConfig | null;
 }
 
 export interface AgentNode {
@@ -19,12 +36,14 @@ export interface AgentNode {
    * `pipeline_graph` event; absent on editor/template graphs.
    */
   physical_node?: string;
+  config?: AgentNodeConfig | null;
+  /** Legacy (pre-#78) top-level overrides, read only; the editor writes `config`. */
   model?: string | null;
   max_budget_usd?: number | null;
   max_turns?: number | null;
   effort?: string | null;
   tools?: string[] | null;
-  skills?: string[] | null;
+  skills?: string[] | SkillsDelta | null;
   prompt_prepend?: string | null;
   prompt_append?: string | null;
   custom_prompt?: string | null;
@@ -64,12 +83,22 @@ export interface PipelineGraph {
   metadata: PipelineMetadata;
 }
 
+/** The job kinds a template can be the default route for; at most one template per kind. */
+export const TEMPLATE_KINDS = ["code", "research", "analysis", "ops"] as const;
+export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
+
 export interface PipelineTemplate {
   template_id: string;
   name: string;
   description: string;
   graph: PipelineGraph;
   created_at: string;
+  /** Write responses only: non-fatal problems the backend found (e.g. a skill whose source is not ready). */
+  warnings?: string[];
+  /** Seeded by embry0 and re-seeded on every restart, so an edit saved in
+   * place does not survive one; Save As keeps it as a template of your own. */
+  is_builtin?: boolean;
+  default_for_kind?: TemplateKind | null;
 }
 
 export interface PipelineTemplateSummary {
@@ -77,6 +106,11 @@ export interface PipelineTemplateSummary {
   name: string;
   description: string;
   created_at: string;
+  /** Seeded by embry0; Save As keeps a copy of your own. */
+  is_builtin?: boolean;
+  /** The kind this template is the default route for, or null. */
+  default_for_kind?: TemplateKind | null;
+  sandbox_profile?: string | null;
 }
 
 export interface AgentTypeInfo {
@@ -88,12 +122,4 @@ export interface AgentTypeInfo {
   default_max_turns: number;
   default_max_budget_usd: number;
   available_skills: string[];
-}
-
-export interface SkillConfig {
-  name: string;
-  mode: "autonomous" | "guided" | "interactive";
-  auto_answer_categories?: string[] | null;
-  escalation_categories?: string[] | null;
-  context_hints?: Record<string, string> | null;
 }

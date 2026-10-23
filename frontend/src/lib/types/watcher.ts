@@ -42,3 +42,29 @@ export interface WatcherTickResult {
   tracker_key?: string | null;
   tracker_url?: string | null;
 }
+
+export type WatcherTracker = "linear" | "github" | "gitlab";
+
+/** One stack embry0 watches (#378): a repository, its Loki selector, where findings are filed, and the settings it overrides. */
+export interface WatcherStack {
+  repo: string;
+  logql: string;
+  tracker: WatcherTracker;
+  /** linear: `{team_id, project_id}`; github and gitlab file into the stack's repository. */
+  tracker_target: Record<string, unknown>;
+  /** Overrides only; an absent key inherits the global default. */
+  settings: Record<string, unknown>;
+  enabled: boolean;
+}
+
+export interface WatcherStackList {
+  stacks: WatcherStack[];
+  overridable_settings: string[];
+}
+
+export type WatcherStackWrite = Omit<WatcherStack, "repo">;
+
+/** What PUT answers: the stored stack and the settings keys it dropped. */
+export interface WatcherStackSaved extends WatcherStack {
+  ignored_settings: string[];
+}

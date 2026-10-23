@@ -1,11 +1,20 @@
 """Tests for SandboxImageManager — proxy image presence check + expire paused jobs routing."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from embry0.execution.image_manager import ContainerReaper, SandboxImageManager
 from embry0.execution.runtime import DockerRuntime
+from embry0.execution.sandbox_manager import SandboxManager
+
+
+def _reaper(docker: MagicMock, **kwargs: Any) -> ContainerReaper:
+    """A reaper whose teardown is a real SandboxManager over the same docker mock."""
+    runtime = DockerRuntime(docker)
+    sandbox = SandboxManager(docker, proxy_manager=MagicMock(unenroll_sandbox=AsyncMock()), runtime=runtime)
+    return ContainerReaper(runtime, sandbox_manager=sandbox, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -56,8 +65,8 @@ async def test_expire_paused_jobs_uses_jobs_repo():
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         paused_ttl_hours=0,
@@ -97,8 +106,8 @@ async def test_expire_paused_jobs_calls_purge_thread(monkeypatch):
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         paused_ttl_hours=0,
@@ -134,8 +143,8 @@ async def test_expire_paused_jobs_purge_failure_does_not_break_loop(monkeypatch)
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         paused_ttl_hours=0,
@@ -173,8 +182,8 @@ async def test_expire_paused_jobs_no_purge_without_database_url(monkeypatch):
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         paused_ttl_hours=0,
@@ -200,8 +209,8 @@ async def test_expire_paused_jobs_fallback_without_jobs_repo():
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=None,
         paused_ttl_hours=0,
@@ -246,8 +255,8 @@ async def test_expire_paused_jobs_claim_race_skips_destroy_and_purge(monkeypatch
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock()
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         issues_repo=mock_issues_repo,
@@ -282,8 +291,8 @@ async def test_expire_paused_jobs_reopens_issue_via_cas_helper():
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         issues_repo=mock_issues_repo,
@@ -443,3 +452,50 @@ async def test_check_proxy_image_present_is_false_when_the_registry_lacks_it_too
     mgr = SandboxImageManager(runtime, app_root=str(tmp_path), image_registry="registry:5000")  # type: ignore[arg-type]
 
     assert await mgr.check_proxy_image_present() is False
+
+
+def _reaper_with_paused_jobs(job_ids: list[str]) -> tuple[ContainerReaper, AsyncMock]:
+    mock_db = AsyncMock()
+    mock_db.fetch = AsyncMock(return_value=[{"job_id": j} for j in job_ids])
+    mock_db.fetchrow = AsyncMock(return_value=None)
+    mock_jobs_repo = AsyncMock()
+    mock_jobs_repo.update = AsyncMock()
+    mock_docker = MagicMock()
+    mock_docker.build_stop_cmd = MagicMock(return_value=["docker", "stop"])
+    mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
+    mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
+    reaper = _reaper(mock_docker, db=mock_db, jobs_repo=mock_jobs_repo, paused_ttl_hours=0)
+    return reaper, mock_jobs_repo
+
+
+@pytest.mark.asyncio
+async def test_expire_paused_jobs_announces_job_finished_for_each_expired_job() -> None:
+    """spec 3.5: expiry is a terminal transition, so each expired job ends with job_finished."""
+    announced: list[str] = []
+
+    async def _on_finished(job_id: str) -> None:
+        announced.append(job_id)
+
+    reaper, jobs_repo = _reaper_with_paused_jobs(["job-a", "job-b"])
+    reaper.on_job_finished = _on_finished
+    await reaper._expire_paused_jobs()
+    assert jobs_repo.update.await_count == 2
+    assert sorted(announced) == ["job-a", "job-b"], "every expired job must be announced once"
+
+
+@pytest.mark.asyncio
+async def test_expire_paused_jobs_announcement_failure_does_not_stop_the_sweep() -> None:
+    async def _boom(job_id: str) -> None:
+        raise RuntimeError("bus down")
+
+    reaper, jobs_repo = _reaper_with_paused_jobs(["job-a", "job-b"])
+    reaper.on_job_finished = _boom
+    await reaper._expire_paused_jobs()  # must not raise
+    assert jobs_repo.update.await_count == 2, "the sweep still expires every job"
+
+
+@pytest.mark.asyncio
+async def test_expire_paused_jobs_without_a_callback_behaves_as_before() -> None:
+    reaper, jobs_repo = _reaper_with_paused_jobs(["job-a"])
+    await reaper._expire_paused_jobs()
+    jobs_repo.update.assert_awaited_once_with("job-a", status="expired")

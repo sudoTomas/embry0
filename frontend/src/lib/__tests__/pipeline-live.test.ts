@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { deriveNodeStates } from "../pipeline-live";
 import type { LogEvent, PipelineGraph } from "@/lib/types";
+import { loadFixture } from "./fixtures";
 
 const GRAPH: PipelineGraph = {
   graph_id: "route-job-1",
@@ -47,6 +48,13 @@ describe("deriveNodeStates (RAV-1285)", () => {
     expect(states.qa.state).toBe("completed");
   });
 
+  it("a qa_subtask_status event marks the qa node running", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "qa_subtask_status", app: "backend", status: "running" }),
+    ]);
+    expect(states.qa.state).toBe("running");
+  });
+
   it("attributes cost_update to the running node", () => {
     const states = deriveNodeStates(GRAPH, [
       ev({ type: "node_started", node: "developer" }),
@@ -73,12 +81,58 @@ describe("deriveNodeStates (RAV-1285)", () => {
     expect(deriveNodeStates(GRAPH, running, "running").developer.state).toBe("running");
   });
 
-  it("error events fail the running node", () => {
+  it("a run-ending error (no tool_name) fails the running node", () => {
     const states = deriveNodeStates(GRAPH, [
       ev({ type: "node_started", node: "developer" }),
-      ev({ type: "error", node: "developer", message: "boom" }),
+      ev({ type: "error", node: "developer", message: "boom", code: "ERR_AGENT_CRASHED" }),
     ]);
     expect(states.developer.state).toBe("failed");
+  });
+
+  it("a tool-level error (tool_name set) leaves the running node alone", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer" }),
+      ev({ type: "error", node: "developer", run_id: "r1", message: "denied", code: "ERR_TOOL_DENIED", tool_name: "Bash" }),
+    ]);
+    expect(states.developer.state, "a recoverable tool denial must not fail the node").toBe("running");
+  });
+
+  it("a run-ending error keeps the node so its later cost_update still lands", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer" }),
+      ev({ type: "error", node: "developer", run_id: "r1", message: "boom" }),
+      ev({ type: "cost_update", node: "developer", run_id: "r1", cost_usd: 0.5, num_turns: 3 }),
+      ev({ type: "node_completed", node: "developer", timestamp: "2026-08-07T12:00:30Z" }),
+    ]);
+    expect(states.developer.cost_usd, "the failed run's cost was dropped").toBe(0.5);
+    expect(states.developer.state, "node_completed must not hide the failure").toBe("failed");
+    expect(states.developer.duration_seconds, "node_completed after the error was dropped").toBe(30);
+  });
+
+  it("the issue-to-pr fixture: a completed job's developer is completed with both runs' cost", () => {
+    const events = loadFixture("issue-to-pr");
+    const graphEvent = events.find((e) => e.type === "pipeline_graph");
+    const graph = graphEvent?.type === "pipeline_graph" ? graphEvent.graph : null;
+    const states = deriveNodeStates(graph, events, "completed");
+    expect(states.developer.state, "the fixture's tool denial failed the developer node").toBe("completed");
+    expect(states.developer.cost_usd, "developer's cost_updates were dropped").toBeCloseTo(0.048 + 0.0068, 6);
+    expect(states.developer.iteration).toBe(2);
+    expect(states.reviewer.state).toBe("completed");
+    expect(states.reviewer.cost_usd).toBeCloseTo(0.003, 6);
+  });
+
+  it("a legacy cost_update whose node is the agent type lands on the running graph node", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "review" }),
+      ev({ type: "cost_update", node: "reviewer", cost_usd: 0.02, num_turns: 1 }),
+    ]);
+    expect(states.reviewer.cost_usd, "a pre-contract reviewer cost_update was dropped").toBe(0.02);
+  });
+
+  it("the legacy-rows fixture: the reviewer's cost lands on the reviewer graph node", () => {
+    const states = deriveNodeStates(GRAPH, loadFixture("legacy-rows"));
+    expect(states.reviewer.cost_usd, "the legacy reviewer cost_update was dropped").toBe(0.02);
+    expect(states.developer.cost_usd, "the node-less legacy cost_update goes to the running developer").toBe(0.01);
   });
 
   it("multi-step templates assign repeated physicals in order", () => {
@@ -96,6 +150,49 @@ describe("deriveNodeStates (RAV-1285)", () => {
     ]);
     expect(states["res-1"].state).toBe("completed");
     expect(states["res-2"].state).toBe("running");
+  });
+
+  it("a node_started with attempt 2 sets iteration 2 without counting starts", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer", attempt: 2 }),
+    ]);
+    expect(states.developer.iteration, "iteration comes from the event's attempt").toBe(2);
+  });
+
+  it("a node_started without attempt falls back to counting starts", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer" }),
+      ev({ type: "node_completed", node: "developer" }),
+      ev({ type: "node_started", node: "developer" }),
+    ]);
+    expect(states.developer.iteration, "legacy rows count starts").toBe(2);
+  });
+
+  it("a cost_update is attributed to its own node, not the last running one", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer", attempt: 1 }),
+      ev({ type: "node_started", node: "review", attempt: 1 }),
+      ev({ type: "cost_update", node: "developer", cost_usd: 0.5, num_turns: 3 }),
+    ]);
+    expect(states.developer.cost_usd, "developer's cost_update lands on developer").toBe(0.5);
+    expect(states.reviewer.cost_usd, "the reviewer did not spend developer's cost").toBe(0);
+  });
+
+  it("a retried node's cost and turns sum its runs' cost_update deltas", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer", attempt: 1 }),
+      ev({ type: "cost_update", node: "developer", cost_usd: 0.5, num_turns: 3 }),
+      ev({ type: "node_completed", node: "developer", attempt: 1 }),
+      ev({ type: "node_started", node: "developer", attempt: 2 }),
+      ev({ type: "cost_update", node: "developer", cost_usd: 0.25, num_turns: 2 }),
+    ]);
+    expect(states.developer.cost_usd, "cost_update is a per-run delta; attempts add up").toBe(0.75);
+    expect(states.developer.turns, "turns add up across attempts").toBe(5);
+  });
+
+  it("a partial job closes its running node", () => {
+    const states = deriveNodeStates(GRAPH, [ev({ type: "node_started", node: "developer" })], "partial");
+    expect(states.developer.state, "partial is terminal").not.toBe("running");
   });
 
   it("returns empty for a missing graph", () => {

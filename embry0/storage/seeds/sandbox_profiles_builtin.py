@@ -105,9 +105,8 @@ BUILTIN_SANDBOX_PROFILES: dict[str, dict[str, Any]] = {
     "qa-external": {
         "base_image": "embry0-sandbox-qa:latest",
         "description": (
-            "Deployed-target QA runtime: Playwright browser + LAN egress for "
-            "driving an externally running app. No DinD — the app under test "
-            "is not booted in the sandbox."
+            "Browser test machine: Node, Java, Python and a Playwright browser, no Docker. "
+            "Tests an app it starts itself, or one already running elsewhere."
         ),
         "memory": "8g",
         "cpus": "4",

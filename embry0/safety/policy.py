@@ -206,6 +206,7 @@ _BASELINE_ALLOW_RULES: list[str] = [
 ]
 
 # Agent-type → tools mapping (matches current developer/triage/review semantics).
+# Custom agent types (agent_definitions rows) take the developer default.
 _AGENT_TOOLS: dict[str, list[str]] = {
     "triage": ["Read", "Glob", "Grep"],
     "developer": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],

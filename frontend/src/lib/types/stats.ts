@@ -1,10 +1,20 @@
 export interface RecentIssue {
+  /** The issue's id: the row links to /issues/:trace_id. */
   trace_id: string;
+  /** GitHub issue number; 0 for every other tracker. */
   issue_number: number;
   repo: string;
+  /** The rest name the issue; absent from a backend older than them. */
+  title?: string;
+  tracker?: string | null;
+  tracker_key?: string | null;
+  /** The issue's own status, apart from its latest job's. */
+  issue_status?: string;
+  job_status?: string | null;
   timestamp: string;
   passed: boolean;
   cost_usd?: number;
+  /** The latest job's status, else the issue's (blended; kept for older backends). */
   status?: string;
 }
 
@@ -71,6 +81,27 @@ export interface DeliveryStats {
   merge_rate: number;
 }
 
+export interface QaPrebuiltImageRef {
+  repo: string;
+  image_tag: string;
+}
+
+/** Which repositories' pre-built QA images sit on the current base (#334); null when the stack has no docker handle. */
+export interface QaPrebuiltImagesSummary {
+  active: number;
+  fresh: number;
+  stale: QaPrebuiltImageRef[];
+  unknown: QaPrebuiltImageRef[];
+}
+
+/** The credential registry's size and health; null when the registry is not wired. */
+export interface CredentialsSummary {
+  count: number;
+  quarantined: number;
+  disabled: number;
+  env_fallback_keys: string[];
+}
+
 export interface StatsResponse {
   total_issues: number;
   total_jobs: number;
@@ -102,4 +133,6 @@ export interface StatsResponse {
   /** EMB-35 — token observability. Optional for back-compat. */
   tokens_by_agent?: AgentTokenStats[];
   token_totals?: TokenTotals;
+  qa_prebuilt_images?: QaPrebuiltImagesSummary | null;
+  credentials?: CredentialsSummary | null;
 }

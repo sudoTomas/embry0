@@ -21,16 +21,26 @@ import type {
   ScopeKind,
 } from "@/lib/types/credentials";
 
-export function useCredentials() {
-  return useQuery({ queryKey: ["credentials"], queryFn: fetchCredentials });
+/** The account list: the key and fetch every reader of it shares. */
+export function credentialsQuery() {
+  return { queryKey: ["credentials"], queryFn: fetchCredentials };
 }
 
-export function useRepoCredentials(fullRepo: string) {
-  return useQuery({
+export function useCredentials() {
+  return useQuery(credentialsQuery());
+}
+
+/** A repo's account bindings: the key and fetch every reader of them shares. */
+export function repoCredentialsQuery(fullRepo: string) {
+  return {
     queryKey: ["credentials", "repo", fullRepo],
     queryFn: () => fetchRepoCredentials(fullRepo),
     enabled: !!fullRepo,
-  });
+  };
+}
+
+export function useRepoCredentials(fullRepo: string) {
+  return useQuery(repoCredentialsQuery(fullRepo));
 }
 
 export function useScopedBindings(kind: ScopeKind, value: string) {

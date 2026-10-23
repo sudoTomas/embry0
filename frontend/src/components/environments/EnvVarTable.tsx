@@ -34,43 +34,44 @@ export function EnvVarTable({
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <div className="relative">
-          <div className="absolute inset-0 bg-blue-500/5 blur-2xl rounded-full scale-150" />
-          <KeyRound size={40} className="text-white/10 relative" />
+          <KeyRound size={40} className="text-fg-muted relative" />
         </div>
-        <p className="text-white/25 text-sm mt-4 font-medium">No environment variables configured</p>
-        <p className="text-white/[0.12] text-xs mt-1">Click &ldquo;Add Variable&rdquo; to set global defaults</p>
+        <p className="text-fg-secondary text-sm mt-4 font-medium">No environment variables configured</p>
+        <p className="text-fg-muted text-xs mt-1">Click &ldquo;Add variable&rdquo; to set global defaults</p>
       </div>
     );
   }
 
+  // Below sm the key, its value and the actions stay; type, description and
+  // the required mark step aside so edit and delete stay on a phone screen.
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="data-table">
         <thead>
-          <tr className="border-b border-white/[0.04]">
-            <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-white/35 font-medium">
+          <tr>
+            <th>
               Key
             </th>
-            <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-white/35 font-medium">
+            <th>
               Value
             </th>
-            <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-white/35 font-medium">
+            <th className="hidden sm:table-cell">
               Type
             </th>
-            <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-white/35 font-medium">
+            <th className="hidden sm:table-cell">
               Description
             </th>
             {showSource && (
-              <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-white/35 font-medium">
+              <th>
                 Source
               </th>
             )}
             {showRequired && (
-              <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-white/35 font-medium">
+              <th className="hidden sm:table-cell">
                 Required
               </th>
             )}
-            <th className="text-right px-4 py-3 text-[11px] uppercase tracking-wider text-white/35 font-medium">
+            <th className="text-right">
               Actions
             </th>
           </tr>
@@ -83,11 +84,10 @@ export function EnvVarTable({
             return (
               <tr
                 key={v.key}
-                className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors"
               >
-                <td className="px-4 py-3 font-mono text-xs text-foreground">{v.key}</td>
+                <td className="font-mono text-xs text-foreground [overflow-wrap:anywhere]">{v.key}</td>
 
-                <td className="px-4 py-3 font-mono text-xs text-muted-foreground max-w-[280px]">
+                <td className="font-mono text-xs text-muted-foreground max-w-[280px]">
                   <div className="flex items-center gap-2">
                     {v.var_type === "secret" ? (
                       <>
@@ -123,26 +123,26 @@ export function EnvVarTable({
                   </div>
                 </td>
 
-                <td className="px-4 py-3">
+                <td className="hidden sm:table-cell">
                   {v.var_type === "secret" ? (
                     <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-amber-500/10 text-amber-400 ring-1 ring-inset ring-amber-500/20">
                       secret
                     </span>
                   ) : (
-                    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-green-500/10 text-green-400 ring-1 ring-inset ring-green-500/20">
+                    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-success/10 text-success ring-1 ring-inset ring-success/20">
                       config
                     </span>
                   )}
                 </td>
 
-                <td className="px-4 py-3 text-muted-foreground text-xs max-w-[240px] truncate">
+                <td className="hidden text-muted-foreground text-xs max-w-[240px] truncate sm:table-cell">
                   {v.description || "\u2014"}
                 </td>
 
                 {showSource && (
-                  <td className="px-4 py-3">
+                  <td>
                     {sourceMap[v.key] === "repo" ? (
-                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-blue-500/10 text-blue-400 ring-1 ring-inset ring-blue-500/20">
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-white/[0.08] text-fg-secondary ring-1 ring-inset ring-white/15">
                         repo
                       </span>
                     ) : (
@@ -154,12 +154,12 @@ export function EnvVarTable({
                 )}
 
                 {showRequired && (
-                  <td className="px-4 py-3 text-center">
+                  <td className="hidden text-center sm:table-cell">
                     {v.required && <span className="text-amber-400 text-xs">*</span>}
                   </td>
                 )}
 
-                <td className="px-4 py-3 text-right">
+                <td className="text-right">
                   <div className="flex items-center justify-end gap-1">
                     <button
                       onClick={() => onEdit(v)}

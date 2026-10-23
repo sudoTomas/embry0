@@ -7,8 +7,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from embry0.execution import events
 from embry0.execution.agent_runner import AgentOutput
-from embry0.sandbox.events import EventType, emit_event
+from embry0.execution.events import emit_to_stdout
 from embry0.sandbox.runner import _invocation_from_config, main, run_agent
 
 
@@ -16,7 +17,7 @@ from embry0.sandbox.runner import _invocation_from_config, main, run_agent
 # Preserved: wire-format event emission is still stdout JSON-per-line.
 # ---------------------------------------------------------------------------
 def test_emit_event_stdout(capsys):
-    emit_event(EventType.PROGRESS, message="Reading files")
+    emit_to_stdout(events.progress(message="Reading files"))
     captured = capsys.readouterr()
     data = json.loads(captured.out.strip())
     assert data["type"] == "progress"
@@ -25,7 +26,7 @@ def test_emit_event_stdout(capsys):
 
 
 def test_emit_agent_started(capsys):
-    emit_event(EventType.AGENT_STARTED, agent="developer")
+    emit_to_stdout(events.agent_started(model="m", max_turns=1, run_id="r", node="developer", agent="developer"))
     captured = capsys.readouterr()
     data = json.loads(captured.out.strip())
     assert data["type"] == "agent_started"
@@ -33,12 +34,24 @@ def test_emit_agent_started(capsys):
 
 
 def test_emit_agent_completed(capsys):
-    emit_event(
-        EventType.AGENT_COMPLETED,
-        cost_usd=0.42,
-        duration_ms=15000,
-        tools_called={"Read": 5},
-        result={"passed": True},
+    emit_to_stdout(
+        events.agent_completed(
+            is_error=False,
+            error_code=None,
+            error_message="",
+            output="",
+            cost_usd=0.42,
+            duration_ms=1,
+            tools_called={"Read": 5},
+            policy_denials={},
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            run_id="r",
+            node="developer",
+            agent="developer",
+        )
     )
     captured = capsys.readouterr()
     data = json.loads(captured.out.strip())
@@ -64,8 +77,12 @@ def test_invocation_from_config_builds_all_fields() -> None:
         "timeout_seconds": 30,
         "execution_mode": "sdk",
         "auth_mode": "api_key",
+        "run_id": "run-1",
+        "node": "developer",
     }
     inv = _invocation_from_config(cfg)
+    assert inv.run_id == "run-1"
+    assert inv.node == "developer"
     assert inv.agent_type == "developer"
     assert inv.prompt == "hi"
     assert inv.system_prompt == "sp"
@@ -94,6 +111,8 @@ def test_invocation_from_config_defaults_when_fields_missing() -> None:
     assert inv.mcp_servers == {}
     assert inv.execution_mode == "sdk"
     assert inv.auth_mode == "oauth"
+    assert inv.run_id == ""
+    assert inv.node == ""
 
 
 # ---------------------------------------------------------------------------
@@ -243,3 +262,37 @@ def test_successful_run_writes_no_diagnostic(monkeypatch, capsys) -> None:
     line = json.loads(captured.out.strip().splitlines()[-1])
     assert line["type"] == "final_result"
     assert "diagnostic" not in line
+
+
+def test_emit_scrubs_every_string_value_before_stdout(capsys, monkeypatch) -> None:
+    """The runner's writer is the sandbox's last line: tool_input and anything a
+    constructor did not cap are scrubbed here (spec 3.6, second pass)."""
+    from embry0.sandbox.runner import _emit
+
+    secret = "runner-secret-value-abcdef123456"
+    monkeypatch.setenv("RUNNER_TEST_TOKEN", secret)
+    _emit(
+        events.tool_call(
+            tool_id="t1",
+            tool_name="Bash",
+            summary=f"echo {secret}",
+            tool_input={"command": f"echo {secret}", "env": [secret]},
+            run_id="r",
+            node="n",
+            agent="a",
+        )
+    )
+    line = json.loads(capsys.readouterr().out)
+    assert secret not in json.dumps(line)
+    assert line["tool_id"] == "t1" and line["type"] == "tool_call"
+
+
+def test_invocation_from_config_reads_skill_mounts() -> None:
+    spec = {
+        "source_id": "superpowers",
+        "plugin_name": "superpowers",
+        "container_path": "/opt/embry0/skills/superpowers",
+    }
+    inv = _invocation_from_config({"prompt": "ping", "skill_mounts": [spec]})
+    assert inv.skill_mounts == (spec,)
+    assert _invocation_from_config({"prompt": "ping"}).skill_mounts == ()

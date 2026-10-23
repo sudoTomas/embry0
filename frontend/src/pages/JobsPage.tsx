@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { ALL_JOB_STATUSES } from "@/lib/types/jobs";
+import { toastApiError } from "@/api/errorToast";
 
 export function JobsPage() {
   const [showCreate, setShowCreate] = useState(false);
@@ -25,7 +26,7 @@ export function JobsPage() {
   const handleCancel = (jobId: string) => {
     cancelJob.mutate(jobId, {
       onSuccess: () => toast.success("Job cancelled"),
-      onError: (e) => toast.error(`Failed: ${e.message}`),
+      onError: (e) => toastApiError(e, "Failed"),
     });
   };
 
@@ -46,9 +47,9 @@ export function JobsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Jobs</h1>
-        <Button onClick={() => setShowCreate(!showCreate)}>
-          <Plus className="h-4 w-4 mr-2" /> New Job
+        <h1 className="title-pixel text-xl font-bold">Jobs</h1>
+        <Button onClick={() => setShowCreate(true)}>
+          <Plus className="h-4 w-4 mr-2" /> New job
         </Button>
       </div>
 

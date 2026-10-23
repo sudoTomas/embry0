@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 // Mock both hooks BEFORE importing the component so the import sees the mocks.
 vi.mock("@/hooks/useQaDashboard", () => ({
@@ -203,6 +204,56 @@ describe("QaArtifactGrid", () => {
 
       fireEvent.keyDown(document, { key: "Escape" });
       expect(screen.queryByTestId("qa-artifact-lightbox")).not.toBeInTheDocument();
+    });
+
+    function setupTwoScreenshots() {
+      mockedUseAppArtifacts.mockReturnValue(
+        makeQueryResult({ data: ["first.png", "second.png"] }),
+      );
+      mockedUseArtifactBlobUrl.mockImplementation(
+        (_runId, _app, _kind, filename) => ({
+          url: `blob:fake/${filename}`,
+          loading: false,
+          error: null,
+        }),
+      );
+    }
+
+    // The lightbox had no focus trap and no scroll lock: Tab walked on to the
+    // thumbnails behind it, and the page scrolled underneath.
+    it("keeps focus inside while open and holds the page behind it still", async () => {
+      setupTwoScreenshots();
+      const user = userEvent.setup();
+      render(<QaArtifactGrid runId="RUN1" app="hub" />);
+      await user.click(screen.getAllByTestId("qa-artifact-thumb-button")[0]);
+
+      const close = screen.getByTestId("qa-artifact-lightbox-close");
+      await waitFor(() => expect(close).toHaveFocus());
+      expect(document.body.style.overflow).toBe("hidden");
+
+      await user.tab();
+      expect(close).toHaveFocus();
+      await user.tab({ shift: true });
+      expect(close).toHaveFocus();
+    });
+
+    type User = ReturnType<typeof userEvent.setup>;
+    it.each([
+      ["Escape", (user: User) => user.keyboard("{Escape}")],
+      ["Close", (user: User) => user.click(screen.getByTestId("qa-artifact-lightbox-close"))],
+      ["the backdrop", (user: User) => user.click(screen.getByTestId("qa-artifact-lightbox"))],
+    ])("gives focus back to the thumbnail when %s closes it", async (_how, close) => {
+      setupTwoScreenshots();
+      const user = userEvent.setup();
+      render(<QaArtifactGrid runId="RUN1" app="hub" />);
+      const thumb = screen.getAllByTestId("qa-artifact-thumb-button")[0];
+      await user.click(thumb);
+      await waitFor(() => expect(screen.getByTestId("qa-artifact-lightbox-close")).toHaveFocus());
+
+      await close(user);
+      expect(screen.queryByTestId("qa-artifact-lightbox")).not.toBeInTheDocument();
+      expect(thumb).toHaveFocus();
+      expect(document.body.style.overflow).toBe("");
     });
   });
 });

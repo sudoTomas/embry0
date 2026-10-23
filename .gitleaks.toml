@@ -52,8 +52,16 @@ regexes = [
     # tests/unit/api/v1/test_credentials.py and tests/unit/safety/test_redaction.py.
     '''^embry0\.scope_key$''',
     '''^embry0\.api-key$''',
+    # Reserved sandbox env-var NAMES for the OpenAI-compatible providers
+    # (embry0/agents/providers.py, `sandbox_key_env`): identifiers every
+    # sandbox sees, never values. Matched as a whole upper-case identifier.
+    '''^EMBRY0_[A-Z0-9_]+_KEY$''',
     '''^ghp_fromenv12345678$''',
     '''^abcdefgh12345678$''',
+    # The 36-char synthetic token the redact-before-cap test places across the
+    # 4000-char tool_result cap (tests/unit/agents/test_sdk_executor.py; the
+    # same test is quoted in docs/superpowers/plans/2026-10-16-trace-fidelity-plan-b.md).
+    '''^straddle-secret-abcdefghij0123456789$''',
     # xAI's public OAuth client id for the device-code login: an identifier
     # every client sends, not a credential (embry0/execution/xai_device_login.py).
     '''^b1a00492-073a-47ea-816f-4c329264a828$''',
@@ -61,4 +69,10 @@ regexes = [
     # base64-encoded (infra/tofu/modules/cloudflare-tunnel/tests/
     # full.tftest.hcl). A placeholder, never a real tunnel secret.
     '''^AQIDBAUGBwgBAgMEBQYHCAECAwQFBgcIAQIDBAUGBwg=$''',
+    # The two opaque env-var values the session route's redaction test plants
+    # (tests/unit/api/v1/test_job_session_route.py): one secret-typed, one with a
+    # secret-looking name. Chosen so no pattern matches them, which is the point
+    # of the test; matched whole here so a real secret in that file is still found.
+    '''^Yt3nQw8vLp2rMx6KdHs9Fb$''',
+    '''^Hq5wRt7yUp3iLk9oZx2cVb$''',
 ]

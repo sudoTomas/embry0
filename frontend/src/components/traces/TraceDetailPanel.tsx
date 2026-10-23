@@ -5,12 +5,14 @@ import type { TraceResponse } from "@/lib/types";
 
 interface TraceDetailPanelProps {
   trace: TraceResponse;
+  /** The column count of the table it opens in: the panel spans all of it. */
+  colSpan: number;
   onClose: () => void;
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+    <h3 className="label-caps mb-2">
       {children}
     </h3>
   );
@@ -25,7 +27,7 @@ function InfoItem({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-export function TraceDetailPanel({ trace, onClose }: TraceDetailPanelProps) {
+export function TraceDetailPanel({ trace, colSpan, onClose }: TraceDetailPanelProps) {
   const toolEntries = Object.entries(trace.tools_called ?? {}).sort(
     ([, a], [, b]) => b - a,
   );
@@ -34,8 +36,11 @@ export function TraceDetailPanel({ trace, onClose }: TraceDetailPanelProps) {
 
   return (
     <tr>
-      <td colSpan={9} className="p-0">
-        <div className="border-t border-primary/20 bg-muted/20 px-6 py-5">
+      <td colSpan={colSpan} className="p-0">
+        {/* On a phone the table scrolls sideways under the detail. The detail
+            stays as wide as the table's visible part and pinned to its left
+            edge, so the close button is in view whatever the scroll. */}
+        <div className="sticky left-0 max-w-[100cqw] border-t border-border bg-muted/20 px-6 py-5">
           {/* Header */}
           <div className="flex items-start justify-between mb-5">
             <div className="flex flex-col gap-1">
@@ -75,21 +80,21 @@ export function TraceDetailPanel({ trace, onClose }: TraceDetailPanelProps) {
               </SectionLabel>
               {toolEntries.length > 0 ? (
                 <div className="rounded-md border border-border bg-background overflow-hidden">
-                  <table className="w-full text-sm">
+                  <table className="data-table">
                     <thead>
-                      <tr className="border-b border-border text-xs text-muted-foreground">
-                        <th className="text-left px-3 py-1.5">Tool</th>
-                        <th className="text-right px-3 py-1.5">Calls</th>
+                      <tr>
+                        <th>Tool</th>
+                        <th className="text-right">Calls</th>
                       </tr>
                     </thead>
                     <tbody>
                       {toolEntries.map(([tool, count]) => (
                         <tr
                           key={tool}
-                          className="border-b border-border/50 last:border-b-0"
+                          className="last:border-b-0"
                         >
-                          <td className="px-3 py-1.5 font-mono text-xs">{tool}</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{count}</td>
+                          <td className="font-mono text-xs">{tool}</td>
+                          <td className="text-right tabular-nums">{count}</td>
                         </tr>
                       ))}
                     </tbody>

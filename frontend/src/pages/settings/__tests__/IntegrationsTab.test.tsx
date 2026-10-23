@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useAuthStore } from "@/stores/authStore";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -42,6 +43,8 @@ function renderTab() {
 
 describe("IntegrationsTab — Linear (#157)", () => {
   beforeEach(() => {
+    // Saving is admin work (require_admin); these tests drive it as the API key.
+    useAuthStore.setState({ authMode: "key" });
     vi.clearAllMocks();
     mockFetch.mockResolvedValue(CONFIG);
     mockUpdate.mockResolvedValue(CONFIG);
@@ -77,5 +80,13 @@ describe("IntegrationsTab — Linear (#157)", () => {
     // An untouched secret must not be transmitted as an empty string, which
     // the repository would otherwise treat as a deliberate write.
     expect(payload).not.toHaveProperty("linear_api_key");
+  });
+
+  it("names each unset secret field by its label", async () => {
+    renderTab();
+    expect(await screen.findByLabelText("HMAC secret")).toBeInTheDocument();
+    expect(screen.getByLabelText("Signing secret")).toBeInTheDocument();
+    expect(screen.getByLabelText("Webhook secret")).toBeInTheDocument();
+    expect(screen.getByLabelText("Bot token")).toBeInTheDocument();
   });
 });

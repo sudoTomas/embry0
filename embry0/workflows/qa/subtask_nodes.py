@@ -23,6 +23,7 @@ from typing import Any
 import structlog
 from langchain_core.runnables import RunnableConfig
 
+from embry0.execution import events
 from embry0.execution.runtime.egress import derive_deployed_egress_allowlist
 from embry0.workflows.qa._subtask_boot_phase import (
     _boot_phase_from_state,
@@ -75,11 +76,11 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
 
     _app = str(state.get("app_name") or "")
     _parent_writer(config)(
-        {
-            "type": "progress",
-            "message": f"[{_app}] acquiring sandbox",
-            "app": _app,
-        }
+        events.progress(
+            message=f"[{_app}] acquiring sandbox",
+            node="acquire_sandbox",
+            app=_app,
+        )
     )
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
@@ -383,11 +384,11 @@ async def boot_app_node(state: SubTaskState, config: RunnableConfig) -> dict[str
 
     _app = str(state.get("app_name") or "")
     _parent_writer(config)(
-        {
-            "type": "progress",
-            "message": f"[{_app}] booting app (target={resolved.target})",
-            "app": _app,
-        }
+        events.progress(
+            message=f"[{_app}] booting app (target={resolved.target})",
+            node="boot_app",
+            app=_app,
+        )
     )
 
     async with httpx.AsyncClient(timeout=10.0) as http:
@@ -810,7 +811,7 @@ async def exploratory_qa_node(state: SubTaskState, config: RunnableConfig) -> di
         )
         writer = ((config or {}).get("configurable") or {}).get("qa_parent_writer")
         if writer is not None:
-            writer({"type": "qa_agent_transient_retry", "app": resolved.app_name, "reason": exit_reason[:200]})
+            writer(events.qa_agent_transient_retry(app=resolved.app_name, reason=exit_reason[:200]))
 
     update: dict[str, Any] = {"agent_outputs": agent_outputs}
     if retries:
@@ -1103,6 +1104,19 @@ async def emit_result_node(state: SubTaskState, config: RunnableConfig) -> dict[
         # persisted via QAAppResultsRepository.upsert_with_boot_phase. None
         # when boot passed (legacy behavior preserved) or never ran.
         boot_phase=state.get("boot_phase"),
+    )
+
+    # spec 3.7: the final per-app status rides the job stream too, so it is
+    # persisted and replayed; the QA bus below keeps feeding the SSE route.
+    boot_phase = state.get("boot_phase")
+    _parent_writer(config)(
+        events.qa_subtask_status(
+            app=state["app_name"],
+            status=str(status),
+            duration_ms=duration_ms,
+            failure_summary=failure_summary,
+            boot_phase=boot_phase if isinstance(boot_phase, dict) else None,
+        )
     )
 
     # Phase 5C: publish to the QA event bus for SSE liveness. Absent when

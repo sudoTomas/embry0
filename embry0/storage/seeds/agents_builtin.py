@@ -5,8 +5,9 @@ Migration 3 inserted the original builtin agent rows, so agents added to
 database. This seeder runs at orchestrator startup and inserts any
 ``BUILTIN_SEED`` agent that is missing — insert-if-missing only, never
 overwriting: builtin rows are operator-editable, and the explicit
-``POST /agents/{type}/reset`` endpoint is the restore path. (The qa and
-onboarding agents are force-synced separately by their own seeders.)
+``POST /agents/{type}/reset`` endpoint is the restore path. (The qa,
+onboarding and pr-reviewer agents have their own seeders, which run first
+and are insert-if-missing too.)
 """
 
 from typing import Any
@@ -38,6 +39,10 @@ async def seed_missing_builtin_agents(repo: AgentDefinitionsRepository) -> None:
             execution_mode=seed_fields["execution_mode"],
             auth_mode=seed_fields["auth_mode"],
             mcp_servers=seed_fields["mcp_servers"],
+            display_name=seed_fields["display_name"],
+            avatar=seed_fields["avatar"],
+            color=seed_fields["color"],
+            tagline=seed_fields["tagline"],
         )
         # create() marks rows non-builtin (it serves the custom-agent API);
         # only seeders may set is_builtin, so flip it via direct SQL — the

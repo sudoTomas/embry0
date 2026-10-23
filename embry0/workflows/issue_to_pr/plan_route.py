@@ -22,8 +22,16 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
+from embry0.execution import events
 from embry0.workflows._validation import validate_graph_definition
-from embry0.workflows.issue_to_pr.route_plan import LEGACY_ROUTE_PLAN, build_route_plan, triage_template_config
+from embry0.workflows.issue_to_pr.route_plan import (
+    GENERIC_AGENT_TYPES,
+    LEGACY_ROUTE_PLAN,
+    build_route_plan,
+    specialist_job_kind,
+    triage_template_config,
+)
+from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_TEMPLATE_NAMES
 
 logger = structlog.get_logger(__name__)
 
@@ -119,6 +127,8 @@ class TemplateInvalidError(RuntimeError):
 # node_started/node_completed stream events represent it. The frontend uses
 # this (via each graph node's ``physical_node``) to light nodes up live.
 # ``qa`` is special — the QA chain streams qa_* events, not node_started.
+# Every type not listed is an agent_definitions row and runs on
+# generic_agent (spec 3.5), so the lookup defaults to it.
 _PHYSICAL_NODE: dict[str, str] = {
     "triage": "triage",
     "developer": "developer",
@@ -126,9 +136,7 @@ _PHYSICAL_NODE: dict[str, str] = {
     "review": "review",
     "qa": "qa",
     "output": "finalize_output",
-    "research": "generic_agent",
-    "analysis": "generic_agent",
-    "ops": "generic_agent",
+    **dict.fromkeys(GENERIC_AGENT_TYPES, "generic_agent"),
 }
 
 _NODE_SPACING_X = 230
@@ -166,7 +174,7 @@ def build_pipeline_graph(
                 "x": position.get("x", _NODE_BASE_X + index * _NODE_SPACING_X),
                 "y": position.get("y", _NODE_BASE_Y),
             },
-            "physical_node": _PHYSICAL_NODE.get(agent_type, agent_type),
+            "physical_node": _PHYSICAL_NODE.get(agent_type, "generic_agent"),
         }
 
     nodes: list[dict[str, Any]] = []
@@ -269,10 +277,30 @@ async def pinned_triage_template_config(state: dict[str, Any], templates_repo: A
     return triage_template_config(row.get("graph_definition") or {})
 
 
+async def _known_agent_types(config: RunnableConfig) -> set[str] | None:
+    """The agent_definitions types that exist now, for the validator; None without a database.
+
+    A read failure is logged and treated like no database (the builtin seed
+    types): a template naming a custom agent is then skipped with the usual
+    log rather than crashing the job, and the kind default runs.
+    """
+    db = config["configurable"].get("db")
+    if db is None:
+        return None
+    try:
+        from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
+
+        return {str(row["type"]) for row in await AgentDefinitionsRepository(db).list_all()}
+    except Exception:
+        logger.warning("plan_route_agent_types_unavailable", exc_info=True)
+        return None
+
+
 async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Resolve template → route_plan snapshot. Resolution order:
 
-    1. triage's explicit ``pipeline_template`` name (legacy values skipped);
+    1. triage's explicit ``pipeline_template`` name (legacy values skipped,
+       and a specialist template, which runs only when the job names it);
     2. the template whose ``default_for_kind`` matches the job_kind;
     3. the legacy synthesized plan (bit-for-bit today's dev→review→qa chain).
 
@@ -288,7 +316,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     ``pipeline_template_request`` still wins: that is a person's call.
     """
     writer = get_stream_writer()
-    writer({"type": "node_started", "node": "plan_route"})
+    writer(events.node_started(node="plan_route"))
 
     decision = state.get("triage_decision") or {}
     job_kind = str(decision.get("job_kind") or "code")
@@ -311,6 +339,18 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     requested_user = str(state.get("pipeline_template_request") or "")
     explicit_user = requested_user not in _LEGACY_TEMPLATE_VALUES
 
+    # A specialist template runs only when the job names it. Triage is not
+    # offered one, so its pick of one is dropped and the kind default routes.
+    if requested in SPECIALIST_TEMPLATE_NAMES and requested != requested_user:
+        logger.info(
+            "plan_route_triage_pick_overridden",
+            job_id=state.get("job_id"),
+            reason="a specialist template runs only when the job names it",
+            triage_template=requested,
+            triage_kind=job_kind,
+        )
+        requested, explicit = "", False
+
     templates_repo = config["configurable"].get("pipeline_templates_repo")
     plan: list[dict[str, Any]] | None = None
     resolved_name: str | None = None
@@ -326,6 +366,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
             candidates.append(("explicit", await _find_template(templates_repo, name=requested)))
         candidates.append(("kind_default", await _find_template(templates_repo, kind=job_kind)))
 
+        agent_types = await _known_agent_types(config)
         for tier, row in candidates:
             if row is None:
                 if tier == "explicit":
@@ -336,7 +377,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
                     )
                 continue
             graph = row.get("graph_definition") or {}
-            problems = validate_graph_definition(row["name"], graph)
+            problems = validate_graph_definition(row["name"], graph, agent_types)
             if problems:
                 logger.warning("plan_route_template_invalid", template=row["name"], problems=problems)
                 if tier == "explicit":
@@ -344,7 +385,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
                 continue
             plan = build_route_plan(graph)
             resolved_name = row["name"]
-            resolved_kind = row.get("default_for_kind") or None
+            resolved_kind = row.get("default_for_kind") or specialist_job_kind(plan)
             resolved_graph = graph
             break
 
@@ -362,7 +403,8 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     # triage's opinion. When a template wins (user-requested or kind-default)
     # its ``default_for_kind`` is the honest job_kind — a watcher run pinned to
     # ``analysis-default`` is an analysis job even if triage guessed ``code``.
-    # Only fall back to triage's kind on the legacy path (no template resolved).
+    # A specialist route declares no kind, and its agents make it analysis.
+    # Otherwise fall back to triage's kind (the legacy path, a custom template).
     # Triage's raw opinion stays in state["triage_decision"] for audit.
     effective_kind = resolved_kind or job_kind
 
@@ -391,24 +433,23 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     # _broadcast_event, so it is persisted to job_logs AND broadcast: live
     # viewers, WS-replay late joiners, and the REST fallback all receive it.
     writer(
-        {
-            "type": "pipeline_graph",
-            "graph": build_pipeline_graph(
+        events.pipeline_graph(
+            graph=build_pipeline_graph(
                 job_id=str(state.get("job_id") or ""),
                 plan=plan,
                 graph_definition=resolved_graph,
                 template_name=resolved_name,
             ),
-        }
+            node="plan_route",
+        )
     )
 
     writer(
-        {
-            "type": "node_completed",
-            "node": "plan_route",
-            "job_kind": effective_kind,
-            "template": resolved_name or "legacy",
-        }
+        events.node_completed(
+            node="plan_route",
+            job_kind=effective_kind,
+            template=resolved_name or "legacy",
+        )
     )
     return {
         "job_kind": effective_kind,
@@ -512,7 +553,7 @@ async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) ->
     ``pr_url`` at completion for every job uniformly.
     """
     writer = get_stream_writer()
-    writer({"type": "node_started", "node": "finalize_output"})
+    writer(events.node_started(node="finalize_output"))
 
     summary = ""
     for entry in reversed(state.get("agent_outputs") or []):
@@ -531,7 +572,7 @@ async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) ->
         )
     deliverables.extend(await _collect_artifacts(state, config))
 
-    writer({"type": "node_completed", "node": "finalize_output", "deliverables": len(deliverables)})
+    writer(events.node_completed(node="finalize_output", deliverables=len(deliverables)))
     return {
         "result_summary": summary,
         "deliverables": deliverables,

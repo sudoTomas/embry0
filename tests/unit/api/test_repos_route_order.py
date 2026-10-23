@@ -17,7 +17,22 @@ from embry0.config import Embry0Config
 from tests.fixtures.routes import app_routes
 
 # Every suffix owned by a router other than `repos`.
-_SUB_RESOURCES = ("qa-config", "preferences", "environment", "credentials")
+_SUB_RESOURCES = (
+    "qa-config",
+    "check",
+    "preferences",
+    "environment",
+    "credentials",
+    "history",
+    "undo",
+    "cost",
+    "propose",
+    "proposal",
+    "apply",
+    "reject",
+    "skip-testing",
+    "readiness",
+)
 
 
 def _all_routes() -> list[ServedRoute]:

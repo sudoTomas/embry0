@@ -251,3 +251,42 @@ async def test_stats_without_a_credential_registry_reports_none(app):
         data = (await client.get("/api/v1/stats")).json()
     assert "credentials" in data
     assert data["credentials"] is None
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_stats_recent_issues_name_each_issue(db_with_migrations):
+    """Overview's Recent issues read 'repo#0' with no title for every
+    non-GitHub ticket and showed the latest job's status as the issue's.
+    Each row now carries the issue's title, tracker key and own status,
+    with the latest job's status apart."""
+    db = db_with_migrations
+    await db.execute(
+        "INSERT INTO issues (id, repo, title, status, tracker, tracker_key, created_at)"
+        " VALUES ('iss-gh', 'o/r', 'Fix the login redirect', 'closed', 'github', '42', NOW() - interval '2 hours')"
+    )
+    await db.execute(
+        "INSERT INTO issues (id, repo, title, status, tracker, tracker_key, created_at)"
+        " VALUES ('iss-lin', 'o/r', 'Tidy the setup docs', 'open', 'linear', 'ENG-7', NOW() - interval '1 hour')"
+    )
+    await db.execute(
+        "INSERT INTO jobs (job_id, repo, task, status, issue_id, started_at)"
+        " VALUES ('job-1', 'o/r', 't', 'pr_merged', 'iss-gh', NOW() - interval '90 minutes')"
+    )
+    app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
+    app.state.db = db
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        recent = (await client.get("/api/v1/stats")).json()["recent_issues"]
+
+    by_id = {r["trace_id"]: r for r in recent}
+    assert by_id["iss-lin"]["title"] == "Tidy the setup docs"
+    assert (by_id["iss-lin"]["tracker"], by_id["iss-lin"]["tracker_key"]) == ("linear", "ENG-7")
+    assert by_id["iss-lin"]["issue_status"] == "open"
+    assert by_id["iss-lin"]["job_status"] is None
+    assert by_id["iss-gh"]["title"] == "Fix the login redirect"
+    assert (by_id["iss-gh"]["tracker"], by_id["iss-gh"]["tracker_key"]) == ("github", "42")
+    assert (by_id["iss-gh"]["issue_status"], by_id["iss-gh"]["job_status"]) == ("closed", "pr_merged")
+    # The existing fields keep their meaning for older clients.
+    assert by_id["iss-gh"]["issue_number"] == 42
+    assert by_id["iss-gh"]["status"] == "pr_merged"

@@ -385,6 +385,11 @@ class Embry0Config(BaseSettings):
     model_heavy: str = "claude-opus-5"
     model_medium: str = "claude-sonnet-5"
     model_light: str = "claude-haiku-4-5"
+    # Refuse to save an agent definition whose model routes to a provider
+    # with no credential configured, or to no catalog provider at all. Off
+    # by default: the save succeeds and the job fails when it runs, as
+    # before. See embry0/services/provider_readiness.py, docs/providers.md.
+    agent_model_provider_check: bool = False
 
     # Budget
     # Fallback only: budget_config (DB row > env) is the source of truth
@@ -436,6 +441,19 @@ class Embry0Config(BaseSettings):
     # registry on the backend network; on K8s migration this becomes the
     # production registry URL with no code changes.
     image_registry: str = ""
+    # Where skill sources are synced to (spec 3.2). The compose file mounts the
+    # `skills-store` volume here and at the same path in dind, because the
+    # sandbox bind mounts are resolved in dind's namespace.
+    skills_store_path: Path = Path("/skills")
+    # The path at which the sandbox daemon sees the store; None means the same
+    # path as skills_store_path. DinD mounts the volume at /skills too; the
+    # rootless daemon runs on the host, so infra/docker-compose.rootless.yml
+    # bind-mounts a host directory and sets this to that directory.
+    skills_store_daemon_path: Path | None = None
+    # The directory a `path` skill source must live under, as the orchestrator
+    # sees it; a source that resolves outside it fails its sync. None refuses
+    # every `path` source.
+    skills_path_root: Path | None = None
     # #523: the in-stack registry refuses anonymous clients. A directory holding
     # `username` and `password` files (compose mounts the registry-auth volume
     # there); at startup the login is written into the orchestrator's docker CLI
@@ -503,6 +521,18 @@ class Embry0Config(BaseSettings):
     # user can click to answer pending questions. Defaults to the local
     # nginx-served dashboard port.
     dashboard_public_url: str = "http://localhost:8200"
+
+    # The public base URL forges deliver webhooks to (a webhooks tunnel
+    # hostname, no path). It is the install target of an organization
+    # webhook and of the organization hook action (<it>/api/v1/webhook,
+    # ADR 0012), and the only origin organization discovery (ADR 0011)
+    # counts as "points here": a hook points here only when its URL starts
+    # with it. The dashboard and SSO origins above are not webhook origins:
+    # the public dashboard answers 404 on webhook paths. Empty or a loopback
+    # address (no forge can deliver there): organization webhooks cannot be
+    # installed, the hook action is skipped, and a repository's hooks are
+    # unknown, not absent.
+    webhook_public_url: str = ""
 
     # Auth0 SSO (RAV-1069). All-or-nothing: sso_enabled requires every core
     # field, INCLUDING the roles claim, and a partial set refuses startup (see
@@ -654,7 +684,29 @@ class Embry0Config(BaseSettings):
     minio_root_password: SecretSetting = ""
     qa_artifact_retention_days: int = Field(default=14, gt=0, le=3650)
 
-    @field_validator("audit_log_path", mode="before")
+    # Code retention (ADR 0017). Unset (the default) keeps everything, as
+    # before. Set, a daily sweep replaces the code in job events older than
+    # this many days (Write/Edit/Bash inputs, every tool result) with a marker
+    # that keeps the tool, file path, size and hash. Ended jobs only.
+    job_log_retention_days: int | None = Field(default=None, gt=0, le=3650)
+    # Set, a daily sweep deletes the saved agent sessions (the whole
+    # conversation) of ended jobs last used more than this many days ago. A
+    # pull request comment follow-up on such a job then starts a fresh session
+    # instead of resuming, which is why this is not part of the job log setting.
+    agent_session_retention_days: int | None = Field(default=None, gt=0, le=3650)
+    # Set, a daily sweep removes pre-built QA images (a full checkout each)
+    # and per-repo warm volumes unused for this many days, from the sandbox
+    # daemon. Never the image an active qa_image_tags row names, nor anything
+    # a container uses or a live job's repo needs.
+    qa_image_retention_days: int | None = Field(default=None, gt=0, le=3650)
+
+    @field_validator(
+        "audit_log_path",
+        "job_log_retention_days",
+        "agent_session_retention_days",
+        "qa_image_retention_days",
+        mode="before",
+    )
     @classmethod
     def _empty_str_to_none(cls, v: object) -> object:
         if v == "":

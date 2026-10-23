@@ -1,5 +1,7 @@
+import asyncio
 import base64
 import re
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -919,3 +921,251 @@ async def test_a_failed_ca_install_destroys_the_sandbox():
     with pytest.raises(SandboxInitError, match="CA bundle"):
         await mgr.create(job_id="job-ca", forge="gitlab")
     assert any(cmd[:2] == ["docker", "rm"] for cmd in calls), "container was not rolled back"
+
+
+def _skill_store_with_one_tree(tmp_path):
+    from embry0.skills.store import SkillStore
+
+    store = SkillStore(tmp_path / "skills")
+    staged = tmp_path / "staged"
+    (staged / "skills" / "x").mkdir(parents=True)
+    (staged / "skills" / "x" / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+    store.publish("superpowers", "a" * 40, staged)
+    sources = MagicMock()
+    sources.list_all = AsyncMock(
+        return_value=[
+            {"id": "superpowers", "plugin_name": "superpowers", "status": "ready", "enabled": True},
+            {"id": "gone", "plugin_name": "gone", "status": "ready", "enabled": True},
+        ]
+    )
+    return store, sources
+
+
+def _skills_docker() -> MagicMock:
+    docker = MagicMock()
+    docker.run_cmd = AsyncMock(return_value="container-abc123")
+    docker.build_run_cmd = MagicMock(return_value=["docker", "run", "..."])
+    docker.build_stop_cmd = MagicMock(return_value=["docker", "stop", "..."])
+    docker.build_rm_cmd = MagicMock(return_value=["docker", "rm", "..."])
+    return docker
+
+
+@pytest.mark.asyncio
+async def test_create_mounts_every_ready_skill_source_read_only(tmp_path):
+    store, sources = _skill_store_with_one_tree(tmp_path)
+    docker = _skills_docker()
+    mgr = SandboxManager(
+        docker=docker, proxy_manager=_make_proxy_manager(), skill_store=store, skill_sources_repo=sources
+    )
+    container_id, _ = await mgr.create(job_id="job-skills")
+    volumes = docker.build_run_cmd.call_args.kwargs["volumes"]
+    expected = f"{tmp_path / 'skills' / 'superpowers' / ('a' * 40)}:/opt/embry0/skills/superpowers:ro"
+    assert expected in volumes
+    assert not any(v.startswith(str(tmp_path / "skills" / "gone")) for v in volumes), (
+        "a source with no tree is skipped, not mounted"
+    )
+    # Keyed by the container id create returns: the node holds that id.
+    mounts = await mgr.skill_mounts_for(container_id)
+    assert [m.source_id for m in mounts] == ["superpowers"]
+    sources.list_all.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_skill_mounts_for_reports_what_create_mounted_not_the_newer_manifest(tmp_path):
+    store, sources = _skill_store_with_one_tree(tmp_path)
+    mgr = SandboxManager(
+        docker=_skills_docker(), proxy_manager=_make_proxy_manager(), skill_store=store, skill_sources_repo=sources
+    )
+    container_id, _ = await mgr.create(job_id="job-skills")
+    sources.list_all.return_value = []
+    mounts = await mgr.skill_mounts_for(container_id)
+    assert [m.source_id for m in mounts] == ["superpowers"], "the sandbox has what create mounted"
+
+
+def _skills_runtime(**methods) -> MagicMock:
+    runtime = MagicMock()
+    for name, mock in methods.items():
+        setattr(runtime, name, mock)
+    return runtime
+
+
+@pytest.mark.asyncio
+async def test_skill_mounts_for_a_resumed_container_reads_its_mounts_not_the_manifest(tmp_path):
+    """After an orchestrator restart the record is gone; the container's own mounts say what it has."""
+    store, sources = _skill_store_with_one_tree(tmp_path)
+    sources.list_all.return_value.append({"id": "local", "plugin_name": "house", "enabled": True})
+    older = str(tmp_path / "skills" / "local" / ("b" * 40))
+    runtime = _skills_runtime(
+        container_mounts=AsyncMock(
+            return_value=[
+                (older, "/opt/embry0/skills/local"),
+                ("/var/lib/docker/volumes/m2/_data", "/home/agent/.m2"),
+                ("/certs/client", "/opt/embry0/skills"),
+            ]
+        )
+    )
+    mgr = SandboxManager(
+        docker=_skills_docker(),
+        proxy_manager=_make_proxy_manager(),
+        runtime=runtime,
+        skill_store=store,
+        skill_sources_repo=sources,
+    )
+    mounts = await mgr.skill_mounts_for("container-from-before-the-restart")
+    assert [(m.source_id, m.plugin_name, m.host_path, m.container_path) for m in mounts] == [
+        ("local", "house", older, "/opt/embry0/skills/local")
+    ], "a resumed container reports the current manifest, not what it mounts"
+    runtime.container_mounts.assert_awaited_once_with("container-from-before-the-restart")
+    await mgr.skill_mounts_for("container-from-before-the-restart")
+    runtime.container_mounts.assert_awaited_once()  # the answer is kept for the container
+
+
+@pytest.mark.asyncio
+async def test_skill_mounts_for_falls_back_to_the_manifest_when_the_inspect_fails(tmp_path):
+    from structlog.testing import capture_logs
+
+    store, sources = _skill_store_with_one_tree(tmp_path)
+    runtime = _skills_runtime(container_mounts=AsyncMock(side_effect=RuntimeError("no such container")))
+    mgr = SandboxManager(
+        docker=_skills_docker(),
+        proxy_manager=_make_proxy_manager(),
+        runtime=runtime,
+        skill_store=store,
+        skill_sources_repo=sources,
+    )
+    with capture_logs() as logs:
+        mounts = await mgr.skill_mounts_for("container-from-before-the-restart")
+    assert [m.source_id for m in mounts] == ["superpowers"]
+    assert any(e["event"] == "skill_mounts_inspect_failed" for e in logs)
+
+
+def _store_with_trees(tmp_path, shas):
+    from embry0.skills.store import SkillStore
+
+    store = SkillStore(tmp_path / "skills")
+    for sha in shas:
+        staged = tmp_path / f"staged-{sha[:1]}"
+        (staged / "skills" / "x").mkdir(parents=True)
+        (staged / "skills" / "x" / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+        store.publish("superpowers", sha, staged)
+    return store
+
+
+@pytest.mark.asyncio
+async def test_gc_skill_trees_removes_only_unmounted_stale_trees(tmp_path):
+    a, b, c = "a" * 40, "b" * 40, "c" * 40
+    store = _store_with_trees(tmp_path, [a, b, c])
+    runtime = _skills_runtime(mounted_sources=AsyncMock(return_value={str(store.tree_path("superpowers", a))}))
+    mgr = SandboxManager(
+        docker=_skills_docker(),
+        proxy_manager=_make_proxy_manager(),
+        runtime=runtime,
+        skill_store=store,
+        skill_sources_repo=MagicMock(),
+    )
+    removed = await mgr.gc_skill_trees()
+    assert removed == [store.tree_path("superpowers", b)]
+    assert store.tree_path("superpowers", a).is_dir(), "a stale tree a container mounts was removed"
+    assert not store.tree_path("superpowers", b).exists(), "an unmounted stale tree survived"
+    assert store.tree_path("superpowers", c).is_dir(), "the current tree was removed"
+
+
+@pytest.mark.asyncio
+async def test_gc_skill_trees_compares_the_daemons_paths(tmp_path):
+    """Rootless: the daemon reports its own path for a mount, not the orchestrator's."""
+    from embry0.skills.store import SkillStore
+
+    a, b = "a" * 40, "b" * 40
+    _store_with_trees(tmp_path, [a, b])
+    store = SkillStore(tmp_path / "skills", daemon_root=Path("/var/lib/embry0/skills"))
+    runtime = _skills_runtime(mounted_sources=AsyncMock(return_value={f"/var/lib/embry0/skills/superpowers/{a}"}))
+    mgr = SandboxManager(
+        docker=_skills_docker(), proxy_manager=_make_proxy_manager(), runtime=runtime, skill_store=store
+    )
+    assert await mgr.gc_skill_trees() == []
+    assert store.tree_path("superpowers", a).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_gc_skill_trees_removes_nothing_when_the_daemon_cannot_list_mounts(tmp_path):
+    a, b = "a" * 40, "b" * 40
+    store = _store_with_trees(tmp_path, [a, b])
+    runtime = _skills_runtime(mounted_sources=AsyncMock(side_effect=RuntimeError("daemon down")))
+    mgr = SandboxManager(
+        docker=_skills_docker(), proxy_manager=_make_proxy_manager(), runtime=runtime, skill_store=store
+    )
+    assert await mgr.gc_skill_trees() == []
+    assert store.tree_path("superpowers", a).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_gc_skill_trees_keeps_the_trees_of_a_create_still_in_docker_run(tmp_path):
+    """The daemon lists a container only once `docker run` returns; its trees are mounted already."""
+    a, b = "a" * 40, "b" * 40
+    store = _store_with_trees(tmp_path, [a])
+    sources = MagicMock()
+    sources.list_all = AsyncMock(return_value=[{"id": "superpowers", "plugin_name": "superpowers", "enabled": True}])
+    docker = _skills_docker()
+    running = asyncio.Event()
+    release = asyncio.Event()
+
+    async def run_cmd(cmd, timeout=60):
+        if cmd[:2] == ["docker", "run"]:
+            running.set()
+            await release.wait()
+        return "container-abc123"
+
+    docker.run_cmd = AsyncMock(side_effect=run_cmd)
+    from embry0.execution.runtime import DockerRuntime
+
+    runtime = DockerRuntime(docker)
+    runtime.mounted_sources = AsyncMock(return_value=set())  # type: ignore[method-assign]
+    mgr = SandboxManager(
+        docker=docker,
+        proxy_manager=_make_proxy_manager(),
+        runtime=runtime,
+        skill_store=store,
+        skill_sources_repo=sources,
+    )
+    create = asyncio.create_task(mgr.create(job_id="job-skills"))
+    await running.wait()
+    staged = tmp_path / "staged-new"
+    (staged / "skills" / "x").mkdir(parents=True)
+    store.publish("superpowers", b, staged)
+    assert await mgr.gc_skill_trees() == []
+    assert store.tree_path("superpowers", a).is_dir(), "the tree a create is mounting was removed"
+    release.set()
+    await create
+    assert mgr._skill_mounts_creating == []
+
+
+@pytest.mark.asyncio
+async def test_destroy_forgets_the_containers_skill_mounts(tmp_path):
+    store, sources = _skill_store_with_one_tree(tmp_path)
+    mgr = SandboxManager(
+        docker=_skills_docker(), proxy_manager=_make_proxy_manager(), skill_store=store, skill_sources_repo=sources
+    )
+    container_id, _ = await mgr.create(job_id="job-skills")
+    await mgr.destroy(container_id)
+    assert container_id not in mgr._skill_mounts_by_container
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_skill_registry_never_stops_a_sandbox(tmp_path):
+    store, sources = _skill_store_with_one_tree(tmp_path)
+    sources.list_all = AsyncMock(side_effect=RuntimeError("db down"))
+    docker = _skills_docker()
+    mgr = SandboxManager(
+        docker=docker, proxy_manager=_make_proxy_manager(), skill_store=store, skill_sources_repo=sources
+    )
+    container_id, _ = await mgr.create(job_id="job-skills")
+    assert container_id == "container-abc123"
+    volumes = docker.build_run_cmd.call_args.kwargs["volumes"] or []
+    assert not any("/opt/embry0/skills/" in v for v in volumes)
+
+
+@pytest.mark.asyncio
+async def test_create_without_a_skill_store_mounts_nothing_extra(manager: SandboxManager):
+    await manager.create(job_id="job-plain")
+    volumes = manager._docker.build_run_cmd.call_args.kwargs["volumes"]
+    assert not volumes or not any("/opt/embry0/skills/" in v for v in volumes)

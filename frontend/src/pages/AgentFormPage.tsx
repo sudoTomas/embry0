@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
@@ -9,26 +9,34 @@ import {
   OPERATION_NUMERAL,
 } from "@/components/divine/operations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonVariants } from "@/components/ui/Button";
+import { AdminButton } from "@/components/auth/AdminButton";
+import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
-import { TagInput } from "@/components/ui/TagInput";
+import { AgentIdentityFields } from "@/components/agents/AgentIdentityFields";
+import { ToolChecklist } from "@/components/agents/ToolChecklist";
+import { SkillPicker } from "@/components/skills/SkillPicker";
 import { useAgent, useCreateAgent, useUpdateAgent } from "@/hooks/useAgents";
 import { useModels } from "@/hooks/useModels";
-import type { AgentCreateRequest, AgentUpdateRequest } from "@/lib/types/agents";
-
-const AVAILABLE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
-
-const SUGGESTED_SKILLS = [
-  "superpowers:subagent-driven-development",
-  "superpowers:verification-before-completion",
-  "superpowers:test-driven-development",
-];
+import { useSkills } from "@/hooks/useSkills";
+import { useTools } from "@/hooks/useTools";
+import { DEFAULT_AVATAR, DEFAULT_COLOR, identityOf, type AvatarId, type PaletteId } from "@/lib/agentIdentity";
+import { runOverrideNote } from "@/lib/effectiveModel";
+import { providerForModel } from "@/lib/providers";
+import { providerLabel } from "@/lib/status";
+import type { AgentCreateRequest, AgentDefinition, AgentUpdateRequest } from "@/lib/types/agents";
+import { toastApiError } from "@/api/errorToast";
+import { cn } from "@/lib/utils";
 
 interface FormState {
   type: string;
+  display_name: string;
+  tagline: string;
+  avatar: AvatarId;
+  color: PaletteId;
   description: string;
   model: string;
   customModel: string;
@@ -46,6 +54,10 @@ const DEFAULT_MODEL = "claude-sonnet-5";
 
 const EMPTY_FORM: FormState = {
   type: "",
+  display_name: "",
+  tagline: "",
+  avatar: DEFAULT_AVATAR,
+  color: DEFAULT_COLOR,
   description: "",
   model: DEFAULT_MODEL,
   customModel: "",
@@ -63,7 +75,37 @@ export function AgentFormPage() {
 
   const isEdit = !!typeParam && typeParam !== "new";
   const { data: existing, isLoading } = useAgent(isEdit ? typeParam : null);
-  const { models: knownModels, isLoading: modelsLoading } = useModels();
+  const { models: knownModels, providers, isLoading: modelsLoading } = useModels();
+  // The picker offers every tier and catalogue model, whatever credentials
+  // this API process sees: they may be injected only where jobs run. A model
+  // whose provider is not ready here is marked "(no credential)" and cannot be
+  // picked anew; an agent already saved on one still opens on it.
+  // Operator-disabled models stay out, as in useModels. Without the catalog
+  // (older backend) the list stays as useModels built it.
+  const offeredModels = useMemo(
+    () =>
+      providers.length === 0
+        ? knownModels
+        : [
+            ...new Set([
+              ...knownModels,
+              ...providers.flatMap((p) => p.models.filter((m) => m.enabled !== false).map((m) => m.model)),
+            ]),
+          ],
+    [knownModels, providers],
+  );
+  const notReadyModels = useMemo(
+    () =>
+      new Set(
+        providers.length === 0
+          ? []
+          : offeredModels.filter((m) => providerForModel(m, providers)?.available !== true),
+      ),
+    [offeredModels, providers],
+  );
+
+  const { data: toolCatalog } = useTools();
+  const { data: skillCatalog, isLoading: skillsLoading } = useSkills();
 
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
@@ -73,10 +115,18 @@ export function AgentFormPage() {
   // Populate form when editing an existing agent
   useEffect(() => {
     if (!existing) return;
-    const isCustomModel = !knownModels.includes(existing.model);
+    const isCustomModel = !offeredModels.includes(existing.model);
     const mcp = existing.mcp_servers;
+    // Avatar and colour through identityOf so a backend predating identity
+    // still yields valid ids; the text fields as stored, so an empty display
+    // name keeps showing the slug after a save.
+    const identity = identityOf(existing);
     setForm({
       type: existing.type,
+      display_name: existing.display_name ?? "",
+      tagline: existing.tagline ?? "",
+      avatar: identity.avatar,
+      color: identity.color,
       description: existing.description ?? "",
       model: isCustomModel ? "__custom__" : existing.model,
       customModel: isCustomModel ? existing.model : "",
@@ -87,9 +137,42 @@ export function AgentFormPage() {
       auth_mode: existing.auth_mode ?? "",
       mcpServersText: mcp && Object.keys(mcp).length > 0 ? JSON.stringify(mcp, null, 2) : "",
     });
-  }, [existing, knownModels]);
+  }, [existing, offeredModels]);
+
+  // A new agent starts on DEFAULT_MODEL. When the picker does not offer it as
+  // a choice, start on the first model it does, so the select shows what will
+  // be saved; Custom... when none is ready.
+  useEffect(() => {
+    if (isEdit || modelsLoading) return;
+    const selectable = (m: string) => offeredModels.includes(m) && !notReadyModels.has(m);
+    setForm((prev) =>
+      prev.model === "__custom__" || selectable(prev.model)
+        ? prev
+        : { ...prev, model: offeredModels.find(selectable) ?? "__custom__" },
+    );
+  }, [isEdit, modelsLoading, offeredModels, notReadyModels]);
 
   const resolvedModel = form.model === "__custom__" ? form.customModel : form.model;
+
+  // Which provider serves the chosen model and whether it can run it now: from
+  // the catalog by id prefix, as the backend routes, so it follows the picker
+  // and the custom id. Without the catalog, the saved model's answer from
+  // GET /agents/{type}.
+  const chosenProvider: { name: string | null; ready: boolean } | null = (() => {
+    if (!resolvedModel.trim()) return null;
+    if (providers.length > 0) {
+      const provider = providerForModel(resolvedModel, providers);
+      return { name: provider?.name ?? null, ready: provider?.available === true };
+    }
+    if (isEdit && existing && resolvedModel === existing.model && existing.provider_ready !== undefined) {
+      return { name: existing.provider ?? null, ready: existing.provider_ready };
+    }
+    return null;
+  })();
+
+  // When jobs will not run the model being edited: the default model or a
+  // per-job tier replaces it (GET /agents/{type}, effective_model).
+  const runNote = isEdit ? runOverrideNote(existing, resolvedModel) : null;
 
   const handleToolToggle = (tool: string) => {
     setForm((prev) => ({
@@ -127,10 +210,23 @@ export function AgentFormPage() {
       }
     }
 
+    const identity = {
+      display_name: form.display_name,
+      tagline: form.tagline,
+      avatar: form.avatar,
+      color: form.color,
+    };
+    const onSaved = (message: string) => (saved: AgentDefinition) => {
+      saved.warnings?.forEach((w) => toast.warning(w));
+      toast.success(message);
+      navigate("/agents");
+    };
+
     if (isEdit) {
       // PUT semantics: explicit null clears (execution/auth mode "inherit").
       const update: AgentUpdateRequest & { type: string } = {
         type: typeParam!,
+        ...identity,
         description: form.description,
         model: resolvedModel,
         tools: form.tools,
@@ -141,15 +237,13 @@ export function AgentFormPage() {
         mcp_servers: mcpServers,
       };
       updateAgent.mutate(update, {
-        onSuccess: () => {
-          toast.success("Agent updated");
-          navigate("/agents");
-        },
-        onError: (e) => toast.error(`Failed: ${e.message}`),
+        onSuccess: onSaved("Agent updated"),
+        onError: (e) => toastApiError(e, "Failed"),
       });
     } else {
       const create: AgentCreateRequest = {
         type: form.type.trim(),
+        ...identity,
         description: form.description,
         model: resolvedModel,
         tools: form.tools,
@@ -160,15 +254,13 @@ export function AgentFormPage() {
         ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
       };
       createAgent.mutate(create, {
-        onSuccess: () => {
-          toast.success("Agent created");
-          navigate("/agents");
-        },
-        onError: (e) => toast.error(`Failed: ${e.message}`),
+        onSuccess: onSaved("Agent created"),
+        onError: (e) => toastApiError(e, "Failed"),
       });
     }
   };
 
+  const orphanSkills = existing?.orphan_skills ?? [];
   const isPending = createAgent.isPending || updateAgent.isPending;
 
   if (isEdit && isLoading) {
@@ -180,10 +272,12 @@ export function AgentFormPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link to="/agents">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+          <Link
+            to="/agents"
+            aria-label="Back to agents"
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+          >
+            <ArrowLeft className="h-4 w-4" />
           </Link>
           {(() => {
             const op = agentTypeToOperation(typeParam);
@@ -194,14 +288,14 @@ export function AgentFormPage() {
             ) : null;
           })()}
           <div className="flex flex-col">
-            <h1 className="text-2xl font-bold leading-tight">
-              {isEdit ? `Edit Agent: ${typeParam}` : "New Agent"}
+            <h1 className="title-pixel text-xl font-bold leading-tight">
+              {isEdit ? `Edit agent: ${typeParam}` : "New agent"}
             </h1>
             {(() => {
               const op = agentTypeToOperation(typeParam);
               if (!op) return null;
               return (
-                <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono mt-0.5">
+                <span className="text-[10px] uppercase tracking-[0.18em] text-fg-muted font-mono mt-0.5">
                   Op {OPERATION_NUMERAL[op]} · {op} · {OPERATION_ELEMENT[op]}
                 </span>
               );
@@ -212,9 +306,9 @@ export function AgentFormPage() {
           <Link to="/agents">
             <Button variant="outline">Cancel</Button>
           </Link>
-          <Button onClick={handleSave} disabled={isPending}>
+          <AdminButton onClick={handleSave} disabled={isPending}>
             {isPending ? "Saving..." : "Save Agent"}
-          </Button>
+          </AdminButton>
         </div>
       </div>
 
@@ -239,6 +333,11 @@ export function AgentFormPage() {
                 <p className="text-xs text-white/30 mt-1">Agent type cannot be changed after creation.</p>
               )}
             </div>
+            <AgentIdentityFields
+              type={form.type}
+              value={form}
+              onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
+            />
             <div>
               <Label htmlFor="agent-description">Description</Label>
               <Textarea
@@ -246,7 +345,7 @@ export function AgentFormPage() {
                 placeholder="Describe what this agent does..."
                 value={form.description}
                 onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-                className="mt-1 min-h-[80px] bg-[#0c1015] border-white/[0.08]"
+                className="mt-1 min-h-[80px] bg-overlay border-white/[0.08]"
               />
             </div>
           </div>
@@ -270,9 +369,14 @@ export function AgentFormPage() {
                 className="mt-1"
                 disabled={modelsLoading}
               >
-                {knownModels.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
+                {offeredModels.map((m) => {
+                  const notReady = notReadyModels.has(m);
+                  return (
+                    <option key={m} value={m} disabled={notReady && m !== existing?.model}>
+                      {notReady ? `${m} (no credential)` : m}
+                    </option>
+                  );
+                })}
                 <option value="__custom__">Custom...</option>
               </Select>
               {form.model === "__custom__" && (
@@ -283,46 +387,70 @@ export function AgentFormPage() {
                   onChange={(e) => setForm((prev) => ({ ...prev, customModel: e.target.value }))}
                 />
               )}
+              {chosenProvider && (
+                <p
+                  className="mt-1 flex items-center gap-2 text-xs text-white/40"
+                  data-testid="model-provider-readiness"
+                >
+                  {chosenProvider.name ? (
+                    <span>
+                      Provider: {providerLabel(chosenProvider.name)}
+                    </span>
+                  ) : (
+                    <span>No configured provider serves this model</span>
+                  )}
+                  {chosenProvider.ready ? (
+                    <Badge tone="success">Ready</Badge>
+                  ) : (
+                    <Badge
+                      tone="error"
+                      title={
+                        chosenProvider.name
+                          ? "No credential is configured for this provider"
+                          : "No configured provider serves this model"
+                      }
+                    >
+                      Not ready
+                    </Badge>
+                  )}
+                </p>
+              )}
+              {runNote && (
+                <p className="mt-1 text-xs text-warning" data-testid="model-run-override">
+                  {runNote}
+                </p>
+              )}
             </div>
 
             {/* Tools */}
             <div>
               <Label>Tools</Label>
-              <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {AVAILABLE_TOOLS.map((tool) => (
-                  <label
-                    key={tool}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-md border border-white/[0.06] bg-white/[0.02] cursor-pointer hover:bg-white/[0.04] transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={form.tools.includes(tool)}
-                      onChange={() => handleToolToggle(tool)}
-                      className="w-4 h-4 rounded accent-cyan-500"
-                    />
-                    <span className="text-sm text-white/70 font-mono">{tool}</span>
-                  </label>
-                ))}
-              </div>
+              <ToolChecklist value={form.tools} onToggle={handleToolToggle} catalog={toolCatalog ?? []} />
             </div>
 
             {/* Skills */}
             <div>
-              <Label>Skills</Label>
-              <TagInput
-                value={form.skills}
-                onChange={(skills) => setForm((prev) => ({ ...prev, skills }))}
-                placeholder="Add skill..."
-                suggestions={SUGGESTED_SKILLS}
-                className="mt-1"
-              />
-              <p className="text-xs text-white/30 mt-1">Press Enter to add. Type to filter suggestions.</p>
+              <Label htmlFor="agent-skills">Skills</Label>
+              <div className="mt-1">
+                <SkillPicker
+                  id="agent-skills"
+                  value={form.skills}
+                  onChange={(skills) => setForm((prev) => ({ ...prev, skills }))}
+                  catalog={skillCatalog ?? []}
+                  isLoading={skillsLoading}
+                />
+              </div>
+              {isEdit && orphanSkills.length > 0 && (
+                <p className="text-xs text-amber-300/80 mt-1">
+                  No source lists: {orphanSkills.join(", ")}. They keep running; adding a new unknown name is refused.
+                </p>
+              )}
             </div>
 
             {/* Execution / auth mode (RAV-1058) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="agent-execution-mode">Execution Mode</Label>
+                <Label htmlFor="agent-execution-mode">Execution mode</Label>
                 <Select
                   id="agent-execution-mode"
                   value={form.execution_mode}
@@ -337,7 +465,7 @@ export function AgentFormPage() {
                 </Select>
               </div>
               <div>
-                <Label htmlFor="agent-auth-mode">Auth Mode</Label>
+                <Label htmlFor="agent-auth-mode">Auth mode</Label>
                 <Select
                   id="agent-auth-mode"
                   value={form.auth_mode}
@@ -355,13 +483,13 @@ export function AgentFormPage() {
 
             {/* MCP servers (RAV-1058) */}
             <div>
-              <Label htmlFor="agent-mcp-servers">MCP Servers (JSON)</Label>
+              <Label htmlFor="agent-mcp-servers">MCP servers (JSON)</Label>
               <Textarea
                 id="agent-mcp-servers"
                 placeholder={'{\n  "my-server": { "type": "stdio", "command": "my-mcp", "args": ["--flag"] }\n}'}
                 value={form.mcpServersText}
                 onChange={(e) => setForm((prev) => ({ ...prev, mcpServersText: e.target.value }))}
-                className="mt-1 font-mono text-sm min-h-[120px] bg-[#0c1015] border-white/[0.08]"
+                className="mt-1 font-mono text-sm min-h-[120px] bg-overlay border-white/[0.08]"
               />
               <p className="text-xs text-white/30 mt-1">
                 Object mapping server name → config, injected into the sandbox agent. Leave empty for none. The QA
@@ -380,13 +508,13 @@ export function AgentFormPage() {
         </CardHeader>
         <CardContent>
           <div>
-            <Label htmlFor="agent-system-prompt">System Prompt</Label>
+            <Label htmlFor="agent-system-prompt">System prompt</Label>
             <Textarea
               id="agent-system-prompt"
               placeholder="Enter the system prompt for this agent..."
               value={form.system_prompt}
               onChange={(e) => setForm((prev) => ({ ...prev, system_prompt: e.target.value }))}
-              className="mt-1 font-mono text-sm min-h-[160px] bg-[#0c1015] border-white/[0.08]"
+              className="mt-1 font-mono text-sm min-h-[160px] bg-overlay border-white/[0.08]"
             />
           </div>
         </CardContent>

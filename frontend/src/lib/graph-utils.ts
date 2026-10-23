@@ -1,39 +1,7 @@
 import type { Node, Edge } from "@xyflow/react";
-import type { AgentNode, PipelineEdge, PipelineGraph, PipelineMetadata, EdgeType } from "./types";
-
-// Canonical color map for React Flow nodes. Tailwind class equivalents are in constants.ts (ROLE_COLORS).
-// Agent type -> color category
-const AGENT_COLORS: Record<string, string> = {
-  explorer: "#06b6d4", // cyan
-  "frontend-explorer": "#06b6d4",
-  developer: "#f59e0b", // amber
-  "code-gen": "#f59e0b",
-  "docs-writer": "#f59e0b",
-  "test-runner": "#22c55e", // green
-  "lint-checker": "#22c55e",
-  "type-checker": "#22c55e",
-  "visual-validator": "#22c55e",
-  reviewer: "#a855f7", // purple
-  "security-reviewer": "#a855f7",
-  triage: "#a855f7",
-  validator: "#22c55e", // green
-  output: "#f43f5e", // rose
-  custom: "#6b7280", // gray
-};
-
-export function getAgentColor(agentType: string): string {
-  return AGENT_COLORS[agentType] ?? "#6b7280";
-}
-
-export function getAgentCategory(agentType: string): string {
-  if (["explorer", "frontend-explorer"].includes(agentType)) return "Exploration";
-  if (["developer", "code-gen", "docs-writer"].includes(agentType)) return "Development";
-  if (["test-runner", "lint-checker", "type-checker", "visual-validator", "validator"].includes(agentType)) return "Validation";
-  if (["reviewer", "security-reviewer"].includes(agentType)) return "Review";
-  if (agentType === "triage") return "Triage";
-  if (agentType === "output") return "Output";
-  return "Custom";
-}
+import { toast } from "sonner";
+import { normalizeDelta, isEmptyDelta, type NormalizedDelta } from "@/lib/skills";
+import type { AgentNode, AgentNodeConfig, PipelineEdge, PipelineGraph, PipelineMetadata, EdgeType } from "./types";
 
 /**
  * DFS-based cycle detection. Returns set of edge IDs that are back-edges.
@@ -74,11 +42,20 @@ export function detectCycles(
 }
 
 /**
+ * Whether a React Flow node is the canvas's START or END, and which. The
+ * canvas types both "startEndNode" and tells them apart by data.nodeRole, so
+ * a check on node.type finds neither; the layouts ask here.
+ */
+export function startEndRole(n: Node): "start" | "end" | null {
+  const role = (n.data as Record<string, unknown> | undefined)?.nodeRole;
+  return role === "start" || role === "end" ? role : null;
+}
+
+/**
  * Helper: check if a React Flow node is a Start/End structural node.
  */
 function isStartEndNode(n: Node): boolean {
-  const role = (n.data as Record<string, unknown>).nodeRole;
-  return role === "start" || role === "end";
+  return startEndRole(n) !== null;
 }
 
 /**
@@ -102,35 +79,33 @@ export function serializeGraph(
         agent_type: role === "start" ? "__start__" : "__end__",
         label: role === "start" ? "START" : "END",
         position: { x: n.position.x, y: n.position.y },
-        model: null,
-        max_budget_usd: null,
-        max_turns: null,
-        effort: null,
-        tools: null,
-        skills: null,
-        prompt_prepend: null,
-        prompt_append: null,
-        custom_prompt: null,
-        custom_tools: null,
-        sandbox: null,
+        config: {},
       };
     }
+    // #78: overrides live under `config`, only the keys that are set, in the
+    // order of the shared fixture tests/fixtures/templates/editor-config-shape.json.
+    const config: AgentNodeConfig = {};
+    const set = <K extends keyof AgentNodeConfig>(k: K, v: AgentNodeConfig[K] | undefined) => {
+      if (v !== undefined && v !== null) config[k] = v;
+    };
+    set("model", d.model as string | undefined);
+    set("max_budget_usd", d.maxBudgetUsd as number | undefined);
+    set("max_turns", d.maxTurns as number | undefined);
+    set("effort", d.effort as string | undefined);
+    set("tools", d.tools as string[] | undefined);
+    const delta = d.skills as NormalizedDelta | null | undefined;
+    if (delta && !isEmptyDelta(delta)) config.skills = { add: delta.add, remove: delta.remove };
+    set("prompt_prepend", d.promptPrepend as string | undefined);
+    set("prompt_append", d.promptAppend as string | undefined);
+    set("custom_prompt", d.customPrompt as string | undefined);
+    set("custom_tools", d.customTools as string[] | undefined);
+    set("sandbox", d.sandbox as AgentNodeConfig["sandbox"]);
     return {
       node_id: n.id,
       agent_type: d.agentType as string,
       label: (d.label as string) ?? "",
       position: { x: n.position.x, y: n.position.y },
-      model: (d.model as string | undefined) ?? null,
-      max_budget_usd: (d.maxBudgetUsd as number | undefined) ?? null,
-      max_turns: (d.maxTurns as number | undefined) ?? null,
-      effort: (d.effort as string | undefined) ?? null,
-      tools: (d.tools as string[] | undefined) ?? null,
-      skills: (d.skills as string[] | undefined) ?? null,
-      prompt_prepend: (d.promptPrepend as string | undefined) ?? null,
-      prompt_append: (d.promptAppend as string | undefined) ?? null,
-      custom_prompt: (d.customPrompt as string | undefined) ?? null,
-      custom_tools: (d.customTools as string[] | undefined) ?? null,
-      sandbox: (d.sandbox as AgentNode["sandbox"]) ?? null,
+      config,
     };
   });
 
@@ -189,6 +164,29 @@ export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: 
         data: { nodeRole: role },
       };
     }
+    // #78: `config` when present, else the legacy (pre-#78) top-level keys.
+    const legacy: AgentNodeConfig = {
+      model: n.model,
+      max_budget_usd: n.max_budget_usd,
+      max_turns: n.max_turns,
+      effort: n.effort,
+      tools: n.tools,
+      skills: n.skills,
+      prompt_prepend: n.prompt_prepend,
+      prompt_append: n.prompt_append,
+      custom_prompt: n.custom_prompt,
+      custom_tools: n.custom_tools,
+      sandbox: n.sandbox,
+    };
+    const cfg: AgentNodeConfig = n.config && typeof n.config === "object" ? n.config : legacy;
+    let skills: NormalizedDelta | null;
+    try {
+      const delta = normalizeDelta(cfg.skills);
+      skills = isEmptyDelta(delta) ? null : delta;
+    } catch {
+      toast.warning(`Node ${n.node_id}: its skills override could not be read and was dropped`);
+      skills = null;
+    }
     return {
       id: n.node_id,
       type: "agentNode",
@@ -196,17 +194,17 @@ export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: 
       data: {
         agentType: n.agent_type,
         label: n.label || n.agent_type,
-        model: n.model,
-        maxBudgetUsd: n.max_budget_usd,
-        maxTurns: n.max_turns,
-        effort: n.effort,
-        tools: n.tools,
-        skills: n.skills,
-        promptPrepend: n.prompt_prepend,
-        promptAppend: n.prompt_append,
-        customPrompt: n.custom_prompt,
-        customTools: n.custom_tools,
-        sandbox: n.sandbox,
+        model: cfg.model ?? null,
+        maxBudgetUsd: cfg.max_budget_usd ?? null,
+        maxTurns: cfg.max_turns ?? null,
+        effort: cfg.effort ?? null,
+        tools: cfg.tools ?? null,
+        skills,
+        promptPrepend: cfg.prompt_prepend ?? null,
+        promptAppend: cfg.prompt_append ?? null,
+        customPrompt: cfg.custom_prompt ?? null,
+        customTools: cfg.custom_tools ?? null,
+        sandbox: cfg.sandbox ?? null,
       },
     };
   });
@@ -217,7 +215,6 @@ export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: 
     target: e.target,
     type: e.edge_type === "feedback" ? "feedbackEdge" : "default",
     animated: e.edge_type === "feedback",
-    style: e.edge_type === "feedback" ? { stroke: "#f87171", strokeDasharray: "6 4" } : undefined,
     data: {
       edgeType: e.edge_type,
       loopConfig: e.loop_config,
@@ -229,7 +226,8 @@ export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: 
 
 /**
  * Ensure Start and End nodes exist in the React Flow graph.
- * If missing, inject them at sensible positions relative to existing nodes.
+ * If missing, inject them at sensible positions relative to existing nodes,
+ * connected to the graph's roots and leaves.
  */
 export function injectStartEndNodes(graph: { nodes: Node[]; edges: Edge[] }): { nodes: Node[]; edges: Edge[] } {
   const { nodes, edges } = graph;
@@ -266,5 +264,26 @@ export function injectStartEndNodes(graph: { nodes: Node[]; edges: Edge[] }): { 
     });
   }
 
-  return { nodes: injected, edges };
+  // A stored graph has no scaffold edges (toApiGraph strips them), so connect
+  // what was injected: Start to every agent no flow edge enters, every agent
+  // no flow edge leaves to End. Feedback edges loop back and do not count.
+  const flow = edges.filter((e) => (e.data as Record<string, unknown> | undefined)?.edgeType !== "feedback");
+  const hasIncoming = new Set(flow.map((e) => e.target));
+  const hasOutgoing = new Set(flow.map((e) => e.source));
+  const scaffold = (source: string, target: string): Edge => ({
+    id: `${source}->${target}`,
+    source,
+    target,
+    type: "default",
+    data: { edgeType: "flow" },
+  });
+  const added: Edge[] = [];
+  if (!hasStart) {
+    for (const n of agentNodes) if (!hasIncoming.has(n.id)) added.push(scaffold("__start__", n.id));
+  }
+  if (!hasEnd) {
+    for (const n of agentNodes) if (!hasOutgoing.has(n.id)) added.push(scaffold(n.id, "__end__"));
+  }
+
+  return { nodes: injected, edges: [...edges, ...added] };
 }

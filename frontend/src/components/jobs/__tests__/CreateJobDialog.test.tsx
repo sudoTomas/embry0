@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const mockMutate = vi.fn();
@@ -18,6 +18,13 @@ beforeEach(() => {
 });
 
 describe("CreateJobDialog", () => {
+  it("moves focus into the form, to the Context field, not to the header's Close", async () => {
+    render(<CreateJobDialog onClose={vi.fn()} />);
+    await waitFor(() =>
+      expect(document.activeElement, "the first field takes focus, not the Close button").toBe(screen.getByLabelText("Context")),
+    );
+  });
+
   it("submits a git context with repo, ref, and issue number", async () => {
     const user = userEvent.setup();
     render(<CreateJobDialog onClose={vi.fn()} />);
@@ -97,5 +104,19 @@ describe("CreateJobDialog", () => {
       expect.objectContaining({ max_budget_usd: 25 }),
       expect.anything(),
     );
+  });
+
+  it("is a modal dialog named for what it does, and Cancel closes it", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<CreateJobDialog onClose={onClose} />);
+    const dialog = screen.getByRole("dialog", { name: "Create New Job" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(dialog.parentElement?.parentElement, "a Dialog over the page, not a card in it").toBe(document.body);
+    expect(screen.getByLabelText("Advanced options")).toHaveAttribute("role", "switch");
+    fireEvent.click(dialog.parentElement as HTMLElement);
+    expect(onClose, "a click outside does not discard the form").not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

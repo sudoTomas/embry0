@@ -12,6 +12,11 @@ opt-in fallback: it routes only when ``EMBRY0_XAI_DIRECT_EXECUTOR`` is set
 alongside a live proxy (``EMBRY0_XAI_PROXY_URL``) — insurance for a CLI
 release breaking against xAI's compat endpoint. With the proxy off, grok
 falls back to the EMB-36 CLI/console-key path.
+
+The OpenAI-compatible providers (``runtime="chat_completions"`` in
+``embry0/agents/providers.py``) run on OpenAICompatibleExecutor, whatever the
+execution mode: the Claude CLI cannot speak their API. The orchestrator routes a
+model to one of them only when the deployment enabled it.
 """
 
 from __future__ import annotations
@@ -40,6 +45,14 @@ def select_executor(invocation: AgentInvocation) -> AgentExecutor:
         from embry0.agents.executor_xai import DirectXaiExecutor
 
         return DirectXaiExecutor()
+
+    from embry0.agents.providers import provider_named
+
+    provider = provider_named(invocation.provider) if invocation.provider else None
+    if provider is not None and provider.runtime == "chat_completions":
+        from embry0.agents.executor_openai import OpenAICompatibleExecutor
+
+        return OpenAICompatibleExecutor()
 
     mode = invocation.execution_mode
     if mode == "sdk":

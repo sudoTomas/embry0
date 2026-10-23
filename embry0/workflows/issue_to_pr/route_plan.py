@@ -12,17 +12,30 @@ feedback, ask-user) never touch the cursor — they are not template edges.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import structlog
 
+from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_AGENT_TYPES
+
 logger = structlog.get_logger(__name__)
+
+# The builtin agent types that run on the generic agent node: their behavior
+# is the agent definition's system prompt, so the node needs no code per type.
+# AGENT_TYPE_TO_NODE and plan_route's physical-node map read this tuple; the
+# dispatcher maps below default every type outside the fixed node vocabulary
+# to the generic agent, and the template validator accepts any agent_type
+# that names an agent_definitions row (spec 3.5), so a new builtin generic
+# type needs its BUILTIN_SEED row and an entry here.
+GENERIC_AGENT_TYPES: tuple[str, ...] = ("research", "analysis", "ops", *SPECIALIST_AGENT_TYPES)
 
 # Template agent_type → physical LangGraph node. ``qa`` maps to the head of
 # the whole QA chain (init_orchestrator → orchestrate_qa → qa_report →
 # qa_failure_bookkeeping) — one template step, internal edges untouched.
-# The non-code agents (RAV-604) share one generic node that reads the
-# current route step to know which agent definition to run.
+# Every type outside FIXED_NODE_TYPES (the builtin non-code agents listed
+# here and any custom agent_definitions row) runs on the one generic_agent
+# node, which reads the current route step to know which definition to run.
 AGENT_TYPE_TO_NODE: dict[str, str] = {
     "developer": "developer",
     "reviewer": "review",
@@ -30,9 +43,7 @@ AGENT_TYPE_TO_NODE: dict[str, str] = {
     "review": "review",
     "qa": "init_orchestrator",
     "output": "finalize_output",
-    "research": "generic_agent",
-    "analysis": "generic_agent",
-    "ops": "generic_agent",
+    **dict.fromkeys(GENERIC_AGENT_TYPES, "generic_agent"),
 }
 
 # The dispatcher's return vocabulary; graph.py maps these to nodes.
@@ -78,24 +89,40 @@ def build_route_plan(graph_definition: dict[str, Any]) -> list[dict[str, Any]]:
         node = nodes[node_id]
         agent_type = node.get("agent_type", "")
         if agent_type != "triage":  # triage is the selector, not a step
-            plan.append({"agent_type": agent_type, "node_id": node_id, "config": node.get("config") or {}})
+            plan.append({"agent_type": agent_type, "node_id": node_id, "config": node_config(node)})
         node_id = successors.get(node_id)
     return plan
 
 
+def specialist_job_kind(plan: list[dict[str, Any]]) -> str | None:
+    """``"analysis"`` for a route whose agents are all specialists, else None.
+
+    A specialist route (kintsugi-trace, interrogate, ...) declares no
+    ``default_for_kind`` and is never triage's pick: a job reaches it only by
+    naming it (``SPECIALIST_TEMPLATE_NAMES``). Its agent examines a cloned
+    repository and reports, which is what the analysis kind means, so
+    plan_route records the job as one whatever kind triage guessed.
+    """
+    agents = [step.get("agent_type") for step in plan if step.get("agent_type") != "output"]
+    if agents and all(agent in SPECIALIST_AGENT_TYPES for agent in agents):
+        return "analysis"
+    return None
+
+
 def _step_target(step: dict[str, Any]) -> str:
-    """Dispatcher key for a step ('developer' | 'review' | 'qa' | 'output' | 'agent')."""
+    """Dispatcher key for a step ('developer' | 'review' | 'qa' | 'output' | 'agent').
+
+    Every type outside the fixed node vocabulary is an agent_definitions row
+    and runs on generic_agent (spec 3.5).
+    """
     mapping = {
         "developer": "developer",
         "reviewer": "review",
         "review": "review",
         "qa": "qa",
         "output": "output",
-        "research": "agent",
-        "analysis": "agent",
-        "ops": "agent",
     }
-    return mapping[step["agent_type"]]
+    return mapping.get(step["agent_type"], "agent")
 
 
 def next_route(state: dict[str, Any]) -> str:
@@ -142,12 +169,10 @@ def step_template_config(state: dict[str, Any], run_agent_type: str) -> dict[str
         "review": "review",
         "qa": "qa",
         "output": "output",
-        # Non-code agents (RAV-604): template agent_type IS the runtime type.
-        "research": "research",
-        "analysis": "analysis",
-        "ops": "ops",
     }
-    if step_to_runtime.get(step.get("agent_type", "")) != run_agent_type:
+    agent_type = str(step.get("agent_type", ""))
+    # Any other type is its own runtime type: the row named by the template runs (spec 3.5).
+    if step_to_runtime.get(agent_type, agent_type) != run_agent_type:
         return None
     return _config_overrides(step.get("config") or {}, run_agent_type)
 
@@ -162,8 +187,35 @@ def triage_template_config(graph_definition: dict[str, Any]) -> dict[str, Any] |
     """
     for node in graph_definition.get("nodes", []):
         if node.get("agent_type") == "triage":
-            return _config_overrides(node.get("config") or {}, "triage")
+            return _config_overrides(node_config(node), "triage")
     return None
+
+
+_LEGACY_NODE_OVERRIDE_KEYS = (
+    "model",
+    "max_budget_usd",
+    "max_turns",
+    "effort",
+    "tools",
+    "skills",
+    "prompt_prepend",
+    "prompt_append",
+    "custom_prompt",
+    "custom_tools",
+    "sandbox",
+)
+
+
+def node_config(node: Mapping[str, Any]) -> dict[str, Any]:
+    """A node's overrides: ``config`` when it is a dict, else the legacy top-level keys (#78).
+
+    The editor wrote overrides at the node's top level for a while; stored
+    templates of that shape keep working. An explicit ``config`` dict wins.
+    """
+    cfg = node.get("config")
+    if isinstance(cfg, dict):
+        return dict(cfg)
+    return {k: node[k] for k in _LEGACY_NODE_OVERRIDE_KEYS if node.get(k) is not None}
 
 
 def _config_overrides(cfg: dict[str, Any], run_agent_type: str) -> dict[str, Any] | None:
@@ -172,8 +224,9 @@ def _config_overrides(cfg: dict[str, Any], run_agent_type: str) -> dict[str, Any
         out["agent_models"] = {run_agent_type: cfg["model"]}
     if cfg.get("tools"):
         out["agent_tools"] = {run_agent_type: list(cfg["tools"])}
-    if cfg.get("skills"):
-        out["agent_skills"] = {run_agent_type: list(cfg["skills"])}
+    # `is not None`: a stored bare [] is the legacy "replace with nothing".
+    if cfg.get("skills") is not None:
+        out["agent_skills"] = {run_agent_type: cfg["skills"]}
     return out or None
 
 

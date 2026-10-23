@@ -78,10 +78,13 @@ can be approved for real once the mode is `on`.
 ## Auth: the `merge` key scope
 
 The chat client holds a `merge`-scope API key (admin-minted). It may make every GET,
-plus exactly these mutations: `POST /merge-approvals/{id}/decide`, both
+plus exactly these mutations: `POST /merge-approvals/{id}/decide`,
+`POST /cases/{id}/accept` (accepting a watcher finding of a stack this
+orchestrator watches, which dispatches one paid job per call), both
 agent-question answer routes, and `POST /pipelines/validate`. Everything else
-is 403 — a leaked copy cannot create or cancel jobs, edit env vars or trigger
-the watcher. The allowlist is matched on the full route template, include
+is 403: a leaked copy cannot submit, cancel or resume a job directly, edit env
+vars or trigger the watcher, but it can start paid work, one job for each
+finding it accepts. The allowlist is matched on the full route template, include
 prefix and all (`embry0/api/deps.py:MERGE_SCOPE_MUTATIONS`, read through
 `embry0/api/route_table.py`).
 
@@ -89,15 +92,34 @@ prefix and all (`embry0/api/deps.py:MERGE_SCOPE_MUTATIONS`, read through
 
 - `GET /api/v1/merge-approvals?status=pending` — asks, newest first, plus the current `mode`.
 - `GET /api/v1/merge-approvals/{id}`
-- `POST /api/v1/merge-approvals/{id}/decide` `{decision: approve|reject, decided_by, chat_id}` →
-  `{outcome: merged|would_merge|rejected|refused|stale|failed|already_decided, status, detail, …}`.
-  Each decision writes a `merge.decided` audit row.
+- `POST /api/v1/merge-approvals/{id}/decide`, two forms on one route →
+  `{outcome: merged|would_merge|rejected|refused|stale|failed|already_decided, status, detail, …}`:
+  - the relay's: `{decision: approve|reject, decided_by, chat_id}`, with `chat_id` checked against `MERGE_APPROVAL_CHAT_ID`; accepted from the `merge`-scope key, the master key or an admin, since `decided_by` names whoever answered (an operate key or an operator session gets 403 pointing at the dashboard's form);
+  - the dashboard's: `{decision}` alone, admin tier (an admin session or an admin-scope key); the actor is who authenticated, the stored `chat_id` is the literal `dashboard`, and no chat needs to be configured.
+  A body with one of `decided_by` and `chat_id` but not the other is 422.
+  Each decision writes a `merge.decided` audit row carrying `via` (`chat` or `dashboard`).
 - MCP: `merge_approval_list`, `merge_approval_get`, `merge_decide` (confirm-gated).
+
+## Deciding from the dashboard
+
+The approval chat is one channel; the dashboard's merge-approvals page is the
+other (spec 3.8). An admin presses approve or reject there, the dashboard
+sends `{decision}` and nothing else, and embry0 names the actor from the
+session or key that made the call. The same re-checks run (PR head unchanged,
+CI green, verification gate not blocking, mergeable); `MERGE_APPROVAL_REPOS`
+still decides which repositories are asked about at all. A `merge`-scope key
+cannot use this form: it is the relay's key, and the relay answers for a chat.
+
+The page is **Merge approvals** in the Work section: the asks by status,
+pending first, and each ask's own page with the change, the checks, the
+reviewer's verdict, the recommendation and the two buttons.
 
 ## Rolling out
 
 1. Deploy with `MERGE_APPROVAL_MODE=dry_run` and `MERGE_APPROVAL_CHAT_ID` set.
 2. Mint a `merge`-scope service key for that client and swap it in for the operate key.
+   The relay cannot decide until it holds that key: the relay's form is refused
+   to an operate key with a 403 that points at the dashboard's form.
 3. Watch a few asks and "would merge" answers in the chat.
 4. Set `MERGE_APPROVAL_MODE=on` in the root `.env` and recreate the orchestrator.
    The token for the repo's owner (`GITHUB_TOKEN__<OWNER>`) needs pull-request

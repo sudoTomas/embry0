@@ -71,6 +71,41 @@ async def test_list_jobs(app):
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_brief_cuts_each_task_to_its_first_line(app):
+    """``?brief=true`` keeps a list page small: a watcher analysis job's task
+    is its whole log briefing, and twenty of them weighed close to a megabyte
+    per page load. The default stays the full text, so every other client
+    sees what it saw before."""
+    briefing = "Analyze the following production logs\n" + "x" * 50_000
+    one_long_line = "y" * 300
+    app.state.jobs_repo.list_all = AsyncMock(
+        return_value=(
+            [
+                {"job_id": "job-briefing", "status": "completed", "repo": "owner/repo", "task": briefing},
+                {"job_id": "job-long-line", "status": "completed", "repo": "owner/repo", "task": one_long_line},
+                {"job_id": "job-short", "status": "pending", "repo": "owner/repo", "task": "Fix bug"},
+            ],
+            3,
+        )
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        brief = await client.get("/api/v1/jobs", params={"brief": "true"})
+        full = await client.get("/api/v1/jobs")
+    assert brief.status_code == 200
+    jobs = brief.json()["jobs"]
+    assert jobs[0]["task"] == "Analyze the following production logs…"
+    assert jobs[0]["task_truncated"] is True
+    assert jobs[1]["task"] == "y" * 200 + "…"
+    assert jobs[1]["task_truncated"] is True
+    assert jobs[2]["task"] == "Fix bug"
+    assert jobs[2]["task_truncated"] is False
+    assert len(brief.content) < 2_000
+    assert full.json()["jobs"][0]["task"] == briefing
+    assert full.json()["jobs"][0]["task_truncated"] is False
+
+
+@pytest.mark.asyncio
 async def test_list_jobs_surfaces_issue_id_and_current_stage(app):
     """GET /jobs builds JobResponse from the row — the Console board fields
     (issue_id, current_stage) must survive the model, and legacy rows without

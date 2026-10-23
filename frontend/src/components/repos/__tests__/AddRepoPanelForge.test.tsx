@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 
 const mockRegister = vi.fn();
 
@@ -62,12 +62,18 @@ const GITLAB_PROJECTS = {
   configured: true,
 };
 
+/** Where the panel sent the browser. */
+function Where() {
+  return <div data-testid="where">{useLocation().pathname}</div>;
+}
+
 function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/repos"]}>
         <AddRepoPanel />
+        <Where />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -111,6 +117,27 @@ describe("AddRepoPanel forge selection (#169)", () => {
     await user.click(screen.getByRole("button", { name: /^register$/i }));
     await waitFor(() => expect(mockRegister).toHaveBeenCalled());
     expect(mockRegister).toHaveBeenCalledWith("acme/products/fbr", "", "gitlab");
+  });
+
+  it("Register and set up on a GitLab subgroup path lands on that repository's page", async () => {
+    // The old target, the setup form, only knows GitHub; the repo page works for both.
+    mockRegister.mockResolvedValue({ repo: "acme/products/fbr", forge: "gitlab" });
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByTestId("add-repo-forge-gitlab"));
+    await user.selectOptions(screen.getByTestId("add-repo-select"), "acme/products/fbr");
+    await user.click(screen.getByRole("button", { name: "Register and set up" }));
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/repos/acme/products/fbr"));
+    expect(screen.getByTestId("where").textContent).not.toContain("onboard");
+  });
+
+  it("Register lands on the new repository's page too", async () => {
+    mockRegister.mockResolvedValue({ repo: "acme/widgets", forge: "github" });
+    const user = userEvent.setup();
+    renderPanel();
+    await user.selectOptions(screen.getByTestId("add-repo-select"), "acme/widgets");
+    await user.click(screen.getByRole("button", { name: /^register$/i }));
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/repos/acme/widgets"));
   });
 
   it("switching forge clears a stale selection", async () => {

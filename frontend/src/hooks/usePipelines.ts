@@ -1,6 +1,14 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchTemplates, fetchTemplate, createTemplate, deleteTemplate, renameTemplate } from "@/api/pipelines";
-import type { PipelineGraph } from "@/lib/types";
+import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  fetchTemplates,
+  fetchTemplate,
+  createTemplate,
+  deleteTemplate,
+  renameTemplate,
+  duplicateTemplate,
+  setTemplateDefaultKind,
+} from "@/api/pipelines";
+import type { PipelineGraph, TemplateKind } from "@/lib/types";
 
 export function useTemplates() {
   return useQuery({
@@ -17,6 +25,13 @@ export function useTemplate(templateId: string | null) {
   });
 }
 
+/** A write to one template stales both the list and its detail query, so a
+ * template reopened after a save shows the saved name and graph. */
+function invalidateTemplate(qc: QueryClient, templateId: string) {
+  qc.invalidateQueries({ queryKey: ["pipeline-templates"] });
+  qc.invalidateQueries({ queryKey: ["pipeline-template", templateId] });
+}
+
 export function useCreateTemplate() {
   const qc = useQueryClient();
   return useMutation({
@@ -30,7 +45,7 @@ export function useDeleteTemplate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (templateId: string) => deleteTemplate(templateId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["pipeline-templates"] }),
+    onSuccess: (_data, templateId) => invalidateTemplate(qc, templateId),
   });
 }
 
@@ -39,6 +54,23 @@ export function useRenameTemplate() {
   return useMutation({
     mutationFn: (params: { templateId: string; name?: string; description?: string; graph?: PipelineGraph }) =>
       renameTemplate(params.templateId, params.name, params.description, params.graph),
+    onSuccess: (_data, { templateId }) => invalidateTemplate(qc, templateId),
+  });
+}
+
+export function useDuplicateTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ templateId, name }: { templateId: string; name: string }) => duplicateTemplate(templateId, name),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pipeline-templates"] }),
+  });
+}
+
+/** Set or clear (kind null) a template's default kind; the list and the template are read again. */
+export function useSetTemplateDefault() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ templateId, kind }: { templateId: string; kind: TemplateKind | null }) => setTemplateDefaultKind(templateId, kind),
+    onSuccess: (_data, { templateId }) => invalidateTemplate(qc, templateId),
   });
 }

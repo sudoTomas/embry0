@@ -213,6 +213,79 @@ async def test_runner_idle_watchdog_kills_silent_run() -> None:
     assert "idle watchdog" in out.error_message
 
 
+_PKILL = ["pkill", "-f", "embry0.sandbox.runner"]
+
+
+def _recording_runner(proc: _HangingProc, *, pkill_error: Exception | None = None) -> AgentRunner:
+    """A runner whose fake docker builds real exec argv and records every command."""
+    runner = _runner_with_proc(proc)
+    docker = runner._docker
+    docker.build_exec_cmd = MagicMock(
+        side_effect=lambda container, command, **_: ["docker", "exec", container, *command]
+    )
+
+    async def _run_cmd(cmd: list[str], timeout: int = 60, **_: object) -> str:
+        if pkill_error is not None and cmd[-3:] == _PKILL:
+            raise pkill_error
+        return ""
+
+    docker.run_cmd = AsyncMock(side_effect=_run_cmd)
+    return runner
+
+
+@pytest.mark.asyncio
+async def test_wall_clock_timeout_stops_the_agent_inside_the_sandbox() -> None:
+    """Killing the docker exec client does not kill the runner inside the
+    sandbox, and a timed-out job pauses with its sandbox kept: the agent
+    went on working, and spending, unseen, and a resume started a second
+    one in the same workspace. The timeout must stop it there and say so."""
+    proc = _HangingProc()
+    runner = _recording_runner(proc)
+    with structlog.testing.capture_logs() as logs:
+        out = await runner.run(
+            container="sandbox-job-x",
+            config={"agent_type": "developer", "timeout_seconds": 0.3, "idle_grace_seconds": 30},
+        )
+    assert out.is_error and "timed out after" in out.error_message
+    assert proc.killed is True
+    sent = [c.args[0] for c in runner._docker.run_cmd.await_args_list]
+    assert ["docker", "exec", "sandbox-job-x", *_PKILL] in sent, f"the timeout left the agent running; sent {sent}"
+    record = [e for e in logs if e["event"] == "agent_runner_wall_clock_timeout"]
+    assert record, "the timeout kill is not recorded"
+    assert record[0]["container"] == "sandbox-job-x" and record[0]["runner_stopped"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [RuntimeError("pkill exited 1"), TimeoutError("docker command timed out after 10s")],
+)
+async def test_a_failed_in_sandbox_kill_still_returns_the_timeout(error: Exception) -> None:
+    """pkill exits 1 when the runner is already gone, and docker can hang:
+    either way the run ends with its timeout, and the record says the kill
+    did not land."""
+    runner = _recording_runner(_HangingProc(), pkill_error=error)
+    with structlog.testing.capture_logs() as logs:
+        out = await runner.run(
+            container="sandbox-job-x",
+            config={"agent_type": "developer", "timeout_seconds": 0.3, "idle_grace_seconds": 30},
+        )
+    assert "timed out after" in out.error_message
+    record = [e for e in logs if e["event"] == "agent_runner_wall_clock_timeout"]
+    assert record and record[0]["runner_stopped"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_idle_watchdog_also_stops_the_runner_inside_the_sandbox() -> None:
+    runner = _recording_runner(_HangingProc())
+    await runner.run(
+        container="sandbox-job-x",
+        config={"agent_type": "developer", "timeout_seconds": 30, "idle_grace_seconds": 0.3},
+    )
+    sent = [c.args[0] for c in runner._docker.run_cmd.await_args_list]
+    assert ["docker", "exec", "sandbox-job-x", *_PKILL] in sent, sent
+
+
 @pytest.mark.asyncio
 async def test_runner_heartbeats_suppress_idle_watchdog() -> None:
     """Steady stdout lines keep the watchdog quiet; the run completes
@@ -776,3 +849,26 @@ async def test_an_image_with_inconsistent_baked_modules_is_reported_as_a_start_f
         f"an image whose runner cannot import its safety module was coded {out.error_code!r}: {out.error_message}"
     )
     assert "cannot import name 'classify_agent_error'" in out.stderr_tail
+
+
+@pytest.mark.asyncio
+async def test_skill_mounts_are_the_managers_record_without_the_daemon_path() -> None:
+    from embry0.skills.store import SkillMount
+
+    sandbox = MagicMock()
+    sandbox.skill_mounts_for = AsyncMock(
+        return_value=[
+            SkillMount(
+                source_id="superpowers",
+                plugin_name="superpowers",
+                host_path="/skills/superpowers/" + "a" * 40,
+                container_path="/opt/embry0/skills/superpowers",
+            )
+        ]
+    )
+    runner = AgentRunner(sandbox, MagicMock())
+    specs = await runner.skill_mounts("container-abc123")
+    sandbox.skill_mounts_for.assert_awaited_once_with("container-abc123")
+    assert specs == [
+        {"source_id": "superpowers", "plugin_name": "superpowers", "container_path": "/opt/embry0/skills/superpowers"}
+    ]

@@ -63,7 +63,9 @@ class PipelineConfig(TypedDict, total=False):
     validator_modes: list[str]
     agent_models: dict[str, str]
     agent_tools: dict[str, list[str]]
-    agent_skills: dict[str, list[str]]
+    # A bare list replaces the agent's skills; {"add": [...], "remove": [...] | "*"}
+    # is a delta over them (embry0.agents.skills.effective_skills).
+    agent_skills: dict[str, list[str] | dict[str, Any]]
     budget_usd: float
     # Phase 1 additions — per-agent-type overrides produced by triage.
     execution_modes: dict[str, str]
@@ -138,6 +140,15 @@ class AgentOutputEntry(TypedDict, total=False):
     session_blob: bytes | None
 
 
+class SkillsDeltaModel(BaseModel):
+    """A skills delta triage may emit: ``remove`` first, then ``add`` (spec 3.3)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    add: list[str] = Field(default_factory=list)
+    remove: list[str] | Literal["*"] = Field(default_factory=list)
+
+
 class PipelineConfigModel(BaseModel):
     """Strict Pydantic equivalent of the PipelineConfig TypedDict.
 
@@ -157,7 +168,7 @@ class PipelineConfigModel(BaseModel):
     validator_modes: list[str] = Field(default_factory=list)
     agent_models: dict[str, str] = Field(default_factory=dict)
     agent_tools: dict[str, list[str]] = Field(default_factory=dict)
-    agent_skills: dict[str, list[str]] = Field(default_factory=dict)
+    agent_skills: dict[str, list[str] | SkillsDeltaModel] = Field(default_factory=dict)
     budget_usd: float = Field(default=10.0, ge=0.0)
     execution_modes: dict[str, str] = Field(default_factory=dict)
     auth_modes: dict[str, str] = Field(default_factory=dict)
@@ -301,6 +312,10 @@ class JobState(TypedDict, total=False):
     ]  # typed job context; None → treat as git for back-compat
     task: Annotated[str, FoldingLastValue]
     issue_number: Annotated[int | None, FoldingLastValue]
+    # The forge-native issue number (GitHub number or GitLab iid), None for
+    # a Linear issue. issue_number stays GitHub-only for its GitHub-shaped
+    # readers; the QA report reads this one to write on either forge (#65).
+    forge_issue_number: Annotated[int | None, FoldingLastValue]
     issue_id: Annotated[str | None, FoldingLastValue]
     # EMB-39: labels from the originating issue (empty for standalone QA
     # jobs). Feeds conditional-criteria `labels:` predicates in the QA
@@ -523,6 +538,14 @@ class JobState(TypedDict, total=False):
     onboard: Annotated[dict[str, Any] | None, FoldingLastValue]
     # EMB-50: skip the boot/ready smoke phase (onboard jobs, --no-smoke).
     skip_smoke: Annotated[bool, FoldingLastValue]
+    # ADR 0019 propose mode (onboard jobs started with a setup proposal):
+    # write_config stores nothing, and the runner keeps the draft on the
+    # proposal for a person to apply.
+    onboard_propose: Annotated[bool, FoldingLastValue]
+    # #30 pr-review pipeline: the job's pipeline_config plus sandbox id,
+    # checkout facts, previous review, verdict and final_status. Owned by
+    # embry0/workflows/pr_review/nodes.py; absent on other pipelines.
+    pr_review: Annotated[dict[str, Any] | None, FoldingLastValue]
 
 
 class QAAttempt(TypedDict, total=False):

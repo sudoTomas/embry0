@@ -1,11 +1,25 @@
 import { cn } from "@/lib/utils";
 
+export type HeartbeatTone = "primary" | "live" | "down" | "waiting";
+
 interface HeartbeatProps {
   label: string;
+  /** Dot colour. Only a live (or primary) heartbeat pulses. */
+  tone?: HeartbeatTone;
+  /** Rail mode: the dot alone, the label stays as the accessible name. */
+  hideLabel?: boolean;
   className?: string;
 }
 
-export function Heartbeat({ label, className }: HeartbeatProps) {
+const DOT: Record<HeartbeatTone, string> = {
+  primary: "bg-primary",
+  live: "bg-success",
+  down: "bg-destructive",
+  waiting: "bg-fg-muted",
+};
+
+export function Heartbeat({ label, tone = "primary", hideLabel = false, className }: HeartbeatProps) {
+  const pulses = tone === "primary" || tone === "live";
   return (
     <div
       role="status"
@@ -14,11 +28,9 @@ export function Heartbeat({ label, className }: HeartbeatProps) {
     >
       <span
         aria-hidden
-        className="vitals-pulse inline-block h-2 w-2 rounded-full bg-primary"
+        className={cn("inline-block h-2 w-2 shrink-0 rounded-full", pulses && "vitals-pulse", DOT[tone])}
       />
-      <span className="text-xs uppercase tracking-wider text-muted-foreground">
-        {label}
-      </span>
+      {!hideLabel && <span className="truncate text-xs font-semibold">{label}</span>}
     </div>
   );
 }

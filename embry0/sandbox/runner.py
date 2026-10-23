@@ -21,14 +21,21 @@ from langchain_core.runnables import RunnableConfig
 from embry0.agents.executor_factory import select_executor
 from embry0.agents.invocation import AgentInvocation
 from embry0.safety.policy import default_policy_for_agent
-from embry0.safety.redaction import redact_secrets, secret_env_values
+from embry0.safety.redaction import redact_event, redact_secrets, secret_env_values
 
 logger = structlog.get_logger(__name__)
 
 
 def _emit(event: dict[str, Any]) -> None:
-    """Write a JSON event to stdout and flush."""
+    """Write a JSON event to stdout and flush.
+
+    Second redaction pass (spec 3.6): the executors scrub their text fields
+    before the constructors cap them; this scrubs every string the event
+    still carries (tool_input, summaries, error messages) with the secrets
+    this process can see, so no line depends on one side alone.
+    """
     event.setdefault("timestamp", datetime.now(UTC).isoformat())
+    event = redact_event(event, secret_env_values())
     sys.stdout.write(json.dumps(event, default=str) + "\n")
     sys.stdout.flush()
 
@@ -71,6 +78,9 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
         safety_policy=policy,
         channel_config=None,
         provider=cfg.get("provider"),
+        run_id=str(cfg.get("run_id") or ""),
+        node=str(cfg.get("node") or ""),
+        skill_mounts=tuple(cfg.get("skill_mounts") or ()),
     )
 
 

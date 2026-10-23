@@ -111,15 +111,15 @@ def test_reserved_env_prefixes_export_expected_tuple() -> None:
     from embry0.execution.auth_provider import RESERVED_ENV_PREFIXES
 
     # These prefixes must NEVER be user-settable via the environment UI.
-    assert RESERVED_ENV_PREFIXES == ("QA_ARTIFACT_", "DOCKER_", "VIBIUM_", "GIT_CONFIG_")
+    assert RESERVED_ENV_PREFIXES == ("QA_ARTIFACT_", "DOCKER_", "VIBIUM_", "GIT_CONFIG_", "EMBRY0_LLM_")
 
 
 def test_hook_env_prefixes_export_expected_tuple() -> None:
     from embry0.execution.auth_provider import HOOK_ENV_PREFIXES
 
-    # #524: git, the agent CLI and its runtime. Kept out of RESERVED_ENV_PREFIXES
+    # #524: git, the agent CLI and its runtime; Grok Build. Kept out of RESERVED_ENV_PREFIXES
     # so config_lint still reports CLAUDE_ typos in the orchestrator's own env.
-    assert HOOK_ENV_PREFIXES == ("GIT_", "CLAUDE_", "BUN_")
+    assert HOOK_ENV_PREFIXES == ("GIT_", "CLAUDE_", "BUN_", "GROK_")
 
 
 def test_guarded_env_keys_export_expected_set() -> None:
@@ -142,3 +142,14 @@ def test_sandbox_ca_env_keys_are_all_reserved() -> None:
     from embry0.execution.tls import sandbox_ca_env
 
     assert set(sandbox_ca_env()) <= RESERVED_ENV_KEYS
+
+
+def test_grok_namespace_is_reserved() -> None:
+    from embry0.execution.auth_provider import env_override_refusal
+
+    # Grok Build reads GROK_* variables that redirect its traffic or load code
+    # (GROK_AUTH_PROVIDER_COMMAND, GROK_CLI_CHAT_PROXY_BASE_URL, GROK_HOME, GROK_CONFIG,
+    # GROK_MANAGED_CONFIG_URL); a sandbox that carries the binary must refuse them
+    # from repo env vars, like CLAUDE_, GIT_ and BUN_.
+    for name in ("GROK_AUTH_PROVIDER_COMMAND", "grok_home", "Grok_Config"):
+        assert env_override_refusal(name, "x") is not None, f"{name} was accepted"

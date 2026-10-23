@@ -12,17 +12,31 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { RepoPicker } from "@/components/RepoPicker";
 import { useRegisteredRepos } from "@/hooks/useRepos";
+import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import { EnvVarTable } from "@/components/environments/EnvVarTable";
 import { EnvVarModal } from "@/components/environments/EnvVarModal";
-import { envErrorText } from "@/components/environments/envErrorText";
 import { DetectBanner } from "@/components/environments/DetectBanner";
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
+import { PullRequestReviewCard } from "@/components/environments/PullRequestReviewCard";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { FolderOpen, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
 import type { EnvVar, EnvVarScope, DetectedEnvVar } from "@/lib/types/environment";
 
 type LocationScope = "global" | "repo";
+
+/**
+ * The confirm shown before a variable is removed. A secret's value is not
+ * kept anywhere else, so its removal says it cannot be recovered.
+ */
+function removeQuestion(key: string, where: string, vars: EnvVar[]): string {
+  const question = `Remove ${key} ${where}? Jobs that start after this will not get it.`;
+  const secret = vars.some((v) => v.key === key && v.var_type === "secret");
+  return secret
+    ? `${question} embry0 does not keep secret values, so this one cannot be recovered.`
+    : question;
+}
 
 /**
  * Default an env var to scope=app for backwards compat with rows persisted
@@ -74,6 +88,8 @@ function mergeForSave(
 
 const APP_DESCRIPTION =
   "Application configuration and secrets injected into all sandboxes.";
+const REPO_APP_DESCRIPTION =
+  "Settings and passwords handed to embry0's test computers for this repository only. A value here wins over a global value with the same name.";
 const QA_DESCRIPTION =
   "Credentials and tokens used only by the QA agent during validation runs. Never injected into developer or review jobs.";
 
@@ -158,10 +174,11 @@ export function EnvironmentsPage() {
   };
 
   const handleGlobalDelete = (key: string) => {
+    if (!window.confirm(removeQuestion(key, "for every repository", globalVars))) return;
     const merged = mergeForSave(globalVars, null, key);
     setGlobalEnv.mutate(merged, {
       onSuccess: () => toast.success(`Deleted "${key}"`),
-      onError: (e) => toast.error(`Failed: ${envErrorText(e)}`),
+      onError: (e) => toastApiError(e, "Failed"),
     });
   };
 
@@ -185,12 +202,13 @@ export function EnvironmentsPage() {
   };
 
   const handleRepoDelete = (key: string) => {
+    if (!window.confirm(removeQuestion(key, `from ${selectedRepo}`, repoVars))) return;
     const merged = mergeForSave(repoVars, null, key);
     setRepoEnv.mutate(
       { fullRepo: selectedRepo, variables: merged },
       {
         onSuccess: () => toast.success(`Deleted "${key}"`),
-        onError: (e) => toast.error(`Failed: ${envErrorText(e)}`),
+        onError: (e) => toastApiError(e, "Failed"),
       },
     );
   };
@@ -223,7 +241,7 @@ export function EnvironmentsPage() {
       {
         onSuccess: () =>
           toast.success(`Imported ${toAdd.length} variable${toAdd.length !== 1 ? "s" : ""}`),
-        onError: (e) => toast.error(`Failed: ${envErrorText(e)}`),
+        onError: (e) => toastApiError(e, "Failed"),
       },
     );
   };
@@ -267,7 +285,13 @@ export function EnvironmentsPage() {
 
   // RAV-1294: the registry (with env-var counts) feeds both the repo picker
   // and the Global-tab discoverability summary.
-  const { data: registeredRepos = [] } = useRegisteredRepos();
+  const registry = useRegisteredRepos();
+  const { data: registeredRepos = [] } = registry;
+  // The Global tab paints once the registry has first answered. Its summary
+  // card sits above the two sections and only exists once the registry
+  // says some repository has variables; landing after them, it pushed both
+  // down (a layout shift of 0.13 to 0.16 on a phone, where its chips wrap).
+  const globalPainted = useFirstPaint(hasAnswered(registry));
   const reposWithVars = useMemo(
     () => registeredRepos.filter((r) => r.env_var_count > 0),
     [registeredRepos],
@@ -285,7 +309,7 @@ export function EnvironmentsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Environments</h1>
+        <h1 className="title-pixel text-xl font-bold">Environments</h1>
       </div>
 
       <Tabs defaultValue="global" value={activeTab} onValueChange={setActiveTab}>
@@ -295,6 +319,11 @@ export function EnvironmentsPage() {
         </TabsList>
 
         <TabsContent value="global">
+          {!globalPainted ? (
+            <div className="mt-4">
+              <TableSkeleton rows={5} />
+            </div>
+          ) : (
           <div className="space-y-6 mt-4">
             {/* RAV-1294: repo-scoped variables exist one tab away — say so
                 instead of greeting the operator with an empty Global tab. */}
@@ -310,7 +339,7 @@ export function EnvironmentsPage() {
                       key={r.repo}
                       type="button"
                       onClick={() => jumpToRepo(r.repo)}
-                      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-mono bg-blue-500/10 text-blue-400 ring-1 ring-inset ring-blue-500/20 hover:bg-blue-500/20 transition-colors cursor-pointer"
+                      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-mono bg-overlay text-fg-secondary ring-1 ring-inset ring-border-strong hover:text-fg hover:ring-primary/40 transition-colors cursor-pointer"
                     >
                       {r.repo} ({r.env_var_count})
                     </button>
@@ -319,16 +348,16 @@ export function EnvironmentsPage() {
               </Card>
             )}
 
-            {/* App Config section */}
+            {/* App config section */}
             <section className="space-y-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold">App Config</h2>
+                  <h2 className="text-section font-semibold">App config</h2>
                   <p className="text-sm text-muted-foreground">{APP_DESCRIPTION}</p>
                 </div>
                 <Button size="sm" onClick={() => openGlobalAdd("app")}>
                   <Plus className="h-4 w-4 mr-1" />
-                  Add Variable
+                  Add variable
                 </Button>
               </div>
               <Card className="p-0">
@@ -349,16 +378,16 @@ export function EnvironmentsPage() {
               </Card>
             </section>
 
-            {/* QA Test Credentials section */}
+            {/* QA test credentials section */}
             <section className="space-y-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold">QA Test Credentials</h2>
+                  <h2 className="text-section font-semibold">QA test credentials</h2>
                   <p className="text-sm text-muted-foreground">{QA_DESCRIPTION}</p>
                 </div>
-                <Button size="sm" onClick={() => openGlobalAdd("qa")}>
+                <Button size="sm" variant="secondary" onClick={() => openGlobalAdd("qa")}>
                   <Plus className="h-4 w-4 mr-1" />
-                  Add QA Variable
+                  Add QA variable
                 </Button>
               </div>
               <Card className="p-0">
@@ -376,10 +405,10 @@ export function EnvironmentsPage() {
                     showRequired
                     emptyState={
                       <div className="flex flex-col items-center justify-center py-12 text-center">
-                        <p className="text-white/25 text-sm font-medium">
+                        <p className="text-fg-secondary text-sm font-medium">
                           No QA test credentials configured
                         </p>
-                        <p className="text-white/[0.12] text-xs mt-1">
+                        <p className="text-fg-muted text-xs mt-1">
                           Add credentials with keys like{" "}
                           <code className="font-mono">QA_TEST_USER</code> for QA agent runs
                         </p>
@@ -390,6 +419,7 @@ export function EnvironmentsPage() {
               </Card>
             </section>
           </div>
+          )}
         </TabsContent>
 
         <TabsContent value="repo">
@@ -416,7 +446,7 @@ export function EnvironmentsPage() {
                     htmlFor="show-resolved"
                     className="text-sm text-muted-foreground cursor-pointer"
                   >
-                    Show resolved (App Config)
+                    Show resolved (app config)
                   </label>
                 </div>
               )}
@@ -426,18 +456,20 @@ export function EnvironmentsPage() {
 
             {validRepo && <RepoPreferencesSection repo={selectedRepo} />}
 
+            {validRepo && <PullRequestReviewCard repo={selectedRepo} />}
+
             {validRepo ? (
               <div className="space-y-6">
-                {/* App Config section */}
+                {/* App config section */}
                 <section className="space-y-3">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h2 className="text-lg font-semibold">App Config</h2>
-                      <p className="text-sm text-muted-foreground">{APP_DESCRIPTION}</p>
+                      <h2 className="text-section font-semibold">App config</h2>
+                      <p className="text-sm text-muted-foreground">{REPO_APP_DESCRIPTION}</p>
                     </div>
                     <Button size="sm" onClick={() => openRepoAdd("app")} type="button">
                       <Plus className="h-4 w-4 mr-1" />
-                      Add Variable
+                      Add variable
                     </Button>
                   </div>
                   <Card className="p-0">
@@ -461,14 +493,13 @@ export function EnvironmentsPage() {
                         emptyState={
                           <div className="flex flex-col items-center justify-center py-16 text-center">
                             <div className="relative">
-                              <div className="absolute inset-0 bg-blue-500/5 blur-2xl rounded-full scale-150" />
-                              <FolderOpen size={40} className="text-white/10 relative" />
+                              <FolderOpen size={40} className="text-fg-muted relative" />
                             </div>
-                            <p className="text-white/25 text-sm mt-4 font-medium">
+                            <p className="text-fg-secondary text-sm mt-4 font-medium">
                               No app config variables for this repository
                             </p>
-                            <p className="text-white/[0.12] text-xs mt-1">
-                              Click &ldquo;Add Variable&rdquo; to set repository-specific overrides
+                            <p className="text-fg-muted text-xs mt-1">
+                              Click &ldquo;Add variable&rdquo; to set repository-specific overrides
                             </p>
                           </div>
                         }
@@ -477,16 +508,16 @@ export function EnvironmentsPage() {
                   </Card>
                 </section>
 
-                {/* QA Test Credentials section */}
+                {/* QA test credentials section */}
                 <section className="space-y-3">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h2 className="text-lg font-semibold">QA Test Credentials</h2>
+                      <h2 className="text-section font-semibold">QA test credentials</h2>
                       <p className="text-sm text-muted-foreground">{QA_DESCRIPTION}</p>
                     </div>
-                    <Button size="sm" onClick={() => openRepoAdd("qa")} type="button">
+                    <Button size="sm" variant="secondary" onClick={() => openRepoAdd("qa")} type="button">
                       <Plus className="h-4 w-4 mr-1" />
-                      Add QA Variable
+                      Add QA variable
                     </Button>
                   </div>
                   <Card className="p-0">
@@ -504,10 +535,10 @@ export function EnvironmentsPage() {
                         showRequired
                         emptyState={
                           <div className="flex flex-col items-center justify-center py-12 text-center">
-                            <p className="text-white/25 text-sm font-medium">
+                            <p className="text-fg-secondary text-sm font-medium">
                               No QA test credentials configured
                             </p>
-                            <p className="text-white/[0.12] text-xs mt-1">
+                            <p className="text-fg-muted text-xs mt-1">
                               Add credentials with keys like{" "}
                               <code className="font-mono">QA_TEST_USER</code> for QA agent runs on
                               this repository
@@ -523,11 +554,10 @@ export function EnvironmentsPage() {
               <Card className="p-0">
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                   <div className="relative">
-                    <div className="absolute inset-0 bg-white/[0.03] blur-2xl rounded-full scale-150" />
-                    <FolderOpen size={40} className="text-white/10 relative" />
+                    <FolderOpen size={40} className="text-fg-muted relative" />
                   </div>
-                  <p className="text-white/25 text-sm mt-4 font-medium">No repository selected</p>
-                  <p className="text-white/[0.12] text-xs mt-1">
+                  <p className="text-fg-secondary text-sm mt-4 font-medium">No repository selected</p>
+                  <p className="text-fg-muted text-xs mt-1">
                     Select a repository above to manage its environment variables
                   </p>
                 </div>

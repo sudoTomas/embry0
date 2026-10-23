@@ -25,9 +25,10 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
+import httpx
 import structlog
 
-from embry0.execution.forge_client import ForgeClient
+from embry0.execution.forge_client import ForgeClient, ForgeWrite, forge_write
 from embry0.execution.gitlab_tokens import resolve_for_repo
 from embry0.execution.tls import build_ssl_context, load_ca_pem
 
@@ -107,6 +108,28 @@ class GitLabClient(ForgeClient):
         body = resp.json()
         return body if isinstance(body, dict) else None
 
+    async def get_merge_request(self, repo: str, iid: int) -> dict[str, Any] | None:
+        """One merge request by its project-scoped ``iid``, or None when missing or unreadable."""
+        resp = await self.get(self.project_path(repo, f"/merge_requests/{iid}"), repo=repo)
+        if resp.status_code != 200:
+            return None
+        body = resp.json()
+        return body if isinstance(body, dict) else None
+
+    async def get_member_access_level(self, repo: str, user_id: int) -> int | None:
+        """The user's access level on the project, inherited memberships included.
+
+        ``/members/all`` counts group membership too; plain ``/members`` would
+        refuse a Developer who is one only through the group. None when the
+        user is not a member or the lookup failed.
+        """
+        resp = await self.get(self.project_path(repo, f"/members/all/{user_id}"), repo=repo)
+        if resp.status_code != 200:
+            return None
+        body = resp.json()
+        level = body.get("access_level") if isinstance(body, dict) else None
+        return level if isinstance(level, int) and not isinstance(level, bool) else None
+
     async def create_issue_note(self, repo: str, iid: int, body: str) -> bool:
         """Post a note (comment) on an issue. True when accepted."""
         resp = await self.post(
@@ -116,14 +139,84 @@ class GitLabClient(ForgeClient):
         )
         return resp.status_code in (200, 201)
 
-    async def create_mr_note(self, repo: str, iid: int, body: str) -> bool:
-        """Post a note (comment) on a merge request. True when accepted."""
+    async def upsert_sticky_issue_note(self, repo: str, iid: int, body: str, *, marker: str) -> int:
+        """Create or update the one note on an issue whose body carries ``marker``.
+
+        The GitLab twin of ``embry0.notifications.qa_comment.upsert_sticky_comment``:
+        the earliest marked note is updated (later duplicates are left alone), and
+        a missing one is created. Returns the note id; raises ``HTTPStatusError``
+        when the notes read or the write is rejected, so a failed read never
+        creates a duplicate note.
+        """
+        path = self.project_path(repo, f"/issues/{iid}/notes")
+        notes = await self.paginate(
+            path,
+            repo=repo,
+            params={"sort": "asc", "order_by": "created_at"},
+            per_page=100,
+            max_pages=20,
+            strict=True,
+        )
+        existing = next(
+            (int(note["id"]) for note in notes if isinstance(note, dict) and marker in (note.get("body") or "")),
+            None,
+        )
+        if existing is not None:
+            resp = await self.put(f"{path}/{existing}", repo=repo, json={"body": body})
+            resp.raise_for_status()
+            return existing
+        # Sent once: a note GitLab accepted and answered 502 must not be posted twice.
+        resp = await self.post(path, repo=repo, json={"body": body}, retry_transient=False)
+        resp.raise_for_status()
+        return int(resp.json()["id"])
+
+    async def post_mr_note(self, repo: str, iid: int, body: str, *, retry_transient: bool = False) -> ForgeWrite:
+        """Post a note on a merge request; what the forge answered.
+
+        Sent once by default: a note GitLab accepted and answered 502 must not
+        be posted twice.
+        """
         resp = await self.post(
             self.project_path(repo, f"/merge_requests/{iid}/notes"),
             repo=repo,
             json={"body": body},
+            retry_transient=retry_transient,
         )
-        return resp.status_code in (200, 201)
+        return forge_write(resp)
+
+    async def create_mr_note(self, repo: str, iid: int, body: str) -> bool:
+        """Post a note (comment) on a merge request. True when accepted.
+
+        Keeps the default retry policy its callers had before ``post_mr_note``.
+        """
+        return (await self.post_mr_note(repo, iid, body, retry_transient=True)).ok
+
+    async def create_mr_discussion(self, repo: str, iid: int, *, body: str, position: dict[str, Any]) -> ForgeWrite:
+        """Start a diff discussion at ``position`` (#30); GitLab answers 400 for a line outside the diff."""
+        resp = await self.post(
+            self.project_path(repo, f"/merge_requests/{iid}/discussions"),
+            repo=repo,
+            json={"body": body, "position": position},
+            retry_transient=False,  # sent once: an accepted discussion answered 502 must not be posted twice
+        )
+        return forge_write(resp)
+
+    async def list_merge_request_diffs(self, repo: str, iid: int) -> list[dict[str, Any]]:
+        """The merge request's file diffs (#30).
+
+        ``/diffs`` exists from GitLab 15.7; an older instance answers 404 there
+        and serves the same items under ``/changes``. Raises on any other error.
+        """
+        try:
+            items = await self.paginate(self.project_path(repo, f"/merge_requests/{iid}/diffs"), repo=repo, strict=True)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            resp = await self.get(self.project_path(repo, f"/merge_requests/{iid}/changes"), repo=repo)
+            resp.raise_for_status()
+            body = resp.json()
+            items = body.get("changes") or [] if isinstance(body, dict) else []
+        return [item for item in items if isinstance(item, dict)]
 
     async def add_mr_labels(self, repo: str, iid: int, labels: list[str]) -> bool:
         """Add labels to a merge request without touching the ones it has."""

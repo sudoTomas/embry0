@@ -46,6 +46,8 @@ apps:
     frontend_url: "http://my-app-frontend:3000"
 ```
 
+In the dashboard editor, **Check my setup** runs a free check of the text (no model call, nothing stored), and **Save** runs the same check first. A setup every test run would stop on, such as one whose work machine has no browser, is not stored, and the editor says why. `PUT /repos/{owner}/{repo}/qa-config` and `qa_config_set` keep the schema-only validation.
+
 **Have an admin grant the repo Docker access** — `mode: dind` only. The sandbox profile asks for the shared Docker daemon; the repo must also hold the grant (repo page in the dashboard, or `PUT /api/v1/repos/{owner}/{repo}/docker-access` with `{"enabled": true}`, admin tier). Code from a granted repo can control the shared Docker daemon, including the proxies holding your tokens, so grant it only to repos you trust as much as the host. Without it, the QA sandbox is refused before it starts. See [qa-yaml-reference.md](qa-yaml-reference.md#docker-access-mode-dind).
 
 **Add a `compose.qa.override.yml`** (only if your `docker-compose.yml` uses an external network or the services rely on short DNS names like `redis`/`timescaledb`):

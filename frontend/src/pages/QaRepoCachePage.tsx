@@ -10,22 +10,24 @@
  * days is a low-cost follow-up if the analytics page gets daily use.
  */
 import { Link, useParams } from "react-router";
+import { BuildImageButton } from "@/components/qa/BuildImageButton";
 import { CacheAnalyticsView } from "@/components/qa/CacheAnalyticsView";
 
 export function QaRepoCachePage() {
   const { repo } = useParams<{ repo: string }>();
   if (!repo) {
-    return <div className="p-6 text-white/50">No repo</div>;
+    return <div className="text-fg-muted">No repo</div>;
   }
   return (
     <div>
-      <div className="px-6 pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-6 pt-4">
         <Link
           to={`/qa/repos/${encodeURIComponent(repo)}`}
           className="text-sm text-white/50 hover:underline"
         >
           ← {repo} runs
         </Link>
+        <BuildImageButton repo={repo} />
       </div>
       <CacheAnalyticsView repo={repo} />
     </div>

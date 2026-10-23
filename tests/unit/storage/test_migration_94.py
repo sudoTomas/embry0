@@ -20,12 +20,6 @@ def test_migration_94_present_and_gapless() -> None:
     assert versions == list(range(1, len(versions) + 1))
 
 
-def test_migration_94_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_93.py)."""
-    assert MIGRATIONS[-1][0] == 94, "migration 94 must add healing_cases.signature_source"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_the_column_takes_the_vocabulary_and_nothing_else(db_with_migrations: DatabasePool) -> None:

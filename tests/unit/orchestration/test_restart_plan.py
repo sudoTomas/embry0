@@ -68,3 +68,15 @@ def test_attempts_bound_only_recoveries_after_an_unclean_stop() -> None:
 def test_zero_attempts_turns_recovery_off() -> None:
     rows = [_row("j"), _row("p", "pending", launch=LAUNCH, interrupted_at=STAMP)]
     assert _actions(rows, {"j"}, max_attempts=0) == {"j": "fail", "p": "fail"}
+
+
+def test_a_pr_review_job_that_began_its_graph_is_not_resumed() -> None:
+    rows = [_row("rv", pipeline_template="pr-review", launch={"runner": "pr-review"})]
+    assert _actions(rows, {"rv"}) == {"rv": "fail"}, (
+        "a review that started must fail and be asked for again, not resume"
+    )
+
+
+def test_a_pr_review_job_that_never_started_is_launched_again() -> None:
+    rows = [_row("rv", "pending", pipeline_template="pr-review", launch={"runner": "pr-review"})]
+    assert _actions(rows, set()) == {"rv": "relaunch"}

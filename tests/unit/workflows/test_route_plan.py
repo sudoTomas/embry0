@@ -28,6 +28,9 @@ def test_builtin_seeds_linearize():
     assert [s["agent_type"] for s in _plan("research-default")] == ["research", "output"]
     assert [s["agent_type"] for s in _plan("analysis-default")] == ["analysis", "output"]
     assert [s["agent_type"] for s in _plan("ops-default")] == ["ops", "output"]
+    # One route per specialist; test_specialist_agents.py covers the rest.
+    assert [s["agent_type"] for s in _plan("kintsugi-trace")] == ["kintsugi", "output"]
+    assert [s["agent_type"] for s in _plan("comment-pass")] == ["comment-sicko", "output"]
 
 
 def test_builtin_seeds_cover_every_kind_exactly_once():
@@ -214,3 +217,71 @@ def test_review_agent_type_routes_like_reviewer():
     plan_with_cfg = [{"agent_type": "review", "node_id": "rev", "config": {"model": "claude-opus-5"}}]
     cfg = step_template_config({"route_plan": plan_with_cfg, "route_cursor": 0}, "review")
     assert cfg == {"agent_models": {"review": "claude-opus-5"}}
+
+
+def test_node_config_reads_config_then_legacy_top_level() -> None:
+    from embry0.workflows.issue_to_pr.route_plan import node_config
+
+    assert node_config({"config": {"model": "m", "skills": {"add": ["s:x"]}}})["model"] == "m"
+    legacy = {
+        "node_id": "n",
+        "agent_type": "developer",
+        "model": "m2",
+        "skills": ["s:y"],
+        "tools": None,
+        "max_turns": 3,
+    }
+    assert node_config(legacy) == {"model": "m2", "skills": ["s:y"], "max_turns": 3}
+    assert node_config({"config": {}, "model": "ignored"}) == {}, "an empty config dict wins over legacy keys"
+
+
+def test_step_template_config_passes_a_skills_delta_through() -> None:
+    from embry0.workflows.issue_to_pr.route_plan import step_template_config
+
+    delta = {"add": ["s:x"], "remove": ["s:y"]}
+    plan = build_route_plan(
+        {"nodes": [{"node_id": "d", "agent_type": "developer", "config": {"skills": delta}}], "edges": []}
+    )
+    got = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
+    assert got == {"agent_skills": {"developer": delta}}, f"the step's skills delta was reshaped: {got!r}"
+
+
+def test_custom_agent_step_dispatches_to_the_generic_node():
+    from embry0.workflows.issue_to_pr.route_plan import _step_target, step_template_config
+
+    plan = build_route_plan(
+        {
+            "nodes": [
+                {"node_id": "t", "agent_type": "triage"},
+                {"node_id": "b", "agent_type": "release-bot", "config": {"model": "model-for-bot"}},
+            ],
+            "edges": [{"edge_id": "e", "source": "t", "target": "b", "edge_type": "flow"}],
+        }
+    )
+    assert _step_target(plan[0]) == "agent", "a custom agent type runs on generic_agent"
+    assert next_route({"route_plan": plan, "route_cursor": 0, "qa": {}}) == "agent"
+    cfg = step_template_config({"route_plan": plan, "route_cursor": 0}, "release-bot")
+    assert cfg == {"agent_models": {"release-bot": "model-for-bot"}}, "a custom step's config reaches its own type"
+    assert step_template_config({"route_plan": plan, "route_cursor": 0}, "developer") is None
+
+
+def test_pipeline_graph_maps_a_custom_type_onto_generic_agent():
+    from embry0.workflows.issue_to_pr.plan_route import build_pipeline_graph
+
+    graph = build_pipeline_graph(
+        job_id="job-1",
+        plan=[{"agent_type": "release-bot", "node_id": "b", "config": {}}],
+    )
+    bot = next(n for n in graph["nodes"] if n["agent_type"] == "release-bot")
+    assert bot["physical_node"] == "generic_agent", "the live view lights custom steps up through generic_agent"
+
+
+def test_step_template_config_keeps_a_bare_empty_skills_list() -> None:
+    """A stored bare ``[]`` is the legacy "replace with nothing"; normalize_delta honours it."""
+    from embry0.workflows.issue_to_pr.route_plan import step_template_config
+
+    plan = build_route_plan(
+        {"nodes": [{"node_id": "d", "agent_type": "developer", "config": {"skills": []}}], "edges": []}
+    )
+    got = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
+    assert got == {"agent_skills": {"developer": []}}, f"a bare [] was dropped before the resolver: {got!r}"

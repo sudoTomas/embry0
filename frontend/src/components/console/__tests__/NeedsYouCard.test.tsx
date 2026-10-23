@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
@@ -12,16 +12,18 @@ import { NeedsYouCard } from "../NeedsYouCard";
 import { makeJob } from "./fixtures";
 import type { JobInput } from "@/lib/types";
 
+// The issue_inputs row GET /jobs/{id}/inputs returns (InputResponse).
 function makeJobInput(overrides: Partial<JobInput> = {}): JobInput {
   return {
-    input_id: "in-1",
+    id: "in-1",
     job_id: "abcd1234efgh5678",
     issue_id: "iss-1",
+    asking_node: "triage",
     question: "Which database should the migration target?",
-    category: "technical",
-    options: null,
+    importance: "blocking",
     status: "pending",
     answer: null,
+    answered_by: null,
     auto_answer: null,
     created_at: "2026-07-08T11:00:00Z",
     answered_at: null,
@@ -46,47 +48,7 @@ beforeEach(() => {
   vi.mocked(answerInput).mockReset().mockResolvedValue(undefined);
 });
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
 describe("NeedsYouCard", () => {
-  describe("TTL countdown", () => {
-    it('renders "expires in 3h 12m" from paused_at + ttl_hours', () => {
-      // Paused 48 minutes ago with a 4h TTL ⇒ 3h 12m remaining
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-07-08T12:00:00Z"));
-
-      renderCard({
-        job: makeJob({ status: "paused" }),
-        interrupt: { paused_at: "2026-07-08T11:12:00Z", ttl_hours: 4 },
-      });
-
-      expect(screen.getByTestId("ttl-countdown")).toHaveTextContent("expires in 3h 12m");
-    });
-
-    it("renders an expired marker once the TTL has elapsed", () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-07-08T12:00:00Z"));
-
-      renderCard({
-        job: makeJob({ status: "paused" }),
-        interrupt: { paused_at: "2026-07-08T07:00:00Z", ttl_hours: 4 },
-      });
-
-      expect(screen.getByTestId("ttl-countdown")).toHaveTextContent("expired");
-    });
-
-    it("renders no countdown when the interrupt carries no TTL", () => {
-      renderCard({
-        job: makeJob({ status: "awaiting_input" }),
-        interrupt: { reason: "Need input" },
-      });
-
-      expect(screen.queryByTestId("ttl-countdown")).toBeNull();
-    });
-  });
-
   describe("question text", () => {
     it("shows the first pending input's question", () => {
       renderCard({ job: makeJob({ status: "awaiting_input" }), jobInputs: [makeJobInput()] });
@@ -95,15 +57,9 @@ describe("NeedsYouCard", () => {
       );
     });
 
-    it("falls back to the interrupt reason, then a generic line", () => {
-      renderCard({
-        job: makeJob({ status: "paused" }),
-        interrupt: { reason: "Review retry cap reached" },
-      });
-      expect(screen.getByTestId("needs-you-question")).toHaveTextContent("Review retry cap reached");
-
+    it("falls back to a generic line when no input is pending", () => {
       renderCard({ job: makeJob({ status: "paused" }) });
-      expect(screen.getAllByTestId("needs-you-question")[1]).toHaveTextContent(
+      expect(screen.getByTestId("needs-you-question")).toHaveTextContent(
         "Pipeline paused — open the job for details",
       );
     });
@@ -126,15 +82,23 @@ describe("NeedsYouCard", () => {
       fireEvent.click(screen.getByRole("button", { name: "Submit 1 answer" }));
 
       await waitFor(() => {
-        expect(answerInput).toHaveBeenCalledWith("iss-1", "in-1", "postgres");
+        expect(answerInput).toHaveBeenCalledWith("iss-1", "in-1", "postgres", "abcd1234efgh5678");
       });
+    });
+
+    it("gives the question the card's width: no second box inside the card", () => {
+      renderCard({ job: makeJob({ status: "awaiting_input" }), jobInputs: [makeJobInput()] });
+      // The card is the amber box. A box of its own inside it took the
+      // question another 26px of a lane a fifth of the board wide.
+      const box = screen.getByTestId("question-text").parentElement!.parentElement!;
+      expect(box).not.toHaveClass("border");
+      expect(box).not.toHaveClass("p-3");
     });
 
     it("renders no form when there are no renderable inputs", () => {
       renderCard({
         job: makeJob({ status: "paused" }),
         jobInputs: [makeJobInput({ status: "answered" })],
-        interrupt: { reason: "Paused for review" },
       });
 
       expect(screen.queryByPlaceholderText("Your answer...")).toBeNull();

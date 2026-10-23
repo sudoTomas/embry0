@@ -10,17 +10,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Select } from "@/components/ui/Select";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { PageError } from "@/components/PageError";
+import { isNotFound } from "@/api/errorDetail";
 import { IssueStatusBadge } from "@/components/issues/IssueStatusBadge";
 import { IssuePriorityBadge } from "@/components/issues/IssuePriorityBadge";
 import { AgentIndicator } from "@/components/issues/AgentIndicator";
 import { IssueActivityFeed } from "@/components/issues/IssueActivityFeed";
 import { IssueQuestionsPanel } from "@/components/issues/IssueQuestionsPanel";
+import { IssueBody } from "@/components/issues/IssueBody";
 import { LabelInput } from "@/components/issues/LabelInput";
 import { updateIssueNotificationChannels } from "@/api/issues";
 import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssue, useUpdateIssue } from "@/hooks/useIssues";
 import { formatDate } from "@/lib/utils";
 import { formatCost } from "@/lib/utils";
+import { providerLabel, statusLabel } from "@/lib/status";
 import type { NotificationChannel } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
+import { trackerName } from "@/lib/forgeLinks";
 
 const NOTIFICATION_CHANNELS = ["dashboard", "telegram", "github", "linear", "gitlab", "slack"] as NotificationChannel[];
 
@@ -28,7 +33,7 @@ export function IssueDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  const { data: issue, isLoading, isError, refetch } = useIssue(id);
+  const { data: issue, isLoading, isError, error, refetch } = useIssue(id);
   const { data: activity = [] } = useIssueActivity(id);
   const triageIssue = useTriageIssue();
   const syncIssue = useSyncIssue();
@@ -49,7 +54,7 @@ export function IssueDetailPage(): JSX.Element {
   }, [issue?.notification_channels]);
 
   const handleFieldUpdate = (field: string, value: unknown): void => {
-    updateIssue.mutate({ id: issue!.id, [field]: value });
+    updateIssue.mutate({ id: issue!.id, [field]: value }, { onError: (e) => toastApiError(e, "Failed to update") });
   };
 
   const toggleChannel = (ch: NotificationChannel): void => {
@@ -68,10 +73,11 @@ export function IssueDetailPage(): JSX.Element {
       .catch((e: unknown) => {
         // Roll back the optimistic state on failure.
         setChannels(channels);
-        toast.error(e instanceof Error ? e.message : "Failed to update notification channels");
+        toastApiError(e, "Failed to update notification channels");
       });
   };
 
+  if (isNotFound(error)) return <PageError message={`No issue ${id}`} back={{ to: "/issues", label: "All issues" }} />;
   if (isError) return <PageError message="Failed to load issue" onRetry={() => refetch()} />;
   if (isLoading || !issue) return <TableSkeleton columns={4} rows={8} />;
 
@@ -86,14 +92,14 @@ export function IssueDetailPage(): JSX.Element {
         result.dispatch_error
           ? toast.error(`Triage did not start: ${result.dispatch_error}`)
           : toast.success("Triage started"),
-      onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to triage"),
+      onError: (e) => toastApiError(e, "Failed to triage"),
     });
   };
 
   const handleSync = () => {
     syncIssue.mutate(id!, {
       onSuccess: () => toast.success("Synced with GitHub"),
-      onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to sync"),
+      onError: (e) => toastApiError(e, "Failed to sync"),
     });
   };
 
@@ -103,14 +109,15 @@ export function IssueDetailPage(): JSX.Element {
     if (!confirm("Cancel this issue? Its running jobs are cancelled too.")) return;
     deleteIssue.mutate(id!, {
       onSuccess: () => toast.success("Issue cancelled"),
-      onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to cancel"),
+      onError: (e) => toastApiError(e, "Failed to cancel"),
     });
   };
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start gap-4">
+      {/* Header. It wraps: on a phone the actions take a line of their own
+          under the title instead of running off the right edge. */}
+      <div className="flex flex-wrap items-start gap-4">
         <Button variant="ghost" size="icon" onClick={() => navigate("/issues")} aria-label="Back to issues">
           <ArrowLeft className="h-4 w-4" />
         </Button>
@@ -121,11 +128,11 @@ export function IssueDetailPage(): JSX.Element {
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold truncate leading-tight">{issue.title}</h1>
+            <h1 className="title-pixel text-xl font-bold truncate leading-tight">{issue.title}</h1>
             {issue.active_agent && <AgentIndicator agentType={issue.active_agent} size="md" />}
           </div>
           <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-fg-muted font-mono">
               Op {OPERATION_NUMERAL.calcinate} · calcinate · {OPERATION_ELEMENT.calcinate}
             </span>
             <span className="text-[10px] text-muted-foreground/40">·</span>
@@ -134,7 +141,7 @@ export function IssueDetailPage(): JSX.Element {
         </div>
 
         {/* Action buttons */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <Button
             size="sm"
             variant="outline"
@@ -143,7 +150,7 @@ export function IssueDetailPage(): JSX.Element {
             className="gap-1.5"
           >
             <Send className="h-3.5 w-3.5" />
-            {triageIssue.isPending ? "Triaging..." : "Send to Triage"}
+            {triageIssue.isPending ? "Triaging..." : "Send to triage"}
           </Button>
 
           {canSync && (
@@ -190,9 +197,7 @@ export function IssueDetailPage(): JSX.Element {
             </CardHeader>
             <CardContent>
               {issue.body ? (
-                <div className="text-sm text-foreground/90 whitespace-pre-wrap break-words leading-relaxed">
-                  {issue.body}
-                </div>
+                <IssueBody body={issue.body} />
               ) : (
                 <p className="text-sm text-muted-foreground">No description provided.</p>
               )}
@@ -204,7 +209,7 @@ export function IssueDetailPage(): JSX.Element {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">
-                  Child Issues
+                  Child issues
                   <span className="ml-2 text-sm font-normal text-muted-foreground">
                     ({issue.children.length})
                   </span>
@@ -272,7 +277,7 @@ export function IssueDetailPage(): JSX.Element {
                         aria-label={`View job: ${jobId}`}
                       >
                         <span className="text-xs font-mono text-muted-foreground shrink-0">{jobId}</span>
-                        <span className="text-xs text-white/60 capitalize">{status.replace("_", " ")}</span>
+                        <span className="text-xs text-white/60">{statusLabel(status)}</span>
                         {cost !== null && (
                           <span className="text-xs text-muted-foreground">{formatCost(cost)}</span>
                         )}
@@ -282,7 +287,7 @@ export function IssueDetailPage(): JSX.Element {
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            className="ml-auto flex items-center gap-1 text-xs text-primary hover:underline"
+                            className="ml-auto flex items-center gap-1 text-xs text-fg hover:text-primary hover:underline"
                           >
                             PR <ExternalLink className="h-3 w-3" />
                           </a>
@@ -314,14 +319,15 @@ export function IssueDetailPage(): JSX.Element {
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Status</p>
                 <Select
+                  aria-label="Status"
                   value={issue.status}
                   onChange={(e) => handleFieldUpdate("status", e.target.value)}
                   className="h-8 text-xs"
                 >
                   <option value="open">Open</option>
                   <option value="triaging">Triaging</option>
-                  <option value="awaiting_input">Awaiting Input</option>
-                  <option value="in_progress">In Progress</option>
+                  <option value="awaiting_input">Awaiting input</option>
+                  <option value="in_progress">In progress</option>
                   <option value="closed">Closed</option>
                   <option value="cancelled">Cancelled</option>
                 </Select>
@@ -331,6 +337,7 @@ export function IssueDetailPage(): JSX.Element {
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Priority</p>
                 <Select
+                  aria-label="Priority"
                   value={issue.priority}
                   onChange={(e) => handleFieldUpdate("priority", e.target.value)}
                   className="h-8 text-xs"
@@ -362,7 +369,7 @@ export function IssueDetailPage(): JSX.Element {
               {/* Tracker link (GitHub / GitLab / Linear) */}
               {(issue.github_sync_enabled || issue.tracker) && (
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1.5 capitalize">{issue.tracker ?? "GitHub"}</p>
+                  <p className="text-xs text-muted-foreground mb-1.5">{providerLabel(issue.tracker ?? "github")}</p>
                   <div className="space-y-1">
                     {issue.tracker_key && (
                       <div className="flex items-center gap-1.5">
@@ -371,10 +378,11 @@ export function IssueDetailPage(): JSX.Element {
                         </span>
                         {issue.tracker_url && (
                           <a
+                            aria-label={`Open ${issue.tracker === "linear" ? issue.tracker_key : `#${issue.tracker_key}`} in ${trackerName(issue.tracker)}`}
                             href={issue.tracker_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-primary hover:underline"
+                            className="text-fg hover:text-primary hover:underline"
                           >
                             <ExternalLink className="h-3.5 w-3.5" />
                           </a>
@@ -404,7 +412,7 @@ export function IssueDetailPage(): JSX.Element {
                         onChange={() => toggleChannel(ch)}
                         className="rounded border-white/20"
                       />
-                      <span className="capitalize">{ch}</span>
+                      <span>{providerLabel(ch)}</span>
                     </label>
                   ))}
                 </div>
@@ -412,7 +420,7 @@ export function IssueDetailPage(): JSX.Element {
                   .filter((tracker) => channels.includes(tracker) && issue.tracker !== tracker)
                   .map((tracker) => (
                     <p key={tracker} className="text-xs text-amber-400 mt-1.5">
-                      No <span className="capitalize">{tracker}</span> issue linked — comment dispatch will be a
+                      No {providerLabel(tracker)} issue linked — comment dispatch will be a
                       no-op.
                     </p>
                   ))}

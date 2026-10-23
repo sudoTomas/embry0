@@ -28,7 +28,7 @@ Then the Postgres the suites connect to:
     (cd frontend && npm ci && npx tsc -b && npm run lint && npm run test -- --run && npm run build)
     docker run --rm -v "$PWD/infra/prometheus:/rules:ro" -w /rules --entrypoint promtool \
       prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0 \
-      test rules offhost-backup.rules.test.yml
+      test rules offhost-backup.rules.test.yml job-events.rules.test.yml
 
 The last gate runs the alert rules in `infra/prometheus/` against their
 `promtool` tests; it prints `SUCCESS` and exits 0 on a pass.
@@ -56,15 +56,18 @@ customers, people, hosts. The terms are kept outside the repository, because a
 test that spells out the names it guards publishes them. Only maintainers hold
 the file, so contributors skip this gate.
 
-    EMBRY0_DENYLIST_FILE=/outside/the/repo/denylist.txt python3 scripts/check_denylist.py
+    EMBRY0_DENYLIST_FILE=/outside/the/repo/denylist.txt python3 scripts/check_denylist.py --public
     EMBRY0_DENYLIST_FILE=/outside/the/repo/denylist.txt python3 scripts/check_denylist.py docs frontend/src
 
 - The file holds one Python regular expression per line, matched
   case-insensitively against every line and every file path; `#` starts a
   comment. Keep it mode 600.
-- Without paths it scans `DEFAULT_SCOPE` in the script, the paths the retired
-  in-tree name guards covered. Widen that as the tree is cleaned. In a git
-  checkout only tracked files are scanned.
+- `--public` scans the whole tree with the allowances the public export
+  passes (below), read from `scripts/export_public.py`. This repository is the
+  public one, so that is the check CI runs.
+- Without paths or `--public` it scans `DEFAULT_SCOPE` in the script, the
+  paths the retired in-tree name guards covered. In a git checkout only
+  tracked files are scanned.
 - Exit 0 is a pass. Exit 1 is a match, reported as file, line and denylist
   line, never the matched text. Exit 2 means nothing was checked: no
   `EMBRY0_DENYLIST_FILE`, an empty or unreadable denylist, a denylist inside
@@ -73,22 +76,23 @@ the file, so contributors skip this gate.
 
 **CI.** The denylist is the repository secret `EMBRY0_DENYLIST`. The
 `denylist` job writes it to `$RUNNER_TEMP`, outside the checkout, and runs the
-check without `continue-on-error` or `|| true`, so exit 1 and exit 2 both fail
-it; an unset secret is exit 2. GitHub gives no repository secrets to a pull
-request from a fork or from Dependabot, where the check could only exit 2, so
+check with `--public`, without `continue-on-error` or `|| true`, so exit 1 and
+exit 2 both fail it; an unset secret is exit 2. GitHub gives no repository
+secrets to a pull request from a fork or from Dependabot, where the check could only exit 2, so
 those runs skip the step and post a notice saying so. Every push to `main` and
 every pull request from a branch of the repository runs it.
 
 **Public export.** `scripts/export_public.py` scans the whole exported tree
-and stops on any non-zero exit. The one allowance it passes is the public
-repository's canonical URLs, which name its owner: `--allow LITERAL` masks an
-exact literal before the patterns run (not when it continues into a longer
-word, so a sibling repository's URL is not covered), and `--allow-in PATH
-LITERAL` does so in one file only. The same scan by hand:
+and stops on any non-zero exit. Its allowances are the public repository's
+canonical URLs, which name its owner, in any file; the owner's handle in
+`.github/CODEOWNERS`; and each name it writes to `CONTRIBUTORS`, in that file
+only. `--allow LITERAL` masks an exact literal before the patterns run (not
+when it continues into a longer word, so a sibling repository's URL is not
+covered), and `--allow-in PATH LITERAL` does so in one file only. The same
+scan by hand, on an exported tree:
 
     EMBRY0_DENYLIST_FILE=/outside/the/repo/denylist.txt \
-      python3 scripts/check_denylist.py --root "$EXPORT_DIR" \
-        --allow github.com/<owner>/<repo> --allow-in .github/CODEOWNERS @<owner> .
+      python3 scripts/check_denylist.py --root "$EXPORT_DIR" --public
 
 ## CI
 

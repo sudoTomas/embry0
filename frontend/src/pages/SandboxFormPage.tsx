@@ -4,7 +4,7 @@ import { ArrowLeft, Info } from "lucide-react";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { OPERATION_NUMERAL, OPERATION_ELEMENT } from "@/components/divine/operations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonVariants } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { TagInput } from "@/components/ui/TagInput";
@@ -16,6 +16,8 @@ import {
 } from "@/hooks/useSandboxProfiles";
 import type { SandboxProfile } from "@/api/sandbox-profiles";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
+import { cn } from "@/lib/utils";
 
 type ProfileForm = Omit<SandboxProfile, "created_at" | "updated_at" | "is_builtin">;
 
@@ -175,7 +177,7 @@ export function SandboxFormPage() {
           toast.success(`Updated "${form.name}"`);
           navigate("/sandboxes");
         },
-        onError: (err) => toast.error(`Failed to update: ${err.message}`),
+        onError: (err) => toastApiError(err, "Failed to update"),
       });
     } else {
       createMutation.mutate(payload, {
@@ -183,7 +185,7 @@ export function SandboxFormPage() {
           toast.success(`Created "${form.name}"`);
           navigate("/sandboxes");
         },
-        onError: (err) => toast.error(`Failed to create: ${err.message}`),
+        onError: (err) => toastApiError(err, "Failed to create"),
       });
     }
   };
@@ -196,7 +198,7 @@ export function SandboxFormPage() {
         toast.success(`Reset "${name}"`);
         navigate("/sandboxes");
       },
-      onError: (err) => toast.error(`Failed to reset: ${(err as Error).message}`),
+      onError: (err) => toastApiError(err, "Failed to reset"),
     });
   };
 
@@ -211,19 +213,21 @@ export function SandboxFormPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Link to="/sandboxes">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+          <Link
+            to="/sandboxes"
+            aria-label="Back to sandboxes"
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+          >
+            <ArrowLeft className="h-4 w-4" />
           </Link>
           <span className="flex items-center justify-center w-9 h-9 shrink-0">
             <OperationGlyph operation="ferment" size={36} titled />
           </span>
           <div className="flex flex-col">
-            <h1 className="text-2xl font-bold leading-tight">
+            <h1 className="title-pixel text-xl font-bold leading-tight">
               {isEditMode ? `Edit "${name}"` : "New Sandbox Profile"}
             </h1>
-            <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono mt-0.5">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-fg-muted font-mono mt-0.5">
               Op {OPERATION_NUMERAL.ferment} · ferment · {OPERATION_ELEMENT.ferment}
             </span>
           </div>
@@ -252,10 +256,10 @@ export function SandboxFormPage() {
 
       {/* Builtin notice */}
       {isBuiltin && (
-        <div className="flex items-start gap-2.5 px-4 py-3 rounded-md bg-cyan-500/[0.06] border border-cyan-500/20 text-sm text-cyan-100/80">
-          <Info className="w-4 h-4 mt-0.5 shrink-0 text-cyan-300" />
+        <div className="flex items-start gap-2.5 px-4 py-3 rounded-md bg-overlay border border-border text-sm text-fg-secondary">
+          <Info className="w-4 h-4 mt-0.5 shrink-0 text-fg-muted" />
           <div>
-            This is a builtin profile. Its fields are read-only here. To revert
+            This is a built-in profile. Its fields are read-only here. To revert
             any local changes that drift from the built-in defaults, use{" "}
             <span className="font-semibold">Reset to Default</span>.
           </div>
@@ -299,9 +303,10 @@ export function SandboxFormPage() {
             </div>
           </div>
           <div>
-            <Label>Additional Packages</Label>
+            <Label htmlFor="additional_packages">Additional Packages</Label>
             <div className="mt-1">
               <TagInput
+                id="additional_packages"
                 value={form.additional_packages}
                 onChange={(tags) => setField("additional_packages", tags)}
                 placeholder="Add package..."
@@ -311,9 +316,10 @@ export function SandboxFormPage() {
             <p className="text-xs text-white/30 mt-1">Press Enter to add. These are installed at container startup.</p>
           </div>
           <div>
-            <Label>Setup Commands</Label>
+            <Label htmlFor="setup_commands">Setup Commands</Label>
             <div className="mt-1">
               <TagInput
+                id="setup_commands"
                 value={form.setup_commands}
                 onChange={(tags) => setField("setup_commands", tags)}
                 placeholder="Add command..."
@@ -419,7 +425,7 @@ export function SandboxFormPage() {
               checked={form.dind_enabled}
               onChange={(e) => setField("dind_enabled", e.target.checked)}
               disabled={isBuiltin}
-              className="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-cyan-500 focus:ring-cyan-500/50 disabled:opacity-50"
+              className="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-primary focus:ring-ring disabled:opacity-50"
             />
             <div>
               <Label htmlFor="dind_enabled" className="cursor-pointer">DinD enabled</Label>
@@ -439,7 +445,7 @@ export function SandboxFormPage() {
               checked={form.extra_networks.includes(INTERNET_NETWORK)}
               onChange={(e) => setField("extra_networks", e.target.checked ? [INTERNET_NETWORK] : [])}
               disabled={isBuiltin}
-              className="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-cyan-500 focus:ring-cyan-500/50 disabled:opacity-50"
+              className="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-primary focus:ring-ring disabled:opacity-50"
             />
             <div>
               <Label htmlFor="internet_egress" className="cursor-pointer">Internet egress (sandbox-internet)</Label>
@@ -485,7 +491,7 @@ export function SandboxFormPage() {
               Non-secret env vars set by the profile. Stored as a JSON object of string values.
             </p>
             {!envDefaultsValid && (
-              <p className="text-xs text-red-400 mt-1">
+              <p className="text-xs text-destructive mt-1">
                 Invalid JSON — must be a flat object of string values, e.g. {`{"KEY": "value"}`}.
               </p>
             )}
@@ -507,7 +513,7 @@ export function SandboxFormPage() {
               externally deployed app by its vhost name. The "dind" alias is reserved.
             </p>
             {!extraHostsValid && (
-              <p className="text-xs text-red-400 mt-1">
+              <p className="text-xs text-destructive mt-1">
                 Invalid JSON — must be a flat object mapping hostnames to IP strings.
               </p>
             )}

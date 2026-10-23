@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.schemas.repo_path import validate_repo_path
+from embry0.api.v1.standards import standards_for_repo
 from embry0.audit.helpers import emit_audit
 from embry0.storage.repositories.repos import SUPPORTED_FORGES
 
@@ -117,6 +118,11 @@ async def get_repo(full_repo: str, request: Request) -> dict[str, Any]:
     config_row = await configs_repo.get(full)
     prefs = await prefs_repo.get(full)
     env_vars = await env_repo.get_repo(full)
+    # ADR 0013: the machines this repo's code runs on, each with its role for the repo.
+    hosts_repo = getattr(request.app.state, "hosts_repo", None)
+    hosts = await hosts_repo.hosts_for_repo(full) if hosts_repo is not None else []
+    # ADR 0014: the repository's mode and newest audit under each kind of its owner's standards.
+    standards = await standards_for_repo(request, full)
     return {
         **row,
         "has_qa_config": config_row is not None,
@@ -125,6 +131,8 @@ async def get_repo(full_repo: str, request: Request) -> dict[str, Any]:
         "preferences": prefs,
         "env_var_count": len(env_vars),
         "env_secret_count": sum(1 for v in env_vars if v.get("var_type") == "secret"),
+        "hosts": hosts,
+        "standards": standards,
     }
 
 

@@ -216,10 +216,8 @@ async def test_e2e_qa_report_writes_comment(monkeypatch):
     assert "hub" in body
 
 
-@pytest.mark.asyncio
-async def test_e2e_no_affected_apps_short_circuits_pass(monkeypatch):
-    """Skipped path: 0 affected apps yields overall_status=passed with empty list,
-    no upsert, no fan-out."""
+def _empty_selection_fixture(monkeypatch):
+    """A provider whose affected set is empty, with fan-out forbidden."""
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
         packages=[],
@@ -238,8 +236,9 @@ async def test_e2e_no_affected_apps_short_circuits_pass(monkeypatch):
         fake_run_subtask,
     )
 
-    results_repo = AsyncMock()
-    state = {
+
+def _empty_selection_state(changed_files: list[str]) -> dict:
+    return {
         "job_id": "run-skip",
         "repo": "org/repo",
         "branch_name": "main",
@@ -247,16 +246,41 @@ async def test_e2e_no_affected_apps_short_circuits_pass(monkeypatch):
         "qa": {
             "qa_yaml_v2_raw": _QA_YAML_V2,
             "head_sha": "abc",
-            "changed_files": [],
+            "changed_files": changed_files,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_e2e_no_affected_apps_with_empty_diff_fails(monkeypatch):
+    """An empty selection with no change context is the vacuous pass of #65:
+    the run fails with ERR_QA_NO_APPS, no upsert, no fan-out."""
+    _empty_selection_fixture(monkeypatch)
+    results_repo = AsyncMock()
     config = {"configurable": {"qa_app_results_repo": results_repo}}
 
-    out = await qa_orchestrator_node(state, config)
+    out = await qa_orchestrator_node(_empty_selection_state([]), config)
+    qa = out["qa"]
+    assert qa["final_status"] == "failed", "an empty selection with an empty diff must not pass"
+    assert qa["outcome"]["overall_status"] == "failed"
+    assert qa["error_code"] == "ERR_QA_NO_APPS"
+    assert qa["apps_to_qa"] == []
+    assert results_repo.upsert_with_boot_phase.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_e2e_no_affected_apps_with_a_diff_passes_with_reason(monkeypatch):
+    """A change that touched no declared app gates green, and says why."""
+    _empty_selection_fixture(monkeypatch)
+    results_repo = AsyncMock()
+    config = {"configurable": {"qa_app_results_repo": results_repo}}
+
+    out = await qa_orchestrator_node(_empty_selection_state(["docs/readme.md"]), config)
     qa = out["qa"]
     assert qa["outcome"]["overall_status"] == "passed"
     assert qa["apps_to_qa"] == []
     assert qa["final_status"] == "passed"
+    assert any("touched no declared app" in w for w in qa["validation_warnings"]), "the pass carries no reason"
     assert results_repo.upsert_with_boot_phase.await_count == 0
 
 

@@ -31,11 +31,21 @@ export function useTestProviderConnection() {
 
 // --- RAV-1297: LLM Providers page ---
 
-export function useModelsCatalog() {
+/** The models catalog: the key and fetch every reader of it shares. */
+export function modelsCatalogQuery() {
   // Same key as useModels so the two consumers share one cache entry.
-  return useQuery({ queryKey: ["config", "models"], queryFn: fetchModelsCatalog });
+  return { queryKey: ["config", "models"], queryFn: fetchModelsCatalog };
+}
+
+export function useModelsCatalog() {
+  return useQuery(modelsCatalogQuery());
 }
 
 export function useTestCatalogProvider() {
-  return useMutation({ mutationFn: (name: string) => testCatalogProvider(name) });
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => testCatalogProvider(name),
+    // The test is audited and GET /config/models reports it back as last_probe.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["config", "models"] }),
+  });
 }

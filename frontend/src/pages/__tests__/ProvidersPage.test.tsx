@@ -84,15 +84,94 @@ beforeEach(() => {
 });
 
 describe("ProvidersPage", () => {
+  it("shows each provider's last connection test", async () => {
+    mockFetchModelsCatalog.mockResolvedValue({
+      ...CATALOG,
+      providers: [
+        { ...CATALOG.providers[0], last_probe: { status: "unauthorized", checked_at: "2026-01-02T03:04:05+00:00" } },
+        { ...CATALOG.providers[1], last_probe: null },
+      ],
+    });
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    const line = within(anthropic).getByTestId("provider-last-probe");
+    expect(line).toHaveTextContent("Last test: Unauthorized");
+    expect(line.querySelector("time")?.getAttribute("dateTime")).toBe("2026-01-02T03:04:05+00:00");
+    const xai = screen.getByTestId("provider-card-xai");
+    expect(within(xai).getByTestId("provider-last-probe")).toHaveTextContent("Last test: never");
+  });
+
+  it("shows no last-test line when the backend does not report one", async () => {
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    expect(within(anthropic).queryByTestId("provider-last-probe")).not.toBeInTheDocument();
+  });
+
+  it("refreshes the catalog after a connection test so the last test updates", async () => {
+    mockTestCatalogProvider.mockResolvedValue({ provider: "anthropic", status: "ok", checks: [] });
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    const before = mockFetchModelsCatalog.mock.calls.length;
+    await userEvent.click(within(anthropic).getByRole("button", { name: "Test connection" }));
+    await waitFor(() => expect(mockFetchModelsCatalog.mock.calls.length).toBeGreaterThan(before));
+  });
+
   it("renders every catalog provider with availability and credential source", async () => {
     renderPage();
     const anthropic = await screen.findByTestId("provider-card-anthropic");
-    expect(within(anthropic).getByText("available")).toBeInTheDocument();
-    expect(within(anthropic).getByText("default provider")).toBeInTheDocument();
-    expect(within(anthropic).getByText("oauth")).toBeInTheDocument();
+    expect(within(anthropic).getByText("Available")).toBeInTheDocument();
+    expect(within(anthropic).getByText("Default provider")).toBeInTheDocument();
+    // The credential source reads in words; the identifier rides in the title.
+    expect(within(anthropic).getByText("OAuth token")).toHaveAttribute("title", "oauth");
     const xai = screen.getByTestId("provider-card-xai");
-    expect(within(xai).getByText("unavailable")).toBeInTheDocument();
+    expect(within(xai).getByText("Unavailable")).toBeInTheDocument();
     expect(within(xai).getByText(/none configured/)).toBeInTheDocument();
+  });
+
+  it("wraps a provider's base URL inside its card on a phone", async () => {
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    // A URL has no spaces, so without a break anywhere a long one pushed
+    // main sideways on a phone screen.
+    expect(within(anthropic).getByText("https://api.anthropic.com")).toHaveClass("[overflow-wrap:anywhere]");
+  });
+
+  it("titles each provider card with the provider's own spelling, not the stored id", async () => {
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    expect(within(anthropic).getByText("Anthropic")).toBeInTheDocument();
+    const xai = screen.getByTestId("provider-card-xai");
+    const title = within(xai).getByText("xAI");
+    expect(title.className).not.toContain("capitalize");
+    expect(within(xai).queryByText("xai")).not.toBeInTheDocument();
+  });
+
+  it("marks a model its provider serves without tool calling", async () => {
+    mockFetchModelsCatalog.mockResolvedValue({
+      ...CATALOG,
+      providers: [
+        ...CATALOG.providers,
+        {
+          name: "openai",
+          base_url: "https://api.openai.com/v1",
+          available: false,
+          credential_source: null,
+          default: false,
+          models: [
+            { model: "gpt-6.1-sol", enabled: true, tool_calling: false, pricing_usd_per_mtok: { input: 2, output: 10 } },
+            { model: "gpt-6-luna", enabled: true, tool_calling: true, pricing_usd_per_mtok: { input: 0.1, output: 0.5 } },
+          ],
+        },
+      ],
+    });
+    renderPage();
+    const openai = await screen.findByTestId("provider-card-openai");
+    const chatOnly = within(openai).getByText("gpt-6.1-sol").closest("tr")!;
+    expect(within(chatOnly).getByText("(chat-only)")).toBeInTheDocument();
+    const withTools = within(openai).getByText("gpt-6-luna").closest("tr")!;
+    expect(within(withTools).queryByText("(chat-only)")).not.toBeInTheDocument();
+    const anthropic = screen.getByTestId("provider-card-anthropic");
+    expect(within(anthropic).queryByText("(chat-only)")).not.toBeInTheDocument();
   });
 
   it("shows model pricing in the provider table", async () => {
@@ -209,5 +288,10 @@ describe("ProvidersPage", () => {
     await waitFor(() => expect(locked).toBeDisabled());
     expect(within(xai).getByText("(default model)")).toBeInTheDocument();
     expect(within(xai).getByRole("checkbox", { name: "Enable grok-4.5" })).toBeEnabled();
+  });
+
+  it("titles the page in sentence case, the name the sidebar and Settings use", async () => {
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1, name: "LLM providers" })).toBeInTheDocument();
   });
 });

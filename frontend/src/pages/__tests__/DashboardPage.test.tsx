@@ -7,6 +7,9 @@ type FakeQuery<T> = {
   data: T | undefined;
   isPending: boolean;
   isError: boolean;
+  dataUpdatedAt: number;
+  errorUpdatedAt: number;
+  failureCount: number;
 };
 
 const mockUseStats = vi.fn();
@@ -26,13 +29,17 @@ vi.mock("@/hooks/useWatcherRuns", () => ({
 import { DashboardPage } from "../DashboardPage";
 
 function ready<T>(data: T): FakeQuery<T> {
-  return { data, isPending: false, isError: false };
+  return { data, isPending: false, isError: false, dataUpdatedAt: 1, errorUpdatedAt: 0, failureCount: 0 };
 }
 function loading<T>(): FakeQuery<T> {
-  return { data: undefined, isPending: true, isError: false };
+  return { data: undefined, isPending: true, isError: false, dataUpdatedAt: 0, errorUpdatedAt: 0, failureCount: 0 };
+}
+/** Pending again after a failed first attempt: retrying. */
+function retrying<T>(): FakeQuery<T> {
+  return { ...loading<T>(), failureCount: 1 };
 }
 function errored<T>(): FakeQuery<T> {
-  return { data: undefined, isPending: false, isError: true };
+  return { data: undefined, isPending: false, isError: true, dataUpdatedAt: 0, errorUpdatedAt: 1, failureCount: 2 };
 }
 
 const ORCH_OK = ready({
@@ -108,45 +115,53 @@ beforeEach(() => {
 });
 
 describe("DashboardPage", () => {
-  it("renders all seven embry0-sourced tiles when the backend is healthy", () => {
+  it("renders the six embry0-sourced tiles when the backend is healthy", () => {
     renderPage();
 
-    // Live counts come from /queue — not Companion.
-    expect(within(screen.getByTestId("tile-Running")).getByText("4")).toBeInTheDocument();
-    expect(within(screen.getByTestId("tile-Queued")).getByText("7")).toBeInTheDocument();
-    // Needs You = awaiting_input + paused.
-    expect(within(screen.getByTestId("tile-Needs You")).getByText("3")).toBeInTheDocument();
+    // Live counts come from /queue — not Companion. Queued rides on the
+    // Running tile, under its label.
+    const running = screen.getByTestId("tile-Running");
+    expect(within(running).getByText("4")).toBeInTheDocument();
+    expect(within(running).getByText(/7 queued/)).toBeInTheDocument();
+    // Needs you = awaiting_input + paused.
+    expect(within(screen.getByTestId("tile-Needs you")).getByText("3")).toBeInTheDocument();
 
     // Orchestrator-sourced derived metrics.
-    expect(within(screen.getByTestId("tile-Job Success Rate")).getByText("90%")).toBeInTheDocument();
-    expect(within(screen.getByTestId("tile-Cost Today")).getByText("$3.45")).toBeInTheDocument();
+    expect(within(screen.getByTestId("tile-Job success")).getByText("90%")).toBeInTheDocument();
+    const cost = screen.getByTestId("tile-Cost today");
+    expect(within(cost).getByText("$3.45")).toBeInTheDocument();
+    expect(within(cost).getByText(/\$47\.50 this month/)).toBeInTheDocument();
     expect(
-      within(screen.getByTestId("tile-Cost This Month")).getByText("$47.50"),
-    ).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("tile-Cache Hit Rate")).getByText("80%"),
+      within(screen.getByTestId("tile-Cache hit rate")).getByText("80%"),
     ).toBeInTheDocument();
   });
 
-  it("presents no Companion-sourced data: single orchestrator heartbeat only", () => {
+  it("presents no Companion-sourced data, and leaves the orchestrator's state to the sidebar", () => {
     renderPage();
-    const strip = screen.getByTestId("heartbeat-strip");
-    expect(within(strip).getByLabelText(/orchestrator/i)).toBeInTheDocument();
-    expect(within(strip).queryByLabelText(/agent/i)).toBeNull();
+    expect(screen.queryByTestId("heartbeat-strip")).toBeNull();
+    expect(screen.queryByLabelText(/agent/i)).toBeNull();
+  });
+
+  it("tints a tile that is a status: running, and the page's one gold on what needs a person", () => {
+    renderPage();
+    expect(within(screen.getByTestId("tile-Running")).getByText("4").className).toContain("text-info");
+    expect(within(screen.getByTestId("tile-Needs you")).getByText("3").className).toContain("text-primary");
+    expect(within(screen.getByTestId("tile-Job success")).getByText("90%").className).toContain("text-fg");
   });
 
   // Guards the assay finding: "Cost Today" must come from the orchestrator's
   // daily_cost_usd, and the monthly figure must never leak into Today.
-  it("sources Cost Today from orchestrator daily_cost_usd", () => {
+  it("sources Cost today from orchestrator daily_cost_usd", () => {
     renderPage();
-    const tile = screen.getByTestId("tile-Cost Today");
+    const tile = screen.getByTestId("tile-Cost today");
+    // The value is today's figure; the month is only the line under the label.
     expect(within(tile).getByText("$3.45")).toBeInTheDocument();
     expect(within(tile).queryByText("$47.50")).toBeNull();
   });
 
   // Guards the assay finding: pass rate must use the orchestrator's existing
   // success_rate field, not be re-derived from completed/failed.
-  it("sources Job Success Rate directly from orchestrator success_rate", () => {
+  it("sources Job success directly from orchestrator success_rate", () => {
     mockUseStats.mockReturnValue(
       ready({
         ...ORCH_OK.data!,
@@ -158,7 +173,7 @@ describe("DashboardPage", () => {
     );
     renderPage();
     expect(
-      within(screen.getByTestId("tile-Job Success Rate")).getByText("90%"),
+      within(screen.getByTestId("tile-Job success")).getByText("90%"),
     ).toBeInTheDocument();
   });
 
@@ -185,32 +200,59 @@ describe("DashboardPage", () => {
     );
     renderPage();
     expect(
-      within(screen.getByTestId("tile-Job Success Rate")).getByText("40%"),
+      within(screen.getByTestId("tile-Job success")).getByText("40%"),
     ).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("tile-Succeeded or Merged")).getByText("60%"),
-    ).toBeInTheDocument();
+    // The blended "succeeded or merged" rate repeated both and is gone.
+    expect(screen.queryByText("60%")).toBeNull();
     // 39 job rows carry a merged PR, but they are 34 distinct pull requests:
     // the tile says "PRs", so it counts PRs.
-    const merged = screen.getByTestId("tile-PRs Merged");
+    const merged = screen.getByTestId("tile-PRs merged");
     expect(within(merged).getByText("34")).toBeInTheDocument();
     expect(within(merged).queryByText("39")).toBeNull();
-    expect(within(merged).getByText(/human-finished/)).toBeInTheDocument();
+    // Whose work it was stays said, under the tiles rather than inside one.
+    expect(within(merged).queryByText(/human-finished/)).toBeNull();
+    expect(screen.getByText(/human-finished/)).toBeInTheDocument();
   });
 
   it("falls back to success_rate against a backend that predates the split", () => {
     renderPage();
     expect(
-      within(screen.getByTestId("tile-Job Success Rate")).getByText("90%"),
+      within(screen.getByTestId("tile-Job success")).getByText("90%"),
     ).toBeInTheDocument();
-    expect(within(screen.getByTestId("tile-PRs Merged")).getByText("0")).toBeInTheDocument();
+    expect(within(screen.getByTestId("tile-PRs merged")).getByText("0")).toBeInTheDocument();
   });
 
-  it("renders every tile in loading state while queries are pending", () => {
+  it("paints once stats and the queue have first answered, a skeleton before", () => {
     mockUseStats.mockReturnValue(loading());
-    mockUseQueue.mockReturnValue(loading());
+    const { rerender } = renderPage();
+    // Drawn before, the page grew as they landed and pushed itself down.
+    expect(screen.queryByTestId("tile-Running")).toBeNull();
+    expect(screen.queryByTestId("panel-Recent issues")).toBeNull();
+
+    mockUseStats.mockReturnValue(ORCH_OK);
+    rerender(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+    expect(within(screen.getByTestId("tile-Running")).getByText("7 queued")).toBeInTheDocument();
+    expect(screen.getByTestId("panel-Recent issues")).toBeInTheDocument();
+  });
+
+  it("does not wait on the watcher, whose answer moves nothing", () => {
+    mockUseWatcherRuns.mockReturnValue(loading());
     renderPage();
-    for (const label of ["Running", "Queued", "Needs You", "Job Success Rate", "Cost Today"]) {
+    expect(screen.getByTestId("tile-Running")).toBeInTheDocument();
+    expect(within(screen.getByTestId("panel-Watcher")).getByText("Loading…")).toBeInTheDocument();
+  });
+
+  it("renders every tile in loading state while a failed first attempt retries", () => {
+    // The first paint never waits out retries: it goes ahead, and the tiles
+    // say they are still loading.
+    mockUseStats.mockReturnValue(retrying());
+    mockUseQueue.mockReturnValue(retrying());
+    renderPage();
+    for (const label of ["Running", "Needs you", "Job success", "Cost today"]) {
       expect(screen.getByTestId(`tile-${label}`)).toHaveAttribute("data-state", "loading");
     }
   });
@@ -218,29 +260,24 @@ describe("DashboardPage", () => {
   it("scopes an outage to the failing source: queue tiles error, stats tiles stay ready", () => {
     mockUseQueue.mockReturnValue(errored());
     renderPage();
-    for (const label of ["Running", "Queued", "Needs You"]) {
+    for (const label of ["Running", "Needs you"]) {
       expect(screen.getByTestId(`tile-${label}`)).toHaveAttribute("data-state", "error");
     }
-    for (const label of ["Job Success Rate", "Cost Today", "Cost This Month"]) {
+    for (const label of ["Job success", "Cost today", "Cache hit rate"]) {
       expect(screen.getByTestId(`tile-${label}`)).toHaveAttribute("data-state", "ready");
     }
-  });
-
-  it("shows the live-activity band when the queue has activity", () => {
-    renderPage();
-    // 4 running / 7 queued / 2 awaiting input from QUEUE_OK.
-    expect(screen.getByText("running")).toBeInTheDocument();
-    expect(screen.getByText("awaiting input")).toBeInTheDocument();
   });
 
   it("renders recent issues and watcher runs panels", () => {
     renderPage();
 
-    const issues = screen.getByTestId("panel-Recent Issues");
+    const issues = screen.getByTestId("panel-Recent issues");
     expect(within(issues).getByText("acme/app#42")).toBeInTheDocument();
+    // Readable words on the pill, never the raw enum.
+    expect(within(issues).getByText("Completed")).toBeInTheDocument();
 
     const watcher = screen.getByTestId("panel-Watcher");
-    expect(within(watcher).getByText("proposed")).toBeInTheDocument();
+    expect(within(watcher).getByText("Proposed")).toBeInTheDocument();
     expect(within(watcher).getByText("RAV-999")).toBeInTheDocument();
   });
 
@@ -248,5 +285,84 @@ describe("DashboardPage", () => {
     mockUseWatcherRuns.mockReturnValue(ready([]));
     renderPage();
     expect(screen.getByText("No watcher ticks recorded yet.")).toBeInTheDocument();
+  });
+
+  it("names each recent issue by its tracker key and title, and links it to the issue", () => {
+    const base = ORCH_OK.data!;
+    const now = new Date().toISOString();
+    mockUseStats.mockReturnValue(
+      ready({
+        ...base,
+        recent_issues: [
+          {
+            trace_id: "iss-lin", issue_number: 0, repo: "acme/app", title: "Tidy the setup docs",
+            tracker: "linear", tracker_key: "ENG-7", issue_status: "open", job_status: "expired",
+            timestamp: now, passed: false, cost_usd: 0, status: "expired",
+          },
+          {
+            trace_id: "iss-gh", issue_number: 42, repo: "acme/app", title: "Fix the login redirect",
+            tracker: "github", tracker_key: "42", issue_status: "closed", job_status: "pr_merged",
+            timestamp: now, passed: false, cost_usd: 1, status: "pr_merged",
+          },
+        ],
+      }),
+    );
+    renderPage();
+    const issues = screen.getByTestId("panel-Recent issues");
+    expect(within(issues).queryByText(/acme\/app#0/), "a Linear ticket is not issue #0").toBeNull();
+
+    const linear = within(issues).getByRole("link", { name: /ENG-7.*Tidy the setup docs/ });
+    expect(linear).toHaveAttribute("href", "/issues/iss-lin");
+    const github = within(issues).getByRole("link", { name: /acme\/app#42.*Fix the login redirect/ });
+    expect(github).toHaveAttribute("href", "/issues/iss-gh");
+
+    // The pill is the issue's own status, not its latest job's.
+    const linearRow = linear.closest("tr")!;
+    expect(within(linearRow).getByText("Open")).toBeInTheDocument();
+    expect(within(linearRow).queryByText("Expired")).toBeNull();
+  });
+
+  it("keeps a recent issue's key and title readable on a phone", () => {
+    mockUseStats.mockReturnValue(
+      ready({
+        ...ORCH_OK.data!,
+        recent_issues: [
+          {
+            trace_id: "iss-lin", issue_number: 0, repo: "acme/app", title: "[ENG-7] [watcher] Tidy the setup docs",
+            tracker: "linear", tracker_key: "ENG-7", issue_status: "open", job_status: "expired",
+            timestamp: new Date().toISOString(), passed: false, cost_usd: 0, status: "expired",
+          },
+        ],
+      }),
+    );
+    renderPage();
+    const issues = screen.getByTestId("panel-Recent issues");
+    const link = within(issues).getByRole("link", { name: /ENG-7/ });
+    expect(link, "the title must not repeat the key the row already shows").toHaveTextContent(
+      /^ENG-7\s*\[watcher\] Tidy the setup docs$/,
+    );
+    // On a phone the key has a line of its own and the title up to two under
+    // it; from sm up the two share one line, cut at the end.
+    const key = within(link).getByText("ENG-7");
+    const title = within(link).getByText("[watcher] Tidy the setup docs");
+    expect(key).toHaveClass("block", "sm:inline");
+    expect(title).toHaveClass("line-clamp-2", "sm:inline");
+    expect(link).toHaveClass("block", "break-words", "sm:truncate");
+    expect(link.closest("td")).not.toHaveClass("truncate");
+    // When is the table's last column, and it steps aside below sm.
+    const table = within(issues).getByRole("table");
+    expect(within(table).getAllByRole("columnheader").at(-1)).toHaveTextContent("When");
+    expect(table).toHaveClass("[&_tr>*:last-child]:hidden", "sm:[&_tr>*:last-child]:table-cell");
+  });
+
+  it("draws the deep stats under the two panels, from the same stats answer", () => {
+    mockUseStats.mockReturnValue(
+      ready({ ...ORCH_OK.data, cost_by_repo: [{ repo: "acme/widgets", cost_usd: 4.5, job_count: 3 }] }),
+    );
+    renderPage();
+    const panels = screen.getByTestId("panel-Recent issues");
+    const deep = screen.getByTestId("panel-Cost by repository");
+    expect(panels.compareDocumentPosition(deep) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(deep).getByText("acme/widgets")).toBeInTheDocument();
   });
 });

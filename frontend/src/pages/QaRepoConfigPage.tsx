@@ -11,11 +11,11 @@ export function QaRepoConfigPage() {
   if (!validRepo) return <PageError message="Invalid repo — expected owner/name" />;
 
   return (
-    <div className="space-y-4 p-6">
-      <Link to={`/qa/repos/${encodeURIComponent(repo!)}`} className="text-sm text-white/50 hover:underline">
-        ← {repo}
+    <div className="space-y-4">
+      <Link to={`/repos/${repo}`} className="text-sm text-white/50 hover:underline">
+        ← Repository
       </Link>
-      <h1 className="text-2xl font-bold">QA config</h1>
+      <h1 className="title-pixel text-xl font-bold">QA config</h1>
       <QaConfigEditor repo={`${owner}/${name}`} />
     </div>
   );

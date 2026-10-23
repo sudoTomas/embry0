@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from embry0.api.schemas.repo_preferences import validate_git_author_email
 
 _LABEL = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+# A tailnet's name as the tailnet API takes it in a path: "-" (the key's own
+# tailnet) or an organization name such as "example.com".
+_TAILNET = re.compile(r"^(-|[A-Za-z0-9][A-Za-z0-9._@+-]{0,252})$")
 
 
 def _stripped_secret(v: str) -> str:
@@ -23,16 +28,52 @@ def _stripped_secret(v: str) -> str:
     return v
 
 
+def _custom_base_url(metadata: dict[str, Any]) -> str:
+    """The custom provider's API root (``metadata.base_url``), validated and without a trailing slash.
+
+    http is allowed: a model server on the operator's network rarely has a certificate.
+    No userinfo, query or fragment — the URL is stored in the clear and injected as is.
+    """
+    unknown = sorted(set(metadata) - {"base_url"})
+    if unknown:
+        raise ValueError(f"custom credential metadata takes only 'base_url', got {unknown}")
+    raw = metadata.get("base_url")
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("a custom credential needs metadata.base_url, the root of its OpenAI-compatible API")
+    parsed = urlparse(raw.strip())
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("metadata.base_url must be an http(s) URL with a host, e.g. http://10.0.0.5:11434/v1")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("metadata.base_url must not carry credentials, a query or a fragment")
+    return raw.strip().rstrip("/")
+
+
 class CredentialCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["forge_token", "llm_oauth", "llm_api_key"]  # ssh_key opens in a later slice
-    provider: Literal["github", "gitlab", "anthropic", "xai"]
+    kind: Literal["forge_token", "llm_oauth", "llm_api_key", "tailnet_api_key"]  # ssh_key opens in a later slice
+    provider: Literal[
+        "github",
+        "gitlab",
+        "anthropic",
+        "xai",
+        "tailscale",
+        "openai",
+        "openrouter",
+        "google",
+        "groq",
+        "deepseek",
+        "custom",
+    ]
     host: str = ""  # "" means the provider's default host
     label: str = Field(min_length=1, max_length=64, pattern=_LABEL)
     secret: str = Field(min_length=1)
     git_author_name: str | None = None
     git_author_email: str | None = None
+    # Non-secret settings stored with the secret. tailnet_api_key takes
+    # {"tailnet": "<name>"}, "-" (the key's own tailnet) when omitted; a custom
+    # LLM provider's key takes {"base_url": "<OpenAI-compatible API root>"}.
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("secret")
     @classmethod
@@ -46,12 +87,37 @@ class CredentialCreate(BaseModel):
 
     @model_validator(mode="after")
     def _kind_matches_provider(self) -> CredentialCreate:
+        from embry0.agents.providers import OPENAI_COMPATIBLE
+        from embry0.services.credentials.providers import llm_providers
+
         forge = self.provider in ("github", "gitlab")
-        llm = self.provider in ("anthropic", "xai")
+        enabled = list(llm_providers())
+        family = self.provider in {p.name for p in OPENAI_COMPATIBLE}
+        if family and self.provider not in enabled:
+            raise ValueError(
+                f"provider {self.provider!r} is not enabled in this deployment: add it to OPENAI_COMPATIBLE_PROVIDERS"
+            )
         if self.kind == "forge_token" and not forge:
             raise ValueError("forge_token credentials must use provider github or gitlab")
-        if self.kind in ("llm_oauth", "llm_api_key") and not llm:
-            raise ValueError(f"{self.kind} credentials must use provider anthropic or xai")
+        if self.kind in ("llm_oauth", "llm_api_key") and self.provider not in enabled:
+            names = ", ".join(enabled[:-1]) + f" or {enabled[-1]}"
+            raise ValueError(f"{self.kind} credentials must use provider {names}")
+        if family and self.kind != "llm_api_key":
+            raise ValueError(f"{self.provider} credentials are llm_api_key: the provider takes an API key only")
+        if (self.kind == "tailnet_api_key") != (self.provider == "tailscale"):
+            raise ValueError("tailnet_api_key credentials use provider tailscale, and tailscale takes no other kind")
+        if self.kind == "tailnet_api_key":
+            unknown = sorted(set(self.metadata) - {"tailnet"})
+            if unknown:
+                raise ValueError(f"tailnet_api_key metadata takes only 'tailnet', got {unknown}")
+            tailnet = self.metadata.get("tailnet", "-")
+            if not isinstance(tailnet, str) or not _TAILNET.match(tailnet):
+                raise ValueError("metadata.tailnet must be '-' or a tailnet name of letters, digits and . _ @ + -")
+            self.metadata = {"tailnet": tailnet}
+        elif self.provider == "custom":
+            self.metadata = {"base_url": _custom_base_url(self.metadata)}
+        elif self.metadata:
+            raise ValueError("metadata is only accepted for tailnet_api_key and custom credentials")
         # The secret is a JSON refresh payload; the single-line rule rejects it.
         # Device-code login and the importer are the only writers.
         if self.provider == "xai" and self.kind == "llm_oauth":
@@ -97,7 +163,7 @@ class BindingInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     credential_id: str = Field(pattern=r"^cred-[0-9a-f]{12}$")
-    role: Literal["forge", "llm", "deploy"]
+    role: Literal["forge", "llm", "deploy", "tailnet"]
     pinned: bool = False
     priority: int = 0
 
@@ -137,6 +203,7 @@ class CredentialOut(BaseModel):
     updated_at: datetime | str | None = None
     rotated_at: datetime | str | None = None
     last_used_at: datetime | str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ResolveOut(BaseModel):

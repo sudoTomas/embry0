@@ -1,5 +1,5 @@
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "partial" | "cancelled" | "awaiting_input" | "pr_merged" | "pr_closed" | "paused" | "expired" | "skipped";
-export type TraceResult = "pass" | "fail" | "partial" | "error" | "timeout" | "budget_exceeded";
+export type TraceResult = "success" | "error" | "running";
 
 /** Every JobStatus, in board-lane order. The `satisfies` + Record guard makes
  * adding a status to the union a build error HERE instead of a silently stale
@@ -36,6 +36,9 @@ export interface JobResponse {
   /** Null for non-git jobs (http/local/none contexts). */
   repo: string | null;
   task: string;
+  /** True on list rows fetched with `brief`: `task` is the first line, cut to
+   * 200 characters. The full text comes from the job detail endpoint. */
+  task_truncated?: boolean;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -124,7 +127,9 @@ export interface JobCreateRequest {
   repo?: string | null;
   task?: string | null;
   issue_number?: number | null;
-  pipeline?: "issue-to-pr" | "qa" | "onboard" | null;
+  /** pr-review only: the pull request number (GitLab: the merge request iid). */
+  number?: number | null;
+  pipeline?: "issue-to-pr" | "qa" | "onboard" | "pr-review" | null;
   branch?: string | null;
   context?: JobContext | null;
   pipeline_template?: string | null;
@@ -142,4 +147,46 @@ export interface JobFilters {
   repo?: string;
   limit?: number;
   offset?: number;
+}
+
+/** One `job_verifications` row (docs/verification.md, "The result"), from GET /jobs/{id}/verification. */
+export interface JobVerification {
+  job_id: string;
+  repo: string;
+  mode: string;
+  tier: string;
+  gate_verdict: string;
+  blocking: boolean;
+  browser_qa: string;
+  human_merge_only: boolean;
+  base_sha: string;
+  head_sha: string;
+  /** The full VerificationResult document; `gate.targets` feeds the gate table. */
+  report: {
+    tier?: { tier?: string; reason?: string };
+    gate?: {
+      verdict?: string;
+      blocking?: boolean;
+      base_ref?: string;
+      targets?: { target: string; status: string; comparison?: string; new_failures?: string[]; preexisting?: string[]; flaky?: string[]; fixed?: string[]; blocking?: boolean }[];
+    };
+    browser_qa?: { planned?: string; reason_code?: string; verdict?: string };
+    human_merge_only?: boolean;
+    human_merge_reasons?: string[];
+    config_error?: string | null;
+  } & Record<string, unknown>;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One agent's stored conversation for a job, redacted server-side (GET /jobs/{id}/agents/{type}/session). */
+export interface AgentSession {
+  job_id: string;
+  agent_type: string;
+  mode: string | null;
+  session_id: string | null;
+  last_turn_at: string | null;
+  /** Anthropic Messages shape: role plus a string or a list of content blocks. */
+  messages: { role: string; content: string | { type: string; text?: string; name?: string; input?: unknown; content?: unknown; tool_use_id?: string }[] }[];
 }

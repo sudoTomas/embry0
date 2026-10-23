@@ -9,6 +9,7 @@ import { RepoAccountsSection } from "../RepoAccountsSection";
 const mockSet = vi.fn();
 let repoCreds: unknown;
 let credentialRows: Array<Record<string, unknown>>;
+let catalogProviders: { name: string; available?: boolean }[] | undefined;
 
 const forgeRows = () => [
   {
@@ -28,6 +29,10 @@ vi.mock("@/hooks/useCredentials", () => ({
     data: credentialRows,
     isLoading: false,
   }),
+}));
+
+vi.mock("@/hooks/useProvider", () => ({
+  useModelsCatalog: () => ({ data: catalogProviders ? { providers: catalogProviders } : undefined }),
 }));
 
 function renderSection(repo: string, forge: "github" | "gitlab") {
@@ -50,6 +55,20 @@ const asTier = (tier: string) =>
     apiKeyLogin: true,
   });
 
+const GITHUB_PICKER = /^GitHub account embry0 uses for this repository$/;
+const NONE_LABEL = "Use the shared account (recommended)";
+const ALL_PROVIDERS = ["anthropic", "xai", "openai", "openrouter", "google", "groq", "deepseek", "custom"];
+
+/** The provider rows on screen, by name, in page order. */
+function providerRows(): string[] {
+  return ALL_PROVIDERS.filter((name) => screen.queryByTestId(`llm-${name}`));
+}
+
+/** Every provider this deployment enables; only Anthropic and xAI hold an account. */
+function catalogWithTwoAccounts() {
+  return ALL_PROVIDERS.map((name) => ({ name, available: name === "anthropic" || name === "xai" }));
+}
+
 const llmBinding = {
   credential_id: "cred-000000000009",
   role: "llm" as const,
@@ -62,6 +81,7 @@ describe("RepoAccountsSection", () => {
     mockSet.mockReset();
     repoCreds = undefined;
     credentialRows = forgeRows();
+    catalogProviders = undefined;
     asTier("operator");
   });
 
@@ -113,10 +133,10 @@ describe("RepoAccountsSection", () => {
     repoCreds = { repo: "acme/widgets", bindings: [], effective: {} };
     asTier("operator");
     renderSection("acme/widgets", "github");
-    expect(screen.getByLabelText(/bound account/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(GITHUB_PICKER)).toBeInTheDocument();
   });
 
-  it("marks an env source as served from the environment", () => {
+  it("marks an env source as coming from the server's settings", () => {
     repoCreds = {
       repo: "acme/widgets",
       bindings: [],
@@ -133,7 +153,7 @@ describe("RepoAccountsSection", () => {
     asTier("operator");
     renderSection("acme/widgets", "github");
     const badge = screen.getByText("env");
-    expect(badge).toHaveAttribute("title", "served from the environment; run import-env");
+    expect(badge).toHaveAttribute("title", "Comes from the server's settings, not the account list");
     expect(badge.className).toContain("text-warning");
   });
 
@@ -146,10 +166,9 @@ describe("RepoAccountsSection", () => {
     asTier("admin");
     const user = userEvent.setup();
     renderSection("acme/widgets", "github");
-    const select = screen.getByLabelText(/bound account/i);
-    // Exact name: /gl/ also matches "global" in the none option.
+    const select = screen.getByLabelText(GITHUB_PICKER);
     expect(screen.queryByRole("option", { name: "gl" })).toBeNull();
-    expect(within(select).getByRole("option", { name: "(none — use owner/global/env)" })).toBeInTheDocument();
+    expect(within(select).getByRole("option", { name: NONE_LABEL })).toBeInTheDocument();
     await user.selectOptions(select, "cred-000000000001");
     expect(mockSet).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -172,7 +191,7 @@ describe("RepoAccountsSection", () => {
     asTier("admin");
     const user = userEvent.setup();
     renderSection("acme/widgets", "github");
-    await user.selectOptions(screen.getByLabelText(/bound account/i), "");
+    await user.selectOptions(screen.getByLabelText(GITHUB_PICKER), "");
     expect(mockSet).toHaveBeenCalledWith(
       expect.objectContaining({
         fullRepo: "acme/widgets",
@@ -186,6 +205,7 @@ describe("RepoAccountsSection", () => {
     repoCreds = { repo: "acme/widgets", bindings: [], effective: { forge: { error: "x" } } };
     asTier("admin");
     renderSection("acme/widgets", "gitlab");
+    expect(screen.getByLabelText("GitLab account embry0 uses for this repository")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "gl" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "alice" })).toBeNull();
   });
@@ -195,11 +215,11 @@ describe("RepoAccountsSection", () => {
     asTier("operator");
     const user = userEvent.setup();
     renderSection("acme/widgets", "github");
-    const select = screen.getByLabelText(/bound account/i);
+    const select = screen.getByLabelText(GITHUB_PICKER);
     expect(select).toBeDisabled();
     expect(select).toBeInTheDocument();
     await user.hover(select);
-    expect(screen.getByText("Admin scope required")).toBeInTheDocument();
+    expect(screen.getByText("Only an admin can change accounts.")).toBeInTheDocument();
   });
 
   it("filters each LLM picker to that provider", () => {
@@ -236,6 +256,136 @@ describe("RepoAccountsSection", () => {
     expect(within(xai).queryByRole("option", { name: "claude-default" })).toBeNull();
   });
 
+  it("binds an account for every usable provider, counts the unused ones and names the ones not enabled", async () => {
+    catalogProviders = [
+      { name: "anthropic", available: true },
+      { name: "xai", available: false },
+      { name: "openai", available: false },
+      { name: "custom", available: true },
+    ];
+    credentialRows = [
+      ...forgeRows(),
+      { id: "cred-00000000000c", label: "openai-key", provider: "openai", status: "ok" },
+      { id: "cred-00000000000d", label: "ollama", provider: "custom", status: "ok" },
+    ];
+    repoCreds = {
+      repo: "acme/widgets",
+      bindings: [],
+      effective: {
+        forge: { error: "x" },
+        llm: {
+          openai: { id: "cred-00000000000c", label: "openai-key", provider: "openai", source: "registry", trace: ["global -> openai-key"] },
+        },
+      },
+    };
+    asTier("admin");
+    const user = userEvent.setup();
+    renderSection("acme/widgets", "github");
+    // OpenAI is not marked available, but it resolves here, so it is never hidden.
+    expect(providerRows()).toEqual(["anthropic", "openai", "custom"]);
+    const openai = screen.getByLabelText(/^openai account/i);
+    expect(within(openai).getByRole("option", { name: "openai-key" })).toBeInTheDocument();
+    expect(within(openai).queryByRole("option", { name: "ollama" })).toBeNull();
+    expect(within(screen.getByTestId("llm-trace-openai")).getByText("global -> openai-key")).toBeInTheDocument();
+    expect(screen.getByTestId("llm-unused")).toHaveTextContent(
+      "1 other AI company is switched on here but has no account. This repository does not use it.",
+    );
+    expect(screen.getByTestId("llm-not-enabled")).toHaveTextContent(
+      "Not enabled in this deployment: OpenRouter, Google, Groq, DeepSeek. Name a provider in OPENAI_COMPATIBLE_PROVIDERS to bind its account here.",
+    );
+    await user.selectOptions(screen.getByLabelText(/^custom account/i), "cred-00000000000d");
+    expect(mockSet).toHaveBeenLastCalledWith(
+      {
+        fullRepo: "acme/widgets",
+        bindings: [{ credential_id: "cred-00000000000d", role: "llm", pinned: false }],
+      },
+      expect.anything(),
+    );
+  });
+
+  it("shows only the AI companies with an account and counts the rest in one line", () => {
+    catalogProviders = catalogWithTwoAccounts();
+    repoCreds = { repo: "acme/widgets", bindings: [], effective: { forge: { error: "x" } } };
+    asTier("admin");
+    renderSection("acme/widgets", "github");
+    expect(providerRows()).toEqual(["anthropic", "xai"]);
+    const unused = screen.getByTestId("llm-unused");
+    expect(unused).toHaveTextContent(
+      "6 other AI companies are switched on here but have no account. This repository does not use them.",
+    );
+    expect(unused.className).toContain("text-muted-foreground");
+    expect(screen.queryByText(/No OpenAI account resolved/)).toBeNull();
+    expect(screen.queryByTestId("llm-not-enabled")).toBeNull();
+  });
+
+  it("never hides a provider this repository has a binding for", () => {
+    catalogProviders = catalogWithTwoAccounts();
+    credentialRows = [
+      ...forgeRows(),
+      { id: "cred-00000000000e", label: "groq-key", provider: "groq", status: "disabled" },
+    ];
+    repoCreds = {
+      repo: "acme/widgets",
+      bindings: [{ credential_id: "cred-00000000000e", role: "llm", provider: "groq", pinned: true, priority: 0 }],
+      effective: { forge: { error: "x" } },
+    };
+    asTier("admin");
+    renderSection("acme/widgets", "github");
+    expect(providerRows()).toEqual(["anthropic", "xai", "groq"]);
+    expect(screen.getByLabelText(/^groq account/i)).toHaveValue("cred-00000000000e");
+    expect(screen.getByTestId("llm-unused")).toHaveTextContent(/^5 other AI companies/);
+  });
+
+  it("never hides a provider whose account resolves here, even with an error", () => {
+    catalogProviders = catalogWithTwoAccounts();
+    repoCreds = {
+      repo: "acme/widgets",
+      bindings: [],
+      effective: { forge: { error: "x" }, llm: { deepseek: { error: "the pinned DeepSeek account is paused" } } },
+    };
+    asTier("admin");
+    renderSection("acme/widgets", "github");
+    expect(providerRows()).toEqual(["anthropic", "xai", "deepseek"]);
+    expect(within(screen.getByTestId("llm-deepseek")).getByText("the pinned DeepSeek account is paused")).toBeInTheDocument();
+  });
+
+  it("puts the code login picker under its effective account, before the AI accounts", () => {
+    catalogProviders = catalogWithTwoAccounts();
+    repoCreds = { repo: "acme/widgets", bindings: [], effective: { forge: { error: "x" } } };
+    renderSection("acme/widgets", "github");
+    const effective = screen.getByRole("heading", { name: "Effective forge account" });
+    const label = screen.getByText("GitHub account embry0 uses for this repository");
+    const llm = screen.getByRole("heading", { name: "LLM accounts" });
+    expect(effective.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(label.compareDocumentPosition(llm) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("names the account disclosures 'Why this account?'", () => {
+    catalogProviders = catalogWithTwoAccounts();
+    repoCreds = {
+      repo: "acme/widgets",
+      bindings: [],
+      effective: {
+        forge: { id: "cred-000000000001", label: "alice", provider: "github", source: "registry", trace: [] },
+        llm: { anthropic: { id: "cred-00000000000a", label: "claude-default", provider: "anthropic", source: "registry", trace: [] } },
+      },
+    };
+    renderSection("acme/widgets", "github");
+    expect(within(screen.getByTestId("repo-accounts-trace")).getByText("Why this account?")).toBeInTheDocument();
+    expect(within(screen.getByTestId("llm-trace-anthropic")).getByText("Why this account?")).toBeInTheDocument();
+    expect(screen.queryByText("Trace")).toBeNull();
+  });
+
+  it("shows Anthropic and xAI only, and claims nothing, before the catalog answers", () => {
+    repoCreds = { repo: "acme/widgets", bindings: [], effective: { forge: { error: "x" } } };
+    renderSection("acme/widgets", "github");
+    expect(screen.getByTestId("llm-anthropic")).toBeInTheDocument();
+    expect(screen.getByTestId("llm-xai")).toBeInTheDocument();
+    expect(screen.queryByTestId("llm-openai")).toBeNull();
+    expect(screen.queryByTestId("llm-not-enabled")).toBeNull();
+    expect(screen.queryByTestId("llm-unused")).toBeNull();
+  });
+
   it("pins the selected LLM account for this repo", async () => {
     credentialRows = [
       ...forgeRows(),
@@ -251,7 +401,7 @@ describe("RepoAccountsSection", () => {
     renderSection("acme/widgets", "github");
     await user.selectOptions(screen.getByLabelText(/anthropic account/i), "cred-00000000000a");
     const pin = within(screen.getByTestId("llm-anthropic")).getByRole("checkbox", {
-      name: /never fall back to another account for this repo/i,
+      name: "If this account is paused, stop work on this repository instead of using the shared account",
     });
     await user.click(pin);
     expect(mockSet).toHaveBeenLastCalledWith(
@@ -280,6 +430,6 @@ describe("RepoAccountsSection", () => {
       apiKeyLogin: true,
     });
     renderSection("acme/widgets", "github");
-    expect(screen.getByLabelText(/bound account/i)).toBeEnabled();
+    expect(screen.getByLabelText(GITHUB_PICKER)).toBeEnabled();
   });
 });

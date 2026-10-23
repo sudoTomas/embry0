@@ -47,3 +47,9 @@ export async function detectRepoEnv(fullRepo: string): Promise<DetectRepoEnvResp
   const { data } = await api.get(`/repos/${fullRepo}/environment/detect`);
   return data;
 }
+
+/** The variables a sandbox for this repository gets: global ones with the repo's written over them, secrets masked. */
+export async function fetchResolvedRepoEnv(fullRepo: string): Promise<EnvVar[]> {
+  const { data } = await api.get(`/repos/${fullRepo}/environment/resolve`);
+  return data.variables;
+}

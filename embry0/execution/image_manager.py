@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -14,6 +15,9 @@ from embry0.execution.image_registry import is_registry_qualified, qualify_image
 from embry0.execution.runtime import AgentRuntime
 from embry0.execution.sandbox_listing import list_sandbox_containers, parse_ps_created
 from embry0.storage.repositories.jobs import StatusTransitionConflict
+
+if TYPE_CHECKING:
+    from embry0.execution.sandbox_manager import SandboxManager
 
 logger = structlog.get_logger(__name__)
 
@@ -267,10 +271,14 @@ class ContainerReaper:
         jobs_repo: Any = None,
         issues_repo: Any = None,
         database_url: str | None = None,
+        on_job_finished: Callable[[str], Awaitable[None]] | None = None,
+        *,
+        sandbox_manager: SandboxManager,
     ) -> None:
         self._runtime = runtime
-        # Stop and rm of a sandbox still go through the CLI client (#268).
-        self._docker = runtime.client
+        # Every teardown goes through SandboxManager.destroy, as boot cleanup
+        # does: the proxy unenroll, egress rules and bearers come with it.
+        self._sandbox = sandbox_manager
         self._max_age_hours = max_age_hours
         self._interval = check_interval_seconds
         self._task: asyncio.Task[None] | None = None
@@ -279,6 +287,9 @@ class ContainerReaper:
         self._jobs_repo = jobs_repo
         self._issues_repo = issues_repo
         self._database_url = database_url
+        # spec 3.5: expiry is terminal, so each expired job is announced. Set
+        # by the lifespan once the executor exists (the reaper is built first).
+        self.on_job_finished = on_job_finished
 
     def start(self) -> None:
         """Start the reaper background task."""
@@ -296,17 +307,27 @@ class ContainerReaper:
             self._task = None
 
     async def _reap_loop(self) -> None:
-        """Periodically check for stale containers."""
+        """Periodically check for stale containers.
+
+        Each step runs on its own: one that fails is logged and the tick goes
+        on, so a hung docker command in the reap cannot cost the QA orphan
+        sweep or the paused-job expiry.
+        """
+        steps = (
+            ("reap", self._reap),
+            ("qa_orphan_sweep", self._sweep_qa_orphans),
+            ("paused_job_expiry", self._expire_paused_jobs),
+        )
         while True:
             try:
                 await asyncio.sleep(self._interval)
-                await self._reap()
-                await self._sweep_qa_orphans()
-                await self._expire_paused_jobs()
+                for name, step in steps:
+                    try:
+                        await step()
+                    except Exception:
+                        logger.exception("reaper_error", step=name)
             except asyncio.CancelledError:
                 break
-            except Exception:
-                logger.exception("reaper_error")
 
     def _older_than_max_age(self, created: str) -> bool:
         """Return True if the given ``docker inspect --format {{.Created}}`` timestamp is older than max_age.
@@ -421,14 +442,7 @@ class ContainerReaper:
                 continue
 
             logger.info("reaping_stale_container", name=name, age_hours=round(age_hours, 1))
-            try:
-                await self._docker.run_cmd(self._docker.build_stop_cmd(container_id, timeout=5))
-            except RuntimeError:
-                pass
-            try:
-                await self._docker.run_cmd(self._docker.build_rm_cmd(container_id))
-            except RuntimeError:
-                pass
+            await self._sandbox.destroy(container_id, timeout=5)
 
     async def _expire_paused_jobs(self) -> None:
         """Transition paused jobs past their TTL to expired, destroy their sandboxes."""
@@ -467,16 +481,12 @@ class ContainerReaper:
                     logger.warning("expire_paused_job_status_race", job_id=job_id)
                     continue
                 logger.info("expiring_paused_job", job_id=job_id)
-                try:
-                    stop_cmd = self._docker.build_stop_cmd(container_name, timeout=5)
-                    await self._docker.run_cmd(stop_cmd)
-                except RuntimeError:
-                    pass
-                try:
-                    rm_cmd = self._docker.build_rm_cmd(container_name)
-                    await self._docker.run_cmd(rm_cmd)
-                except RuntimeError:
-                    pass
+                if self.on_job_finished is not None:
+                    try:
+                        await self.on_job_finished(job_id)
+                    except Exception:
+                        logger.warning("job_finished_announce_failed", job_id=job_id, exc_info=True)
+                await self._sandbox.destroy(container_name, timeout=5)
                 # Purge checkpoint state immediately (spec § 3.7). Failure is
                 # non-fatal — the daily orphan sweep is a fallback.
                 if self._database_url:

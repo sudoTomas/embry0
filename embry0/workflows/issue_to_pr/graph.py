@@ -40,8 +40,8 @@ node tails for the single dispatch.
 The QA subpath uses the multi-app orchestrator nodes:
 ``init_orchestrator_node`` loads qa.yaml v2 from a bootstrap sandbox,
 ``qa_orchestrator_node`` fans out one parallel sub-task per affected app,
-and ``qa_report_node`` writes the aggregate GitHub check + sticky PR
-comment. Sub-tasks handle boot/QA failures internally and emit
+and ``qa_report_node`` writes the sticky QA comment on the job's forge (a
+GitHub issue comment or a GitLab issue note). Sub-tasks handle boot/QA failures internally and emit
 ``SubTaskResult`` with the right status; ``final_status`` is the gate.
 
 After ``qa_report``, ``_qa_failure_bookkeeping_node`` increments
@@ -283,8 +283,8 @@ class IssueToprWorkflow:
 
         # Multi-app QA subpath wiring: init_orchestrator loads qa.yaml v2 from a
         # bootstrap sandbox, orchestrate_qa fans out one parallel sub-task per
-        # affected app, qa_report writes the aggregate GitHub check + sticky PR
-        # comment. After qa_report, qa_failure_bookkeeping increments
+        # affected app, qa_report writes the sticky QA comment on the job's
+        # forge (GitHub issue comment or GitLab issue note). After qa_report, qa_failure_bookkeeping increments
         # failure_rounds + routes back to triage on failure (capped) or
         # terminates with ERR_QA_FAILURES_UNRESOLVED on exhaustion.
         builder.add_edge("init_orchestrator", "orchestrate_qa")

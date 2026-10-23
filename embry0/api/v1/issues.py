@@ -294,6 +294,9 @@ async def delete_issue(
         raise HTTPException(status_code=404, detail="Issue not found")
 
     children = await issues.get_children(issue_id)
+    # Every issue this cancels, the children included, is checked before any write.
+    for target in [existing, *children]:
+        await enforce_repo_allowlist(request, target.get("repo"), action="delete an issue")
     all_issue_ids = [issue_id] + [c["id"] for c in children]
 
     # #449: stop every active job through the executor, as POST

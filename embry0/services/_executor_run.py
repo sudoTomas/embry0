@@ -17,11 +17,13 @@ if TYPE_CHECKING:
 from embry0.orchestration.checkpoint import checkpointer_context
 from embry0.orchestration.restart import NOT_RESUMABLE_PIPELINES, ShutdownInterrupt
 from embry0.safety.error_codes import ErrorCode, classify_failure, classify_qa_outcome
+from embry0.safety.redaction import register_known_secrets
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services.healing.lifecycle import Origin
 from embry0.services.healing.recorder import record_case_event
 from embry0.storage.repositories.jobs import StatusTransitionConflict
-from embry0.trackers import github_number_of, linear_identifier_of
+from embry0.storage.repositories.repo_setup_proposals import RepoSetupProposalsRepository
+from embry0.trackers import forge_number_of, github_number_of, linear_identifier_of
 
 logger = structlog.get_logger(__name__)
 
@@ -190,6 +192,7 @@ async def _refuse_if_over_budget(
             finished_at=datetime.now(UTC),
         )
         await self._finish_credential_uses(job_id, error_code=ErrorCode.BUDGET_REFUSED.value)
+        await self._announce_finished(job_id)
     except (StatusTransitionConflict, ValueError):
         # ValueError: the job left `pending` meanwhile (cancelled) — the
         # repository refuses the transition; the job is not ours to fail.
@@ -220,11 +223,17 @@ async def _run_onboard_workflow(
     branch: str,
     skip_smoke: bool,
     agent_models: dict[str, str] | None = None,
+    proposal_id: str | None = None,
 ) -> None:
     """Background runner for onboard jobs — mirrors ``_run_qa_workflow``'s
     lifecycle (trace binding, status transitions) minus QA verdict logic:
     the onboard graph's own nodes decide success (config written to the
-    store) vs failure (rounds exhausted / infra error)."""
+    store) vs failure (rounds exhausted / infra error).
+
+    With ``proposal_id`` (propose mode, ADR 0019) success is a draft for a
+    person instead: it is stored on that setup proposal (``pending``) before
+    the job is marked completed, and a job that cannot store it fails. Every
+    other end marks the proposal ``failed`` with the job's reason."""
     from datetime import UTC, datetime
 
     import structlog.contextvars as cv
@@ -244,6 +253,8 @@ async def _run_onboard_workflow(
         # #348: ask the gate before the job is marked running — a refused
         # job never ran and must not carry a started_at.
         if await self._refuse_if_over_budget(job_id):
+            if proposal_id is not None:
+                await _fail_setup_proposal(self, proposal_id, job_id, None)
             return
 
         await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
@@ -263,6 +274,7 @@ async def _run_onboard_workflow(
             # smoke phase boots apps exactly like a QA sub-task would.
             "qa_active": True,
             "skip_smoke": skip_smoke,
+            "onboard_propose": proposal_id is not None,
             "onboard": {},
         }
         if agent_models:
@@ -281,6 +293,8 @@ async def _run_onboard_workflow(
 
         if interrupted:
             logger.warning("onboard_workflow_unexpected_interrupt", job_id=job_id)
+            if proposal_id is not None:
+                await _fail_setup_proposal(self, proposal_id, job_id, "onboard workflow interrupted unexpectedly")
             await self._jobs.update(
                 job_id,
                 status="failed",
@@ -289,28 +303,51 @@ async def _run_onboard_workflow(
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=ErrorCode.UNEXPECTED_INTERRUPT.value)
+            await self._announce_finished(job_id)
             return
 
         ob = (final_state or {}).get("onboard") or {}
-        if ob.get("final_status") == "completed":
+        failure: str | None = None
+        if ob.get("final_status") != "completed":
+            failure = ob.get("failure_summary") or ob.get("last_error") or "onboard did not complete"
+            if proposal_id is not None:
+                await _fail_setup_proposal(self, proposal_id, job_id, failure, notes_md=ob.get("notes_md") or "")
+        elif proposal_id is not None:
+            try:
+                stored = await _setup_proposals(self).finish(
+                    proposal_id,
+                    status="pending",
+                    proposed_yaml=ob["qa_yaml_text"],
+                    notes_md=ob.get("notes_md") or "",
+                    smoke=ob.get("smoke"),
+                )
+                if not stored:
+                    raise LookupError(f"proposal {proposal_id} is no longer waiting for this run")
+            except Exception as exc:  # noqa: BLE001
+                failure = f"could not store the proposal: {exc}"
+        if failure is None:
             await self._jobs.update(
                 job_id,
                 status="completed",
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=None)
+            await self._announce_finished(job_id)
         else:
             await self._jobs.update(
                 job_id,
                 status="failed",
-                error_message=(ob.get("failure_summary") or ob.get("last_error") or "onboard did not complete")[:4000],
+                error_message=failure[:4000],
                 error_code=ErrorCode.ONBOARD_FAILED.value,
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=ErrorCode.ONBOARD_FAILED.value)
+            await self._announce_finished(job_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("onboard_workflow_crashed", job_id=job_id, error=str(exc), exc_info=True)
         crash_code = classify_failure(exc=exc, stage="onboard").value
+        if proposal_id is not None:
+            await _fail_setup_proposal(self, proposal_id, job_id, f"onboard workflow crashed: {exc}")
         try:
             await self._jobs.update(
                 job_id,
@@ -320,9 +357,183 @@ async def _run_onboard_workflow(
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=crash_code)
+            await self._announce_finished(job_id)
         except StatusTransitionConflict:
             pass
     finally:
+        if trace_id_bound:
+            cv.unbind_contextvars("trace_id")
+
+
+def _setup_proposals(self: IssueExecutor) -> RepoSetupProposalsRepository:
+    if self._db is None:
+        raise RuntimeError("no database to store the setup proposal in")
+    return RepoSetupProposalsRepository(self._db)
+
+
+async def _fail_setup_proposal(
+    self: IssueExecutor, proposal_id: str, job_id: str, failure: str | None, *, notes_md: str = ""
+) -> None:
+    """Mark a propose-mode run's setup proposal failed (ADR 0019). ``failure``
+    None takes the reason the job already carries (a refused start). Best
+    effort: the job's failure stays the record, and its status still tells a
+    proposal left ``running`` apart from a live run."""
+    try:
+        if failure is None:
+            failure = str(((await self._jobs.get(job_id)) or {}).get("error_message") or "")
+        await _setup_proposals(self).finish(proposal_id, status="failed", failure=failure, notes_md=notes_md)
+    except Exception:  # noqa: BLE001
+        logger.warning("setup_proposal_not_marked_failed", job_id=job_id, proposal_id=proposal_id, exc_info=True)
+
+
+async def _heavy_tier_model(self: IssueExecutor) -> str:
+    """The deployment's heavy tier (MODEL_HEAVY): the provider_config row, then the env, then the default."""
+    from embry0.orchestration.nodes.agent import load_triage_model_settings
+
+    _default, tiers = await load_triage_model_settings(
+        {"configurable": {"db": getattr(self, "_db", None), "embry0_config": getattr(self, "_config", None)}}
+    )
+    return tiers["model_heavy"]
+
+
+async def _pr_review_model(self: IssueExecutor, review: dict[str, Any], job_id: str) -> str:
+    """The repo's ``pr_review.model`` if it can still run, else the heavy tier.
+
+    The override was checked when it was saved; a model that has since lost
+    its price entry or been disabled would otherwise fail the review at the
+    agent (unpriced) or move it to the medium tier (the resolver's disabled
+    fallback). Either way the review runs on the heavy tier, and the log
+    says why.
+    """
+    from embry0.agents.providers import unpriced_models
+
+    heavy = await _heavy_tier_model(self)
+    wanted = str(review.get("model") or "").strip()
+    if not wanted:
+        return heavy
+    reason = ""
+    if unpriced_models([wanted]):
+        reason = "unpriced"
+    elif wanted in set((await _model_policy_for_precheck(self) or {}).get("disabled_models") or []):
+        reason = "disabled"
+    if reason:
+        logger.warning("pr_review_model_unusable", job_id=job_id, model=wanted, reason=reason, fallback=heavy)
+        return heavy
+    return wanted
+
+
+async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
+    """Background runner for pr-review jobs (#30).
+
+    Mirrors ``_run_onboard_workflow``: the graph's own nodes decide success
+    (the review was posted) or failure (``pr_review.error_code``). Everything
+    the run needs is the job row's ``pipeline_config``, so a relaunch after a
+    restart needs no arguments. The sandbox is destroyed here too, from the
+    last state the graph streamed, in case the graph raised before cleanup.
+
+    ``pipeline_config`` carries the pull request's own text, so none of it
+    reaches the agent's settings: the model is the repo's override or the
+    heavy tier, and ``state.pipeline_config`` (where the agent node reads
+    ``agent_tools``) is never set.
+    """
+    from datetime import UTC, datetime
+
+    import structlog.contextvars as cv
+
+    from embry0.workflows.pr_review.agent_seed import AGENT_TYPE
+
+    trace_id_bound = False
+    job_row: dict[str, Any] | None = None
+    try:
+        job_row = await self._jobs.get(job_id)
+        trace_id = (job_row or {}).get("trace_id")
+        if trace_id:
+            cv.bind_contextvars(trace_id=trace_id)
+            trace_id_bound = True
+    except Exception:
+        logger.warning("trace_id_bind_failed", job_id=job_id, exc_info=True)
+
+    review = dict((job_row or {}).get("pipeline_config") or {})
+    sink: dict[str, Any] = {}
+    try:
+        if await self._refuse_if_over_budget(job_id, actor=(job_row or {}).get("dispatched_by")):
+            return
+        await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
+
+        repo = str(review.get("repo") or (job_row or {}).get("repo") or "")
+        initial_state: dict[str, Any] = {
+            "job_id": job_id,
+            "repo": repo,
+            "task": str((job_row or {}).get("task") or f"Review {repo}"),
+            "current_stage": "init",
+            "agent_outputs": [],
+            "errors": [],
+            "retry_count": 0,
+            "total_cost_usd": 0.0,
+            "budget_overrun_usd": 0.0,
+            "pr_review": review,
+            # The model is explicit, so a deployment-wide default_model does
+            # not move reviews off the heavy tier, and the LLM precheck sees
+            # the provider the review will use.
+            "agent_models_override": {AGENT_TYPE: await _pr_review_model(self, review, job_id)},
+        }
+        if not review.get("from_fork") and review.get("depth") != "read_only":
+            env_vars = await self._load_merged_env_vars(repo, job_id)
+            if env_vars:
+                initial_state["user_env_vars"] = env_vars
+
+        final_state, interrupted, _ = await self._execute_workflow_stream(
+            initial_state, issue_id="", job_id=job_id, pipeline="pr-review", state_sink=sink
+        )
+        if interrupted:
+            logger.warning("pr_review_workflow_unexpected_interrupt", job_id=job_id)
+            await self._jobs.update(
+                job_id,
+                status="failed",
+                error_message="pr-review workflow interrupted unexpectedly",
+                error_code=ErrorCode.UNEXPECTED_INTERRUPT.value,
+                finished_at=datetime.now(UTC),
+            )
+            await self._finish_credential_uses(job_id, error_code=ErrorCode.UNEXPECTED_INTERRUPT.value)
+            await self._announce_finished(job_id)
+            return
+
+        rv = (final_state or {}).get("pr_review") or {}
+        if rv.get("final_status") == "completed":
+            summary = str((rv.get("verdict") or {}).get("summary") or "")
+            await self._jobs.update(
+                job_id, status="completed", finished_at=datetime.now(UTC), result_summary=summary[:4000] or None
+            )
+            await self._finish_credential_uses(job_id, error_code=None)
+            await self._announce_finished(job_id)
+        else:
+            code = str(rv.get("error_code") or ErrorCode.PR_REVIEW_NO_VERDICT.value)
+            await self._jobs.update(
+                job_id,
+                status="failed",
+                error_message=str(rv.get("failure_summary") or "the pull request review did not complete")[:4000],
+                error_code=code,
+                finished_at=datetime.now(UTC),
+            )
+            await self._finish_credential_uses(job_id, error_code=code)
+            await self._announce_finished(job_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("pr_review_workflow_crashed", job_id=job_id, error=str(exc), exc_info=True)
+        crash_code = classify_failure(exc=exc, stage="pr-review").value
+        try:
+            await self._jobs.update(
+                job_id,
+                status="failed",
+                error_message=f"pr-review workflow crashed: {exc}"[:4000],
+                error_code=crash_code,
+                finished_at=datetime.now(UTC),
+            )
+            await self._finish_credential_uses(job_id, error_code=crash_code)
+            await self._announce_finished(job_id)
+        except StatusTransitionConflict:
+            pass
+    finally:
+        await self._cleanup_sandbox(sink or None, job_id)
         if trace_id_bound:
             cv.unbind_contextvars("trace_id")
 
@@ -414,8 +625,16 @@ async def _load_merged_env_vars(self: IssueExecutor, repo_name: str, job_id: str
                 keys=failed_keys,
                 msg="Encrypted values couldn't be decrypted with the current secret key. Those vars will NOT be injected into the sandbox.",
             )
+        # var_type rides along so a reader can tell the secret rows apart
+        # (the session route scrubs transcripts with them); the sandbox
+        # injection reads key, value and scope only.
         env_vars = [
-            {"key": v["key"], "value": v["value"], "scope": v.get("scope", "app")}
+            {
+                "key": v["key"],
+                "value": v["value"],
+                "scope": v.get("scope", "app"),
+                "var_type": v.get("var_type", "config"),
+            }
             for v in decrypted
             if v["value"] != "[DECRYPTION_FAILED]"
         ]
@@ -510,6 +729,9 @@ async def _precheck_llm_accounts(
         await _model_policy_for_precheck(self),
     )
     resolved = await resolver.resolve_llm_for_job(str(state.get("repo") or ""), providers, job_id=job_id)
+    # spec 3.6: registry secrets are registered at startup; an env-fallback
+    # credential is not, so register whatever this job resolved to.
+    register_known_secrets(cred.secret for cred in resolved.values() if isinstance(cred.secret, str))
     ids = {provider: cred.id for provider, cred in resolved.items()}
     kinds = {provider: cred.kind for provider, cred in resolved.items()}
     if isinstance(input_value, dict):
@@ -595,7 +817,7 @@ async def _execute_workflow_stream(
 # it without git_push. Every other pipeline runs IssueToprWorkflow, whose init
 # node creates it with git_push for the developer's branch. Mirrors
 # IssueExecutor._select_workflow.
-_READ_ONLY_PIPELINES = frozenset({"qa", "onboard"})
+_READ_ONLY_PIPELINES = frozenset({"qa", "onboard", "pr-review"})
 
 
 # Facts a job sets before it can pause, which its terminal steps read (#482).
@@ -794,6 +1016,7 @@ async def _run_workflow(
             "repo": issue.get("repo") or "",
             "task": issue["title"] + ("\n\n" + issue["body"] if issue.get("body") else ""),
             "issue_number": github_number_of(issue),
+            "forge_issue_number": forge_number_of(issue),
             # EMB-39: issue labels feed conditional-criteria `labels:`
             # predicates in the QA orchestrator.
             "issue_labels": list(issue.get("labels") or []),
@@ -979,6 +1202,7 @@ async def _run_workflow(
         else:
             await self._jobs.update(job_id, status="completed")
             await self._finish_credential_uses(job_id, error_code=None)
+            await self._announce_finished(job_id)
 
         # Don't destroy sandbox for paused jobs
         job_record = await self._jobs.get(job_id)
@@ -1016,21 +1240,24 @@ async def _run_workflow(
             **({"pr_url": pr_url} if pr_url else {}),
         )
         await self._finish_credential_uses(job_id, error_code=code.value)
+        await self._announce_finished(job_id)
         if pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
-        await self._issues.update(issue_id, status="open")
-        await self._emit_audit(
-            self._db,
-            "issue.status_changed",
-            actor="system",
-            details={
-                "old_status": "triaging",
-                "new_status": "open",
-                "reason": f"Workflow failed: {exc}",
-            },
-            audit_log_path=self._audit_log_path,
-            issue_id=issue_id,
-        )
+        # No issue, no status change to record (see _handle_workflow_result).
+        if issue_id is not None:
+            await self._issues.update(issue_id, status="open")
+            await self._emit_audit(
+                self._db,
+                "issue.status_changed",
+                actor="system",
+                details={
+                    "old_status": "triaging",
+                    "new_status": "open",
+                    "reason": f"Workflow failed: {exc}",
+                },
+                audit_log_path=self._audit_log_path,
+                issue_id=issue_id,
+            )
 
         # Purge checkpoint state for failed jobs.
         from embry0.orchestration.checkpoint import purge_thread as _purge_thread_on_error
@@ -1178,6 +1405,7 @@ async def _skip_as_duplicate(
         finished_at=datetime.now(UTC),
     )
     await self._finish_credential_uses(job_id, error_code=None)
+    await self._announce_finished(job_id)
     await record_case_event(
         self,
         "existing_pr_found",
@@ -1351,6 +1579,7 @@ async def _run_qa_workflow(
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=ErrorCode.UNEXPECTED_INTERRUPT.value)
+            await self._announce_finished(job_id)
             # Terminal like any other failure: release the sandbox and the
             # job's volumes (#274).
             await self._cleanup_sandbox(final_state, job_id)
@@ -1434,6 +1663,7 @@ async def _run_qa_workflow(
             **profile_used,
         )
         await self._finish_credential_uses(job_id, error_code=error_code)
+        await self._announce_finished(job_id)
 
         # Cleanup: sandbox + checkpoint state.
         await self._cleanup_sandbox(final_state, job_id)
@@ -1471,6 +1701,7 @@ async def _run_qa_workflow(
             **spent,
         )
         await self._finish_credential_uses(job_id, error_code=crash_code)
+        await self._announce_finished(job_id)
         await self._cleanup_sandbox(final_state, job_id)
         from embry0.orchestration.checkpoint import purge_thread as _purge
 

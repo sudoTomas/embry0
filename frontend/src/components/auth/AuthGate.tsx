@@ -60,6 +60,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const setSsoEnabled = useAuthStore((s) => s.setSsoEnabled);
   const setApiKeyLogin = useAuthStore((s) => s.setApiKeyLogin);
   const ssoEnabled = useAuthStore((s) => s.ssoEnabled);
+  const apiKeyLogin = useAuthStore((s) => s.apiKeyLogin);
+  // The sign-in check failed with anything but a 404, so how this origin
+  // lets people in is unknown.
+  const [signInCheckFailed, setSignInCheckFailed] = useState(false);
 
   useEffect(() => {
     if (status !== "checking") return;
@@ -73,7 +77,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
           authenticated: boolean;
           tier: string | null;
           api_key_login?: boolean;
-        }>("/auth/check");
+        }>("/auth/check", { suppressErrorToast: true });
         if (cancelled) return;
         setSsoEnabled(check.data.sso_enabled);
         setApiKeyLogin(check.data.api_key_login !== false);
@@ -87,8 +91,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
           if (!cancelled) markDenied(user);
           return;
         }
-      } catch {
-        // Router absent or unreachable — fall through to the key probe.
+      } catch (error: unknown) {
+        // A 404 is an older backend without the auth router: the key form
+        // stays. Any other failure leaves the origin's sign-in rules unknown,
+        // and an SSO-only origin must not offer the key form, so a prompt
+        // then says sign-in is unavailable. Either way the key probe runs:
+        // a stored key that works still opens the app.
+        if (!cancelled && !(isAxiosError(error) && error.response?.status === 404)) {
+          setSignInCheckFailed(true);
+        }
       }
 
       // 2. API-key probe (pre-SSO behavior, unchanged).
@@ -129,6 +140,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
     if (ssoEnabled) {
       return <SsoRedirect />;
     }
+    // An origin the server keeps SSO-only for people (api_key_login false)
+    // never offers the key form, even while SSO reports off.
+    if (!apiKeyLogin) {
+      return <SignInUnavailable reason="sso-off" />;
+    }
+    if (signInCheckFailed) {
+      return <SignInUnavailable reason="check-failed" />;
+    }
     return <ApiKeyPrompt sessionExpired={sessionExpired} />;
   }
 
@@ -146,11 +165,29 @@ function SsoRedirect() {
   );
 }
 
+function SignInUnavailable({ reason }: { reason: "sso-off" | "check-failed" }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="rounded-lg border border-border bg-card w-full max-w-sm p-8 text-center">
+        <h1 className="font-display text-xl font-semibold text-foreground">{APP_NAME}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {reason === "sso-off"
+            ? "Sign-in is unavailable right now. This address signs people in with single sign-on, which the server reports is not configured. Try again later, or ask an administrator."
+            : "Sign-in is unavailable right now: the server did not answer its sign-in check. Try again in a moment, or ask an administrator."}
+        </p>
+        <Button className="mt-6 w-full" variant="outline" onClick={() => window.location.reload()}>
+          Try again
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function AccessDenied() {
   const user = useAuthStore((s) => s.user);
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="embry0-card w-full max-w-sm p-8 text-center">
+      <div className="rounded-lg border border-border bg-card w-full max-w-sm p-8 text-center">
         <span className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-destructive/20 bg-destructive/5">
           <ShieldX size={20} className="text-destructive" />
         </span>
@@ -208,9 +245,9 @@ function ApiKeyPrompt({ sessionExpired }: { sessionExpired: boolean }) {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="embry0-card w-full max-w-sm p-8">
+      <div className="rounded-lg border border-border bg-card w-full max-w-sm p-8">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <span className="flex h-12 w-12 items-center justify-center rounded-full border border-cyan-500/20 bg-cyan-500/5">
+          <span className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-primary-dim">
             <KeyRound size={20} className="text-primary" />
           </span>
           <div>

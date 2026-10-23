@@ -83,7 +83,7 @@ class EnvVarResponse(BaseModel):
     description: str
     required: bool = False
     scope: Literal["app", "qa"] = "app"
-    # RAV-1294: recognisable-but-safe secret preview (e.g. "AZUR••••••••7Q2F").
+    # RAV-1294: a secret preview that shows at most its last 2 characters (e.g. "••••••••2F").
     # None for config vars (value is already plain) and when decryption fails.
     masked_preview: str | None = None
 

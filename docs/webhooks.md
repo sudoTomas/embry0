@@ -50,6 +50,14 @@ You should see at least one `Registered tunnel connection` log line. Webhooks po
 
 **Tearing down:** `docker compose stop cloudflared`, then delete the tunnel and its DNS record in the Cloudflare dashboard.
 
+**5. Tell embry0 its webhook URL.** The hostname above is configured outside the repository, so set it in the root `.env`:
+
+```bash
+WEBHOOK_PUBLIC_URL=https://webhooks.example.com
+```
+
+It is the one public base URL forges deliver webhooks to (GitHub's hook URL is `<it>/api/v1/webhook`). Organization discovery ([ADR 0011](adr/0011-organization-needs.md)) counts a repository's hook as pointing here only when its URL starts with it. `DASHBOARD_PUBLIC_URL` and `SSO_PUBLIC_ORIGIN` are not webhook origins: the public dashboard answers 404 on webhook paths. Until `WEBHOOK_PUBLIC_URL` is set, a repository's hooks are recorded as unknown rather than absent, and the organization's needs list files one `hook_origin_unknown` need that asks for the setting and names the hosts the hooks deliver to. A repository with no hooks at all reads as absent either way.
+
 ## Per-forge configuration
 
 ### GitHub
@@ -61,9 +69,37 @@ Repo → Settings → Webhooks → Add webhook:
 - **Secret:** the value of `GITHUB_WEBHOOK_SECRET` in `.env`
 - **Events:** Issues, Issue comments, Pull requests
 
+For every repository of an organization at once, set `WEBHOOK_PUBLIC_URL` to the same `<base>` and run the organization `hook` action (`POST /api/v1/orgs/{owner}/actions`, see [api.md](api.md#organizations)): it creates exactly this webhook on each repository where the owner's credential can manage hooks, and reports `already` where one already posts to `WEBHOOK_PUBLIC_URL`.
+
 GitHub signs each delivery with `X-Hub-Signature-256: sha256=<hex HMAC>`. A job dispatches when an issue is opened carrying a trigger label (default `embry0`, see `TRIGGER_LABELS`), or when a trigger label is applied to an existing open issue.
 
 `issue_comment.created` also carries answers to agent questions: `/answer <input_id>: <text>` (canonical — the id is stable no matter what other channels answer in the meantime, and embry0 prints it under each question in the question comment) or `/answer <n>: <text>`, where `<n>` is the question's position *in that one question comment*, not in the live pending list. The positional form is sugar bound to a single comment: embry0 refuses it whenever the issue has questions outstanding in more than one comment, or a blocking question whose comment it could not map — it cannot tell which list you are replying to, since GitHub issue comments carry no `in_reply_to`. Anything embry0 cannot resolve — an ambiguous `<n>`, a stale one, or a question already answered from another channel — is rejected with a reply asking for the id (or the dashboard), never applied to a neighbouring question. `/skip <ref>` takes the same reference. Directives are honored only from comment authors whose `author_association` is in `COMMENT_DISPATCH_AUTHOR_ROLES` (default `OWNER,MEMBER,COLLABORATOR`); everyone else is ignored silently and logged as `answer_rejected_author`.
+
+**Pull request review (#30).** With review turned on for the repository, `pull_request` (`ready_for_review`, or `opened` as non-draft) and an `issue_comment` on a pull request with a line starting `/embry0 review` start an advisory review that embry0 posts on the pull request; by default a ready pull request is reviewed only when its author has write access (the repository's `pr_review.ready_authors`). Such a comment is only a review request, never an `/answer` or a follow-up. The `pull_request` events also keep feeding merge sync, as before. See [pull request review](pr-review.md).
+
+### Organization webhooks (GitHub)
+
+A repository webhook is one more decision per repository. When the owner is registered as an organization ([ADR 0010](adr/0010-organizations.md)), embry0 installs one webhook on the organization itself, which GitHub fires for every repository under it, present and future ([ADR 0012](adr/0012-organization-webhook.md)).
+
+What it needs:
+
+- `WEBHOOK_PUBLIC_URL` in the root `.env`: the public origin the forge posts to, with no path (for Option A above, `https://webhooks.example.com`). The hook is installed pointing at `<WEBHOOK_PUBLIC_URL>/api/v1/webhook`. The dashboard origin is not a fallback: its public vhost answers 404 on the webhook routes on purpose.
+- `GITHUB_WEBHOOK_SECRET` set. The organization hook is created with it, so deliveries verify like repository ones.
+- A credential the probe found can manage hooks (`access.hooks` on the organization). The probe measures that on one repository; creating the hook on the organization also needs organization hook administration (`admin:org_hook` on a classic token, the organization Webhooks permission with write access on a fine-grained one). Without it GitHub hides the organization's hooks and the install answers 502 saying so. A user account has no owner-level webhooks, so it is refused.
+
+Install it with `POST /api/v1/orgs/{owner}/webhook` (admin), or the MCP tool `org_webhook_install(owner, confirm=true)`. The call is idempotent: a hook already pointing at the target answers `outcome: already` and writes nothing. `GET /api/v1/orgs/{owner}/webhook` asks GitHub whether a hook points here (`installed`, `hook`, `target_url`) and lists every organization hook the credential can see; a hook that points elsewhere is listed by its origin only, because such URLs often carry another service's token. The events subscribed are `issues`, `issue_comment`, `pull_request` and `workflow_run`, the four the receiver handles.
+
+The receiver's organization gate is additive: every delivery reaches the same handlers it would reach without organizations. What the gate adds for a delivery for a repository that is not registered depends on the owner:
+
+| Owner | What the gate adds |
+|---|---|
+| No organization row; a paused or removed organization; a GitLab group with the same name | Nothing. |
+| A registered, active GitHub organization | A record on the repository's fact row: `facts.registered = false`, `facts.webhook_events`, `facts.last_webhook_event` and `facts.webhook_delivery_ids` (a later discovery run keeps these keys). The needs list reads this row as the need `not_registered`; when the delivery creates the row (no discovery run has listed the repository), the gate runs the needs sync a finished run makes, so the need and its case awaiting a decision appear at once. `webhook_events` counts each `X-GitHub-Delivery` once: a redelivery of one of the last 50 deliveries is not counted again. |
+| The same, with `settings.auto_register` true | First, the repository is registered under the organization's forge and the audit log gets `repo.auto_register`; when the organization has a credential, it is bound to the repository as its forge credential through the same path as `PUT /api/v1/repos/{repo}/credentials`, unless the repository already has a forge binding. The fact row records `registered = true`, the gate runs the needs sync so the repository leaves the `not_registered` need, and the response carries `auto_registered`. |
+
+A failure inside the gate (the database went away, say) is logged as `webhook_organization_gate_failed` and the delivery is handled as if the gate were not there; it never turns into a 500.
+
+`auto_register` is off by default. Turn it on with `PATCH /api/v1/orgs/{owner}` and the body `{"settings": {"auto_register": true}}`; the settings a PATCH accepts are a closed list, so an unknown key is refused with 422. A registered repository is never touched by this gate, whatever the owner.
 
 ### Linear
 
@@ -98,7 +134,7 @@ Project (or group) → Settings → Webhooks → Add new webhook:
 
 - **URL:** `<base>/api/v1/webhook/gitlab`
 - **Secret token:** the value of `GITLAB_WEBHOOK_SECRET` in `.env`
-- **Trigger:** Issues events (the handler acts on `object_kind: issue` with action `open`/`reopen`/`update`; `close` syncs status; everything else is ignored)
+- **Trigger:** Issues events (the handler acts on `object_kind: issue` with action `open`/`reopen`/`update`; `close` syncs status), plus **Merge request events** and **Comments** for [pull request review](pr-review.md) (a merge request marked ready or opened as non-draft, and a `/embry0 review` note on a merge request; these reach the reviewer even when the GitLab issue sync is not set up); everything else is ignored
 
 ⚠️ GitLab does **not** sign the body at all: `X-Gitlab-Token` carries the configured secret **verbatim**. Treat that secret like a bearer token — it is only as safe as the TLS channel it rides on, so never expose the endpoint over plain HTTP.
 
@@ -172,7 +208,7 @@ Exit codes: **0** the database matches GitHub · **1** (`check` only) it does no
 
 ## Without webhooks
 
-You can trigger jobs manually via the dashboard — open the Issues page, find your issue, and click **Send to Agent**. No webhook setup required.
+You can trigger jobs manually via the dashboard — open the Issues page, find your issue, and click **Send to Triage**. No webhook setup required.
 
 
 ## Alertmanager as a detection source (#296)

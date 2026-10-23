@@ -28,8 +28,13 @@ def test_builtin_seeds_define_qa_external():
     # egress) and slim (egress, no browser) each lack. EMB-28.
     assert qa["base_image"] == "embry0-sandbox-qa:latest"
     assert qa["extra_networks"] == ["sandbox-internet"]
-    # The app under test runs OUTSIDE the sandbox — no DinD.
+    # No DinD: the app under test is started as a process or already runs
+    # elsewhere. The starter test setup names this machine.
     assert qa["dind_enabled"] is False
+    assert qa["description"] == (
+        "Browser test machine: Node, Java, Python and a Playwright browser, no Docker. "
+        "Tests an app it starts itself, or one already running elsewhere."
+    )
     # Builtin seeds always overwrite at startup, so the builtin row cannot
     # carry deployment-specific aliases; clones set extra_hosts.
     assert qa["extra_hosts"] == {}

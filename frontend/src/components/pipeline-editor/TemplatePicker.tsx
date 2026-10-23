@@ -1,6 +1,7 @@
 import { useTemplates, useTemplate } from "@/hooks/usePipelines";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { Dialog } from "@/components/ui/Dialog";
 import type { PipelineTemplate } from "@/lib/types";
 
 interface TemplatePickerProps {
@@ -21,31 +22,21 @@ export function TemplatePicker({ onSelect, onClose }: TemplatePickerProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="w-[500px] max-h-[400px] rounded-lg border border-white/10 bg-[#161822] shadow-xl overflow-hidden flex flex-col">
-        <div className="p-4 border-b border-white/[0.08]">
-          <h3 className="text-sm font-semibold text-white">
-            Load Pipeline Template
-          </h3>
-        </div>
+    <Dialog onClose={onClose} title="Load pipeline template" className="max-w-[500px]">
+      <div className="flex max-h-[400px] flex-col">
         <div className="flex-1 overflow-y-auto p-2">
-          {isLoading && (
-            <div className="text-sm text-white/40 p-4">Loading...</div>
-          )}
+          {isLoading && <div className="p-4 text-sm text-white/40">Loading...</div>}
           {!isLoading && (!templates || templates.length === 0) && (
-            <div className="text-sm text-white/40 p-4">
-              No templates saved yet.
-            </div>
+            <div className="p-4 text-sm text-white/40">No templates saved yet.</div>
           )}
           {templates?.map((t) => (
             <button
               key={t.template_id}
               type="button"
               onClick={() => setSelectedId(t.template_id)}
-              className={`w-full text-left px-3 py-2 rounded-md mb-1 text-sm transition-colors ${
-                selectedId === t.template_id
-                  ? "bg-primary/20 text-white"
-                  : "text-white/70 hover:bg-white/5"
+              aria-pressed={selectedId === t.template_id}
+              className={`mb-1 w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
+                selectedId === t.template_id ? "bg-primary/20 text-white" : "text-white/70 hover:bg-white/5"
               }`}
             >
               <div className="font-medium">{t.name}</div>
@@ -53,20 +44,15 @@ export function TemplatePicker({ onSelect, onClose }: TemplatePickerProps) {
             </button>
           ))}
         </div>
-        <div className="flex items-center justify-end gap-2 p-3 border-t border-white/[0.08]">
+        <div className="flex items-center justify-end gap-2 border-t border-white/[0.08] p-3">
           <Button type="button" variant="outline" size="sm" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            onClick={handleApply}
-            disabled={!selectedTemplate}
-          >
-            Load Template
+          <Button type="button" size="sm" onClick={handleApply} disabled={!selectedTemplate}>
+            Load template
           </Button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

@@ -13,6 +13,7 @@ import os
 import re
 from contextvars import ContextVar
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -25,8 +26,6 @@ caller_bearer: ContextVar[str | None] = ContextVar("embry0_caller_bearer", defau
 DEFAULT_API_URL = "http://localhost:8200"
 
 TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled", "partial", "expired", "skipped"})
-
-_SECRET_MASK = "****"
 
 
 class Embry0APIError(Exception):
@@ -60,9 +59,42 @@ def _drop_none(params: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in params.items() if value is not None}
 
 
+def _seg(value: str) -> str:
+    """One path segment: a ``plugin:skill`` name or an id cannot split the path or start a query."""
+    return quote(value, safe="")
+
+
 _REPO_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9_.-]*"
 _REPO_PATH_RE = re.compile(rf"^{_REPO_SEGMENT}(?:/{_REPO_SEGMENT})+\Z")
 _REPO_PATH_ERROR = "repo must be 'group/name' or 'group/subgroup/name'"
+
+
+_HOST_ID_RE = re.compile(r"^host-[0-9a-f]{12}\Z")
+
+
+def _host_id(host_id: str) -> str:
+    """A host id as the API mints it (``host-`` and 12 hex digits), so nothing else reaches the URL."""
+    if not _HOST_ID_RE.match(host_id):
+        raise Embry0APIError(422, f"host_id must look like 'host-0123456789ab', got {host_id!r}")
+    return host_id
+
+
+_OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
+_KIND_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}\Z")
+
+
+def _owner(owner: str) -> str:
+    """A forge owner, one path segment, so nothing else reaches the URL."""
+    if not _OWNER_RE.match(owner):
+        raise Embry0APIError(422, f"owner must be one forge owner with no slash, got {owner!r}")
+    return owner
+
+
+def _kind(kind: str) -> str:
+    """A standard's kind as the API names them (lowercase, one word), so nothing else reaches the URL."""
+    if not _KIND_RE.match(kind):
+        raise Embry0APIError(422, f"kind must be a standard kind such as 'design', got {kind!r}")
+    return kind
 
 
 def _repo_path(repo: str) -> str:
@@ -323,6 +355,10 @@ class Embry0Client:
         execution_mode: str | None = None,
         auth_mode: str | None = None,
         mcp_servers: dict[str, Any] | None = None,
+        display_name: str | None = None,
+        avatar: str | None = None,
+        color: str | None = None,
+        tagline: str | None = None,
     ) -> dict[str, Any]:
         body = _drop_none(
             {
@@ -334,12 +370,107 @@ class Embry0Client:
                 "execution_mode": execution_mode,
                 "auth_mode": auth_mode,
                 "mcp_servers": mcp_servers,
+                "display_name": display_name,
+                "avatar": avatar,
+                "color": color,
+                "tagline": tagline,
             }
         )
         return _as_dict(await self._request("PUT", f"/api/v1/agents/{agent_type}", body=body))
 
+    async def agent_create(
+        self,
+        agent_type: str,
+        *,
+        description: str,
+        model: str,
+        tools: list[str] | None = None,
+        skills: list[str] | None = None,
+        system_prompt: str = "",
+        execution_mode: str | None = None,
+        auth_mode: str | None = None,
+        mcp_servers: dict[str, Any] | None = None,
+        display_name: str = "",
+        avatar: str = "golem",
+        color: str = "slate",
+        tagline: str = "",
+    ) -> dict[str, Any]:
+        body = _drop_none(
+            {
+                "type": agent_type,
+                "description": description,
+                "model": model,
+                "tools": tools,
+                "skills": skills,
+                "system_prompt": system_prompt,
+                "execution_mode": execution_mode,
+                "auth_mode": auth_mode,
+                "mcp_servers": mcp_servers,
+                "display_name": display_name,
+                "avatar": avatar,
+                "color": color,
+                "tagline": tagline,
+            }
+        )
+        return _as_dict(await self._request("POST", "/api/v1/agents", body=body))
+
+    async def agent_delete(self, agent_type: str) -> dict[str, Any]:
+        return _as_dict(await self._request("DELETE", f"/api/v1/agents/{agent_type}"))
+
     async def agent_reset(self, agent_type: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/agents/{agent_type}/reset"))
+
+    async def agent_skill_add(self, agent_type: str, skill_name: str) -> dict[str, Any]:
+        path = f"/api/v1/agents/{_seg(agent_type)}/skills/{_seg(skill_name)}"
+        return _as_dict(await self._request("POST", path))
+
+    async def agent_skill_remove(self, agent_type: str, skill_name: str) -> dict[str, Any]:
+        path = f"/api/v1/agents/{_seg(agent_type)}/skills/{_seg(skill_name)}"
+        return _as_dict(await self._request("DELETE", path))
+
+    # ------------------------------------------------------------------- skills
+
+    async def skill_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/skills"))
+
+    async def skill_source_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/skills/sources"))
+
+    async def skill_source_get(self, source_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/skills/sources/{_seg(source_id)}"))
+
+    async def skill_source_add(
+        self, source_id: str, *, kind: str, url: str = "", ref: str = "", enabled: bool = True
+    ) -> dict[str, Any]:
+        body = {"id": source_id, "kind": kind, "url": url, "ref": ref, "enabled": enabled}
+        return _as_dict(await self._request("POST", "/api/v1/skills/sources", body=body))
+
+    async def skill_source_update(
+        self, source_id: str, *, ref: str | None = None, enabled: bool | None = None
+    ) -> dict[str, Any]:
+        body = _drop_none({"ref": ref, "enabled": enabled})
+        return _as_dict(await self._request("PATCH", f"/api/v1/skills/sources/{_seg(source_id)}", body=body))
+
+    async def skill_source_sync(self, source_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", f"/api/v1/skills/sources/{_seg(source_id)}/sync"))
+
+    async def skill_source_remove(self, source_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("DELETE", f"/api/v1/skills/sources/{_seg(source_id)}"))
+
+    async def inline_skill_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/skills/inline"))
+
+    async def inline_skill_put(self, name: str, *, description: str, body: str) -> dict[str, Any]:
+        payload = {"description": description, "body": body}
+        return _as_dict(await self._request("PUT", f"/api/v1/skills/inline/{_seg(name)}", body=payload))
+
+    async def inline_skill_remove(self, name: str) -> dict[str, Any]:
+        return _as_dict(await self._request("DELETE", f"/api/v1/skills/inline/{_seg(name)}"))
+
+    # -------------------------------------------------------------------- tools
+
+    async def tool_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/tools"))
 
     # ---------------------------------------------------------------- templates
 
@@ -376,15 +507,17 @@ class Embry0Client:
 
     # ------------------------------------------------------------------ watcher
 
-    async def watcher_runs(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        return _as_list(await self._request("GET", "/api/v1/watcher/runs", params={"limit": limit}))
+    async def watcher_runs(self, *, limit: int = 50, stack: str | None = None) -> list[dict[str, Any]]:
+        params = _drop_none({"limit": limit, "stack": stack})
+        return _as_list(await self._request("GET", "/api/v1/watcher/runs", params=params))
 
-    async def watcher_trigger(self, *, timeout: float = 900.0) -> dict[str, Any]:
+    async def watcher_trigger(self, *, timeout: float = 900.0, stack: str | None = None) -> dict[str, Any]:
         # A tick runs its LLM analysis job synchronously inside the request —
         # real ticks take minutes, so the client default timeout would always
         # trip. The tick keeps running server-side either way; a long
         # per-request read timeout lets the caller actually see the summary.
-        return _as_dict(await self._request("POST", "/api/v1/watcher/run", timeout=timeout))
+        params = _drop_none({"stack": stack})
+        return _as_dict(await self._request("POST", "/api/v1/watcher/run", params=params, timeout=timeout))
 
     # ------------------------------------------------------------------- cases
 
@@ -459,17 +592,13 @@ class Embry0Client:
     async def env_list(self, *, repo: str | None = None) -> dict[str, Any]:
         return _as_dict(await self._request("GET", self._env_base(repo)))
 
-    async def _env_reveal(self, key: str, repo: str | None) -> str:
-        data = _as_dict(await self._request("GET", f"{self._env_base(repo)}/{key}/reveal"))
-        value = data.get("value")
-        return value if isinstance(value, str) else ""
-
     async def _env_rebuild(self, repo: str | None, *, drop_key: str | None = None) -> list[dict[str, Any]]:
-        """Reconstruct the current variable set with real (unmasked) values.
+        """The current variable set, as the list response gave it, minus ``drop_key``.
 
-        The API only exposes full-set PUT, and list responses mask secrets, so a
-        single-key upsert/delete must reveal each existing secret before writing
-        the set back — otherwise the literal mask would overwrite stored values.
+        The API only exposes full-set PUT. A stored secret goes back as the
+        ``****`` its list response carries, which the PUT reads as "keep the
+        stored value", so a single-key write never reveals a secret: reveal is
+        admin tier and audited, while writing the set is operator tier.
         """
         current = await self.env_list(repo=repo)
         variables: list[dict[str, Any]] = []
@@ -477,13 +606,10 @@ class Embry0Client:
             key = var.get("key")
             if not isinstance(key, str) or key == drop_key:
                 continue
-            value = var.get("value", "")
-            if var.get("var_type") == "secret" or value == _SECRET_MASK:
-                value = await self._env_reveal(key, repo)
             variables.append(
                 {
                     "key": key,
-                    "value": value,
+                    "value": var.get("value", ""),
                     "var_type": var.get("var_type", "config"),
                     "description": var.get("description", ""),
                     "required": var.get("required", False),
@@ -529,6 +655,90 @@ class Embry0Client:
         return {"key": key, "status": "deleted"}
 
     # ------------------------------------------------------------- repos / qa config (RAV-1251)
+
+    async def org_list(self, *, include_removed: bool = False) -> dict[str, Any]:
+        params = {"include_removed": "true"} if include_removed else None
+        return _as_dict(await self._request("GET", "/api/v1/orgs", params=params))
+
+    async def org_get(self, owner: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/orgs/{owner}"))
+
+    async def org_needs(self, owner: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/orgs/{owner}/needs"))
+
+    async def org_register(
+        self,
+        owner: str,
+        forge: str = "github",
+        credential_id: str = "",
+        display_name: str = "",
+        probe: bool = True,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"owner": owner, "forge": forge, "probe": probe}
+        if credential_id:
+            body["credential_id"] = credential_id
+        if display_name:
+            body["display_name"] = display_name
+        return _as_dict(await self._request("POST", "/api/v1/orgs", body=body))
+
+    # ------------------------------------------------------------- hosts (ADR 0013)
+
+    async def host_list(self, *, source: str | None = None, include_removed: bool = False) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if source:
+            params["source"] = source
+        if include_removed:
+            params["include_removed"] = "true"
+        return _as_dict(await self._request("GET", "/api/v1/hosts", params=params or None))
+
+    async def host_get(self, host_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/hosts/{_host_id(host_id)}"))
+
+    async def host_probe(self, host_id: str, credential_id: str = "") -> dict[str, Any]:
+        body = {"credential_id": credential_id} if credential_id else None
+        return _as_dict(await self._request("POST", f"/api/v1/hosts/{_host_id(host_id)}/probe", body=body))
+
+    async def host_import_tailnet(self, credential_id: str = "") -> dict[str, Any]:
+        body: dict[str, Any] = {"confirm": True}
+        if credential_id:
+            body["credential_id"] = credential_id
+        return _as_dict(await self._request("POST", "/api/v1/hosts/import/tailnet", body=body))
+
+    # ------------------------------------------------------------- standards (ADR 0014)
+
+    async def standard_get(self, owner: str, kind: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/standards/{_owner(owner)}/{_kind(kind)}"))
+
+    async def standard_set(
+        self,
+        owner: str,
+        kind: str,
+        *,
+        schema: dict[str, Any],
+        values: dict[str, Any],
+        prose: str = "",
+        references: list[str] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "schema": schema,
+            "values": values,
+            "prose": prose,
+            "references": list(references or []),
+        }
+        return _as_dict(await self._request("PUT", f"/api/v1/standards/{_owner(owner)}/{_kind(kind)}", body=body))
+
+    async def standard_audit(self, owner: str, kind: str, repo: str) -> dict[str, Any]:
+        path = f"/api/v1/standards/{_owner(owner)}/{_kind(kind)}/audit/{_repo_path(repo)}"
+        return _as_dict(await self._request("POST", path))
+
+    async def org_webhook_install(self, owner: str) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/webhook"))
+
+    async def org_act(
+        self, owner: str, action: str, repos: list[str], *, dry_run: bool = False, force: bool = False
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"action": action, "repos": list(repos), "dry_run": dry_run, "force": force}
+        return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/actions", body=body))
 
     async def repo_list(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
         params = {"include_inactive": "true"} if include_inactive else None

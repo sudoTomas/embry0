@@ -54,8 +54,8 @@ COPY embry0/ /app/embry0/
 
 # Non-root user
 RUN useradd --create-home orchestrator \
-    && mkdir -p /data \
-    && chown orchestrator:orchestrator /data
+    && mkdir -p /data /skills \
+    && chown orchestrator:orchestrator /data /skills
 
 USER orchestrator
 

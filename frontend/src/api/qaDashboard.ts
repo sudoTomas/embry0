@@ -161,3 +161,27 @@ export function artifactPath(
 ): string {
   return `/qa/runs/${encodeURIComponent(runId)}/apps/${encodeURIComponent(app)}/artifacts/${kind}/${encodeURIComponent(filename)}`;
 }
+
+export interface QaImageBuildResult {
+  repo: string;
+  branch: string;
+  /** `skipped` when the active image already matches the branch's lockfile and `force` was off. */
+  status: "built" | "skipped";
+}
+
+/**
+ * Bake the repository's QA cache image. A fresh build clones, installs and
+ * commits an image, which takes minutes, so the timeout is ten times the
+ * client's default; a build that outlasts it goes on server-side, and the
+ * caller reads the timeout as "still building", not as a failure. A 422
+ * (unregistered repository, bad branch) is shown by the caller, inside its
+ * form.
+ */
+export async function buildQaImage(repo: string, branch: string, force: boolean): Promise<QaImageBuildResult> {
+  const { data } = await api.post<QaImageBuildResult>(
+    "/qa/images/build",
+    { repo, branch, force },
+    { timeout: 300_000, suppressValidationToast: true },
+  );
+  return data;
+}

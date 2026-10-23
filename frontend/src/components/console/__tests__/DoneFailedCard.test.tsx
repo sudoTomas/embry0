@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+
+vi.mock("@/hooks/useAgents", () => ({
+  useAgents: () => ({ data: [{ type: "review", display_name: "Reviewer", avatar: "warden", color: "rose", tagline: "" }], isLoading: false }),
+}));
 import { DoneFailedCard } from "../DoneFailedCard";
 import { makeJob } from "./fixtures";
 import type { JobResponse } from "@/lib/types";
@@ -33,7 +37,9 @@ describe("DoneFailedCard", () => {
 
   it("shows the status sub-badge (distinguishing merged from completed)", () => {
     renderCard(makeJob({ status: "pr_merged", pr_url: "https://github.com/acme/widgets/pull/7" }));
-    expect(screen.getByText("pr_merged")).toBeInTheDocument();
+    // Readable words from the one status map, never the raw enum.
+    expect(screen.getByText("PR merged")).toBeInTheDocument();
+    expect(screen.queryByText("pr_merged")).toBeNull();
   });
 
   it("says what became of the PR, independent of the job status", () => {
@@ -46,7 +52,7 @@ describe("DoneFailedCard", () => {
     );
 
     expect(screen.getByTestId("pr-pill")).toHaveTextContent("PR merged");
-    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
   });
 
   it.each([
@@ -71,11 +77,32 @@ describe("DoneFailedCard", () => {
     );
 
     expect(screen.getByText("ERR_MAX_AGENT_QUESTIONS")).toBeInTheDocument();
-    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
   });
 
   it("renders no error chip when error_code is null", () => {
     renderCard(makeJob({ status: "cancelled", error_code: null }));
     expect(screen.queryByText(/ERR_/)).toBeNull();
+  });
+
+  it("shows the sprite of the agent the stage names, done for a successful job and failed otherwise", () => {
+    renderCard(makeJob({ status: "completed", current_stage: "review_complete", finished_at: "2026-07-08T11:00:00Z" }));
+    let sprite = screen.getByTestId("party-sprite").querySelector("svg")!;
+    expect(sprite).toHaveAttribute("data-avatar", "warden");
+    expect(sprite).toHaveAttribute("data-state", "done");
+    cleanup();
+    renderCard(makeJob({ status: "failed", current_stage: "developer_complete", finished_at: "2026-07-08T11:00:00Z" }));
+    sprite = screen.getByTestId("party-sprite").querySelector("svg")!;
+    expect(sprite).toHaveAttribute("data-avatar", "smith");
+    expect(sprite).toHaveAttribute("data-state", "failed");
+  });
+  it("shows no sprite, and no golem, for a stage that names no agent", () => {
+    renderCard(makeJob({ status: "completed", current_stage: "output_finalized", finished_at: "2026-07-08T11:00:00Z" }));
+    expect(screen.queryByTestId("party-sprite")).toBeNull();
+    expect(document.querySelector('svg[data-avatar="golem"]')).toBeNull();
+  });
+  it("shows no sprite for a legacy row without a recorded stage", () => {
+    renderCard(makeJob({ status: "completed", current_stage: null }));
+    expect(screen.queryByTestId("party-sprite")).toBeNull();
   });
 });

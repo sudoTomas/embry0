@@ -9,6 +9,8 @@ the real resolver, so a mapping that drops a type fails here.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -52,6 +54,67 @@ def test_a_step_model_reaches_its_agent(node_type: str, runtime_type: str) -> No
     state = {"route_plan": plan, "route_cursor": 0}
     got = _resolved_model(runtime_type, step_template_config(state, runtime_type))
     assert got == f"model-for-{node_type}", f"a {node_type} step's model resolved to {got!r}"
+
+
+def _legacy_graph(types: list[str]) -> dict[str, Any]:
+    """The editor's pre-#78 shape: overrides at the node's top level, no ``config``."""
+    graph = _graph(types)
+    graph["nodes"] = [{"node_id": t, "agent_type": t, "model": f"model-for-{t}"} for t in types]
+    return graph
+
+
+@pytest.mark.parametrize(("node_type", "runtime_type"), sorted(_STEP_TYPES.items()))
+def test_a_legacy_top_level_step_model_reaches_its_agent(node_type: str, runtime_type: str) -> None:
+    plan = build_route_plan(_legacy_graph(["triage", node_type]))
+    state = {"route_plan": plan, "route_cursor": 0}
+    got = _resolved_model(runtime_type, step_template_config(state, runtime_type))
+    assert got == f"model-for-{node_type}", f"a legacy-shaped {node_type} step's model resolved to {got!r}"
+
+
+def test_a_legacy_top_level_triage_model_reaches_triage() -> None:
+    got = _resolved_model("triage", triage_template_config(_legacy_graph(["triage", "developer"])))
+    assert got == "model-for-triage", f"a legacy-shaped triage model resolved to {got!r}"
+
+
+def _editor_node(node_id: str, agent_type: str) -> dict[str, Any]:
+    """A node exactly as ``serializeGraph`` (frontend/src/lib/graph-utils.ts) writes it today.
+
+    Every override sits at the top level, and ``AgentDetailPopup`` stores
+    skills as ``{name, mode}`` objects.
+    """
+    return {
+        "node_id": node_id,
+        "agent_type": agent_type,
+        "label": agent_type,
+        "position": {"x": 0, "y": 0},
+        "model": f"model-for-{agent_type}",
+        "max_budget_usd": 2.5,
+        "max_turns": 40,
+        "effort": "high",
+        "tools": ["Read", "Edit"],
+        "skills": [
+            {"name": "superpowers:brainstorming", "mode": "autonomous"},
+            {"name": "superpowers:writing-plans", "mode": "autonomous"},
+        ],
+        "prompt_prepend": "be brief",
+        "prompt_append": None,
+        "custom_prompt": None,
+        "custom_tools": None,
+        "sandbox": None,
+    }
+
+
+def test_editor_shaped_skill_objects_resolve_to_their_names() -> None:
+    graph = _graph(["triage", "developer"])
+    graph["nodes"] = [_editor_node("triage", "triage"), _editor_node("developer", "developer")]
+    plan = build_route_plan(graph)
+    template_config = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
+    definition = {"model": "definition-model", "tools": [], "skills": ["superpowers:test-driven-development"]}
+    resolved = resolve_agent_config("developer", definition, template_config, default_model="deployment-default")
+    assert resolved.skills == ["superpowers:brainstorming", "superpowers:writing-plans"], (
+        f"editor-shaped skill objects resolved to {resolved.skills!r}"
+    )
+    assert resolved.model == "model-for-developer"
 
 
 def test_the_triage_node_model_reaches_triage() -> None:
@@ -183,3 +246,26 @@ async def test_triage_runs_with_the_named_templates_triage_config() -> None:
     assert got == {"agent_models": {"triage": "model-for-triage"}}, (
         f"triage ran without the named template's triage config: {got!r}"
     )
+
+
+_FIXTURE = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "templates" / "editor-config-shape.json"
+
+
+def test_the_editor_serializer_fixture_reaches_step_template_config() -> None:
+    """#78: the frontend serializer's output (tests/fixtures/templates/editor-config-shape.json,
+    pinned byte for byte by frontend/src/lib/__tests__/graph-utils.test.ts) resolves on the backend."""
+    from embry0.workflows._validation import validate_graph_definition
+
+    graph = json.loads(_FIXTURE.read_text())
+    assert validate_graph_definition("fixture", graph, agent_types={"release-bot"}) == []
+    plan = build_route_plan(graph)
+    assert [s["agent_type"] for s in plan] == ["developer", "release-bot"]
+    dev = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
+    assert dev == {
+        "agent_models": {"developer": "model-for-developer"},
+        "agent_tools": {"developer": ["Read", "Edit"]},
+        "agent_skills": {"developer": {"add": ["superpowers:writing-plans"], "remove": ["local:house-style"]}},
+    }
+    assert _resolved_model("developer", dev) == "model-for-developer"
+    bot = step_template_config({"route_plan": plan, "route_cursor": 1}, "release-bot")
+    assert bot == {"agent_skills": {"release-bot": {"add": ["local:release-notes"], "remove": "*"}}}

@@ -14,7 +14,7 @@ import { AffectedSetView } from "@/components/qa/AffectedSetView";
 export function QaAffectedSetPage() {
   const { runId } = useParams<{ runId: string }>();
   if (!runId) {
-    return <div className="p-6 text-white/50">No run id</div>;
+    return <div className="text-fg-muted">No run id</div>;
   }
   return (
     <div>

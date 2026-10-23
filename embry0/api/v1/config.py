@@ -1,9 +1,11 @@
 """Configuration API — budget controls and context injection settings."""
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from embry0.agents.model_policy import usable_default_model
 from embry0.api.deps import (
     get_budget_repo,
     get_config,
@@ -22,50 +24,13 @@ from embry0.api.schemas import (
 )
 from embry0.audit.helpers import emit_audit
 from embry0.config import Embry0Config
+from embry0.services.provider_readiness import PROBE_AUDIT_ACTION, catalog_provider_for_model, readiness_by_provider
 from embry0.storage.repositories.budget_config import BudgetConfigRepository
 from embry0.storage.repositories.context_config import ContextConfigRepository
 from embry0.storage.repositories.integration_config import _SECRET_FIELDS, IntegrationConfigRepository
 from embry0.storage.repositories.provider_config import ProviderConfigRepository
 
 router = APIRouter()
-
-
-async def _registry_has_provider(request: Request, provider: str) -> bool:
-    repo = getattr(request.app.state, "credentials_repo", None)
-    if repo is None:
-        return False
-    return bool(await repo.any_for_provider(provider))
-
-
-async def _provider_availability(request: Request, p: Any) -> tuple[bool, str | None]:
-    """(available, credential_source) for a catalog provider.
-
-    RAV-1297: Anthropic authenticates via CLAUDE_CODE_OAUTH_TOKEN and/or
-    ANTHROPIC_API_KEY; xAI via console key or the SuperGrok OAuth proxy
-    (EMB-46 default — a provisioned refresher means grok is runnable).
-    A registry row counts only when those env sources are absent.
-    """
-    import os
-
-    if p.name == "anthropic":
-        oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
-        api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-        if oauth and api_key:
-            return True, "oauth+api_key"
-        if oauth:
-            return True, "oauth"
-        if api_key:
-            return True, "api_key"
-        if await _registry_has_provider(request, "anthropic"):
-            return True, "registry"
-        return False, None
-    if os.environ.get(p.api_key_env):
-        return True, "api_key"
-    if p.name == "xai" and getattr(request.app.state, "xai_refresher", None) is not None:
-        return True, "oauth_proxy"
-    if p.name == "xai" and await _registry_has_provider(request, "xai"):
-        return True, "registry"
-    return False, None
 
 
 @router.get("/config/models")
@@ -83,6 +48,10 @@ async def get_model_config(
     The catalog is complete — Anthropic is a first-class entry, each
     provider carries its credential source, and each model an ``enabled``
     flag from provider_config.disabled_models.
+    Availability and the last live test come from
+    embry0.services.provider_readiness, the same answer GET /agents reports
+    per agent; ``model_prefixes`` lets a client name the provider of any
+    model id, a custom one included.
     Used by the frontend model selectors (AgentFormPage, JobAdvancedFields
     via useModels) and the LLM Providers page.
     """
@@ -90,25 +59,43 @@ async def get_model_config(
     # MODEL_* values show the pre-5-family models in every dashboard
     # dropdown while jobs ran on the current ones. RAV-1297: the complete
     # catalog (Anthropic was omitted as the implicit runtime default).
-    from embry0.agents.providers import CATALOG_PROVIDERS
+    from embry0.agents.providers import catalog_providers
 
     provider_cfg = await provider_repo.get()
     disabled = set(provider_cfg.get("disabled_models") or [])
+    readiness = await readiness_by_provider(request.app.state, with_last_probe=True)
+    # The default provider serves the deployment's default model, which every
+    # agent runs on when one is set (#465); with none it is Anthropic, the
+    # runtime's own default.
+    default_serving = catalog_provider_for_model(usable_default_model(provider_cfg.get("default_model")))
+    default_provider = default_serving.name if default_serving is not None else "anthropic"
 
     providers = []
-    for p in CATALOG_PROVIDERS:
-        available, credential_source = await _provider_availability(request, p)
+    for p in catalog_providers():
+        state = readiness[p.name]
+        probe = state.last_probe
         providers.append(
             {
                 "name": p.name,
-                "base_url": p.base_url,
-                "available": available,
-                "credential_source": credential_source,
-                "default": p.name == "anthropic",
+                # The custom provider's root is the operator's; the env one is shown when set.
+                "base_url": p.base_url or (os.environ.get(p.base_url_env, "") if p.base_url_env else ""),
+                # docs/providers.md: the OpenAI-compatible family, xAI included.
+                "family": "openai_compatible"
+                if (p.openai_base_url or p.runtime == "chat_completions")
+                else "anthropic",
+                "available": state.ready,
+                "credential_source": state.credential_source,
+                "default": p.name == default_provider,
+                "model_prefixes": list(p.model_prefixes),
+                "last_probe": (
+                    {"status": probe.status, "checked_at": probe.checked_at.isoformat()} if probe is not None else None
+                ),
                 "models": [
                     {
                         "model": m,
                         "enabled": m not in disabled,
+                        # False: served without tool calling on this provider's API (chat-only).
+                        "tool_calling": m not in p.chat_only_models,
                         "pricing_usd_per_mtok": {
                             "input": p.pricing_usd_per_mtok.get(m, (None, None))[0],
                             "output": p.pricing_usd_per_mtok.get(m, (None, None))[1],
@@ -275,7 +262,7 @@ async def update_provider(
         # must stay mutually consistent — a disabled model in a tier slot
         # would make the tier fallback itself broken. #465: the same goes for
         # the default model, which every agent of every job resolves to.
-        from embry0.agents.providers import known_models, unpriced_models, unpriced_models_message
+        from embry0.agents.providers import chat_only_models, known_models, unpriced_models, unpriced_models_message
 
         current = await repo.get()
         new_default = updates.get("default_model")
@@ -291,6 +278,20 @@ async def update_provider(
         )
         if unpriced:
             raise HTTPException(status_code=422, detail=unpriced_models_message(unpriced))
+        # Every agent with tools resolves to the default model or a tier one; a
+        # chat-only model there would leave each of them refused at run time.
+        chat_only = chat_only_models(
+            str(updates.get(key) or "") for key in ("default_model", "model_heavy", "model_medium", "model_light")
+        )
+        if chat_only:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"chat-only model(s) cannot be the default or a tier model: {', '.join(chat_only)} — their "
+                    "provider serves them without tool calling, and the agents these settings reach use tools "
+                    "(docs/providers.md)"
+                ),
+            )
         disabled = set(
             updates["disabled_models"] if "disabled_models" in updates else current.get("disabled_models") or []
         )
@@ -361,22 +362,27 @@ async def test_catalog_provider(
     and decodes the failure class — unauthorized vs entitlement-refused vs
     unreachable. Credentials never appear in the result.
     """
-    from embry0.agents.providers import CATALOG_PROVIDERS
+    from embry0.agents.providers import catalog_providers
     from embry0.services.provider_probe import (
         overall_status,
         probe_anthropic,
+        probe_chat_completions_provider,
         probe_xai,
         serialize_checks,
     )
 
-    provider = next((p for p in CATALOG_PROVIDERS if p.name == provider_name), None)
+    provider = next((p for p in catalog_providers() if p.name == provider_name), None)
     if provider is None:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_name!r}")
 
     if provider_name == "anthropic":
         checks = await probe_anthropic()
-    else:  # xai — the only other catalog provider today
+    elif provider_name == "xai":
         checks = await probe_xai(getattr(request.app.state, "xai_refresher", None))
+    else:  # an enabled OpenAI-compatible provider
+        checks = await probe_chat_completions_provider(
+            provider, getattr(request.app.state, "credential_resolver", None)
+        )
 
     status = overall_status(checks)
     db = getattr(request.app.state, "db", None)
@@ -384,7 +390,7 @@ async def test_catalog_provider(
     # Outcome only — never credentials or raw provider payloads.
     await emit_audit(
         db,
-        "provider_connection_tested",
+        PROBE_AUDIT_ACTION,
         actor=request_actor(request),
         details={"provider": provider_name, "status": status},
         audit_log_path=getattr(config, "audit_log_path", None),

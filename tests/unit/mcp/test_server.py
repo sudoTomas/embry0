@@ -22,7 +22,9 @@ EXPECTED_TOOLS = {
     "job_deliverables",
     "agent_list",
     "agent_get",
+    "agent_create",
     "agent_update",
+    "agent_delete",
     "agent_reset",
     "template_list",
     "template_get",
@@ -43,11 +45,37 @@ EXPECTED_TOOLS = {
     "repo_list",
     "repo_get",
     "repo_register",
+    "org_list",
+    "org_get",
+    "org_needs",
+    "org_register",
+    "host_list",
+    "host_get",
+    "host_probe",
+    "host_import_tailnet",
+    "standard_get",
+    "standard_set",
+    "standard_audit",
+    "org_webhook_install",
+    "org_act",
     "qa_config_get",
     "qa_config_set",
     "credential_list",
     "credential_resolve",
     "credential_bind",
+    "skill_list",
+    "skill_source_list",
+    "skill_source_add",
+    "skill_source_sync",
+    "skill_source_remove",
+    "skill_source_get",
+    "skill_source_update",
+    "inline_skill_list",
+    "inline_skill_put",
+    "inline_skill_remove",
+    "agent_skill_add",
+    "agent_skill_remove",
+    "tool_list",
 }
 
 CONFIRM_GATED = {
@@ -57,13 +85,29 @@ CONFIRM_GATED = {
     "job_resume",
     "job_answer",
     "job_cancel",
+    "agent_create",
     "agent_update",
+    "agent_delete",
     "agent_reset",
     "env_set",
     "env_delete",
     "repo_register",
+    "org_register",
+    "host_import_tailnet",
+    "standard_set",
+    "standard_audit",
+    "org_webhook_install",
+    "org_act",
     "qa_config_set",
     "credential_bind",
+    "skill_source_add",
+    "skill_source_sync",
+    "skill_source_remove",
+    "skill_source_update",
+    "inline_skill_put",
+    "inline_skill_remove",
+    "agent_skill_add",
+    "agent_skill_remove",
 }
 
 
@@ -98,12 +142,21 @@ async def test_confirm_gated_tools_refuse_without_confirm(fake_client):
         await server.job_resume("j1", "abandon"),
         await server.job_answer("j1", "inp-1", "use option A"),
         await server.job_cancel("j1"),
+        await server.agent_create("lantern", "lights", "m"),
         await server.agent_update("developer", model="m"),
+        await server.agent_delete("lantern"),
         await server.agent_reset("developer"),
         await server.env_set("K", "v"),
         await server.env_delete("K"),
         await server.repo_register("acme/widgets"),
+        await server.org_register("acme"),
+        await server.org_webhook_install("acme"),
+        await server.org_act("acme", "register", ["acme/widgets"]),
+        await server.org_act("acme", "hook", ["acme/widgets"], dry_run=True),
         await server.qa_config_set("acme/widgets", "version: 2"),
+        await server.host_import_tailnet(),
+        await server.standard_set("acme", "design", {"roles": {}}, {}),
+        await server.standard_audit("acme", "design", "acme/widgets"),
         await server.credential_bind("acme/widgets", "cred-000000000009"),
     ]
     for refusal in refusals:
@@ -119,12 +172,20 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
     assert await server.job_cancel("j1", confirm=True) == {"called": "job_cancel"}
     assert await server.job_resume("j1", "merge_as_is", confirm=True) == {"called": "job_resume"}
     assert await server.job_answer("j1", "inp-1", "use option A", confirm=True) == {"called": "job_input_answer"}
+    assert await server.agent_create("lantern", "lights", "m", confirm=True) == {"called": "agent_create"}
     assert await server.agent_update("developer", model="m", confirm=True) == {"called": "agent_update"}
+    assert await server.agent_delete("lantern", confirm=True) == {"called": "agent_delete"}
     assert await server.agent_reset("developer", confirm=True) == {"called": "agent_reset"}
     assert await server.env_set("K", "v", confirm=True) == {"called": "env_set"}
     assert await server.env_delete("K", confirm=True) == {"called": "env_delete"}
     assert await server.repo_register("acme/widgets", confirm=True) == {"called": "repo_register"}
+    assert await server.org_register("acme", confirm=True) == {"called": "org_register"}
+    assert await server.org_webhook_install("acme", confirm=True) == {"called": "org_webhook_install"}
+    assert await server.org_act("acme", "register", ["acme/widgets"], confirm=True) == {"called": "org_act"}
     assert await server.qa_config_set("acme/widgets", "version: 2", confirm=True) == {"called": "qa_config_set"}
+    assert await server.host_import_tailnet(confirm=True) == {"called": "host_import_tailnet"}
+    assert await server.standard_set("acme", "design", {"roles": {}}, {}, confirm=True) == {"called": "standard_set"}
+    assert await server.standard_audit("acme", "design", "acme/widgets", confirm=True) == {"called": "standard_audit"}
     assert await server.credential_bind(
         "acme/widgets", "cred-000000000009", role="forge", pinned=True, confirm=True
     ) == {"called": "credential_bind"}
@@ -137,19 +198,102 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
         "job_cancel",
         "job_resume",
         "job_input_answer",
+        "agent_create",
         "agent_update",
+        "agent_delete",
         "agent_reset",
         "env_set",
         "env_delete",
         "repo_register",
+        "org_register",
+        "org_webhook_install",
+        "org_act",
         "qa_config_set",
+        "host_import_tailnet",
+        "standard_set",
+        "standard_audit",
         "credential_bind",
+    ]
+
+
+async def test_host_tools_pass_through(fake_client):
+    assert await server.host_list(source="tailnet") == {"called": "host_list"}
+    assert await server.host_get("host-0123456789ab") == {"called": "host_get"}
+    assert await server.host_probe("host-0123456789ab") == {"called": "host_probe"}
+    assert await server.host_probe("host-0123456789ab", credential_id="cred-000000000009") == {"called": "host_probe"}
+    assert await server.host_import_tailnet(credential_id="cred-000000000009", confirm=True) == {
+        "called": "host_import_tailnet"
+    }
+    assert fake_client.calls == [
+        ("host_list", (), {"source": "tailnet", "include_removed": False}),
+        ("host_get", ("host-0123456789ab",), {}),
+        ("host_probe", ("host-0123456789ab",), {"credential_id": ""}),
+        ("host_probe", ("host-0123456789ab",), {"credential_id": "cred-000000000009"}),
+        ("host_import_tailnet", (), {"credential_id": "cred-000000000009"}),
+    ]
+
+
+async def test_standard_tools_pass_through(fake_client):
+    schema = {"roles": {"color.accent": {"type": "color"}}}
+    values = {"color.accent": "#3366ff"}
+    assert await server.standard_get("acme", "design") == {"called": "standard_get"}
+    assert await server.standard_set("acme", "design", schema, values, prose="One accent.", confirm=True) == {
+        "called": "standard_set"
+    }
+    assert await server.standard_set("acme", "design", schema, values, references=["acme/site"], confirm=True) == {
+        "called": "standard_set"
+    }
+    assert await server.standard_audit("acme", "design", "acme/widgets", confirm=True) == {"called": "standard_audit"}
+    assert fake_client.calls == [
+        ("standard_get", ("acme", "design"), {}),
+        (
+            "standard_set",
+            ("acme", "design"),
+            {"schema": schema, "values": values, "prose": "One accent.", "references": []},
+        ),
+        (
+            "standard_set",
+            ("acme", "design"),
+            {"schema": schema, "values": values, "prose": "", "references": ["acme/site"]},
+        ),
+        ("standard_audit", ("acme", "design", "acme/widgets"), {}),
+    ]
+
+
+async def test_standard_refusals_name_the_action(fake_client):
+    write = await server.standard_set("acme", "design", {}, {})
+    audit = await server.standard_audit("acme", "design", "acme/widgets")
+    assert "standard_set" in write["message"] and "design standard of 'acme'" in write["message"]
+    assert "standard_audit" in audit["message"] and "'acme/widgets'" in audit["message"]
+    assert fake_client.calls == []
+
+
+async def test_host_import_tailnet_refusal_names_the_action(fake_client):
+    refusal = await server.host_import_tailnet(credential_id="cred-000000000009")
+    assert refusal["error"] == "confirmation_required"
+    assert "import hosts" in refusal["message"] and "host_import_tailnet" in refusal["message"]
+    assert fake_client.calls == []
+
+
+async def test_org_act_needs_confirm_even_for_a_dry_run(fake_client):
+    refusal = await server.org_act("acme", "hook", ["acme/widgets"], dry_run=True)
+    assert refusal["error"] == "confirmation_required"
+    assert fake_client.calls == []
+    assert await server.org_act("acme", "hook", ["acme/widgets"], dry_run=True, confirm=True) == {"called": "org_act"}
+    assert await server.org_act("acme", "onboard", ["acme/widgets"], force=True, confirm=True) == {"called": "org_act"}
+    assert fake_client.calls == [
+        ("org_act", ("acme", "hook", ["acme/widgets"]), {"dry_run": True, "force": False}),
+        ("org_act", ("acme", "onboard", ["acme/widgets"]), {"dry_run": False, "force": True}),
     ]
 
 
 async def test_read_tools_pass_through(fake_client):
     assert await server.health() == {"called": "health"}
     assert await server.watcher_trigger() == {"called": "watcher_trigger"}
+    assert await server.watcher_trigger(stack="acme/api") == {"called": "watcher_trigger"}
+    assert fake_client.calls[-1][2] == {"timeout": 900.0, "stack": "acme/api"}
+    assert await server.watcher_runs(stack="acme/api") == {"called": "watcher_runs"}
+    assert fake_client.calls[-1][2] == {"limit": 50, "stack": "acme/api"}
     assert await server.job_wait("j1", timeout=1.0) == {"called": "job_wait"}
     name, _, kwargs = fake_client.calls[-1]
     assert name == "job_wait"
@@ -184,6 +328,17 @@ async def test_repo_read_tools_pass_through(fake_client):
     # qa_config_get wraps the raw yaml text in a dict for the MCP surface.
     out = await server.qa_config_get("acme/widgets")
     assert out == {"repo": "acme/widgets", "yaml_text": {"called": "qa_config_get"}}
+
+
+async def test_org_read_tools_pass_through(fake_client):
+    assert await server.org_list() == {"called": "org_list"}
+    assert await server.org_get("acme") == {"called": "org_get"}
+    assert await server.org_needs("acme") == {"called": "org_needs"}
+    assert fake_client.calls == [
+        ("org_list", (), {"include_removed": False}),
+        ("org_get", ("acme",), {}),
+        ("org_needs", ("acme",), {}),
+    ]
 
 
 async def test_credential_read_tools_pass_through(fake_client):
@@ -304,3 +459,61 @@ def test_case_accept_says_a_linear_draft_is_accepted_here():
     # The one tracker still left to its label, and the promise the route keeps.
     assert "A GitLab draft is still accepted by adding the label in GitLab" in doc
     assert "there is no success without one" in doc
+
+
+async def test_agent_create_forwards_every_field(fake_client):
+    await server.agent_create(
+        "lantern",
+        "lights",
+        "claude-sonnet-5",
+        tools=["Read"],
+        skills=["s"],
+        system_prompt="p",
+        execution_mode="sdk",
+        auth_mode="oauth",
+        mcp_servers={"x": {}},
+        display_name="Lantern",
+        avatar="bard",
+        color="sky",
+        tagline="Sings.",
+        confirm=True,
+    )
+    assert fake_client.calls == [
+        (
+            "agent_create",
+            ("lantern",),
+            {
+                "description": "lights",
+                "model": "claude-sonnet-5",
+                "tools": ["Read"],
+                "skills": ["s"],
+                "system_prompt": "p",
+                "execution_mode": "sdk",
+                "auth_mode": "oauth",
+                "mcp_servers": {"x": {}},
+                "display_name": "Lantern",
+                "avatar": "bard",
+                "color": "sky",
+                "tagline": "Sings.",
+            },
+        )
+    ]
+
+
+async def test_agent_update_forwards_identity_fields(fake_client):
+    await server.agent_update("developer", display_name="Dev", avatar="rogue", color="rose", tagline="t", confirm=True)
+    name, args, kwargs = fake_client.calls[-1]
+    assert (name, args) == ("agent_update", ("developer",))
+    assert {k: kwargs[k] for k in ("display_name", "avatar", "color", "tagline")} == {
+        "display_name": "Dev",
+        "avatar": "rogue",
+        "color": "rose",
+        "tagline": "t",
+    }
+
+
+async def test_agent_delete_refusal_names_the_agent(fake_client):
+    refusal = await server.agent_delete("lantern")
+    assert refusal["error"] == "confirmation_required"
+    assert "lantern" in refusal["message"] and "agent_delete" in refusal["message"]
+    assert fake_client.calls == []

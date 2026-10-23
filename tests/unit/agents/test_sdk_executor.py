@@ -128,10 +128,10 @@ async def test_sdk_executor_extracts_token_usage(tmp_path, monkeypatch) -> None:
     assert cost_update["cache_creation_tokens"] == 4500
 
     completed = next(e for e in captured_events if e["type"] == "agent_completed")
-    assert completed["result"]["input_tokens"] == 1200
-    assert completed["result"]["output_tokens"] == 340
-    assert completed["result"]["cache_read_tokens"] == 98000
-    assert completed["result"]["cache_creation_tokens"] == 4500
+    assert completed["input_tokens"] == 1200
+    assert completed["output_tokens"] == 340
+    assert completed["cache_read_tokens"] == 98000
+    assert completed["cache_creation_tokens"] == 4500
 
 
 @pytest.mark.asyncio
@@ -570,82 +570,152 @@ async def test_sdk_executor_with_thinking_block(tmp_path, monkeypatch) -> None:
     assert "I should check" in thinking_events[0]["text"]
 
 
+class _FakeToolUse:
+    def __init__(self, id_: str, name: str, input_: dict) -> None:
+        self.id = id_
+        self.name = name
+        self.input = input_
+
+
+class _FakeToolResultBlock:
+    def __init__(self, tool_use_id: str, content, is_error: bool | None = False) -> None:  # noqa: ANN001
+        self.tool_use_id = tool_use_id
+        self.content = content
+        self.is_error = is_error
+
+
+class _FakeUserMessage:
+    def __init__(self, content, parent_tool_use_id: str | None = None) -> None:  # noqa: ANN001
+        self.content = content
+        self.parent_tool_use_id = parent_tool_use_id
+
+
+def _assistant_with(
+    blocks: list, model: str = "claude-sonnet-4-6", parent: str | None = None, usage: dict | None = None
+):  # noqa: ANN001
+    msg = _FakeAssistantMessage("")
+    msg.content = blocks
+    msg.model = model
+    msg.parent_tool_use_id = parent
+    msg.usage = usage
+    return msg
+
+
+async def _run(messages: list, monkeypatch, tmp_path, **inv) -> list[dict]:  # noqa: ANN001
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+    events: list[dict] = []
+    with patch("claude_agent_sdk.query", return_value=_scripted_query(messages)):
+        await SdkAgentExecutor().run(_inv(**inv), config={"configurable": {}, "_test_writer": events.append})
+    return events
+
+
 @pytest.mark.asyncio
-async def test_sdk_executor_with_tool_result_block(tmp_path, monkeypatch) -> None:
-    """Use real ToolResultBlock to hit the isinstance() branch."""
-    from claude_agent_sdk import AssistantMessage, ResultMessage, ToolResultBlock
+async def test_tool_result_on_a_user_message_is_emitted_and_paired(tmp_path, monkeypatch) -> None:
+    messages = [
+        _assistant_with([_FakeToolUse("t1", "Read", {"file_path": "a.py"})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", "file content here")]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path, run_id="run-1", node="developer")
+    results = [e for e in events if e["type"] == "tool_result"]
+    assert len(results) == 1, "a ToolResultBlock on a UserMessage must become one tool_result event"
+    assert results[0]["tool_id"] == "t1"
+    assert results[0]["content"] == "file content here"
+    assert results[0]["is_error"] is False
+    assert results[0]["run_id"] == "run-1" and results[0]["node"] == "developer"
+
+
+@pytest.mark.asyncio
+async def test_tool_result_list_content_renders_text_and_marks_images(tmp_path, monkeypatch) -> None:
+    content = [
+        {"type": "text", "text": "first"},
+        {"type": "image", "source": {"data": "AAAA"}},
+        {"type": "text", "text": "last"},
+    ]
+    messages = [
+        _assistant_with([_FakeToolUse("t1", "mcp__playwright__browser_snapshot", {})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", content)]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert result["content"] == "first\n[image]\nlast"
+    assert "AAAA" not in result["content"], "image bytes must never ride the event"
+
+
+@pytest.mark.asyncio
+async def test_user_message_with_string_content_emits_no_tool_result(tmp_path, monkeypatch) -> None:
+    messages = [_FakeUserMessage("the prompt echoed back"), _FakeResultMessage("done", 0.001)]
+    events = await _run(messages, monkeypatch, tmp_path)
+    assert not [e for e in events if e["type"] == "tool_result"]
+
+
+@pytest.mark.asyncio
+async def test_long_tool_result_is_cut_with_a_marker(tmp_path, monkeypatch) -> None:
+    messages = [
+        _assistant_with([_FakeToolUse("t1", "Bash", {"command": "cat big"})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", "x" * 5000)]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert len(result["content"]) == 4000
+    assert result["truncated"] is True and result["original_length"] == 5000
+
+
+@pytest.mark.asyncio
+async def test_every_executor_event_carries_run_id_node_and_agent(tmp_path, monkeypatch) -> None:
+    messages = [
+        _assistant_with([_FakeBlock("hi"), _FakeToolUse("t1", "Read", {"file_path": "a"})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", "ok")]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path, run_id="run-9", node="generic_agent", agent_type="research")
+    for e in events:
+        assert e.get("run_id") == "run-9", f"{e['type']} lacks run_id"
+        assert e.get("node") == "generic_agent", f"{e['type']} lacks node"
+        assert e.get("agent") == "research", f"{e['type']} lacks agent"
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_error_event_uses_message_and_code(tmp_path, monkeypatch) -> None:
+    async def _boom():
+        raise RuntimeError("socket closed")
+        yield  # pragma: no cover
 
     monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
-
-    tool_result = ToolResultBlock(tool_use_id="t1", content="file content here", is_error=False)
-    assistant_msg = AssistantMessage(content=[tool_result], model="claude-sonnet-4-6")
-    result_msg = ResultMessage(
-        subtype="result",
-        duration_ms=100,
-        duration_api_ms=80,
-        is_error=False,
-        num_turns=1,
-        session_id="s1",
-        total_cost_usd=0.001,
-        usage=None,
-        result="done",
-    )
-
-    with patch(
-        "claude_agent_sdk.query",
-        return_value=_scripted_query([assistant_msg, result_msg]),
-    ):
-        executor = SdkAgentExecutor()
-        out = await executor.run(
-            _inv(),
-            config={"configurable": {}, "_test_writer": lambda e: events.append(e)},
+    with patch("claude_agent_sdk.query", return_value=_boom()):
+        out = await SdkAgentExecutor().run(
+            _inv(run_id="r", node="developer"), config={"configurable": {}, "_test_writer": events.append}
         )
-
-    assert out.is_error is False
-    tr_events = [e for e in events if e.get("type") == "tool_result"]
-    assert len(tr_events) == 1
-    assert tr_events[0]["tool_use_id"] == "t1"
-    assert tr_events[0]["content"] == "file content here"
-
-
-# ---------------------------------------------------------------------------
-# hooks_unavailable warning path
-# ---------------------------------------------------------------------------
+    assert out.is_error
+    err = next(e for e in events if e["type"] == "error")
+    assert err["message"] == "socket closed"
+    assert "error" not in err
+    assert err["node"] == "developer" and err["run_id"] == "r"
 
 
-@pytest.mark.skip(
-    reason="sdk_hooks try/except removed in 2026-04-28-sandbox-hardening Task 3; hooks now fail-closed at boot"
-)
 @pytest.mark.asyncio
-async def test_sdk_executor_hooks_unavailable_logs_warning(tmp_path, monkeypatch) -> None:
-    """If options.hooks assignment raises, executor logs warning and continues."""
-    from unittest.mock import MagicMock
+async def test_policy_denial_error_event_names_the_tool_and_the_code() -> None:
+    from embry0.agents.executor import _evaluate_hook
 
-    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
-
-    mock_options = MagicMock()
-    # Make setting .hooks raise to simulate legacy SDK
-    type(mock_options).hooks = property(
-        fget=lambda self: None,
-        fset=lambda self, v: (_ for _ in ()).throw(AttributeError("hooks not supported")),
+    events: list[dict] = []
+    policy = default_policy_for_agent("developer")
+    await _evaluate_hook(
+        policy,
+        "Bash",
+        {"command": "rm -rf /"},
+        {},
+        events.append,
+        {},
+        ids={"run_id": "r", "node": "developer", "agent": "developer"},
     )
-
-    with (
-        patch(
-            "claude_agent_sdk.query",
-            return_value=_scripted_query([_FakeResultMessage("done", 0.001)]),
-        ),
-        patch("embry0.agents.executor.build_sdk_options", return_value=mock_options),
-    ):
-        executor = SdkAgentExecutor()
-        out = await executor.run(
-            _inv(),
-            config={"configurable": {}, "_test_writer": lambda _e: None},
-        )
-
-    # Executor should not crash even when hooks assignment fails
-    assert out.is_error is False
+    err = next(e for e in events if e["type"] == "error")
+    assert err["tool_name"] == "Bash"
+    assert err["code"] == "ERR_TOOL_DENIED"
+    assert err["message"], "the denial reason is the message"
+    assert err["node"] == "developer"
 
 
 # ---------------------------------------------------------------------------
@@ -1041,3 +1111,144 @@ async def test_sdk_executor_output_parses_as_a_watcher_proposal_without_glue(tmp
     assert verdict["kind"] == "proposal"
     assert verdict["proposal"]["title"] == "Mailbox sync hits 403 quota"
     assert verdict["proposal"]["severity"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_turn_usage_is_emitted_per_assistant_message_with_a_priced_delta(tmp_path, monkeypatch) -> None:
+    usage = {"input_tokens": 1000, "output_tokens": 100, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    messages = [
+        _assistant_with([_FakeBlock("one")], model="claude-sonnet-5", usage=usage),
+        _assistant_with([_FakeBlock("two")], model="claude-sonnet-5", usage=usage),
+        _FakeResultMessage("done", 0.009),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    turn_usage = [e for e in events if e["type"] == "turn_usage"]
+    assert len(turn_usage) == 2, "one turn_usage per assistant message carrying usage"
+    assert turn_usage[0]["input_tokens"] == 1000 and turn_usage[0]["output_tokens"] == 100
+    assert turn_usage[0]["cost_usd"] == pytest.approx(0.003 + 0.0015)
+    assert turn_usage[0]["model"] == "claude-sonnet-5"
+    assert len([e for e in events if e["type"] == "cost_update"]) == 1, "cost_update stays once per run"
+
+
+@pytest.mark.asyncio
+async def test_assistant_message_without_usage_emits_no_turn_usage(tmp_path, monkeypatch) -> None:
+    messages = [_assistant_with([_FakeBlock("one")], usage=None), _FakeResultMessage("done", 0.001)]
+    events = await _run(messages, monkeypatch, tmp_path)
+    assert not [e for e in events if e["type"] == "turn_usage"]
+    assert [e for e in events if e["type"] == "turn_start"][0]["turn_number"] == 1
+
+
+@pytest.mark.asyncio
+async def test_unpriced_model_turn_usage_has_null_cost(tmp_path, monkeypatch) -> None:
+    usage = {"input_tokens": 10, "output_tokens": 10}
+    messages = [
+        _assistant_with([_FakeBlock("one")], model="claude-experimental-9", usage=usage),
+        _FakeResultMessage("done", 0.0),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    assert next(e for e in events if e["type"] == "turn_usage")["cost_usd"] is None
+
+
+@pytest.mark.asyncio
+async def test_subagent_messages_are_bracketed_and_do_not_count_as_turns(tmp_path, monkeypatch) -> None:
+    messages = [
+        _assistant_with([_FakeToolUse("task-1", "Task", {"subagent_type": "Explore", "prompt": "look"})]),
+        _assistant_with([_FakeBlock("sub says hi")], parent="task-1"),
+        _assistant_with([_FakeToolUse("t2", "Read", {"file_path": "x"})], parent="task-1"),
+        _FakeUserMessage([_FakeToolResultBlock("t2", "contents")], parent_tool_use_id="task-1"),
+        _FakeUserMessage([_FakeToolResultBlock("task-1", "sub result")]),
+        _assistant_with([_FakeBlock("parent continues")]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    types = [e["type"] for e in events]
+    start = next(e for e in events if e["type"] == "subagent_start")
+    assert start["tool_id"] == "task-1" and start["name"] == "Explore"
+    assert types.index("subagent_start") < types.index("subagent_end")
+    end = next(e for e in events if e["type"] == "subagent_end")
+    assert end["tool_id"] == "task-1" and end["is_error"] is False
+    sub_text = next(e for e in events if e["type"] == "text" and e["text"] == "sub says hi")
+    assert sub_text["parent_tool_use_id"] == "task-1"
+    turns = [e["turn_number"] for e in events if e["type"] == "turn_start" and "parent_tool_use_id" not in e]
+    assert turns == [1, 2], "only top-level assistant messages count as turns"
+    assert (
+        next(e for e in events if e["type"] == "tool_result" and e["tool_id"] == "t2")["parent_tool_use_id"] == "task-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_result_for_an_unknown_parent_emits_no_subagent_start(tmp_path, monkeypatch) -> None:
+    messages = [
+        _FakeUserMessage([_FakeToolResultBlock("t-orphan", "late")], parent_tool_use_id="never-seen"),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    assert [e for e in events if e["type"] == "tool_result"][0]["tool_id"] == "t-orphan"
+    assert not [e for e in events if e["type"] == "subagent_start"]
+
+
+@pytest.mark.asyncio
+async def test_compact_boundary_system_message_emits_context_compacted(tmp_path, monkeypatch) -> None:
+    class _FakeSystemMessage:
+        def __init__(self) -> None:
+            self.subtype = "compact_boundary"
+            self.data = {"compact_metadata": {"pre_tokens": 123456}}
+
+    messages = [_FakeSystemMessage(), _assistant_with([_FakeBlock("after")]), _FakeResultMessage("done", 0.001)]
+    events = await _run(messages, monkeypatch, tmp_path)
+    compacted = next(e for e in events if e["type"] == "context_compacted")
+    assert compacted["pre_tokens"] == 123456
+
+
+@pytest.mark.asyncio
+async def test_ask_user_recovered_from_a_subagent_tool_result_carries_the_parent(tmp_path, monkeypatch) -> None:
+    """Spec 3.3: every event under a parent carries parent_tool_use_id, the
+    agent_ask_user recovered from a subagent's Bash output included."""
+    ask = json.dumps({"type": "agent_ask_user", "question": "which db?", "category": "general", "options": []})
+    messages = [
+        _assistant_with([_FakeToolUse("task-1", "Task", {"subagent_type": "Explore"})]),
+        _assistant_with([_FakeToolUse("b1", "Bash", {"command": "ask"})], parent="task-1"),
+        _FakeUserMessage([_FakeToolResultBlock("b1", ask)], parent_tool_use_id="task-1"),
+        _FakeUserMessage([_FakeToolResultBlock("task-1", "sub result")]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    asked = next(e for e in events if e["type"] == "agent_ask_user")
+    assert asked["parent_tool_use_id"] == "task-1", f"ask_user from a subagent lost its parent: {asked}"
+
+
+@pytest.mark.asyncio
+async def test_executor_scrubs_text_and_tool_results_with_the_sandbox_env_secrets(tmp_path, monkeypatch) -> None:
+    secret = "env-secret-value-9876543210"
+    monkeypatch.setenv("SOME_SERVICE_TOKEN", secret)
+    messages = [
+        _assistant_with([_FakeBlock(f"the token is {secret}"), _FakeToolUse("t1", "Bash", {"command": "cat .env"})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", f"SOME_SERVICE_TOKEN={secret}\n")]),
+        _FakeResultMessage(f"done, used {secret}", 0.001),
+    ]
+    events_out = await _run(messages, monkeypatch, tmp_path)
+    text = next(e for e in events_out if e["type"] == "text")
+    result = next(e for e in events_out if e["type"] == "tool_result")
+    completed = next(e for e in events_out if e["type"] == "agent_completed")
+    assert secret not in text["text"] and "***REDACTED***" in text["text"]
+    assert secret not in result["content"]
+    assert secret not in completed["output"]
+
+
+@pytest.mark.asyncio
+async def test_a_secret_straddling_the_cap_leaves_no_fragment(tmp_path, monkeypatch) -> None:
+    """Redact before cap (spec 3.6): a token cut in half matches no pattern."""
+    secret = "straddle-secret-abcdefghij0123456789"
+    monkeypatch.setenv("STRADDLE_TOKEN", secret)
+    # The cut at 4000 lands inside the 36-char secret (3980 + 36 > 4000); the
+    # 14-char marker that replaces it fits whole (3980 + 14 < 4000).
+    content = "p" * 3980 + secret + "q" * 200
+    messages = [
+        _assistant_with([_FakeToolUse("t1", "Bash", {"command": "x"})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", content)]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events_out = await _run(messages, monkeypatch, tmp_path)
+    result = next(e for e in events_out if e["type"] == "tool_result")
+    assert secret[:10] not in result["content"], "a fragment of the secret survived the cut"
+    assert "***REDACTED***" in result["content"]

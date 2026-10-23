@@ -1,6 +1,7 @@
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import type { Credential } from "@/lib/types/credentials";
 import { formatDate } from "@/lib/utils";
+import { statusLabel } from "@/lib/status";
 
 const DECRYPTION_FAILED = "decryption_failed";
 
@@ -28,7 +29,7 @@ function statusTitle(credential: Credential): string | undefined {
 export function StatusBadge({ credential }: { credential: Credential }) {
   return (
     <Badge tone={statusTone(credential)} title={statusTitle(credential)}>
-      {credential.status}
+      {statusLabel(credential.status)}
     </Badge>
   );
 }

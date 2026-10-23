@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { RepoStandardState } from "./standards";
 
 /** Registry row from GET /repos (RAV-1251; env counts added in RAV-1294). */
 export type Forge = "github" | "gitlab";
@@ -24,6 +25,8 @@ export interface RepoDetail extends RegisteredRepo {
   qa_config_updated_at: string | null;
   qa_config_updated_by: string | null;
   preferences: Record<string, unknown> | null;
+  /** One state per kind of the owner's standards (ADR 0014); absent from an older server. */
+  standards?: RepoStandardState[];
 }
 
 export async function fetchRepos(includeInactive = false): Promise<RegisteredRepo[]> {

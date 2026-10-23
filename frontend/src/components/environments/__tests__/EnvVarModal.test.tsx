@@ -57,3 +57,14 @@ describe("EnvVarModal — reserved keys come from the API (#543)", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 });
+
+describe("EnvVarModal — on a phone", () => {
+  it("stops short of the screen's edges", () => {
+    render(<EnvVarModal variable={null} onSave={vi.fn()} onClose={vi.fn()} />);
+    const dialog = screen.getByRole("dialog", { name: "Add variable" });
+    // jsdom has no layout, so this pins the classes: the dialog is as wide as
+    // a phone, and the layer under it keeps a 16 px gutter on each side.
+    expect(dialog).toHaveClass("w-full");
+    expect(dialog.parentElement).toHaveClass("p-4");
+  });
+});

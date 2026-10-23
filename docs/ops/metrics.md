@@ -153,12 +153,21 @@ Case events are counted only after the case's transaction commits.
 | `embry0_job_duration_seconds` | histogram | `pipeline_template`, `status` |
 | `embry0_jobs_in_flight` | gauge (DB) | `status`: `pending`, `running`, `awaiting_input`, `paused` |
 | `embry0_agent_spend_usd_total` | counter | `pipeline_template`, `provider`, `model_family` |
+| `embry0_job_events_persist_failed_total` | counter | — |
+| `embry0_job_events_dropped_total` | counter | — |
 
 Outcomes are counted at the terminal status transition and at boot-time
 orphan recovery — the two ways a live job ends. Spend is counted per `traces`
 row, one per agent run, which is also what `GET /jobs/{id}` bills from.
 `model_family` drops the version (`claude-opus`, `grok`), so a model bump
 does not split a series.
+
+A persist failure means a live client saw an event no reconnecting client
+can replay. Alert `Embry0JobEventsNotPersisted`
+(`infra/prometheus/job-events.rules.yml`) fires on any increase in 15
+minutes. A dropped event is the other failure of that path: the redaction
+scrub raised, so the event reached neither `job_logs` nor any client (spec
+3.9); the `event_redaction_failed` log line names the event type only.
 
 ## Linear dispatch reconciler
 

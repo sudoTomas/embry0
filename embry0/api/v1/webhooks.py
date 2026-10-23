@@ -18,10 +18,15 @@ import structlog
 from fastapi import APIRouter, Header, Request
 
 from embry0.api.trigger_context import adopt_linear_sync, linear_trigger_context, resolve_trigger_labels
+from embry0.api.v1.credentials import bind_repo_credentials
+from embry0.api.v1.org_needs import needs_service
 from embry0.api.webhook_ingress import SignatureScheme, parse_webhook_body, verify_webhook
+from embry0.audit.helpers import emit_audit
 from embry0.notifications.inbound_dispatch import apply_inbound_directives
 from embry0.notifications.inbound_parser import parse_answer_directives
 from embry0.services.answer_recorder import record_answer
+from embry0.services.organizations import Organization
+from embry0.services.pr_review.triggers import has_review_command
 from embry0.trackers import TriggerContext, actor_of
 from embry0.trackers.author_association import check_comment_author, parse_author_roles
 
@@ -98,6 +103,18 @@ async def gitlab_webhook(
     )
     payload = parse_webhook_body(body)
 
+    # #30: merge request and comment events are review triggers. Before this
+    # they reached GitLabSyncService, which ignores everything but issues.
+    # Routed ahead of the sync check: reviews are gated on registration and
+    # pr_review.enabled, not on the issue integration being wired.
+    kind = payload.get("object_kind")
+    if kind in ("merge_request", "note"):
+        method = "handle_gitlab_merge_request" if kind == "merge_request" else "handle_gitlab_note"
+        review = await _pr_review(request, method, payload)
+        if review is None:
+            return {"status": "ignored", "reason": f"not a pull request review trigger: {kind}"}
+        return _pr_review_response(review)
+
     gitlab_sync = getattr(request.app.state, "gitlab_sync", None)
     if gitlab_sync is None:
         return {"status": "ignored", "reason": "gitlab integration not configured"}
@@ -142,10 +159,150 @@ async def github_webhook(
     event_type = x_github_event
     logger.info("webhook_received", event_type=event_type, action=action)
 
+    # Additive (ADR 0012): the gate may record and register, but every
+    # delivery goes on to the handlers below exactly as it would without it.
+    auto_registered = await _organization_gate(request, payload, event_type, action)
+
     handler = _GITHUB_EVENT_HANDLERS.get(event_type)
     if handler is None:
-        return {"status": "ignored", "event": event_type, "action": action}
-    return await handler(request, payload, action)
+        result: dict[str, Any] = {"status": "ignored", "event": event_type, "action": action}
+    else:
+        result = await handler(request, payload, action)
+    return {**result, "auto_registered": auto_registered} if auto_registered else result
+
+
+async def _organization_gate(request: Request, payload: dict[str, Any], event_type: str, action: str) -> str | None:
+    """A delivery for a repository embry0 does not know, under an owner it does (ADR 0012).
+
+    An organization webhook fires for every repository under the owner, so
+    deliveries arrive for repositories nobody registered. For an owner that is
+    a registered, active GitHub organization the delivery is recorded on the
+    repository's fact row, which is the need ``not_registered``; with the
+    organization's ``auto_register`` setting on, the repository is registered
+    under it, and bound to its credential, first.
+
+    Additive: the delivery then reaches the same handlers it reaches without
+    organizations, and a failure in here is logged, never answered as an
+    error. Returns the repository when it was just registered, else ``None``.
+    """
+    try:
+        return await _record_organization_delivery(request, payload, event_type, action)
+    except Exception:
+        logger.warning("webhook_organization_gate_failed", event_type=event_type, action=action, exc_info=True)
+        return None
+
+
+async def _record_organization_delivery(
+    request: Request, payload: dict[str, Any], event_type: str, action: str
+) -> str | None:
+    state = request.app.state
+    orgs_repo = getattr(state, "organizations_repo", None)
+    repos_repo = getattr(state, "repos_repo", None)
+    if orgs_repo is None or repos_repo is None:
+        return None
+    repo_name = str((payload.get("repository") or {}).get("full_name") or "")
+    if "/" not in repo_name:
+        return None
+    if await repos_repo.registered_as(repo_name):
+        return None
+    org = await orgs_repo.get(repo_name.split("/", 1)[0])
+    # This is the GitHub receiver: a GitLab group that happens to share the
+    # owner's name is a different owner.
+    if org is None or org.status != "active" or org.forge != "github":
+        return None
+
+    auto = org.settings.get("auto_register") is True
+    delivery_id = request.headers.get("X-GitHub-Delivery")
+    if auto:
+        await repos_repo.register(
+            repo_name, notes=f"registered from a webhook delivery under organization {org.owner}", forge=org.forge
+        )
+        await emit_audit(
+            getattr(state, "db", None),
+            "repo.auto_register",
+            actor="webhook",
+            details={"repo": repo_name, "owner": org.owner, "event": event_type, "delivery_id": delivery_id},
+        )
+    facts_repo = getattr(state, "org_repos_repo", None)
+    created = False
+    if facts_repo is not None:
+        created = bool(
+            await facts_repo.note_webhook_event(
+                org.owner, repo_name, event=event_type, action=action, delivery_id=delivery_id, registered=auto
+            )
+        )
+    if auto:
+        await _bind_organization_credential(request, repo_name, org)
+    if created or auto:
+        # A repository the needs list did not know, or one it named as not
+        # registered: the same sync a finished discovery run makes.
+        await _sync_organization_needs(request, org.owner)
+    if not auto:
+        logger.info(
+            "webhook_repo_not_registered", repo=repo_name, owner=org.owner, event_type=event_type, action=action
+        )
+        return None
+    logger.info("webhook_repo_auto_registered", repo=repo_name, owner=org.owner, event_type=event_type)
+    return repo_name
+
+
+async def _sync_organization_needs(request: Request, owner: str) -> None:
+    """Bring the owner's needs in line with what the gate just wrote (ADR 0011).
+
+    A repository the forge delivers for and no run has listed becomes the need
+    ``not_registered`` with its case awaiting a decision now, not after the
+    next discovery run; a repository the gate registered leaves that need. A
+    failure is logged and left to the next run's sync: the delivery goes on.
+    """
+    service = needs_service(request, required=False)
+    if service is None:
+        return
+    try:
+        await service.sync(owner)
+    except Exception:
+        logger.warning("org_needs_sync_failed", owner=owner, source="webhook", exc_info=True)
+
+
+async def _bind_organization_credential(request: Request, repo_name: str, org: Organization) -> None:
+    """Bind the organization's credential to a repository the gate just
+    registered, as ``PUT /repos/{repo}/credentials`` would.
+
+    A repository that already has a forge binding keeps it: someone chose it.
+    Its other bindings are kept as they are.
+    """
+    credentials_repo = getattr(request.app.state, "credentials_repo", None)
+    if credentials_repo is None or not org.credential_id:
+        return
+    existing = await credentials_repo.bindings_for_scope("repo", repo_name.lower())
+    if any(b["role"] == "forge" for b in existing):
+        return
+    keep = [
+        {"credential_id": b["credential_id"], "role": b["role"], "pinned": b["pinned"], "priority": b["priority"]}
+        for b in existing
+    ]
+    forge = {"credential_id": org.credential_id, "role": "forge", "pinned": False, "priority": 0}
+    await bind_repo_credentials(request, repo_name, [*keep, forge], repo_forge=org.forge, actor="webhook")
+
+
+async def _pr_review(request: Request, method: str, *args: Any) -> dict[str, Any] | None:
+    """Hand a delivery to the pull request reviewer (#30); None when it is not a review trigger.
+
+    Never raises: a review that cannot start must not fail the delivery, or
+    the merge-sync bookkeeping that rides the same event.
+    """
+    dispatcher = getattr(request.app.state, "pr_review_dispatcher", None)
+    if dispatcher is None:
+        return None
+    try:
+        result = await getattr(dispatcher, method)(*args)
+    except Exception:
+        logger.warning("pr_review_dispatch_failed", method=method, exc_info=True)
+        return {"dispatched": False, "reason": "dispatch_error"}
+    return None if result is None else dict(result.as_dict())
+
+
+def _pr_review_response(review: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "accepted" if review.get("dispatched") else "ignored", "action": "pr_review", **review}
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +359,13 @@ async def _handle_issue_comment(request: Request, payload: dict[str, Any], actio
     comment_body = comment.get("body") or ""
     if not comment_body:
         return {"ok": True, "applied": 0, "reason": "empty body"}
+
+    # #30: a /embry0 review comment on a pull request asks for a review and
+    # nothing else — never a follow-up, never an /answer — even when the
+    # reviewer is not wired.
+    if (payload.get("issue") or {}).get("pull_request") and has_review_command(comment_body):
+        review = await _pr_review(request, "handle_github_comment", payload)
+        return _pr_review_response(review or {"dispatched": False, "reason": "pr_review_not_configured"})
 
     # RAV-1092: a tagged comment on a PULL REQUEST dispatches a pr-followup
     # job on the PR's branch (session-adopting). Checked before the /answer
@@ -349,6 +513,21 @@ _PR_ACTIONS = ("opened", "reopened", "synchronize", "closed")
 
 
 async def _handle_pull_request(request: Request, payload: dict[str, Any], action: str) -> dict[str, Any]:
+    """Merge-sync bookkeeping, then the pull request review trigger (#30).
+
+    The two read different actions: ``opened`` is both a delivery state and
+    a possible review trigger, ``ready_for_review`` is only the latter. They
+    run in that order and are not isolated: if the bookkeeping raises, the
+    delivery fails and the review is not triggered.
+    """
+    result = await _record_pull_request(request, payload, action)
+    review = await _pr_review(request, "handle_github_pull_request", payload, action)
+    if review is not None:
+        result = {**result, "pr_review": review}
+    return result
+
+
+async def _record_pull_request(request: Request, payload: dict[str, Any], action: str) -> dict[str, Any]:
     """PR ↔ job linking and delivery state. Creates no jobs — bookkeeping only.
 
     All of it lives in ``services.merge_sync``: this handler only turns the

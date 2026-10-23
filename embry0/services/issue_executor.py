@@ -7,16 +7,20 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from embry0.execution import events
+
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Mapping
 
     from embry0.api.events.bus import EventBus
+    from embry0.metrics import LoopMetrics
     from embry0.orchestration.budget_gate import DispatchDecision
     from embry0.storage.repositories.environment import EnvironmentRepository
     from embry0.storage.repositories.repo_preferences import RepoPreferencesRepository
 
 import embry0.services._executor_outcomes as _executor_outcomes
 import embry0.services._executor_run as _executor_run
+from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.orchestration import dispatch_actors
 from embry0.orchestration.restart import ExecutorDraining, ShutdownInterrupt
@@ -34,6 +38,7 @@ from embry0.storage.repositories.traces import TracesRepository
 from embry0.trackers import github_number_of
 from embry0.workflows.issue_to_pr.graph import IssueToprWorkflow
 from embry0.workflows.onboard.graph import OnboardWorkflow
+from embry0.workflows.pr_review.graph import PrReviewWorkflow
 from embry0.workflows.qa.graph import QAWorkflow
 from embry0.workflows.registry import WorkflowRegistry
 
@@ -114,7 +119,11 @@ class IssueExecutor:
         # CredentialHealth: quarantines the LLM account behind a provider
         # failure. None in tests / legacy callers: the job still finishes.
         credential_health: Any = None,
+        # LoopMetrics: counts job events that could not be persisted. None in
+        # tests / legacy callers: the failure is still logged.
+        metrics: LoopMetrics | None = None,
     ) -> None:
+        self._metrics = metrics
         self._case_recorder = case_recorder
         self._credential_resolver = credential_resolver
         self._credentials_repo = credentials_repo
@@ -211,10 +220,10 @@ class IssueExecutor:
         decision: DispatchDecision = await gate.check(actor=actor)
         return None if decision.allowed else decision
 
-    async def _emit_audit(self, *args: Any, **kwargs: Any) -> None:
+    async def _emit_audit(self, db: Any, action: AuditAction, **kwargs: Any) -> None:
         """Late-bound ``emit_audit`` — mixin methods call through here so test
         patches on ``embry0.services.issue_executor.emit_audit`` reach them."""
-        await emit_audit(*args, **kwargs)
+        await emit_audit(db, action, **kwargs)
 
     def _select_workflow(self, pipeline: str) -> Any:
         """Pick the workflow class based on the pipeline name.
@@ -227,6 +236,8 @@ class IssueExecutor:
             return QAWorkflow()
         if pipeline == "onboard":
             return OnboardWorkflow()
+        if pipeline == "pr-review":
+            return PrReviewWorkflow()
         return IssueToprWorkflow()
 
     def _build_graph_config(
@@ -277,6 +288,13 @@ class IssueExecutor:
 
             job_verifications_repo = JobVerificationsRepository(self._db)
 
+        # #30: the pr-review nodes record outcomes and find the previous review here.
+        pr_reviews_repo: Any = None
+        if self._db is not None:
+            from embry0.storage.repositories.pr_reviews import PrReviewsRepository
+
+            pr_reviews_repo = PrReviewsRepository(self._db)
+
         return {
             # The stop for a graph that loops without reaching END
             # (ERR_GRAPH_RECURSION). LangGraph's default was 25 up to 1.0.5,
@@ -304,6 +322,7 @@ class IssueExecutor:
                 "pipeline_templates_repo": templates_repo,
                 "qa_configs_repo": qa_configs_repo,
                 "job_verifications_repo": job_verifications_repo,
+                "pr_reviews_repo": pr_reviews_repo,
                 "db": self._db,
                 "repo_preferences_repo": self._repo_prefs,
                 # getattr: unit tests build the executor via __new__ and set
@@ -623,10 +642,11 @@ class IssueExecutor:
             dispatched_by=dispatched_by,
         )
 
+        # The one row for this job: every path that starts a QA job ends here.
         await emit_audit(
             self._db,
             "qa.job_created",
-            actor="system",
+            actor=dispatched_by or "system",
             details={"job_id": job_id, "repo": repo, "branch": branch},
             audit_log_path=self._audit_log_path,
         )
@@ -661,12 +681,15 @@ class IssueExecutor:
         skip_smoke: bool = False,
         agent_models: dict[str, str] | None = None,
         dispatched_by: str | None = None,
+        proposal_id: str | None = None,
     ) -> str:
         """EMB-50: issue-less onboard job — analyze ``repo`` and generate its
         qa.yaml v2 into the external config store. Returns the new job id.
 
         Without a ``branch`` the job analyzes the repo's base branch (its
-        preference, else the forge's default branch, else "main"; #29)."""
+        preference, else the forge's default branch, else "main"; #29).
+        With ``proposal_id`` (propose mode, ADR 0019) the job stores its
+        draft on that setup proposal instead, for a person to apply."""
         import uuid
 
         if not branch:
@@ -680,10 +703,16 @@ class IssueExecutor:
         }
         if agent_models:
             pipeline_config["agent_models_override"] = dict(agent_models)
+        if proposal_id:
+            pipeline_config["proposal_id"] = proposal_id
 
         job_id = await self._jobs.create(
             repo=repo,
-            task=f"Onboard {repo}@{branch} — generate qa.yaml into the config store",
+            task=(
+                f"Onboard {repo}@{branch}: propose a test setup for review"
+                if proposal_id
+                else f"Onboard {repo}@{branch} — generate qa.yaml into the config store"
+            ),
             pipeline_template="onboard",
             pipeline_config=pipeline_config,
             sandbox_profile="slim",
@@ -694,7 +723,7 @@ class IssueExecutor:
         await emit_audit(
             self._db,
             "onboard.job_created",
-            actor="system",
+            actor=dispatched_by or "system",
             details={"job_id": job_id, "repo": repo, "branch": branch},
             audit_log_path=self._audit_log_path,
         )
@@ -707,6 +736,7 @@ class IssueExecutor:
                 branch=branch,
                 skip_smoke=skip_smoke,
                 agent_models=agent_models,
+                proposal_id=proposal_id,
             ),
             kind="onboard_workflow_execute",
             job_id=job_id,
@@ -716,7 +746,43 @@ class IssueExecutor:
                 "branch": branch,
                 "skip_smoke": skip_smoke,
                 "agent_models": agent_models,
+                "proposal_id": proposal_id,
             },
+        )
+        return job_id
+
+    async def start_pr_review_job(self, *, repo: str, review: dict[str, Any], dispatched_by: str) -> str:
+        """#30: an issue-less pr-review job; ``review`` is its frozen ``pipeline_config``.
+
+        Called by ``PrReviewDispatcher`` once every gate passed. The job never
+        stores ``pr_url``: the pull request is not its own, and merge sync and
+        the own-PR gate both read that column.
+        """
+        import uuid
+
+        number = review.get("number")
+        job_id = await self._jobs.create(
+            repo=repo,
+            task=f"Review {repo}#{number}: {review.get('title') or ''}".rstrip(": "),
+            pipeline_template="pr-review",
+            pipeline_config=dict(review),
+            sandbox_profile=None,
+            trace_id=f"trc-{uuid.uuid4().hex[:12]}",
+            dispatched_by=dispatched_by,
+        )
+        await emit_audit(
+            self._db,
+            "pr_review.job_created",
+            actor=dispatched_by or "system",
+            details={"job_id": job_id, "repo": repo, "number": number, "trigger": review.get("trigger")},
+            audit_log_path=self._audit_log_path,
+        )
+        logger.info("pr_review_job_created", job_id=job_id, repo=repo, number=number, trigger=review.get("trigger"))
+        self._track_task(
+            self._run_pr_review_workflow(job_id),
+            kind="pr_review_workflow_execute",
+            job_id=job_id,
+            launch={"runner": "pr-review"},
         )
         return job_id
 
@@ -744,9 +810,9 @@ class IssueExecutor:
         - Removes the task from ``_background_tasks`` (idempotent).
         - On CancelledError: silent (normal shutdown path).
         - On any other exception: logs ``background_task_failed`` with the
-          kind/job_id/issue_id context, and publishes a ``job_failed`` event
-          via the event bus so WS clients see the failure even if the coro
-          died outside its own try/except.
+          kind/job_id/issue_id context, and broadcasts a ``job_failed`` event
+          (persisted, then published) so WS clients see the failure even if
+          the coro died outside its own try/except.
         """
         workflow = coro
         if run_slot:
@@ -783,23 +849,15 @@ class IssueExecutor:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            # Best-effort WS notification. Track the publish task on
-            # _background_tasks so a clean shutdown awaits it (otherwise it
-            # could be orphaned if the loop is tearing down).
-            if self._event_bus is not None:
-                pub_task = asyncio.create_task(
-                    self._event_bus.publish(
-                        job_id,
-                        {
-                            "type": "job_failed",
-                            "job_id": job_id,
-                            "kind": kind,
-                            "error": str(exc),
-                        },
-                    )
-                )
-                self._background_tasks.add(pub_task)
-                pub_task.add_done_callback(self._background_tasks.discard)
+            # spec 3.7: job_failed is persisted like every other event (it used
+            # to bypass job_logs and reach only live clients). The callback is
+            # synchronous, so the broadcast runs as a tracked task that a
+            # clean shutdown awaits.
+            pub_task = asyncio.create_task(
+                self._broadcast_event(job_id, events.job_failed(kind=kind, message=str(exc)))
+            )
+            self._background_tasks.add(pub_task)
+            pub_task.add_done_callback(self._background_tasks.discard)
 
         task.add_done_callback(_on_done)
         return task
@@ -824,13 +882,12 @@ class IssueExecutor:
             try:
                 await self._broadcast_event(
                     job_id,
-                    {
-                        "type": "system",
-                        "message": (
+                    events.system(
+                        message=(
                             f"Queued: all {slots.limit} run slots (MAX_RUNNING_JOBS) are in use; "
                             f"position {position}. The job starts when a slot frees."
                         ),
-                    },
+                    ),
                 )
             except Exception:
                 logger.warning("job_queued_event_failed", job_id=job_id, exc_info=True)
@@ -925,10 +982,9 @@ class IssueExecutor:
             try:
                 await self._broadcast_event(
                     job_id,
-                    {
-                        "type": "system",
-                        "message": "Interrupted: embry0 is shutting down. The job resumes from its last checkpoint when it is back.",
-                    },
+                    events.system(
+                        message="Interrupted: embry0 is shutting down. The job resumes from its last checkpoint when it is back.",
+                    ),
                 )
             except Exception:
                 logger.warning("job_interrupt_event_failed", job_id=job_id, exc_info=True)
@@ -1008,6 +1064,7 @@ class IssueExecutor:
         try:
             await self._jobs.update(job_id, status="cancelled")
             await self._finish_credential_uses(job_id, error_code="cancelled")
+            await self._announce_finished(job_id)
         except StatusTransitionConflict:
             logger.warning(
                 "job_status_race_on_cancel",
@@ -1180,6 +1237,7 @@ class IssueExecutor:
             **({"pr_url": pr_url} if pr_url else {}),
         )
         await self._finish_credential_uses(job_id, error_code=code.value)
+        await self._announce_finished(job_id)
         if pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
         await self._issues.update(issue_id, status="open")
@@ -1232,18 +1290,24 @@ class IssueExecutor:
                 branch=str(launch.get("branch") or ""),
                 skip_smoke=bool(launch.get("skip_smoke")),
                 agent_models=launch.get("agent_models"),
+                proposal_id=launch.get("proposal_id"),
             )
+            return
+        if runner == "pr-review":
+            await self._run_pr_review_workflow(job_id)
             return
         issue_id = launch.get("issue_id")
         issue = (await self._issues.get(issue_id)) if issue_id else launch.get("issue")
         if not issue:
             from embry0.safety.error_codes import ErrorCode
 
-            await self._jobs.fail_jobs(
+            failed_ids = await self._jobs.fail_jobs(
                 [job_id],
                 ErrorCode.ORPHANED.value,
                 "Orchestrator restarted and the job's issue no longer exists; nothing to start.",
             )
+            for failed_id in failed_ids:
+                await self._announce_finished(failed_id)
             return
         await self._run_workflow(
             issue_id, job_id, issue, additional_context=str(launch.get("additional_context") or "")
@@ -1252,7 +1316,7 @@ class IssueExecutor:
     async def _announce_recovery(self, job_id: str, message: str) -> None:
         logger.info("job_recovered_after_restart", job_id=job_id)
         try:
-            await self._broadcast_event(job_id, {"type": "system", "message": message})
+            await self._broadcast_event(job_id, events.system(message=message))
         except Exception:
             logger.warning("job_recovery_event_failed", job_id=job_id, exc_info=True)
 
@@ -1303,6 +1367,7 @@ class IssueExecutor:
     _process_stream = _executor_run._process_stream
     _refuse_if_over_budget = _executor_run._refuse_if_over_budget
     _run_onboard_workflow = _executor_run._run_onboard_workflow
+    _run_pr_review_workflow = _executor_run._run_pr_review_workflow
     _cleanup_sandbox = _executor_run._cleanup_sandbox
     _cleanup_job_volumes = _executor_run._cleanup_job_volumes
     _load_merged_env_vars = _executor_run._load_merged_env_vars
@@ -1320,5 +1385,6 @@ class IssueExecutor:
     _record_pr_opened = _executor_outcomes._record_pr_opened
     _handle_split = _executor_outcomes._handle_split
     _broadcast_event = _executor_outcomes._broadcast_event
+    _announce_finished = _executor_outcomes._announce_finished
     _handle_needs_info = _executor_outcomes._handle_needs_info
     _finish_credential_uses = _executor_outcomes._finish_credential_uses

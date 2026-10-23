@@ -45,10 +45,19 @@ services:
       IMAGE_REGISTRY: ""
       # #581: arms the off-host backup alert, as in the base file.
       OFFHOST_BACKUP_S3_PATH: "${OFFHOST_BACKUP_S3_PATH:-}"
+      # Spec 3.2: where the sandbox daemon finds the skills store bind-mounted
+      # at /skills below. Sandbox skill mounts name this host path.
+      SKILLS_STORE_DAEMON_PATH: "${SKILLS_STORE_HOST:-/var/lib/embry0/skills}"
     group_add:
       - "${SANDBOX_DOCKER_GID:?set SANDBOX_DOCKER_GID in infra/.env to the sandbox account's gid}"
     volumes: !override
       - orchestrator-data:/data
+      # Spec 3.2: the skills store. A host directory, not the base file's
+      # named volume: the rootless sandbox daemon resolves bind sources on
+      # the host, so the trees must live at a host path it can name
+      # (SKILLS_STORE_DAEMON_PATH above). docs/ops/provisioning.md says who
+      # must be able to read and write it.
+      - ${SKILLS_STORE_HOST:-/var/lib/embry0/skills}:/skills
       - ${GITLAB_CA_BUNDLE_HOST:-/dev/null}:/etc/embry0/gitlab-ca.pem:ro
       - /run/embry0-sandbox:/run/embry0-sandbox:ro
       # #581: the off-host backup status, as in the base file.

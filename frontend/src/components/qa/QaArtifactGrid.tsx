@@ -10,11 +10,15 @@
  *
  * Clicking a thumbnail opens an in-app lightbox at full size, reusing the
  * blob URL the thumbnail already fetched (no extra request, no auth issue).
- * Escape, click-outside, or the Close button dismisses.
+ * Escape, click-outside, or the Close button dismisses. Like the other
+ * overlays it traps focus, holds the page still behind it, and gives focus
+ * back to the thumbnail when it closes.
  */
-import { type JSX, useEffect, useState } from "react";
+import { type JSX, useEffect, useRef, useState } from "react";
 import { useAppArtifacts } from "@/hooks/useQaDashboard";
 import { useArtifactBlobUrl } from "@/hooks/useArtifactBlobUrl";
+import { Overlay } from "@/components/ui/Overlay";
+import { createFocusTrap } from "@/lib/focus-trap";
 
 interface Props {
   runId: string;
@@ -36,6 +40,8 @@ function ScreenshotLightbox({
   filename: string;
   onClose: () => void;
 }): JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -44,13 +50,24 @@ function ScreenshotLightbox({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  useEffect(() => {
+    if (!containerRef.current) return;
+    document.body.style.overflow = "hidden";
+    const cleanup = createFocusTrap(containerRef.current);
+    return () => {
+      cleanup();
+      document.body.style.overflow = "";
+    };
+  }, []);
+
   return (
-    <div
+    <Overlay
+      ref={containerRef}
       role="dialog"
       aria-modal="true"
       aria-label={`Screenshot ${filename}`}
       data-testid="qa-artifact-lightbox"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+      className="flex items-center justify-center bg-black/80"
       onClick={onClose}
     >
       <div
@@ -78,7 +95,7 @@ function ScreenshotLightbox({
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -108,7 +125,7 @@ function ScreenshotThumb({ runId, app, filename }: ScreenshotThumbProps): JSX.El
       <div
         data-testid="qa-artifact-thumb-loading"
         data-filename={filename}
-        className="h-32 w-full animate-pulse rounded border border-white/10 bg-white/5"
+        className="h-32 w-full motion-safe:animate-pulse rounded border border-white/10 bg-white/5"
         title={filename}
       />
     );

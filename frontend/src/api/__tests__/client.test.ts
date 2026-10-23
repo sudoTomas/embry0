@@ -161,7 +161,7 @@ describe("api client — readable error details (#561)", () => {
       toastError,
       "a 422 detail list must be shown as its messages, not interpolated as [object Object]",
     ).toHaveBeenCalledWith(
-      "Validation error: cap_add: Value error, cap_add: must be empty; name: Input should be a valid string",
+      "Validation error: cap_add: cap_add: must be empty; name: Input should be a valid string",
     );
   });
 

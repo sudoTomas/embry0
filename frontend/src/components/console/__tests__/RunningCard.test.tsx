@@ -2,6 +2,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
+vi.mock("@/hooks/useAgents", () => ({
+  useAgents: () => ({ data: [{ type: "developer", display_name: "Developer", avatar: "smith", color: "amber", tagline: "" }], isLoading: false }),
+}));
+
 vi.mock("@/hooks/useLiveJobSummary", () => ({
   useLiveJobSummary: vi.fn(),
 }));
@@ -61,6 +65,22 @@ describe("RunningCard", () => {
       expect(screen.getByTestId("stage-badge")).toHaveTextContent("review#2");
     });
 
+    it("colours the badge from the stage's identity", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "review", attempt: 1 }));
+      const { unmount } = renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-badge").className, "review: builtin fallback, no row").toContain("text-rose-400");
+      unmount();
+
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "qa", attempt: 1 }));
+      const second = renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-badge").className, "qa: builtin fallback, no row").toContain("text-emerald-400");
+      second.unmount();
+
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", attempt: 1 }));
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-badge").className, "developer: the row's colour").toContain("text-amber-400");
+    });
+
     it("omits the badge when neither the stream nor the row knows a stage", () => {
       renderCard({ job: makeJob({ current_stage: null }) });
       expect(screen.queryByTestId("stage-badge")).toBeNull();
@@ -109,11 +129,11 @@ describe("RunningCard", () => {
         makeSummary({ isConnected: false, latestCost: 0, currentNode: null, lastActivity: null }),
       );
       renderCard({
-        job: makeJob({ total_cost_usd: 0.33, current_stage: "developer" }),
+        job: makeJob({ total_cost_usd: 0.33, current_stage: "developer_complete" }),
       });
 
-      // Polled stage badge — no attempt suffix (attempts only exist live)
-      expect(screen.getByTestId("stage-badge")).toHaveTextContent("developer");
+      // Polled stage badge — the raw stage, no attempt suffix (attempts only exist live)
+      expect(screen.getByTestId("stage-badge")).toHaveTextContent(/^developer_complete$/);
       expect(screen.getByTestId("stage-badge")).not.toHaveTextContent("#");
       // Polled cost from the jobs row
       expect(screen.getByTestId("cost-line")).toHaveTextContent("$0.33");
@@ -123,13 +143,20 @@ describe("RunningCard", () => {
       expect(screen.getByTestId("live-indicator")).toHaveTextContent("Polling");
     });
 
-    it("shows the pulsing Live indicator while the WS is connected", () => {
+    it("shows the breathing Live indicator while the WS is connected", () => {
       vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ isConnected: true }));
       renderCard({ job: makeJob() });
 
       const indicator = screen.getByTestId("live-indicator");
       expect(indicator).toHaveTextContent("Live");
-      expect(indicator.querySelector(".animate-pulse")).not.toBeNull();
+      // The dot breathes through index.css's motion-breathe, which stands
+      // still under reduced motion. A bare animate-* utility would run
+      // whatever the setting; one behind motion-safe: is a class named
+      // "motion-safe:animate-pulse", so a ".animate-pulse" query never saw it.
+      const dot = indicator.firstElementChild!;
+      expect(dot).toHaveClass("motion-breathe");
+      const classes = [indicator, ...indicator.querySelectorAll("*")].flatMap((el) => [...el.classList]);
+      expect(classes.filter((c) => c.startsWith("animate-"))).toEqual([]);
     });
 
     it("prefers live cost over the polled row when the stream has ticked", () => {
@@ -137,6 +164,70 @@ describe("RunningCard", () => {
       renderCard({ job: makeJob({ total_cost_usd: 0.33 }) });
 
       expect(screen.getByTestId("cost-line")).toHaveTextContent("$0.90");
+    });
+  });
+
+  describe("sprite", () => {
+    it("shows the stage's sprite thinking, and using a tool while a call is open", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", toolOpen: false }));
+      const { unmount } = renderCard({ job: makeJob() });
+      let sprite = screen.getByTestId("stage-sprite").querySelector("svg")!;
+      expect(sprite).toHaveAttribute("data-avatar", "smith");
+      expect(sprite).toHaveAttribute("data-state", "thinking");
+      expect(sprite).toHaveAttribute("width", "32");
+      unmount();
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", toolOpen: true }));
+      renderCard({ job: makeJob() });
+      sprite = screen.getByTestId("stage-sprite").querySelector("svg")!;
+      expect(sprite).toHaveAttribute("data-state", "tool");
+    });
+    it("falls back to the agent the polled stage names when the stream has no node", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: null }));
+      renderCard({ job: makeJob({ current_stage: "developer_complete" }) });
+      const sprite = screen.getByTestId("stage-sprite").querySelector("svg")!;
+      expect(sprite).toHaveAttribute("data-avatar", "smith");
+    });
+    it("shows no sprite, and no golem, for a polled stage that names no agent", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: null }));
+      renderCard({ job: makeJob({ current_stage: "output_finalized" }) });
+      expect(screen.queryByTestId("stage-sprite")).toBeNull();
+      expect(document.querySelector('svg[data-avatar="golem"]')).toBeNull();
+      expect(screen.getByTestId("stage-badge")).toHaveTextContent(/^output_finalized$/);
+    });
+    it("shows no sprite for a plumbing node that runs no agent", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "init", currentAgent: null }));
+      renderCard({ job: makeJob() });
+      expect(screen.queryByTestId("stage-sprite")).toBeNull();
+      expect(document.querySelector('svg[data-avatar="golem"]')).toBeNull();
+      expect(screen.getByTestId("stage-badge")).toHaveTextContent("init#1");
+    });
+    it("shows the agent the generic node runs, not the node", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "generic_agent", currentAgent: "qa" }));
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-sprite").querySelector("svg")).toHaveAttribute("data-avatar", "alchemist");
+    });
+    it("shows a builtin node's own agent when the event names none", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", currentAgent: null }));
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-sprite").querySelector("svg")).toHaveAttribute("data-avatar", "smith");
+    });
+    it("shows no sprite before any stage is known", () => {
+      renderCard({ job: makeJob({ current_stage: null }) });
+      expect(screen.queryByTestId("stage-sprite")).toBeNull();
+    });
+  });
+
+  describe("running light", () => {
+    it("runs a light along the card's top edge while the job runs", () => {
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("running-light")).toBeInTheDocument();
+      expect(screen.getByRole("link").className).toContain("relative");
+    });
+
+    it("stops the light once the stream reports the job over", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ isComplete: true }));
+      renderCard({ job: makeJob() });
+      expect(screen.queryByTestId("running-light")).toBeNull();
     });
   });
 });

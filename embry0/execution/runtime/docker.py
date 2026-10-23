@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Mapping, Sequence
 
 import structlog
@@ -11,7 +12,7 @@ import structlog
 from embry0.execution.docker_client import DockerClient
 from embry0.execution.runtime import egress as _egress
 from embry0.execution.runtime import isolation as _isolation
-from embry0.execution.runtime.protocol import ContainerSummary, VolumeSummary
+from embry0.execution.runtime.protocol import ContainerSummary, DiskUsage, ImageSummary, VolumeSummary
 
 logger = structlog.get_logger(__name__)
 
@@ -25,6 +26,20 @@ _PS_FORMAT = "{{.ID}}\t{{.Names}}\t{{.CreatedAt}}\t{{.Status}}\t{{.RunningFor}}"
 # []interface{} and `join` fails there with a template error
 # (verified against the live DinD, 2026-09-20).
 _DIGEST_FORMAT = "{{range .RepoDigests}}{{.}},{{end}}|{{.Id}}"
+
+_INSPECT_CHUNK = 50
+
+# `docker system df` prints sizes in decimal units (go-units HumanSize).
+_SIZE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([kKMGTP]?B)\s*$")
+_SIZE_UNITS = {"B": 1, "kB": 10**3, "KB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12, "PB": 10**15}
+
+
+def parse_size(text: str) -> int | None:
+    """Bytes in a size the daemon printed (``400.7MB``), or None when it is not one."""
+    match = _SIZE.match(text or "")
+    if match is None:
+        return None
+    return int(float(match.group(1)) * _SIZE_UNITS[match.group(2)])
 
 
 class DockerRuntime:
@@ -149,6 +164,7 @@ class DockerRuntime:
         name: str | None = None,
         label: str | None = None,
         volume: str | None = None,
+        ancestor: str | None = None,
         include_stopped: bool = True,
         timeout: int = 15,
     ) -> list[ContainerSummary]:
@@ -161,6 +177,8 @@ class DockerRuntime:
             args += ["--filter", f"label={label}"]
         if volume is not None:
             args += ["--filter", f"volume={volume}"]
+        if ancestor is not None:
+            args += ["--filter", f"ancestor={ancestor}"]
         args += ["--format", _PS_FORMAT]
         output = await self._client.run_cmd(self._cmd(*args), timeout=timeout)
         found: list[ContainerSummary] = []
@@ -186,6 +204,27 @@ class DockerRuntime:
 
     async def remove_containers(self, containers: Sequence[str], *, timeout: int = 15) -> None:
         await self._client.run_cmd(self._cmd("rm", "-f", *containers), timeout=timeout)
+
+    async def container_mounts(self, container: str, *, timeout: int = 10) -> list[tuple[str, str]]:
+        output = await self._client.run_cmd(
+            self._cmd("inspect", "--format", "{{json .Mounts}}", container), timeout=timeout
+        )
+        return [
+            (str(m.get("Source") or ""), str(m.get("Destination") or ""))
+            for m in json.loads((output or "").strip() or "[]") or []
+        ]
+
+    async def mounted_sources(self, *, timeout: int = 30) -> set[str]:
+        ids = (await self._client.run_cmd(self._cmd("ps", "-aq"), timeout=timeout) or "").split()
+        if not ids:
+            return set()
+        # One inspect for every container: one line of JSON each.
+        output = await self._client.run_cmd(self._cmd("inspect", "--format", "{{json .Mounts}}", *ids), timeout=timeout)
+        sources: set[str] = set()
+        for line in (output or "").splitlines():
+            if line.strip():
+                sources.update(str(m["Source"]) for m in json.loads(line) or [] if m.get("Source"))
+        return sources
 
     def chown_volume_cmd(self, volume: str, mount: str, *, image: str, owner: str) -> list[str]:
         """The `docker run` behind ``chown_volume``.
@@ -315,6 +354,47 @@ class DockerRuntime:
 
     async def remove_image(self, image: str, *, timeout: int = 30) -> None:
         await self._client.run_cmd(self._cmd("rmi", "-f", image), timeout=timeout)
+
+    async def list_images(self, *, timeout: int = 60) -> list[ImageSummary]:
+        # --all: without it Docker 27 leaves out every image with no tag, a QA
+        # image left with its registry digest alone included.
+        listed = await self._client.run_cmd(self._cmd("image", "ls", "--all", "--quiet", "--no-trunc"), timeout=timeout)
+        ids = list(dict.fromkeys((listed or "").split()))  # one line per tag: keep each image once
+        images: list[ImageSummary] = []
+        for i in range(0, len(ids), _INSPECT_CHUNK):
+            raw = await self._client.run_cmd(
+                self._cmd("image", "inspect", *ids[i : i + _INSPECT_CHUNK]), timeout=timeout
+            )
+            for entry in json.loads(raw or "[]"):
+                images.append(
+                    ImageSummary(
+                        id=str(entry.get("Id") or ""),
+                        repo_tags=tuple(str(t) for t in entry.get("RepoTags") or ()),
+                        repo_digests=tuple(str(d) for d in entry.get("RepoDigests") or ()),
+                        created_at=str(entry.get("Created") or ""),
+                        size=int(entry.get("Size") or 0),
+                    )
+                )
+        return images
+
+    async def remove_image_refs(self, refs: Sequence[str], *, timeout: int = 60) -> None:
+        # No -f: the daemon refuses the last reference of an image a container uses.
+        await self._client.run_cmd(self._cmd("rmi", *refs), timeout=timeout)
+
+    async def disk_usage(self, *, timeout: int = 120) -> DiskUsage:
+        raw = await self._client.run_cmd(self._cmd("system", "df", "-v", "--format", "{{json .}}"), timeout=timeout)
+        data = json.loads(raw or "{}")
+        images: dict[str, int] = {}
+        for entry in data.get("Images") or ():
+            size = parse_size(str(entry.get("UniqueSize") or ""))
+            if size is not None and entry.get("ID"):
+                images[str(entry["ID"])] = size
+        volumes: dict[str, int] = {}
+        for entry in data.get("Volumes") or ():
+            size = parse_size(str(entry.get("Size") or ""))
+            if size is not None and entry.get("Name"):
+                volumes[str(entry["Name"])] = size
+        return DiskUsage(image_unique_bytes=images, volume_bytes=volumes)
 
     # --- QA compose workspaces (mode: dind) ---------------------------------
 

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import os
+import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
 import structlog
 
-from embry0.agents.model_policy import TIER_KEYS, build_model_policy
+from embry0.agents.model_policy import build_model_policy, resolve_tier_models
 from embry0.agents.resolver import resolve_agent_invocation
 from embry0.agents.session import AgentSession
 from embry0.execution.auth_provider import AuthConfigError
@@ -21,8 +22,15 @@ from embry0.orchestration.budget import (
     resolve_job_cap,
 )
 from embry0.orchestration.state import AgentOutputEntry
+from embry0.safety.redaction import redact_bounded, redact_secrets, secret_env_values
 
 logger = structlog.get_logger(__name__)
+
+TRACE_SUMMARY_CAP = 500
+
+
+def _redact_trace_text(text: str) -> str:
+    return redact_secrets(text, secret_env_values())
 
 
 def _env_cap(name: str, default: int) -> int:
@@ -48,6 +56,7 @@ USER_RETRY_ROUNDS_CAP = _env_cap("USER_RETRY_ROUNDS_CAP", 5)
 # pass and review a bounded check-and-judge pass — neither should be able
 # to burn a developer-sized budget when stuck. Overridable per job via
 # pipeline_config.agent_max_turns; unknown agent types fall back to 40.
+# Custom agent types (agent_definitions rows run on generic_agent) take that default.
 DEFAULT_AGENT_MAX_TURNS: dict[str, int] = {
     "triage": 15,
     "developer": 40,
@@ -62,7 +71,47 @@ DEFAULT_AGENT_MAX_TURNS: dict[str, int] = {
     # job budget bounds cost, not the turn cap).
     "analysis": 40,
     "ops": 40,
+    # The read-only specialists. kintsugi runs every gate it can find and
+    # reads code against its docs, so it gets the most; the explainers and
+    # the comment pass are bounded read-and-report passes.
+    "kintsugi": 60,
+    "interrogator": 40,
+    "blast-radius": 40,
+    "design-auditor": 40,
+    "gardener": 30,
+    "why": 30,
+    "how": 30,
+    "comment-sicko": 25,
 }
+
+
+def agent_attempt(state: dict[str, Any], agent_type: str) -> int:
+    """1 + the number of earlier runs of this agent in the job (agent_outputs is append-only).
+
+    The count is of prior ``agent_outputs`` entries of this ``agent_type``, not of
+    node re-entries: a decide-now resume appends two entries in one node entry,
+    so the next attempt advances by two, and two generic steps that share an
+    agent type read as attempts 1 and 2 of the same node.
+    """
+    outputs = state.get("agent_outputs") or []
+    return 1 + sum(1 for entry in outputs if isinstance(entry, dict) and entry.get("agent_type") == agent_type)
+
+
+def _crashed_trace_fields(exc: BaseException, error_code: str | None) -> dict[str, Any]:
+    """finish() fields for a run whose exec raised: nothing spent, the exception as the summary."""
+    return {
+        "result": "error",
+        "cost_usd": 0.0,
+        "duration_ms": 0,
+        "tools_called": {},
+        "result_summary": str(exc),
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "error_code": error_code,
+        "stderr_tail": None,
+    }
 
 
 def _str_or_none(value: Any) -> str | None:
@@ -110,6 +159,21 @@ def _auth_error_updates(
     }
 
 
+async def load_agent_definition_or_none(config: Any, agent_type: str) -> dict[str, Any] | None:
+    """The DB agent_definitions row for ``agent_type``; None without a db, without a row, or on a failed read."""
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    db = configurable.get("db")
+    if db is None:
+        return None
+    try:
+        from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
+
+        return await AgentDefinitionsRepository(db).get(agent_type)
+    except Exception:
+        logger.warning("agent_definition_load_failed", agent_type=agent_type, exc_info=True)
+        return None
+
+
 async def load_agent_definition(config: Any, agent_type: str, fallback: dict[str, Any]) -> dict[str, Any]:
     """The DB agent_definitions row for ``agent_type``, or the code fallback.
 
@@ -119,18 +183,7 @@ async def load_agent_definition(config: Any, agent_type: str, fallback: dict[str
     setups without a ``db`` in configurable keep the code defaults, and a
     load failure must never block the agent run.
     """
-    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
-    db = configurable.get("db")
-    if db is None:
-        return fallback
-    try:
-        from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
-
-        row = await AgentDefinitionsRepository(db).get(agent_type)
-    except Exception:
-        logger.warning("agent_definition_load_failed", agent_type=agent_type, exc_info=True)
-        return fallback
-    return row or fallback
+    return await load_agent_definition_or_none(config, agent_type) or fallback
 
 
 async def _provider_config_row(config: Any, *, failure_event: str) -> dict[str, Any] | None:
@@ -174,20 +227,12 @@ async def load_triage_model_settings(config: Any) -> tuple[str, dict[str, str]]:
     Tiers resolve the way ``GET /config/models`` resolves them — the
     provider_config row, then ``Embry0Config`` — and end at the config class
     defaults so the prompt always has a model to name (no-DB callers: unit
-    tests, minimal setups). Best-effort like ``load_model_policy``.
+    tests, minimal setups), through ``resolve_tier_models``, which ``GET
+    /agents`` reads them with too. Best-effort like ``load_model_policy``.
     """
-    from embry0.config import Embry0Config
-
-    cfg = await _provider_config_row(config, failure_event="triage_model_settings_load_failed") or {}
-    policy = build_model_policy(cfg)
-    app_config = _graph_configurable(config).get("embry0_config")
-    tiers: dict[str, str] = {}
-    for tier in TIER_KEYS:
-        configured = policy["tier_models"][tier] or getattr(app_config, tier, None)
-        tiers[tier] = (
-            configured if isinstance(configured, str) and configured else Embry0Config.model_fields[tier].default
-        )
-    return policy["default_model"], tiers
+    cfg = await _provider_config_row(config, failure_event="triage_model_settings_load_failed")
+    default_model = build_model_policy(cfg or {})["default_model"]
+    return default_model, resolve_tier_models(cfg, _graph_configurable(config).get("embry0_config"))
 
 
 async def load_budget_policy(config: Any) -> tuple[float, str]:
@@ -340,6 +385,7 @@ async def run_agent_node(
     global_defaults: dict[str, Any] | None = None,
     config: Any | None = None,
     resume_session: AgentSession | None = None,
+    node: str | None = None,
 ) -> dict[str, Any]:
     """Resolve an AgentInvocation and run it via the sandbox executor.
 
@@ -347,6 +393,10 @@ async def run_agent_node(
     container via ``AgentRunner.run``; the in-container ``SdkAgentExecutor``
     performs the actual Claude call. Passing ``agent_runner=None`` raises
     ``SandboxRequiredError`` — there is no in-process fallback by design.
+
+    ``node`` is the graph node id this run executes under, stamped on every
+    event the sandbox emits; it defaults to ``agent_type`` for the nodes
+    named after their agent.
 
     Returns a LangGraph state update dict. Does NOT return a Command here;
     Command returns live in the workflow nodes (see Task 16).
@@ -454,6 +504,16 @@ async def run_agent_node(
         ),
     )
 
+    # Spec 3.4: the run id is minted here, before the exec, so the trace row
+    # and every event of this run share it; the sandbox stamps it on events.
+    run_id = f"run-{uuid.uuid4().hex}"
+    # Spec 3.3: the skill sources this job's sandbox has mounted; the sandbox
+    # turns each into a local plugin of the SDK. A runner without the method
+    # (test doubles that only run) mounts nothing.
+    skill_mounts_of = getattr(agent_runner, "skill_mounts", None)
+    skill_mounts = await skill_mounts_of(state.get("sandbox_container_id", "")) if skill_mounts_of else []
+    invocation = replace(invocation, run_id=run_id, node=node or agent_type, skill_mounts=tuple(skill_mounts))
+
     # Build the serialized invocation dict the sandbox runner receives.
     serialized = {
         "agent_type": invocation.agent_type,
@@ -469,9 +529,48 @@ async def run_agent_node(
         "execution_mode": invocation.execution_mode,
         "auth_mode": invocation.auth_mode,
         "provider": invocation.provider,
+        "run_id": invocation.run_id,
+        "node": invocation.node,
+        "skill_mounts": list(invocation.skill_mounts),
     }
 
     container = state.get("sandbox_container_id", "")
+
+    # Write the trace row as running before the exec so a running agent has a
+    # row the job-detail UI can show, and finalize it after. Best-effort —
+    # failure to write a trace must not fail the agent run.
+    configurable = _graph_configurable(config)
+    traces_repo = configurable.get("traces_repo")
+    trace_job_id = configurable.get("job_id", "")
+    running_row_written = False
+    if traces_repo is not None and trace_job_id:
+        try:
+            await traces_repo.create(
+                job_id=trace_job_id, agent_type=agent_type, model=invocation.model, result="running", trace_id=run_id
+            )
+            running_row_written = True
+        except Exception:
+            logger.warning("trace_start_persist_failed", agent_type=agent_type, exc_info=True)
+
+    async def _finish_trace(**fields: Any) -> None:
+        if traces_repo is None or not trace_job_id:
+            return
+        # spec 3.6: the summary is redacted at write, and before the cap, so a
+        # cut can never leave a fragment no pattern recognises.
+        summary = str(fields.get("result_summary") or "")
+        fields["result_summary"] = redact_bounded(summary, TRACE_SUMMARY_CAP, redact=_redact_trace_text)
+        try:
+            if running_row_written:
+                await traces_repo.finish(run_id, **fields)
+            else:
+                # The start write failed, so there is no row to UPDATE; create
+                # it now with the final fields under the same run id, so the
+                # trace, its spend and its events still join up.
+                await traces_repo.create(
+                    job_id=trace_job_id, agent_type=agent_type, model=invocation.model, trace_id=run_id, **fields
+                )
+        except Exception:
+            logger.warning("trace_finish_persist_failed", agent_type=agent_type, exc_info=True)
 
     try:
         # Production path: docker-exec the sandbox runner with the serialized
@@ -485,7 +584,13 @@ async def run_agent_node(
             resume_session=resume_session,
         )
     except AuthConfigError as exc:
+        await _finish_trace(**_crashed_trace_fields(exc, exc.error_code.value))
         return _stamp_loaded_preferences(_auth_error_updates(agent_type, exc, state), state, loaded_prefs)
+    except Exception as exc:
+        # The row says running until told otherwise; a crashed exec must not
+        # leave it that way.
+        await _finish_trace(**_crashed_trace_fields(exc, None))
+        raise
 
     output_entry = AgentOutputEntry(
         agent_type=result.agent_type,
@@ -521,35 +626,22 @@ async def run_agent_node(
     if getattr(result, "session_blob", None) is not None:
         output_entry["session_blob"] = result.session_blob
 
-    # Persist a trace row so the job-detail UI's TracesTable / cost_breakdown
-    # endpoint actually has data. Best-effort — failure to write a trace must
-    # not fail the agent run.
-    configurable = _graph_configurable(config)
-    traces_repo = configurable.get("traces_repo")
-    trace_job_id = configurable.get("job_id", "")
-    if traces_repo is not None and trace_job_id:
-        try:
-            await traces_repo.create(
-                job_id=trace_job_id,
-                agent_type=result.agent_type,
-                model=invocation.model,
-                result="error" if result.is_error else "success",
-                cost_usd=result.cost_usd,
-                duration_ms=result.duration_ms,
-                tools_called=result.tools_called or {},
-                result_summary=(result.error_message or result.output or "")[:500],
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
-                cache_read_tokens=result.cache_read_tokens,
-                cache_creation_tokens=result.cache_creation_tokens,
-                # #281: why THIS run failed, kept per run — a recovered
-                # attempt's cause is otherwise gone by the time the job ends.
-                # The tail is already redacted and capped by AgentRunner.
-                error_code=_str_or_none(getattr(result, "error_code", None)) if result.is_error else None,
-                stderr_tail=_str_or_none(getattr(result, "stderr_tail", None)) if result.is_error else None,
-            )
-        except Exception:
-            logger.warning("trace_persist_failed", agent_type=result.agent_type, exc_info=True)
+    await _finish_trace(
+        result="error" if result.is_error else "success",
+        cost_usd=result.cost_usd,
+        duration_ms=result.duration_ms,
+        tools_called=result.tools_called or {},
+        result_summary=result.error_message or result.output or "",
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cache_read_tokens=result.cache_read_tokens,
+        cache_creation_tokens=result.cache_creation_tokens,
+        # #281: why THIS run failed, kept per run — a recovered
+        # attempt's cause is otherwise gone by the time the job ends.
+        # The tail is already redacted and capped by AgentRunner.
+        error_code=_str_or_none(getattr(result, "error_code", None)) if result.is_error else None,
+        stderr_tail=_str_or_none(getattr(result, "stderr_tail", None)) if result.is_error else None,
+    )
 
     new_total = state.get("total_cost_usd", 0.0) + result.cost_usd
     updates: dict[str, Any] = {

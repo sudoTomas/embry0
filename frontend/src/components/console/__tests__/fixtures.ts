@@ -30,9 +30,11 @@ export function makeSummary(overrides: Partial<UseLiveJobSummaryResult> = {}): U
     latestTokensIn: 0,
     latestTokensOut: 0,
     currentNode: null,
+    currentAgent: null,
     attempt: 1,
     isConnected: true,
     isComplete: false,
+    toolOpen: false,
     ...overrides,
   };
 }

@@ -2,8 +2,9 @@ import { api } from "./client";
 import type { CaseAcceptResponse, CaseListResponse } from "@/lib/types";
 
 /**
- * Watcher drafts nobody has accepted or rejected. `awaiting_decision` is the
- * server's rule, not `stage=tracked`: that stage also holds a person's ticket
+ * What waits for a person: watcher drafts nobody has accepted or rejected, and
+ * organization needs nobody has answered. `awaiting_decision` is the server's
+ * rule, not `stage=tracked`: that stage also holds a person's ticket
  * mid-dispatch and a draft whose ticket is already gone from its tracker.
  */
 export async function fetchProposals(): Promise<CaseListResponse> {

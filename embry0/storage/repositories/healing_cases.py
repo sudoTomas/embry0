@@ -100,17 +100,24 @@ _REOPENS = "(SELECT COUNT(*) FROM healing_case_events e WHERE e.case_id = c.id A
 # being a draft that limits the watcher's filing. Only a reopen leaves a case
 # at `tracked` after an acceptance, so "reopened and at a cap stage" is exactly
 # "sent back and not accepted again".
+#
+# ADR 0011 adds one more kind: a need of an organization (origin `org`) is a
+# question for a person for as long as it is open. It holds no draft slot
+# and has no tracker ticket; dismissing or answering the need closes it.
 _AWAITING_DECISION = f"""(
-    c.origin = 'watcher'
-    AND c.tracker_key IS NOT NULL
-    AND c.stage IN ({", ".join(f"'{stage}'" for stage in CAP_STAGES)})
-    AND (
-        NOT EXISTS (
-            SELECT 1 FROM watcher_runs w
-            WHERE w.id = c.watcher_run_id AND w.released_at IS NOT NULL
+    (
+        c.origin = 'watcher'
+        AND c.tracker_key IS NOT NULL
+        AND c.stage IN ({", ".join(f"'{stage}'" for stage in CAP_STAGES)})
+        AND (
+            NOT EXISTS (
+                SELECT 1 FROM watcher_runs w
+                WHERE w.id = c.watcher_run_id AND w.released_at IS NOT NULL
+            )
+            OR {_REOPENS} > 0
         )
-        OR {_REOPENS} > 0
     )
+    OR (c.origin = 'org' AND c.stage = 'detected')
 )"""
 
 # lifecycle.fix_deployed, in SQL. NULL-safe, so NOT (...) is its exact negation;
@@ -599,10 +606,11 @@ class HealingCasesRepository:
     ) -> tuple[list[dict[str, Any]], int]:
         """One keyset page, newest first. Returns ``(page, total matching the filters)``.
 
-        ``awaiting_decision`` keeps only watcher findings waiting for a
-        person's answer (``_AWAITING_DECISION``): drafts nobody has accepted
-        or rejected, and cases a ``not_healed`` verdict sent back for a retry
-        nobody has accepted yet. Not ``stage = 'tracked'``, which also holds a
+        ``awaiting_decision`` keeps only cases waiting for a person's answer
+        (``_AWAITING_DECISION``): watcher drafts nobody has accepted or
+        rejected, cases a ``not_healed`` verdict sent back for a retry nobody
+        has accepted yet, and organization needs (origin ``org``) waiting for
+        a person. Not ``stage = 'tracked'``, which also holds a
         human's ticket mid-dispatch and a draft whose ticket was finished or
         deleted in its tracker.
 

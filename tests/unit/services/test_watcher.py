@@ -402,6 +402,25 @@ async def test_the_watchers_own_errors_never_reach_the_analysis_prompt():
     assert svc._runs.create.await_args.kwargs["log_lines"] == len(real)
 
 
+_LOG_READ = (
+    'INFO:     172.18.0.9:40312 - "GET /api/v1/logs/query?container=api&search=ERROR%7CException%7CTraceback'
+    '&since_minutes=60 HTTP/1.1" 200 OK'
+)
+
+
+@pytest.mark.asyncio
+async def test_the_drill_down_of_the_last_analysis_is_a_quiet_window():
+    """An analysis reads logs through /logs/query; the access lines that leaves
+    quote its query, error words and all. The next tick must not pay to read
+    them: no job, a quiet tick."""
+    job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
+    svc = _service(lines=[_LOG_READ] * 4, job_result=job)
+    out = await svc.run_once()
+    assert out["action"] == "skipped_quiet", out
+    svc._jobs.create.assert_not_awaited()
+    assert svc._runs.create.await_args.kwargs["log_lines"] == 0
+
+
 @pytest.mark.asyncio
 async def test_analysis_task_names_the_watched_repo():
     job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
@@ -510,6 +529,23 @@ async def test_context_proxy_on_flags_job_and_renders_drilldown():
     assert "mcp__context__logs_query" in task
     assert "acme-backend, acme-frontend" in task
     assert "30 queries" in task
+    assert "a * stands for" not in task
+
+
+@pytest.mark.asyncio
+async def test_drilldown_explains_a_pattern_entry():
+    """Slot containers are allowlisted as acme-backend*; the agent is
+    told to query the full name its excerpts show, not the pattern."""
+    cfg = _config(
+        context_proxy_enabled=True,
+        context_proxy_container_allowlist="acme-backend*, acme-frontend",
+    )
+    job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
+    svc = _service(config=cfg, lines=["[api] e1", "[api] e2", "[api] e3"], job_result=job)
+    await svc.run_once()
+    task = svc._jobs.create.await_args.kwargs["task"]
+    assert "acme-backend*, acme-frontend (a * stands for" in task
+    assert "query the full name your excerpts show" in task
 
 
 @pytest.mark.asyncio

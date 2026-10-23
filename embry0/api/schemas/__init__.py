@@ -8,9 +8,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
+from embry0.agents.identity import DISPLAY_NAME_MAX, TAGLINE_MAX, validate_avatar, validate_color
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.execution.auth_provider import env_override_refusal
 from embry0.execution.profile_isolation import ISOLATION_FIELDS, field_problem
+from embry0.workflows._validation import FIXED_NODE_TYPES
 
 # Slash-separated alnum + . _ - : segments. Colon allowed for ISO timestamps in
 # filenames. No leading/trailing slash. No '..' segments. No double slashes.
@@ -119,6 +121,26 @@ class JobContext(BaseModel):
         return self
 
 
+# Job fields a pr-review job refuses (#30): its model, tools, profile and
+# budget come from the repo's pr_review settings and the deployment's own, and
+# what it reviews is the pull request ``number`` names, nothing else.
+_PR_REVIEW_REFUSED_FIELDS = (
+    "agent_models",
+    "pipeline_config",
+    "pipeline_template",
+    "sandbox_profile",
+    "max_budget_usd",
+    "execution_mode_override",
+    "auth_mode_override",
+    "additional_context",
+    "task",
+    "branch",
+    "qa",
+    "context",
+    "issue_number",
+)
+
+
 class JobCreateRequest(BaseModel):
     repo: str | None = Field(default=None, max_length=200)
     # ``task`` is required for the legacy issue-to-pr flow but optional for
@@ -126,7 +148,7 @@ class JobCreateRequest(BaseModel):
     # in the handler when pipeline != 'qa'.
     task: str | None = Field(default=None, max_length=50000)
     issue_number: int | None = None
-    pipeline: Literal["issue-to-pr", "qa", "onboard"] | None = None
+    pipeline: Literal["issue-to-pr", "qa", "onboard", "pr-review"] | None = None
     branch: str | None = Field(default=None, max_length=255)
     qa: QAJobOverrides | None = None
     context: JobContext | None = None
@@ -148,6 +170,9 @@ class JobCreateRequest(BaseModel):
     # EMB-50, onboard pipeline only: skip the boot/ready-check smoke phase
     # (schema validation still gates the store write).
     skip_smoke: bool = False
+    # #30, pr-review pipeline only: the pull request (GitHub) or merge request
+    # iid (GitLab) to review now.
+    number: int | None = Field(default=None, ge=1)
 
     @field_validator("repo")
     @classmethod
@@ -162,9 +187,30 @@ class JobCreateRequest(BaseModel):
         handler synthesizes a placeholder. All other pipelines (issue-to-pr, custom
         templates) still need a task to drive triage / dispatch.
         """
-        if self.pipeline not in ("qa", "onboard"):
+        if self.pipeline not in ("qa", "onboard", "pr-review"):
             if self.task is None or not self.task.strip():
                 raise ValueError("task is required and must be non-empty for non-qa pipelines")
+        return self
+
+    @model_validator(mode="after")
+    def _refuse_overrides_for_pr_review(self) -> "JobCreateRequest":
+        """#30: a review runs on the repo's ``pr_review`` settings and nothing else,
+        and ``number`` means nothing to any other pipeline.
+
+        Refused rather than dropped, so a caller never believes an override
+        took effect (RAV-1058 was overrides accepted and silently ignored).
+        """
+        if self.pipeline != "pr-review":
+            if self.number is not None:
+                raise ValueError("number is for pipeline=pr-review only")
+            return self
+        sent = [name for name in _PR_REVIEW_REFUSED_FIELDS if getattr(self, name) is not None]
+        if self.skip_smoke:
+            sent.append("skip_smoke")
+        if sent:
+            raise ValueError(
+                f"pipeline=pr-review takes no {', '.join(sent)}: the review runs on the repo's pr_review settings"
+            )
         return self
 
     @model_validator(mode="after")
@@ -177,9 +223,11 @@ class JobCreateRequest(BaseModel):
         - both             -> must be git + matching repo, else reject
         - neither          -> context = {none}
         """
-        if self.pipeline in ("qa", "onboard"):
+        if self.pipeline in ("qa", "onboard", "pr-review"):
             if self.repo is None:
                 raise ValueError(f"repo is required for pipeline={self.pipeline}")
+            if self.pipeline == "pr-review" and self.number is None:
+                raise ValueError("number is required for pipeline=pr-review")
             return self
         if self.context is not None and self.repo is not None:
             if self.context.type != ContextType.git or self.context.repo != self.repo:
@@ -200,6 +248,9 @@ class JobResponse(BaseModel):
     # existed.
     repo: str | None = None
     task: str
+    # True when a list was asked for ``brief`` tasks and this one was cut to
+    # its first line; the full text is on GET /jobs/{job_id}.
+    task_truncated: bool = False
     issue_number: int | None = None
     # Internal issues-table FK. NULL means the job did not originate from an
     # embry0 issue (operator/API dispatch) — the Console board's explicit
@@ -345,6 +396,10 @@ class AgentCreateRequest(BaseModel):
     execution_mode: str | None = Field(default=None, pattern="^(sdk|cli)$")
     auth_mode: str | None = Field(default=None, pattern="^(api_key|oauth)$")
     mcp_servers: dict[str, Any] = Field(default_factory=dict)
+    display_name: str = Field(default="", max_length=DISPLAY_NAME_MAX)
+    avatar: str = "golem"
+    color: str = "slate"
+    tagline: str = Field(default="", max_length=TAGLINE_MAX)
 
     @field_validator("type")
     @classmethod
@@ -352,7 +407,23 @@ class AgentCreateRequest(BaseModel):
         if not _AGENT_TYPE_PATTERN.match(v):
             msg = "type must be lowercase alphanumeric with hyphens/underscores"
             raise ValueError(msg)
+        # A row named after a fixed node is placeable in a template but runs
+        # that node, never generic_agent; the scaffolding names are no agent.
+        reserved = FIXED_NODE_TYPES | {"__start__", "__end__"}
+        if v in reserved:
+            msg = f"type {v!r} is reserved for a fixed pipeline node; reserved: {sorted(reserved)}"
+            raise ValueError(msg)
         return v
+
+    @field_validator("avatar")
+    @classmethod
+    def _avatar(cls, v: str) -> str:
+        return validate_avatar(v)
+
+    @field_validator("color")
+    @classmethod
+    def _color(cls, v: str) -> str:
+        return validate_color(v)
 
 
 class AgentUpdateRequest(BaseModel):
@@ -364,6 +435,64 @@ class AgentUpdateRequest(BaseModel):
     execution_mode: str | None = Field(default=None, pattern="^(sdk|cli)$")
     auth_mode: str | None = Field(default=None, pattern="^(api_key|oauth)$")
     mcp_servers: dict[str, Any] | None = None
+    display_name: str | None = Field(default=None, max_length=DISPLAY_NAME_MAX)
+    avatar: str | None = None
+    color: str | None = None
+    tagline: str | None = Field(default=None, max_length=TAGLINE_MAX)
+
+    @field_validator("avatar")
+    @classmethod
+    def _avatar(cls, v: str | None) -> str | None:
+        return None if v is None else validate_avatar(v)
+
+    @field_validator("color")
+    @classmethod
+    def _color(cls, v: str | None) -> str | None:
+        return None if v is None else validate_color(v)
+
+
+# --- Skills ---
+
+
+class SkillSourceCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=40)
+    # Only the builtin `local` source is inline; operators write its skills through /skills/inline.
+    kind: str = Field(pattern="^(git|path)$")
+    url: str = Field(default="", max_length=2000)
+    ref: str = Field(default="", max_length=255)
+    enabled: bool = True
+    credential_id: str | None = Field(default=None, description="reserved; any value is refused in this release")
+
+    @field_validator("credential_id")
+    @classmethod
+    def _reserved(cls, v: str | None) -> str | None:
+        if v is not None:
+            raise ValueError("credential_id is reserved: skill sources are public in this release")
+        return v
+
+
+class SkillSourcePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ref: str | None = Field(default=None, max_length=255)
+    enabled: bool | None = None
+
+
+class InlineSkillRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    description: str = Field(min_length=1, max_length=500)
+    body: str = Field(max_length=64 * 1024)
+
+    @field_validator("description", "body")
+    @classmethod
+    def _no_nul(cls, v: str, info: ValidationInfo) -> str:
+        # Postgres text cannot hold a NUL byte; refusing it here keeps it a 422, not a 500.
+        if "\x00" in v:
+            raise ValueError(f"{info.field_name} must not contain a NUL byte")
+        return v
 
 
 # --- Pipeline Templates ---
@@ -402,7 +531,11 @@ class TemplateUpdateRequest(_TemplateWriteRequest):
     description: str | None = None
     graph_definition: dict[str, Any] | None = None
     sandbox_profile: str | None = None
-    default_for_kind: str | None = Field(default=None, pattern="^(code|research|analysis|ops)$")
+    default_for_kind: str | None = Field(
+        default=None,
+        pattern="^(code|research|analysis|ops)$",
+        description="the kind this template is the default route for; an explicit null clears it, an absent field keeps it",
+    )
 
 
 class TemplateDuplicateRequest(BaseModel):

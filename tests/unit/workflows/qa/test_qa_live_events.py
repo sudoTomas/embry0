@@ -226,3 +226,27 @@ async def test_qa_node_prefers_parent_writer_and_tags_app():
     on_event = fake_run.call_args.kwargs["on_event"]
     on_event({"type": "turn_start", "turn_number": 1})
     assert captured == [{"type": "turn_start", "turn_number": 1, "app": "hub"}]
+
+
+@pytest.mark.asyncio
+async def test_fan_out_emits_running_status_through_the_parent_writer(monkeypatch):
+    """spec 3.7: the status change rides the job stream, not only the QA bus."""
+    events_out: list[dict] = []
+    monkeypatch.setattr(
+        orchestrator_helpers, "run_subtask", AsyncMock(side_effect=lambda resolved, **kw: _result(resolved.app_name))
+    )
+    await orchestrator_helpers.fan_out_subtasks(
+        [_resolved("hub")],
+        parent_run_id="job-p1",
+        repo="x/y",
+        branch_name="main",
+        max_concurrent=1,
+        config={"configurable": {"qa_parent_writer": events_out.append}},
+    )
+    running = [e for e in events_out if e["type"] == "qa_subtask_status"]
+    assert running and running[0]["app"] == "hub" and running[0]["status"] == "running"
+    assert "run_id" not in running[0], (
+        "the job id is not the contract's run_id (an agent run); the orchestrator stamps job_id"
+    )
+    types = [e["type"] for e in events_out]
+    assert types.index("qa_subtask_started") < types.index("qa_subtask_status") < types.index("qa_subtask_finished")

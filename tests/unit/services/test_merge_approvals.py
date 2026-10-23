@@ -15,6 +15,7 @@ import pytest
 
 from embry0.execution.github_client import MergeResult
 from embry0.services.merge_approvals import (
+    DASHBOARD_CHANNEL,
     DecisionRefused,
     MergeApprovalService,
     classify_checks,
@@ -307,6 +308,35 @@ async def test_no_configured_chat_refuses_every_decision(db_with_migrations, git
     with pytest.raises(DecisionRefused) as refused:
         await _approve(svc, row["id"], chat_id="")
     assert refused.value.status_code == 403
+
+
+@pg
+async def test_a_dashboard_decision_needs_no_approval_chat(db_with_migrations, github, notifier) -> None:
+    """Spec 3.8: the dashboard is a second channel. With no chat configured at all,
+    an admin's decision from the dashboard is taken, recorded under the literal
+    channel name, and attributed to the actor the route named."""
+    repo = MergeApprovalsRepository(db_with_migrations)
+    svc = _svc(db_with_migrations, github, notifier, merge_approval_chat_id="")
+    row = await _ask(svc)
+    result = await svc.decide(row["id"], decision="approve", decided_by="ops@example.test", chat_id="", via="dashboard")
+    assert result["outcome"] == "would_merge", result
+    stored = await repo.get(row["id"])
+    assert stored is not None
+    assert (stored["decided_by"], stored["chat_id"]) == ("ops@example.test", DASHBOARD_CHANNEL), (
+        "a dashboard decision names its actor and the dashboard channel, whatever chat_id was passed"
+    )
+
+
+@pg
+async def test_a_dashboard_reject_is_recorded_from_the_dashboard(db_with_migrations, github, notifier) -> None:
+    repo = MergeApprovalsRepository(db_with_migrations)
+    svc = _svc(db_with_migrations, github, notifier, merge_approval_chat_id="")
+    row = await _ask(svc)
+    result = await svc.decide(row["id"], decision="reject", decided_by="ops@example.test", chat_id="", via="dashboard")
+    assert result["outcome"] == "rejected", result
+    stored = await repo.get(row["id"])
+    assert stored is not None and stored["chat_id"] == DASHBOARD_CHANNEL
+    assert github.merge_calls == []
 
 
 @pg

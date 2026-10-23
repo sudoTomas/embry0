@@ -384,3 +384,113 @@ async def test_sandbox_manager_enforces_policy_through_its_runtime() -> None:
     runtime.ensure_isolation.assert_awaited_once_with(["git-proxy"])
     await manager.destroy("sbx")
     runtime.detach_policy.assert_awaited_once_with("sbx")
+
+
+@pytest.mark.asyncio
+async def test_container_mounts_reports_source_and_destination() -> None:
+    mounts = (
+        '[{"Type": "bind", "Source": "/skills/superpowers/aaa", "Destination": "/opt/embry0/skills/superpowers"},'
+        ' {"Type": "volume", "Name": "cache", "Source": "/var/lib/docker/volumes/cache/_data",'
+        ' "Destination": "/home/agent/.m2"}]\n'
+    )
+    client = _client(mounts, "null\n")
+    runtime = DockerRuntime(client)
+    assert await runtime.container_mounts("cid") == [
+        ("/skills/superpowers/aaa", "/opt/embry0/skills/superpowers"),
+        ("/var/lib/docker/volumes/cache/_data", "/home/agent/.m2"),
+    ]
+    assert await runtime.container_mounts("bare") == [], "a container with no mounts prints null"
+    base = ["docker", "--host", "tcp://dind:2376"]
+    assert _issued(client)[0] == ([*base, "inspect", "--format", "{{json .Mounts}}", "cid"], 10)
+
+
+@pytest.mark.asyncio
+async def test_mounted_sources_inspects_every_container_in_one_call() -> None:
+    inspected = (
+        '[{"Source": "/skills/superpowers/aaa", "Destination": "/opt/embry0/skills/superpowers"}]\n'
+        "null\n"
+        '[{"Source": "/skills/local/bbb", "Destination": "/opt/embry0/skills/local"}, {"Destination": "/tmp"}]\n'
+    )
+    client = _client("c1\nc2\nc3\n", inspected)
+    runtime = DockerRuntime(client)
+    assert await runtime.mounted_sources() == {"/skills/superpowers/aaa", "/skills/local/bbb"}
+    base = ["docker", "--host", "tcp://dind:2376"]
+    assert _issued(client) == [
+        ([*base, "ps", "-aq"], 30),
+        ([*base, "inspect", "--format", "{{json .Mounts}}", "c1", "c2", "c3"], 30),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mounted_sources_with_no_containers_inspects_nothing() -> None:
+    client = _client("\n")
+    assert await DockerRuntime(client).mounted_sources() == set()
+    assert len(_issued(client)) == 1
+
+
+# --- QA image retention (ADR 0017) ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_images_inspects_each_image_once() -> None:
+    import json
+
+    listed = "sha256:aaa\nsha256:aaa\nsha256:bbb\n"  # one line per tag
+    inspected = [
+        {
+            "Id": "sha256:aaa",
+            "RepoTags": ["embry0-qa-x:t1", "registry:5000/embry0-qa-x:t1"],
+            "RepoDigests": ["registry:5000/embry0-qa-x@sha256:d1"],
+            "Created": "2026-08-12T22:32:22.775519053Z",
+            "Size": 4293400006,
+        },
+        {"Id": "sha256:bbb", "RepoTags": None, "RepoDigests": None, "Created": "2026-08-01T00:00:00Z", "Size": 5},
+    ]
+    client = _client(listed, json.dumps(inspected))
+    images = await DockerRuntime(client).list_images()
+    base = ["docker", "--host", "tcp://dind:2376"]
+    assert _issued(client) == [
+        ([*base, "image", "ls", "--all", "--quiet", "--no-trunc"], 60),
+        ([*base, "image", "inspect", "sha256:aaa", "sha256:bbb"], 60),
+    ]
+    assert images[0].repo_tags == ("embry0-qa-x:t1", "registry:5000/embry0-qa-x:t1")
+    assert images[0].repo_digests == ("registry:5000/embry0-qa-x@sha256:d1",)
+    assert (images[0].size, images[1].repo_tags, images[1].repo_digests) == (4293400006, (), ())
+
+
+@pytest.mark.asyncio
+async def test_image_refs_are_removed_without_force_and_holders_found_by_ancestor() -> None:
+    client = _client("", "")
+    runtime = DockerRuntime(client)
+    await runtime.remove_image_refs(["embry0-qa-x:t1", "registry:5000/embry0-qa-x@sha256:d1"])
+    await runtime.list_containers(ancestor="sha256:aaa")
+    (rmi, _), (ps, _) = _issued(client)
+    assert rmi[3:] == ["rmi", "embry0-qa-x:t1", "registry:5000/embry0-qa-x@sha256:d1"], "rmi must not carry -f"
+    assert ps[3:7] == ["ps", "-a", "--filter", "ancestor=sha256:aaa"]
+
+
+@pytest.mark.asyncio
+async def test_disk_usage_reads_unique_image_sizes_and_volume_sizes() -> None:
+    import json
+
+    from embry0.execution.runtime.docker import parse_size
+
+    df = {
+        "Images": [
+            {"ID": "sha256:aaa", "UniqueSize": "400.7MB", "Size": "1.38GB"},
+            {"ID": "sha256:bbb", "UniqueSize": "N/A"},
+        ],
+        "Volumes": [{"Name": "embry0-qa-vol-x", "Size": "158.3MB"}],
+    }
+    client = _client(json.dumps(df))
+    usage = await DockerRuntime(client).disk_usage()
+    ((cmd, timeout),) = _issued(client)
+    assert cmd[3:] == ["system", "df", "-v", "--format", "{{json .}}"] and timeout == 120
+    assert usage.image_unique_bytes == {"sha256:aaa": 400_700_000}
+    assert usage.volume_bytes == {"embry0-qa-vol-x": 158_300_000}
+    assert (parse_size("0B"), parse_size("12kB"), parse_size("1.5GB"), parse_size("")) == (
+        0,
+        12_000,
+        1_500_000_000,
+        None,
+    )

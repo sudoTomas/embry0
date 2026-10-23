@@ -16,11 +16,25 @@ import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { cn } from "@/lib/utils";
+import { sentenceCase } from "@/lib/status";
+
+/** `qa_required` from the generated qa.yaml, in words. */
+const QA_REQUIRED_LABELS: Record<string, string> = {
+  auto: "QA when the change needs it",
+  always: "QA on every change",
+  never: "QA off",
+};
 
 // Mirrors the backend's BootstrapRequest validators (embry0/api/v1/bootstrap.py)
 // so shape errors surface inline instead of as a 422 round-trip.
 const REPO_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const APP_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+
+/** The server refuses to replace a stored setup without force. Older servers
+ * say "already exists", newer ones "already has a test setup". */
+function isAlreadySetUp(detail: string): boolean {
+  return detail.includes("already exists") || detail.includes("already has a test setup");
+}
 
 type PageState = { kind: "form" } | { kind: "success"; result: BootstrapResult };
 
@@ -31,7 +45,7 @@ export function OnboardRepoPage() {
   const { data: profiles = [] } = useSandboxProfiles();
 
   const [state, setState] = useState<PageState>({ kind: "form" });
-  // Held here, not in <Tabs>, so "Onboard another repo" returns to the manual tab.
+  // Held here, not in <Tabs>, so "Set up another repository" returns to the by-hand tab.
   const [mode, setMode] = useState(() => (params.get("mode") === "manual" ? "manual" : "agent"));
   const [repo, setRepo] = useState(() => params.get("repo") ?? "");
   const [app, setApp] = useState("");
@@ -41,7 +55,7 @@ export function OnboardRepoPage() {
   const [sandboxProfile, setSandboxProfile] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
-  const [forceDetail, setForceDetail] = useState<string | null>(null);
+  const [alreadySetUp, setAlreadySetUp] = useState(false);
 
   const repoOptions = githubRepos?.repos.map((r) => r.full_name) ?? [];
   const pending = bootstrap.isPending;
@@ -61,7 +75,7 @@ export function OnboardRepoPage() {
   function submit(force: boolean) {
     setFieldError(null);
     setServerError(null);
-    if (!force) setForceDetail(null);
+    if (!force) setAlreadySetUp(false);
 
     if (!REPO_PATTERN.test(repo.trim())) {
       setFieldError("Repo must be in owner/name form.");
@@ -74,7 +88,7 @@ export function OnboardRepoPage() {
 
     bootstrap.mutate(buildRequest(force), {
       onSuccess: (result) => {
-        setForceDetail(null);
+        setAlreadySetUp(false);
         setState({ kind: "success", result });
       },
       onError: (error) => {
@@ -82,8 +96,8 @@ export function OnboardRepoPage() {
           isAxiosError(error) && typeof error.response?.data?.detail === "string"
             ? error.response.data.detail
             : null;
-        if (detail && detail.includes("already exists")) {
-          setForceDetail(detail);
+        if (detail && isAlreadySetUp(detail)) {
+          setAlreadySetUp(true);
         } else {
           setServerError(detail ?? (error instanceof Error ? error.message : "Bootstrap failed"));
         }
@@ -101,7 +115,7 @@ export function OnboardRepoPage() {
     setSandboxProfile("");
     setFieldError(null);
     setServerError(null);
-    setForceDetail(null);
+    setAlreadySetUp(false);
     bootstrap.reset();
   }
 
@@ -109,8 +123,8 @@ export function OnboardRepoPage() {
     const { result } = state;
     const enc = encodeURIComponent(result.repo);
     return (
-      <div className="space-y-4 p-6 max-w-2xl">
-        <h1 className="text-2xl font-bold">Repo onboarded</h1>
+      <div className="space-y-4 max-w-2xl">
+        <h1 className="title-pixel text-xl font-bold">Test setup saved</h1>
         <Card className="p-4 space-y-4" data-testid="bootstrap-success">
           <div className="space-y-1 text-sm">
             <p className="font-medium">{result.repo}</p>
@@ -122,15 +136,16 @@ export function OnboardRepoPage() {
                 </>
               )}
               {result.private !== null && (
-                <Badge>{result.private ? "private" : "public"}</Badge>
+                <Badge>{result.private ? "Private" : "Public"}</Badge>
               )}{" "}
-              <Badge tone="info">qa_required: {result.qa_required}</Badge>
+              <Badge title={`qa_required: ${result.qa_required}`}>
+                {QA_REQUIRED_LABELS[result.qa_required] ?? `QA ${sentenceCase(result.qa_required).toLowerCase()}`}
+              </Badge>
               {result.app && <> · app <code className="text-white/80">{result.app}</code></>}
               {result.sandbox_profile && (
-                <> · profile <code className="text-white/80">{result.sandbox_profile}</code></>
+                <> · work machine <code className="text-white/80">{result.sandbox_profile}</code></>
               )}
             </p>
-            <p className="font-mono text-xs text-white/50">{result.qa_config_path}</p>
           </div>
           <ul className="space-y-1.5" data-testid="bootstrap-steps">
             {result.steps.map((step) => (
@@ -143,28 +158,21 @@ export function OnboardRepoPage() {
         </Card>
         <div className="flex items-center gap-3">
           <Link
-            to={`/qa/repos/${enc}/config`}
+            to={`/repos/${result.repo}`}
             className={cn(buttonVariants({ size: "sm" }))}
-            data-testid="bootstrap-edit-config-cta"
+            data-testid="bootstrap-repo-overview-cta"
           >
-            Edit QA config
+            Back to the repository
           </Link>
           <Link
             to={`/qa/repos/${enc}`}
             className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
             data-testid="bootstrap-view-qa-cta"
           >
-            View QA runs
-          </Link>
-          <Link
-            to={`/repos/${result.repo}`}
-            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-            data-testid="bootstrap-repo-overview-cta"
-          >
-            Repo overview — preferences & environment
+            View test runs
           </Link>
           <Button variant="ghost" size="sm" onClick={resetForm}>
-            <Plus className="h-4 w-4" /> Onboard another repo
+            <Plus className="h-4 w-4" /> Set up another repository
           </Button>
         </div>
       </div>
@@ -172,29 +180,28 @@ export function OnboardRepoPage() {
   }
 
   return (
-    <div className="space-y-4 p-6 max-w-2xl">
+    <div className="space-y-4 max-w-2xl">
       <Link to="/repos" className="text-sm text-white/50 hover:underline">
         ← Repos
       </Link>
-      <h1 className="text-2xl font-bold">Onboard a repo</h1>
+      <h1 className="title-pixel text-xl font-bold">Set up testing</h1>
       <p className="text-sm text-white/60">
-        Stores the repo&apos;s QA config (qa.yaml v2) in embry0. Let the onboarding agent work it out
-        from the code, or write a starter config yourself. Everything is refinable in the QA config
-        editor afterward.
+        How embry0 starts your app on its own test computer and what it checks after each change.
+        Let the onboarding agent work it out from the code, or fill in the form yourself.
       </p>
 
       <Tabs defaultValue="agent" value={mode} onValueChange={setMode} className="space-y-3">
         <TabsList>
           <TabsTrigger value="agent">Analyze with the onboarding agent</TabsTrigger>
-          <TabsTrigger value="manual">Configure manually</TabsTrigger>
+          <TabsTrigger value="manual">Set up by hand</TabsTrigger>
         </TabsList>
         <TabsContent value="agent">
           <OnboardAgentForm initialRepo={params.get("repo") ?? ""} />
         </TabsContent>
         <TabsContent value="manual">
           <p className="text-sm text-white/60 mb-4">
-            Verifies the repo, registers a starter qa.yaml (v2), and optionally seeds sandbox
-            preferences.
+            Fill in how embry0 starts your app. Most people should use 'Let embry0 set up testing' on
+            the repository page instead.
           </p>
           <form
             className="space-y-4"
@@ -207,8 +214,8 @@ export function OnboardRepoPage() {
               <div>
                 <h3 className="text-sm font-semibold">Repository</h3>
                 <p className="text-xs text-muted-foreground mt-1">
-                  The manual form verifies the repo through the GitHub API, so it takes GitHub repos
-                  only. Onboard a GitLab repo with the onboarding agent.
+                  The form verifies the repository through the GitHub API, so it takes GitHub
+                  repositories only. Set up a GitLab repository with the onboarding agent.
                 </p>
               </div>
               <div className="space-y-1">
@@ -272,20 +279,21 @@ export function OnboardRepoPage() {
 
             <Card className="p-4 space-y-3">
               <div>
-                <h3 className="text-sm font-semibold">Sandbox (optional)</h3>
+                <h3 className="text-sm font-semibold">Work machine (optional)</h3>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Seed a sandbox-profile preference for this repo. Leave as default to let triage pick.
+                  The prepared computer embry0 writes code on for this repository. Leave it on
+                  embry0's default unless this repository needs another.
                 </p>
               </div>
               <div className="space-y-1">
-                <Label htmlFor="onboard-profile">Sandbox profile</Label>
+                <Label htmlFor="onboard-profile">Work machine</Label>
                 <Select
                   id="onboard-profile"
                   value={sandboxProfile}
                   onChange={(e) => setSandboxProfile(e.target.value)}
                   disabled={pending}
                 >
-                  <option value="">(default)</option>
+                  <option value="">embry0's default</option>
                   {profiles.map((p) => (
                     <option key={p.name} value={p.name}>
                       {p.name}
@@ -305,12 +313,15 @@ export function OnboardRepoPage() {
                 {serverError}
               </p>
             )}
-            {forceDetail && (
+            {alreadySetUp && (
               <div
                 className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2"
                 data-testid="bootstrap-force-panel"
               >
-                <p className="text-sm text-amber-200">{forceDetail}</p>
+                <p className="text-sm text-amber-200">
+                  This repository already has a test setup. Replacing it keeps the current one in
+                  History, so you can undo it.
+                </p>
                 <div className="flex items-center gap-2">
                   <Button
                     type="button"
@@ -320,13 +331,13 @@ export function OnboardRepoPage() {
                     disabled={pending}
                     data-testid="bootstrap-force-overwrite"
                   >
-                    Overwrite
+                    Replace setup
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setForceDetail(null)}
+                    onClick={() => setAlreadySetUp(false)}
                     disabled={pending}
                   >
                     Cancel
@@ -336,7 +347,7 @@ export function OnboardRepoPage() {
             )}
 
             <Button type="submit" disabled={pending || !repo.trim()} data-testid="bootstrap-submit">
-              {pending ? "Bootstrapping… (contacting GitHub)" : "Bootstrap repo"}
+              {pending ? "Saving…" : "Save test setup"}
             </Button>
           </form>
         </TabsContent>

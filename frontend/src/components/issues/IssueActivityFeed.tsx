@@ -1,5 +1,5 @@
 import { formatDate } from "@/lib/utils";
-import { ACTION_ICONS, ACTION_LABELS, formatDetails } from "@/lib/auditLabels";
+import { ACTION_LABELS, actionIcon, formatDetails } from "@/lib/auditLabels";
 import type { ActivityEntry } from "@/lib/types";
 
 interface IssueActivityFeedProps {
@@ -20,15 +20,15 @@ export function IssueActivityFeed({ entries }: IssueActivityFeedProps) {
 
       <div className="space-y-4">
         {entries.map((entry) => {
-          const icon = ACTION_ICONS[entry.action] ?? "●";
+          const Icon = actionIcon(entry.action);
           const label = ACTION_LABELS[entry.action] ?? entry.action;
           const detail = formatDetails(entry.action, entry.details);
 
           return (
             <div key={entry.id} className="relative flex items-start gap-3 pl-8">
               {/* Icon bubble */}
-              <span className="absolute left-0 flex h-7 w-7 items-center justify-center rounded-full bg-card border border-white/[0.08] text-sm shrink-0">
-                {icon}
+              <span className="absolute left-0 flex h-7 w-7 items-center justify-center rounded-full bg-card border border-white/[0.08] shrink-0">
+                <Icon aria-hidden="true" className="h-3.5 w-3.5 text-fg-muted" />
               </span>
 
               {/* Content */}

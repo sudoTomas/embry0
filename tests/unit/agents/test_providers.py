@@ -208,3 +208,25 @@ async def test_executor_no_overlay_for_anthropic(tmp_path, monkeypatch):
         # #240: every SDK agent carries the tool-search kill-switch; the assertion
         # here is that NO PROVIDER key rides along for anthropic models.
         assert getattr(captured["options"], "env", None) == {"ENABLE_TOOL_SEARCH": "false"}
+
+
+def test_price_usage_prices_input_output_and_cache_for_a_catalog_model() -> None:
+    from embry0.agents.providers import price_usage
+
+    # claude-sonnet-5: $3 in, $15 out per Mtok; cache read 10% of input, cache write 125% of input.
+    cost = price_usage(
+        "claude-sonnet-5",
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+        cache_read_tokens=1_000_000,
+        cache_creation_tokens=1_000_000,
+    )
+    assert cost == pytest.approx(3.0 + 15.0 + 0.3 + 3.75)
+
+
+def test_price_usage_is_none_for_an_unpriced_model() -> None:
+    from embry0.agents.providers import price_usage
+
+    assert price_usage("grok-9-unlisted", input_tokens=10, output_tokens=10) is None, (
+        "an unpriced model must not read as free"
+    )

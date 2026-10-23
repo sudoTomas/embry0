@@ -1,21 +1,25 @@
-import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { useStats } from "@/hooks/useStats";
 import { useQueue } from "@/hooks/useQueue";
 import { useWatcherRuns } from "@/hooks/useWatcherRuns";
-import { LiveActivityBand } from "@/components/dashboard/LiveActivityBand";
+import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import { Badge } from "@/components/ui/Badge";
-import { formatDate } from "@/lib/utils";
+import { DashboardSkeleton } from "@/components/ui/PageSkeleton";
+import { DashboardPanel } from "@/components/dashboard/DashboardPanel";
+import { DeepStats } from "@/components/dashboard/DeepStats";
+import { formatDateTime } from "@/lib/utils";
+import { statusLabel, statusTone } from "@/lib/status";
 import { watcherActionLabel, watcherActionTone } from "@/lib/watcherActions";
+import type { RecentIssue } from "@/lib/types";
 import {
-  Heartbeat,
   SingleSourceTile,
   type SingleSourceQuery,
 } from "@/components/vitals";
 
 // Format helpers — kept local; they're the only translation layer between
-// raw backend numbers and tile strings.
-const formatCount = (n: number) => String(n);
+// raw backend numbers and tile strings. A tile counting up draws every step
+// through them, so a count rounds to whole numbers on the way.
+const formatCount = (n: number) => String(Math.round(n));
 const formatPercent = (n: number) => `${Math.round(n * 100)}%`;
 const formatUsd = (n: number) => `$${n.toFixed(2)}`;
 
@@ -34,115 +38,147 @@ function selectQuery<TSource, TValue>(
   };
 }
 
+/** How a recent issue is named: owner/repo#42 on GitHub, the tracker's own
+ * key (ENG-7) elsewhere, the repository when the issue has no key. */
+function recentIssueKey(issue: RecentIssue): string {
+  if (issue.tracker_key) return issue.tracker === "github" ? `${issue.repo}#${issue.tracker_key}` : issue.tracker_key;
+  return issue.issue_number > 0 ? `${issue.repo}#${issue.issue_number}` : issue.repo;
+}
+
+/** The issue's title without a leading "[KEY]" that repeats the key beside it. */
+function recentIssueTitle(issue: RecentIssue): string {
+  const title = issue.title ?? "";
+  const prefix = issue.tracker_key ? `[${issue.tracker_key}]` : "";
+  return prefix && title.startsWith(prefix) ? title.slice(prefix.length).trimStart() : title;
+}
+
 /**
- * Dashboard (rebuilt in RAV-1058 increment 1) — every number on this page
- * comes from embry0's own backend. Companion (`/agent`) stats used to fill
- * 4 of 7 tiles here, presenting another product's task counts as embry0's;
- * live counts now come from /queue and the rest from /stats, plus the
- * watcher audit trail shipped in RAV-657.
+ * Overview — every number on this page comes from embry0's own backend: live
+ * counts from /queue, the rest from /stats, plus the watcher audit trail. The
+ * brief line above it (what waits for a person) is the layout's, on this
+ * route only.
  */
 export function DashboardPage() {
   const stats = useStats();
   const queue = useQueue();
   const watcher = useWatcherRuns(5);
+  // The page paints once stats and the queue have first answered. Drawn
+  // before, it grew as they landed: two tiles' second lines and the recent
+  // issues pushed everything under them down. The watcher's answer moves
+  // nothing (its panel is last, or beside another), so it is not waited on.
+  const painted = useFirstPaint(hasAnswered(stats) && hasAnswered(queue));
 
   const recentIssues = stats.data?.recent_issues.slice(0, 6) ?? [];
+  if (!painted) return <DashboardSkeleton />;
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
-        <SingleSourceTile
-          label="Running"
-          query={selectQuery(queue, (q) => q.running)}
-          format={formatCount}
-        />
-        <SingleSourceTile
-          label="Queued"
-          query={selectQuery(queue, (q) => q.pending)}
-          format={formatCount}
-        />
-        <SingleSourceTile
-          label="Needs You"
-          query={selectQuery(queue, (q) => q.awaiting_input + q.paused)}
-          format={formatCount}
-        />
-        {/* #280: two outcomes, never folded into one number. How the job
-            itself ended, and whether its work was delivered — a job that
-            failed a late stage after opening a PR that merged is the second
-            without being the first. */}
-        <SingleSourceTile
-          label="Job Success Rate"
-          query={selectQuery(stats, (s) => s.job_success_rate ?? s.success_rate)}
-          format={formatPercent}
-        />
-        <SingleSourceTile
-          label="Succeeded or Merged"
-          query={selectQuery(stats, (s) => s.success_rate)}
-          format={formatPercent}
-        />
-        {/* Distinct pull requests, not job rows — several jobs share one PR.
-            The trend line says whose work it was: some of these PRs were
-            finished by a person from an embry0 branch. */}
-        <SingleSourceTile
-          label="PRs Merged"
-          query={selectQuery(stats, (s) => s.delivery?.prs_merged ?? 0)}
-          format={formatCount}
-          trend="embry0 branches, incl. human-finished"
-        />
-        <SingleSourceTile
-          label="Cost Today"
-          query={selectQuery(stats, (s) => s.daily_cost_usd)}
-          format={formatUsd}
-        />
-        <SingleSourceTile
-          label="Cost This Month"
-          query={selectQuery(stats, (s) => s.monthly_cost_usd)}
-          format={formatUsd}
-        />
-        <SingleSourceTile
-          label="Cache Hit Rate"
-          query={selectQuery(stats, (s) => s.token_totals?.cache_hit_rate ?? 0)}
-          format={formatPercent}
-        />
+    <div className="space-y-5">
+      <div>
+        {/* One row of six on desktop. #280: how the job itself ended and
+            whether its work was delivered stay two numbers, never one — the
+            blended "succeeded or merged" rate repeated both and is gone. */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+          <SingleSourceTile
+            label="Running"
+            turn={0}
+            query={selectQuery(queue, (q) => q.running)}
+            format={formatCount}
+            tone={(n) => (n > 0 ? "running" : "neutral")}
+            detail={queue.data ? `${queue.data.pending} queued` : undefined}
+          />
+          {/* The page's one gold: the count of jobs waiting for a person,
+              the single thing on Overview to act on. */}
+          <SingleSourceTile
+            label="Needs you"
+            turn={1}
+            query={selectQuery(queue, (q) => q.awaiting_input + q.paused)}
+            format={formatCount}
+            tone={(n) => (n > 0 ? "accent" : "neutral")}
+          />
+          <SingleSourceTile
+            label="Job success"
+            turn={2}
+            query={selectQuery(stats, (s) => s.job_success_rate ?? s.success_rate)}
+            format={formatPercent}
+          />
+          {/* Distinct pull requests, not job rows — several jobs share one PR. */}
+          <SingleSourceTile
+            label="PRs merged"
+            turn={3}
+            query={selectQuery(stats, (s) => s.delivery?.prs_merged ?? 0)}
+            format={formatCount}
+            tone={(n) => (n > 0 ? "good" : "neutral")}
+          />
+          <SingleSourceTile
+            label="Cost today"
+            turn={4}
+            query={selectQuery(stats, (s) => s.daily_cost_usd)}
+            format={formatUsd}
+            detail={stats.data ? `${formatUsd(stats.data.monthly_cost_usd)} this month` : undefined}
+          />
+          <SingleSourceTile
+            label="Cache hit rate"
+            turn={5}
+            query={selectQuery(stats, (s) => s.token_totals?.cache_hit_rate ?? 0)}
+            format={formatPercent}
+          />
+        </div>
+        <p className="mt-2 text-xs text-fg-muted">
+          PRs merged counts distinct pull requests from embry0 branches, human-finished ones included.
+        </p>
       </div>
 
-      {queue.data && (
-        <LiveActivityBand
-          running={queue.data.running}
-          queued={queue.data.pending}
-          awaitingInput={queue.data.awaiting_input}
-        />
-      )}
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
         <DashboardPanel
-          title="Recent Issues"
+          title="Recent issues"
           viewAll={{ to: "/issues", label: "All issues" }}
           isPending={stats.isPending}
           isError={stats.isError}
           isEmpty={recentIssues.length === 0}
           emptyText="No issues processed yet."
         >
-          <ul className="divide-y divide-white/[0.06]">
-            {recentIssues.map((issue) => (
-              <li key={issue.trace_id} className="flex items-center gap-3 py-2">
-                <Badge tone={issue.passed ? "success" : "error"}>
-                  {issue.status ?? (issue.passed ? "passed" : "failed")}
-                </Badge>
-                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                  {issue.repo}#{issue.issue_number}
-                </span>
-                {issue.cost_usd !== undefined && (
-                  <span className="text-xs tabular-nums text-muted-foreground">
-                    {formatUsd(issue.cost_usd)}
-                  </span>
-                )}
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {formatDate(issue.timestamp)}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {/* On a phone the When column, the last, steps aside so the issue
+              keeps its key and title readable on up to two lines. */}
+          <table className="data-table [&_tr>*:last-child]:hidden sm:[&_tr>*:last-child]:table-cell">
+            <thead>
+              <tr>
+                <th scope="col">Status</th>
+                <th scope="col">Issue</th>
+                <th scope="col" className="num hidden sm:table-cell">Cost</th>
+                <th scope="col" className="num">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentIssues.map((issue) => {
+                const status = issue.issue_status ?? issue.status ?? (issue.passed ? "passed" : "failed");
+                return (
+                  <tr key={issue.trace_id}>
+                    <td className="w-px">
+                      <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>
+                    </td>
+                    <td className="w-full max-w-0">
+                      {/* On a phone the key takes a line of its own and the
+                          title up to two under it; from sm up they share one. */}
+                      <Link
+                        to={`/issues/${issue.trace_id}`}
+                        className="block break-words hover:underline sm:truncate"
+                        title={issue.title}
+                      >
+                        <span className="block font-mono text-xs text-fg-secondary sm:inline">{recentIssueKey(issue)}</span>
+                        {recentIssueTitle(issue) && (
+                          <span className="line-clamp-2 sm:ml-2 sm:inline">{recentIssueTitle(issue)}</span>
+                        )}
+                      </Link>
+                    </td>
+                    <td className="num hidden whitespace-nowrap text-fg-secondary sm:table-cell">
+                      {issue.cost_usd !== undefined ? formatUsd(issue.cost_usd) : "—"}
+                    </td>
+                    <td className="num whitespace-nowrap text-fg-muted">{formatDateTime(issue.timestamp)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </DashboardPanel>
 
         <DashboardPanel
@@ -153,83 +189,34 @@ export function DashboardPage() {
           isEmpty={(watcher.data?.length ?? 0) === 0}
           emptyText="No watcher ticks recorded yet."
         >
-          <ul className="divide-y divide-white/[0.06]">
-            {watcher.data?.map((run) => (
-              <li key={run.id} className="flex items-center gap-3 py-2">
-                <Badge tone={watcherActionTone(run.action)}>
-                  {watcherActionLabel(run.action)}
-                </Badge>
-                <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-                  {run.tracker_key ?? `${run.log_lines} log lines`}
-                </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {formatDate(run.created_at)}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Result</th>
+                <th scope="col">Detail</th>
+                <th scope="col" className="num">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {watcher.data?.map((run) => (
+                <tr key={run.id}>
+                  <td className="w-px">
+                    <Badge tone={watcherActionTone(run.action)}>
+                      {watcherActionLabel(run.action)}
+                    </Badge>
+                  </td>
+                  <td className="w-full max-w-0 truncate text-fg-secondary">
+                    {run.tracker_key ?? `${run.log_lines} log lines`}
+                  </td>
+                  <td className="num whitespace-nowrap text-fg-muted">{formatDateTime(run.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </DashboardPanel>
       </div>
 
-      <div
-        data-testid="heartbeat-strip"
-        className="flex flex-wrap items-center gap-6"
-      >
-        <Heartbeat label="orchestrator live" />
-      </div>
+      {stats.data && <DeepStats stats={stats.data} />}
     </div>
-  );
-}
-
-interface DashboardPanelProps {
-  title: string;
-  viewAll?: { to: string; label: string };
-  isPending: boolean;
-  isError: boolean;
-  isEmpty: boolean;
-  emptyText: string;
-  children: ReactNode;
-}
-
-function DashboardPanel({
-  title,
-  viewAll,
-  isPending,
-  isError,
-  isEmpty,
-  emptyText,
-  children,
-}: DashboardPanelProps) {
-  let body: ReactNode;
-  if (isError) {
-    body = <p className="py-2 text-sm text-muted-foreground">Unavailable</p>;
-  } else if (isPending) {
-    body = <p className="py-2 text-sm text-muted-foreground">Loading…</p>;
-  } else if (isEmpty) {
-    body = <p className="py-2 text-sm text-muted-foreground">{emptyText}</p>;
-  } else {
-    body = children;
-  }
-
-  return (
-    <section
-      data-testid={`panel-${title}`}
-      className="rounded-lg border border-border bg-card px-4 py-3"
-    >
-      <header className="flex items-center justify-between">
-        <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-          {title}
-        </h2>
-        {viewAll && (
-          <Link
-            to={viewAll.to}
-            className="text-xs text-primary hover:underline"
-          >
-            {viewAll.label} →
-          </Link>
-        )}
-      </header>
-      <div className="mt-1">{body}</div>
-    </section>
   );
 }

@@ -1,9 +1,14 @@
 import { memo } from "react";
 import { GitPullRequest } from "lucide-react";
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import type { SpriteState } from "@/components/roster";
 import { Badge } from "@/components/ui/Badge";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
+import { isSuccessfulTerminal } from "@/lib/jobStatus";
 import { formatCost, formatDate } from "@/lib/utils";
 import type { JobResponse } from "@/lib/types";
+import { agentOfStage } from "./agentOfStage";
 import { ConsoleCardShell } from "./ConsoleCardShell";
 
 /**
@@ -14,7 +19,7 @@ import { ConsoleCardShell } from "./ConsoleCardShell";
 const PR_PILL: Record<string, { label: string; className: string }> = {
   merged: {
     label: "PR merged",
-    className: "border-purple-400/25 bg-purple-400/10 text-purple-400 hover:bg-purple-400/20",
+    className: "border-purple/25 bg-purple/10 text-purple hover:bg-purple/20",
   },
   closed: {
     label: "PR closed",
@@ -39,9 +44,17 @@ const PR_PILL_DEFAULT = {
  */
 export const DoneFailedCard = memo(function DoneFailedCard({ job }: { job: JobResponse }) {
   const pill = PR_PILL[job.delivery_state ?? ""] ?? PR_PILL_DEFAULT;
+  const agentType = agentOfStage(job.current_stage);
+  const identity = useAgentIdentity(agentType);
+  const lastState: SpriteState = isSuccessfulTerminal(job.status) ? "done" : "failed";
   return (
     <ConsoleCardShell job={job} headerRight={<JobStatusBadge status={job.status} />}>
       <div className="mt-2 flex flex-wrap items-center gap-2">
+        {agentType && (
+          <span data-testid="party-sprite" className="shrink-0">
+            <AgentAvatar identity={identity} size={32} state={lastState} />
+          </span>
+        )}
         {job.pr_url ? (
           <a
             href={job.pr_url}

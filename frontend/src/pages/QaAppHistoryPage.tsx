@@ -4,6 +4,7 @@ import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { formatDateTime } from "@/lib/utils";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -24,14 +25,14 @@ export function QaAppHistoryPage() {
   const passing = data.filter((h) => h.status === "passed").length;
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       <Link
         to={`/qa/repos/${encodeURIComponent(repo)}`}
         className="text-sm text-white/50 hover:underline"
       >
         ← {repo}
       </Link>
-      <h1 className="text-2xl font-bold">{app}</h1>
+      <h1 className="title-pixel text-xl font-bold">{app}</h1>
       <p className="text-sm text-white/60">
         Last {data.length} runs · {passing} passed · {data.length - passing} failed
       </p>
@@ -42,36 +43,39 @@ export function QaAppHistoryPage() {
           description="Once a QA run includes this app, it will appear here."
         />
       ) : (
-        <div className="overflow-hidden rounded-md border bg-card">
-          <table className="w-full text-sm">
-            <thead className="bg-card text-left text-xs uppercase text-white/40">
+        // Like the repo's run history: the run id is the row's only link and
+        // never wraps; below sm duration and failure step aside so the id,
+        // the status and the time fit a phone.
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="data-table">
+            <thead>
               <tr>
-                <th className="px-4 py-2">Run</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2">Duration</th>
-                <th className="px-4 py-2">When</th>
-                <th className="px-4 py-2">Failure</th>
+                <th scope="col">Run</th>
+                <th scope="col">Status</th>
+                <th scope="col" className="hidden sm:table-cell">Duration</th>
+                <th scope="col">When</th>
+                <th scope="col" className="hidden sm:table-cell">Failure</th>
               </tr>
             </thead>
             <tbody>
               {data.map((h) => (
-                <tr key={h.job_id} className="border-t border-white/5">
-                  <td className="px-4 py-2 font-mono">
+                <tr key={h.job_id}>
+                  <td className="whitespace-nowrap">
                     <Link
                       to={`/qa/runs/${encodeURIComponent(h.job_id)}`}
-                      className="text-cyan-300 hover:underline"
+                      className="font-mono text-xs text-fg hover:text-primary hover:underline"
                     >
                       {h.job_id}
                     </Link>
                   </td>
-                  <td className="px-4 py-2">
+                  <td>
                     <RunStatusBadge status={h.status} />
                   </td>
-                  <td className="px-4 py-2 text-white/70">{formatDuration(h.duration_ms)}</td>
-                  <td className="px-4 py-2 text-white/40">
-                    {new Date(h.started_at).toLocaleString()}
+                  <td className="hidden text-white/70 sm:table-cell">{formatDuration(h.duration_ms)}</td>
+                  <td className="whitespace-nowrap text-fg-muted">
+                    {formatDateTime(h.started_at)}
                   </td>
-                  <td className="px-4 py-2 text-destructive">
+                  <td className="hidden text-destructive sm:table-cell">
                     {h.failure_summary || ""}
                   </td>
                 </tr>

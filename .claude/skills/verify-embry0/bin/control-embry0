@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# control-embry0: launch a branch's dashboard beside a running embry0 stack, prove which
+# build it serves, drive it read-only, and stop it. JSON on stdout.
+#
+#   control-embry0 setup                              # install the browser driver once
+#   control-embry0 launch --checkout DIR [--port N] [--dry-run]
+#   control-embry0 doctor
+#   control-embry0 probe   --route /jobs [--width 390]
+#   control-embry0 shot    --route /jobs [--width 390] --path FILE
+#   control-embry0 read    --route / --selector main
+#   control-embry0 api     /api/v1/orgs               # GET only
+#   control-embry0 stop
+#
+# Environment:
+#   EMBRY0_VERIFY_URL      the dashboard to drive (default: the one `launch` started)
+#   EMBRY0_API_KEY         the deployment's API key; else read from EMBRY0_ENV_FILE
+#   EMBRY0_ENV_FILE        a root .env holding API_KEY= (default: <repo root>/.env)
+#   EMBRY0_VERIFY_NETWORK  the compose network the dashboard's nginx joins (default embry0_frontend)
+#   EMBRY0_VERIFY_CACHE    where `setup` installs the driver (default ~/.cache/embry0-verify)
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+skill="$(cd "$here/.." && pwd)"
+state="$skill/.state"
+cache="${EMBRY0_VERIFY_CACHE:-$HOME/.cache/embry0-verify}"
+mkdir -p "$state" "$skill/artifacts"
+
+json_err() { printf '{"ok":false,"error":"%s"}\n' "$1"; exit "${2:-1}"; }
+
+api_key() {
+  if [ -n "${EMBRY0_API_KEY-}" ]; then printf '%s' "$EMBRY0_API_KEY"; return; fi
+  local root env_file
+  root="$(git -C "$skill" rev-parse --show-toplevel 2>/dev/null || true)"
+  env_file="${EMBRY0_ENV_FILE:-$root/.env}"
+  [ -f "$env_file" ] || return 0
+  sed -n 's/^API_KEY=//p' "$env_file" | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
+}
+
+verify_url() {
+  if [ -n "${EMBRY0_VERIFY_URL-}" ]; then printf '%s' "$EMBRY0_VERIFY_URL"; return; fi
+  [ -f "$state/url" ] && cat "$state/url" && return
+  printf 'http://127.0.0.1:8201'
+}
+
+drive() {
+  [ -d "$cache/node_modules/playwright" ] || json_err "browser driver missing: run control-embry0 setup"
+  EMBRY0_VERIFY_URL="$(verify_url)" EMBRY0_API_KEY="$(api_key)" \
+    NODE_PATH="$cache/node_modules" node "$here/drive.cjs" "$@"
+}
+
+cmd="${1-}"; shift || true
+case "$cmd" in
+  setup)
+    mkdir -p "$cache"
+    npm install --silent --prefix "$cache" playwright@1.63.0 >/dev/null
+    (cd "$cache" && npx --yes playwright install chromium >/dev/null)
+    printf '{"ok":true,"driver":"%s"}\n' "$cache/node_modules/playwright"
+    ;;
+  launch)
+    checkout=""; port=8201; dry=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --checkout) checkout="$2"; shift 2 ;;
+        --port) port="$2"; shift 2 ;;
+        --dry-run) dry=1; shift ;;
+        *) json_err "unknown flag $1" 2 ;;
+      esac
+    done
+    [ -n "$checkout" ] || json_err "launch needs --checkout DIR" 2
+    checkout="$(cd "$checkout" && pwd)"
+    head="$(git -C "$checkout" rev-parse --short=12 HEAD)"
+    dirty="$(git -C "$checkout" status --porcelain -- frontend | wc -l | tr -d ' ')"
+    tag="embry0-frontend:verify-$head"
+    name="embry0-frontend-verify-$port"
+    network="${EMBRY0_VERIFY_NETWORK:-embry0_frontend}"
+    if [ "$dry" = 1 ]; then
+      printf '{"ok":true,"dry_run":true,"build":"docker build -t %s --label org.opencontainers.image.revision=%s %s/frontend","run":"docker run -d --name %s --network %s -p 127.0.0.1:%s:80 %s"}\n' \
+        "$tag" "$head" "$checkout" "$name" "$network" "$port" "$tag"
+      exit 0
+    fi
+    if ss -ltn 2>/dev/null | grep -q ":$port "; then json_err "port $port is taken; pass --port" ; fi
+    docker network inspect "$network" >/dev/null 2>&1 || json_err "network $network not found; set EMBRY0_VERIFY_NETWORK"
+    docker build -q -t "$tag" --label "org.opencontainers.image.revision=$head" "$checkout/frontend" >/dev/null
+    cid="$(docker run -d --name "$name" --network "$network" -p "127.0.0.1:$port:80" "$tag")"
+    printf '%s' "$cid" > "$state/container"
+    printf '%s' "$tag" > "$state/image"
+    printf 'http://127.0.0.1:%s' "$port" > "$state/url"
+    for _ in $(seq 1 30); do
+      curl -fsS -m 2 "http://127.0.0.1:$port/" >/dev/null 2>&1 && break
+      sleep 1
+    done
+    printf '{"ok":true,"url":"http://127.0.0.1:%s","container":"%s","head":"%s","dirty_frontend_files":%s}\n' "$port" "${cid:0:12}" "$head" "$dirty"
+    ;;
+  doctor)
+    served_head=""
+    if [ -f "$state/container" ] && docker inspect "$(cat "$state/container")" >/dev/null 2>&1; then
+      served_head="$(docker inspect "$(cat "$state/image")" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null || true)"
+    fi
+    EMBRY0_SERVED_HEAD="$served_head" drive doctor
+    ;;
+  probe|shot|read|api)
+    drive "$cmd" "$@"
+    ;;
+  stop)
+    if [ -f "$state/container" ]; then
+      cid="$(cat "$state/container")"
+      docker rm -f "$cid" >/dev/null 2>&1 || true
+      [ -f "$state/image" ] && docker rmi "$(cat "$state/image")" >/dev/null 2>&1 || true
+      rm -f "$state/container" "$state/image" "$state/url"
+      printf '{"ok":true,"stopped":"%s"}\n' "${cid:0:12}"
+    else
+      printf '{"ok":true,"stopped":null,"note":"nothing launched by this skill"}\n'
+    fi
+    ;;
+  *)
+    sed -n '2,20p' "$0"; exit 2 ;;
+esac

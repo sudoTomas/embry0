@@ -6,6 +6,7 @@ import {
   setRepoEnv,
   revealSecret,
   detectRepoEnv,
+  fetchResolvedRepoEnv,
 } from "@/api/environment";
 import type { EnvVar } from "@/lib/types/environment";
 
@@ -21,12 +22,17 @@ export function useSetGlobalEnv() {
   });
 }
 
-export function useRepoEnv(fullRepo: string) {
-  return useQuery({
+/** A repo's environment variables: the key and fetch every reader of them shares. */
+export function repoEnvQuery(fullRepo: string) {
+  return {
     queryKey: ["repo-env", fullRepo],
     queryFn: () => fetchRepoEnv(fullRepo),
     enabled: !!fullRepo,
-  });
+  };
+}
+
+export function useRepoEnv(fullRepo: string) {
+  return useQuery(repoEnvQuery(fullRepo));
 }
 
 export function useSetRepoEnv() {
@@ -52,4 +58,17 @@ export function useDetectRepoEnv(fullRepo: string) {
     enabled: !!fullRepo,
     staleTime: 60_000,
   });
+}
+
+/** The effective environment of a repo; read only while something shows it. */
+export function resolvedRepoEnvQuery(fullRepo: string, enabled = true) {
+  return {
+    queryKey: ["repo-env", fullRepo, "resolved"],
+    queryFn: () => fetchResolvedRepoEnv(fullRepo),
+    enabled: !!fullRepo && enabled,
+  };
+}
+
+export function useResolvedRepoEnv(fullRepo: string, enabled = true) {
+  return useQuery(resolvedRepoEnvQuery(fullRepo, enabled));
 }

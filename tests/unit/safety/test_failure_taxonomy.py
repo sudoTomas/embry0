@@ -58,6 +58,10 @@ _PIPELINE_PACKAGES = (
 # orchestrator starts, by the functions that read the image pins and the
 # registry login; api/app.py turns them into a refused start. No job calls
 # those functions; the check below keeps it so.
+# UnknownSkillError is raised only by check_skill_names, which only the
+# agent and template save routes call (they turn it into an HTTP 422). A job
+# resolves skills with effective_skills and never checks the catalog; the
+# check below keeps it so.
 _NEVER_ESCAPES = {
     "_TerminalRefreshFailure",
     "EnrollRejected",
@@ -65,6 +69,7 @@ _NEVER_ESCAPES = {
     "XaiDeviceLoginError",
     "ImagePinError",
     "RegistryAuthError",
+    "UnknownSkillError",
 }
 
 # The only callers of the functions that raise ImagePinError / RegistryAuthError.
@@ -116,6 +121,31 @@ def test_no_job_path_reads_the_image_pins_or_the_registry_login():
             text = path.read_text()
             callers += [f"{rel}: {fn}" for fn, home in _STARTUP_ONLY_RAISERS.items() if fn in text and rel != home]
     assert callers == [], f"a job path now reads the pins or the registry login; give its errors a code: {callers}"
+
+
+# The catalog check and its one caller, which only the save routes (embry0/api/v1) import.
+_SKILL_CHECK_HOMES = {"embry0/agents/skills.py", "embry0/agents/skill_catalog.py"}
+
+
+def test_no_job_path_checks_skill_names_against_the_catalog():
+    """UnknownSkillError is exempt only while the save routes alone raise it."""
+    callers = []
+    catalog_importers = []
+    for entry in _PIPELINE_PACKAGES:
+        root = _REPO_ROOT / entry
+        for path in [root] if root.is_file() else sorted(root.rglob("*.py")):
+            rel = str(path.relative_to(_REPO_ROOT))
+            if rel in _SKILL_CHECK_HOMES:
+                continue
+            text = path.read_text()
+            if "check_skill_names" in text:
+                callers.append(rel)
+            if "skill_catalog" in text:
+                catalog_importers.append(rel)
+    assert callers == [], f"a job path now checks skill names; give UnknownSkillError a code: {callers}"
+    assert catalog_importers == [], (
+        f"a job path now reaches the catalog check; give UnknownSkillError a code: {catalog_importers}"
+    )
 
 
 def _instantiate(cls: type[BaseException]) -> BaseException:
@@ -278,11 +308,20 @@ def test_a_classified_failure_does_not_log_unclassified():
         ({"infra_apps": ["a"], "failed_apps": ["b"]}, ErrorCode.QA_INFRA),
         ({"failed_apps": ["b"], "inconclusive_apps": ["c"]}, ErrorCode.QA_FAILED),
         ({"inconclusive_apps": ["c"]}, ErrorCode.QA_INCONCLUSIVE),
+        ({"qa_error_code": "ERR_QA_NO_APPS"}, ErrorCode.QA_NO_APPS),
         ({}, ErrorCode.QA_NO_VERDICT),
     ],
 )
 def test_standalone_qa_outcomes(kwargs, expected):
     assert classify_qa_outcome(**kwargs) is expected
+
+
+def test_no_apps_is_a_configuration_error_with_public_text():
+    from embry0.notifications.public_errors import public_error_message
+    from embry0.safety.error_codes import ERROR_CATEGORIES, FailureCategory
+
+    assert ERROR_CATEGORIES[ErrorCode.QA_NO_APPS] is FailureCategory.CONFIG
+    assert "no app" in public_error_message("ERR_QA_NO_APPS")
 
 
 def test_an_unknown_qa_code_from_state_is_not_trusted():

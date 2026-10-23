@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -20,7 +20,13 @@ from cryptography.fernet import InvalidToken
 
 from embry0.execution import github_tokens, gitlab_tokens
 from embry0.safety.error_codes import ErrorCode
-from embry0.services.credentials.providers import LLM_PROVIDERS, default_host, env_fallback
+from embry0.services.credentials.providers import (
+    base_url_host,
+    default_host,
+    env_fallback,
+    env_fallback_metadata,
+    llm_providers,
+)
 from embry0.storage.encryption import SecretsProvider
 from embry0.storage.repositories.credentials import CredentialsRepository
 
@@ -43,6 +49,8 @@ class ResolvedCredential:
     git_author_email: str | None
     source: str
     trace: tuple[str, ...]
+    # Non-secret settings stored with the secret: the tailnet a tailnet_api_key reads.
+    metadata: Mapping[str, Any] = field(default_factory=dict, compare=False, hash=False)
 
     def __repr__(self) -> str:  # never leak the secret through a stray log
         return f"ResolvedCredential(id={self.id!r}, label={self.label!r}, provider={self.provider!r}, source={self.source!r})"
@@ -283,6 +291,60 @@ class CredentialResolver:
         default = str(getattr(self._config, f"{forge}_token", "") or "")
         return bool(default) or any(k.startswith(prefix + "__") and v for k, v in self._environ.items())
 
+    # -- tailnet ----------------------------------------------------------------
+
+    async def resolve_tailnet(self, *, credential_id: str | None = None) -> ResolvedCredential:
+        """The tailnet API key embry0 reads devices with (ADR 0013).
+
+        ``credential_id`` names one; otherwise the ``tailnet`` binding at
+        global scope, the only scope that role takes. There is no env
+        fallback. The tailnet it reads is ``metadata["tailnet"]``.
+        """
+        trace: list[str] = []
+        if credential_id:
+            row = await self._repo.get(credential_id)
+            if row is None:
+                raise CredentialMissingError(f"no credential {credential_id!r}")
+            if row["kind"] != "tailnet_api_key":
+                raise CredentialUnavailableError(f"credential '{row['label']}' is not a tailnet_api_key")
+            rows = [row]
+            trace.append(f"explicit:{credential_id}")
+        else:
+            rows = await self._repo.candidates(
+                scope_kind="global", scope_value="", role="tailnet", provider="tailscale"
+            )
+        for row in rows:
+            why = self._availability(row)
+            if why:
+                trace.append(f"global: -> {row['label']} skipped ({why})")
+                if credential_id:
+                    raise CredentialUnavailableError(f"credential '{row['label']}' is {why}")
+                continue
+            secret = await self._decrypt_or_disable(row)
+            if secret is None:
+                trace.append(f"global: -> {row['label']} skipped (decryption_failed)")
+                if credential_id:
+                    raise CredentialUnavailableError(f"credential '{row['label']}' cannot be decrypted; rotate it")
+                continue
+            trace.append(f"global: -> {row['label']}")
+            return ResolvedCredential(
+                id=str(row["id"]),
+                kind=str(row["kind"]),
+                provider=str(row["provider"]),
+                host=str(row["host"]),
+                label=str(row["label"]),
+                secret=secret,
+                git_author_name=None,
+                git_author_email=None,
+                source="registry",
+                trace=tuple(trace),
+                metadata=dict(row.get("metadata") or {}),
+            )
+        raise CredentialMissingError(
+            "no tailnet credential: create a tailnet_api_key credential and bind it at global scope "
+            f"with role tailnet (trace: {'; '.join(trace) or 'global: -> none'})"
+        )
+
     # -- llm --------------------------------------------------------------------
 
     async def resolve_llm(self, repo: str, provider: str, *, job_id: str = "") -> ResolvedCredential:
@@ -310,9 +372,8 @@ class CredentialResolver:
             resolved[provider] = reused if reused is not None else await self.resolve_llm(repo, provider, job_id=job_id)
         return resolved
 
-    @staticmethod
-    def _check_llm_provider(provider: str) -> None:
-        if provider not in LLM_PROVIDERS:
+    def _check_llm_provider(self, provider: str) -> None:
+        if provider not in llm_providers(self._environ):
             raise ValueError(f"unknown llm provider {provider!r}")
 
     async def _uses(self, job_id: str) -> list[dict[str, Any]]:
@@ -399,17 +460,21 @@ class CredentialResolver:
                     msg="token served from the environment; run `embry0 credentials import-env` to move it into the registry",
                 )
             trace.append(f"env:{key}")
+            metadata = env_fallback_metadata(provider, self._environ)
             return ResolvedCredential(
                 id=None,
                 kind=kind,
                 provider=provider,
-                host=default_host(provider),
+                host=base_url_host(metadata["base_url"])
+                if "base_url" in metadata
+                else default_host(provider, self._environ),
                 label=key,
                 secret=secret,
                 git_author_name=None,
                 git_author_email=None,
                 source="env",
                 trace=tuple(trace),
+                metadata=metadata,
             )
         trace.append(f"env:{provider} -> none")
         raise CredentialMissingError(
@@ -431,6 +496,8 @@ class CredentialResolver:
             git_author_email=row.get("git_author_email"),
             source="registry",
             trace=trace,
+            # A custom provider's base URL rides here into the sandbox env.
+            metadata=dict(row.get("metadata") or {}),
         )
 
     async def known_secret_values(self, *, refresh: bool = False) -> list[str]:

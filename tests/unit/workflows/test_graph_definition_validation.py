@@ -85,3 +85,32 @@ def test_deferred_tools_still_rejected():
     g = _graph([_n("t", "triage"), _n("d", "developer")], [_e("t", "d")])
     g["agent_tools"] = {"developer": ["CreateIssue"]}
     assert any("deferred tool" in p for p in validate_graph_definition("x", g))
+
+
+def test_custom_agent_row_is_a_valid_node_type():
+    """Spec 3.5: an agent_type that names an existing agent_definitions row is executable."""
+    g = _graph([_n("t", "triage"), _n("b", "release-bot"), _n("o", "output")], [_e("t", "b"), _e("b", "o")])
+    assert validate_graph_definition("x", g, agent_types={"release-bot"}) == []
+
+
+def test_custom_agent_type_without_a_row_is_unknown():
+    g = _graph([_n("t", "triage"), _n("b", "release-bot"), _n("o", "output")], [_e("t", "b"), _e("b", "o")])
+    problems = validate_graph_definition("x", g, agent_types={"developer"})
+    assert any("unknown agent_type 'release-bot'" in p for p in problems), problems
+
+
+def test_fixed_node_types_need_no_row():
+    """triage/developer/reviewer/review/qa/output are node code, not rows."""
+    g = _graph(
+        [_n("t", "triage"), _n("d", "developer"), _n("r", "review"), _n("q", "qa"), _n("o", "output")],
+        [_e("t", "d"), _e("d", "r"), _e("r", "q"), _e("q", "o")],
+    )
+    assert validate_graph_definition("x", g, agent_types=set()) == []
+
+
+def test_default_known_types_are_the_builtin_seed():
+    """With no rows passed, the builtin seed's types (research, analysis, ops, ...) are accepted, nothing else."""
+    ok = _graph([_n("t", "triage"), _n("a", "research"), _n("o", "output")], [_e("t", "a"), _e("a", "o")])
+    assert validate_graph_definition("x", ok) == []
+    bad = _graph([_n("t", "triage"), _n("a", "release-bot"), _n("o", "output")], [_e("t", "a"), _e("a", "o")])
+    assert validate_graph_definition("x", bad), "a custom type must not pass without its row"

@@ -31,7 +31,7 @@ If your work contradicts a record here, say so explicitly rather than silently o
 
 | ADR | Decision | Status |
 |---|---|---|
-| [0001](0001-langgraph-agent-sdk-dind-sandboxes.md) | LangGraph + Claude Agent SDK; agents execute in DinD sandboxes, no customer code retained on the host | accepted (2026-04-04) |
+| [0001](0001-langgraph-agent-sdk-dind-sandboxes.md) | LangGraph + Claude Agent SDK; agents execute in DinD sandboxes, no customer code retained on the host (that clause is corrected by ADR 0017) | accepted (2026-04-04) |
 | [0002](0002-credential-proxies-per-sandbox-enrollment.md) | Credential proxies with per-sandbox enrollment, no forge tokens in the sandbox env | accepted (2026-04-28) |
 | [0003](0003-db-backed-qa-config.md) | qa.yaml v2 lives in the embry0 DB; legacy config channels removed | accepted (2026-08-06) |
 | [0004](0004-github-issues-canonical-tracker.md) | GitHub Issues is the canonical tracker; Linear is transitional | accepted (2026-08-07) |
@@ -40,3 +40,13 @@ If your work contradicts a record here, say so explicitly rather than silently o
 | [0007](0007-git-proxy-forwards-smart-http.md) | The git-proxy forwards git smart HTTP for the job's repository; the forge token never reaches the sandbox | accepted (2026-10-08) |
 | [0008](0008-llm-credential-in-sandbox-env.md) | The agent's LLM credential is in the sandbox env; the command denylist and the CLI's permission rules do not protect it | accepted (2026-10-08) |
 | [0009](0009-git-proxy-scopes-push-to-the-jobs-branch.md) | The git-proxy lets a push touch the job's own branch only: no other ref, no deletion | accepted (2026-10-10) |
+| [0010](0010-organizations.md) | The organization is the unit embry0 maintains | accepted (2026-10-16) |
+| [0011](0011-organization-needs.md) | Needs are derived from facts, and only a person's answer is kept | accepted (2026-10-16) |
+| [0012](0012-organization-webhook.md) | One organization webhook replaces a webhook per repository; a delivery for an unregistered repository under it is recorded as a need, or registers the repository when the organization says so, and is then handled as before | accepted (2026-10-16) |
+| [0013](0013-hosts.md) | A host is a first-class record, apart from the repository; a tailnet is one source of hosts | accepted (2026-10-16) |
+| [0014](0014-organization-standards.md) | A standard is a schema embry0 ships and values the organization holds, keyed by the forge owner; a repository starts in mode off and is never audited there | accepted (2026-10-18) |
+| [0015](0015-maintain-hints.md) | What a repository takes to maintain is read from its facts by rules, never a model | accepted (2026-10-18) |
+| [0016](0016-rediscovery-schedule.md) | An organization can be rediscovered on a schedule; a repository that left the listing, once a direct read confirms it gone, is proposed for deactivation, never deactivated on its own | accepted (2026-10-18) |
+| [0017](0017-code-retention.md) | What embry0 keeps of a repository's code (job events, agent sessions, QA images and volumes) is bounded by `JOB_LOG_RETENTION_DAYS`, `AGENT_SESSION_RETENTION_DAYS` and `QA_IMAGE_RETENTION_DAYS`, all off by default; corrects ADR 0001's retention clause | accepted (2026-10-19) |
+| [0018](0018-openai-compatible-providers.md) | OpenAI-compatible providers run on embry0's own tool loop over chat completions, each off until the deployment enables it | accepted (2026-10-18) |
+| [0019](0019-setup-proposals.md) | The onboarding agent proposes a test setup and a person applies it; every change to a repository's test setup or preferences is recorded, and the newest one can be undone | accepted (2026-10-19) |

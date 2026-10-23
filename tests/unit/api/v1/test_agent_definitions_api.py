@@ -86,6 +86,24 @@ async def test_create_agent(app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reserved", ["reviewer", "output", "qa"])
+async def test_create_agent_refuses_a_fixed_node_type(app, reserved):
+    """A row named after a fixed node would be placeable but never run on generic_agent."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/agents",
+            json={"type": reserved, "description": "d", "model": "m"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 422, resp.text
+    message = str(resp.json()["detail"])
+    assert f"{reserved!r} is reserved" in message, message
+    assert "'__start__'" in message and "'output'" in message, message
+    app.state.agent_defs_repo.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_create_agent_full_surface(app):
     """RAV-604: execution_mode/auth_mode/mcp_servers reach the repo."""
     transport = ASGITransport(app=app)

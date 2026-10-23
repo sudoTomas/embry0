@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { QueueResponse } from "@/lib/types";
+import { useAuthStore } from "@/stores/authStore";
 
 vi.mock("@/stores/layoutStore", () => ({
   useLayoutStore: (selector?: (s: { sidebarOpen: boolean }) => unknown) =>
@@ -18,13 +19,13 @@ vi.mock("@/api/queue", () => ({
 
 import { Sidebar } from "../Sidebar";
 
-function renderSidebar() {
+function renderSidebar(path = "/") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/"]}>
+      <MemoryRouter initialEntries={[path]}>
         <Sidebar />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -33,6 +34,7 @@ function renderSidebar() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useAuthStore.setState({ status: "checking", authMode: null, user: null });
   mockFetchQueue.mockResolvedValue({
     depth: 0,
     pending: 0,
@@ -59,6 +61,15 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
+  it("shows a quiet uppercase label over each group but Overview, a group of one", () => {
+    renderSidebar();
+    const work = screen.getByRole("heading", { level: 3, name: "Work" });
+    expect(work.className).not.toContain("sr-only");
+    expect(work.className).toContain("uppercase");
+    expect(work.className).toContain("text-fg-muted");
+    expect(screen.getByRole("heading", { level: 3, name: "Overview" }).className).toContain("sr-only");
+  });
+
   it("Operations section contains Watcher, Logs in that order (Deploys removed with the RAV-658 deployer)", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Operations" })
@@ -70,7 +81,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
-  it("Work section contains Console, Issues, Jobs in that order (Companion pages dropped, RAV-1058 A2)", () => {
+  it("Work section contains Console, Issues, Jobs, Merge approvals in that order", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Work" })
       .parentElement as HTMLElement;
@@ -79,23 +90,50 @@ describe("Sidebar — unified IA (ticket 011)", () => {
       "Console",
       "Issues",
       "Jobs",
+      "Merge approvals",
     ]);
   });
 
-  it("Infra section contains Sandboxes, Agents, Environments, Credentials in that order", () => {
+  it("Infra section contains Sandboxes, Hosts, Agents, Environments, Credentials in that order", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Infra" })
       .parentElement as HTMLElement;
     const links = within(section).getAllByRole("link");
     expect(links.map((a) => a.textContent?.trim())).toEqual([
       "Sandboxes",
+      "Hosts",
       "Agents",
       "Environments",
       "Credentials",
     ]);
   });
 
-  it("Pipelines & QA section contains Pipelines, Repos, QA (RAV-1301 central registry)", () => {
+  it("Infra section adds Skills after Agents for an admin session, Hosts after Sandboxes", () => {
+    useAuthStore.setState({ status: "authenticated", authMode: "session", user: { email: "a@example.com", name: "A", tier: "admin" } });
+    renderSidebar();
+    const section = screen.getByRole("heading", { level: 3, name: "Infra" })
+      .parentElement as HTMLElement;
+    const links = within(section).getAllByRole("link");
+    expect(links.map((a) => a.textContent?.trim())).toEqual([
+      "Sandboxes",
+      "Hosts",
+      "Agents",
+      "Skills",
+      "Environments",
+      "Credentials",
+    ]);
+    expect(screen.getByRole("link", { name: "Skills" })).toHaveAttribute("href", "/skills");
+  });
+
+  it("Infra section hides Skills from the operator tier", () => {
+    useAuthStore.setState({ status: "authenticated", authMode: "session", user: { email: "o@example.com", name: "O", tier: "operator" } });
+    renderSidebar();
+    const section = screen.getByRole("heading", { level: 3, name: "Infra" })
+      .parentElement as HTMLElement;
+    expect(within(section).queryByRole("link", { name: "Skills" })).toBeNull();
+  });
+
+  it("Pipelines & QA section contains Pipelines, Repos, Organizations, QA (central registry, ADR 0010)", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Pipelines & QA" })
       .parentElement as HTMLElement;
@@ -103,16 +141,17 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     expect(links.map((a) => a.textContent?.trim())).toEqual([
       "Pipelines",
       "Repos",
+      "Organizations",
       "QA",
     ]);
   });
 
-  it("Settings section contains Settings, LLM Providers", () => {
+  it("Settings section contains Settings, LLM providers", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Settings" })
       .parentElement as HTMLElement;
     const links = within(section).getAllByRole("link");
-    expect(links.map((a) => a.textContent?.trim())).toEqual(["Settings", "LLM Providers"]);
+    expect(links.map((a) => a.textContent?.trim())).toEqual(["Settings", "LLM providers"]);
   });
 
   it("Overview section contains a single Overview link to /", () => {
@@ -134,8 +173,9 @@ describe("Sidebar — unified IA (ticket 011)", () => {
       Jobs: "/jobs",
       Pipelines: "/pipelines",
       Repos: "/repos",
+      Organizations: "/orgs",
       QA: "/qa/repos",
-      "LLM Providers": "/providers",
+      "LLM providers": "/providers",
       Watcher: "/watcher",
       Logs: "/logs",
       Sandboxes: "/sandboxes",
@@ -148,6 +188,23 @@ describe("Sidebar — unified IA (ticket 011)", () => {
       const link = screen.getByRole("link", { name: label });
       expect(link, `nav link "${label}"`).toHaveAttribute("href", href);
     }
+  });
+});
+
+describe("Sidebar — the orchestrator's live state at its foot", () => {
+  it("reads live once the queue poll answers", async () => {
+    renderSidebar();
+    const pill = screen.getByTestId("orchestrator-status");
+    await waitFor(() => expect(pill).toHaveAttribute("data-state", "live"));
+    expect(within(pill).getByRole("status")).toHaveAccessibleName("Orchestrator live");
+  });
+
+  it("reads unreachable when the queue poll fails", async () => {
+    mockFetchQueue.mockRejectedValue(new Error("down"));
+    renderSidebar();
+    const pill = screen.getByTestId("orchestrator-status");
+    await waitFor(() => expect(pill).toHaveAttribute("data-state", "down"));
+    expect(within(pill).getByRole("status")).toHaveAccessibleName("Orchestrator unreachable");
   });
 });
 
@@ -190,3 +247,115 @@ describe("Sidebar — Console awaiting-input prominence", () => {
     expect(document.title).toBe("embry0 — Software that is alive");
   });
 });
+
+describe("Sidebar — the active item's marker travels with the route", () => {
+  /** jsdom has no matchMedia, which reads as reduced motion; this says no
+   * (and not narrow, so the desktop column stays). */
+  function allowMotion() {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} })),
+    );
+  }
+
+  /** jsdom lays nothing out: give an element the box a browser would. */
+  function placeBox(el: Element, top: number, height = 32) {
+    vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+      top,
+      height,
+      bottom: top + height,
+      left: 0,
+      right: 224,
+      width: 224,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect);
+  }
+
+  function markerAndNav() {
+    const marker = screen.getByTestId("nav-active-marker");
+    const nav = marker.parentElement;
+    if (!nav) throw new Error("the marker sits in no nav");
+    return { marker, nav };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("stands one quiet marker at the active item, inside the nav", () => {
+    renderSidebar("/jobs");
+    expect(screen.getAllByTestId("nav-active-marker")).toHaveLength(1);
+    const { marker, nav } = markerAndNav();
+    expect(nav.tagName).toBe("NAV");
+    expect(marker.hidden).toBe(false);
+    expect(marker).toHaveAttribute("aria-hidden", "true");
+    expect(marker.className).toContain("bg-primary");
+  });
+
+  it("shows no marker where no item is active", () => {
+    renderSidebar("/about/operations");
+    expect(markerAndNav().marker.hidden).toBe(true);
+  });
+
+  it("glides the marker to the item the route lands on", () => {
+    allowMotion();
+    renderSidebar("/");
+    const { marker, nav } = markerAndNav();
+    expect(marker.hasAttribute("data-glide"), "the first placement jumps").toBe(false);
+    placeBox(nav, 100);
+    placeBox(screen.getByRole("link", { name: "Jobs" }), 300);
+    fireEvent.click(screen.getByRole("link", { name: "Jobs" }));
+    expect(marker.style.transform).toBe("translateY(200px) scaleY(1)");
+    expect(marker.hasAttribute("data-glide"), "a move to another item glides").toBe(true);
+  });
+
+  it("jumps to the item under reduced motion", () => {
+    renderSidebar("/");
+    const { marker, nav } = markerAndNav();
+    placeBox(nav, 100);
+    placeBox(screen.getByRole("link", { name: "Jobs" }), 300);
+    fireEvent.click(screen.getByRole("link", { name: "Jobs" }));
+    expect(marker.style.transform).toBe("translateY(200px) scaleY(1)");
+    expect(marker.hasAttribute("data-glide")).toBe(false);
+  });
+
+  it("re-places at once when a section's height moves the item, and not otherwise", () => {
+    const reports: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(report: ResizeObserverCallback) {
+          reports.push(report);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    allowMotion();
+    renderSidebar("/");
+    const { marker, nav } = markerAndNav();
+    const jobs = screen.getByRole("link", { name: "Jobs" });
+    placeBox(nav, 100);
+    placeBox(jobs, 300);
+    fireEvent.click(jobs);
+    const report = reports[reports.length - 1];
+    const section = nav.querySelector("section") as Element;
+    const sized = (height: number) =>
+      [{ target: section, contentRect: { height } }] as unknown as ResizeObserverEntry[];
+
+    // An observer's first report moves nothing: the glide under way stays.
+    report(sized(40), {} as ResizeObserver);
+    expect(marker.hasAttribute("data-glide")).toBe(true);
+    expect(marker.style.transform).toBe("translateY(200px) scaleY(1)");
+
+    // A section grew and the item moved: the marker follows at once.
+    placeBox(jobs, 260);
+    report(sized(0), {} as ResizeObserver);
+    expect(marker.style.transform).toBe("translateY(160px) scaleY(1)");
+    expect(marker.hasAttribute("data-glide")).toBe(false);
+  });
+});
+

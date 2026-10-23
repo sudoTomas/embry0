@@ -239,3 +239,70 @@ async def test_failures_for_job_returns_errored_runs_newest_first(repos: tuple[J
     assert failures[1]["stderr_tail"] == "ENOSPC: no space left on device"
     assert failures[0]["stderr_tail"] is None
     assert len(await traces_repo.failures_for_job(job_id, limit=1)) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_with_a_given_id_then_finish(repos: tuple[JobsRepository, TracesRepository]):
+    jobs_repo, traces_repo = repos
+    job_id = await jobs_repo.create(repo="a/b", task="Fix bug")
+    trace_id = await traces_repo.create(
+        job_id=job_id, agent_type="developer", model="m", result="running", trace_id="run-abc"
+    )
+    assert trace_id == "run-abc"
+    assert (await traces_repo.get("run-abc"))["result"] == "running"
+    await traces_repo.finish(
+        "run-abc",
+        result="error",
+        cost_usd=0.5,
+        duration_ms=10,
+        tools_called={"Bash": 1},
+        result_summary="boom",
+        input_tokens=1,
+        output_tokens=2,
+        cache_read_tokens=3,
+        cache_creation_tokens=4,
+        error_code="ERR_X",
+        stderr_tail="tail",
+    )
+    row = await traces_repo.get("run-abc")
+    assert row["result"] == "error" and row["cost_usd"] == 0.5 and row["error_code"] == "ERR_X"
+    assert row["tools_called"] == {"Bash": 1} and row["stderr_tail"] == "tail"
+    assert (row["input_tokens"], row["output_tokens"], row["cache_read_tokens"], row["cache_creation_tokens"]) == (
+        1,
+        2,
+        3,
+        4,
+    )
+
+
+@pytest.mark.asyncio
+async def test_spend_is_counted_once_when_the_running_row_is_finished(db_with_migrations: DatabasePool):
+    """The running row carries no cost; finish() counts the spend, once, with the row's model."""
+    spent: list[tuple[str, float]] = []
+
+    class _Metrics:
+        def agent_spend(self, *, pipeline_template: str | None, model: str, cost_usd: float) -> None:
+            spent.append((model, cost_usd))
+
+    jobs_repo = JobsRepository(db_with_migrations)
+    traces_repo = TracesRepository(db_with_migrations, metrics=_Metrics())  # type: ignore[arg-type]
+    job_id = await jobs_repo.create(repo="a/b", task="Fix bug")
+    await traces_repo.create(
+        job_id=job_id, agent_type="developer", model="claude-opus-5", result="running", trace_id="run-1"
+    )
+    assert spent == [], "a running row has spent nothing yet"
+    await traces_repo.finish(
+        "run-1",
+        result="success",
+        cost_usd=1.25,
+        duration_ms=10,
+        tools_called=None,
+        result_summary="",
+        input_tokens=0,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_creation_tokens=0,
+        error_code=None,
+        stderr_tail=None,
+    )
+    assert spent == [("claude-opus-5", 1.25)], f"finish must count the spend exactly once, got {spent}"

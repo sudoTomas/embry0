@@ -154,6 +154,15 @@ jobs:
             vibium --version
           '
 
+      - name: Playwright MCP tool list matches the QA allowlist (#81)
+        # The QA agent's allowlist is a copy of what @playwright/mcp serves.
+        # Ask the image's own server for tools/list and compare, so a tool it
+        # starts or stops serving fails here, not as a denied call mid-job.
+        run: |
+          docker run --rm --network none -v "$PWD:/src:ro" embry0-sandbox-qa:latest \
+            python /src/infra/scripts/check-playwright-mcp-tools.py \
+              /src/embry0/workflows/qa/browser_backends.py
+
       - name: Smoke-test vibium headless browser (no egress)
         # Proves the vibium backend can drive its baked Chrome for Testing
         # with zero network access (sandboxes have no internet egress at job
@@ -214,7 +223,7 @@ jobs:
         run: >-
           docker run --rm -v "$PWD/infra/prometheus:/rules:ro" -w /rules --entrypoint promtool
           prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
-          test rules offhost-backup.rules.test.yml
+          test rules offhost-backup.rules.test.yml job-events.rules.test.yml
 
   mypy:
     name: Mypy type-check
@@ -541,8 +550,9 @@ jobs:
         env:
           DENYLIST: ${{ secrets.EMBRY0_DENYLIST }}
         # Exit 2 (nothing checked, e.g. the secret is unset) fails the step,
-        # as a match does.
+        # as a match does. --public: every tracked file, with the allowances
+        # the public export passed, because this repository is the public one.
         run: |
           umask 077
           printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist.txt"
-          EMBRY0_DENYLIST_FILE="$RUNNER_TEMP/denylist.txt" python3 scripts/check_denylist.py
+          EMBRY0_DENYLIST_FILE="$RUNNER_TEMP/denylist.txt" python3 scripts/check_denylist.py --public

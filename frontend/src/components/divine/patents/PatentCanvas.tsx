@@ -15,8 +15,10 @@ interface PatentCanvasProps {
 
 /**
  * Patent-drawing-style framing component for hero / lore / completion
- * surfaces. Renders the gold-on-dark patent chrome (header, title,
- * footer) and lets children own the figures inside.
+ * surfaces. Renders the patent chrome (header, title, footer) in the
+ * neutral text tones on the raised surface and lets children own the
+ * figures inside. Decoration, so never gold: the gold marks only the one
+ * thing on a view that needs a person.
  */
 export function PatentCanvas({
   patentNo,
@@ -35,18 +37,14 @@ export function PatentCanvas({
   return (
     <div
       className={
-        `divine-element relative rounded font-mono text-primary ` +
-        `border border-primary/20 ${padding} ${className ?? ""}`
+        `divine-element relative rounded font-mono text-fg-secondary bg-surface ` +
+        `border border-border ${padding} ${className ?? ""}`
       }
-      style={{
-        background:
-          "linear-gradient(180deg, rgba(20,16,11,0.6) 0%, rgba(12,11,9,0.85) 100%)",
-      }}
     >
       {(date || inventor || patentNo) && (
         <div
           className={
-            `flex justify-between items-baseline border-b border-primary/35 ` +
+            `flex justify-between items-baseline border-b border-border ` +
             `pb-1.5 mb-4 ${headerSize} tracking-[0.15em] opacity-85 uppercase`
           }
         >
@@ -60,7 +58,7 @@ export function PatentCanvas({
         <div
           className={
             `text-center ${titleSize} tracking-[0.25em] uppercase ` +
-            `mb-3 text-primary/95`
+            `mb-3 text-foreground`
           }
         >
           {title}
@@ -72,7 +70,7 @@ export function PatentCanvas({
       {(elements || epigraph) && (
         <div
           className={
-            `flex justify-between items-baseline border-t border-primary/25 ` +
+            `flex justify-between items-baseline border-t border-border ` +
             `pt-1.5 mt-4 text-[9px] tracking-[0.12em] opacity-55 italic`
           }
         >

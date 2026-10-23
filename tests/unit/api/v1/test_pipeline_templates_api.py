@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock
 
+import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -134,3 +135,355 @@ async def test_a_template_agent_models_map_is_refused(app, method):
         r = await getattr(client, method)(url, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
     assert r.status_code == 422, f"a template agent_models map must be refused, got {r.status_code}"
     assert "config.model" in r.text
+
+
+def _graph_with_developer(node: dict) -> dict:
+    return {
+        **SAMPLE_GRAPH,
+        "nodes": [{"node_id": "t", "agent_type": "triage"}, {"node_id": "d", "agent_type": "developer", **node}],
+    }
+
+
+def _catalog(*names: str, sources: list[dict] | None = None) -> MagicMock:
+    repo = MagicMock()
+    repo.catalog = AsyncMock(return_value=[{"name": n, "available": True} for n in names])
+    repo.list_all = AsyncMock(return_value=sources or [])
+    return repo
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["post", "put"])
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"config": {"skills": {"add": ["superpowers:writing-plan"]}}},
+        {"skills": ["superpowers:writing-plan"]},  # the editor's legacy top-level shape (#78)
+    ],
+    ids=["config-delta", "legacy-top-level"],
+)
+async def test_a_template_naming_an_unknown_skill_is_refused(app, method, node):
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans")
+    body = {"name": "t", "graph_definition": _graph_with_developer(node)}
+    url = "/api/v1/pipelines/templates" + ("/tmpl-1" if method == "put" else "")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await getattr(client, method)(url, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
+    assert r.status_code == 422, f"an unknown skill must be refused, got {r.status_code}"
+    assert "superpowers:writing-plans" in r.text, "the 422 names the closest known skill"
+    app.state.templates_repo.create.assert_not_awaited()
+    app.state.templates_repo.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_template_with_known_skills_saves(app):
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans", "local:house-style")
+    node = {"config": {"skills": {"add": ["superpowers:writing-plans"], "remove": ["local:house-style"]}}}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _graph_with_developer(node)},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 201, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_template_skills_delta_is_refused(app):
+    node = {"config": {"skills": {"add": "superpowers:writing-plans"}}}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _graph_with_developer(node)},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 422
+    assert "skills delta" in r.text
+    app.state.templates_repo.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_unpriced_model_at_the_legacy_top_level_is_refused(app):
+    """#78: a model stored at the node's top level is the model that runs, so it is checked too."""
+    node = {"model": "grok-9-unpriced"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _graph_with_developer(node)},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 422, f"a legacy-shaped unpriced model must be refused, got {r.status_code}"
+    assert "grok-9-unpriced" in r.text
+    app.state.templates_repo.create.assert_not_awaited()
+
+
+_PENDING_SUPERPOWERS = [{"id": "superpowers", "plugin_name": "", "status": "pending", "enabled": True}]
+
+
+@pytest.mark.asyncio
+async def test_a_template_update_keeping_its_skills_saves_with_an_empty_catalog(app):
+    node = {"config": {"skills": {"add": ["superpowers:brainstorming"], "remove": ["superpowers:writing-plans"]}}}
+    graph = _graph_with_developer(node)
+    app.state.templates_repo.get = AsyncMock(return_value={**SAMPLE_TEMPLATE, "graph_definition": graph})
+    app.state.skill_sources_repo = _catalog()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/v1/pipelines/templates/tmpl-1",
+            json={"name": "t", "graph_definition": graph},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == []
+    app.state.templates_repo.update.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_template_update_adding_an_unknown_skill_is_still_refused(app):
+    kept = _graph_with_developer({"config": {"skills": {"add": ["superpowers:brainstorming"]}}})
+    app.state.templates_repo.get = AsyncMock(return_value={**SAMPLE_TEMPLATE, "graph_definition": kept})
+    app.state.skill_sources_repo = _catalog()
+    graph = _graph_with_developer({"config": {"skills": {"add": ["superpowers:brainstorming", "nope:x"]}}})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/v1/pipelines/templates/tmpl-1",
+            json={"graph_definition": graph},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 422, r.text
+    assert "nope:x" in r.text and "superpowers:brainstorming" not in r.text.split("did you mean")[0]
+    app.state.templates_repo.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_template_adding_a_pending_source_skill_saves_with_a_warning(app):
+    app.state.skill_sources_repo = _catalog(sources=_PENDING_SUPERPOWERS)
+    node = {"config": {"skills": {"add": ["superpowers:brainstorming", "commit-standard"]}}}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _graph_with_developer(node)},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 201, r.text
+    assert [w.split()[0] for w in r.json()["warnings"]] == ["superpowers:brainstorming"]
+
+
+@pytest.mark.asyncio
+async def test_updating_a_missing_template_is_404(app):
+    app.state.templates_repo.get = AsyncMock(return_value=None)
+    app.state.templates_repo.update = AsyncMock(return_value=None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/v1/pipelines/templates/nope",
+            json={"description": "d"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 404, r.text
+
+
+@pytest.mark.asyncio
+async def test_updating_a_missing_template_with_an_unknown_skill_is_404(app):
+    """Existence comes first: a 422 about the body would send the caller to fix a template that is not there."""
+    app.state.templates_repo.get = AsyncMock(return_value=None)
+    app.state.templates_repo.update = AsyncMock(return_value=None)
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans")
+    graph = _graph_with_developer({"config": {"skills": {"add": ["nope:x"]}}})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/v1/pipelines/templates/nope",
+            json={"graph_definition": graph},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 404, r.text
+    app.state.templates_repo.update.assert_not_awaited()
+
+
+def _bot_graph():
+    return {
+        **SAMPLE_GRAPH,
+        "nodes": [{"node_id": "t", "agent_type": "triage"}, {"node_id": "b", "agent_type": "release-bot"}],
+        "edges": [{"edge_id": "e1", "source": "t", "target": "b", "edge_type": "flow"}],
+    }
+
+
+def _agents(*types: str) -> MagicMock:
+    repo = MagicMock()
+    repo.list_all = AsyncMock(return_value=[{"type": t} for t in types])
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_a_template_may_name_any_agent_row(app):
+    app.state.agent_defs_repo = _agents("developer", "release-bot")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _bot_graph()},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 201, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_template_naming_a_missing_agent_row_is_refused(app):
+    app.state.agent_defs_repo = _agents("developer")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _bot_graph()},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 422
+    assert "unknown agent_type 'release-bot'" in r.text
+    app.state.templates_repo.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_validate_route_knows_the_agent_rows(app):
+    app.state.agent_defs_repo = _agents("release-bot")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/validate", json=_bot_graph(), headers={"X-Requested-With": "XMLHttpRequest"}
+        )
+    assert r.json() == {"valid": True, "errors": []}
+
+
+@pytest.mark.asyncio
+async def test_an_update_may_name_any_agent_row(app):
+    app.state.agent_defs_repo = _agents("release-bot")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/v1/pipelines/templates/tmpl-1",
+            json={"graph_definition": _bot_graph()},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_failing_agent_rows_read_degrades_to_the_builtin_types(app):
+    """As at plan time: the rows cannot be read, so the builtin types decide; no 500."""
+    from structlog.testing import capture_logs
+
+    broken = MagicMock()
+    broken.list_all = AsyncMock(side_effect=RuntimeError("database is down"))
+    app.state.agent_defs_repo = broken
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with capture_logs() as logs:
+            ok = await client.post(
+                "/api/v1/pipelines/templates",
+                json={"name": "t", "graph_definition": SAMPLE_GRAPH},
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+        custom = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _bot_graph()},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert ok.status_code == 201, ok.text
+    assert any(e["event"] == "template_agent_types_unavailable" for e in logs), logs
+    assert custom.status_code == 422, custom.text
+    assert "unknown agent_type 'release-bot'" in custom.text
+
+
+_XHR = {"X-Requested-With": "XMLHttpRequest"}
+_KIND_INDEX = "idx_pipeline_templates_default_kind"  # migration 42
+_NAME_KEY = "pipeline_templates_name_key"  # Postgres's name for the UNIQUE on pipeline_templates.name
+
+
+def _unique_violation(constraint: str) -> asyncpg.UniqueViolationError:
+    """The error asyncpg raises for 23505, carrying the constraint the server names."""
+    return asyncpg.UniqueViolationError.new({"C": "23505", "M": "duplicate key", "n": constraint})
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_null_clears_the_default_kind(app):
+    """``{"default_for_kind": null}`` is a write, not an absent field (spec 3.7, plan 3b)."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"default_for_kind": None}, headers=_XHR)
+    assert resp.status_code == 200, resp.text
+    app.state.templates_repo.update.assert_awaited_once_with("tmpl-1", default_for_kind=None)
+
+
+@pytest.mark.asyncio
+async def test_an_absent_default_kind_is_kept(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"name": "Renamed"}, headers=_XHR)
+    assert resp.status_code == 200, resp.text
+    app.state.templates_repo.update.assert_awaited_once_with("tmpl-1", name="Renamed")
+
+
+@pytest.mark.asyncio
+async def test_a_second_default_for_a_kind_is_409(app):
+    """The partial unique index refuses two defaults for one kind; the route says which kind, not a 500."""
+    app.state.templates_repo.update = AsyncMock(side_effect=_unique_violation(_KIND_INDEX))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"default_for_kind": "code"}, headers=_XHR)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "another template is already the default for code; clear it first"
+
+
+@pytest.mark.asyncio
+async def test_creating_a_second_default_for_a_kind_is_409(app):
+    app.state.templates_repo.create = AsyncMock(side_effect=_unique_violation(_KIND_INDEX))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "Research", "graph_definition": SAMPLE_GRAPH, "default_for_kind": "research"},
+            headers=_XHR,
+        )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "another template is already the default for research; clear it first"
+
+
+@pytest.mark.asyncio
+async def test_creating_a_template_with_a_taken_name_is_409(app):
+    """With no kind in the body the unique violation is the name column, so the 409 names the template, not a kind."""
+    app.state.templates_repo.create = AsyncMock(side_effect=_unique_violation(_NAME_KEY))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "Research", "graph_definition": SAMPLE_GRAPH},
+            headers=_XHR,
+        )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "a template named Research already exists"
+
+
+@pytest.mark.asyncio
+async def test_renaming_a_template_onto_a_taken_name_is_409(app):
+    app.state.templates_repo.update = AsyncMock(side_effect=_unique_violation(_NAME_KEY))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"name": "Research"}, headers=_XHR)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "a template named Research already exists"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["post", "put"])
+async def test_a_taken_name_is_reported_even_when_the_body_carries_a_kind(app, method):
+    """The constraint the server names decides, not the body: a kind in the write does not make a name clash a kind clash."""
+    app.state.templates_repo.create = AsyncMock(side_effect=_unique_violation(_NAME_KEY))
+    app.state.templates_repo.update = AsyncMock(side_effect=_unique_violation(_NAME_KEY))
+    body = {"name": "Research", "default_for_kind": "research"}
+    if method == "post":
+        body["graph_definition"] = SAMPLE_GRAPH
+    url = "/api/v1/pipelines/templates" + ("/tmpl-1" if method == "put" else "")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await getattr(client, method)(url, json=body, headers=_XHR)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "a template named Research already exists"
+
+
+@pytest.mark.asyncio
+async def test_duplicating_onto_a_taken_name_is_409(app):
+    """The copy's name hits the same UNIQUE as a create; the route says so instead of a 500."""
+    app.state.templates_repo.duplicate = AsyncMock(side_effect=_unique_violation(_NAME_KEY))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/pipelines/templates/tmpl-1/duplicate", json={"name": "Research"}, headers=_XHR
+        )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "a template named Research already exists"

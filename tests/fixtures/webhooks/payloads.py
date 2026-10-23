@@ -93,6 +93,45 @@ def github_pull_request(
     }
 
 
+def github_review_pull_request(
+    *,
+    action: str = "ready_for_review",
+    number: int = 7,
+    repo: str = "acme/widgets",
+    head_repo: str | None = "acme/widgets",
+    head_ref: str = "feature/login",
+    head_sha: str = "a" * 40,
+    base_ref: str = "main",
+    draft: bool | None = False,
+    author: str = "octocat",
+    state: str = "open",
+    association: str = "COLLABORATOR",
+    author_type: str = "User",
+) -> dict[str, Any]:
+    """A `pull_request` delivery with every field the reviewer reads (#30).
+
+    ``head_repo=None`` is a fork whose repository was deleted: GitHub sends
+    ``head.repo: null``. ``draft=None`` leaves the key out. ``association``
+    is the pull request's ``author_association``; ``author_type`` is
+    GitHub's ``user.type`` (``"Bot"`` for an app).
+    """
+    pr: dict[str, Any] = {
+        "number": number,
+        "html_url": f"https://github.com/{repo}/pull/{number}",
+        "title": "Add the login form",
+        "body": "Adds the login form and its validation.",
+        "state": state,
+        "user": {"login": author, "type": author_type},
+        "author_association": association,
+        "head": {"ref": head_ref, "sha": head_sha, "repo": {"full_name": head_repo} if head_repo else None},
+        "base": {"ref": base_ref, "sha": "b" * 40, "repo": {"full_name": repo}},
+        "updated_at": "2026-10-15T10:00:00Z",
+    }
+    if draft is not None:
+        pr["draft"] = draft
+    return {"action": action, "repository": {"full_name": repo}, "sender": {"login": author}, "pull_request": pr}
+
+
 # --- Linear -----------------------------------------------------------------
 
 
@@ -150,6 +189,97 @@ def gitlab_issue(
             }
         }
     return payload
+
+
+def gitlab_merge_request(
+    *,
+    action: str = "update",
+    iid: int = 5,
+    project_path: str = "acme/products/web",
+    draft: bool | None = False,
+    previous_draft: bool | None = True,
+    legacy_wip: bool = False,
+    source_project_id: int = 1,
+    target_project_id: int = 1,
+    sha: str = "c" * 40,
+    state: str = "opened",
+    username: str = "jdoe",
+    user_id: int = 42,
+    author_id: int | None = 51,
+) -> dict[str, Any]:
+    """GitLab Merge Request Hook (#30).
+
+    ``legacy_wip`` spells the draft flag ``work_in_progress``, as GitLab did
+    before ``draft`` existed, in ``object_attributes`` and in ``changes``.
+    ``previous_draft=None`` sends no ``changes`` delta at all. ``user`` is
+    whoever opened the merge request or marked it ready; the author is named
+    only by ``object_attributes.author_id``, so the two ids differ by default.
+    ``author_id=None`` leaves the key out.
+    """
+    key = "work_in_progress" if legacy_wip else "draft"
+    attrs: dict[str, Any] = {
+        "iid": iid,
+        "title": "Add search",
+        "description": "Adds search to the catalogue.",
+        "action": action,
+        "state": state,
+        "url": f"https://gitlab.example.com/{project_path}/-/merge_requests/{iid}",
+        "source_branch": "feature/search",
+        "target_branch": "main",
+        "source_project_id": source_project_id,
+        "target_project_id": target_project_id,
+        "last_commit": {"id": sha},
+    }
+    if author_id is not None:
+        attrs["author_id"] = author_id
+    if draft is not None:
+        attrs[key] = draft
+    payload: dict[str, Any] = {
+        "object_kind": "merge_request",
+        "event_type": "merge_request",
+        "user": {"id": user_id, "username": username},
+        "project": {"id": target_project_id, "path_with_namespace": project_path},
+        "object_attributes": attrs,
+    }
+    if previous_draft is not None and draft is not None:
+        payload["changes"] = {key: {"previous": previous_draft, "current": draft}}
+    return payload
+
+
+def gitlab_mr_note(
+    *,
+    note: str = "/embry0 review",
+    note_id: int = 901,
+    iid: int = 5,
+    project_path: str = "acme/products/web",
+    user_id: int = 42,
+    username: str = "jdoe",
+    system: bool = False,
+    noteable_type: str = "MergeRequest",
+    source_project_id: int = 1,
+    target_project_id: int = 1,
+    sha: str = "c" * 40,
+) -> dict[str, Any]:
+    """GitLab Note Hook on a merge request (#30)."""
+    return {
+        "object_kind": "note",
+        "event_type": "note",
+        "user": {"id": user_id, "username": username},
+        "project": {"id": target_project_id, "path_with_namespace": project_path},
+        "object_attributes": {"id": note_id, "note": note, "noteable_type": noteable_type, "system": system},
+        "merge_request": {
+            "iid": iid,
+            "title": "Add search",
+            "description": "Adds search to the catalogue.",
+            "state": "opened",
+            "url": f"https://gitlab.example.com/{project_path}/-/merge_requests/{iid}",
+            "source_branch": "feature/search",
+            "target_branch": "main",
+            "source_project_id": source_project_id,
+            "target_project_id": target_project_id,
+            "last_commit": {"id": sha},
+        },
+    }
 
 
 def alertmanager_alert(

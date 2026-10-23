@@ -1,5 +1,4 @@
 import json
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,6 +29,45 @@ def test_triage_word_default_is_not_stored_as_a_profile():
     assert decision["pipeline_config"]["sandbox_profile"] == "", (
         "the word default is not a sandbox profile and must not be stored"
     )
+
+
+def test_triage_prompt_asks_for_a_skills_addition():
+    from embry0.orchestration.nodes.triage import _TRIAGE_SYSTEM_PROMPT_TEMPLATE
+
+    assert '{"developer": {"add": ["superpowers:brainstorming"]}}' in _TRIAGE_SYSTEM_PROMPT_TEMPLATE
+    assert '{"developer": ["superpowers:brainstorming"]}' not in _TRIAGE_SYSTEM_PROMPT_TEMPLATE, (
+        "the replace form would drop the developer's configured skills"
+    )
+
+
+def test_a_skills_delta_from_triage_parses_and_adds_to_the_definition():
+    from embry0.agents.resolver import resolve_agent_config
+
+    raw = json.dumps(
+        {
+            "action": "proceed",
+            "confidence": 0.9,
+            "pipeline_config": {"agent_skills": {"developer": {"add": ["superpowers:brainstorming"]}}},
+            "reasoning": "open-ended",
+        }
+    )
+    decision = parse_triage_response(raw)
+    definition = {"model": "m", "tools": [], "skills": ["local:house-style"], "system_prompt": ""}
+    resolved = resolve_agent_config("developer", definition, pipeline_config=dict(decision["pipeline_config"]))
+    assert resolved.skills == ["local:house-style", "superpowers:brainstorming"]
+
+
+def test_a_legacy_skills_list_from_triage_still_parses():
+    raw = json.dumps(
+        {
+            "action": "proceed",
+            "confidence": 0.9,
+            "pipeline_config": {"agent_skills": {"developer": ["superpowers:writing-plans"]}},
+            "reasoning": "clear",
+        }
+    )
+    decision = parse_triage_response(raw)
+    assert decision["pipeline_config"]["agent_skills"] == {"developer": ["superpowers:writing-plans"]}
 
 
 def test_parse_triage_response_proceed():
@@ -206,33 +244,6 @@ def test_parse_triage_response_preserves_escaped_quotes_in_strings():
     )
     decision = parse_triage_response(raw)
     assert decision["reasoning"] == 'looked like "{"ok": true}" to me'
-
-
-@dataclass
-class MockAgentResult:
-    success: bool = True
-    raw_output: str = ""
-    error: str | None = None
-    usage: dict | None = None
-
-
-@pytest.mark.skip(
-    reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
-    "Rewrite using a real agent_runner mock + container_id if coverage of "
-    "run_triage_node is needed."
-)
-@pytest.mark.asyncio
-async def test_run_triage_node_success():
-    """Skipped — run_triage_node (in-process SDK path) was deleted."""
-
-
-@pytest.mark.skip(
-    reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
-    "Low-confidence escalation logic lives in triage_node (sandbox path)."
-)
-@pytest.mark.asyncio
-async def test_low_confidence_triggers_needs_info():
-    """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
 
 @pytest.mark.asyncio

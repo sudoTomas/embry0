@@ -44,6 +44,15 @@ ANSWER_RESUME = f"{RESERVED_PREFIX}answer-resume"
 # A PR-comment follow-up whose comment payload named no author. The author
 # gate upstream makes this near-impossible; the row still gets an actor.
 PR_COMMENT = f"{RESERVED_PREFIX}pr-comment"
+# A pull request review whose trigger named nobody (#30). Rate-limited like
+# any other non-continuation actor.
+PR_REVIEW = f"{RESERVED_PREFIX}pr-review"
+# The API's master key (``API_KEY``) names no person, and behind the dashboard
+# proxy all its requests share the proxy's address, so the key is the actor.
+# Rate-limited: it is a person at a keyboard or a script acting for one.
+MASTER_KEY = f"{RESERVED_PREFIX}master-key"
+# A request with no identity at all: only AUTH_DEV_MODE lets one through.
+ANONYMOUS = f"{RESERVED_PREFIX}anonymous"
 
 RATE_LIMIT_EXEMPT: frozenset[str] = frozenset({WATCHER, AUTO_RETRIAGE, ANSWER_RESUME})
 

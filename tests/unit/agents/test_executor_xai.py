@@ -106,6 +106,47 @@ def _run(inv, events):
 # ---- tests ---------------------------------------------------------------
 
 
+@pytest.mark.asyncio
+async def test_xai_denied_tool_error_event_uses_message_code_and_ids(env, monkeypatch) -> None:
+    _install(
+        monkeypatch,
+        [
+            _Resp([_Block("tool_use", id="t1", name="Bash", input={"command": "rm -rf /"})], "tool_use", _Usage(5, 5)),
+            _Resp([_Block("text", text="done")], "end_turn", _Usage(5, 5)),
+        ],
+    )
+    events: list[dict] = []
+    inv = dataclasses.replace(_invocation(), run_id="run-x", node="developer")
+    await DirectXaiExecutor().run(inv, config={"configurable": {}, "_test_writer": events.append})
+    err = next(e for e in events if e["type"] == "error")
+    assert err["tool_name"] == "Bash"
+    assert err["code"] == "ERR_TOOL_DENIED", f"denied tool error must carry the policy code: {err}"
+    assert "error" not in err and err["message"], f"error event must carry message, not error: {err}"
+    for e in events:
+        assert e.get("run_id") == "run-x" and e.get("node") == "developer", f"{e['type']} lacks ids"
+    completed = next(e for e in events if e["type"] == "agent_completed")
+    assert completed["policy_denials"] == {err["message"]: 1}, (
+        f"the denial must be counted under the policy reason, as the Claude path does: {completed}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_xai_tool_result_uses_tool_id_and_marker(env, monkeypatch) -> None:
+    _install(
+        monkeypatch,
+        [
+            _Resp([_Block("tool_use", id="t1", name="Bash", input={"command": "echo hi"})], "tool_use", _Usage(5, 5)),
+            _Resp([_Block("text", text="done")], "end_turn", _Usage(5, 5)),
+        ],
+    )
+    monkeypatch.setattr(ex, "execute_tool", lambda name, tool_input, cwd, policy: ("y" * 4100, False))
+    events: list[dict] = []
+    await DirectXaiExecutor().run(_invocation(), config={"configurable": {}, "_test_writer": events.append})
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert result["tool_id"] == "t1", f"tool_result event must be keyed by tool_id: {result}"
+    assert result["truncated"] is True and result["original_length"] == 4100
+
+
 def test_missing_proxy_url_errors(monkeypatch, tmp_path):
     monkeypatch.delenv("EMBRY0_XAI_PROXY_URL", raising=False)
     monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
@@ -323,6 +364,62 @@ def test_cost_update_num_turns_counts_turns_not_distinct_tools(env, monkeypatch)
     assert out.tools_called == {"Read": 2}
     cost_updates = [e for e in events if e["type"] == "cost_update"]
     assert cost_updates and cost_updates[-1]["num_turns"] == 3
+
+
+def test_each_turn_emits_turn_usage_priced_with_cache_tokens(env, monkeypatch):
+    # Spec 3.1: executors emit turn_usage per assistant message, priced by the
+    # table including cache reads and writes (the SDK path already does).
+    (env / "a.txt").write_text("a\n")
+    responses = [
+        _Resp(
+            [_Block("tool_use", id="t1", name="Read", input={"file_path": "a.txt"})],
+            "tool_use",
+            _Usage(10, 2, 1000, 100),
+        ),
+        _Resp([_Block("text", text="done")], "end_turn", _Usage(5, 2)),
+    ]
+    _install(monkeypatch, responses)
+    events = []
+    _run(dataclasses.replace(_invocation(), run_id="run-x"), events)
+    usages = [e for e in events if e["type"] == "turn_usage"]
+    assert len(usages) == 2, f"expected one turn_usage per turn, got {[e['type'] for e in events]}"
+    first = usages[0]
+    assert (
+        first["input_tokens"],
+        first["output_tokens"],
+        first["cache_read_tokens"],
+        first["cache_creation_tokens"],
+    ) == (10, 2, 1000, 100)
+    assert (first["model"], first["run_id"], first["node"], first["agent"]) == (
+        "grok-4.5",
+        "run-x",
+        "developer",
+        "developer",
+    )
+    from embry0.agents.providers import price_usage
+
+    assert first["cost_usd"] == pytest.approx(
+        price_usage("grok-4.5", input_tokens=10, output_tokens=2, cache_read_tokens=1000, cache_creation_tokens=100)
+    )
+    # turn_usage precedes the turn's tool_call, as on the SDK path (usage is known when the message arrives)
+    types = [e["type"] for e in events]
+    assert types.index("turn_usage") < types.index("tool_call")
+
+
+def test_run_cost_prices_cache_tokens_like_the_sdk_path(env, monkeypatch):
+    # _compute_cost ignored cache reads/writes while price_usage prices them, so
+    # cost_update and the summed turn_usage disagreed on every cached run.
+    _install(monkeypatch, [_Resp([_Block("text", text="ok")], "end_turn", _Usage(100, 20, 10_000, 1_000))])
+    events = []
+    out = _run(_invocation(), events)
+    from embry0.agents.providers import price_usage
+
+    expected = price_usage(
+        "grok-4.5", input_tokens=100, output_tokens=20, cache_read_tokens=10_000, cache_creation_tokens=1_000
+    )
+    assert out.cost_usd == pytest.approx(expected), f"cost {out.cost_usd} ignores cache tokens; expected {expected}"
+    cost_update = [e for e in events if e["type"] == "cost_update"][-1]
+    assert cost_update["cost_usd"] == pytest.approx(expected)
 
 
 def test_client_closed(env, monkeypatch):
@@ -620,3 +717,28 @@ def test_grep_result_leaves_out_files_a_read_deny_rule_covers(env, monkeypatch):
     tr = client.messages.calls[1]["messages"][-1]["content"][0]
     assert "s3cr3t-value" not in tr["content"], f"the executor's Grep returned a Read-denied file: {tr['content']!r}"
     assert "s3cr3t-open" in tr["content"], f"the allowed file must still be found: {tr['content']!r}"
+
+
+@pytest.mark.asyncio
+async def test_xai_executor_scrubs_text_and_tool_results(env, monkeypatch) -> None:
+    secret = "xai-env-secret-value-1234567890"
+    monkeypatch.setenv("ANOTHER_API_KEY", secret)
+    _install(
+        monkeypatch,
+        [
+            _Resp(
+                [
+                    _Block("text", text=f"key {secret}"),
+                    _Block("tool_use", id="t1", name="Bash", input={"command": "echo hi"}),
+                ],
+                "tool_use",
+                _Usage(5, 5),
+            ),
+            _Resp([_Block("text", text="done")], "end_turn", _Usage(5, 5)),
+        ],
+    )
+    monkeypatch.setattr(ex, "execute_tool", lambda name, tool_input, cwd, policy: (f"out {secret}", False))
+    events_out: list[dict] = []
+    await DirectXaiExecutor().run(_invocation(), config={"configurable": {}, "_test_writer": events_out.append})
+    assert all(secret not in e.get("text", "") for e in events_out if e["type"] == "text")
+    assert all(secret not in e.get("content", "") for e in events_out if e["type"] == "tool_result")

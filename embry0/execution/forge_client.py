@@ -15,6 +15,7 @@ import asyncio
 import ssl
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
@@ -80,6 +81,43 @@ def retry_after_seconds(response: httpx.Response) -> float | None:
             except ValueError:
                 pass
     return None
+
+
+@dataclass(frozen=True)
+class ForgeWrite:
+    """What a forge answered to one write: its status, and its own words when it refused."""
+
+    status_code: int
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return 200 <= self.status_code < 300
+
+
+@dataclass(frozen=True)
+class Listing:
+    """What :meth:`ForgeClient.paginate_listing` read: the items, and whether
+    they are the whole collection."""
+
+    items: list[Any]
+    complete: bool
+
+
+def forge_write(response: httpx.Response) -> ForgeWrite:
+    """``response`` as a :class:`ForgeWrite`; ``detail`` is the forge's message, at most 1000 characters."""
+    if 200 <= response.status_code < 300:
+        return ForgeWrite(status_code=response.status_code)
+    detail = ""
+    try:
+        body: Any = response.json()
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        message = body.get("message") or body.get("error") or ""
+        errors = body.get("errors")
+        detail = f"{message} {errors}".strip() if errors else str(message)
+    return ForgeWrite(status_code=response.status_code, detail=(detail or response.text)[:1000])
 
 
 class ForgeClient:
@@ -154,12 +192,17 @@ class ForgeClient:
         params: Mapping[str, Any] | None = None,
         json: Any = None,
         extra_headers: Mapping[str, str] | None = None,
+        retry_transient: bool = True,
         **header_kwargs: Any,
     ) -> httpx.Response:
         """Issue one request, retrying transient failures.
 
         Returns the response whatever its status. Raises only when every
         attempt failed at the transport layer, which retrying will not fix.
+
+        ``retry_transient=False`` sends the request once: a write the forge
+        accepted can still be answered 5xx or lose its answer in transit, and
+        sending it again would post it twice.
         """
         headers = self.headers(repo, token=await self.token_for(repo), **header_kwargs)
         if extra_headers:
@@ -168,7 +211,8 @@ class ForgeClient:
         client = self._http or httpx.AsyncClient(timeout=self._timeout, verify=self._verify)
         owned = self._http is None
         try:
-            for attempt in range(1, self._max_attempts + 1):
+            attempts = self._max_attempts if retry_transient else 1
+            for attempt in range(1, attempts + 1):
                 try:
                     response = await client.request(
                         method,
@@ -179,12 +223,12 @@ class ForgeClient:
                         timeout=self._timeout,
                     )
                 except httpx.TransportError:
-                    if attempt == self._max_attempts:
+                    if attempt == attempts:
                         raise
                     await self._backoff(attempt, None, method=method, path=path, reason="transport")
                     continue
 
-                if response.status_code in RETRY_STATUSES and attempt < self._max_attempts:
+                if response.status_code in RETRY_STATUSES and attempt < attempts:
                     await self._backoff(
                         attempt,
                         response,
@@ -259,6 +303,27 @@ class ForgeClient:
         ``strict=True`` raises ``HTTPStatusError`` instead, so a caller that
         fans out across accounts can tell a dead token from an empty page.
         """
+        listing = await self.paginate_listing(
+            path, repo=repo, params=params, per_page=per_page, max_pages=max_pages, strict=strict
+        )
+        return listing.items
+
+    async def paginate_listing(
+        self,
+        path: str,
+        *,
+        repo: str | None = None,
+        params: Mapping[str, Any] | None = None,
+        per_page: int = 100,
+        max_pages: int = 20,
+        strict: bool = False,
+    ) -> Listing:
+        """:meth:`paginate`, saying whether it read the whole collection.
+
+        ``complete`` is False when ``max_pages`` stopped it with a next page
+        unread, or when a non-200 ended it under ``strict=False``. A caller
+        that reads what is absent from a listing as gone needs to know.
+        """
         merged = dict(params or {})
         merged.setdefault("per_page", per_page)
 
@@ -277,11 +342,10 @@ class ForgeClient:
                 )
                 if strict:
                     response.raise_for_status()
-                return items
+                return Listing(items, complete=False)
             body = response.json()
             if not isinstance(body, list):
-                single: list[Any] = [body]
-                return single
+                return Listing([body], complete=True)
             items.extend(body)
             next_path = response.links.get("next", {}).get("url")
             pages += 1
@@ -294,4 +358,4 @@ class ForgeClient:
                 max_pages=max_pages,
                 items=len(items),
             )
-        return items
+        return Listing(items, complete=not next_path)

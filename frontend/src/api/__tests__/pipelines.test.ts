@@ -19,9 +19,11 @@ vi.mock("../client", () => {
 import { api } from "../client";
 import {
   createTemplate,
+  duplicateTemplate,
   fetchTemplate,
   fetchTemplates,
   renameTemplate,
+  setTemplateDefaultKind,
   validatePipeline,
 } from "../pipelines";
 import type { PipelineGraph } from "@/lib/types";
@@ -41,6 +43,14 @@ beforeEach(() => {
 });
 
 describe("pipelines API client — boundary mappers", () => {
+  it("fetchTemplates reads a row without sandbox_profile as null, never undefined", async () => {
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: [{ id: "abc", name: "quick-fix", description: "", created_at: "2026-05-04T00:00:00Z", updated_at: "2026-05-04T00:00:00Z" }],
+    });
+    const [row] = await fetchTemplates();
+    expect(row).toHaveProperty("sandbox_profile", null);
+  });
+
   it("fetchTemplates reads a bare array (no envelope) and maps id → template_id", async () => {
     (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: [
@@ -63,6 +73,9 @@ describe("pipelines API client — boundary mappers", () => {
         name: "quick-fix",
         description: "two steps",
         created_at: "2026-05-04T00:00:00Z",
+        sandbox_profile: "slim",
+        is_builtin: true,
+        default_for_kind: null,
       },
     ]);
   });
@@ -85,6 +98,17 @@ describe("pipelines API client — boundary mappers", () => {
     expect(result.graph).toEqual(SAMPLE_GRAPH);
   });
 
+  it("fetchTemplate keeps is_builtin, false when the server leaves it out", async () => {
+    const row = {
+      id: "abc", name: "n", description: "d", sandbox_profile: null, graph_definition: SAMPLE_GRAPH,
+      created_at: "2026-05-04T00:00:00Z", updated_at: "2026-05-04T00:00:00Z",
+    };
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ data: { ...row, is_builtin: true } });
+    expect((await fetchTemplate("abc")).is_builtin, "the editor must know a built-in is re-seeded").toBe(true);
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ data: row });
+    expect((await fetchTemplate("abc")).is_builtin).toBe(false);
+  });
+
   it("createTemplate sends graph under graph_definition", async () => {
     (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: {
@@ -103,6 +127,23 @@ describe("pipelines API client — boundary mappers", () => {
       description: "d",
       graph_definition: SAMPLE_GRAPH,
     });
+  });
+
+  it("createTemplate returns the write's warnings", async () => {
+    (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: {
+        id: "t1",
+        name: "n",
+        description: "d",
+        sandbox_profile: null,
+        graph_definition: SAMPLE_GRAPH,
+        created_at: "2026-05-04T00:00:00Z",
+        updated_at: "2026-05-04T00:00:00Z",
+        warnings: ["superpowers:x is not available: source pending"],
+      },
+    });
+    const created = await createTemplate("n", "d", SAMPLE_GRAPH);
+    expect(created.warnings).toEqual(["superpowers:x is not available: source pending"]);
   });
 
   it("renameTemplate uses PUT and only sends provided fields", async () => {
@@ -147,5 +188,31 @@ describe("pipelines API client — boundary mappers", () => {
     });
     await validatePipeline(SAMPLE_GRAPH);
     expect(api.post).toHaveBeenCalledWith("/pipelines/validate", SAMPLE_GRAPH);
+  });
+
+  it("fetchTemplates keeps is_builtin, default_for_kind and sandbox_profile", async () => {
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: [{ id: "abc", name: "quick-fix", description: "", sandbox_profile: "node", is_builtin: true, default_for_kind: "code", created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z" }],
+    });
+    const [row] = await fetchTemplates();
+    expect(row).toMatchObject({ template_id: "abc", is_builtin: true, default_for_kind: "code", sandbox_profile: "node" });
+  });
+
+  it("duplicateTemplate posts the new name and maps the copy", async () => {
+    (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: { id: "def", name: "quick-fix (copy)", description: "", sandbox_profile: null, graph_definition: SAMPLE_GRAPH, created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z" },
+    });
+    await expect(duplicateTemplate("abc", "quick-fix (copy)")).resolves.toMatchObject({ template_id: "def", name: "quick-fix (copy)" });
+    expect(api.post).toHaveBeenCalledWith("/pipelines/templates/abc/duplicate", { name: "quick-fix (copy)" });
+  });
+
+  it("setTemplateDefaultKind sends the kind, and an explicit null to clear it", async () => {
+    (api.put as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { id: "abc", name: "quick-fix", description: "", sandbox_profile: null, graph_definition: SAMPLE_GRAPH, default_for_kind: null, created_at: "", updated_at: "" },
+    });
+    await setTemplateDefaultKind("abc", "research");
+    expect(api.put).toHaveBeenLastCalledWith("/pipelines/templates/abc", { default_for_kind: "research" });
+    await setTemplateDefaultKind("abc", null);
+    expect(api.put).toHaveBeenLastCalledWith("/pipelines/templates/abc", { default_for_kind: null });
   });
 });
