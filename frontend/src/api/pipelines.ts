@@ -18,7 +18,8 @@ interface ApiTemplateSummary {
   id: string;
   name: string;
   description: string;
-  sandbox_profile: string | null;
+  /** Older rows and responses leave it out; the UI reads null either way. */
+  sandbox_profile?: string | null;
   is_builtin?: boolean;
   default_for_kind?: string | null;
   created_at: string;
@@ -37,7 +38,7 @@ function mapSummary(row: ApiTemplateSummary): PipelineTemplateSummary {
     name: row.name,
     description: row.description,
     created_at: row.created_at,
-    sandbox_profile: row.sandbox_profile,
+    sandbox_profile: row.sandbox_profile ?? null,
     is_builtin: row.is_builtin === true,
     default_for_kind: (row.default_for_kind as TemplateKind | null | undefined) ?? null,
   };

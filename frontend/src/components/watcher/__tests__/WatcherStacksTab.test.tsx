@@ -127,6 +127,30 @@ describe("WatcherStacksTab", () => {
     expect(del).toHaveBeenCalledWith("acme/widgets", expect.anything());
   });
 
+  it("enables a disabled stack from its menu and says so", async () => {
+    mockUseWatcherStacks.mockReturnValue(ready({ ...LIST, stacks: [{ ...STACK, enabled: false }] }));
+    save.mockImplementation((_v: unknown, opts: { onSuccess: (r: unknown) => void }) => opts.onSuccess({ ...STACK, ignored_settings: [] }));
+    render(<WatcherStacksTab />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for acme/widgets" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Enable" }));
+    expect(save).toHaveBeenCalledWith(
+      { repo: "acme/widgets", body: { logql: STACK.logql, tracker: STACK.tracker, tracker_target: STACK.tracker_target, settings: STACK.settings, enabled: true } },
+      expect.anything(),
+    );
+    expect(toast.success).toHaveBeenCalledWith("Enabled acme/widgets");
+  });
+
+  it("shows the editor's 403 under the form instead of toasting it", async () => {
+    save.mockImplementation((_v: unknown, opts: { onError: (e: unknown) => void }) => opts.onError({ response: { status: 403, data: { detail: "Admin scope required" } } }));
+    render(<WatcherStacksTab />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for acme/widgets" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Admin scope required.");
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Edit acme/widgets" })).toBeInTheDocument();
+  });
+
   it("offers the writes disabled to an operator session", async () => {
     useAuthStore.setState({ authMode: "session", user: { email: "ops@example.test", name: "Ops", tier: "operator" } });
     render(<WatcherStacksTab />);

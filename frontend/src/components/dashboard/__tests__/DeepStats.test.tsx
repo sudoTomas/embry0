@@ -78,6 +78,17 @@ describe("DeepStats", () => {
     expect(within(second).queryByText("Credentials")).toBeNull();
   });
 
+  it("reads absent failure categories and absent fleet fields as nothing to show", () => {
+    const stats: Partial<StatsResponse> = { ...BASE };
+    delete stats.failure_categories;
+    renderStats(stats as StatsResponse);
+    expect(within(screen.getByTestId("panel-Failures by category")).getByText("No failures recorded.")).toBeInTheDocument();
+    const fleet = screen.getByTestId("panel-Fleet");
+    expect(within(fleet).getByText("Queue depth")).toBeInTheDocument();
+    expect(within(fleet).queryByText("QA images")).toBeNull();
+    expect(within(fleet).queryByText("Credentials")).toBeNull();
+  });
+
   it("spends no gold: the Overview's one gold is the Needs-you tile", () => {
     renderStats({ ...BASE, cost_by_repo: [{ repo: "acme/widgets", cost_usd: 4.5, job_count: 3 }] });
     const gold = [...document.querySelectorAll("*")].filter((el) => /(^|\s)(bg-primary|bg-primary-dim|text-primary)(\s|$)/.test(el.getAttribute("class") ?? ""));

@@ -36,6 +36,13 @@ describe("TemplateActions", () => {
     expect(setDefault).toHaveBeenCalledWith({ templateId: "t1", kind: "research" }, expect.anything());
   });
 
+  it("clears the default kind the template holds", async () => {
+    render(<TemplateActions template={{ ...TEMPLATE, default_for_kind: "code" }} />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Issue to PR" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Clear default (code)" }));
+    expect(setDefault).toHaveBeenCalledWith({ templateId: "t1", kind: null }, expect.anything());
+  });
+
   it("duplicates through a dialog that proposes a name", async () => {
     duplicate.mockImplementation((_vars: unknown, opts: { onSuccess: (t: unknown) => void }) => opts.onSuccess({ template_id: "t2", name: "Nightly" }));
     render(<TemplateActions template={TEMPLATE} />);
@@ -73,7 +80,11 @@ describe("TemplateActions", () => {
     await userEvent.clear(name);
     await userEvent.type(name, "Nightly");
     await userEvent.click(screen.getByRole("button", { name: "Duplicate" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("a template named Nightly already exists");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("a template named Nightly already exists");
+    expect(name).toHaveAttribute("aria-invalid", "true");
+    expect(alert.id, "the alert is addressable").not.toBe("");
+    expect(name).toHaveAttribute("aria-describedby", alert.id);
     expect(name, "the person corrects the name in place; the dialog stays").toHaveValue("Nightly");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(toast.error, "a refusal shown in the dialog is not toasted as well").not.toHaveBeenCalled();

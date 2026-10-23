@@ -43,6 +43,14 @@ beforeEach(() => {
 });
 
 describe("pipelines API client — boundary mappers", () => {
+  it("fetchTemplates reads a row without sandbox_profile as null, never undefined", async () => {
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: [{ id: "abc", name: "quick-fix", description: "", created_at: "2026-05-04T00:00:00Z", updated_at: "2026-05-04T00:00:00Z" }],
+    });
+    const [row] = await fetchTemplates();
+    expect(row).toHaveProperty("sandbox_profile", null);
+  });
+
   it("fetchTemplates reads a bare array (no envelope) and maps id → template_id", async () => {
     (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: [

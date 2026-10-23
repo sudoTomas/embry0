@@ -60,11 +60,13 @@ export function DuplicateTemplateDialog({ template, onClose }: { template: Pipel
             }}
             maxLength={100}
             disabled={duplicate.isPending}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? "duplicate-template-name-error" : undefined}
             data-autofocus
           />
         </div>
         {error && (
-          <p className="text-sm text-destructive" role="alert">
+          <p id="duplicate-template-name-error" className="text-sm text-destructive" role="alert">
             {error}
           </p>
         )}

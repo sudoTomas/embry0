@@ -71,7 +71,7 @@ export function DeepStats({ stats }: { stats: StatsResponse }) {
   return (
     <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2" data-testid="deep-stats">
       <DashboardPanel title="Failures by category" isPending={false} isError={false} isEmpty={!failures} emptyText="No failures recorded.">
-        <FailureBars categories={stats.failure_categories} />
+        <FailureBars categories={stats.failure_categories ?? {}} />
       </DashboardPanel>
 
       <DashboardPanel title="Fleet" isPending={false} isError={false} isEmpty={false} emptyText="">

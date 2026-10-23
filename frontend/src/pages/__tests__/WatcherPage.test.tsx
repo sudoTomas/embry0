@@ -41,11 +41,11 @@ function ready<T>(data: T) {
   return { data, isPending: false, isError: false, refetch: vi.fn() };
 }
 
-function renderPage() {
+function renderPage(path = "/watcher") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>
         <WatcherPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -97,11 +97,23 @@ describe("WatcherPage", () => {
     expect(screen.getByText("No watcher ticks recorded yet")).toBeInTheDocument();
   });
 
-  it("opens the Stacks tab from the URL and keeps the ticks as the default", async () => {
+  it("opens the Stacks tab on a click and keeps the ticks as the default", async () => {
     renderPage();
     expect(screen.getByRole("tab", { name: "Ticks" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("table")).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole("tab", { name: "Stacks" }));
     expect(screen.getByText("No watched stacks")).toBeInTheDocument();
+  });
+
+  it("opens on the Stacks tab when the URL names it", () => {
+    renderPage("/watcher?tab=stacks");
+    expect(screen.getByRole("tab", { name: "Stacks" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("No watched stacks")).toBeInTheDocument();
+  });
+
+  it("falls back to Ticks for a tab the URL names that does not exist", () => {
+    renderPage("/watcher?tab=nope");
+    expect(screen.getByRole("tab", { name: "Ticks" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("table")).toBeInTheDocument();
   });
 });
