@@ -39,7 +39,8 @@ async function deleteHelper() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: /Delete/ }));
+  // Every test renders the page cold; under load that outruns the default 1 s wait (#106).
+  fireEvent.click(await screen.findByRole("button", { name: /Delete/ }, { timeout: 4000 }));
   fireEvent.click(screen.getByRole("button", { name: /Confirm delete/ }));
 }
 

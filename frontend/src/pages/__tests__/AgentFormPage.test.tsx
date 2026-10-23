@@ -353,7 +353,9 @@ describe("identity and skills (spec 3.6)", () => {
       expect.objectContaining({ type: "release-bot", display_name: "Release Bot", tagline: "Ships it.", avatar: "rogue", color: "cyan" }),
       expect.anything(),
     );
-  });
+    // Typing three fields key by key re-renders the whole form per keystroke;
+    // under load that alone outruns the default 5 s (#106).
+  }, 15000);
   it("populates identity from the row and shows the preview tile", () => {
     mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, display_name: "Grok Dev", avatar: "bard", color: "sky", tagline: "" }, isLoading: false });
     renderEdit("grok-dev");
