@@ -44,7 +44,9 @@ const SETTLED = new Set(["merged", "would_merge", "approved", "rejected"]);
 function toastOutcome(title: string, result: MergeDecisionResult) {
   const summary = `${title}: ${sentenceCase(result.outcome)}`;
   if (KEPT_PENDING.has(result.outcome)) {
-    toast.warning(result.detail ? `${summary}. ${detailSentence(result.detail)}` : summary);
+    const reason = result.detail ? `${summary}. ${detailSentence(result.detail)}` : `${summary}.`;
+    const replaced = result.outcome === "stale" && result.new_approval_id;
+    toast.warning(replaced ? `${reason} A new ask replaced it.` : result.detail ? reason : summary);
   } else if (SETTLED.has(result.outcome)) {
     toast.success(summary);
   } else {
@@ -54,17 +56,30 @@ function toastOutcome(title: string, result: MergeDecisionResult) {
 
 function Decision({ row }: { row: MergeApproval }) {
   const [asking, setAsking] = useState<MergeDecision | null>(null);
+  // The ask a stale answer said replaced this one; the row itself does not carry it.
+  const [replacedBy, setReplacedBy] = useState<string | null>(null);
   const decide = useDecideMergeApproval();
   const title = approvalTitle(row);
 
+  const replacedLink = replacedBy && (
+    <p className="text-sm text-fg-secondary">
+      <Link to={`/merge-approvals/${replacedBy}`} className="hover:text-primary hover:underline">
+        Open the new ask
+      </Link>
+    </p>
+  );
+
   if (row.status !== "pending") {
     return (
-      <p className="text-sm text-fg-secondary" data-testid="merge-approval-decided">
-        {row.decided_by
-          ? `Decided by ${row.decided_by} ${decidedVia(row.chat_id)}${row.decided_at ? ` on ${formatDateTime(row.decided_at)}` : ""}.`
-          : `${statusLabel(row.status)}.`}
-        {row.detail && ` ${detailSentence(row.detail)}`}
-      </p>
+      <>
+        <p className="text-sm text-fg-secondary" data-testid="merge-approval-decided">
+          {row.decided_by
+            ? `Decided by ${row.decided_by} ${decidedVia(row.chat_id)}${row.decided_at ? ` on ${formatDateTime(row.decided_at)}` : ""}.`
+            : `${statusLabel(row.status)}.`}
+          {row.detail && ` ${detailSentence(row.detail)}`}
+        </p>
+        {replacedLink}
+      </>
     );
   }
 
@@ -74,6 +89,7 @@ function Decision({ row }: { row: MergeApproval }) {
       {
         onSuccess: (result) => {
           setAsking(null);
+          if (result.new_approval_id) setReplacedBy(result.new_approval_id);
           toastOutcome(title, result);
         },
         onError: (e) => {
@@ -100,6 +116,7 @@ function Decision({ row }: { row: MergeApproval }) {
           {detailSentence(row.detail)}
         </p>
       )}
+      {replacedLink}
       {asking === "approve" && (
         <ConfirmDialog
           title={`Approve ${title}?`}

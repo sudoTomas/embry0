@@ -206,6 +206,17 @@ describe("MergeApprovalPage", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
+  it("links the ask that replaced a stale one", async () => {
+    mutate.mockImplementation((_vars: unknown, opts: MutateOptions) =>
+      opts.onSuccess(answer("stale", { status: "stale", detail: "the head moved since the ask", new_approval_id: "ma-2" })),
+    );
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await userEvent.click(screen.getByRole("button", { name: "Approve and merge" }));
+    expect(toast.warning).toHaveBeenCalledWith("acme/widgets#42: Stale. The head moved since the ask. A new ask replaced it.");
+    expect(screen.getByRole("link", { name: "Open the new ask" })).toHaveAttribute("href", "/merge-approvals/ma-2");
+  });
+
   it("shows a way back for an ask that does not exist", () => {
     mockUseMergeApproval.mockReturnValue({ data: undefined, isPending: false, isError: true, error: { response: { status: 404 } }, refetch: vi.fn() });
     renderPage("/merge-approvals/ma-9");
