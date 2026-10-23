@@ -836,6 +836,12 @@ claims that need a running service or a network the sandbox lacks, and \
 references the script cannot extract.
 - `## Assumptions` - as the contract below asks.
 
+The whole report, the diff included, stays under {REPORT_TARGET_CHARS:,} \
+characters. When it does not fit, cut in this order until it does: the \
+`drift` rows and their hunks, then the entries under the last four \
+headings, then the `dead` hunks. Never cut the first two lines or a \
+`misleads` row, and say under the table what you cut.
+
 With no instruction files, the report is `Stale: 0`, then `Files: 0`, then \
 where you looked: the command you ran and what it printed.
 {DELIVERABLE_CONTRACT}"""

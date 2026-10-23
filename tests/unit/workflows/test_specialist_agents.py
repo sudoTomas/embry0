@@ -296,7 +296,7 @@ def test_context_audit_command_lists_what_instruction_files_lists(tmp_path):
 
 
 def test_context_audit_report_opens_with_the_stale_and_file_counts():
-    # The context-audit schedule reads the two counts back from the start.
+    # The first two lines are fixed so a program can read the counts.
     prompt = CONTEXT_AUDITOR_SYSTEM_PROMPT
     assert "The first line is `Stale: N` and nothing else" in prompt
     assert "where N is the number of `misleads` and `dead` findings" in prompt
@@ -315,6 +315,16 @@ def test_context_audit_report_opens_with_the_stale_and_file_counts():
     assert positions == sorted(positions), "the sections after the table keep their order"
     assert prompt.index("| Severity | Location |") < positions[0]
     assert "`Stale: 0`, then `Files: 0`" in prompt, "a repository with no instruction files still opens with both"
+
+
+def test_context_audit_report_says_what_to_cut_to_fit():
+    # Its pull is the longest part: a 24,731-character audit lost its head to
+    # the executor's cut. The prompt bounds the whole report, diff included,
+    # and keeps the counts and the misleads rows whatever else goes.
+    shape = CONTEXT_AUDITOR_SYSTEM_PROMPT.split("## Deliverable shape", 1)[1]
+    assert f"the diff included, stays under {REPORT_TARGET_CHARS:,}" in shape
+    assert "the `drift` rows and their hunks" in shape
+    assert "Never cut the first two lines or a `misleads` row" in shape
 
 
 def test_context_audit_checks_references_by_script_and_proves_its_pull():
