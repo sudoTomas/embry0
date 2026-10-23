@@ -83,7 +83,7 @@ export interface PipelineGraph {
   metadata: PipelineMetadata;
 }
 
-/** The job kinds a template can be the default route for (RAV-601); at most one template per kind. */
+/** The job kinds a template can be the default route for; at most one template per kind. */
 export const TEMPLATE_KINDS = ["code", "research", "analysis", "ops"] as const;
 export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
 
