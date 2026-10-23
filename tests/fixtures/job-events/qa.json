@@ -1,6 +1,14 @@
 [
   {
+    "attempt": 1,
     "event_seq": 1000,
+    "job_id": "job-0001",
+    "node": "init_orchestrator",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "type": "node_started"
+  },
+  {
+    "event_seq": 1003,
     "graph": {
       "description": "Boot the apps and run the browser QA agent per app",
       "edges": [
@@ -17,7 +25,7 @@
           "target": "qa_report"
         }
       ],
-      "graph_id": "qa-job-fixture-qa",
+      "graph_id": "qa-job-0001",
       "metadata": {
         "created_by": "auto",
         "max_total_budget_usd": 0,
@@ -58,161 +66,273 @@
         }
       ]
     },
-    "job_id": "job-fixture-qa",
-    "node": "init_orchestrator",
-    "timestamp": "2026-01-01T00:00:00Z",
-    "type": "pipeline_graph"
-  },
-  {
-    "agent": "qa",
-    "attempt": 1,
-    "event_seq": 1003,
-    "job_id": "job-fixture-qa",
+    "job_id": "job-0001",
     "node": "init_orchestrator",
     "prev_seq": 1000,
     "timestamp": "2026-01-01T00:00:01Z",
-    "type": "node_started"
+    "type": "pipeline_graph"
   },
   {
-    "agent": "qa",
     "attempt": 1,
     "event_seq": 1006,
-    "job_id": "job-fixture-qa",
+    "job_id": "job-0001",
     "node": "init_orchestrator",
-    "ok": true,
     "prev_seq": 1003,
     "timestamp": "2026-01-01T00:00:02Z",
     "type": "node_completed"
   },
   {
-    "agent": "qa",
     "attempt": 1,
     "event_seq": 1009,
-    "job_id": "job-fixture-qa",
+    "job_id": "job-0001",
     "node": "orchestrate_qa",
     "prev_seq": 1006,
     "timestamp": "2026-01-01T00:00:03Z",
     "type": "node_started"
   },
   {
-    "apps": [
-      "web"
-    ],
     "event_seq": 1012,
-    "job_id": "job-fixture-qa",
+    "job_id": "job-0001",
+    "message": "QA fan-out: 1 app(s): web",
     "node": "orchestrate_qa",
     "prev_seq": 1009,
     "timestamp": "2026-01-01T00:00:04Z",
+    "type": "progress"
+  },
+  {
+    "apps": [
+      "web"
+    ],
+    "event_seq": 1015,
+    "job_id": "job-0001",
+    "node": "qa",
+    "prev_seq": 1012,
+    "timestamp": "2026-01-01T00:00:05Z",
     "type": "qa_apps_resolved"
   },
   {
     "app": "web",
-    "event_seq": 1015,
-    "job_id": "job-fixture-qa",
-    "node": "orchestrate_qa",
-    "prev_seq": 1012,
-    "target": "http://web.example.test:3000",
-    "timestamp": "2026-01-01T00:00:05Z",
+    "event_seq": 1018,
+    "job_id": "job-0001",
+    "node": "qa",
+    "prev_seq": 1015,
+    "target": "managed",
+    "timestamp": "2026-01-01T00:00:06Z",
     "type": "qa_subtask_started"
   },
   {
     "app": "web",
-    "boot_phase": {
-      "attempt": 1,
-      "phase": "install"
-    },
-    "event_seq": 1018,
-    "job_id": "job-fixture-qa",
-    "node": "orchestrate_qa",
-    "prev_seq": 1015,
-    "status": "booting",
-    "timestamp": "2026-01-01T00:00:06Z",
-    "type": "qa_subtask_status"
-  },
-  {
-    "app": "web",
     "event_seq": 1021,
-    "job_id": "job-fixture-qa",
-    "node": "orchestrate_qa",
+    "job_id": "job-0001",
+    "node": "qa",
     "prev_seq": 1018,
-    "reason": "ready check timed out once",
-    "timestamp": "2026-01-01T00:00:07Z",
-    "type": "qa_agent_transient_retry"
-  },
-  {
-    "app": "web",
-    "event_seq": 1024,
-    "job_id": "job-fixture-qa",
-    "message": "Running acceptance criteria",
-    "node": "orchestrate_qa",
-    "prev_seq": 1021,
-    "timestamp": "2026-01-01T00:00:08Z",
-    "type": "progress"
-  },
-  {
-    "app": "web",
-    "duration_ms": 15000,
-    "event_seq": 1027,
-    "job_id": "job-fixture-qa",
-    "node": "orchestrate_qa",
-    "prev_seq": 1024,
     "status": "running",
+    "timestamp": "2026-01-01T00:00:07Z",
+    "type": "qa_subtask_status"
+  },
+  {
+    "agent": "qa",
+    "event_seq": 1024,
+    "job_id": "job-0001",
+    "max_turns": 100,
+    "model": "claude-sonnet-5-5",
+    "node": "qa",
+    "prev_seq": 1021,
+    "run_id": "run-0001",
+    "timestamp": "2026-01-01T00:00:08Z",
+    "type": "agent_started"
+  },
+  {
+    "agent": "qa",
+    "event_seq": 1027,
+    "job_id": "job-0001",
+    "model": "claude-sonnet-5-5",
+    "node": "qa",
+    "prev_seq": 1024,
+    "run_id": "run-0001",
     "timestamp": "2026-01-01T00:00:09Z",
+    "turn_number": 1,
+    "type": "turn_start"
+  },
+  {
+    "agent": "qa",
+    "event_seq": 1030,
+    "job_id": "job-0001",
+    "node": "qa",
+    "prev_seq": 1027,
+    "run_id": "run-0001",
+    "summary": "Navigate to http://web:3000/",
+    "timestamp": "2026-01-01T00:00:10Z",
+    "tool_id": "toolu_fx_qa1",
+    "tool_input": {
+      "url": "http://web:3000/"
+    },
+    "tool_name": "mcp__playwright__browser_navigate",
+    "type": "tool_call"
+  },
+  {
+    "agent": "qa",
+    "content": "Page loaded: Home",
+    "event_seq": 1033,
+    "is_error": false,
+    "job_id": "job-0001",
+    "node": "qa",
+    "prev_seq": 1030,
+    "run_id": "run-0001",
+    "timestamp": "2026-01-01T00:00:11Z",
+    "tool_id": "toolu_fx_qa1",
+    "type": "tool_result"
+  },
+  {
+    "agent": "qa",
+    "event_seq": 1036,
+    "job_id": "job-0001",
+    "model": "claude-sonnet-5-5",
+    "node": "qa",
+    "prev_seq": 1033,
+    "run_id": "run-0001",
+    "timestamp": "2026-01-01T00:00:12Z",
+    "turn_number": 2,
+    "type": "turn_start"
+  },
+  {
+    "agent": "qa",
+    "event_seq": 1039,
+    "job_id": "job-0001",
+    "node": "qa",
+    "prev_seq": 1036,
+    "run_id": "run-0001",
+    "text": "Every acceptance criterion passed.",
+    "timestamp": "2026-01-01T00:00:13Z",
+    "type": "text"
+  },
+  {
+    "agent": "qa",
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "cost_usd": 0.42,
+    "event_seq": 1042,
+    "input_tokens": 1800,
+    "job_id": "job-0001",
+    "model": "claude-sonnet-5-5",
+    "node": "qa",
+    "output_tokens": 600,
+    "prev_seq": 1039,
+    "run_id": "run-0001",
+    "timestamp": "2026-01-01T00:00:14Z",
+    "type": "turn_usage"
+  },
+  {
+    "agent": "qa",
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "cost_usd": 0.42,
+    "duration_api_ms": 150000,
+    "duration_ms": 160000,
+    "event_seq": 1045,
+    "job_id": "job-0001",
+    "node": "qa",
+    "num_turns": 2,
+    "prev_seq": 1042,
+    "run_id": "run-0001",
+    "timestamp": "2026-01-01T00:00:15Z",
+    "tokens_in": 1800,
+    "tokens_out": 600,
+    "type": "cost_update"
+  },
+  {
+    "agent": "qa",
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "cost_usd": 0.42,
+    "duration_ms": 160000,
+    "error_code": null,
+    "error_message": "",
+    "event_seq": 1048,
+    "input_tokens": 1800,
+    "is_error": false,
+    "job_id": "job-0001",
+    "node": "qa",
+    "output": "overall: passed",
+    "output_tokens": 600,
+    "policy_denials": {},
+    "prev_seq": 1045,
+    "run_id": "run-0001",
+    "timestamp": "2026-01-01T00:00:16Z",
+    "tools_called": {
+      "mcp__playwright__browser_navigate": 1
+    },
+    "type": "agent_completed"
+  },
+  {
+    "app": "web",
+    "duration_ms": 178000,
+    "event_seq": 1051,
+    "job_id": "job-0001",
+    "node": "qa",
+    "prev_seq": 1048,
+    "status": "passed",
+    "timestamp": "2026-01-01T00:00:17Z",
     "type": "qa_subtask_status"
   },
   {
     "app": "web",
-    "duration_ms": 61000,
-    "event_seq": 1030,
-    "job_id": "job-fixture-qa",
-    "node": "orchestrate_qa",
-    "prev_seq": 1027,
+    "duration_ms": 178000,
+    "event_seq": 1054,
+    "job_id": "job-0001",
+    "node": "qa",
+    "prev_seq": 1051,
     "status": "passed",
-    "timestamp": "2026-01-01T00:00:10Z",
+    "timestamp": "2026-01-01T00:00:18Z",
     "type": "qa_subtask_finished"
   },
   {
-    "action": "passed",
-    "agent": "qa",
-    "attempt": 1,
-    "event_seq": 1033,
-    "job_id": "job-fixture-qa",
+    "event_seq": 1057,
+    "job_id": "job-0001",
+    "message": "QA fan-out complete: passed",
     "node": "orchestrate_qa",
-    "prev_seq": 1030,
-    "timestamp": "2026-01-01T00:00:11Z",
+    "prev_seq": 1054,
+    "timestamp": "2026-01-01T00:00:19Z",
+    "type": "progress"
+  },
+  {
+    "action": "passed",
+    "attempt": 1,
+    "event_seq": 1060,
+    "job_id": "job-0001",
+    "node": "orchestrate_qa",
+    "prev_seq": 1057,
+    "timestamp": "2026-01-01T00:00:20Z",
     "type": "node_completed"
   },
   {
-    "agent": "qa",
     "attempt": 1,
-    "event_seq": 1036,
-    "job_id": "job-fixture-qa",
+    "event_seq": 1063,
+    "job_id": "job-0001",
     "node": "qa_report",
-    "prev_seq": 1033,
-    "timestamp": "2026-01-01T00:00:12Z",
+    "prev_seq": 1060,
+    "timestamp": "2026-01-01T00:00:21Z",
     "type": "node_started"
   },
   {
-    "agent": "qa",
     "attempt": 1,
-    "event_seq": 1039,
-    "job_id": "job-fixture-qa",
+    "event_seq": 1066,
+    "job_id": "job-0001",
     "node": "qa_report",
-    "ok": true,
-    "prev_seq": 1036,
-    "timestamp": "2026-01-01T00:00:13Z",
+    "prev_seq": 1063,
+    "timestamp": "2026-01-01T00:00:22Z",
     "type": "node_completed"
   },
   {
     "error_code": null,
     "error_message": null,
-    "event_seq": 1042,
-    "job_id": "job-fixture-qa",
+    "event_seq": 1069,
+    "job_id": "job-0001",
     "pr_url": null,
-    "prev_seq": 1039,
+    "prev_seq": 1066,
     "status": "completed",
-    "timestamp": "2026-01-01T00:00:14Z",
-    "total_cost_usd": 0.0,
+    "timestamp": "2026-01-01T00:00:23Z",
+    "total_cost_usd": 0.42,
     "type": "job_finished"
   }
 ]

@@ -79,6 +79,40 @@ def test_issue_to_pr_fixture_exercises_the_sandbox_vocabulary() -> None:
     assert expected <= types, f"missing {sorted(expected - types)}"
 
 
+def test_qa_fixture_nests_the_agent_run_in_orchestrate_qa() -> None:
+    """#102: the standalone QA stream brackets three agentless nodes, and every row
+    the nested QA agent emits carries node "qa", a name the graph does not know;
+    the run's own rows also carry its run_id. The emitters: orchestrator.py and
+    orchestrator_report.py bracket the nodes, nodes.py runs the agent with
+    node="qa" and executor._ids stamps it, the qa_* builders default to "qa"."""
+    events = json.loads((FIXTURES / "qa.json").read_text())
+    graph = next(e for e in events if e["type"] == "pipeline_graph")["graph"]
+    node_ids = [n["node_id"] for n in graph["nodes"]]
+    assert node_ids == ["init_orchestrator", "orchestrate_qa", "qa_report"], node_ids
+    brackets = [(e["type"], e["node"]) for e in events if e["type"] in ("node_started", "node_completed")]
+    assert brackets == [(t, n) for n in node_ids for t in ("node_started", "node_completed")], (
+        f"the three graph nodes bracket themselves in order, nothing else does: {brackets}"
+    )
+    assert "qa" not in node_ids, "the nested agent's node name must not be a graph node"
+    qa_rows = [e for e in events if e["type"].startswith("qa_")]
+    assert qa_rows, "no qa_* rows"
+    for e in qa_rows:
+        assert e["node"] == "qa", (
+            f"{e['type']} seq {e['event_seq']} carries node {e['node']!r}, the emitter writes 'qa'"
+        )
+        assert "run_id" not in e, f"{e['type']} seq {e['event_seq']} is the orchestrator's, it has no run_id"
+    run_rows = [e for e in events if e["type"] in ("agent_started", "cost_update", "agent_completed")]
+    assert [e["type"] for e in run_rows] == ["agent_started", "cost_update", "agent_completed"], (
+        f"the QA run opens, reports its cost and closes once: {[e['type'] for e in run_rows]}"
+    )
+    for e in run_rows:
+        assert (e["node"], e["agent"], e["run_id"]) == ("qa", "qa", "run-0001"), f"{e['type']} seq {e['event_seq']}"
+    started = events.index(next(e for e in events if e["type"] == "node_started" and e["node"] == "orchestrate_qa"))
+    completed = events.index(next(e for e in events if e["type"] == "node_completed" and e["node"] == "orchestrate_qa"))
+    for e in qa_rows + run_rows:
+        assert started < events.index(e) < completed, f"{e['type']} seq {e['event_seq']} is outside orchestrate_qa"
+
+
 def test_fixtures_equal_the_script_output() -> None:
     module = _script()
     generated = module.generate_all()

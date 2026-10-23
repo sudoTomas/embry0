@@ -214,14 +214,21 @@ describe("useAgentStates", () => {
     expect(agents[0].toolCalls).toMatchObject([{ tool_id: "legacy-1", input: "ls -la", result: "total 0" }]);
   });
 
-  it("agentless nodes: every graph node of a completed QA job keeps one completed card", () => {
+  it("agentless nodes: a completed QA job's init and report nodes keep one completed card each", () => {
+    // Only orchestrate_qa hosts an agent run (the QA agent nested inside it,
+    // #102); the other two nodes run no agent and must still keep a card once
+    // started. How many cards the one run yields is #104's assertion, not this one's.
     const { events, graph } = fixtureWithGraph("qa");
     const { agents } = run(events, "completed", graph);
+    for (const node of ["init_orchestrator", "qa_report"]) {
+      const cards = agents.filter((a) => a.node === node);
+      expect(cards.map((a) => a.status), `${node} must keep exactly one completed card`).toEqual(["completed"]);
+      expect(cards[0].toolCalls, `${node} ran no agent`).toHaveLength(0);
+    }
     expect(
-      agents.map((a) => [a.node, a.status]),
-      "a node with no agent run must keep a card once it has started",
-    ).toEqual(graph.nodes.map((n) => [n.physical_node ?? n.node_id, "completed"]));
-    expect(agents.every((a) => a.toolCalls.length === 0)).toBe(true);
+      agents.filter((a) => a.node === "orchestrate_qa").map((a) => a.status),
+      "orchestrate_qa keeps a completed card",
+    ).toEqual(["completed"]);
   });
 
   it("agentless nodes: a running QA node's card is running, the next one pending", () => {
