@@ -480,3 +480,75 @@ async def test_scoped_results_cap_each_line_before_redacting(ctx):
     line = (await resp.json())["lines"][0]["line"]
     assert line.endswith("… [line truncated]")
     assert len(line) <= MAX_REDACTED_LINE_CHARS + 32
+
+
+# --- glob entries for containers named per release (blue/green slots) ---
+
+_PATTERNED = ["acme-backend*", "acme-frontend"]
+
+
+@pytest.fixture
+async def pctx(aiohttp_client):
+    """(client, fake_upstream) over an allowlist with a pattern entry."""
+    app = _make_app(container_allowlist=list(_PATTERNED))
+    client = await aiohttp_client(app)
+    fake = _FakeUpstreamClient()
+    app["http_client"] = fake
+    return client, fake
+
+
+@pytest.mark.parametrize("name", ["acme-backend-blue", "acme-backend-b-green", "acme-backend-leads-blue"])
+async def test_a_pattern_admits_a_slot_name_and_forwards_it_as_given(pctx, name):
+    client, fake = pctx
+    await _enroll(client)
+    resp = await client.get("/api/v1/logs/query", params={"container": name}, headers=_bearer())
+    assert resp.status == 200
+    assert fake.calls[0]["params"]["container"] == name
+
+
+@pytest.mark.parametrize("name", ["acme-backend|.+", "acme-backend.*", "acme-backend*", "acme-backend-(a|b)"])
+async def test_a_pattern_never_lets_regex_syntax_reach_the_selector(pctx, name):
+    """The upstream selector embeds the name in a regex unescaped: through a
+    pattern only a plain container name may pass, and a miss costs no quota."""
+    client, fake = pctx
+    await _enroll(client)
+    resp = await client.get("/api/v1/logs/query", params={"container": name}, headers=_bearer())
+    assert resp.status == 400
+    data = await resp.json()
+    assert data["allowed_containers"] == _PATTERNED
+    assert fake.calls == []
+    assert client.server.app["query_count_by_id"].get("s1", 0) == 0
+
+
+async def test_exact_entries_next_to_a_pattern_are_unchanged(pctx):
+    client, fake = pctx
+    await _enroll(client)
+    assert (await client.get("/api/v1/logs/query?container=ACME-FRONTEND", headers=_bearer())).status == 200
+    assert fake.calls[0]["params"]["container"] == "acme-frontend"
+    # An exact entry is not a prefix.
+    assert (await client.get("/api/v1/logs/query?container=acme-frontend-old", headers=_bearer())).status == 400
+
+
+async def test_a_scope_holds_the_slot_names_asked_for_never_the_pattern(pctx):
+    client, fake = pctx
+    resp = await _enroll_scoped(client, ["acme-backend-green", "acme-backend*", "embry0-postgres"])
+    assert resp.status == 200
+    assert (await resp.json())["allowed_containers"] == ["acme-backend-green"]
+
+    sibling = await client.get("/api/v1/logs/query", params={"container": "acme-backend-blue"}, headers=_bearer())
+    assert sibling.status == 400
+    assert (await sibling.json())["allowed_containers"] == ["acme-backend-green"]
+    ok = await client.get("/api/v1/logs/query", params={"container": "ACME-BACKEND-GREEN"}, headers=_bearer())
+    assert ok.status == 200
+    assert fake.calls[0]["params"]["container"] == "acme-backend-green"
+
+
+async def test_a_scope_of_only_the_pattern_grants_nothing(pctx):
+    client, _ = pctx
+    resp = await _enroll_scoped(client, ["acme-backend*"])
+    assert resp.status == 400
+
+
+async def test_health_counts_entries_not_names(pctx):
+    client, _ = pctx
+    assert (await (await client.get("/health")).json())["allowlist_size"] == 2

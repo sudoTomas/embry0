@@ -12,7 +12,11 @@ Mediation, all server-side:
   ProxyManager deliberately does NOT include this proxy in the ``enroll_sandbox``
   broadcast, only watcher-flagged jobs are enrolled via ``enroll_context()``.
 - container-name allowlist (exact match, case-insensitive) — no sandbox-supplied free-form
-  string ever reaches Loki's regex selector; a miss returns the allowed names.
+  string ever reaches Loki's regex selector; a miss returns the allowed names. An entry
+  may be a glob pattern (``shop-api*``) for containers named per release, such as
+  blue/green slots; a name admitted by a pattern must be a plain container name
+  (letters, digits, ``_``, ``-``), so it carries no regex syntax either
+  (:mod:`embry0.execution.proxy.container_allowlist`).
 - the raw ``logql`` override (and any unknown param) is rejected, never forwarded.
 - numeric caps are clamped rather than rejected (the upstream endpoint 422s on
   out-of-range, and the agent must never see an opaque validation error).
@@ -40,6 +44,7 @@ import httpx
 import structlog
 from aiohttp import web
 
+from embry0.execution.proxy.container_allowlist import ContainerAllowlist
 from embry0.execution.proxy.enrollment import EnrollRejected, check_bearer, register_admin_routes
 from embry0.safety.redaction import redact_bounded, redact_log_text, secret_env_values
 
@@ -77,8 +82,9 @@ class _ContainerScope:
         requested = body[_SCOPE_FIELD]
         if not isinstance(requested, list) or not all(isinstance(c, str) for c in requested):
             raise EnrollRejected(f"{_SCOPE_FIELD} must be a list of container names")
-        canonical: dict[str, str] = app["allowlist_lower"]
-        scope = sorted({canonical[c.strip().lower()] for c in requested if c.strip().lower() in canonical})
+        allowlist: ContainerAllowlist = app["allowlist"]
+        # A pattern narrows to the concrete names asked for; it is never granted as itself.
+        scope = sorted({name for c in requested if (name := allowlist.resolve(c)) is not None})
         if not scope:
             raise EnrollRejected(f"{_SCOPE_FIELD} names no queryable container")
         return scope
@@ -142,12 +148,13 @@ def create_context_proxy_app(
         orchestrator_api_key: injected as ``Authorization: Bearer`` on the upstream
             call. May be empty in dev mode (upstream auth is skipped there too).
         admin_token: shared secret for the ``/admin/*`` endpoints.
-        container_allowlist: exact container names the sandbox may query.
+        container_allowlist: container names the sandbox may query, exact or glob
+            patterns (:class:`ContainerAllowlist`).
         query_quota: lifetime queries allowed per enrolled sandbox.
     """
     if not upstream_url:
         raise ValueError("upstream_url is required")
-    allowlist = [c.strip() for c in container_allowlist if c.strip()]
+    allowlist = ContainerAllowlist(container_allowlist)
     if not allowlist:
         raise ValueError("container_allowlist must be non-empty")
     if query_quota < 1:
@@ -156,8 +163,8 @@ def create_context_proxy_app(
     app = web.Application()
     app["upstream_url"] = upstream_url.rstrip("/")
     app["orchestrator_api_key"] = orchestrator_api_key
-    app["container_allowlist"] = allowlist
-    app["allowlist_lower"] = {c.lower(): c for c in allowlist}
+    app["container_allowlist"] = allowlist.entries
+    app["allowlist"] = allowlist
     app["query_quota"] = query_quota
     # Quota counters and scopes are in-memory alongside the shared enrollment
     # registry; all of it resets on proxy restart. The registry runs
@@ -231,8 +238,11 @@ async def _query_handler(request: web.Request) -> web.Response:
     container = (request.query.get("container") or "").strip()
     scope: list[str] | None = request.app["scope_by_id"].get(sandbox_id)
     queryable: list[str] = scope if scope is not None else request.app["container_allowlist"]
-    canonical = request.app["allowlist_lower"].get(container.lower())
-    if not canonical or canonical not in queryable:
+    # The global allowlist always decides; a scope can only narrow it further.
+    canonical = request.app["allowlist"].resolve(container)
+    if canonical is not None and scope is not None:
+        canonical = {name.lower(): name for name in scope}.get(canonical.lower())
+    if not canonical:
         return web.json_response(
             {
                 "error": f"container {container!r} is not queryable",

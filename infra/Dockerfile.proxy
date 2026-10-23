@@ -35,6 +35,7 @@ COPY embry0/safety/redaction.py                   /app/embry0/safety/redaction.p
 COPY embry0/safety/xai_denials.py                 /app/embry0/safety/xai_denials.py
 COPY embry0/execution/proxy/__init__.py           /app/embry0/execution/proxy/__init__.py
 COPY embry0/execution/proxy/auth_proxy.py         /app/embry0/execution/proxy/auth_proxy.py
+COPY embry0/execution/proxy/container_allowlist.py /app/embry0/execution/proxy/container_allowlist.py
 COPY embry0/execution/proxy/context_proxy.py      /app/embry0/execution/proxy/context_proxy.py
 COPY embry0/execution/proxy/enrollment.py         /app/embry0/execution/proxy/enrollment.py
 COPY embry0/execution/proxy/forge_scope.py        /app/embry0/execution/proxy/forge_scope.py
