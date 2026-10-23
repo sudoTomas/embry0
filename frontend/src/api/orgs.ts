@@ -154,6 +154,8 @@ export async function fetchOrganization(owner: string): Promise<Organization> {
 export interface OrgSettingsPatch {
   /** Hours between discovery runs, 1 to 168; null takes the owner off the schedule. */
   rediscover_hours?: number | null;
+  /** Register a repository under this owner when a webhook delivery names one nobody registered. */
+  auto_register?: boolean;
 }
 
 /** Change an owner's settings (admin). The server merges them into the stored ones. */
@@ -230,5 +232,66 @@ export async function runOrganizationAction(
   const { data } = await api.post<OrgActionResponse>(`/orgs/${encodeURIComponent(owner)}/actions`, body, {
     suppressValidationToast: true,
   });
+  return data;
+}
+
+/** One webhook on the organization, as GitHub reports it; a hook pointing elsewhere is reduced to its origin. */
+export interface OrgHook {
+  id: number | null;
+  url: string;
+  events: string[];
+  active: boolean;
+}
+
+export interface OrgWebhookStatus {
+  owner: string;
+  installed: boolean;
+  hook: OrgHook | null;
+  /** Where this deployment's hook points, or null without a public webhook origin. */
+  target_url: string | null;
+  /** False when the credential cannot list hooks; `hooks` is then empty and says nothing. */
+  hooks_visible: boolean;
+  hooks: OrgHook[];
+}
+
+export interface OrgWebhookInstall {
+  owner: string;
+  target_url: string;
+  outcome: "done" | "already" | "failed";
+  hook: OrgHook | null;
+  detail: string;
+}
+
+/** What PATCH /orgs/{owner} takes: a display name (null clears), settings (merged), or both. */
+export interface OrgPatch {
+  display_name?: string | null;
+  settings?: OrgSettingsPatch;
+}
+
+/** Ask the forge again what the stored credential can do at this owner (admin). */
+export async function reprobeOrganization(owner: string): Promise<Organization> {
+  const { data } = await api.post<Organization>(`/orgs/${encodeURIComponent(owner)}/probe`, undefined, { suppressValidationToast: true });
+  return data;
+}
+
+/** Change the display name or the settings (admin); a refusal is the caller's to show. */
+export async function updateOrganization(owner: string, body: OrgPatch): Promise<Organization> {
+  const { data } = await api.patch<Organization>(`/orgs/${encodeURIComponent(owner)}`, body, { suppressValidationToast: true });
+  return data;
+}
+
+export async function setOrganizationStatus(owner: string, status: OrgStatus): Promise<Organization> {
+  const { data } = await api.put<Organization>(`/orgs/${encodeURIComponent(owner)}/status`, { status }, { suppressValidationToast: true });
+  return data;
+}
+
+export async function fetchOrganizationWebhook(owner: string): Promise<OrgWebhookStatus> {
+  const { data } = await api.get<OrgWebhookStatus>(`/orgs/${encodeURIComponent(owner)}/webhook`);
+  return data;
+}
+
+/** Install the organization's one webhook, pointing at this deployment (admin, GitHub only). */
+export async function installOrganizationWebhook(owner: string): Promise<OrgWebhookInstall> {
+  const { data } = await api.post<OrgWebhookInstall>(`/orgs/${encodeURIComponent(owner)}/webhook`, undefined, { suppressValidationToast: true });
   return data;
 }

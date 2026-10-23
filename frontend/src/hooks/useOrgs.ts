@@ -7,10 +7,18 @@ import {
   fetchOrganizationRepos,
   fetchOrganizationRuns,
   fetchOrganizations,
+  fetchOrganizationWebhook,
+  installOrganizationWebhook,
   patchOrganization,
   reopenNeed,
+  reprobeOrganization,
+  setOrganizationStatus,
+  updateOrganization,
   type DiscoveryRun,
+  type Organization,
+  type OrgPatch,
   type OrgSettingsPatch,
+  type OrgStatus,
 } from "@/api/orgs";
 
 /** While a discovery run is going, its progress is read this often. */
@@ -84,5 +92,45 @@ export function usePatchOrganizationSettings(owner: string) {
     mutationFn: (settings: OrgSettingsPatch) => patchOrganization(owner, settings),
     onSuccess: (org) => qc.setQueryData(["orgs", owner], org),
     onSettled: () => qc.invalidateQueries({ queryKey: ["orgs"] }),
+  });
+}
+
+/** The organization's webhook as the forge reports it; read only for a GitHub owner on a tab that shows it. */
+export function useOrganizationWebhook(owner: string, enabled = true) {
+  return useQuery({
+    queryKey: ["orgs", owner, "webhook"],
+    queryFn: () => fetchOrganizationWebhook(owner),
+    enabled: !!owner && enabled,
+    retry: false,
+  });
+}
+
+function replaceOrganization(qc: ReturnType<typeof useQueryClient>, owner: string) {
+  return {
+    onSuccess: (org: Organization) => qc.setQueryData(["orgs", owner], org),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["orgs"] }),
+  };
+}
+
+export function useReprobeOrganization(owner: string) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: () => reprobeOrganization(owner), ...replaceOrganization(qc, owner) });
+}
+
+export function useUpdateOrganization(owner: string) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (body: OrgPatch) => updateOrganization(owner, body), ...replaceOrganization(qc, owner) });
+}
+
+export function useSetOrganizationStatus(owner: string) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (status: OrgStatus) => setOrganizationStatus(owner, status), ...replaceOrganization(qc, owner) });
+}
+
+export function useInstallOrganizationWebhook(owner: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => installOrganizationWebhook(owner),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["orgs", owner, "webhook"] }),
   });
 }
