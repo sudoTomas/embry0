@@ -3,6 +3,7 @@ import { renderHook } from "@testing-library/react";
 import { useAgentStates } from "../useAgentStates";
 import type { LogEvent, PipelineGraph } from "@/lib/types";
 import { loadFixture, type FixtureName } from "@/lib/__tests__/fixtures";
+import { QA_AGENT_STARTED, STANDALONE_QA_EVENTS, STANDALONE_QA_GRAPH } from "@/lib/__tests__/standalone-qa-stream";
 
 const t = "2026-10-15T00:00:00Z";
 
@@ -251,6 +252,127 @@ describe("useAgentStates", () => {
     const { agents } = run(events, "completed", graph);
     expect(agents.map((a) => a.runId), "a node with a run must not also get a graph card").toEqual([
       "run-fixture-1", "run-fixture-2", "run-fixture-3", "run-fixture-4",
+    ]);
+  });
+});
+
+describe("a run nested inside a graph node (#104)", () => {
+  // The standalone QA job's agent runs inside the orchestrate_qa LangGraph
+  // node and stamps `node: "qa"`, a name the graph does not know. The run is
+  // that node's work: the node must not get a second card of its own on top,
+  // carrying the same cost_update once more.
+  it("is its graph node's one card, with the run's cost counted once", () => {
+    const { agents } = run(STANDALONE_QA_EVENTS, "completed", STANDALONE_QA_GRAPH);
+    expect(agents.map((a) => a.runId), "the orchestrate_qa node's work is one card: its run").toEqual([
+      "run-0001", "node:init_orchestrator", "node:qa_report",
+    ]);
+    const qaRun = agents.find((a) => a.runId === "run-0001")!;
+    expect(qaRun.node, "a nested run belongs to the graph node running when it started").toBe("orchestrate_qa");
+    expect(qaRun.agent).toBe("qa");
+    expect([qaRun.status, qaRun.costUsd, qaRun.turnCount], "the run's own rows still reach its card").toEqual(["completed", 1.602263, 0]);
+    expect(agents.reduce((sum, a) => sum + a.costUsd, 0), "the run's one cost_update is counted once").toBeCloseTo(1.602263, 6);
+    expect(qaRun.summary, "neither the node's action nor its closing progress row may replace the outcome agent_completed set").toBe("All acceptance criteria passed.");
+    expect(qaRun.events.slice(0, 7).map((e) => e.type), "the run's record starts with its node's own rows").toEqual([
+      "node_started", "qa_apps_resolved", "qa_subtask_started", "qa_subtask_status", "progress", "progress", "agent_started",
+    ]);
+  });
+
+  it("the sub-task's progress rows before the run open no run", () => {
+    const upToRun = STANDALONE_QA_EVENTS.slice(0, STANDALONE_QA_EVENTS.indexOf(QA_AGENT_STARTED));
+    const { agents } = run(upToRun, "running", STANDALONE_QA_GRAPH);
+    expect(agents.map((a) => a.runId), "an unknown-node row before any run is nobody's").toEqual([
+      "node:init_orchestrator", "node:orchestrate_qa", "pending:qa_report",
+    ]);
+  });
+
+  it("a progress row after the run completed leaves its outcome alone; one while it runs is its summary", () => {
+    const progress = (message: string) => ({ type: "progress", node: "developer", message, timestamp: t });
+    const completed = { type: "agent_completed", node: "developer", run_id: "r1", is_error: false, output: "done", cost_usd: 0.01, duration_ms: 1,
+      error_code: null, error_message: "", tools_called: {}, policy_denials: {}, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, timestamp: t };
+    const { agents } = run([...started("developer", "r1"), progress("working"), completed, progress("wrapping up the node")]);
+    expect(agents[0].summary, "a finished run's summary is its outcome").toBe("done");
+    expect(run([...started("developer", "r1"), progress("working")]).agents[0].summary, "a running run's summary follows progress").toBe("working");
+  });
+
+  it("the node's run-less node_completed fills in a summary only for a run that has none", () => {
+    const { agents } = run([
+      ...started("developer", "r1"),
+      { type: "node_completed", node: "developer", action: "proceed", timestamp: t },
+    ]);
+    expect(agents[0].summary, "a run with no outcome of its own takes the node's action").toBe("proceed");
+  });
+
+  it("a routing action never replaces an agent's own summary: triage keeps its output, a silent run takes the action", () => {
+    const completed = (output: string) => ({
+      type: "agent_completed", node: "triage", agent: "triage", run_id: "r1", is_error: false, output, cost_usd: 0.01, duration_ms: 1,
+      error_code: null, error_message: "", tools_called: {}, policy_denials: {}, input_tokens: 0, output_tokens: 0,
+      cache_read_tokens: 0, cache_creation_tokens: 0, timestamp: t,
+    });
+    const routed = { type: "node_completed", node: "triage", action: "ask_user", timestamp: t };
+    const withOutput = run([...started("triage", "r1"), completed("Needs the owner's call on the schema."), routed]);
+    expect(withOutput.agents[0].summary, "the agent's own output outranks the routing label").toBe("Needs the owner's call on the schema.");
+    const silent = run([...started("triage", "r1"), completed(""), routed]);
+    expect(silent.agents[0].summary, "a run with no output shows where the node routed").toBe("ask_user");
+  });
+
+  it("a node nesting several runs: each keeps its own outcome, the node card carries the verdict", () => {
+    // Two apps: orchestrate_qa fans out one run per app. The web run fails,
+    // the api run passes, the node's own node_completed says failed overall.
+    const qa = (type: string, fields: Record<string, unknown>) => ({ type, node: "qa", timestamp: t, ...fields });
+    const cost = (runId: string, cost_usd: number) => qa("cost_update", {
+      run_id: runId, cost_usd, num_turns: 3, duration_ms: 1, duration_api_ms: 1, tokens_in: 1, tokens_out: 1, cache_read_tokens: 0, cache_creation_tokens: 0,
+    });
+    const completed = (runId: string, cost_usd: number, extra: Record<string, unknown>) => qa("agent_completed", {
+      run_id: runId, agent: "qa", cost_usd, duration_ms: 1, tools_called: {}, policy_denials: {}, input_tokens: 0, output_tokens: 0,
+      cache_read_tokens: 0, cache_creation_tokens: 0, error_code: null, error_message: "", output: "", is_error: false, ...extra,
+    });
+    const { agents } = run([
+      { type: "node_started", node: "init_orchestrator", attempt: 1, timestamp: t },
+      { type: "node_completed", node: "init_orchestrator", timestamp: t },
+      { type: "node_started", node: "orchestrate_qa", attempt: 1, timestamp: t },
+      qa("qa_apps_resolved", { apps: ["web", "api"] }),
+      qa("agent_started", { agent: "qa", run_id: "run-web", model: "m", max_turns: 10 }),
+      qa("agent_started", { agent: "qa", run_id: "run-api", model: "m", max_turns: 10 }),
+      cost("run-web", 0.5),
+      completed("run-web", 0.5, { is_error: true, error_code: "ERR_QA_FAILED", error_message: "web: criterion 2 failed" }),
+      cost("run-api", 0.25),
+      completed("run-api", 0.25, { output: "api: all passed" }),
+      { type: "node_completed", node: "orchestrate_qa", action: "failed", timestamp: t },
+      { type: "node_started", node: "qa_report", timestamp: t },
+      { type: "node_completed", node: "qa_report", timestamp: t },
+    ], "failed", STANDALONE_QA_GRAPH);
+    expect(agents.map((a) => [a.runId, a.status, a.summary]), "the passing run must not wear the node's verdict").toEqual([
+      ["run-web", "failed", "web: criterion 2 failed"],
+      ["run-api", "completed", "api: all passed"],
+      ["node:init_orchestrator", "completed", ""],
+      ["node:orchestrate_qa", "failed", ""],
+      ["node:qa_report", "completed", ""],
+    ]);
+    expect(agents.map((a) => a.costUsd), "the node card carries no cost of its own").toEqual([0.5, 0.25, 0, 0, 0]);
+    expect(agents.find((a) => a.runId === "node:orchestrate_qa")!.turnCount).toBe(0);
+  });
+
+  it("moves a run only onto a node the graph has", () => {
+    const nestedUnder = (host: string) => [
+      { type: "node_started", node: host, attempt: 1, timestamp: t },
+      { type: "agent_started", node: "qa", agent: "qa", run_id: "run-0001", model: "m", max_turns: 10, timestamp: t },
+    ];
+    expect(run(nestedUnder("init"), "running", STANDALONE_QA_GRAPH).agents[0].node, "a host the graph does not know is not a graph node").toBe("qa");
+    const empty = { ...STANDALONE_QA_GRAPH, nodes: [] };
+    expect(run(nestedUnder("orchestrate_qa"), "running", empty).agents[0].node, "an empty graph moves nothing").toBe("qa");
+    expect(run(nestedUnder("orchestrate_qa"), "running", STANDALONE_QA_GRAPH).agents[0].node).toBe("orchestrate_qa");
+  });
+
+  it("keeps its own node name when the graph is not known yet", () => {
+    const { agents } = run(STANDALONE_QA_EVENTS, "completed", null);
+    expect(agents.map((a) => [a.runId, a.node]), "no graph, no resolution and no graph cards").toEqual([["run-0001", "qa"]]);
+  });
+
+  it("a run whose node the graph knows is unchanged", () => {
+    const { events, graph } = fixtureWithGraph("issue-to-pr");
+    const { agents } = run(events, "completed", graph);
+    expect(agents.map((a) => [a.runId, a.node])).toEqual([
+      ["run-fixture-1", "triage"], ["run-fixture-2", "developer"], ["run-fixture-3", "developer"], ["run-fixture-4", "review"],
     ]);
   });
 });

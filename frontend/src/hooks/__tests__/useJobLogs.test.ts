@@ -11,6 +11,7 @@ async function flushConnect() {
   await act(async () => {});
 }
 import { useJobLogs } from "../useJobLogs";
+import { useAgentStates } from "../useAgentStates";
 import { fetchJobLogEvents } from "@/api/logs";
 
 // Mock the REST fallback so tests control what persisted events exist
@@ -359,6 +360,41 @@ describe("useJobLogs", () => {
     expect(result.current.latestCost).toBeCloseTo(0.35, 6);
     expect(result.current.latestTokensIn).toBe(610);
     expect(result.current.latestTokensOut).toBe(305);
+  });
+
+  it("counts a run's cost_update once however often its persisted row is replayed (#104)", async () => {
+    const { result } = renderHook(() => useJobLogs("job-0001"));
+    await flushConnect();
+
+    const row = (seq: number, fields: Record<string, unknown>) => ({ timestamp: "t", event_seq: seq, prev_seq: seq - 1, ...fields });
+    const started = row(11, { type: "agent_started", node: "qa", agent: "qa", run_id: "run-0001", model: "m", max_turns: 10 });
+    const cost = row(12, {
+      type: "cost_update", node: "qa", run_id: "run-0001", cost_usd: 1.602263, num_turns: 57, duration_ms: 1, duration_api_ms: 1,
+      tokens_in: 108, tokens_out: 13785, cache_read_tokens: 0, cache_creation_tokens: 0,
+    });
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage(started);
+      lastCreatedWs!.simulateMessage(cost);
+      // The same persisted row again on this socket (a bus duplicate).
+      lastCreatedWs!.simulateMessage(cost);
+      lastCreatedWs!.simulateClose();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    // The reconnect replays the whole log, cursor or not.
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage(started);
+      lastCreatedWs!.simulateMessage(cost);
+    });
+    await flushBatch();
+
+    expect(result.current.events.filter((e) => e.type === "cost_update"), "a replayed row reaches the page once").toHaveLength(1);
+    expect(result.current.latestCost, "the HUD total counts the replayed cost_update once").toBeCloseTo(1.602263, 6);
+    const { agents } = renderHook(() => useAgentStates(result.current.events, "running", null)).result.current;
+    expect(agents.map((a) => [a.runId, a.costUsd]), "one card, its cost once").toEqual([["run-0001", 1.602263]]);
   });
 
   it("adds turn_usage partials until the run's cost_update lands", async () => {
