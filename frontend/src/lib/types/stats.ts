@@ -81,6 +81,27 @@ export interface DeliveryStats {
   merge_rate: number;
 }
 
+export interface QaPrebuiltImageRef {
+  repo: string;
+  image_tag: string;
+}
+
+/** Which repositories' pre-built QA images sit on the current base (#334); null when the stack has no docker handle. */
+export interface QaPrebuiltImagesSummary {
+  active: number;
+  fresh: number;
+  stale: QaPrebuiltImageRef[];
+  unknown: QaPrebuiltImageRef[];
+}
+
+/** The credential registry's size and health; null when the registry is not wired. */
+export interface CredentialsSummary {
+  count: number;
+  quarantined: number;
+  disabled: number;
+  env_fallback_keys: string[];
+}
+
 export interface StatsResponse {
   total_issues: number;
   total_jobs: number;
@@ -112,4 +133,6 @@ export interface StatsResponse {
   /** EMB-35 — token observability. Optional for back-compat. */
   tokens_by_agent?: AgentTokenStats[];
   token_totals?: TokenTotals;
+  qa_prebuilt_images?: QaPrebuiltImagesSummary | null;
+  credentials?: CredentialsSummary | null;
 }
