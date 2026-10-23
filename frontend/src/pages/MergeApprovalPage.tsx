@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/Badge";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DashboardSkeleton } from "@/components/ui/PageSkeleton";
 import { PageError } from "@/components/PageError";
-import { CHECKS_TONES, VERDICT_LABELS, VERDICT_TONES, approvalTitle, decidedVia } from "@/lib/mergeApprovals";
+import { CHECKS_TONES, VERDICT_LABELS, VERDICT_TONES, approvalTitle, decidedVia, detailSentence } from "@/lib/mergeApprovals";
 import { sentenceCase, statusLabel, statusTone } from "@/lib/status";
 import { formatDateTime } from "@/lib/utils";
 
@@ -43,7 +43,7 @@ const SETTLED = new Set(["merged", "would_merge", "approved", "rejected"]);
 function toastOutcome(title: string, result: MergeDecisionResult) {
   const summary = `${title}: ${sentenceCase(result.outcome)}`;
   if (KEPT_PENDING.has(result.outcome)) {
-    toast.warning(result.detail ? `${summary}. ${result.detail}` : summary);
+    toast.warning(result.detail ? `${summary}. ${detailSentence(result.detail)}` : summary);
   } else if (SETTLED.has(result.outcome)) {
     toast.success(summary);
   } else {
@@ -62,7 +62,7 @@ function Decision({ row }: { row: MergeApproval }) {
         {row.decided_by
           ? `Decided by ${row.decided_by} ${decidedVia(row.chat_id)}${row.decided_at ? ` on ${formatDateTime(row.decided_at)}` : ""}.`
           : `${statusLabel(row.status)}.`}
-        {row.detail && ` ${sentenceCase(row.detail)}.`}
+        {row.detail && ` ${detailSentence(row.detail)}`}
       </p>
     );
   }
@@ -96,7 +96,7 @@ function Decision({ row }: { row: MergeApproval }) {
       </div>
       {row.detail && (
         <p className="text-sm text-fg-secondary" data-testid="merge-approval-detail">
-          {`${sentenceCase(row.detail)}.`}
+          {detailSentence(row.detail)}
         </p>
       )}
       {asking === "approve" && (

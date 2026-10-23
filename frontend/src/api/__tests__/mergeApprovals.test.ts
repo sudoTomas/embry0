@@ -4,6 +4,7 @@ vi.mock("../client", () => ({ api: { get: vi.fn(), post: vi.fn() } }));
 
 import { api } from "../client";
 import { decideMergeApproval, fetchMergeApproval, fetchMergeApprovals, fetchPendingMergeApprovals } from "../mergeApprovals";
+import { detailSentence } from "@/lib/mergeApprovals";
 
 const get = api.get as ReturnType<typeof vi.fn>;
 const post = api.post as ReturnType<typeof vi.fn>;
@@ -35,5 +36,13 @@ describe("merge approvals api", () => {
     post.mockResolvedValueOnce({ data: { outcome: "rejected", status: "rejected", dry_run: true, pr_url: "", head_sha: "" } });
     await expect(decideMergeApproval("ma-1", "reject")).resolves.toMatchObject({ outcome: "rejected" });
     expect(post).toHaveBeenCalledWith("/merge-approvals/ma-1/decide", { decision: "reject" }, expect.anything());
+  });
+});
+
+describe("detailSentence", () => {
+  it("capitalises only the first character and ends the sentence, keeping the service's own spelling", () => {
+    expect(detailSentence("could not read the PR from GitHub; try again")).toBe("Could not read the PR from GitHub; try again.");
+    expect(detailSentence("The squash-merge failed.")).toBe("The squash-merge failed.");
+    expect(detailSentence("head moved; ask again?")).toBe("Head moved; ask again?");
   });
 });

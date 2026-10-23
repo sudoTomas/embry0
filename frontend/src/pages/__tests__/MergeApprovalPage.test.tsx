@@ -164,7 +164,7 @@ describe("MergeApprovalPage", () => {
     const { refetched } = renderPage();
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
     await userEvent.click(screen.getByRole("button", { name: "Approve and merge" }));
-    expect(toast.warning).toHaveBeenCalledWith("acme/widgets#42: Refused. the head moved since the ask");
+    expect(toast.warning).toHaveBeenCalledWith("acme/widgets#42: Refused. The head moved since the ask.");
     expect(toast.success).not.toHaveBeenCalled();
     refetched();
     expect(screen.getByTestId("merge-approval-detail")).toHaveTextContent("The head moved since the ask.");
