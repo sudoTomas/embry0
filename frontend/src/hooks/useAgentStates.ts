@@ -85,11 +85,17 @@ export function useAgentStates(
   return useMemo(() => {
     const runs = new Map<string, AgentState>();
     const latestRunByNode = new Map<string, string>();
-    // The graph's physical nodes: a run under a name the graph does not know
-    // is nested inside the node running when it started (#90, #104).
+    // The graph's physical nodes. A run under a name the graph does not know,
+    // started while a graph node is the last one started, is nested inside
+    // that node and is that node's work (#90, #104).
     const knownPhysicals = graph ? new Set(graph.nodes.map(physicalOf)) : null;
+    // Nested runs per nesting node. A node nesting exactly one run hands its
+    // run-less rows (node_completed) to it; one nesting several leaves each
+    // run its own outcome and keeps a card of its own for the node's verdict.
+    const nestedRunsByNode = new Map<string, string[]>();
     const attemptByNode = new Map<string, number>();
     let lastStartedNode = "";
+    let lastStartedIndex = 0;
     let prUrl: string | null = null;
     let pausedForInput = false;
     let interruptData: InterruptData | null = null;
@@ -123,6 +129,7 @@ export function useAgentStates(
         // A card is a run, not a node: only the attempt is recorded here.
         attemptByNode.set(node, event.attempt ?? (attemptByNode.get(node) ?? 0) + 1);
         lastStartedNode = node;
+        lastStartedIndex = index;
         return;
       }
       if (event.type === "agent_started") {
@@ -131,19 +138,32 @@ export function useAgentStates(
         // run's later rows with `node` = agent type (`reviewer` under `review`),
         // so the legacy run is also found under its agent.
         // A run nested inside a LangGraph node stamps its own name (`qa` under
-        // `orchestrate_qa`), which the graph does not know: it is that node's
-        // run, so the node gets no graph card of its own on top (#104). Its
-        // run-less rows still carry the nested name, so the run is also found
-        // under it.
-        const nested = knownPhysicals !== null && node !== "" && lastStartedNode !== "" && !knownPhysicals.has(node);
+        // `orchestrate_qa`), which the graph does not know: when the node last
+        // started is one the graph has, the run is that node's, so the node
+        // gets no graph card of its own on top (#104). Its run-less rows still
+        // carry the nested name, so the run is also found under it, and its
+        // record opens with the node's own rows since node_started (the QA
+        // boot rows), which no run claims.
+        const nested = knownPhysicals !== null && node !== "" && !knownPhysicals.has(node) && knownPhysicals.has(lastStartedNode);
         const runNode = node && !nested ? node : lastStartedNode;
         const runId = event.run_id ?? `legacy:${index}`;
         const state = makeAgentState(runId, runNode, event.agent ?? runNode, attemptByNode.get(runNode) ?? 1, "running");
         state.model = event.model;
         state.startedAt = event.timestamp;
         runs.set(runId, state);
-        latestRunByNode.set(runNode, runId);
-        if (nested) latestRunByNode.set(node, runId);
+        if (nested) {
+          const siblings = [...(nestedRunsByNode.get(runNode) ?? []), runId];
+          nestedRunsByNode.set(runNode, siblings);
+          // The node's run-less rows go to its one nested run, to none of several.
+          if (siblings.length === 1) latestRunByNode.set(runNode, runId);
+          else latestRunByNode.delete(runNode);
+          latestRunByNode.set(node, runId);
+          for (const row of events.slice(lastStartedIndex, index)) {
+            if (row.run_id === undefined) state.events.push(row);
+          }
+        } else {
+          latestRunByNode.set(runNode, runId);
+        }
         if (!event.run_id && event.agent) latestRunByNode.set(event.agent, runId);
         state.events.push(event);
         return;
@@ -164,8 +184,9 @@ export function useAgentStates(
         case "node_completed":
           if (nodeCompletedFailed(event)) agent.status = "failed";
           else if (agent.status === "running") agent.status = "completed";
-          // A failed run keeps its error message; the action ("failed") says less.
-          if (event.action && !(agent.status === "failed" && agent.summary)) agent.summary = event.action;
+          // The node's action fills in for a run with no outcome of its own;
+          // what agent_completed said (an error message, the output) says more.
+          if (event.action && !agent.summary) agent.summary = event.action;
           if (agent.durationMs === 0 && agent.startedAt && event.timestamp) {
             agent.durationMs = new Date(event.timestamp).getTime() - new Date(agent.startedAt).getTime();
           }
@@ -234,7 +255,9 @@ export function useAgentStates(
           agent.errorCode = event.code;
           break;
         case "progress":
-          agent.summary = event.message;
+          // A finished run's summary is its outcome; the nesting node's own
+          // closing progress row ("QA fan-out complete") arrives after it.
+          if (agent.status === "running") agent.summary = event.message;
           break;
       }
     });
@@ -260,9 +283,12 @@ export function useAgentStates(
     // reports nodes some event touched, so an absent entry is pending too), and
     // running/completed/failed for a node no agent runs on (QA, onboarding
     // steps), which would otherwise vanish from the Pipeline tab once it starts.
+    // A node nesting several runs keeps a card too, for its own verdict: the
+    // runs carry the cost and the turns, so this card carries none.
     if (graph) {
       const states = deriveNodeStates(graph, events, jobStatus);
-      const withRun = new Set(agents.map((a) => a.node));
+      const multiNested = new Set([...nestedRunsByNode].filter(([, ids]) => ids.length > 1).map(([n]) => n));
+      const withRun = new Set(agents.map((a) => a.node).filter((n) => !multiNested.has(n)));
       const terminal = isTerminalStatus(jobStatus);
       for (const n of graph.nodes) {
         const st = states[n.node_id];
@@ -274,7 +300,7 @@ export function useAgentStates(
         }
         if (withRun.has(physical)) continue;
         const card = makeAgentState(`node:${n.node_id}`, physical, agentType, st.iteration, st.state);
-        card.costUsd = st.cost_usd;
+        card.costUsd = multiNested.has(physical) ? 0 : st.cost_usd;
         card.durationMs = st.duration_seconds * 1000;
         agents.push(card);
       }

@@ -5,8 +5,11 @@ import type { LogEvent, PipelineGraph } from "@/lib/types";
 // `physical_node`, so each physical is its own id; the QA agent run nested
 // inside `orchestrate_qa` stamps `node: "qa"` on its own events, a name the
 // graph does not know. The run's agent_started, cost_update and
-// agent_completed carry its run_id; the qa_* rows carry none. The executor
-// writes cost_update before agent_completed (#104).
+// agent_completed carry its run_id; the qa_* rows carry none, and neither do
+// the sub-task's progress rows before the run (nodes acquire_sandbox and
+// boot_app, names the graph does not know either) nor the orchestrator's
+// closing progress row after it. The executor writes cost_update before
+// agent_completed (#104).
 
 export const STANDALONE_QA_GRAPH: PipelineGraph = {
   graph_id: "qa-job-0001",
@@ -35,6 +38,8 @@ export const QA_ORCHESTRATE_STARTED = at(3, { type: "node_started", node: "orche
 export const QA_APPS_RESOLVED = at(4, { type: "qa_apps_resolved", node: "qa", apps: ["web"] });
 export const QA_SUBTASK_STARTED = at(5, { type: "qa_subtask_started", node: "qa", app: "web", target: "managed" });
 export const QA_SUBTASK_RUNNING = at(6, { type: "qa_subtask_status", node: "qa", app: "web", status: "running" });
+export const QA_ACQUIRING_SANDBOX = at(6, { type: "progress", node: "acquire_sandbox", app: "web", message: "[web] acquiring sandbox" });
+export const QA_BOOTING_APP = at(6, { type: "progress", node: "boot_app", app: "web", message: "[web] booting app (target=managed)" });
 export const QA_AGENT_STARTED = at(7, {
   type: "agent_started",
   node: "qa",
@@ -88,6 +93,7 @@ export const QA_SUBTASK_FINISHED = at(184, {
   status: "passed",
   duration_ms: 178384,
 });
+export const QA_FANOUT_COMPLETE = at(184, { type: "progress", node: "orchestrate_qa", message: "QA fan-out complete: passed" });
 export const QA_ORCHESTRATE_COMPLETED = at(185, { type: "node_completed", node: "orchestrate_qa", action: "passed" });
 export const QA_REPORT_STARTED = at(186, { type: "node_started", node: "qa_report" });
 export const QA_REPORT_COMPLETED = at(187, { type: "node_completed", node: "qa_report" });
@@ -116,11 +122,14 @@ export const STANDALONE_QA_EVENTS: LogEvent[] = [
   QA_APPS_RESOLVED,
   QA_SUBTASK_STARTED,
   QA_SUBTASK_RUNNING,
+  QA_ACQUIRING_SANDBOX,
+  QA_BOOTING_APP,
   QA_AGENT_STARTED,
   QA_COST_UPDATE,
   QA_AGENT_COMPLETED,
   QA_SUBTASK_PASSED,
   QA_SUBTASK_FINISHED,
+  QA_FANOUT_COMPLETE,
   QA_ORCHESTRATE_COMPLETED,
   QA_REPORT_STARTED,
   QA_REPORT_COMPLETED,
