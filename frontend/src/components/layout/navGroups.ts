@@ -7,9 +7,11 @@ import {
   Eye,
   FolderGit2,
   Gauge,
+  GitMerge,
   KeyRound,
   ListChecks,
   ScrollText,
+  Server,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -57,6 +59,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
       { path: "/console", label: "Console", icon: SquareTerminal },
       { path: "/issues", label: "Issues", icon: CircleDot },
       { path: "/jobs", label: "Jobs", icon: Zap },
+      { path: "/merge-approvals", label: "Merge approvals", icon: GitMerge },
     ],
   },
   {
@@ -85,6 +88,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "Infra",
     items: [
       { path: "/sandboxes", label: "Sandboxes", icon: Container },
+      { path: "/hosts", label: "Hosts", icon: Server },
       { path: "/agents", label: "Agents", icon: Bot },
       { path: "/skills", label: "Skills", icon: Sparkles, adminOnly: true },
       { path: "/environments", label: "Environments", icon: Variable },

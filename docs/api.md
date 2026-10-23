@@ -188,6 +188,15 @@ curl -X POST http://localhost:8200/api/v1/agents/developer/skills/superpowers:wr
   -H "X-Requested-With: XMLHttpRequest"
 ```
 
+## Pipeline templates
+
+The saved pipeline graphs the editor and the Pipelines page work on, under `/api/v1/pipelines/templates`: list, read, create, update, delete and duplicate. Every authenticated principal may read and write them; the two writes with answers worth knowing:
+
+| Endpoint | Answer |
+|---|---|
+| `PUT /api/v1/pipelines/templates/{id}` | Updates the fields sent. `default_for_kind` set to a kind makes the template that kind's default route; an explicit `null` clears it. 409 when another template already holds the kind (clear it first), or when the new name is taken |
+| `POST /api/v1/pipelines/templates/{id}/duplicate` | `{"name": "..."}` copies the graph and sandbox profile under the new name and answers 201. 409 when a template of that name already exists |
+
 ## Environment variables
 
 ```bash

@@ -1,12 +1,15 @@
-import { Link, useParams } from "react-router";
-import { Building2, ClipboardList, FolderGit2, Radar, Ruler, Wrench } from "lucide-react";
+import { Link, useParams, useSearchParams } from "react-router";
+import { Building2, ClipboardList, FolderGit2, Radar, Ruler, ShieldCheck, Wrench } from "lucide-react";
 import { formatErrorDetail } from "@/api/errorDetail";
+import { toastApiError } from "@/api/errorToast";
+import { AdminButton } from "@/components/auth/AdminButton";
 import { AccessChips } from "@/components/orgs/AccessChips";
 import { DiscoveryStatus } from "@/components/orgs/DiscoveryStatus";
 import { OrgActPanel } from "@/components/orgs/OrgActPanel";
 import { OrgCredential } from "@/components/orgs/OrgCredential";
 import { OrgNeedsList } from "@/components/orgs/OrgNeedsList";
 import { OrgReposTable } from "@/components/orgs/OrgReposTable";
+import { OrgSettingsTab } from "@/components/orgs/OrgSettingsTab";
 import { RediscoverSetting } from "@/components/orgs/RediscoverSetting";
 import { OrgStandardSummary } from "@/components/standards/OrgStandardSummary";
 import { PageError } from "@/components/PageError";
@@ -14,6 +17,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button, buttonVariants } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/PageSkeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { useCredentials } from "@/hooks/useCredentials";
 import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import {
@@ -22,10 +26,12 @@ import {
   useOrganizationNeeds,
   useOrganizationRepos,
   useOrganizationRuns,
+  useReprobeOrganization,
 } from "@/hooks/useOrgs";
 import { useOwnerStandards } from "@/hooks/useStandards";
 import { ORG_WIZARD_PATH } from "@/lib/orgs";
-import { useAuthStore } from "@/stores/authStore";
+import { ORG_TABS, orgTab } from "@/lib/orgTabs";
+import { useIsAdmin } from "@/stores/authStore";
 import { cn, formatDate } from "@/lib/utils";
 import { statusLabel } from "@/lib/status";
 import type { ReactNode } from "react";
@@ -49,9 +55,7 @@ function Section({ icon: Icon, title, children }: { icon: typeof Building2; titl
 /** One organization: access, the latest discovery, its repositories, what embry0 needs, and acting on it. */
 export function OrganizationPage() {
   const owner = (useParams().owner ?? "").toLowerCase();
-  const authMode = useAuthStore((s) => s.authMode);
-  const userTier = useAuthStore((s) => s.user?.tier);
-  const isAdmin = authMode === "key" || userTier === "admin";
+  const isAdmin = useIsAdmin();
 
   const org = useOrganization(owner);
   const found = org.isSuccess;
@@ -61,6 +65,11 @@ export function OrganizationPage() {
   const standards = useOwnerStandards(owner, found);
   const credentials = useCredentials();
   const discover = useDiscoverOrganization(owner);
+  const reprobe = useReprobeOrganization(owner);
+  // The open tab lives in the URL so a setting can be linked to.
+  const [params, setParams] = useSearchParams();
+  const tab = orgTab(params.get("tab")).value;
+  const openTab = (value: string) => setParams(value === ORG_TABS[0].value ? {} : { tab: value }, { replace: true });
   // The page paints once the latest discovery, the needs and the standard
   // have first answered. Drawn before, each section grew from its skeleton
   // as its answer landed and pushed every section under it down (a layout
@@ -112,11 +121,21 @@ export function OrganizationPage() {
             {statusLabel(o.status)}
           </Badge>
           <AccessChips access={o.access} />
-          <Button
+          <AdminButton
             type="button"
             size="sm"
             variant="outline"
             className="ml-auto"
+            onClick={() => reprobe.mutate(undefined, { onError: (e) => toastApiError(e, "The probe did not run") })}
+            disabled={reprobe.isPending}
+            data-testid="org-reprobe"
+          >
+            <ShieldCheck className="h-4 w-4" /> {reprobe.isPending ? "Probing…" : "Probe again"}
+          </AdminButton>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
             onClick={() => discover.mutate()}
             disabled={!isAdmin || running || discover.isPending || o.status !== "active"}
             data-testid="org-rediscover"
@@ -140,40 +159,54 @@ export function OrganizationPage() {
         )}
       </div>
 
-      <Section icon={Radar} title="Latest discovery">
-        {runs.isLoading ? <Skeleton className="h-12 w-full" /> : <DiscoveryStatus owner={o.owner} run={latest} />}
-      </Section>
+      <Tabs defaultValue={ORG_TABS[0].value} value={tab} onValueChange={openTab}>
+        <TabsList>
+          {ORG_TABS.map((t) => (
+            <TabsTrigger key={t.value} value={t.value}>
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value="overview" className="mt-6 space-y-6">
+          <Section icon={Radar} title="Latest discovery">
+            {runs.isLoading ? <Skeleton className="h-12 w-full" /> : <DiscoveryStatus owner={o.owner} run={latest} />}
+          </Section>
 
-      <Section icon={ClipboardList} title="What embry0 needs">
-        <OrgNeedsList
-          needs={needs.data}
-          isLoading={needs.isLoading}
-          isError={needs.isError}
-          onRetry={() => void needs.refetch()}
-        />
-      </Section>
+          <Section icon={ClipboardList} title="What embry0 needs">
+            <OrgNeedsList
+              needs={needs.data}
+              isLoading={needs.isLoading}
+              isError={needs.isError}
+              onRetry={() => void needs.refetch()}
+            />
+          </Section>
 
-      <Section icon={Wrench} title="Act">
-        {needs.isError ? (
-          <p className="text-sm text-muted-foreground">The needs list did not load, so there is nothing to act on.</p>
-        ) : (
-          <OrgActPanel owner={o.owner} needs={needs.data} isAdmin={isAdmin} />
-        )}
-      </Section>
+          <Section icon={Wrench} title="Act">
+            {needs.isError ? (
+              <p className="text-sm text-muted-foreground">The needs list did not load, so there is nothing to act on.</p>
+            ) : (
+              <OrgActPanel owner={o.owner} needs={needs.data} isAdmin={isAdmin} />
+            )}
+          </Section>
 
-      <Section icon={Ruler} title="Design standard">
-        <OrgStandardSummary owner={o.owner} />
-      </Section>
+          <Section icon={Ruler} title="Design standard">
+            <OrgStandardSummary owner={o.owner} />
+          </Section>
 
-      <Section icon={FolderGit2} title="Repositories">
-        {repos.isError ? (
-          <PageError message="Failed to load the repositories" onRetry={() => void repos.refetch()} />
-        ) : repos.data ? (
-          <OrgReposTable repos={repos.data} />
-        ) : (
-          <Skeleton className="h-32 w-full" />
-        )}
-      </Section>
+          <Section icon={FolderGit2} title="Repositories">
+            {repos.isError ? (
+              <PageError message="Failed to load the repositories" onRetry={() => void repos.refetch()} />
+            ) : repos.data ? (
+              <OrgReposTable repos={repos.data} />
+            ) : (
+              <Skeleton className="h-32 w-full" />
+            )}
+          </Section>
+        </TabsContent>
+        <TabsContent value="settings" className="mt-6">
+          <OrgSettingsTab org={o} isAdmin={isAdmin} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

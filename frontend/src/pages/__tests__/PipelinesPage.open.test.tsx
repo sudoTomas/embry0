@@ -53,6 +53,8 @@ vi.mock("@/hooks/usePipelines", () => ({
   useRenameTemplate: () => ({ mutate: rename, isPending: false }),
   useCreateTemplate: () => ({ mutate: create, isPending: false }),
   useDeleteTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useDuplicateTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useSetTemplateDefault: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock("@/hooks/useAgents", () => ({ useAgents: () => ({ data: [] }) }));
 vi.mock("@/api/pipelines", () => ({ fetchTemplate: vi.fn(async (id: string) => BY_ID[id]) }));
@@ -86,7 +88,7 @@ beforeEach(() => {
 
 describe("opening a saved pipeline", () => {
   it("opens a template of your own under its name with Save enabled", async () => {
-    const name = await openFromList(/Quick fix/);
+    const name = await openFromList(/^Quick fix/);
     expect(name).toHaveValue("Quick fix");
     const save = saveButton();
     expect(save, "a saved template must be savable in place, not only as a copy").toBeEnabled();
@@ -96,7 +98,7 @@ describe("opening a saved pipeline", () => {
   });
 
   it("opens a built-in under its name with Save off and says why", async () => {
-    const name = await openFromList(/Bug fix/);
+    const name = await openFromList(/^Bug fix/);
     expect(name).toHaveValue("Bug fix");
     expect(saveButton(), "a built-in is re-seeded on restart, so Save in place would be lost").toBeDisabled();
     expect(saveButton()).toHaveAccessibleDescription(/Built-in templates reset on restart\. Save As makes your own copy\./);
@@ -106,7 +108,7 @@ describe("opening a saved pipeline", () => {
   });
 
   it("connects Start and End to the graph it loads", async () => {
-    await openFromList(/Quick fix/);
+    await openFromList(/^Quick fix/);
     expect(screen.queryByText("Connect Start → End")).toBeNull();
     expect(screen.getByText("Valid")).toBeInTheDocument();
   });
@@ -117,13 +119,13 @@ describe("opening a saved pipeline", () => {
 // template of your own, with Save As.
 describe("the pipeline editor's gold action", () => {
   it("is Save for a template of your own, with Save As beside it", async () => {
-    await openFromList(/Quick fix/);
+    await openFromList(/^Quick fix/);
     expect(saveButton()).toHaveClass("bg-primary");
     expect(saveAsButton()).not.toHaveClass("bg-primary");
   });
 
   it("is Save As for a built-in", async () => {
-    await openFromList(/Bug fix/);
+    await openFromList(/^Bug fix/);
     expect(saveAsButton()).toHaveClass("bg-primary");
     expect(saveButton()).not.toHaveClass("bg-primary");
   });
@@ -139,7 +141,7 @@ describe("the pipeline editor's gold action", () => {
   it("moves to Save once Save As has made a copy of a built-in", async () => {
     vi.spyOn(window, "prompt").mockReturnValue("My bug fix");
     create.mockImplementation((_vars, opts) => opts.onSuccess({ ...builtin, template_id: "tpl-mine", name: "My bug fix", is_builtin: false }));
-    await openFromList(/Bug fix/);
+    await openFromList(/^Bug fix/);
     fireEvent.click(saveAsButton());
     await waitFor(() => expect(saveButton()).toBeEnabled());
     expect(saveButton()).toHaveClass("bg-primary");
@@ -171,7 +173,7 @@ describe("picking a template in the editor's Templates drawer", () => {
 // and Save As stay inside the viewport instead of running off its right edge.
 describe("the pipeline editor's toolbar on a phone", () => {
   it("wraps below sm, the name on a row of its own", async () => {
-    const name = await openFromList(/Quick fix/);
+    const name = await openFromList(/^Quick fix/);
     const toolbar = screen.getByTestId("pipeline-toolbar");
     expect(toolbar).toHaveClass("flex-wrap", "sm:flex-nowrap");
     expect(name).toHaveClass("w-full", "sm:w-64");
@@ -179,7 +181,7 @@ describe("the pipeline editor's toolbar on a phone", () => {
   });
 
   it("keeps Save and Save As together when the actions wrap", async () => {
-    await openFromList(/Bug fix/);
+    await openFromList(/^Bug fix/);
     const pair = saveButton().parentElement;
     expect(pair, "Save As must not wrap onto a row of its own, apart from Save").toBe(saveAsButton().parentElement);
     expect(pair).not.toBe(screen.getByTestId("pipeline-actions"));

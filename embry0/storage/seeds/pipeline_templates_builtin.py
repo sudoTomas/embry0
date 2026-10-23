@@ -1,8 +1,10 @@
 """Builtin pipeline-template seeding.
 
 Run at orchestrator startup to upsert the canonical embry0 starter
-pipelines. The seeds always overwrite (per upsert_builtin) — users who
-want a customized variant should clone the builtin under a different name.
+pipelines. The seeds overwrite every field but ``default_for_kind`` (per
+upsert_builtin): the default an operator moved or cleared stays where they
+put it. Users who want a customized variant should clone the builtin under
+a different name.
 
 Each template is a small graph in the same shape the frontend stores
 under ``graph_definition``: ``{nodes: [...], edges: [...], metadata: {...}}``.

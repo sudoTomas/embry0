@@ -531,7 +531,11 @@ class TemplateUpdateRequest(_TemplateWriteRequest):
     description: str | None = None
     graph_definition: dict[str, Any] | None = None
     sandbox_profile: str | None = None
-    default_for_kind: str | None = Field(default=None, pattern="^(code|research|analysis|ops)$")
+    default_for_kind: str | None = Field(
+        default=None,
+        pattern="^(code|research|analysis|ops)$",
+        description="the kind this template is the default route for; an explicit null clears it, an absent field keeps it",
+    )
 
 
 class TemplateDuplicateRequest(BaseModel):

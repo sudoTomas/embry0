@@ -3,20 +3,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const get = vi.fn();
 const post = vi.fn();
 const patch = vi.fn();
+const put = vi.fn();
 vi.mock("../client", () => ({
   api: {
     get: (...a: unknown[]) => get(...a),
     post: (...a: unknown[]) => post(...a),
     patch: (...a: unknown[]) => patch(...a),
+    put: (...a: unknown[]) => put(...a),
   },
 }));
 
 import {
   fetchOrganizationNeeds,
+  fetchOrganizationWebhook,
+  installOrganizationWebhook,
   isMissingEndpoint,
   patchOrganization,
   probeOrganization,
+  reprobeOrganization,
   runOrganizationAction,
+  setOrganizationStatus,
+  updateOrganization,
 } from "../orgs";
 
 const httpError = (status: number, detail: unknown = "x") => ({ response: { status, data: { detail } } });
@@ -25,6 +32,7 @@ beforeEach(() => {
   get.mockReset();
   post.mockReset();
   patch.mockReset();
+  put.mockReset();
 });
 
 describe("organizations API", () => {
@@ -84,5 +92,22 @@ describe("organizations API", () => {
     expect(patch).toHaveBeenCalledWith("/orgs/acme", { settings: { rediscover_hours: 12 } }, { suppressValidationToast: true });
     await patchOrganization("acme", { rediscover_hours: null });
     expect(patch).toHaveBeenLastCalledWith("/orgs/acme", { settings: { rediscover_hours: null } }, { suppressValidationToast: true });
+  });
+
+  it("probes again, patches the profile, sets the status and reads and installs the webhook at the contract's paths", async () => {
+    post.mockResolvedValue({ data: { owner: "acme" } });
+    patch.mockResolvedValue({ data: { owner: "acme" } });
+    put.mockResolvedValue({ data: { owner: "acme" } });
+    get.mockResolvedValue({ data: { owner: "acme", installed: false, hook: null, target_url: null, hooks_visible: true, hooks: [] } });
+    await reprobeOrganization("acme");
+    expect(post).toHaveBeenLastCalledWith("/orgs/acme/probe", undefined, { suppressValidationToast: true });
+    await updateOrganization("acme", { display_name: "Acme", settings: { auto_register: true } });
+    expect(patch).toHaveBeenLastCalledWith("/orgs/acme", { display_name: "Acme", settings: { auto_register: true } }, { suppressValidationToast: true });
+    await setOrganizationStatus("acme", "paused");
+    expect(put).toHaveBeenLastCalledWith("/orgs/acme/status", { status: "paused" }, { suppressValidationToast: true });
+    await fetchOrganizationWebhook("acme");
+    expect(get).toHaveBeenLastCalledWith("/orgs/acme/webhook");
+    await installOrganizationWebhook("acme");
+    expect(post).toHaveBeenLastCalledWith("/orgs/acme/webhook", undefined, { suppressValidationToast: true });
   });
 });

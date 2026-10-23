@@ -10,7 +10,7 @@ export interface SwitchProps {
   className?: string;
 }
 
-/** An on/off control (spec 3.9): a button with role="switch", a thumb that slides. */
+/** An on/off control (spec 3.9): a button with role="switch", a thumb that slides. On is the success colour, a state, never the page's gold. */
 export function Switch({ checked, onCheckedChange, label, id, disabled, className }: SwitchProps) {
   return (
     <button
@@ -24,7 +24,7 @@ export function Switch({ checked, onCheckedChange, label, id, disabled, classNam
       className={cn(
         "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors motion-reduce:transition-none focus:outline-none focus:ring-2 focus:ring-ring",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        checked ? "bg-primary" : "bg-white/20",
+        checked ? "bg-success" : "bg-white/20",
         className,
       )}
     >

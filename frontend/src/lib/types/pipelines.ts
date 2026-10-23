@@ -83,6 +83,10 @@ export interface PipelineGraph {
   metadata: PipelineMetadata;
 }
 
+/** The job kinds a template can be the default route for; at most one template per kind. */
+export const TEMPLATE_KINDS = ["code", "research", "analysis", "ops"] as const;
+export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
+
 export interface PipelineTemplate {
   template_id: string;
   name: string;
@@ -94,6 +98,7 @@ export interface PipelineTemplate {
   /** Seeded by embry0 and re-seeded on every restart, so an edit saved in
    * place does not survive one; Save As keeps it as a template of your own. */
   is_builtin?: boolean;
+  default_for_kind?: TemplateKind | null;
 }
 
 export interface PipelineTemplateSummary {
@@ -101,6 +106,11 @@ export interface PipelineTemplateSummary {
   name: string;
   description: string;
   created_at: string;
+  /** Seeded by embry0; Save As keeps a copy of your own. */
+  is_builtin?: boolean;
+  /** The kind this template is the default route for, or null. */
+  default_for_kind?: TemplateKind | null;
+  sandbox_profile?: string | null;
 }
 
 export interface AgentTypeInfo {

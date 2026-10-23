@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
+  buildQaImage,
   fetchQaAppHistory,
   fetchQaRepos,
   fetchQaRun,
@@ -77,5 +78,21 @@ describe("qaDashboard api client", () => {
     });
     await fetchQaRunApp("j-1", "hub");
     expect(get).toHaveBeenCalledWith("/qa/runs/j-1/apps/hub");
+  });
+
+  it("builds a QA image, sends the long timeout and suppresses the validation toast", async () => {
+    const post = vi
+      .spyOn(api, "post")
+      .mockResolvedValueOnce({ data: { repo: "acme/widgets", branch: "main", status: "built" } });
+    await expect(buildQaImage("acme/widgets", "main", false)).resolves.toEqual({
+      repo: "acme/widgets",
+      branch: "main",
+      status: "built",
+    });
+    expect(post).toHaveBeenCalledWith(
+      "/qa/images/build",
+      { repo: "acme/widgets", branch: "main", force: false },
+      { timeout: 300_000, suppressValidationToast: true },
+    );
   });
 });

@@ -354,4 +354,15 @@ describe("DashboardPage", () => {
     expect(within(table).getAllByRole("columnheader").at(-1)).toHaveTextContent("When");
     expect(table).toHaveClass("[&_tr>*:last-child]:hidden", "sm:[&_tr>*:last-child]:table-cell");
   });
+
+  it("draws the deep stats under the two panels, from the same stats answer", () => {
+    mockUseStats.mockReturnValue(
+      ready({ ...ORCH_OK.data, cost_by_repo: [{ repo: "acme/widgets", cost_usd: 4.5, job_count: 3 }] }),
+    );
+    renderPage();
+    const panels = screen.getByTestId("panel-Recent issues");
+    const deep = screen.getByTestId("panel-Cost by repository");
+    expect(panels.compareDocumentPosition(deep) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(deep).getByText("acme/widgets")).toBeInTheDocument();
+  });
 });

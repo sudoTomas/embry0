@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -9,8 +10,10 @@ vi.mock("@/api/repos", () => ({
 }));
 
 const mockUseRepoEnv = vi.fn();
+const mockUseResolvedRepoEnv = vi.fn();
 vi.mock("@/hooks/useEnvironments", () => ({
   useRepoEnv: () => mockUseRepoEnv(),
+  useResolvedRepoEnv: (repo: string, enabled: boolean) => mockUseResolvedRepoEnv(repo, enabled),
 }));
 
 const mockUseQaRunsForRepo = vi.fn();
@@ -214,7 +217,8 @@ beforeEach(() => {
   mockFetchReadiness.mockResolvedValue(READINESS);
   mockFetchHistory.mockReset();
   mockFetchHistory.mockResolvedValue({ entries: [], before_history: false });
-  mockUseRepoEnv.mockReturnValue({ data: [] });
+  mockUseRepoEnv.mockReturnValue({ isSuccess: true, data: [] });
+  mockUseResolvedRepoEnv.mockReset().mockReturnValue({ data: undefined, isPending: false, isError: false, refetch: vi.fn() });
   mockUseQaRunsForRepo.mockReturnValue({ data: [] });
   mockFetchRepoCredentials.mockReset();
   mockFetchRepoCredentials.mockResolvedValue({ repo: "acme/widgets", bindings: [], effective: {} });
@@ -283,6 +287,17 @@ describe("RepoDetailPage (RAV-1253)", () => {
     expect(el).toHaveTextContent(`Takes effect: ${guide.takesEffect}`);
     expect(el).toHaveTextContent(`Undo: ${guide.undo}`);
     expect(goldElements(el)).toEqual([]);
+  });
+
+  it("spends no gold in App settings with the Effective switch on", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockUseResolvedRepoEnv.mockReturnValue({ data: [], isPending: false, isError: false, refetch: vi.fn() });
+    renderPage();
+    await screen.findByRole("heading", { name: "acme/widgets" });
+    const toggle = screen.getByRole("switch", { name: "Effective for this repo" });
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(goldElements(section("appSettings"))).toEqual([]);
   });
 
   it("opens the section a link points at", async () => {
@@ -457,7 +472,7 @@ describe("RepoDetailPage (RAV-1253)", () => {
 
   it("masks secret env values and links runs", async () => {
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
-    mockUseRepoEnv.mockReturnValue({
+    mockUseRepoEnv.mockReturnValue({ isSuccess: true,
       data: [
         { key: "API_URL", value: "http://x", var_type: "config", scope: "app" },
         { key: "TOKEN", value: "should-not-render", var_type: "secret", scope: "app" },
@@ -533,5 +548,63 @@ describe("RepoDetailPage (RAV-1253)", () => {
     renderPage();
     await screen.findByTestId("repo-readiness-chip");
     expect(screen.getByTestId("repo-docker-access-section")).toHaveTextContent("not granted");
+  });
+
+  it("shows the effective environment on request, each value marked Repo or Global", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockUseRepoEnv.mockReturnValue({ isSuccess: true, data: [{ key: "API_URL", value: "https://repo.example.test", var_type: "config", description: "" }] });
+    mockUseResolvedRepoEnv.mockReturnValue({
+      data: [
+        { key: "API_URL", value: "https://repo.example.test", var_type: "config", description: "" },
+        { key: "SHARED_TOKEN", value: "", var_type: "secret", description: "", masked_preview: "SHAR••••7Q2F" },
+      ],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(mockUseResolvedRepoEnv).toHaveBeenLastCalledWith("acme/widgets", false);
+    const toggle = screen.getByRole("switch", { name: "Effective for this repo" });
+    await userEvent.click(toggle);
+    expect(mockUseResolvedRepoEnv).toHaveBeenLastCalledWith("acme/widgets", true);
+    const rows = screen.getAllByTestId("repo-env-row");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText("Repo")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Global")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("SHAR••••7Q2F")).toBeInTheDocument();
+  });
+
+  it("waits for the repo's own list before drawing the effective table, whose Source column reads it", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockUseRepoEnv.mockReturnValue({ isSuccess: false, data: undefined });
+    mockUseResolvedRepoEnv.mockReturnValue({
+      data: [{ key: "SHARED", value: "x", var_type: "config", description: "" }],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    await userEvent.click(screen.getByRole("switch", { name: "Effective for this repo" }));
+    expect(screen.queryAllByTestId("repo-env-row"), "no row may read Global before the own list has answered").toHaveLength(0);
+    expect(section("appSettings").querySelector(".motion-safe\\:animate-pulse"), "the skeleton holds the table's place").not.toBeNull();
+  });
+
+  it("marks every effective variable Global when the repo sets none", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockUseRepoEnv.mockReturnValue({ isSuccess: true, data: [] });
+    mockUseResolvedRepoEnv.mockReturnValue({
+      data: [{ key: "SHARED", value: "x", var_type: "config", description: "" }],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.getByText("No repo-scoped environment variables.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("switch", { name: "Effective for this repo" }));
+    expect(screen.queryByText("No repo-scoped environment variables.")).toBeNull();
+    expect(within(screen.getByTestId("repo-env-row")).getByText("Global")).toBeInTheDocument();
   });
 });

@@ -13,7 +13,7 @@ interface BriefItem {
   key: string;
   count: number;
   text: string;
-  /** Where the number is answered; the merge asks are answered in the approval chat. */
+  /** Where the number is answered. */
   to?: string;
   /** Waits for a person: only shown above zero. */
   needsPerson: boolean;
@@ -62,7 +62,7 @@ export function BriefBar({ onReady }: { onReady?: (ready: boolean) => void }) {
   const items: BriefItem[] = [
     { key: "awaiting", count: awaiting, text: "awaiting input", to: "/console", needsPerson: true },
     { key: "paused", count: paused, text: "paused", to: "/console", needsPerson: true },
-    { key: "approvals", count: asks, text: plural(asks, "merge approval asked", "merge approvals asked"), needsPerson: true },
+    { key: "approvals", count: asks, text: plural(asks, "merge approval asked", "merge approvals asked"), to: "/merge-approvals", needsPerson: true },
     { key: "org-needs", count: orgNeeds, text: plural(orgNeeds, "organization need", "organization needs"), to: "/orgs", needsPerson: true },
     { key: "drafts", count: drafts, text: plural(drafts, "draft ticket to decide", "draft tickets to decide"), to: "/issues", needsPerson: true },
     {
@@ -120,7 +120,7 @@ export function BriefBar({ onReady }: { onReady?: (ready: boolean) => void }) {
                 {body}
               </Link>
             ) : (
-              <span data-testid={`brief-${item.key}`} className={tone} title="Answered in the approval chat">
+              <span data-testid={`brief-${item.key}`} className={tone}>
                 {body}
               </span>
             )}

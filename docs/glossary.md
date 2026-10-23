@@ -186,6 +186,12 @@ The drawer in the [PipelineEditor](#pipelineeditor) that lists saved [templates]
 ### SkillsPage
 The dashboard page at `/skills` (Infra, admin) that lists [skill sources](api.md#skills) with their sync status, adds git or path sources, edits inline skills (published as the builtin `local` source), and shows the resulting catalog of `plugin:skill` names.
 
+### MergeApprovalsPage
+The dashboard page at `/merge-approvals` (Work) that lists the merge asks ([merge-approvals.md](merge-approvals.md)) by status, pending first; each ask has its own page at `/merge-approvals/{id}` with the change, the CI checks, the verification gate, the reviewer's verdict, the recommendation and, for an admin, Approve and Reject behind a `ConfirmDialog`. The decision uses the dashboard form of `POST /merge-approvals/{id}/decide` (spec 3.8).
+
+### HostsPage
+The dashboard page at `/hosts` (Infra) over the [host](#host) routes: the list with its source filter and a Show-removed switch, a probe from each row's menu (operator), and for an admin the add and edit form (`HostFormDialog`), Remove and Restore, and the tailnet import, with Remove and the import behind a `ConfirmDialog`. See [hosts.md](hosts.md).
+
 ### AgentBar
 The horizontal bar at the bottom of the [PipelineEditor](#pipelineeditor) holding draggable agent chips, one per agent definition plus the terminal `output` step. Each chip shows the agent's sprite and display name in its identity colour, with the tagline as its tooltip. Drag a chip onto the canvas to place an agent node. A "New agent" link after the chips opens the agent form. Filters out [triage](#triage) (orchestrator-side, not a pipeline node).
 

@@ -2,6 +2,7 @@
 
 from typing import Any
 
+import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -60,6 +61,20 @@ def _stored_added_skills(template: dict[str, Any] | None) -> set[str]:
     return names
 
 
+# migration 42: the partial unique index behind "at most one default per kind".
+_DEFAULT_KIND_INDEX = "idx_pipeline_templates_default_kind"
+
+
+def _default_kind_taken(kind: str | None) -> HTTPException:
+    """The partial unique index on ``default_for_kind`` refused a second holder."""
+    return HTTPException(status_code=409, detail=f"another template is already the default for {kind}; clear it first")
+
+
+def _template_name_taken(name: str | None) -> HTTPException:
+    """``pipeline_templates.name`` is UNIQUE; the only other constraint a template write can violate."""
+    return HTTPException(status_code=409, detail=f"a template named {name} already exists")
+
+
 async def _known_agent_types(request: Request) -> set[str] | None:
     """The agent_definitions types that exist now; None when the app has no
     repository (tests) or the read fails, so the builtin types decide, as at
@@ -110,13 +125,19 @@ async def create_template(
         raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(req.graph_definition)
     warnings = await _check_template_skills(request, req.graph_definition)
-    created = await repo.create(
-        name=req.name,
-        description=req.description,
-        graph_definition=req.graph_definition,
-        sandbox_profile=req.sandbox_profile,
-        default_for_kind=req.default_for_kind,
-    )
+    try:
+        created = await repo.create(
+            name=req.name,
+            description=req.description,
+            graph_definition=req.graph_definition,
+            sandbox_profile=req.sandbox_profile,
+            default_for_kind=req.default_for_kind,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        # The server names the constraint it refused; the body cannot tell the two apart.
+        if exc.constraint_name == _DEFAULT_KIND_INDEX:
+            raise _default_kind_taken(req.default_for_kind) from None
+        raise _template_name_taken(req.name) from None
     return {**created, "warnings": warnings}
 
 
@@ -128,6 +149,10 @@ async def update_template(
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    # Only this field's null is a write: it clears the default so another
+    # template can take the kind. Every other field's null means "unchanged".
+    if "default_for_kind" in req.model_fields_set and req.default_for_kind is None:
+        updates["default_for_kind"] = None
     if not updates:
         template = await repo.get(template_id)
         if not template:
@@ -152,7 +177,12 @@ async def update_template(
     # 3. Only the names this save adds are checked; names the stored template has keep working.
     already = _stored_added_skills(stored)
     warnings = await check_added_skills(request, [s for s in added if s not in already])
-    updated = await repo.update(template_id, **updates)
+    try:
+        updated = await repo.update(template_id, **updates)
+    except asyncpg.UniqueViolationError as exc:
+        if exc.constraint_name == _DEFAULT_KIND_INDEX:
+            raise _default_kind_taken(updates.get("default_for_kind")) from None
+        raise _template_name_taken(updates.get("name")) from None
     if not updated:
         raise HTTPException(status_code=404, detail="Template not found")
     return {**updated, "warnings": warnings}
@@ -177,6 +207,8 @@ async def duplicate_template(
         return await repo.duplicate(template_id, new_name=req.name)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except asyncpg.UniqueViolationError:
+        raise _template_name_taken(req.name) from None
 
 
 @router.post("/pipelines/validate")

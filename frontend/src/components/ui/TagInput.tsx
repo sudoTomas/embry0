@@ -11,9 +11,11 @@ interface TagInputProps {
   suggestions?: string[];
   className?: string;
   disabled?: boolean;
+  /** Commit text left in the box when it loses focus, so a tag typed without Enter is not lost to the submit that follows. */
+  commitOnBlur?: boolean;
 }
 
-export function TagInput({ id, value, onChange, placeholder = "Add...", suggestions, className, disabled = false }: TagInputProps) {
+export function TagInput({ id, value, onChange, placeholder = "Add...", suggestions, className, disabled = false, commitOnBlur = false }: TagInputProps) {
   const [input, setInput] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
@@ -73,7 +75,10 @@ export function TagInput({ id, value, onChange, placeholder = "Add...", suggesti
           onChange={(e) => { setInput(e.target.value); setShowSuggestions(true); }}
           onKeyDown={handleKeyDown}
           onFocus={() => setShowSuggestions(true)}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+          onBlur={() => {
+            if (commitOnBlur && input.trim()) addTag(input);
+            setTimeout(() => setShowSuggestions(false), 150);
+          }}
           placeholder={value.length === 0 ? placeholder : ""}
           disabled={disabled}
           className="flex-1 min-w-[80px] bg-transparent text-sm outline-none text-fg placeholder:text-fg-muted disabled:cursor-not-allowed"

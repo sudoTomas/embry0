@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const api = { org: vi.fn(), runs: vi.fn(), repos: vi.fn(), needs: vi.fn(), discover: vi.fn() };
+const api = { org: vi.fn(), runs: vi.fn(), repos: vi.fn(), needs: vi.fn(), discover: vi.fn(), reprobe: vi.fn() };
 vi.mock("@/api/orgs", async () => {
   const actual = await vi.importActual<typeof import("@/api/orgs")>("@/api/orgs");
   return {
@@ -13,6 +13,9 @@ vi.mock("@/api/orgs", async () => {
     fetchOrganizationRepos: (...a: unknown[]) => api.repos(...a),
     fetchOrganizationNeeds: (...a: unknown[]) => api.needs(...a),
     discoverOrganization: (...a: unknown[]) => api.discover(...a),
+    reprobeOrganization: (...a: unknown[]) => api.reprobe(...a),
+    fetchOrganizationWebhook: () =>
+      Promise.resolve({ owner: "acme", installed: false, hook: null, target_url: null, hooks_visible: false, hooks: [] }),
   };
 });
 vi.mock("@/api/credentials", () => ({ fetchCredentials: () => Promise.resolve([]) }));
@@ -98,6 +101,31 @@ describe("OrganizationPage", () => {
     renderPage();
     expect(await screen.findAllByText("This server has no needs endpoint yet")).toHaveLength(2);
     expect(await screen.findAllByTestId("org-repo-row")).toHaveLength(1);
+  });
+
+  it("probes again from the header", async () => {
+    api.reprobe.mockResolvedValue(org({ discovered_at: "2026-01-01T00:00:00Z" }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1, name: "acme" });
+    fireEvent.click(screen.getByRole("button", { name: "Probe again" }));
+    await waitFor(() => expect(api.reprobe).toHaveBeenCalledWith("acme"));
+  });
+
+  it("shows an operator Probe again disabled, with the reason on hover", async () => {
+    useAuthStore.setState({ authMode: "session", user: { email: "ops@example.test", name: "Ops", tier: "operator" } });
+    renderPage();
+    const probe = await screen.findByTestId("org-reprobe");
+    expect(probe).toBeDisabled();
+    fireEvent.mouseEnter(probe.parentElement as HTMLElement);
+    expect(screen.getByText("Admin scope required")).toBeInTheDocument();
+  });
+
+  it("opens the Settings tab from the URL and keeps the overview as the default", async () => {
+    renderPage("/orgs/acme?tab=settings");
+    await screen.findByRole("heading", { level: 1, name: "acme" });
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("textbox", { name: "Display name" })).toBeInTheDocument();
+    expect(screen.queryByTestId("org-act-panel")).toBeNull();
   });
 
   it("offers the wizard for an owner that is not registered", async () => {
