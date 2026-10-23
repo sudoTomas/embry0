@@ -429,3 +429,26 @@ async def test_creating_a_second_default_for_a_kind_is_409(app):
         )
     assert resp.status_code == 409, resp.text
     assert "'research'" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_creating_a_template_with_a_taken_name_is_409(app):
+    """With no kind in the body the unique violation is the name column, so the 409 names the template, not a kind."""
+    app.state.templates_repo.create = AsyncMock(side_effect=asyncpg.UniqueViolationError("duplicate key"))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "Research", "graph_definition": SAMPLE_GRAPH},
+            headers=_XHR,
+        )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "a template named 'Research' already exists"
+
+
+@pytest.mark.asyncio
+async def test_renaming_a_template_onto_a_taken_name_is_409(app):
+    app.state.templates_repo.update = AsyncMock(side_effect=asyncpg.UniqueViolationError("duplicate key"))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"name": "Research"}, headers=_XHR)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "a template named 'Research' already exists"

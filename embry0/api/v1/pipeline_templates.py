@@ -68,6 +68,11 @@ def _default_kind_taken(kind: str | None) -> HTTPException:
     )
 
 
+def _template_name_taken(name: str | None) -> HTTPException:
+    """``pipeline_templates.name`` is UNIQUE: with no kind in the write, the violation can only be the name."""
+    return HTTPException(status_code=409, detail=f"a template named {name!r} already exists")
+
+
 async def _known_agent_types(request: Request) -> set[str] | None:
     """The agent_definitions types that exist now; None when the app has no
     repository (tests) or the read fails, so the builtin types decide, as at
@@ -127,6 +132,8 @@ async def create_template(
             default_for_kind=req.default_for_kind,
         )
     except asyncpg.UniqueViolationError:
+        if req.default_for_kind is None:
+            raise _template_name_taken(req.name) from None
         raise _default_kind_taken(req.default_for_kind) from None
     return {**created, "warnings": warnings}
 
@@ -170,7 +177,10 @@ async def update_template(
     try:
         updated = await repo.update(template_id, **updates)
     except asyncpg.UniqueViolationError:
-        raise _default_kind_taken(updates.get("default_for_kind")) from None
+        kind = updates.get("default_for_kind")
+        if kind is None:
+            raise _template_name_taken(updates.get("name")) from None
+        raise _default_kind_taken(kind) from None
     if not updated:
         raise HTTPException(status_code=404, detail="Template not found")
     return {**updated, "warnings": warnings}
