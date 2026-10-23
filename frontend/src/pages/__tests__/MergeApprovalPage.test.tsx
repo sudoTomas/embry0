@@ -199,6 +199,13 @@ describe("MergeApprovalPage", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
+  it("shows the same off state as the list when the deployment has merge approvals off", () => {
+    mockUseMergeApproval.mockReturnValue(ready(null));
+    renderPage();
+    expect(screen.getByText("Merge approvals are off on this deployment")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  });
+
   it("shows a way back for an ask that does not exist", () => {
     mockUseMergeApproval.mockReturnValue({ data: undefined, isPending: false, isError: true, error: { response: { status: 404 } }, refetch: vi.fn() });
     renderPage("/merge-approvals/ma-9");

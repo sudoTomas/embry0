@@ -9,6 +9,7 @@ import { AdminButton } from "@/components/auth/AdminButton";
 import { Badge } from "@/components/ui/Badge";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DashboardSkeleton } from "@/components/ui/PageSkeleton";
+import { MergeApprovalsOff } from "@/components/merge-approvals/MergeApprovalsOff";
 import { PageError } from "@/components/PageError";
 import { CHECKS_TONES, VERDICT_LABELS, VERDICT_TONES, approvalTitle, decidedVia, detailSentence } from "@/lib/mergeApprovals";
 import { sentenceCase, statusLabel, statusTone } from "@/lib/status";
@@ -139,7 +140,8 @@ export function MergeApprovalPage() {
     }
     return <PageError message={`Failed to load merge approval ${approvalId}`} onRetry={() => void ask.refetch()} />;
   }
-  if (ask.isPending || !ask.data) return <DashboardSkeleton />;
+  if (ask.isPending || ask.data === undefined) return <DashboardSkeleton />;
+  if (ask.data === null) return <MergeApprovalsOff />;
 
   const row = ask.data;
   const a = row.ask;

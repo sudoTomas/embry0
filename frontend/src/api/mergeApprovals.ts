@@ -128,9 +128,11 @@ export async function fetchPendingMergeApprovals(): Promise<MergeApproval[] | nu
   return list === null ? null : list.items;
 }
 
-export async function fetchMergeApproval(approvalId: string): Promise<MergeApproval> {
-  const { data } = await api.get<MergeApproval>(`/merge-approvals/${encodeURIComponent(approvalId)}`);
-  return data;
+/** One ask by id, or `null` when the feature is off: the route's 503, read as the list reads it. */
+export async function fetchMergeApproval(approvalId: string): Promise<MergeApproval | null> {
+  const response = await api.get<MergeApproval>(`/merge-approvals/${encodeURIComponent(approvalId)}`, { validateStatus: okOr503 });
+  if (response.status === 503) return null;
+  return response.data;
 }
 
 /**

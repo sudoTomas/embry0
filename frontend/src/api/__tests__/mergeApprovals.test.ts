@@ -26,10 +26,12 @@ describe("merge approvals api", () => {
     await expect(fetchPendingMergeApprovals()).resolves.toEqual([{ id: "ma-1" }]);
   });
 
-  it("reads one ask by id", async () => {
-    get.mockResolvedValueOnce({ data: { id: "ma-1", repo: "acme/widgets" } });
+  it("reads one ask by id, and its 503 as the feature being off", async () => {
+    get.mockResolvedValueOnce({ status: 200, data: { id: "ma-1", repo: "acme/widgets" } });
     await expect(fetchMergeApproval("ma-1")).resolves.toEqual({ id: "ma-1", repo: "acme/widgets" });
-    expect(get).toHaveBeenCalledWith("/merge-approvals/ma-1");
+    expect(get).toHaveBeenCalledWith("/merge-approvals/ma-1", expect.objectContaining({ validateStatus: expect.any(Function) }));
+    get.mockResolvedValueOnce({ status: 503, data: { detail: "off" } });
+    await expect(fetchMergeApproval("ma-1")).resolves.toBeNull();
   });
 
   it("decides with the dashboard's form: the decision word alone", async () => {

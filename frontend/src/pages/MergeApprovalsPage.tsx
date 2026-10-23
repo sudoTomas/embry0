@@ -6,6 +6,7 @@ import { useMergeApprovals } from "@/hooks/useMergeApprovals";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FilterSelect } from "@/components/ui/FilterSelect";
+import { MergeApprovalsOff } from "@/components/merge-approvals/MergeApprovalsOff";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { CHECKS_TONES, VERDICT_LABELS, VERDICT_TONES, approvalTitle } from "@/lib/mergeApprovals";
@@ -40,13 +41,7 @@ export function MergeApprovalsPage() {
   } else if (list.isPending) {
     body = <TableSkeleton />;
   } else if (list.data === null) {
-    body = (
-      <EmptyState
-        icon={GitMerge}
-        title="Merge approvals are off on this deployment"
-        description="Set MERGE_APPROVAL_MODE and the approval chat in the root .env to have embry0 ask before it merges."
-      />
-    );
+    body = <MergeApprovalsOff />;
   } else if (list.data.items.length === 0) {
     body = (
       <EmptyState
