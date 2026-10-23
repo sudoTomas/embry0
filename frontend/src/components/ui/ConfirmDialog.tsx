@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 
+const noop = () => {};
+
 export interface ConfirmDialogProps {
   /** A question, which is also the dialog's name: "Remove web-1?". */
   title: string;
@@ -18,13 +20,14 @@ export interface ConfirmDialogProps {
 
 /**
  * The one "are you sure" (spec 3.7): a Dialog that must be answered, so the
- * backdrop does not dismiss it; Escape and Cancel do. Focus lands on Cancel,
- * so a stray Enter never confirms. It opens from a page, a row or a tab, never
- * from inside another Dialog.
+ * backdrop does not dismiss it; Escape and Cancel do, except while the action
+ * runs, when nothing closes it. Focus lands on Cancel, so a stray Enter never
+ * confirms. It opens from a page, a row or a tab, never from inside another
+ * Dialog.
  */
 export function ConfirmDialog({ title, children, confirmLabel, destructive, pending, onConfirm, onClose }: ConfirmDialogProps) {
   return (
-    <Dialog onClose={onClose} title={title} dismissOnBackdrop={false} className="max-w-md">
+    <Dialog onClose={pending ? noop : onClose} title={title} dismissOnBackdrop={false} className="max-w-md">
       <div className="space-y-4 p-5">
         <div className="text-sm text-fg-secondary">{children}</div>
         <div className="flex justify-end gap-2">

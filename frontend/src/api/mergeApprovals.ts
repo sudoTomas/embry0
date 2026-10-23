@@ -97,9 +97,15 @@ export interface MergeDecisionResult {
   dry_run: boolean;
   pr_url: string;
   head_sha: string;
+  /** Why a `refused`, `stale` or `failed` answer left the ask as it is; the row's `detail` carries it too. */
+  detail?: string | null;
+  /** A sentence for an `already_decided` answer. */
+  message?: string;
+  /** The ask that replaced a `stale` one. */
+  new_approval_id?: string | null;
 }
 
-const FEATURE_OFF = (status: number) => (status >= 200 && status < 300) || status === 503;
+const okOr503 = (status: number) => (status >= 200 && status < 300) || status === 503;
 
 /**
  * The asks, newest first, in one status or all of them; `null` when this
@@ -110,7 +116,7 @@ const FEATURE_OFF = (status: number) => (status >= 200 && status < 300) || statu
 export async function fetchMergeApprovals(status: MergeApprovalStatus | "all"): Promise<MergeApprovalList | null> {
   const response = await api.get<MergeApprovalList>("/merge-approvals", {
     params: status === "all" ? { limit: 200 } : { status, limit: 200 },
-    validateStatus: FEATURE_OFF,
+    validateStatus: okOr503,
   });
   if (response.status === 503) return null;
   return response.data;

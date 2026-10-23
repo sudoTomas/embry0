@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { useAuthStore } from "@/stores/authStore";
@@ -10,7 +10,9 @@ vi.mock("@/hooks/useMergeApprovals", () => ({
   useMergeApproval: (id: string | null) => mockUseMergeApproval(id),
   useDecideMergeApproval: () => ({ mutate, isPending: false }),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
+const { mockToastApiError } = vi.hoisted(() => ({ mockToastApiError: vi.fn() }));
+vi.mock("@/api/errorToast", () => ({ toastApiError: mockToastApiError }));
 
 import { toast } from "sonner";
 import { MergeApprovalPage } from "../MergeApprovalPage";
@@ -56,18 +58,32 @@ function ready<T>(data: T) {
   return { data, isPending: false, isError: false, error: null, refetch: vi.fn() };
 }
 
-function renderPage(path = "/merge-approvals/ma-1") {
-  return render(
+function tree(path: string) {
+  return (
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/merge-approvals/:approvalId" element={<MergeApprovalPage />} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
 }
 
+/** Renders the page; `refetched()` re-renders it, the way the invalidated query hands the page its new row. */
+function renderPage(path = "/merge-approvals/ma-1") {
+  const view = render(tree(path));
+  return { ...view, refetched: () => view.rerender(tree(path)) };
+}
+
+/** The decision's answer, as the service's `_result` shapes it. */
+function answer(outcome: string, extra: Record<string, unknown> = {}) {
+  return { outcome, status: ROW.status, dry_run: ROW.dry_run, pr_url: ROW.pr_url, head_sha: ROW.head_sha, ...extra };
+}
+
+type MutateOptions = { onSuccess: (r: unknown) => void; onError: (e: unknown) => void };
+
 beforeEach(() => {
   mutate.mockReset();
+  mockToastApiError.mockReset();
   mockUseMergeApproval.mockReset().mockReturnValue(ready(ROW));
   useAuthStore.setState({ authMode: "key", user: null });
 });
@@ -82,6 +98,8 @@ describe("MergeApprovalPage", () => {
     expect(screen.getAllByText("Review first")).toHaveLength(2);
     expect(screen.getByText("a denylisted path")).toBeInTheDocument();
     expect(screen.getByText("all 2 checks passed")).toBeInTheDocument();
+    expect(screen.getByText("Verification gate: Pass.")).toBeInTheDocument();
+    expect(screen.getByText(/addresses the failure: Yes/)).toBeInTheDocument();
     expect(screen.getByText("Looks right.")).toBeInTheDocument();
     expect(screen.getByText(".env.example")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "job-1" })).toHaveAttribute("href", "/jobs/job-1");
@@ -110,14 +128,65 @@ describe("MergeApprovalPage", () => {
     expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
   });
 
-  it("shows the outcome when the ask was decided elsewhere first", async () => {
-    mutate.mockImplementation((_vars: unknown, opts: { onSuccess: (r: unknown) => void }) =>
-      opts.onSuccess({ outcome: "already decided", status: "approved", dry_run: false, pr_url: ROW.pr_url, head_sha: ROW.head_sha }),
-    );
+  it("labels the approval plainly in dry run, where nothing merges", async () => {
+    mockUseMergeApproval.mockReturnValue(ready({ ...ROW, dry_run: true }));
     renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    const dialog = screen.getByRole("dialog", { name: "Approve acme/widgets#42?" });
+    expect(dialog).toHaveTextContent(/nothing merges/i);
+    expect(within(dialog).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Approve and merge" })).toBeNull();
+  });
+
+  it("shows the outcome when the ask was decided elsewhere first", async () => {
+    const decided = { ...ROW, status: "approved", decided_by: "ops@example.test", decided_at: "2026-10-20T11:00:00Z", chat_id: "chat-1" };
+    mutate.mockImplementation((_vars: unknown, opts: MutateOptions) => {
+      // The hook invalidates every merge-approval read on settle; the page then sees the decided row.
+      mockUseMergeApproval.mockReturnValue(ready(decided));
+      opts.onSuccess(answer("already_decided", { status: "approved", message: "this ask is already approved; nothing was done" }));
+    });
+    const { refetched } = renderPage();
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
     await userEvent.click(screen.getByRole("button", { name: "Approve and merge" }));
     expect(toast.info).toHaveBeenCalledWith("acme/widgets#42: Already decided");
+    refetched();
+    expect(screen.getByText(/decided by ops@example.test in the approval chat/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("warns with the reason when the merge was refused, and keeps the reason on the pending ask", async () => {
+    const refused = { ...ROW, detail: "the head moved since the ask" };
+    mutate.mockImplementation((_vars: unknown, opts: MutateOptions) => {
+      mockUseMergeApproval.mockReturnValue(ready(refused));
+      opts.onSuccess(answer("refused", { detail: refused.detail }));
+    });
+    const { refetched } = renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await userEvent.click(screen.getByRole("button", { name: "Approve and merge" }));
+    expect(toast.warning).toHaveBeenCalledWith("acme/widgets#42: Refused. the head moved since the ask");
+    expect(toast.success).not.toHaveBeenCalled();
+    refetched();
+    expect(screen.getByTestId("merge-approval-detail")).toHaveTextContent("The head moved since the ask.");
+    expect(screen.getByRole("button", { name: "Approve" }), "the ask is still pending, so the decision stays offered").toBeEnabled();
+  });
+
+  it("celebrates a merge", async () => {
+    mutate.mockImplementation((_vars: unknown, opts: MutateOptions) => opts.onSuccess(answer("merged", { status: "merged" })));
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await userEvent.click(screen.getByRole("button", { name: "Approve and merge" }));
+    expect(toast.success).toHaveBeenCalledWith("acme/widgets#42: Merged");
+  });
+
+  it("explains a refused request through the api error toast", async () => {
+    const error = { response: { status: 403, data: { detail: "Admin scope required" } } };
+    mutate.mockImplementation((_vars: unknown, opts: MutateOptions) => opts.onError(error));
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await userEvent.click(screen.getByRole("button", { name: "Reject the ask" }));
+    expect(mockToastApiError).toHaveBeenCalledWith(error, "The decision was not recorded");
+    expect(screen.queryByRole("dialog"), "the confirm closes either way").toBeNull();
   });
 
   it("shows who decided and hides the buttons once decided", () => {

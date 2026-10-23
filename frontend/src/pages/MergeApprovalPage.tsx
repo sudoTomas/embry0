@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { toast } from "sonner";
-import type { MergeApproval, MergeDecision } from "@/api/mergeApprovals";
+import type { MergeApproval, MergeDecision, MergeDecisionResult } from "@/api/mergeApprovals";
 import { isNotFound } from "@/api/errorDetail";
 import { toastApiError } from "@/api/errorToast";
 import { useDecideMergeApproval, useMergeApproval } from "@/hooks/useMergeApprovals";
@@ -34,6 +34,23 @@ function Lines({ items, className }: { items: string[]; className?: string }) {
   );
 }
 
+/** Answers that left the ask pending, with the reason in `detail`. */
+const KEPT_PENDING = new Set(["refused", "stale", "failed"]);
+/** Answers that settled the ask the way the person asked. */
+const SETTLED = new Set(["merged", "would_merge", "approved", "rejected"]);
+
+/** The decision's answer as a toast: a warning with the reason when the ask stays pending, a success when it settled, a note otherwise (already decided). */
+function toastOutcome(title: string, result: MergeDecisionResult) {
+  const summary = `${title}: ${sentenceCase(result.outcome)}`;
+  if (KEPT_PENDING.has(result.outcome)) {
+    toast.warning(result.detail ? `${summary}. ${result.detail}` : summary);
+  } else if (SETTLED.has(result.outcome)) {
+    toast.success(summary);
+  } else {
+    toast.info(summary);
+  }
+}
+
 function Decision({ row }: { row: MergeApproval }) {
   const [asking, setAsking] = useState<MergeDecision | null>(null);
   const decide = useDecideMergeApproval();
@@ -56,7 +73,7 @@ function Decision({ row }: { row: MergeApproval }) {
       {
         onSuccess: (result) => {
           setAsking(null);
-          toast.info(`${title}: ${sentenceCase(result.outcome)}`);
+          toastOutcome(title, result);
         },
         onError: (e) => {
           setAsking(null);
@@ -77,10 +94,15 @@ function Decision({ row }: { row: MergeApproval }) {
         </AdminButton>
         {row.dry_run && <span className="text-sm text-fg-muted">Dry run: an approval is recorded and nothing merges.</span>}
       </div>
+      {row.detail && (
+        <p className="text-sm text-fg-secondary" data-testid="merge-approval-detail">
+          {`${sentenceCase(row.detail)}.`}
+        </p>
+      )}
       {asking === "approve" && (
         <ConfirmDialog
           title={`Approve ${title}?`}
-          confirmLabel="Approve and merge"
+          confirmLabel={row.dry_run ? "Approve" : "Approve and merge"}
           pending={decide.isPending}
           onConfirm={() => submit("approve")}
           onClose={() => setAsking(null)}
@@ -127,7 +149,7 @@ export function MergeApprovalPage() {
   return (
     <div className="space-y-6" data-testid="merge-approval-page">
       <div className="space-y-2">
-        <Link to="/merge-approvals" className="text-sm text-white/50 hover:underline">
+        <Link to="/merge-approvals" className="text-sm text-fg-muted hover:underline">
           ← Merge approvals
         </Link>
         <div className="flex flex-wrap items-center gap-3">
@@ -188,7 +210,7 @@ export function MergeApprovalPage() {
             )}
             {verification?.present ? (
               <p className="text-sm text-fg-secondary">
-                {`Verification ${verification.gate_verdict ?? "unknown"}`}
+                {`Verification gate: ${sentenceCase(verification.gate_verdict ?? "unknown")}`}
                 {verification.blocking && ", blocking"}
                 {verification.human_merge_only && ", human merge only"}
                 {verification.for_this_head === false && " (for an earlier head)"}
@@ -205,7 +227,7 @@ export function MergeApprovalPage() {
               <>
                 <p className="text-sm text-fg-secondary">
                   {`${sentenceCase(a.review.decision || "no decision")} · ${a.review.critical} critical, ${a.review.important} important`}
-                  {a.review.addresses_failure && ` · addresses the failure: ${a.review.addresses_failure}`}
+                  {a.review.addresses_failure && ` · addresses the failure: ${sentenceCase(a.review.addresses_failure)}`}
                   {a.review.duplicate_pr !== null && ` · duplicate of #${a.review.duplicate_pr}`}
                 </p>
                 {a.review.summary && <p className="text-sm text-fg-secondary">{a.review.summary}</p>}
