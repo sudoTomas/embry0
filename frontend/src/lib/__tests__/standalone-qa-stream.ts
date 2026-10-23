@@ -33,6 +33,7 @@ export const QA_INIT_STARTED = ofNode("node_started", "init_orchestrator");
 export const QA_INIT_COMPLETED = ofNode("node_completed", "init_orchestrator");
 export const QA_ORCHESTRATE_STARTED = ofNode("node_started", "orchestrate_qa");
 export const QA_APPS_RESOLVED = one("qa_apps_resolved", (e) => e.type === "qa_apps_resolved");
+export const QA_AGENT_STARTED = one("agent_started", (e) => e.type === "agent_started");
 export const QA_COST_UPDATE = one("cost_update", (e) => e.type === "cost_update");
 export const QA_SUBTASK_PASSED = subtaskStatus("passed");
 export const QA_SUBTASK_FINISHED = one("qa_subtask_finished", (e) => e.type === "qa_subtask_finished");
