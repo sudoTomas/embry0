@@ -2337,7 +2337,7 @@ export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
   sandbox_profile?: string | null;
 ```
 
-`frontend/src/api/pipelines.ts`: `ApiTemplateSummary` gains `default_for_kind?: string | null;`; `mapSummary` returns `is_builtin: row.is_builtin === true, default_for_kind: (row.default_for_kind as TemplateKind | null | undefined) ?? null, sandbox_profile: row.sandbox_profile` too; `mapTemplate` adds `default_for_kind: (row.default_for_kind as TemplateKind | null | undefined) ?? null`. Append:
+`frontend/src/api/pipelines.ts`: `ApiTemplateSummary` gains `default_for_kind?: string | null;`; `mapSummary` returns `is_builtin: row.is_builtin === true, default_for_kind: (row.default_for_kind as TemplateKind | null | undefined) ?? null` and the row's `sandbox_profile` unchanged too; `mapTemplate` adds `default_for_kind: (row.default_for_kind as TemplateKind | null | undefined) ?? null`. Append:
 
 ```ts
 /** A copy of a template under a new name (its graph and sandbox profile; the description is the copy's own). */
