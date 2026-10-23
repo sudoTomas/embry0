@@ -732,6 +732,15 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     except httpx.ConnectError:
         _err(f"cannot reach the orchestrator at {base} — is the stack running? (embry0 start)")
         sys.exit(2)
+    except httpx.TimeoutException:
+        # Without --branch the orchestrator asks the forge for the repo's
+        # default branch before answering, and a rate-limited forge can take
+        # longer than this call waits. The job may still have been created.
+        _err(
+            f"the orchestrator at {base} did not answer in time — the onboard job may still have been "
+            f"created; check `embry0 jobs` or the dashboard's Jobs page before retrying"
+        )
+        sys.exit(2)
     if resp.status_code == 401:
         _err("orchestrator rejected the request (401) — set EMBRY0_API_KEY or pass --api-key")
         sys.exit(2)
@@ -739,8 +748,11 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         _err(f"onboard job creation failed ({resp.status_code}): {resp.text[:500]}")
         sys.exit(2)
 
-    job_id = resp.json().get("job_id")
-    _info(f"onboard job {job_id} started for {args.repo}@{args.branch} — analyzing…")
+    created = resp.json()
+    job_id = created.get("job_id")
+    # Without --branch the orchestrator picks the repo's base branch (#29).
+    branch = (created.get("pipeline_config") or {}).get("branch") or args.branch
+    _info(f"onboard job {job_id} started for {args.repo}@{branch} — analyzing…")
 
     # Poll until terminal. Analysis + up-to-3 rounds + smoke boots can take
     # a while; cap at 1h wall-clock.
@@ -997,8 +1009,12 @@ def main() -> None:
         "onboard",
         help="Analyze an existing repo and generate its qa.yaml into the external config store.",
     )
-    onboard.add_argument("repo", help="GitHub repo in owner/name form")
-    onboard.add_argument("--branch", default="main", help="Branch to analyze (default: main)")
+    onboard.add_argument("repo", help="Registered repo path (owner/name, or a GitLab group/subgroup/project)")
+    onboard.add_argument(
+        "--branch",
+        default=None,
+        help="Branch to analyze (default: the repo's base branch, from its preference or its forge)",
+    )
     onboard.add_argument(
         "--no-smoke",
         action="store_true",

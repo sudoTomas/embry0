@@ -68,7 +68,7 @@ async def start_onboard_job(
     request: Request,
     *,
     repo: str,
-    branch: str,
+    branch: str | None,
     skip_smoke: bool = False,
     agent_models: dict[str, str] | None = None,
     proposal_id: str | None = None,
@@ -81,7 +81,8 @@ async def start_onboard_job(
     organization onboard action both start their jobs here, so the action
     cannot start a job the caller's key could not start through the route.
     ``proposal_id`` runs it in propose mode (ADR 0019): the draft is stored on
-    that setup proposal, not as the test setup.
+    that setup proposal, not as the test setup. Without a ``branch`` the
+    executor resolves the repo's base branch (#29).
     Raises HTTPException as the route answers.
     """
     await enforce_repo_allowlist(request, repo, action=CREATE_A_JOB)
@@ -108,15 +109,15 @@ async def create_job(
     req: JobCreateRequest, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)
 ) -> dict[str, Any]:
     # EMB-50: onboard pipeline — analyze the repo + generate its qa.yaml into
-    # the external config store. Issue-less, like qa; branch defaults to main.
-    # Its checks live in start_onboard_job, which the organization onboard
-    # action shares.
+    # the external config store. Issue-less, like qa. Without a branch the
+    # executor resolves the repo's base branch (#29). Its checks live in
+    # start_onboard_job, which the organization onboard action shares.
     if req.pipeline == "onboard":
         assert req.repo is not None  # noqa: S101 — schema-enforced for onboard
         job_id = await start_onboard_job(
             request,
             repo=req.repo,
-            branch=req.branch or "main",
+            branch=req.branch or None,
             skip_smoke=req.skip_smoke,
             agent_models=req.agent_models,
         )

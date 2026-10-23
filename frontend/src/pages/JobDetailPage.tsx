@@ -36,6 +36,7 @@ import { TracesTable } from "@/components/traces/TracesTable";
 import { CostBreakdownTable } from "@/components/jobs/CostBreakdownTable";
 import { AgentFailuresCard } from "@/components/jobs/AgentFailuresCard";
 import { DeliverablesCard } from "@/components/jobs/DeliverablesCard";
+import { OnboardOutcomeCard } from "@/components/jobs/OnboardOutcomeCard";
 import { PipelineGraphView } from "@/components/pipeline/PipelineGraphView";
 import { ConversationView } from "@/components/logs/ConversationView";
 import { StructuredView } from "@/components/logs/StructuredView";
@@ -259,6 +260,7 @@ export function JobDetailPage() {
           {job.error_code && <div className="mt-1 text-[11px] font-mono text-destructive/80">{job.error_code}</div>}
         </div>
       )}
+      <OnboardOutcomeCard job={job} />
       <AgentFailuresCard failures={job.agent_failures} />
       {job.status === "expired" && <div className="px-4 py-3 rounded-lg border border-border bg-card text-sm text-muted-foreground">Job expired — sandbox discarded</div>}
       {job.status === "paused" && (
