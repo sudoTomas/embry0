@@ -276,6 +276,36 @@ class JobsRepository:
         )
         return [dict(r) for r in rows], int(total or 0)
 
+    async def newest_per_repo(
+        self, repos: Collection[str], *, pipeline_template: str, dispatched_by: str | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """The newest job of each repository in ``repos`` that names ``pipeline_template``.
+
+        A job ``dispatched_by`` started counts too, whatever its template
+        column says now: plan_route rewrites the column with the template it
+        resolved. Each row carries ``live``, whether any such job of the
+        repository has not been released (``RELEASED_JOB_STATUSES``), not only
+        the newest. One query for the whole set, without the task text; a
+        repository with no such job is absent.
+        """
+        if not repos:
+            return {}
+        rows = await self._db.fetch(
+            """
+            SELECT DISTINCT ON (repo)
+                repo, job_id, status, created_at, finished_at, pipeline_config,
+                bool_or(NOT (status = ANY($4::text[]))) OVER (PARTITION BY repo) AS live
+            FROM jobs
+            WHERE repo = ANY($1::text[]) AND (pipeline_template = $2 OR dispatched_by = $3)
+            ORDER BY repo, created_at DESC, job_id DESC
+            """,
+            sorted(set(repos)),
+            pipeline_template,
+            dispatched_by,
+            sorted(str(status) for status in RELEASED_JOB_STATUSES),
+        )
+        return {str(r["repo"]): dict(r) for r in rows}
+
     async def count_dispatched_by(
         self,
         actor: str,
