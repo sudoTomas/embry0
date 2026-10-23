@@ -110,6 +110,10 @@ CI green, verification gate not blocking, mergeable); `MERGE_APPROVAL_REPOS`
 still decides which repositories are asked about at all. A `merge`-scope key
 cannot use this form: it is the relay's key, and the relay answers for a chat.
 
+The page is **Merge approvals** in the Work section: the asks by status,
+pending first, and each ask's own page with the change, the checks, the
+reviewer's verdict, the recommendation and the two buttons.
+
 ## Rolling out
 
 1. Deploy with `MERGE_APPROVAL_MODE=dry_run` and `MERGE_APPROVAL_CHAT_ID` set.

@@ -78,6 +78,7 @@ describe("BriefBar", () => {
     expect(screen.getByTestId("brief-awaiting")).toHaveAttribute("href", "/console");
     expect(screen.getByTestId("brief-paused")).toHaveTextContent("1 paused");
     expect(screen.getByTestId("brief-approvals")).toHaveTextContent("1 merge approval asked");
+    expect(screen.getByTestId("brief-approvals")).toHaveAttribute("href", "/merge-approvals");
     expect(screen.getByTestId("brief-org-needs")).toHaveTextContent("2 organization needs");
     expect(screen.getByTestId("brief-org-needs")).toHaveAttribute("href", "/orgs");
     expect(screen.getByTestId("brief-drafts")).toHaveTextContent("1 draft ticket to decide");

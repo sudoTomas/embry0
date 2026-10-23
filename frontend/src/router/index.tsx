@@ -8,6 +8,8 @@ const DashboardPage = lazy(() => import("../pages/DashboardPage").then(m => ({ d
 const ConsolePage = lazy(() => import("../pages/ConsolePage").then(m => ({ default: m.ConsolePage })));
 const JobsPage = lazy(() => import("../pages/JobsPage").then(m => ({ default: m.JobsPage })));
 const JobDetailPage = lazy(() => import("../pages/JobDetailPage").then(m => ({ default: m.JobDetailPage })));
+const MergeApprovalsPage = lazy(() => import("../pages/MergeApprovalsPage").then(m => ({ default: m.MergeApprovalsPage })));
+const MergeApprovalPage = lazy(() => import("../pages/MergeApprovalPage").then(m => ({ default: m.MergeApprovalPage })));
 const AgentsPage = lazy(() => import("../pages/AgentsPage").then(m => ({ default: m.AgentsPage })));
 const AgentFormPage = lazy(() => import("../pages/AgentFormPage").then(m => ({ default: m.AgentFormPage })));
 const SandboxesPage = lazy(() => import("../pages/SandboxesPage").then(m => ({ default: m.SandboxesPage })));
@@ -60,6 +62,8 @@ export const router = createBrowserRouter([
       { path: "jobs", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobsPage /></Suspense></ErrorBoundary> },
       { path: "jobs/:jobId", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobDetailPage /></Suspense></ErrorBoundary> },
       { path: "jobs/:jobId/logs", element: <JobLogsPageRedirect /> },
+      { path: "merge-approvals", element: <ErrorBoundary inline><Suspense fallback={fallback}><MergeApprovalsPage /></Suspense></ErrorBoundary> },
+      { path: "merge-approvals/:approvalId", element: <ErrorBoundary inline><Suspense fallback={fallback}><MergeApprovalPage /></Suspense></ErrorBoundary> },
       { path: "agents", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentsPage /></Suspense></ErrorBoundary> },
       { path: "agents/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
       { path: "agents/:type", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },

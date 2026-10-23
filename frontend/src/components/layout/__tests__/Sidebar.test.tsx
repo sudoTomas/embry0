@@ -81,7 +81,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
-  it("Work section contains Console, Issues, Jobs in that order (Companion pages dropped, RAV-1058 A2)", () => {
+  it("Work section contains Console, Issues, Jobs, Merge approvals in that order", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Work" })
       .parentElement as HTMLElement;
@@ -90,6 +90,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
       "Console",
       "Issues",
       "Jobs",
+      "Merge approvals",
     ]);
   });
 

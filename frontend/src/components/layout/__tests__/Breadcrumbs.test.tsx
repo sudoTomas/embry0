@@ -116,4 +116,11 @@ describe("Breadcrumbs", () => {
     renderAt("/qa/runs/job-123");
     expect(trail()).toBe("QA/job-123");
   });
+
+  it("names the Work section on the merge approvals list and the ask under it", () => {
+    renderAt("/merge-approvals");
+    expect(trail()).toBe("Work");
+    renderAt("/merge-approvals/ma-1");
+    expect(screen.getAllByRole("navigation", { name: "Breadcrumb" })[1]).toHaveTextContent("Merge approvals/ma-1");
+  });
 });
