@@ -1,5 +1,6 @@
 import { Link, useParams } from "react-router";
 import { useQaRunsForRepo } from "@/hooks/useQaDashboard";
+import { BuildImageButton } from "@/components/qa/BuildImageButton";
 import { QaRunRow } from "@/components/qa/QaRunRow";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
@@ -20,7 +21,10 @@ export function QaRepoDetailPage() {
       <Link to="/qa/repos" className="text-sm text-white/50 hover:underline">
         ← all repos
       </Link>
-      <h1 className="title-pixel text-xl font-bold">{repo}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="title-pixel text-xl font-bold">{repo}</h1>
+        <BuildImageButton repo={repo} />
+      </div>
       <p className="text-sm text-white/60">
         Last {data.length} runs · {passing} passed · {failing} failed
         {" · "}
