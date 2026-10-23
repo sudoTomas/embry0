@@ -39,13 +39,17 @@ interface AuthCheck {
 }
 
 /** The tier of `candidate` as the sign-in check reports it; undefined when
- *  the check fails or does not report it (the store then keeps the old
- *  every-key-is-admin behaviour). */
+ *  the check fails, hangs or does not report it (the store then keeps the
+ *  old every-key-is-admin behaviour). The key is already validated by then,
+ *  so a short timeout keeps a slow check from holding the form. */
+const KEY_TIER_TIMEOUT_MS = 5000;
+
 async function fetchKeyTier(candidate: string): Promise<string | null | undefined> {
   try {
     const check = await api.get<AuthCheck>("/auth/check", {
       headers: { Authorization: `Bearer ${candidate}` },
       suppressErrorToast: true,
+      timeout: KEY_TIER_TIMEOUT_MS,
     });
     return check.data.key_tier;
   } catch {

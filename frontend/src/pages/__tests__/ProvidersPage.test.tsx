@@ -17,9 +17,9 @@ vi.mock("@/api/provider", () => ({
   testCatalogProvider: (name: string) => mockTestCatalogProvider(name),
 }));
 
+// An admin session: the page reads only useIsAdmin (#101).
 vi.mock("@/stores/authStore", () => ({
-  useAuthStore: (sel: (s: { authMode: string; user?: { tier: string } }) => unknown) =>
-    sel({ authMode: "key", user: undefined }),
+  useIsAdmin: () => true,
 }));
 
 import { ProvidersPage } from "../ProvidersPage";

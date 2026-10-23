@@ -11,7 +11,7 @@ import {
   type ApiKey,
   type CreatedApiKey,
 } from "@/api/apiKeys";
-import { useAuthStore } from "@/stores/authStore";
+import { useIsAdmin } from "@/stores/authStore";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -55,9 +55,7 @@ function mcpAddCommand(key: string): string {
 export default function ApiKeysTab() {
   const keys = useApiKeys();
   const queryClient = useQueryClient();
-  const authMode = useAuthStore((s) => s.authMode);
-  const userTier = useAuthStore((s) => s.user?.tier);
-  const isAdmin = authMode === "key" || userTier === "admin";
+  const isAdmin = useIsAdmin();
 
   const [name, setName] = useState("");
   const [scope, setScope] = useState("read");

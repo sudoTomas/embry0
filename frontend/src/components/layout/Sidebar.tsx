@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { prefersReducedMotion } from "@/hooks/useReducedMotion";
 import { useLayoutStore } from "@/stores/layoutStore";
-import { useAuthStore } from "@/stores/authStore";
+import { useIsAdmin } from "@/stores/authStore";
 import { useAwaitingIndicator } from "@/hooks/useAwaitingIndicator";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -183,11 +183,9 @@ export function Sidebar() {
   const narrow = useIsNarrow();
   const sidebarOpen = narrow ? true : desktopOpen;
   const closeDrawer = () => setDrawerOpen(false);
-  // RAV-1056: admin-only entries render for admin sessions or API-key mode
-  // (the master key is admin-equivalent). Backend enforces independently.
-  const authMode = useAuthStore((s) => s.authMode);
-  const userTier = useAuthStore((s) => s.user?.tier);
-  const isAdmin = authMode === "key" || userTier === "admin";
+  // RAV-1056: admin-only entries render for admin sessions and admin-tier
+  // keys (issue 101). Backend enforces independently.
+  const isAdmin = useIsAdmin();
   // Blocked-job (awaiting_input + paused) count: badges the Console entry
   // and mirrors into document.title ("(2⚠) …") — the sidebar is mounted on
   // every route, so the title stays honest app-wide.

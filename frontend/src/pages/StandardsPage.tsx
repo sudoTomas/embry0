@@ -20,7 +20,7 @@ import { useAuditJobStatuses, useOwnerStandards, useStandardVersions } from "@/h
 import { colourRoles, otherRoles, standardRows, standardTitle } from "@/lib/standards";
 import { statusLabel, statusTone } from "@/lib/status";
 import { formatDate } from "@/lib/utils";
-import { useAuthStore } from "@/stores/authStore";
+import { useAuthStore, useIsAdmin } from "@/stores/authStore";
 
 /** The one kind of standard this release holds. */
 const KIND = "design";
@@ -55,10 +55,10 @@ function Section({
  */
 export function StandardsPage() {
   const owner = (useParams().owner ?? "").toLowerCase();
-  const authMode = useAuthStore((s) => s.authMode);
   const userTier = useAuthStore((s) => s.user?.tier);
-  const isAdmin = authMode === "key" || userTier === "admin";
-  const canAudit = isAdmin || userTier === "operator";
+  const keyTier = useAuthStore((s) => s.keyTier);
+  const isAdmin = useIsAdmin();
+  const canAudit = isAdmin || userTier === "operator" || keyTier === "operator";
 
   // From the list, not GET /orgs/<owner>: a standard can exist before its
   // owner is registered, and that read would answer 404 on every load.

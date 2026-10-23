@@ -28,7 +28,7 @@ import {
   useOrganizationRepos,
   useOrganizationRuns,
 } from "@/hooks/useOrgs";
-import { useAuthStore } from "@/stores/authStore";
+import { useIsAdmin } from "@/stores/authStore";
 import { cn } from "@/lib/utils";
 
 const STEPS = ["Connect", "Discover", "Report", "Act"] as const;
@@ -96,9 +96,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
  * discovery found and what embry0 still needs) and act on those needs.
  */
 export function OrgWizardPage() {
-  const authMode = useAuthStore((s) => s.authMode);
-  const userTier = useAuthStore((s) => s.user?.tier);
-  const isAdmin = authMode === "key" || userTier === "admin";
+  const isAdmin = useIsAdmin();
 
   const [step, setStep] = useState<Step>(1);
   const [ownerInput, setOwnerInput] = useState("");

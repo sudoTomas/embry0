@@ -203,6 +203,13 @@ describe("AuthGate (the key's tier — #101)", () => {
 
     expect(await screen.findByTestId("app-content")).toBeInTheDocument();
     expect(useAuthStore.getState().keyTier).toBe("operator");
+    expect(mockGet).toHaveBeenCalledWith(
+      "/auth/check",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer sk-operate" },
+        timeout: 5000,
+      }),
+    );
     const { result } = renderHook(() => useIsAdmin());
     expect(result.current, "the form path learns the tier too").toBe(false);
   });

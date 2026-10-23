@@ -55,6 +55,15 @@ describe("useIsAdmin", () => {
     expect(result.current).toBe(false);
   });
 
+  it("is true for an admin SSO session", () => {
+    useAuthStore.setState({
+      authMode: "session",
+      user: { email: "a@example.com", name: "A", tier: "admin" },
+    });
+    const { result } = renderHook(() => useIsAdmin());
+    expect(result.current).toBe(true);
+  });
+
   it("is false for an operator SSO session", () => {
     useAuthStore.setState({
       authMode: "session",

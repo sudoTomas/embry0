@@ -4,7 +4,7 @@ import { setRepoDockerAccess } from "@/api/repos";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { useAuthStore } from "@/stores/authStore";
+import { useIsAdmin } from "@/stores/authStore";
 import { toastApiError } from "@/api/errorToast";
 
 /** What the grant hands over (#522). Shown wherever the grant can be given. */
@@ -15,9 +15,7 @@ export const DOCKER_ACCESS_WARNING =
  * A sandbox profile with DinD only asks for the daemon; a sandbox gets it
  * when its repo holds this grant. */
 export function RepoDockerAccessSection({ repo, dockerAccess }: { repo: string; dockerAccess: boolean }) {
-  const authMode = useAuthStore((s) => s.authMode);
-  const userTier = useAuthStore((s) => s.user?.tier);
-  const isAdmin = authMode === "key" || userTier === "admin";
+  const isAdmin = useIsAdmin();
   const queryClient = useQueryClient();
 
   const mutation = useMutation({

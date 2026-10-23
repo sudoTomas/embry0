@@ -11,7 +11,7 @@ import { useModelsCatalog } from "@/hooks/useProvider";
 import { ENABLE_SETTING, llmProviderStates, usableLlmProviders, type LlmProviderName } from "@/lib/llmProviders";
 import type { Binding, BindingInput, RepoCredentials } from "@/lib/types/credentials";
 import { providerLabel } from "@/lib/status";
-import { useAuthStore } from "@/stores/authStore";
+import { useIsAdmin } from "@/stores/authStore";
 
 const NONE_VALUE = "";
 const NONE_LABEL = "Use the shared account (recommended)";
@@ -22,9 +22,7 @@ type ForgeName = "github" | "gitlab";
 type ForgeEffective = NonNullable<RepoCredentials["effective"]["forge"]>;
 
 export function RepoAccountsSection({ repo, forge }: { repo: string; forge: ForgeName }) {
-  const authMode = useAuthStore((s) => s.authMode);
-  const userTier = useAuthStore((s) => s.user?.tier);
-  const isAdmin = authMode === "key" || userTier === "admin";
+  const isAdmin = useIsAdmin();
 
   const repoQuery = useRepoCredentials(repo);
   const credentialsQuery = useCredentials();

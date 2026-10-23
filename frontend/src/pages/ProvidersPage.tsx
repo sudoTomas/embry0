@@ -8,7 +8,7 @@ import { Select } from "@/components/ui/Select";
 import { PageError } from "@/components/PageError";
 import { formatDate } from "@/lib/utils";
 import { providerLabel, sentenceCase } from "@/lib/status";
-import { useAuthStore } from "@/stores/authStore";
+import { useIsAdmin } from "@/stores/authStore";
 import {
   useModelsCatalog,
   useProviderConfig,
@@ -225,9 +225,7 @@ export function ProvidersPage() {
   const { data: providerConfig } = useProviderConfig();
   const updateProvider = useUpdateProviderConfig();
 
-  const authMode = useAuthStore((s) => s.authMode);
-  const userTier = useAuthStore((s) => s.user?.tier);
-  const isAdmin = authMode === "key" || userTier === "admin";
+  const isAdmin = useIsAdmin();
 
   const [tierDraft, setTierDraft] = useState<Partial<Record<TierKey, string>>>({});
   const [defaultModelDraft, setDefaultModelDraft] = useState<string | null>(null);

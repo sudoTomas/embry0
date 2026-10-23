@@ -51,6 +51,7 @@ beforeEach(() => {
     sessionExpired: false,
     authMode: "session",
     user: { email: "op@example.com", name: "Op", tier: "operator" },
+    keyTier: undefined,
     ssoEnabled: true,
     apiKeyLogin: true,
   });
@@ -70,6 +71,18 @@ describe("ApiKeysTab", () => {
     renderTab();
     await screen.findByText(/no api keys/i);
     expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["read", "operate"]);
+  });
+
+  it("caps the scope select at the operator tier for a key session of tier operator (#101)", async () => {
+    useAuthStore.setState({ authMode: "key", user: null, keyTier: "operator" });
+    mockFetch.mockResolvedValue([]);
+    renderTab();
+    await screen.findByText(/no api keys/i);
+    expect(
+      screen.getAllByRole("option").map((o) => o.textContent),
+      "an operate-scope key cannot mint admin or merge keys",
+    ).toEqual(["read", "operate"]);
+    expect(screen.queryByText("Service key (unowned — for agents/infra such as a chat relay)")).toBeNull();
   });
 
   it("offers admin scope and the service checkbox to admins", async () => {
