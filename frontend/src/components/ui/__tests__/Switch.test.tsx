@@ -22,7 +22,7 @@ describe("Switch", () => {
     render(<Switch checked onCheckedChange={onCheckedChange} label="Review pull requests" disabled />);
     const sw = screen.getByRole("switch");
     expect(sw).toHaveAttribute("aria-checked", "true");
-    expect(sw).toHaveClass("bg-primary");
+    expect(sw).toHaveClass("bg-success");
     expect(sw).toBeDisabled();
     await user.click(sw);
     expect(onCheckedChange).not.toHaveBeenCalled();
