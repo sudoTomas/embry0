@@ -71,9 +71,12 @@ export function RepoDetailPage() {
     enabled: validRepo,
     retry: false,
   });
-  const { data: envVars = [] } = useRepoEnv(full);
+  const own = useRepoEnv(full);
+  const envVars = own.data ?? [];
   // The repo's own values by default; the effective set (global values with
-  // the repo's written over them) on request, fetched only then.
+  // the repo's written over them) on request, fetched only then. Its Source
+  // column reads the own list: drawn before that list has answered, every
+  // value would say Global.
   const [effective, setEffective] = useState(false);
   const resolved = useResolvedRepoEnv(full, effective);
   const ownKeys = new Set(envVars.map((v) => v.key));
@@ -159,7 +162,7 @@ export function RepoDetailPage() {
           </div>
           {effective && resolved.isError ? (
             <PageError message="Failed to load the effective environment" onRetry={() => void resolved.refetch()} />
-          ) : effective && !resolved.data ? (
+          ) : effective && (!own.isSuccess || !resolved.data) ? (
             <Skeleton className="h-10 w-full" />
           ) : (effective ? resolved.data ?? [] : envVars).length === 0 ? (
             <p className="text-sm text-muted-foreground">

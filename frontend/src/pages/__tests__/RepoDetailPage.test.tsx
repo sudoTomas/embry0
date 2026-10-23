@@ -217,7 +217,7 @@ beforeEach(() => {
   mockFetchReadiness.mockResolvedValue(READINESS);
   mockFetchHistory.mockReset();
   mockFetchHistory.mockResolvedValue({ entries: [], before_history: false });
-  mockUseRepoEnv.mockReturnValue({ data: [] });
+  mockUseRepoEnv.mockReturnValue({ isSuccess: true, data: [] });
   mockUseResolvedRepoEnv.mockReset().mockReturnValue({ data: undefined, isPending: false, isError: false, refetch: vi.fn() });
   mockUseQaRunsForRepo.mockReturnValue({ data: [] });
   mockFetchRepoCredentials.mockReset();
@@ -472,7 +472,7 @@ describe("RepoDetailPage (RAV-1253)", () => {
 
   it("masks secret env values and links runs", async () => {
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
-    mockUseRepoEnv.mockReturnValue({
+    mockUseRepoEnv.mockReturnValue({ isSuccess: true,
       data: [
         { key: "API_URL", value: "http://x", var_type: "config", scope: "app" },
         { key: "TOKEN", value: "should-not-render", var_type: "secret", scope: "app" },
@@ -552,7 +552,7 @@ describe("RepoDetailPage (RAV-1253)", () => {
 
   it("shows the effective environment on request, each value marked Repo or Global", async () => {
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
-    mockUseRepoEnv.mockReturnValue({ data: [{ key: "API_URL", value: "https://repo.example.test", var_type: "config", description: "" }] });
+    mockUseRepoEnv.mockReturnValue({ isSuccess: true, data: [{ key: "API_URL", value: "https://repo.example.test", var_type: "config", description: "" }] });
     mockUseResolvedRepoEnv.mockReturnValue({
       data: [
         { key: "API_URL", value: "https://repo.example.test", var_type: "config", description: "" },
@@ -575,9 +575,25 @@ describe("RepoDetailPage (RAV-1253)", () => {
     expect(within(rows[1]).getByText("SHAR••••7Q2F")).toBeInTheDocument();
   });
 
+  it("waits for the repo's own list before drawing the effective table, whose Source column reads it", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockUseRepoEnv.mockReturnValue({ isSuccess: false, data: undefined });
+    mockUseResolvedRepoEnv.mockReturnValue({
+      data: [{ key: "SHARED", value: "x", var_type: "config", description: "" }],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    await userEvent.click(screen.getByRole("switch", { name: "Effective for this repo" }));
+    expect(screen.queryAllByTestId("repo-env-row"), "no row may read Global before the own list has answered").toHaveLength(0);
+    expect(section("appSettings").querySelector(".motion-safe\\:animate-pulse"), "the skeleton holds the table's place").not.toBeNull();
+  });
+
   it("marks every effective variable Global when the repo sets none", async () => {
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
-    mockUseRepoEnv.mockReturnValue({ data: [] });
+    mockUseRepoEnv.mockReturnValue({ isSuccess: true, data: [] });
     mockUseResolvedRepoEnv.mockReturnValue({
       data: [{ key: "SHARED", value: "x", var_type: "config", description: "" }],
       isPending: false,
