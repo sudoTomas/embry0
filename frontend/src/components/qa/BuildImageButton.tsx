@@ -60,7 +60,16 @@ export function BuildImageButton({ repo }: { repo: string }) {
 
   return (
     <>
-      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)} data-testid="build-qa-image">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          setError(null);
+          setOpen(true);
+        }}
+        data-testid="build-qa-image"
+      >
         <Hammer className="mr-2 h-4 w-4" />
         Build QA image
       </Button>

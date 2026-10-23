@@ -80,7 +80,7 @@ describe("qaDashboard api client", () => {
     expect(get).toHaveBeenCalledWith("/qa/runs/j-1/apps/hub");
   });
 
-  it("builds a QA image with a long timeout and shows a refusal itself", async () => {
+  it("builds a QA image, sends the long timeout and suppresses the validation toast", async () => {
     const post = vi
       .spyOn(api, "post")
       .mockResolvedValueOnce({ data: { repo: "acme/widgets", branch: "main", status: "built" } });

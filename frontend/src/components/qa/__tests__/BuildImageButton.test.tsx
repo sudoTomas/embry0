@@ -61,6 +61,30 @@ describe("BuildImageButton", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  it("forgets the last refusal when the dialog is opened again", async () => {
+    mockBuild.mockRejectedValue({ response: { status: 422, data: { detail: "ERR_REPO_UNREGISTERED: acme/widgets is not registered" } } });
+    renderButton();
+    await userEvent.click(screen.getByRole("button", { name: "Build QA image" }));
+    await userEvent.click(screen.getByRole("button", { name: "Build" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("acme/widgets is not registered");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: "Build QA image" }));
+    expect(screen.getByRole("dialog", { name: "Build QA image" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("locks the dialog while the build runs", async () => {
+    mockBuild.mockReturnValue(new Promise(() => {}));
+    renderButton();
+    await userEvent.click(screen.getByRole("button", { name: "Build QA image" }));
+    await userEvent.click(screen.getByRole("button", { name: "Build" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Building… (can take minutes)" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Build QA image" })).toBeInTheDocument();
+  });
+
   it("refuses an empty branch before asking the server", async () => {
     renderButton();
     await userEvent.click(screen.getByRole("button", { name: "Build QA image" }));
