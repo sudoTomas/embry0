@@ -302,6 +302,19 @@ describe("a run nested inside a graph node (#104)", () => {
     expect(agents[0].summary, "a run with no outcome of its own takes the node's action").toBe("proceed");
   });
 
+  it("a routing action never replaces an agent's own summary: triage keeps its output, a silent run takes the action", () => {
+    const completed = (output: string) => ({
+      type: "agent_completed", node: "triage", agent: "triage", run_id: "r1", is_error: false, output, cost_usd: 0.01, duration_ms: 1,
+      error_code: null, error_message: "", tools_called: {}, policy_denials: {}, input_tokens: 0, output_tokens: 0,
+      cache_read_tokens: 0, cache_creation_tokens: 0, timestamp: t,
+    });
+    const routed = { type: "node_completed", node: "triage", action: "ask_user", timestamp: t };
+    const withOutput = run([...started("triage", "r1"), completed("Needs the owner's call on the schema."), routed]);
+    expect(withOutput.agents[0].summary, "the agent's own output outranks the routing label").toBe("Needs the owner's call on the schema.");
+    const silent = run([...started("triage", "r1"), completed(""), routed]);
+    expect(silent.agents[0].summary, "a run with no output shows where the node routed").toBe("ask_user");
+  });
+
   it("a node nesting several runs: each keeps its own outcome, the node card carries the verdict", () => {
     // Two apps: orchestrate_qa fans out one run per app. The web run fails,
     // the api run passes, the node's own node_completed says failed overall.
