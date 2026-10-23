@@ -209,6 +209,8 @@ async def duplicate_template(
         return await repo.duplicate(template_id, new_name=req.name)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except asyncpg.UniqueViolationError:
+        raise _template_name_taken(req.name) from None
 
 
 @router.post("/pipelines/validate")

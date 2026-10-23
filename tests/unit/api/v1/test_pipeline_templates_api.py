@@ -475,3 +475,15 @@ async def test_a_taken_name_is_reported_even_when_the_body_carries_a_kind(app, m
         resp = await getattr(client, method)(url, json=body, headers=_XHR)
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"] == "a template named 'Research' already exists"
+
+
+@pytest.mark.asyncio
+async def test_duplicating_onto_a_taken_name_is_409(app):
+    """The copy's name hits the same UNIQUE as a create; the route says so instead of a 500."""
+    app.state.templates_repo.duplicate = AsyncMock(side_effect=_unique_violation(_NAME_KEY))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/pipelines/templates/tmpl-1/duplicate", json={"name": "Research"}, headers=_XHR
+        )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "a template named 'Research' already exists"
