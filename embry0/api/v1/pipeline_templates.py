@@ -61,6 +61,10 @@ def _stored_added_skills(template: dict[str, Any] | None) -> set[str]:
     return names
 
 
+# migration 42: the partial unique index behind "at most one default per kind".
+_DEFAULT_KIND_INDEX = "idx_pipeline_templates_default_kind"
+
+
 def _default_kind_taken(kind: str | None) -> HTTPException:
     """The partial unique index on ``default_for_kind`` refused a second holder (RAV-601)."""
     return HTTPException(
@@ -69,7 +73,7 @@ def _default_kind_taken(kind: str | None) -> HTTPException:
 
 
 def _template_name_taken(name: str | None) -> HTTPException:
-    """``pipeline_templates.name`` is UNIQUE: with no kind in the write, the violation can only be the name."""
+    """``pipeline_templates.name`` is UNIQUE; the only other constraint a template write can violate."""
     return HTTPException(status_code=409, detail=f"a template named {name!r} already exists")
 
 
@@ -131,10 +135,11 @@ async def create_template(
             sandbox_profile=req.sandbox_profile,
             default_for_kind=req.default_for_kind,
         )
-    except asyncpg.UniqueViolationError:
-        if req.default_for_kind is None:
-            raise _template_name_taken(req.name) from None
-        raise _default_kind_taken(req.default_for_kind) from None
+    except asyncpg.UniqueViolationError as exc:
+        # The server names the constraint it refused; the body cannot tell the two apart.
+        if exc.constraint_name == _DEFAULT_KIND_INDEX:
+            raise _default_kind_taken(req.default_for_kind) from None
+        raise _template_name_taken(req.name) from None
     return {**created, "warnings": warnings}
 
 
@@ -176,11 +181,10 @@ async def update_template(
     warnings = await check_added_skills(request, [s for s in added if s not in already])
     try:
         updated = await repo.update(template_id, **updates)
-    except asyncpg.UniqueViolationError:
-        kind = updates.get("default_for_kind")
-        if kind is None:
-            raise _template_name_taken(updates.get("name")) from None
-        raise _default_kind_taken(kind) from None
+    except asyncpg.UniqueViolationError as exc:
+        if exc.constraint_name == _DEFAULT_KIND_INDEX:
+            raise _default_kind_taken(updates.get("default_for_kind")) from None
+        raise _template_name_taken(updates.get("name")) from None
     if not updated:
         raise HTTPException(status_code=404, detail="Template not found")
     return {**updated, "warnings": warnings}

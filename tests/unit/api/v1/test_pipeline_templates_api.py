@@ -385,6 +385,13 @@ async def test_a_failing_agent_rows_read_degrades_to_the_builtin_types(app):
 
 
 _XHR = {"X-Requested-With": "XMLHttpRequest"}
+_KIND_INDEX = "idx_pipeline_templates_default_kind"  # migration 42
+_NAME_KEY = "pipeline_templates_name_key"  # Postgres's name for the UNIQUE on pipeline_templates.name
+
+
+def _unique_violation(constraint: str) -> asyncpg.UniqueViolationError:
+    """The error asyncpg raises for 23505, carrying the constraint the server names."""
+    return asyncpg.UniqueViolationError.new({"C": "23505", "M": "duplicate key", "n": constraint})
 
 
 @pytest.mark.asyncio
@@ -409,7 +416,7 @@ async def test_an_absent_default_kind_is_kept(app):
 @pytest.mark.asyncio
 async def test_a_second_default_for_a_kind_is_409(app):
     """The partial unique index refuses two defaults for one kind; the route says which kind, not a 500."""
-    app.state.templates_repo.update = AsyncMock(side_effect=asyncpg.UniqueViolationError("duplicate key"))
+    app.state.templates_repo.update = AsyncMock(side_effect=_unique_violation(_KIND_INDEX))
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"default_for_kind": "code"}, headers=_XHR)
@@ -419,7 +426,7 @@ async def test_a_second_default_for_a_kind_is_409(app):
 
 @pytest.mark.asyncio
 async def test_creating_a_second_default_for_a_kind_is_409(app):
-    app.state.templates_repo.create = AsyncMock(side_effect=asyncpg.UniqueViolationError("duplicate key"))
+    app.state.templates_repo.create = AsyncMock(side_effect=_unique_violation(_KIND_INDEX))
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
@@ -434,7 +441,7 @@ async def test_creating_a_second_default_for_a_kind_is_409(app):
 @pytest.mark.asyncio
 async def test_creating_a_template_with_a_taken_name_is_409(app):
     """With no kind in the body the unique violation is the name column, so the 409 names the template, not a kind."""
-    app.state.templates_repo.create = AsyncMock(side_effect=asyncpg.UniqueViolationError("duplicate key"))
+    app.state.templates_repo.create = AsyncMock(side_effect=_unique_violation(_NAME_KEY))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/api/v1/pipelines/templates",
@@ -447,8 +454,24 @@ async def test_creating_a_template_with_a_taken_name_is_409(app):
 
 @pytest.mark.asyncio
 async def test_renaming_a_template_onto_a_taken_name_is_409(app):
-    app.state.templates_repo.update = AsyncMock(side_effect=asyncpg.UniqueViolationError("duplicate key"))
+    app.state.templates_repo.update = AsyncMock(side_effect=_unique_violation(_NAME_KEY))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"name": "Research"}, headers=_XHR)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "a template named 'Research' already exists"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["post", "put"])
+async def test_a_taken_name_is_reported_even_when_the_body_carries_a_kind(app, method):
+    """The constraint the server names decides, not the body: a kind in the write does not make a name clash a kind clash."""
+    app.state.templates_repo.create = AsyncMock(side_effect=_unique_violation(_NAME_KEY))
+    app.state.templates_repo.update = AsyncMock(side_effect=_unique_violation(_NAME_KEY))
+    body = {"name": "Research", "default_for_kind": "research"}
+    if method == "post":
+        body["graph_definition"] = SAMPLE_GRAPH
+    url = "/api/v1/pipelines/templates" + ("/tmpl-1" if method == "put" else "")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await getattr(client, method)(url, json=body, headers=_XHR)
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"] == "a template named 'Research' already exists"
