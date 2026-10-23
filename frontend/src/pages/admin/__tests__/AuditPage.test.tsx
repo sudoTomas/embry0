@@ -40,9 +40,13 @@ function renderPage() {
   );
 }
 
-/** The audit table once rows arrive (the loading skeleton is a table too). */
+/**
+ * The audit table once rows arrive (the loading skeleton is a table too).
+ * The first lookup in the file pays the cold render, which exceeds the
+ * default 1 s wait when several suites share the machine (#106).
+ */
 async function auditTable() {
-  const head = await screen.findByRole("columnheader", { name: "Event" });
+  const head = await screen.findByRole("columnheader", { name: "Event" }, { timeout: 4000 });
   return within(head.closest("table") as HTMLElement);
 }
 
