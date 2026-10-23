@@ -421,7 +421,7 @@ async def test_a_second_default_for_a_kind_is_409(app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"default_for_kind": "code"}, headers=_XHR)
     assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"] == "another template is already the default for 'code'; clear it first"
+    assert resp.json()["detail"] == "another template is already the default for code; clear it first"
 
 
 @pytest.mark.asyncio
@@ -435,7 +435,7 @@ async def test_creating_a_second_default_for_a_kind_is_409(app):
             headers=_XHR,
         )
     assert resp.status_code == 409, resp.text
-    assert "'research'" in resp.json()["detail"]
+    assert resp.json()["detail"] == "another template is already the default for research; clear it first"
 
 
 @pytest.mark.asyncio
@@ -449,7 +449,7 @@ async def test_creating_a_template_with_a_taken_name_is_409(app):
             headers=_XHR,
         )
     assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"] == "a template named 'Research' already exists"
+    assert resp.json()["detail"] == "a template named Research already exists"
 
 
 @pytest.mark.asyncio
@@ -458,7 +458,7 @@ async def test_renaming_a_template_onto_a_taken_name_is_409(app):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"name": "Research"}, headers=_XHR)
     assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"] == "a template named 'Research' already exists"
+    assert resp.json()["detail"] == "a template named Research already exists"
 
 
 @pytest.mark.asyncio
@@ -474,7 +474,7 @@ async def test_a_taken_name_is_reported_even_when_the_body_carries_a_kind(app, m
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await getattr(client, method)(url, json=body, headers=_XHR)
     assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"] == "a template named 'Research' already exists"
+    assert resp.json()["detail"] == "a template named Research already exists"
 
 
 @pytest.mark.asyncio
@@ -486,4 +486,4 @@ async def test_duplicating_onto_a_taken_name_is_409(app):
             "/api/v1/pipelines/templates/tmpl-1/duplicate", json={"name": "Research"}, headers=_XHR
         )
     assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"] == "a template named 'Research' already exists"
+    assert resp.json()["detail"] == "a template named Research already exists"

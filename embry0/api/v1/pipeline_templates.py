@@ -66,15 +66,13 @@ _DEFAULT_KIND_INDEX = "idx_pipeline_templates_default_kind"
 
 
 def _default_kind_taken(kind: str | None) -> HTTPException:
-    """The partial unique index on ``default_for_kind`` refused a second holder (RAV-601)."""
-    return HTTPException(
-        status_code=409, detail=f"another template is already the default for {kind!r}; clear it first"
-    )
+    """The partial unique index on ``default_for_kind`` refused a second holder."""
+    return HTTPException(status_code=409, detail=f"another template is already the default for {kind}; clear it first")
 
 
 def _template_name_taken(name: str | None) -> HTTPException:
     """``pipeline_templates.name`` is UNIQUE; the only other constraint a template write can violate."""
-    return HTTPException(status_code=409, detail=f"a template named {name!r} already exists")
+    return HTTPException(status_code=409, detail=f"a template named {name} already exists")
 
 
 async def _known_agent_types(request: Request) -> set[str] | None:

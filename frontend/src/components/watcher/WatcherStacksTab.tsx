@@ -90,7 +90,7 @@ export function WatcherStacksTab() {
                     <Badge tone={stack.enabled ? "success" : "neutral"}>{stack.enabled ? "Enabled" : "Disabled"}</Badge>
                   </td>
                   <td className="hidden whitespace-nowrap text-fg-secondary sm:table-cell">
-                    {overrides === 0 ? "defaults" : `${overrides} ${overrides === 1 ? "override" : "overrides"}`}
+                    {overrides === 0 ? "Defaults" : `${overrides} ${overrides === 1 ? "override" : "overrides"}`}
                   </td>
                   <td className="w-px">
                     <Menu

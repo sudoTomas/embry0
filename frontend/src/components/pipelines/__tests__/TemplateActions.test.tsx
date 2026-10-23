@@ -64,7 +64,7 @@ describe("TemplateActions", () => {
 
   it("shows a taken name's refusal in the dialog and keeps what was typed", async () => {
     duplicate.mockImplementation((_vars: unknown, opts: { onError: (e: unknown) => void }) =>
-      opts.onError({ response: { status: 409, data: { detail: "a template named 'Nightly' already exists" } } }),
+      opts.onError({ response: { status: 409, data: { detail: "a template named Nightly already exists" } } }),
     );
     render(<TemplateActions template={TEMPLATE} />);
     await userEvent.click(screen.getByRole("button", { name: "Actions for Issue to PR" }));
@@ -73,7 +73,7 @@ describe("TemplateActions", () => {
     await userEvent.clear(name);
     await userEvent.type(name, "Nightly");
     await userEvent.click(screen.getByRole("button", { name: "Duplicate" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("a template named 'Nightly' already exists");
+    expect(screen.getByRole("alert")).toHaveTextContent("a template named Nightly already exists");
     expect(name, "the person corrects the name in place; the dialog stays").toHaveValue("Nightly");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(toast.error, "a refusal shown in the dialog is not toasted as well").not.toHaveBeenCalled();
