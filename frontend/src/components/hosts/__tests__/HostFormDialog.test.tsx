@@ -28,6 +28,8 @@ describe("HostFormDialog", () => {
   it("creates a host from the form, with the log source and the repositories it names", async () => {
     render(<HostFormDialog logSourceKinds={[...KINDS]} onClose={vi.fn()} />);
     expect(screen.getByRole("dialog", { name: "Add host" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "SSH" })).toHaveValue("ssh");
+    expect(screen.getByRole("option", { name: "Docker" })).toHaveValue("docker");
     // The focus trap moves focus in on the next tick, as ConfirmDialog.test.tsx waits for too.
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus());
     await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "web-1");
@@ -55,6 +57,17 @@ describe("HostFormDialog", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(update).toHaveBeenCalledWith(
       { id: "host-1", patch: { name: "web-1", address: "100.64.0.10", transport: "tailnet", roles: ["app"], log_source: null, tags: ["tag:server"], repos: [{ repo: "acme/widgets", role: "app" }] } },
+      expect.anything(),
+    );
+  });
+
+  it("keeps each linked repository's own role on edit and links a new one as app", async () => {
+    const host = { ...HOST, repos: [{ repo: "acme/widgets", role: "db" }] };
+    render(<HostFormDialog host={host} logSourceKinds={[...KINDS]} onClose={vi.fn()} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Repositories" }), "acme/api{enter}");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ patch: expect.objectContaining({ repos: [{ repo: "acme/widgets", role: "db" }, { repo: "acme/api", role: "app" }] }) }),
       expect.anything(),
     );
   });

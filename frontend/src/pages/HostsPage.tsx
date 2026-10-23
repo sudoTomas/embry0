@@ -14,7 +14,7 @@ import { Menu } from "@/components/ui/Menu";
 import { Switch } from "@/components/ui/Switch";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
-import { HOST_STATUS_TONES } from "@/lib/hosts";
+import { HOST_STATUS_TONES, TRANSPORT_LABELS } from "@/lib/hosts";
 import { sentenceCase, statusLabel } from "@/lib/status";
 import { useIsAdmin } from "@/stores/authStore";
 import { formatDateTime } from "@/lib/utils";
@@ -73,7 +73,13 @@ export function HostsPage() {
     });
 
   const restore = (host: Host) =>
-    update.mutate({ id: host.id, patch: { status: "active" } }, { onError: (e) => toastApiError(e, `Could not restore ${host.name}`) });
+    update.mutate(
+      { id: host.id, patch: { status: "active" } },
+      {
+        onSuccess: () => toast.success(`Restored ${host.name}`),
+        onError: (e) => toastApiError(e, `Could not restore ${host.name}`),
+      },
+    );
 
   let body;
   if (list.isError) {
@@ -112,7 +118,7 @@ export function HostsPage() {
                 <tr key={host.id} data-testid="host-row">
                   <td className="whitespace-nowrap font-medium">{host.name}</td>
                   <td className="w-full max-w-0 truncate font-mono text-xs text-fg-secondary">{host.address || "—"}</td>
-                  <td className="hidden whitespace-nowrap text-fg-secondary sm:table-cell">{host.transport}</td>
+                  <td className="hidden whitespace-nowrap text-fg-secondary sm:table-cell">{TRANSPORT_LABELS[host.transport]}</td>
                   <td className="hidden sm:table-cell">
                     <span className="inline-flex flex-wrap gap-1">
                       {host.roles.map((role) => (
@@ -127,14 +133,15 @@ export function HostsPage() {
                   </td>
                   <td className="hidden whitespace-nowrap text-fg-secondary sm:table-cell">{sentenceCase(host.source)}</td>
                   <td className="num hidden whitespace-nowrap text-fg-muted sm:table-cell">
-                    {host.last_seen_at ? formatDateTime(host.last_seen_at) : "never"}
+                    {host.last_seen_at ? formatDateTime(host.last_seen_at) : "Never"}
                   </td>
                   <td className="w-px">
                     <Menu
                       label={`Actions for ${host.name}`}
                       items={[
                         { label: "Probe", onSelect: () => runProbe(host), disabled: removed || probe.isPending },
-                        { label: "Edit", onSelect: () => setOpen({ kind: "edit", host }), disabled: !isAdmin },
+                        // A removed host's edit cannot land: the route refuses repository links until it is restored.
+                        { label: "Edit", onSelect: () => setOpen({ kind: "edit", host }), disabled: !isAdmin || removed },
                         removed
                           ? { label: "Restore", onSelect: () => restore(host), disabled: !isAdmin }
                           : { label: "Remove", onSelect: () => setOpen({ kind: "remove", host }), destructive: true, disabled: !isAdmin },

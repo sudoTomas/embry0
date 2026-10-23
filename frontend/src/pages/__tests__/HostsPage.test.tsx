@@ -55,8 +55,10 @@ describe("HostsPage", () => {
     expect(within(rows[0]).getByText("web-1")).toBeInTheDocument();
     expect(within(rows[0]).getByText("100.64.0.10")).toBeInTheDocument();
     expect(within(rows[0]).getByText("Active")).toBeInTheDocument();
+    // The transport column, by position: the source column reads "Tailnet" too for this row.
+    expect(within(rows[0]).getAllByRole("cell")[2]).toHaveTextContent(/^Tailnet$/);
     expect(within(rows[1]).getByText("Unreachable")).toBeInTheDocument();
-    expect(within(rows[1]).getByText("never")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Never")).toBeInTheDocument();
   });
 
   it("filters by source and shows removed hosts on request, through the hook", async () => {
@@ -89,13 +91,17 @@ describe("HostsPage", () => {
     expect(remove).toHaveBeenCalledWith("host-1", expect.anything());
   });
 
-  it("restores a removed host from its menu", async () => {
+  it("restores a removed host from its menu, where Probe and Edit are not offered", async () => {
     mockUseHosts.mockReturnValue(ready({ ...LIST, hosts: [{ ...WEB, status: "removed" }] }));
+    update.mockImplementation((_v: unknown, opts: { onSuccess: () => void }) => opts.onSuccess());
     renderPage();
     await userEvent.click(screen.getByRole("button", { name: "Actions for web-1" }));
     expect(screen.getByRole("menuitem", { name: "Probe" })).toBeDisabled();
+    // A removed host cannot be edited: the route refuses repository links until it is restored.
+    expect(screen.getByRole("menuitem", { name: "Edit" })).toBeDisabled();
     await userEvent.click(screen.getByRole("menuitem", { name: "Restore" }));
     expect(update).toHaveBeenCalledWith({ id: "host-1", patch: { status: "active" } }, expect.anything());
+    expect(toast.success).toHaveBeenCalledWith("Restored web-1");
   });
 
   it("imports from the tailnet behind a confirm and reports the counts", async () => {

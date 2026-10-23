@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { TagInput } from "@/components/ui/TagInput";
-import { ADDRESS_HINTS } from "@/lib/hosts";
+import { ADDRESS_HINTS, LOG_SOURCE_LABELS, TRANSPORT_LABELS } from "@/lib/hosts";
 
 const TRANSPORTS: HostTransport[] = ["tailnet", "ssh", "http"];
 
@@ -65,7 +65,8 @@ export function HostFormDialog({ host, logSourceKinds, onClose }: Props) {
       roles,
       log_source: logKind ? { kind: logKind, selector: selector.trim() } : null,
       tags,
-      repos: repos.map((repo) => ({ repo, role: "app" })),
+      // PATCH replaces the links, so each one keeps the role it has; a new one is linked as app.
+      repos: repos.map((repo) => ({ repo, role: host?.repos.find((r) => r.repo === repo)?.role ?? "app" })),
     };
     const opts = {
       onSuccess: onClose,
@@ -93,7 +94,7 @@ export function HostFormDialog({ host, logSourceKinds, onClose }: Props) {
             <Select id="host-transport" value={transport} onChange={(e) => setTransport(e.target.value as HostTransport)} disabled={pending}>
               {TRANSPORTS.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {TRANSPORT_LABELS[t]}
                 </option>
               ))}
             </Select>
@@ -121,7 +122,7 @@ export function HostFormDialog({ host, logSourceKinds, onClose }: Props) {
               <option value="">None</option>
               {logSourceKinds.map((k) => (
                 <option key={k} value={k}>
-                  {k}
+                  {LOG_SOURCE_LABELS[k]}
                 </option>
               ))}
             </Select>
@@ -139,7 +140,7 @@ export function HostFormDialog({ host, logSourceKinds, onClose }: Props) {
         <div className="space-y-1">
           <Label htmlFor="host-repos">Repositories</Label>
           <TagInput id="host-repos" value={repos} onChange={setRepos} placeholder="owner/name…" disabled={pending} />
-          <p className="text-xs text-fg-muted">The repositories this host runs, each linked with the role app.</p>
+          <p className="text-xs text-fg-muted">The repositories this host runs. New repositories are linked with the role app.</p>
         </div>
         {error && (
           <p className="text-sm text-destructive" role="alert">
