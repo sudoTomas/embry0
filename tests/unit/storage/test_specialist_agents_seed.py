@@ -1,5 +1,7 @@
 """Startup seeding of the specialist agents and their routes, against Postgres."""
 
+from unittest.mock import patch
+
 import pytest
 
 from embry0.agents.identity import BUILTIN_IDENTITY
@@ -9,6 +11,7 @@ from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepo
 from embry0.storage.seeds.agents_builtin import seed_missing_builtin_agents
 from embry0.storage.seeds.pipeline_templates_builtin import seed_builtin_pipeline_templates
 from embry0.workflows._validation import validate_graph_definition
+from embry0.workflows.issue_to_pr import plan_route
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -125,3 +128,33 @@ async def test_template_seeding_is_idempotent_and_every_route_validates(db_with_
         graph = full["graph_definition"]
         assert validate_graph_definition(name, graph) == []
         assert [n["agent_type"] for n in graph["nodes"]] == ["triage", agent_type, "output"]
+
+
+@pytest.mark.asyncio
+async def test_a_job_naming_context_audit_runs_it_against_the_seeded_agent_rows(db_with_migrations: DatabasePool):
+    """Every job the context audit schedule starts names this template (ADR 0020).
+
+    plan_route validates a named template against the agent_definitions rows
+    that exist when the job runs, not against the seed table, and skips one
+    that fails there for the kind default: a job that never runs the
+    context-auditor. So the template seed and the agent seed, as a
+    deployment's startup writes them, have to agree.
+    """
+    db = db_with_migrations
+    agents = AgentDefinitionsRepository(db)
+    templates = PipelineTemplatesRepository(db)
+    await seed_missing_builtin_agents(agents)
+    await seed_builtin_pipeline_templates(templates)
+
+    rows = {str(row["type"]) for row in await agents.list_all()}
+    summary = next(r for r in await templates.list_all() if r["name"] == "context-audit")
+    full = await templates.get(summary["id"])
+    assert full is not None
+    assert validate_graph_definition("context-audit", full["graph_definition"], rows) == []
+
+    config = {"configurable": {"db": db, "pipeline_templates_repo": templates, "jobs_repo": None}}
+    state = {"job_id": "job-1", "triage_decision": {"job_kind": "code"}, "pipeline_template_request": "context-audit"}
+    with patch("embry0.workflows.issue_to_pr.plan_route.get_stream_writer", return_value=lambda _e: None):
+        out = await plan_route.plan_route_node(state, config)
+    assert out["route_template_name"] == "context-audit", "the job fell through to another template"
+    assert [step["agent_type"] for step in out["route_plan"]] == ["context-auditor", "output"]
