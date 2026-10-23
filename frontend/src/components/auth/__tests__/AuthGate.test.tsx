@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AxiosError } from "axios";
@@ -14,7 +14,7 @@ vi.mock("@/api/client", () => ({
 }));
 
 import { AuthGate } from "../AuthGate";
-import { useAuthStore } from "@/stores/authStore";
+import { useAuthStore, useIsAdmin } from "@/stores/authStore";
 
 function axiosErr(status: number, code = String(status)): AxiosError {
   return new AxiosError("err", code, undefined, undefined, {
@@ -61,6 +61,7 @@ beforeEach(() => {
     sessionExpired: false,
     authMode: null,
     user: null,
+    keyTier: undefined,
     ssoEnabled: false,
     apiKeyLogin: true,
   });
@@ -111,7 +112,7 @@ describe("AuthGate (key mode — pre-SSO behavior preserved)", () => {
 
     expect(await screen.findByTestId("app-content")).toBeInTheDocument();
     expect(window.localStorage.getItem("embry0.api-key")).toBe("sk-valid");
-    expect(mockGet).toHaveBeenLastCalledWith("/queue", {
+    expect(mockGet).toHaveBeenCalledWith("/queue", {
       headers: { Authorization: "Bearer sk-valid" },
     });
   });
@@ -127,6 +128,100 @@ describe("AuthGate (key mode — pre-SSO behavior preserved)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/invalid api key/i);
     expect(screen.queryByTestId("app-content")).toBeNull();
     expect(window.localStorage.getItem("embry0.api-key")).toBeNull();
+  });
+});
+
+describe("AuthGate (the key's tier — #101)", () => {
+  // /auth/check goes out with the stored key, so its key_tier is the
+  // scope of the key the /queue probe is about to validate.
+  function checkWithKeyTier(body: Record<string, unknown>) {
+    routeGet({
+      "/auth/check": () =>
+        Promise.resolve({ data: { sso_enabled: false, authenticated: false, tier: null, ...body } }),
+      "/queue": () => Promise.resolve({ data: {} }),
+    });
+  }
+
+  it("stores an operator key's tier and withholds admin", async () => {
+    checkWithKeyTier({ key_tier: "operator" });
+    renderGate();
+    expect(await screen.findByTestId("app-content")).toBeInTheDocument();
+    expect(useAuthStore.getState().authMode).toBe("key");
+    expect(useAuthStore.getState().keyTier).toBe("operator");
+    const { result } = renderHook(() => useIsAdmin());
+    expect(result.current, "an operate-scope key is not admin").toBe(false);
+  });
+
+  it("stores an admin key's tier and grants admin", async () => {
+    checkWithKeyTier({ key_tier: "admin" });
+    renderGate();
+    expect(await screen.findByTestId("app-content")).toBeInTheDocument();
+    expect(useAuthStore.getState().keyTier).toBe("admin");
+    const { result } = renderHook(() => useIsAdmin());
+    expect(result.current).toBe(true);
+  });
+
+  it("keeps admin when an older backend does not report the key's tier", async () => {
+    checkWithKeyTier({});
+    renderGate();
+    expect(await screen.findByTestId("app-content")).toBeInTheDocument();
+    expect(useAuthStore.getState().keyTier).toBeUndefined();
+    const { result } = renderHook(() => useIsAdmin());
+    expect(result.current, "legacy backend: never hide controls").toBe(true);
+  });
+
+  it("keeps admin when the server let the probe in without a key (auth off)", async () => {
+    // AUTH_DEV_MODE: no stored key, the check reports key_tier null and
+    // /queue still answers 200; the server skips its admin gate as well.
+    checkWithKeyTier({ key_tier: null });
+    renderGate();
+    expect(await screen.findByTestId("app-content")).toBeInTheDocument();
+    expect(useAuthStore.getState().keyTier).toBeNull();
+    const { result } = renderHook(() => useIsAdmin());
+    expect(result.current, "auth off server-side grants admin").toBe(true);
+  });
+
+  it("asks /auth/check for the tier of a key entered in the form", async () => {
+    routeGet({ "/queue": () => Promise.reject(axiosErr(401)) });
+    renderGate();
+
+    const user = userEvent.setup();
+    const input = await screen.findByLabelText("API key");
+    mockGet.mockImplementation((path: unknown, opts?: unknown) => {
+      const headers = (opts as { headers?: Record<string, string> } | undefined)?.headers;
+      if (headers?.Authorization !== "Bearer sk-operate") return Promise.reject(axiosErr(401));
+      if (String(path) === "/queue") return Promise.resolve({ data: {} });
+      if (String(path) === "/auth/check") {
+        return Promise.resolve({
+          data: { sso_enabled: false, authenticated: false, tier: null, key_tier: "operator" },
+        });
+      }
+      return Promise.reject(axiosErr(404));
+    });
+    await user.type(input, "sk-operate");
+    await user.click(screen.getByRole("button", { name: /unlock/i }));
+
+    expect(await screen.findByTestId("app-content")).toBeInTheDocument();
+    expect(useAuthStore.getState().keyTier).toBe("operator");
+    const { result } = renderHook(() => useIsAdmin());
+    expect(result.current, "the form path learns the tier too").toBe(false);
+  });
+
+  it("unlocks with admin kept when the tier check fails after the form", async () => {
+    routeGet({ "/queue": () => Promise.reject(axiosErr(401)) });
+    renderGate();
+
+    const user = userEvent.setup();
+    const input = await screen.findByLabelText("API key");
+    mockGet.mockImplementation((path: unknown, opts?: unknown) => {
+      if (String(path) === "/queue" && opts) return Promise.resolve({ data: {} });
+      return Promise.reject(axiosErr(503));
+    });
+    await user.type(input, "sk-valid");
+    await user.click(screen.getByRole("button", { name: /unlock/i }));
+
+    expect(await screen.findByTestId("app-content")).toBeInTheDocument();
+    expect(useAuthStore.getState().keyTier).toBeUndefined();
   });
 });
 

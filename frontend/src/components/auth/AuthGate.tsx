@@ -29,6 +29,30 @@ import { Input } from "@/components/ui/Input";
 // /queue is the cheapest always-on authed endpoint — the key probe of choice.
 const PROBE_PATH = "/queue";
 
+interface AuthCheck {
+  sso_enabled: boolean;
+  authenticated: boolean;
+  tier: string | null;
+  api_key_login?: boolean;
+  /** The Bearer key's tier (#101); absent on an older backend. */
+  key_tier?: string | null;
+}
+
+/** The tier of `candidate` as the sign-in check reports it; undefined when
+ *  the check fails or does not report it (the store then keeps the old
+ *  every-key-is-admin behaviour). */
+async function fetchKeyTier(candidate: string): Promise<string | null | undefined> {
+  try {
+    const check = await api.get<AuthCheck>("/auth/check", {
+      headers: { Authorization: `Bearer ${candidate}` },
+      suppressErrorToast: true,
+    });
+    return check.data.key_tier;
+  } catch {
+    return undefined;
+  }
+}
+
 async function fetchSsoUser(): Promise<SsoUser | null> {
   try {
     const me = await api.get<{ email: string; name: string; tier: string }>("/auth/me");
@@ -70,17 +94,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     async function probe() {
+      // The tier of the stored key, as the sign-in check reports it. The
+      // api client attaches the stored key to that call, so the answer is
+      // about the key the /queue probe validates next. Undefined when the
+      // check failed or an older backend did not report the field: the
+      // store then treats the key as admin, as before #101.
+      let keyTier: string | null | undefined;
       // 1. SSO session probe. 404 = older backend without the auth router.
       try {
-        const check = await api.get<{
-          sso_enabled: boolean;
-          authenticated: boolean;
-          tier: string | null;
-          api_key_login?: boolean;
-        }>("/auth/check", { suppressErrorToast: true });
+        const check = await api.get<AuthCheck>("/auth/check", { suppressErrorToast: true });
         if (cancelled) return;
         setSsoEnabled(check.data.sso_enabled);
         setApiKeyLogin(check.data.api_key_login !== false);
+        keyTier = check.data.key_tier;
         if (check.data.authenticated) {
           if (check.data.tier === "operator" || check.data.tier === "admin") {
             const user = await fetchSsoUser();
@@ -105,7 +131,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       // 2. API-key probe (pre-SSO behavior, unchanged).
       try {
         await api.get(PROBE_PATH);
-        if (!cancelled) markAuthenticated({ mode: "key" });
+        if (!cancelled) markAuthenticated({ mode: "key", keyTier });
       } catch (error: unknown) {
         if (cancelled) return;
         if (isAxiosError(error) && error.response?.status === 401) {
@@ -228,10 +254,11 @@ function ApiKeyPrompt({ sessionExpired }: { sessionExpired: boolean }) {
       await api.get(PROBE_PATH, {
         headers: { Authorization: `Bearer ${candidate}` },
       });
+      const keyTier = await fetchKeyTier(candidate);
       setStoredApiKey(candidate);
       // Drop every cached 401 result so the app refetches with the new key.
       queryClient.clear();
-      markAuthenticated({ mode: "key" });
+      markAuthenticated({ mode: "key", keyTier });
     } catch (err: unknown) {
       if (isAxiosError(err) && err.response?.status === 401) {
         setError("Invalid API key — the server rejected it.");
