@@ -3,11 +3,13 @@ agent types that has to accept them."""
 
 import json
 import re
+import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from embry0.orchestration.nodes.agent import DEFAULT_AGENT_MAX_TURNS
+from embry0.services.instruction_files import INSTRUCTION_FILE_GLOBS, SKIPPED_DIRS, instruction_files
 from embry0.services.standards import MAX_FINDING_ROWS
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
 from embry0.storage.seeds.pipeline_templates_builtin import BUILTIN_PIPELINE_TEMPLATES
@@ -27,7 +29,11 @@ from embry0.workflows.issue_to_pr.route_plan import (
     specialist_job_kind,
     step_template_config,
 )
-from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_AGENT_TYPES, SPECIALIST_TEMPLATE_NAMES
+from embry0.workflows.issue_to_pr.specialist_agents import (
+    CONTEXT_AUDITOR_SYSTEM_PROMPT,
+    SPECIALIST_AGENT_TYPES,
+    SPECIALIST_TEMPLATE_NAMES,
+)
 
 # Agent type -> the template that routes a job to it. Written out rather than
 # imported, so dropping or renaming one fails here.
@@ -174,6 +180,120 @@ def test_design_audit_weights_sum_to_100_in_each_score():
     assert conformance_weights == {"palette": 20, "accent": 20, "type": 20, "radii": 10, "shell": 15, "tables": 15}
     assert hygiene_weights == {"raw colors": 40, "off-scale sizes": 20, "off-set radii": 20, "extra families": 20}
     assert sum(conformance_weights.values()) == sum(hygiene_weights.values()) == 100
+
+
+def test_context_audit_prompt_carries_the_instruction_file_list():
+    # The context-audit schedule fingerprints instruction_files(); the agent
+    # audits what the prompt's command lists, so the prompt carries the
+    # module's globs and skipped directories, not a copy of them.
+    prompt = CONTEXT_AUDITOR_SYSTEM_PROMPT
+    missing = [glob for glob in INSTRUCTION_FILE_GLOBS if f"':(glob){glob}'" not in prompt]
+    assert not missing, f"the context-audit prompt lost the globs {missing}"
+    searched = [d for d in SKIPPED_DIRS if f"':(exclude,glob)**/{d}/**'" not in prompt]
+    assert not searched, f"the context-audit prompt searches the skipped directories {searched}"
+
+
+def test_context_audit_command_lists_what_instruction_files_lists(tmp_path):
+    # git's glob magic is not the module's matcher, so run the prompt's own
+    # command in a repository that holds listed, unlisted and vendored files.
+    paths = [
+        "CLAUDE.md",
+        "apps/hub/src/app/api/CLAUDE.md",
+        "CLAUDE.local.md",
+        "AGENTS.md",
+        "AGENTS.override.md",
+        "services/api/GEMINI.md",
+        "notes/HANDOFF.md",
+        "llms.txt",
+        ".cursorrules",
+        "sub/.windsurfrules",
+        "sub/.clinerules",
+        ".github/copilot-instructions.md",
+        ".github/instructions/frontend.instructions.md",
+        ".github/instructions/deep/api.instructions.md",
+        ".cursor/rules/style.mdc",
+        "pkg/.cursor/rules/deep/style.md",
+        ".claude/skills/verify-app/SKILL.md",
+        "apps/hub/.claude/commands/ship.md",
+        ".claude/agents/reviewer.md",
+        ".claude/rules/tests.md",
+        ".grok/skills/verify/SKILL.md",
+        ".grok/rules/style.md",
+        ".codex/prompts/review.md",
+        ".agents/notes/a.md",
+        # Not instruction files.
+        "README.md",
+        "docs/CLAUDE.md.bak",
+        "docs/MY-CLAUDE.md",
+        "apps/.github/copilot-instructions.md",
+        ".github/instructions/notes.md",
+        ".claude/settings.json",
+        "src/claude.ts",
+        # Instruction files of vendored or generated trees.
+        "node_modules/pkg/CLAUDE.md",
+        "frontend/node_modules/x/.claude/skills/a/SKILL.md",
+        "vendor/lib/AGENTS.md",
+        "build/CLAUDE.md",
+        "a/dist/b/AGENTS.md",
+        ".venv/lib/CLAUDE.md",
+        "venv/AGENTS.md",
+    ]
+    for path in paths:
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text("x\n")
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+
+    command = re.search(r"\n```\n(git ls-files -- [^\n]+)\n```\n", CONTEXT_AUDITOR_SYSTEM_PROMPT)
+    assert command, "the prompt hands the agent the command in a code block of its own"
+    listed = subprocess.run(
+        ["sh", "-c", command.group(1)], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.split()
+
+    assert len(instruction_files(paths)) == 24, "the repository must hold files on both sides of the list"
+    assert sorted(listed) == instruction_files(paths), "the prompt's command and instruction_files() disagree"
+
+
+def test_context_audit_report_opens_with_the_stale_and_file_counts():
+    # The context-audit schedule reads the two counts back from the start.
+    prompt = CONTEXT_AUDITOR_SYSTEM_PROMPT
+    assert "The first line is `Stale: N` and nothing else" in prompt
+    assert "where N is the number of `misleads` and `dead` findings" in prompt
+    assert "The second line is `Files: M` and nothing else" in prompt
+    assert prompt.index("`Stale: N`") < prompt.index("`Files: M`") < prompt.index("a `## Findings` heading")
+    assert "\n| Severity | Location | Claim | Evidence | Fix |\n" in prompt
+    assert "at most 40 rows" in prompt
+    sections = [
+        "`## Pull`",
+        "`## Unverifiable`",
+        "`## Unreachable from a clone`",
+        "`## Not covered`",
+        "`## Assumptions`",
+    ]
+    positions = [prompt.index(section) for section in sections]
+    assert positions == sorted(positions), "the sections after the table keep their order"
+    assert prompt.index("| Severity | Location |") < positions[0]
+    assert "`Stale: 0`, then `Files: 0`" in prompt, "a repository with no instruction files still opens with both"
+
+
+def test_context_audit_checks_references_by_script_and_proves_its_pull():
+    prompt = CONTEXT_AUDITOR_SYSTEM_PROMPT
+    method = prompt.split("## Method", 1)[1].split("## Severity", 1)[0]
+    phrases = [
+        "Write one script under /tmp",
+        "about twice as many",
+        "`runtime`",
+        "`history`",
+        "unverifiable, not stale",
+        "file:line only, never the value",
+        "git -C /tmp/run apply --check",
+        "never in /workspace",
+        "a question, not a guess",
+    ]
+    missing = [p for p in phrases if p not in method]
+    assert not missing, f"the context-audit method lost {missing}"
+    severity = prompt.split("## Severity", 1)[1].split("## Deliverable shape", 1)[0]
+    assert all(f"- `{word}`:" in severity for word in ("misleads", "dead", "drift"))
 
 
 # ---- the routes ----------------------------------------------------------------
