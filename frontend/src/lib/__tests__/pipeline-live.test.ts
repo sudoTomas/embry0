@@ -2,6 +2,15 @@ import { describe, it, expect } from "vitest";
 import { deriveNodeStates } from "../pipeline-live";
 import type { LogEvent, PipelineGraph } from "@/lib/types";
 import { loadFixture } from "./fixtures";
+import {
+  QA_COST_UPDATE,
+  QA_INIT_COMPLETED,
+  QA_INIT_STARTED,
+  QA_ORCHESTRATE_COMPLETED,
+  QA_ORCHESTRATE_STARTED,
+  STANDALONE_QA_EVENTS,
+  STANDALONE_QA_GRAPH,
+} from "./standalone-qa-stream";
 
 const GRAPH: PipelineGraph = {
   graph_id: "route-job-1",
@@ -197,5 +206,40 @@ describe("deriveNodeStates (RAV-1285)", () => {
 
   it("returns empty for a missing graph", () => {
     expect(deriveNodeStates(null, [ev({ type: "node_started", node: "triage" })])).toEqual({});
+  });
+});
+
+describe("deriveNodeStates on a standalone QA job (#90)", () => {
+  it("the nested QA agent's cost_update lands on the orchestrate_qa node", () => {
+    const states = deriveNodeStates(STANDALONE_QA_GRAPH, STANDALONE_QA_EVENTS, "completed");
+    expect(states.orchestrate_qa.cost_usd, "the qa run's cost was attributed to no node").toBeCloseTo(1.602263, 6);
+    expect(states.orchestrate_qa.turns, "the qa run's turns were attributed to no node").toBe(57);
+    expect(states.init_orchestrator.cost_usd, "init_orchestrator spent nothing").toBe(0);
+    expect(states.init_orchestrator.turns, "init_orchestrator ran no turns").toBe(0);
+    expect(states.qa_report.cost_usd, "qa_report spent nothing").toBe(0);
+    expect(states.qa_report.turns, "qa_report ran no turns").toBe(0);
+    expect(states.init_orchestrator.state).toBe("completed");
+    expect(states.orchestrate_qa.state).toBe("completed");
+    expect(states.qa_report.state).toBe("completed");
+  });
+
+  it("a run-ending error from the nested QA agent fails orchestrate_qa", () => {
+    const states = deriveNodeStates(STANDALONE_QA_GRAPH, [
+      QA_INIT_STARTED,
+      QA_INIT_COMPLETED,
+      QA_ORCHESTRATE_STARTED,
+      ev({ type: "error", node: "qa", run_id: "run-0001", message: "boom", code: "ERR_AGENT_CRASHED" }),
+      QA_ORCHESTRATE_COMPLETED,
+    ]);
+    expect(states.orchestrate_qa.state, "the qa agent's error did not fail orchestrate_qa").toBe("failed");
+    expect(states.init_orchestrator.state, "init_orchestrator is unaffected").toBe("completed");
+  });
+
+  it("a cost_update with an unknown node while nothing runs is attributed to no node", () => {
+    const states = deriveNodeStates(STANDALONE_QA_GRAPH, [QA_INIT_STARTED, QA_INIT_COMPLETED, QA_COST_UPDATE]);
+    for (const st of Object.values(states)) {
+      expect(st.cost_usd, `${st.node_id} gained cost while nothing was running`).toBe(0);
+      expect(st.turns, `${st.node_id} gained turns while nothing was running`).toBe(0);
+    }
   });
 });
