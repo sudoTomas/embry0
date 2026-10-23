@@ -97,9 +97,16 @@ class PipelineTemplatesRepository:
         """Idempotent upsert for seed-time builtin pipeline templates.
 
         Match key is ``name`` (the pipeline_templates.name column is UNIQUE).
-        Always wins over local edits — users who want a customized variant
-        should clone the builtin under a different name. ``is_builtin`` is
-        forced to TRUE.
+        Wins over local edits of the graph, the description and the profile —
+        users who want a customized variant should clone the builtin under a
+        different name. ``is_builtin`` is forced to TRUE.
+
+        ``default_for_kind`` is the exception: it is an operator's routing
+        decision, not part of the seed's content. An existing row keeps its
+        stored kind, so clearing a builtin's kind or moving it to another
+        template survives a restart; a first insert takes the kind only while
+        no other template holds it, so the seed never trips the partial
+        unique index ``idx_pipeline_templates_default_kind`` at boot.
         """
         existing = await self._db.fetchrow(
             "SELECT id FROM pipeline_templates WHERE name = $1",
@@ -112,12 +119,18 @@ class PipelineTemplatesRepository:
                 id, name, description, graph_definition,
                 sandbox_profile, default_for_kind, is_builtin, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())
+            VALUES (
+                $1, $2, $3, $4, $5,
+                CASE
+                    WHEN EXISTS (SELECT 1 FROM pipeline_templates WHERE default_for_kind = $6) THEN NULL
+                    ELSE $6
+                END,
+                TRUE, NOW()
+            )
             ON CONFLICT (name) DO UPDATE SET
                 description = EXCLUDED.description,
                 graph_definition = EXCLUDED.graph_definition,
                 sandbox_profile = EXCLUDED.sandbox_profile,
-                default_for_kind = EXCLUDED.default_for_kind,
                 is_builtin = TRUE,
                 updated_at = NOW()
             """,

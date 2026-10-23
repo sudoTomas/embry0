@@ -4759,7 +4759,7 @@ Claude-Session: https://claude.ai/code/session_011MYiGJuebTGdHFAS8GWusQ"
 
 ## Deploy notes
 
-Frontend image for everything (rebuilt by `infra/deploy.sh`); orchestrator image for Task 2's route change. No migration, no sandbox image rebuild, no compose change, no new API route, so "What each ingress reaches" in `docs/ops/deploy.md` is unchanged: the dashboard tunnel already publishes the SPA and `/api/v1/*`.
+Frontend image for everything (rebuilt by `infra/deploy.sh`); orchestrator image for Task 2's route change and for the builtin seed change (`upsert_builtin` no longer rewrites a stored `default_for_kind`), which is code only. No migration, no sandbox image rebuild, no compose change, no new API route, so "What each ingress reaches" in `docs/ops/deploy.md` is unchanged: the dashboard tunnel already publishes the SPA and `/api/v1/*`.
 
 ## Live check after integration
 

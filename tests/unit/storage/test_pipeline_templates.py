@@ -2,6 +2,7 @@ import pytest
 
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
+from embry0.storage.seeds.pipeline_templates_builtin import seed_builtin_pipeline_templates
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -162,3 +163,50 @@ async def test_list_all_includes_is_builtin_and_orders_seeds_first(
 @pytest.mark.asyncio
 async def test_get_nonexistent_returns_none(templates_repo: PipelineTemplatesRepository):
     assert await templates_repo.get("no-such-id") is None
+
+
+@pytest.mark.asyncio
+async def test_reseeding_a_builtin_keeps_a_cleared_default_kind_cleared(
+    templates_repo: PipelineTemplatesRepository,
+):
+    """An admin clears a builtin's kind; the next boot's seed must not put it back."""
+    seeded = await templates_repo.upsert_builtin(
+        name="seed-code", graph_definition=SAMPLE_GRAPH, default_for_kind="code"
+    )
+    assert seeded["default_for_kind"] == "code"
+    await templates_repo.update(seeded["id"], default_for_kind=None)
+
+    reseeded = await templates_repo.upsert_builtin(
+        name="seed-code", graph_definition=SAMPLE_GRAPH, default_for_kind="code"
+    )
+    assert reseeded["default_for_kind"] is None, "the seed put the builtin's kind back after an admin cleared it"
+
+
+@pytest.mark.asyncio
+async def test_reseeding_a_builtin_does_not_fight_the_template_that_took_its_kind(
+    templates_repo: PipelineTemplatesRepository,
+):
+    """Clear builtin A, make B the default for the kind: the next boot seeds without raising, B keeps it."""
+    seeded = await templates_repo.upsert_builtin(
+        name="seed-code", graph_definition=SAMPLE_GRAPH, default_for_kind="code"
+    )
+    await templates_repo.update(seeded["id"], default_for_kind=None)
+    other = await templates_repo.create(name="My code route", graph_definition=SAMPLE_GRAPH, default_for_kind="code")
+
+    reseeded = await templates_repo.upsert_builtin(
+        name="seed-code", graph_definition=SAMPLE_GRAPH, default_for_kind="code"
+    )
+    assert reseeded["default_for_kind"] is None
+    holder = await templates_repo.get(other["id"])
+    assert holder is not None
+    assert holder["default_for_kind"] == "code", "the template the admin made the default lost the kind to the seed"
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_database_seeds_every_builtin_default_kind(
+    templates_repo: PipelineTemplatesRepository,
+):
+    """With no other holder, the first insert takes its kind: all four builtin defaults exist after one seed pass."""
+    await seed_builtin_pipeline_templates(templates_repo)
+    kinds = {row["default_for_kind"] for row in await templates_repo.list_all() if row["default_for_kind"]}
+    assert kinds == {"code", "research", "analysis", "ops"}
