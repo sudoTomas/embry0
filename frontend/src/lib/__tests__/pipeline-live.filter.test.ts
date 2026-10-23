@@ -1,6 +1,20 @@
 import { describe, it, expect } from "vitest";
 import { filterEventsForNode } from "@/lib/pipeline-live";
 import type { LogEvent, PipelineGraph } from "@/lib/types";
+import {
+  QA_COST_UPDATE,
+  QA_INIT_COMPLETED,
+  QA_INIT_STARTED,
+  QA_JOB_FINISHED,
+  QA_ORCHESTRATE_COMPLETED,
+  QA_ORCHESTRATE_STARTED,
+  QA_PIPELINE_GRAPH,
+  QA_REPORT_COMPLETED,
+  QA_REPORT_STARTED,
+  STANDALONE_QA_EVENTS,
+  STANDALONE_QA_GRAPH,
+  STANDALONE_QA_QA_EVENTS,
+} from "./standalone-qa-stream";
 
 const GRAPH: PipelineGraph = {
   graph_id: "route-job-fixture-1",
@@ -88,5 +102,33 @@ describe("filterEventsForNode", () => {
 
   it("a selection with no graph keeps only job-level events", () => {
     expect(filterEventsForNode(null, ALL, "reviewer-1"), "no graph to resolve the id against").toEqual(JOB_LEVEL);
+  });
+});
+
+describe("filterEventsForNode on a standalone QA job (#90)", () => {
+  it("orchestrate_qa shows the nested QA agent's events", () => {
+    const out = filterEventsForNode(STANDALONE_QA_GRAPH, STANDALONE_QA_EVENTS, "orchestrate_qa");
+    expect(out, "the qa run's cost_update belongs to orchestrate_qa").toContain(QA_COST_UPDATE);
+    for (const e of STANDALONE_QA_QA_EVENTS) {
+      expect(out, `${e.type} (${"status" in e ? e.status : "-"}) belongs to orchestrate_qa`).toContain(e);
+    }
+    expect(out, "orchestrate_qa's own node_started").toContain(QA_ORCHESTRATE_STARTED);
+    expect(out, "orchestrate_qa's own node_completed").toContain(QA_ORCHESTRATE_COMPLETED);
+    expect(out, "job_finished is job-level").toContain(QA_JOB_FINISHED);
+    for (const e of [QA_INIT_STARTED, QA_PIPELINE_GRAPH, QA_INIT_COMPLETED, QA_REPORT_STARTED, QA_REPORT_COMPLETED]) {
+      expect(out, `${e.type} of ${"node" in e ? e.node : "-"} is not orchestrate_qa's`).not.toContain(e);
+    }
+  });
+
+  it("init_orchestrator shows none of the nested QA agent's events", () => {
+    const out = filterEventsForNode(STANDALONE_QA_GRAPH, STANDALONE_QA_EVENTS, "init_orchestrator");
+    expect(out, "the qa run's cost_update is not init_orchestrator's").not.toContain(QA_COST_UPDATE);
+    for (const e of STANDALONE_QA_QA_EVENTS) {
+      expect(out, `${e.type} is not init_orchestrator's`).not.toContain(e);
+    }
+    expect(out, "init_orchestrator's own events").toEqual(
+      expect.arrayContaining([QA_INIT_STARTED, QA_PIPELINE_GRAPH, QA_INIT_COMPLETED]),
+    );
+    expect(out, "job_finished is job-level").toContain(QA_JOB_FINISHED);
   });
 });

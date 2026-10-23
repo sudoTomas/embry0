@@ -21,7 +21,10 @@ export interface NodeLiveState {
 // LangGraph node whose events represent it). The QA chain inside an
 // issue-to-pr job is the special case: its one graph node is lit by qa_*
 // events, not node_started/node_completed. A standalone QA job's graph
-// names its own nodes, which emit node events like any other.
+// names its own nodes, which emit node events like any other. An event whose
+// `node` the graph does not know (an agent run nested inside a LangGraph node
+// stamps its own name, e.g. `qa`) belongs to the graph node running at that
+// moment (#90).
 
 const QA_EVENT_TYPES = new Set([
   "qa_apps_resolved",
@@ -67,6 +70,10 @@ export function deriveNodeStates(
   const startCounts = new Map<string, number>();
   const runningNodeByPhysical = new Map<string, string>();
   const startedAtByNode = new Map<string, string>();
+  // Nodes failed by an error under their own physical's name. Such a failure
+  // is sticky through node_completed; one reached through a nested run's name
+  // (a retryable per-app QA error) yields to the node's own verdict.
+  const failedByOwnName = new Set<string>();
 
   const upsert = (nodeId: string, patch: Partial<NodeLiveState>) => {
     const prev = states[nodeId];
@@ -81,6 +88,12 @@ export function deriveNodeStates(
       ...patch,
     };
   };
+
+  // The physical an event's own `node` stands for: itself when the graph has
+  // it, else the physical running last (an unknown name is a nested agent's),
+  // or undefined when nothing runs.
+  const resolvePhysical = (own: string): string | undefined =>
+    byPhysical.has(own) ? own : [...runningNodeByPhysical.keys()].at(-1);
 
   const completeRunningQa = () => {
     const qaNode = runningNodeByPhysical.get("qa");
@@ -114,8 +127,9 @@ export function deriveNodeStates(
       // running last (the stream was single-agent-at-a-time).
       const own = eventNode(event);
       const lastRunning = [...runningNodeByPhysical.values()].at(-1);
+      const resolved = own ? resolvePhysical(own) : undefined;
       const running = own
-        ? (runningNodeByPhysical.get(own) ?? (event.run_id ? undefined : lastRunning))
+        ? ((resolved && runningNodeByPhysical.get(resolved)) ?? (event.run_id ? undefined : lastRunning))
         : lastRunning;
       if (running) {
         // One cost_update per run, carrying that run's delta: a retried
@@ -143,8 +157,12 @@ export function deriveNodeStates(
       // re-start is a retry of the last one.
       const target = ids[Math.min(count, ids.length - 1)];
       startCounts.set(phys, count + 1);
+      // Delete first: a re-start moves the physical to the end, so it is the
+      // one "running last" for unknown-node rows.
+      runningNodeByPhysical.delete(phys);
       runningNodeByPhysical.set(phys, target);
       startedAtByNode.set(target, timestamp);
+      failedByOwnName.delete(target);
       // The event's `attempt` is the iteration; legacy rows without one
       // fall back to counting re-starts.
       const counted = states[target] ? states[target].iteration + (states[target].state !== "pending" ? 1 : 0) : 1;
@@ -160,18 +178,24 @@ export function deriveNodeStates(
         startedAt && timestamp
           ? Math.max(0, (new Date(timestamp).getTime() - new Date(startedAt).getTime()) / 1000)
           : 0;
-      // A run-ending error already failed the node; completing it must not hide
-      // that, and a node that reports its own failure is failed too.
-      const state = states[target]?.state === "failed" || nodeCompletedFailed(event) ? "failed" : "completed";
+      // A run-ending error under the node's own name already failed it;
+      // completing it must not hide that, and a node that reports its own
+      // failure is failed too. A failure that came through a nested run's name
+      // was retryable: the node_completed verdict decides.
+      const state = failedByOwnName.has(target) || nodeCompletedFailed(event) ? "failed" : "completed";
       upsert(target, { state, duration_seconds: duration });
       runningNodeByPhysical.delete(phys);
+      failedByOwnName.delete(target);
     } else if (event.type === "error") {
       // An error naming a tool is a recoverable denial: the run goes on.
       if (event.tool_name) continue;
       // Fail the node but keep it running-registered, so the run's later
       // cost_update and node_completed still land on it.
-      const target = runningNodeByPhysical.get(phys);
-      if (target) upsert(target, { state: "failed" });
+      const resolved = resolvePhysical(phys);
+      const target = resolved ? runningNodeByPhysical.get(resolved) : undefined;
+      if (!target) continue;
+      upsert(target, { state: "failed" });
+      if (resolved === phys) failedByOwnName.add(target);
     }
   }
 
@@ -196,8 +220,12 @@ export function deriveNodeStates(
  * research/analysis/ops steps), so the selection is resolved to its graph
  * node's `physical_node` first. Graph nodes sharing one physical node show the
  * same events; the qa physical also collects every qa_* event; job-level events
- * (no `node`) are always kept. An id the graph does not know, or a selection
- * with no graph, keeps only the job-level events.
+ * (no `node`) are always kept. An event whose `node` the graph does not know (a
+ * nested agent run's, e.g. `qa`) belongs to the physical running when it was
+ * emitted (#90): the filter attributes such rows to the last known physical
+ * started and not yet completed, a single slot rather than deriveNodeStates's
+ * map, so the two can differ for a node that never completes. An id the graph
+ * does not know, or a selection with no graph, keeps only the job-level events.
  */
 export function filterEventsForNode(
   graph: PipelineGraph | null,
@@ -207,10 +235,19 @@ export function filterEventsForNode(
   if (!selectedNodeId) return events;
   const selected = graph?.nodes.find((n) => n.node_id === selectedNodeId);
   const physical = selected ? physicalOf(selected) : null;
+  const known = new Set((graph?.nodes ?? []).map(physicalOf));
+  let running: string | null = null;
   return events.filter((e) => {
     const node = eventNode(e);
     if (node === "") return true;
+    if (known.has(node)) {
+      if (e.type === "node_started") running = node;
+      else if (e.type === "node_completed" && running === node) running = null;
+    }
     if (physical === null) return false;
-    return node === physical || (physical === "qa" && QA_EVENT_TYPES.has(e.type));
+    if (node === physical) return true;
+    // A graph with a qa physical owns every qa_* event, whatever node they name.
+    if (known.has("qa") && QA_EVENT_TYPES.has(e.type)) return physical === "qa";
+    return !known.has(node) && running === physical;
   });
 }
