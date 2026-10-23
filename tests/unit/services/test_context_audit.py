@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
@@ -18,9 +19,14 @@ from embry0.services.context_audit import (
     CHANGED,
     CURRENT,
     FIRST,
+    FORCED,
+    LIMIT,
     LIVE,
+    NO_FILES,
     OFF,
+    REFUSED,
     TEMPLATE,
+    UNREAD,
     Attempt,
     ContextAuditLoop,
     ForgeReadError,
@@ -65,6 +71,8 @@ class FakeForge:
     def __init__(self) -> None:
         self.repos: dict[str, tuple[str | None, dict[str, str]]] = {}
         self.calls: list[str] = []
+        # True: every read gives the event loop a turn, as a real request does.
+        self.yields = False
 
     def put(self, repo: str, head: str | None, files: dict[str, str]) -> None:
         """A repository whose default branch is at ``head``; None for one with no commit."""
@@ -72,6 +80,8 @@ class FakeForge:
 
     async def get(self, path: str, **kwargs: Any) -> Resp:
         self.calls.append(path)
+        if self.yields:
+            await asyncio.sleep(0)
         parts = path.split("/")
         repo = f"{parts[2]}/{parts[3]}"
         if repo not in self.repos:
@@ -115,6 +125,8 @@ class FakeJobs:
     def __init__(self, clock: Clock) -> None:
         self.clock = clock
         self.rows: list[dict[str, Any]] = []
+        # True: a create gives the event loop a turn before the row exists, as an INSERT does.
+        self.yields = False
 
     def add(self, repo: str, status: str, created: datetime, finished: datetime | None = None, **config: Any) -> None:
         self.rows.append(
@@ -131,6 +143,8 @@ class FakeJobs:
         )
 
     async def create(self, **kw: Any) -> str:
+        if self.yields:
+            await asyncio.sleep(0)
         self.add(kw["repo"], "pending", self.clock(), **kw["pipeline_config"])
         self.rows[-1].update(dispatched_by=kw["dispatched_by"], task=kw["task"], created_with=kw)
         return str(self.rows[-1]["job_id"])
@@ -304,6 +318,26 @@ def tried(days_ago: float, *, fp: str | None = FP, head: str | None = HEAD) -> A
 )
 def test_due_reason(newest: Attempt | None, current: RepoContext, days: int | None, live: bool, reason: str) -> None:
     assert due_reason(newest, current, days=days, now=T0, live=live) == reason
+
+
+@pytest.mark.parametrize(
+    ("newest", "current", "days", "live", "reason"),
+    [
+        # The setting off is not a reason by hand, and no interval applies then.
+        (None, ctx(), None, False, FIRST),
+        (done(1), ctx(fp="e" * 64), None, False, CHANGED),
+        (done(400), ctx(head="2" * 40), None, False, CURRENT),
+        (tried(400), ctx(head="2" * 40), None, False, CURRENT),
+        (done(30), ctx(fp="e" * 64), None, True, LIVE),
+        # The setting on, its interval holds by hand as on the schedule.
+        (done(8), ctx(head="2" * 40), 7, False, AGED),
+        (done(1), ctx(), 7, False, CURRENT),
+    ],
+)
+def test_due_reason_by_hand(
+    newest: Attempt | None, current: RepoContext, days: int | None, live: bool, reason: str
+) -> None:
+    assert due_reason(newest, current, days=days, now=T0, live=live, by_hand=True) == reason
 
 
 def test_an_attempt_reads_the_job_row_it_came_from() -> None:
@@ -720,3 +754,162 @@ class Config:
 def test_the_budget_is_the_setting_when_positive_and_finite(value: Any, cap: float) -> None:
     assert job_budget_usd(Config(value)) == cap
     assert job_budget_usd(object()) == 2.0
+
+
+# ---- a start by hand ----
+
+
+@pytest.mark.asyncio
+async def test_a_run_starts_the_due_repositories_with_the_schedule_off_and_says_what_it_passed_over() -> None:
+    repos = (reg("acme/busy"), reg("acme/edited"), reg("acme/new"), reg("acme/old"), reg("acme/plain"))
+    world = World(org("acme", days=None), repos=repos)
+    for repo in ("acme/busy", "acme/edited", "acme/new"):
+        world.forge.put(repo, HEAD, {"CLAUDE.md": "a" * 40})
+    world.forge.put("acme/old", "2" * 40, {"CLAUDE.md": "a" * 40})  # moved since its audit a year ago
+    world.forge.put("acme/plain", HEAD, {"README.md": "a" * 40})
+    year = T0 - timedelta(days=365)
+    world.jobs.add("acme/busy", "running", T0 - timedelta(hours=1), context_fingerprint="0" * 64, head_sha=HEAD)
+    world.jobs.add("acme/edited", "completed", year, year, context_fingerprint="0" * 64, head_sha=HEAD)
+    world.jobs.add("acme/old", "completed", year, year, context_fingerprint=world.fp("acme/old"), head_sha=HEAD)
+
+    result = await world.loop.run(org("acme", days=None))
+
+    assert [(s.repo, s.reason) for s in result.started] == [("acme/edited", CHANGED), ("acme/new", FIRST)]
+    assert [(s.repo, s.reason) for s in result.skipped] == [("acme/busy", LIVE), ("acme/old", CURRENT)], (
+        "with the setting off no interval applies, and a live audit is never joined"
+    )
+    assert (result.days, result.repo, result.force, result.limit, result.budget_usd) == (None, None, False, 3, 2.0)
+    started = {row["repo"]: row for row in world.jobs.rows if row["status"] == "pending"}
+    assert sorted(started) == ["acme/edited", "acme/new"]
+    for repo, row in started.items():
+        assert row["dispatched_by"] == ACTOR, "a start by hand is the schedule's own start"
+        assert row["created_with"]["pipeline_config"]["context_fingerprint"] == world.fp(repo)
+        assert row["created_with"]["pipeline_config"]["head_sha"] == HEAD
+
+
+@pytest.mark.asyncio
+async def test_a_run_starts_at_most_its_limit_else_the_owners_cap() -> None:
+    repos = tuple(reg(f"acme/r{i}") for i in range(4))
+    acme = org("acme", context_audit_max_jobs_per_tick=2, context_audit_budget_usd=4.0)
+    world = World(acme, repos=repos, cap=3)
+    for row in repos:
+        world.forge.put(row["repo"], HEAD, {"AGENTS.md": "a" * 40})
+
+    first = await world.loop.run(acme)
+    assert [s.repo for s in first.started] == ["acme/r0", "acme/r1"] and first.limit == 2, "the owner's own cap"
+    assert [(s.repo, s.reason) for s in first.skipped] == [("acme/r2", LIMIT), ("acme/r3", LIMIT)]
+    assert first.budget_usd == 4.0
+    assert {row["created_with"]["pipeline_config"]["max_budget_usd"] for row in world.jobs.rows} == {4.0}
+
+    second = await world.loop.run(acme, limit=1)
+    assert [s.repo for s in second.started] == ["acme/r2"] and second.limit == 1
+    assert [(s.repo, s.reason) for s in second.skipped] == [
+        ("acme/r0", LIVE),
+        ("acme/r1", LIVE),
+        ("acme/r3", LIMIT),
+    ]
+
+    none = await world.loop.run(org("acme", context_audit_max_jobs_per_tick=0))
+    assert none.started == () and none.limit == 0
+    assert [(s.repo, s.reason) for s in none.skipped] == [
+        ("acme/r0", LIVE),
+        ("acme/r1", LIVE),
+        ("acme/r2", LIVE),
+        ("acme/r3", LIMIT),
+    ], "a live audit is reported live, not as past the limit"
+
+
+@pytest.mark.asyncio
+async def test_a_run_for_one_repository_starts_it_when_due_or_forced_and_never_while_live() -> None:
+    acme = org("acme")
+    world = World(acme, repos=(reg("acme/api"), reg("acme/web")))
+    for repo in ("acme/api", "acme/web"):
+        world.forge.put(repo, HEAD, {"CLAUDE.md": "a" * 40})
+
+    first = await world.loop.run(acme, repo="Acme/Web")
+    assert [(s.repo, s.reason) for s in first.started] == [("acme/web", FIRST)]
+    assert (first.repo, first.limit) == ("acme/web", None)
+    assert [row["repo"] for row in world.jobs.rows] == ["acme/web"], "only the repository named"
+    assert not any(c.startswith("/repos/acme/api/") for c in world.forge.calls), "nor read the others"
+
+    joined = await world.loop.run(acme, repo="acme/web", force=True)
+    assert joined.started == ()
+    assert [(s.repo, s.reason) for s in joined.skipped] == [("acme/web", LIVE)], "force never joins a live audit"
+
+    world.jobs.finish("acme/web", "completed", T0 + timedelta(minutes=5))
+    current = await world.loop.run(acme, repo="acme/web")
+    assert current.started == () and [(s.repo, s.reason) for s in current.skipped] == [("acme/web", CURRENT)]
+    forced = await world.loop.run(acme, repo="acme/web", force=True)
+    assert [(s.repo, s.reason) for s in forced.started] == [("acme/web", FORCED)]
+    assert len(world.jobs.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_job_started_by_hand_is_the_schedules_anchor() -> None:
+    world = World(org("acme", days=7), repos=(reg("acme/web"),))
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    assert [s.repo for s in (await world.loop.run(org("acme", days=7), repo="acme/web")).started] == ["acme/web"]
+    world.jobs.finish("acme/web", "completed", T0 + timedelta(minutes=20))
+    world.clock.now = T0 + timedelta(hours=1)
+    assert await world.loop.tick() == [], "the schedule does not repeat the audit a person started"
+    world.forge.put("acme/web", "2" * 40, {"CLAUDE.md": "e" * 40})
+    assert await world.loop.tick() == ["acme/web"], "and starts the next when the files change"
+
+
+@pytest.mark.asyncio
+async def test_a_run_says_why_a_named_repository_did_not_start() -> None:
+    repos = (reg("acme/gone"), reg("acme/plain"), reg("acme/web"))
+    world = World(org("acme"), repos=repos, templates=("analysis-default",))
+    world.forge.put("acme/plain", HEAD, {"README.md": "a" * 40})
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+
+    gone = await world.loop.run(org("acme"), repo="acme/gone")
+    plain = await world.loop.run(org("acme"), repo="acme/plain")
+    web = await world.loop.run(org("acme"), repo="acme/web")
+
+    assert [(s.repo, s.reason, s.detail) for s in gone.skipped] == [
+        ("acme/gone", UNREAD, "reading the newest commit answered 404")
+    ]
+    assert [(s.repo, s.reason, s.detail) for s in plain.skipped] == [("acme/plain", NO_FILES, None)]
+    assert [(s.repo, s.reason, s.detail) for s in web.skipped] == [
+        ("acme/web", REFUSED, "no pipeline template named 'context-audit'")
+    ]
+    assert world.jobs.rows == []
+    survey = await world.loop.survey(org("acme"))
+    assert [(s.context.repo, s.reason, s.refused_at) for s in survey.repos] == [("acme/web", CURRENT, T0)], (
+        "a refused start by hand is an attempt the schedule waits on, as its own are"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_run_refuses_a_repository_it_does_not_hold_and_force_without_one() -> None:
+    world = World(org("acme"), repos=(reg("acme/web"), reg("acme/old", active=False), reg("beta/web")))
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    for repo in ("acme/nope", "acme/old", "beta/web"):
+        with pytest.raises(context_audit.UnknownRepository, match="is not an active registered repository of acme"):
+            await world.loop.run(org("acme"), repo=repo)
+    with pytest.raises(context_audit.InvalidRun, match="name it with repo"):
+        await world.loop.run(org("acme"), force=True)
+    with pytest.raises(context_audit.UnsupportedForge):
+        await world.loop.run(org("lab", forge="gitlab"))
+    assert world.jobs.rows == [] and world.forge.calls == []
+
+
+@pytest.mark.asyncio
+async def test_starts_that_all_found_a_repository_due_start_one_job_between_them() -> None:
+    """The tick and two people at once: each survey finds the repository due before any job
+    exists, so only a last look at the jobs, under one lock through the start, keeps it to one."""
+    acme = org("acme")
+    world = World(acme, repos=(reg("acme/web"),))
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    world.forge.yields = world.jobs.yields = True
+
+    by_repo, ticked, by_owner = await asyncio.gather(
+        world.loop.run(acme, repo="acme/web"), world.loop.tick(), world.loop.run(acme)
+    )
+
+    assert len(world.jobs.rows) == 1, f"{len(world.jobs.rows)} jobs for one due repository"
+    assert len(by_repo.started) + len(ticked) + len(by_owner.started) == 1
+    assert [s.reason for s in (*by_repo.skipped, *by_owner.skipped)] == [LIVE] * (
+        len(by_repo.skipped) + len(by_owner.skipped)
+    )

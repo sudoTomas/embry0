@@ -37,7 +37,7 @@ A repository is due when:
 
 It is never due while one of its context-audit jobs is pending, running, awaiting input or paused, whoever started it.
 
-The newest job is the anchor whatever became of it. A completed job counts from when it finished; a failed or cancelled one from when it started, so a failure waits a full interval, the same as a success, and the schedule never retries on every tick. A start refused before any job existed counts the same way; the orchestrator remembers it until it restarts. A change to the files is due at once in every case. A context-audit job a person started counts too; it records no fingerprint, so only its age is read.
+The newest job is the anchor whatever became of it. A completed job counts from when it finished; a failed or cancelled one from when it started, so a failure waits a full interval, the same as a success, and the schedule never retries on every tick. A start refused before any job existed counts the same way; the orchestrator remembers it until it restarts. A change to the files is due at once in every case. A job a person starts with the run below is the schedule's own start and counts like one. A context-audit job started any other way, such as one created with `POST /api/v1/jobs`, counts too; it records no fingerprint, so only its age is read.
 
 The schedule reads GitHub repositories in this release. An organization on GitLab is skipped with one log line.
 
@@ -90,6 +90,30 @@ curl http://localhost:8200/api/v1/orgs/acme/context-audit \
 The answer lists each active registered repository with at least one instruction file: how many it has, the fingerprint and head it was read at, its newest context-audit job (id, status, date), whether the schedule would start one now and why (`first`, `changed`, `aged`, `live`, `current`, or `off` while the setting is off). Repositories the forge did not answer for are listed under `unread`, with why. The read reads the forge and starts nothing, and works with the setting off. Field by field: [api.md](api.md#organizations).
 
 Each job the schedule starts is a job like any other: the read above names each repository's newest one, `GET /api/v1/jobs?repo=<owner>/<name>` lists it among the repository's jobs, and `GET /api/v1/jobs/{job_id}` carries its report. Its `job_created` audit row names the actor `embry0:context-audit`, and its `pipeline_config` records the `context_fingerprint` and `head_sha` it was started for.
+
+## Running it now
+
+An audit can be started by hand, whether or not the schedule is on, with the tier that creates a job (`operator`):
+
+```bash
+# Every due repository of the owner, at most its cap per tick (or "limit": N, 1 to 50)
+curl -X POST http://localhost:8200/api/v1/orgs/acme/context-audit/run \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{}'
+
+# One repository: when it is due, or whatever the due rule says with "force": true
+curl -X POST http://localhost:8200/api/v1/orgs/acme/context-audit/run \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"repo": "acme/widgets", "force": true}'
+```
+
+Due is the rule above without the setting: with the setting off no interval applies, so a repository is due when it has no context-audit job yet or its files changed. Nothing starts while one of the repository's context-audit jobs is live, `force` or not. Each job starts as a scheduled one does, under the actor `embry0:context-audit`, with the organization's per-job cap and the fingerprint and head it was read at, so the schedule anchors on it and does not repeat it; the audit row `organization.context_audit_run` names the person who asked. The answer lists the jobs started and every repository passed over, with why. Field by field: [api.md](api.md#organizations).
+
+A job created with `POST /api/v1/jobs` and `"pipeline_template": "context-audit"` runs the same auditor, but records no fingerprint, names no instruction files in its task, and has a hard cap only if it is given one; the schedule sees it as the newest audit of its repository without its fingerprint, so a file changed later is not compared with it until the next scheduled audit. Start one by hand with the run above.
 
 ## Turning it off
 

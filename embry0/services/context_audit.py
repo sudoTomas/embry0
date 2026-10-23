@@ -12,6 +12,10 @@ due (:func:`due_reason`), at most the owner's cap per wake, each job with the
 owner's hard budget (:meth:`ContextAuditLoop.jobs_per_tick`,
 :meth:`ContextAuditLoop.budget_usd`).
 
+A person can start the same jobs at once (:meth:`ContextAuditLoop.run`,
+``POST /orgs/{owner}/context-audit/run``), through the same start, so a job
+started by hand is an anchor like any other.
+
 The schedule is anchored on the recorded jobs, never on the process clock,
 so a restart neither postpones a due audit nor repeats a recent one. The
 newest job counts whatever became of it, a failed one included, and so does
@@ -83,6 +87,19 @@ CURRENT = "current"
 OFF = "off"
 DUE_REASONS = frozenset({FIRST, CHANGED, AGED})
 
+# Why a start by hand passed a repository over, besides LIVE and CURRENT, and
+# the reason it gives a job it started although the due rule said current.
+#: Past the run's limit.
+LIMIT = "limit"
+#: The start was refused before a job existed: no template, no executor.
+REFUSED = "refused"
+#: The forge did not answer for the newest commit or the tree.
+UNREAD = "unread"
+#: The default branch holds no instruction file, or no commit.
+NO_FILES = "no_instruction_files"
+#: Started with ``force`` while the due rule said current.
+FORCED = "forced"
+
 
 @dataclass(frozen=True)
 class RepoContext:
@@ -150,22 +167,34 @@ def fingerprint(blobs: Mapping[str, str]) -> str:
 
 
 def due_reason(
-    newest: Attempt | None, current: RepoContext, *, days: int | None, now: datetime, live: bool = False
+    newest: Attempt | None,
+    current: RepoContext,
+    *,
+    days: int | None,
+    now: datetime,
+    live: bool = False,
+    by_hand: bool = False,
 ) -> str:
     """Why a repository whose newest context audit is ``newest`` is due at ``now``, or why not.
 
     In this order: :data:`OFF` when ``days`` is None; :data:`LIVE` while a
     context-audit job of it has not finished; :data:`FIRST` with no audit
     yet; :data:`CHANGED` when the files differ from those the newest audit
-    recorded (one that recorded none, such as a job a person started, is not
-    compared); :data:`AGED` when the newest audit is ``days`` old and the
-    branch head moved since; else :data:`CURRENT`. The age is read as
+    recorded (one that recorded none, such as a job started without the
+    schedule's start, is not compared); :data:`AGED` when the newest audit
+    is ``days`` old and the branch head moved since; else :data:`CURRENT`.
+    The age is read as
     :func:`~embry0.services.loop_schedule.seconds_until_next_run` reads its
     anchors: a completed audit from when it finished, any other (failed,
     cancelled, refused before it existed) from when it started, so a failure
     waits a full interval like a success.
+
+    ``by_hand`` is the rule a start by hand reads: the setting being off is
+    not :data:`OFF`, and with no interval nothing is :data:`AGED`, so a
+    repository whose files the newest audit recorded is current however old
+    that audit is.
     """
-    if days is None:
+    if days is None and not by_hand:
         return OFF
     if live:
         return LIVE
@@ -173,6 +202,8 @@ def due_reason(
         return FIRST
     if newest.fingerprint is not None and newest.fingerprint != current.fingerprint:
         return CHANGED
+    if days is None:
+        return CURRENT
     wait = seconds_until_next_run(
         now=now,
         interval_seconds=days * 86400,
@@ -196,6 +227,14 @@ def _newer(job: Attempt | None, refused: Attempt | None) -> Attempt | None:
 
 class UnsupportedForge(ValueError):
     """The organization's forge is not one whose trees the audit reads."""
+
+
+class UnknownRepository(LookupError):
+    """A start by hand named a repository that is not an active registered one of the organization."""
+
+
+class InvalidRun(ValueError):
+    """A start by hand asked for something a run does not do."""
 
 
 class ForgeReadError(RuntimeError):
@@ -315,6 +354,51 @@ class Survey:
         }
 
 
+@dataclass(frozen=True)
+class Started:
+    """A job a start by hand started, and why the repository was due (or :data:`FORCED`)."""
+
+    repo: str
+    job_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class Skipped:
+    """A repository a start by hand passed over, and why."""
+
+    repo: str
+    reason: str
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
+class RunResult:
+    """What one start by hand started and passed over (:meth:`ContextAuditLoop.run`)."""
+
+    owner: str
+    days: int | None
+    repo: str | None
+    force: bool
+    #: The most it would start without ``repo``; None with one.
+    limit: int | None
+    budget_usd: float
+    started: tuple[Started, ...]
+    skipped: tuple[Skipped, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "owner": self.owner,
+            "context_audit_days": self.days,
+            "repo": self.repo,
+            "force": self.force,
+            "limit": self.limit,
+            "budget_usd": self.budget_usd,
+            "started": [{"repo": s.repo, "job_id": s.job_id, "reason": s.reason} for s in self.started],
+            "skipped": [{"repo": s.repo, "reason": s.reason, "detail": s.detail} for s in self.skipped],
+        }
+
+
 class _Organizations(Protocol):
     async def list_all(self, *, include_removed: bool = False) -> list[Organization]: ...
 
@@ -379,6 +463,9 @@ class ContextAuditLoop:
         # problem is one log line, not one per tick.
         self._noted: dict[str, str] = {}
         self._unread: dict[str, dict[str, str]] = {}
+        # Held around each start's last look at the jobs and the start itself:
+        # the tick and a start by hand run in this one process.
+        self._starting = asyncio.Lock()
 
     def jobs_per_tick(self, org: Organization) -> int:
         """The most jobs one tick starts for ``org``: its ``context_audit_max_jobs_per_tick``, else the deployment's."""
@@ -409,6 +496,16 @@ class ContextAuditLoop:
         self._contexts[repo] = context
         return context
 
+    async def _registered(self, org: Organization) -> list[str]:
+        """The active registered repositories under ``org``, on its forge."""
+        if org.forge != "github":
+            raise UnsupportedForge(f"the context audit reads GitHub repositories in this release, not {org.forge}")
+        return [
+            str(row["repo"])
+            for row in await self._registry.list_all()
+            if str(row["repo"]).split("/", 1)[0].lower() == org.owner and row.get("forge") == org.forge
+        ]
+
     async def survey(self, org: Organization, *, now: datetime | None = None) -> Survey:
         """Every active registered repository of ``org`` with instruction files, and whether each is due.
 
@@ -419,15 +516,11 @@ class ContextAuditLoop:
         whose trees are not read this way, and what ``client_for`` raises
         when the owner's credential cannot be resolved.
         """
-        if org.forge != "github":
-            raise UnsupportedForge(f"the context audit reads GitHub repositories in this release, not {org.forge}")
-        now = now or self._clock()
+        return await self._survey(org, await self._registered(org), now=now or self._clock())
+
+    async def _survey(self, org: Organization, repos: list[str], *, now: datetime, by_hand: bool = False) -> Survey:
+        """:meth:`survey` over ``repos``, each due by :func:`due_reason` with ``by_hand``."""
         days = context_audit_days(org.settings)
-        repos = [
-            str(row["repo"])
-            for row in await self._registry.list_all()
-            if str(row["repo"]).split("/", 1)[0].lower() == org.owner and row.get("forge") == org.forge
-        ]
         if not repos:
             return Survey(org.owner, days, ())
         client = await self._client_for(org)
@@ -445,7 +538,8 @@ class ContextAuditLoop:
             job = newest.get(repo)
             refused = self._refused.get(repo)
             attempt = _newer(Attempt.from_job(job) if job else None, refused)
-            reason = due_reason(attempt, context, days=days, now=now, live=bool(job and job.get("live")))
+            live = bool(job and job.get("live"))
+            reason = due_reason(attempt, context, days=days, now=now, live=live, by_hand=by_hand)
             states.append(RepoState(context, job, refused.started_at if refused else None, reason))
         return Survey(org.owner, days, tuple(states), tuple(unread))
 
@@ -507,11 +601,8 @@ class ContextAuditLoop:
                     logger.info("context_audit_tick_full", owner=org.owner, cap=cap, next_repo=repo)
                     break
                 try:
-                    job_id = await self._start_job(state.context, budget)
+                    job_id = await self._start(state.context, budget_usd=budget, now=now)
                 except Exception as exc:  # noqa: BLE001 - one repository's refusal is its own log line
-                    self._refused[repo] = Attempt(
-                        started_at=now, fingerprint=state.context.fingerprint, head_sha=state.context.head_sha
-                    )
                     logger.warning(
                         "context_audit_not_started",
                         repo=repo,
@@ -521,7 +612,8 @@ class ContextAuditLoop:
                         retry_in_days=days,
                     )
                     continue
-                self._refused.pop(repo, None)
+                if job_id is None:
+                    continue
                 count += 1
                 started.append(repo)
                 logger.info(
@@ -533,6 +625,112 @@ class ContextAuditLoop:
                     budget_usd=budget,
                 )
         return started
+
+    async def _start(self, context: RepoContext, *, budget_usd: float, now: datetime) -> str | None:
+        """Start ``context``'s job and return its id, or None when a context-audit job of it is live.
+
+        The survey read the jobs a moment earlier, and the tick and a start by
+        hand can both have found the repository due, so the jobs are read
+        again under one lock held through the start: of two such callers one
+        starts the job and the other finds it live. A start that raises is
+        remembered as an attempt, the one nothing else records, and raised.
+        """
+        repo = context.repo
+        async with self._starting:
+            newest = await self._jobs.newest_per_repo([repo], pipeline_template=TEMPLATE, dispatched_by=ACTOR)
+            if (newest.get(repo) or {}).get("live"):
+                logger.info("context_audit_already_live", repo=repo)
+                return None
+            try:
+                job_id = await self._start_job(context, budget_usd)
+            except Exception:
+                self._refused[repo] = Attempt(
+                    started_at=now, fingerprint=context.fingerprint, head_sha=context.head_sha
+                )
+                raise
+            self._refused.pop(repo, None)
+            return job_id
+
+    async def run(
+        self, org: Organization, *, repo: str | None = None, force: bool = False, limit: int | None = None
+    ) -> RunResult:
+        """Start the due context audits of ``org`` now, whatever its schedule says, and say what started and what not.
+
+        Without ``repo``, every due repository, at most ``limit`` of them, the
+        owner's :meth:`jobs_per_tick` when None. With ``repo``, that one when
+        it is due, or when ``force`` is true whatever the due rule says. Due
+        is :func:`due_reason` with ``by_hand``: the setting may be off, and
+        then no interval applies. Never while a context-audit job of the
+        repository is live, ``force`` or not. Each start is :meth:`_start`, the
+        tick's own, so each job records the fingerprint and head the schedule
+        anchors on, and a refused start is remembered as the tick remembers
+        its own. Each job gets the owner's :meth:`budget_usd`.
+
+        Raises :class:`UnsupportedForge` as :meth:`survey` does, what
+        ``client_for`` raises, :class:`UnknownRepository` for a ``repo`` that
+        is not an active registered repository of ``org``, and
+        :class:`InvalidRun` for ``force`` without ``repo``.
+        """
+        if force and repo is None:
+            raise InvalidRun("force starts one repository whatever the due rule says: name it with repo")
+        repos = await self._registered(org)
+        if repo is not None:
+            repos = [name for name in repos if name.lower() == repo.lower()]
+            if not repos:
+                raise UnknownRepository(f"{repo} is not an active registered repository of {org.owner}")
+        now = self._clock()
+        survey = await self._survey(org, repos, now=now, by_hand=True)
+        cap = 1 if repo is not None else limit if limit is not None else self.jobs_per_tick(org)
+        budget = self.budget_usd(org)
+        started: list[Started] = []
+        skipped: list[Skipped] = []
+        for state in survey.repos:
+            name, reason = state.context.repo, state.reason
+            if reason == LIVE or (reason == CURRENT and not force):
+                skipped.append(Skipped(name, reason))
+                continue
+            if len(started) >= cap:
+                skipped.append(Skipped(name, LIMIT))
+                continue
+            try:
+                job_id = await self._start(state.context, budget_usd=budget, now=now)
+            except Exception as exc:  # noqa: BLE001 - one repository's refusal is its own entry
+                logger.warning(
+                    "context_audit_not_started",
+                    repo=name,
+                    reason=reason,
+                    by_hand=True,
+                    error=type(exc).__name__,
+                    detail=_detail(exc),
+                )
+                skipped.append(Skipped(name, REFUSED, _detail(exc)))
+                continue
+            if job_id is None:
+                skipped.append(Skipped(name, LIVE))
+                continue
+            started.append(Started(name, job_id, FORCED if reason == CURRENT else reason))
+            logger.info(
+                "context_audit_started",
+                repo=name,
+                job_id=job_id,
+                reason=started[-1].reason,
+                files=len(state.context.files),
+                budget_usd=budget,
+                by_hand=True,
+            )
+        skipped.extend(Skipped(name, UNREAD, detail) for name, detail in survey.unread)
+        if repo is not None and not survey.repos and not survey.unread:
+            skipped.append(Skipped(repos[0], NO_FILES))
+        return RunResult(
+            owner=org.owner,
+            days=survey.days,
+            repo=repos[0] if repo is not None else None,
+            force=force,
+            limit=None if repo is not None else cap,
+            budget_usd=budget,
+            started=tuple(started),
+            skipped=tuple(skipped),
+        )
 
     async def start(self) -> None:  # pragma: no cover - exercised by the app
         while True:
