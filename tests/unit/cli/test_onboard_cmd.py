@@ -51,6 +51,24 @@ def test_reports_the_branch_the_orchestrator_chose(monkeypatch, capsys) -> None:
     assert "group/proj@develop" in out.out + out.err, out
 
 
+def test_a_timeout_on_create_says_the_job_may_exist(monkeypatch, capsys) -> None:
+    """Without --branch the orchestrator asks the forge before answering; a
+    slow forge can outlast the call. The job may still have been created."""
+    import httpx
+
+    monkeypatch.setenv("EMBRY0_API_KEY", "k")
+    args = argparse.Namespace(repo="group/proj", branch=None, no_smoke=False, api_url=None, api_key=None)
+    with (
+        patch("httpx.post", side_effect=httpx.ReadTimeout("timed out")),
+        pytest.raises(SystemExit) as exc,
+    ):
+        cli.cmd_onboard(args)
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "may still have been created" in err, f"a timeout gave no hint that the job may exist: {err!r}"
+    assert "embry0 jobs" in err
+
+
 def test_failure_still_exits_nonzero(monkeypatch) -> None:
     monkeypatch.setenv("EMBRY0_API_KEY", "k")
     args = argparse.Namespace(repo="group/proj", branch="dev", no_smoke=True, api_url=None, api_key=None)
