@@ -192,7 +192,7 @@ export function MergeApprovalPage() {
           )}
           {` · asked ${formatDateTime(row.posted_at ?? row.created_at)}`}
         </p>
-        <Decision row={row} />
+        <Decision key={row.id} row={row} />
       </div>
 
       {a ? (
