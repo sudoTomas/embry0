@@ -986,8 +986,9 @@ async def context_audit_run(
     needs repo. With the schedule off no interval applies: due is no audit yet, or changed files.
     Never while a context-audit job of the repository is live, force or not. Each job's hard cap is
     the organization's context_audit_budget_usd, else the deployment's default. Returns started (repo, job_id, reason) and
-    skipped (repo, reason: live, current, limit, refused, unread or no_instruction_files, and
-    detail); follow a job with job_wait and job_deliverables. Use this rather than
+    skipped (repo, reason: live, current, limit, refused, gated, unread or no_instruction_files, and
+    detail; gated means the budget gate refused, no job was written and the repository stays due);
+    follow a job with job_wait and job_deliverables. Use this rather than
     job_create(pipeline_template="context-audit"): that job records no fingerprint, so the schedule
     cannot compare a later change with it. Needs an operate-scope key, and a key limited to some
     repositories must name one with repo. Requires confirm=true (starts paid jobs)."""

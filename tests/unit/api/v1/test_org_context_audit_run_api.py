@@ -130,12 +130,16 @@ def make_app(monkeypatch: pytest.MonkeyPatch, **config: Any) -> Any:
         started.append((context.repo, budget_usd))
         return job_id
 
+    async def open_gate() -> None:
+        return None
+
     app.state.context_audit = ContextAuditLoop(
         organizations=app.state.organizations_repo,
         registry=FakeRegistry(),
         jobs=jobs,
         client_for=client_for,
         start_job=start_job,
+        ask_gate=open_gate,
         max_jobs_per_tick=3,
         budget_usd=2.0,
         clock=lambda: NOW,

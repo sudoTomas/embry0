@@ -24,6 +24,13 @@ down): the loop keeps the time of each repository's last refusal. Either way
 a repository whose files did not change is tried again one interval later,
 not on every tick. The refusals live in the process, so a restart tries such
 a repository once more.
+
+The budget gate is asked before each start, as a label trigger asks it
+(#284). While it refuses (the actor's hourly rate limit, a daily or monthly
+budget), no job row is written and nothing counts as an attempt: a tick ends
+there and the repositories it did not reach are due again on the next. A job
+the gate refused anyway, between the ask and the run, did no work and is no
+anchor either: the jobs table's newest-job read leaves it out.
 """
 
 from __future__ import annotations
@@ -93,6 +100,9 @@ DUE_REASONS = frozenset({FIRST, CHANGED, AGED})
 LIMIT = "limit"
 #: The start was refused before a job existed: no template, no executor.
 REFUSED = "refused"
+#: The budget gate refused the start, or one before it in the same run: no
+#: job was written and nothing counts as an attempt.
+GATED = "gated"
 #: The forge did not answer for the newest commit or the tree.
 UNREAD = "unread"
 #: The default branch holds no instruction file, or no commit.
@@ -187,7 +197,8 @@ def due_reason(
     :func:`~embry0.services.loop_schedule.seconds_until_next_run` reads its
     anchors: a completed audit from when it finished, any other (failed,
     cancelled, refused before it existed) from when it started, so a failure
-    waits a full interval like a success.
+    waits a full interval like a success. A job the budget gate refused is
+    never ``newest``: it did no work.
 
     ``by_hand`` is the rule a start by hand reads: the setting being off is
     not :data:`OFF`, and with no interval nothing is :data:`AGED`, so a
@@ -239,6 +250,17 @@ class InvalidRun(ValueError):
 
 class ForgeReadError(RuntimeError):
     """The forge did not answer a read the way the audit needs."""
+
+
+class GateRefused(RuntimeError):
+    """The budget gate refused a start before a job existed; it is not an attempt."""
+
+    def __init__(self, limit: str, message: str) -> None:
+        super().__init__(message or limit or "refused by the budget gate")
+        #: Which layer refused: ``rate_limit``, ``daily`` or ``monthly``.
+        self.limit = limit
+        #: The gate's operator-facing detail.
+        self.message = message
 
 
 class _Forge(Protocol):
@@ -420,6 +442,16 @@ ClientFor = Callable[[Organization], Awaitable[_Forge]]
 StartJob = Callable[[RepoContext, float], Awaitable[str]]
 
 
+class _Refusal(Protocol):
+    limit: str
+    message: str
+
+
+#: Asks the budget gate whether a job of :data:`ACTOR` may start now: its
+#: refusal (a :class:`~embry0.orchestration.budget_gate.DispatchDecision`), or None.
+AskGate = Callable[[], Awaitable[_Refusal | None]]
+
+
 def _detail(exc: Exception) -> str:
     """What a refusal says: an HTTPException's detail, else the exception's text, else its type."""
     text = str(getattr(exc, "detail", "") or "") or str(exc)
@@ -437,6 +469,7 @@ class ContextAuditLoop:
         jobs: _Jobs,
         client_for: ClientFor,
         start_job: StartJob,
+        ask_gate: AskGate,
         max_jobs_per_tick: int,
         budget_usd: float,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -447,6 +480,9 @@ class ContextAuditLoop:
         self._jobs = jobs
         self._client_for = client_for
         self._start_job = start_job
+        # Required, not optional: without it every start past the rate limit
+        # becomes a failed job that anchors its repository for an interval.
+        self._ask_gate = ask_gate
         # The deployment's caps, for an owner whose settings name none.
         self._max_jobs_per_tick = max_jobs_per_tick
         self._budget_usd = budget_usd
@@ -568,9 +604,13 @@ class ContextAuditLoop:
         job gets the owner's :meth:`budget_usd`. An owner that cannot be read
         (a forge whose trees are not read this way, a credential that cannot
         be resolved) and a repository that cannot be read are skipped, each
-        with one log line until the reason changes. A start that fails is
-        logged and counts as an attempt, so that repository waits a full
-        interval unless its files change; the other repositories still go.
+        with one log line until the reason changes. The budget gate is asked
+        before each start: when it refuses, the tick ends there for every
+        owner, since its limits are the deployment's, and nothing counts as
+        an attempt, so each repository it did not start is due again on the
+        next tick. Any other start that fails is logged and counts as an
+        attempt, so that repository waits a full interval unless its files
+        change; the other repositories still go.
         """
         now = self._clock()
         started: list[str] = []
@@ -602,6 +642,11 @@ class ContextAuditLoop:
                     break
                 try:
                     job_id = await self._start(state.context, budget_usd=budget, now=now)
+                except GateRefused as exc:
+                    logger.info(
+                        "context_audit_gate_refused", owner=org.owner, repo=repo, limit=exc.limit, detail=exc.message
+                    )
+                    return started
                 except Exception as exc:  # noqa: BLE001 - one repository's refusal is its own log line
                     logger.warning(
                         "context_audit_not_started",
@@ -632,7 +677,10 @@ class ContextAuditLoop:
         The survey read the jobs a moment earlier, and the tick and a start by
         hand can both have found the repository due, so the jobs are read
         again under one lock held through the start: of two such callers one
-        starts the job and the other finds it live. A start that raises is
+        starts the job and the other finds it live. The budget gate is asked
+        next, under the same lock, so the jobs it counts include every start
+        before this one: its refusal raises :class:`GateRefused` and is not
+        remembered, since nothing was attempted. A start that raises is
         remembered as an attempt, the one nothing else records, and raised.
         """
         repo = context.repo
@@ -641,6 +689,9 @@ class ContextAuditLoop:
             if (newest.get(repo) or {}).get("live"):
                 logger.info("context_audit_already_live", repo=repo)
                 return None
+            refusal = await self._ask_gate()
+            if refusal is not None:
+                raise GateRefused(refusal.limit, refusal.message)
             try:
                 job_id = await self._start_job(context, budget_usd)
             except Exception:
@@ -664,7 +715,9 @@ class ContextAuditLoop:
         repository is live, ``force`` or not. Each start is :meth:`_start`, the
         tick's own, so each job records the fingerprint and head the schedule
         anchors on, and a refused start is remembered as the tick remembers
-        its own. Each job gets the owner's :meth:`budget_usd`.
+        its own. A start the budget gate refuses is :data:`GATED`, and so is
+        every repository the run would have started after it; none of them
+        counts as an attempt. Each job gets the owner's :meth:`budget_usd`.
 
         Raises :class:`UnsupportedForge` as :meth:`survey` does, what
         ``client_for`` raises, :class:`UnknownRepository` for a ``repo`` that
@@ -684,6 +737,7 @@ class ContextAuditLoop:
         budget = self.budget_usd(org)
         started: list[Started] = []
         skipped: list[Skipped] = []
+        gated: GateRefused | None = None
         for state in survey.repos:
             name, reason = state.context.repo, state.reason
             if reason == LIVE or (reason == CURRENT and not force):
@@ -692,8 +746,23 @@ class ContextAuditLoop:
             if len(started) >= cap:
                 skipped.append(Skipped(name, LIMIT))
                 continue
+            if gated is not None:
+                skipped.append(Skipped(name, GATED, str(gated)))
+                continue
             try:
                 job_id = await self._start(state.context, budget_usd=budget, now=now)
+            except GateRefused as exc:
+                gated = exc
+                logger.info(
+                    "context_audit_gate_refused",
+                    owner=org.owner,
+                    repo=name,
+                    limit=exc.limit,
+                    detail=exc.message,
+                    by_hand=True,
+                )
+                skipped.append(Skipped(name, GATED, str(exc)))
+                continue
             except Exception as exc:  # noqa: BLE001 - one repository's refusal is its own entry
                 logger.warning(
                     "context_audit_not_started",

@@ -287,16 +287,22 @@ class JobsRepository:
         repository has not been released (``RELEASED_JOB_STATUSES``), not only
         the newest. One query for the whole set, without the task text; a
         repository with no such job is absent.
+
+        A job the budget gate refused before any agent ran is left out
+        (``gate_refusal_sql``, #331): it did no work, so it is nobody's
+        newest attempt, and a repository whose only such jobs were refused
+        is absent, as one with none.
         """
         if not repos:
             return {}
         rows = await self._db.fetch(
-            """
+            f"""
             SELECT DISTINCT ON (repo)
                 repo, job_id, status, created_at, finished_at, pipeline_config,
                 bool_or(NOT (status = ANY($4::text[]))) OVER (PARTITION BY repo) AS live
             FROM jobs
             WHERE repo = ANY($1::text[]) AND (pipeline_template = $2 OR dispatched_by = $3)
+              AND NOT {gate_refusal_sql("jobs")}
             ORDER BY repo, created_at DESC, job_id DESC
             """,
             sorted(set(repos)),

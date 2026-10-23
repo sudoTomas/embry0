@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Collection
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -20,6 +21,7 @@ from embry0.services.context_audit import (
     CURRENT,
     FIRST,
     FORCED,
+    GATED,
     LIMIT,
     LIVE,
     NO_FILES,
@@ -189,6 +191,14 @@ class FakeTemplates:
         return [{"id": f"pt-{i}", "name": name} for i, name in enumerate(self.names)]
 
 
+@dataclass(frozen=True)
+class Refusal:
+    """The budget gate's answer as the loop reads it: a DispatchDecision that refused."""
+
+    limit: str
+    message: str
+
+
 def org(
     owner: str = "acme", days: Any = 7, *, forge: str = "github", status: str = "active", **settings: Any
 ) -> Organization:
@@ -212,6 +222,7 @@ class World:
         budget: float = 2.0,
         templates: tuple[str, ...] = (TEMPLATE,),
         credential_error: Exception | None = None,
+        rate_limit: int | None = None,
     ) -> None:
         self.clock = Clock(T0)
         self.forge = FakeForge()
@@ -220,6 +231,22 @@ class World:
         self.templates = FakeTemplates(*templates)
         self.attempts: list[str] = []
         self.credential_error = credential_error
+        # The gate's per-actor hourly limit, counted over the job rows as the
+        # real gate counts them; None lets every start through.
+        self.rate_limit = rate_limit
+        self.gate_asks = 0
+
+        async def ask_gate() -> Refusal | None:
+            self.gate_asks += 1
+            if self.rate_limit is None:
+                return None
+            since = self.clock() - timedelta(hours=1)
+            dispatched = sum(1 for r in self.jobs.rows if r["dispatched_by"] == ACTOR and r["created_at"] >= since)
+            if dispatched < self.rate_limit:
+                return None
+            return Refusal(
+                "rate_limit", f"{dispatched} job(s) dispatched in the last hour against a limit of {self.rate_limit}"
+            )
 
         async def client_for(organization: Organization) -> FakeForge:
             if self.credential_error is not None:
@@ -238,6 +265,7 @@ class World:
             jobs=self.jobs,
             client_for=client_for,
             start_job=start_job,
+            ask_gate=ask_gate,
             max_jobs_per_tick=cap,
             budget_usd=budget,
             clock=self.clock,
@@ -569,6 +597,45 @@ async def test_a_missing_template_refuses_the_start_cleanly_and_once_per_interva
     world.clock.now = T0 + timedelta(days=7)
     world.forge.put("acme/a", "2" * 40, {"CLAUDE.md": "a" * 40})
     assert await world.loop.tick() == ["acme/a"], "and the rest one interval after the refusal"
+
+
+@pytest.mark.asyncio
+async def test_the_gate_is_asked_before_each_start_and_its_refusal_ends_the_tick_with_no_attempt() -> None:
+    """The actor's hourly rate limit (5 on a default deployment) is below what
+    a tick may start. A start past it must not become a failed job that
+    anchors its repository: then a repository whose files never change would
+    never get its first audit. The gate is asked first, its refusal writes
+    nothing, and the repositories the tick did not reach stay due."""
+    names = [f"acme/r{i}" for i in range(5)]
+    world = World(org("acme", days=7), repos=tuple(reg(n) for n in names), cap=5, rate_limit=2)
+    for name in names:
+        world.forge.put(name, HEAD, {"CLAUDE.md": "a" * 40})
+    with capture_logs() as logs:
+        assert await world.loop.tick() == names[:2], "the gate let two through"
+    assert world.attempts == names[:2], "no start past the refusal reaches the job store"
+    assert len(world.jobs.rows) == 2, "a refused start writes no job row"
+    assert world.gate_asks == 3, "one ask per start, and the tick stops at the refusal"
+    refusals = [e for e in logs if e["event"] == "context_audit_gate_refused"]
+    assert [(e["repo"], e["limit"]) for e in refusals] == [("acme/r2", "rate_limit")], logs
+    survey = await world.loop.survey(org("acme", days=7))
+    left = [(s.context.repo, s.reason, s.refused_at) for s in survey.repos if s.context.repo in names[2:]]
+    assert left == [(n, FIRST, None) for n in names[2:]], "a gate refusal is no attempt"
+
+    world.clock.now = T0 + timedelta(minutes=61)  # the hour the limit counts has passed
+    assert await world.loop.tick() == names[2:4], "the next tick starts where the last one stopped"
+
+
+@pytest.mark.asyncio
+async def test_a_gate_refusal_ends_the_tick_for_every_owner() -> None:
+    """The gate's limits are the deployment's, not one owner's: once it
+    refuses, asking again for the next owner would only be refused again."""
+    world = World(org("acme"), org("zeta"), repos=(reg("acme/web"), reg("zeta/api")), rate_limit=0)
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    world.forge.put("zeta/api", HEAD, {"CLAUDE.md": "b" * 40})
+    assert await world.loop.tick() == []
+    assert world.attempts == [] and world.jobs.rows == [], "nothing is written while the gate refuses"
+    assert world.gate_asks == 1
+    assert not any("/zeta/" in call for call in world.forge.calls), "the next owner is not even read"
 
 
 @pytest.mark.asyncio
@@ -913,3 +980,23 @@ async def test_starts_that_all_found_a_repository_due_start_one_job_between_them
     assert [s.reason for s in (*by_repo.skipped, *by_owner.skipped)] == [LIVE] * (
         len(by_repo.skipped) + len(by_owner.skipped)
     )
+
+
+@pytest.mark.asyncio
+async def test_a_run_reports_the_gate_refusal_and_every_repository_after_it_as_gated() -> None:
+    """A start by hand meets the same gate: what it could not start says so,
+    with the gate's reason, and none of it counts as an attempt."""
+    names = [f"acme/r{i}" for i in range(4)]
+    world = World(org("acme", days=None), repos=tuple(reg(n) for n in names), rate_limit=1)
+    for name in names:
+        world.forge.put(name, HEAD, {"CLAUDE.md": "a" * 40})
+    result = await world.loop.run(org("acme", days=None), limit=10)
+    assert [s.repo for s in result.started] == names[:1]
+    gated = [s for s in result.skipped if s.reason == GATED]
+    assert [s.repo for s in gated] == names[1:], result.skipped
+    assert all("against a limit of 1" in (s.detail or "") for s in gated), gated
+    assert world.attempts == names[:1] and world.gate_asks == 2, "after the refusal the run asks no more"
+    survey = await world.loop.survey(org("acme", days=None))
+    assert {s.context.repo: s.reason for s in survey.repos}["acme/r1"] == OFF
+    rerun = await world.loop.run(org("acme", days=None), repo="acme/r1")
+    assert [s.reason for s in rerun.skipped] == [GATED], "still within the hour: gated again, not current"

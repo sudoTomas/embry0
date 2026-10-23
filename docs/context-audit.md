@@ -37,7 +37,7 @@ A repository is due when:
 
 It is never due while one of its context-audit jobs is pending, running, awaiting input or paused, whoever started it.
 
-The newest job is the anchor whatever became of it. A completed job counts from when it finished; a failed or cancelled one from when it started, so a failure waits a full interval, the same as a success, and the schedule never retries on every tick. A start refused before any job existed counts the same way; the orchestrator remembers it until it restarts. A change to the files is due at once in every case. A job a person starts with the run below is the schedule's own start and counts like one. A context-audit job started any other way, such as one created with `POST /api/v1/jobs`, counts too; it records no fingerprint, so only its age is read.
+The newest job is the anchor whatever became of it. A completed job counts from when it finished; a failed or cancelled one from when it started, so a failure waits a full interval, the same as a success, and the schedule never retries on every tick. A start refused before any job existed counts the same way; the orchestrator remembers it until it restarts. The budget gate is the exception: the schedule asks it before each start, and while it refuses (the hourly rate limit, a daily or monthly budget) no job is written, nothing counts as an attempt and the tick stops there, so the repositories it did not reach are due again on the next tick. A job the gate refused anyway, between the ask and the run, did no work and is no anchor either. A change to the files is due at once in every case. A job a person starts with the run below is the schedule's own start and counts like one. A context-audit job started any other way, such as one created with `POST /api/v1/jobs`, counts too; it records no fingerprint, so only its age is read.
 
 The schedule reads GitHub repositories in this release. An organization on GitLab is skipped with one log line.
 
@@ -78,7 +78,7 @@ curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
 
 Each organization's cap is its own: one that reached its cap does not hold back another, so one tick starts at most the sum of the caps of the organizations on the schedule.
 
-The fleet-wide caps still apply to every job: `MAX_BUDGET_USD`, `DAILY_BUDGET_CAP_USD`, `MONTHLY_BUDGET_CAP_USD`, and `RATE_LIMIT_PER_AUTHOR_PER_HOUR`, which counts the schedule's jobs under its actor `embry0:context-audit` like any person's ([configuration.md](configuration.md)). A job the budget gate refuses fails, and counts as an attempt.
+The fleet-wide caps still apply to every job: `MAX_BUDGET_USD`, `DAILY_BUDGET_CAP_USD`, `MONTHLY_BUDGET_CAP_USD`, and `RATE_LIMIT_PER_AUTHOR_PER_HOUR`, which counts the schedule's jobs under its actor `embry0:context-audit` like any person's ([configuration.md](configuration.md)). The schedule asks the gate before each start and stops at its first refusal, which counts as no attempt. With the default `RATE_LIMIT_PER_AUTHOR_PER_HOUR` of 5, an owner with many repositories due gets about 5 audits an hour however high its per-tick cap.
 
 ## Reading what it sees
 
