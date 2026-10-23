@@ -101,16 +101,27 @@ def test_qa_fixture_nests_the_agent_run_in_orchestrate_qa() -> None:
             f"{e['type']} seq {e['event_seq']} carries node {e['node']!r}, the emitter writes 'qa'"
         )
         assert "run_id" not in e, f"{e['type']} seq {e['event_seq']} is the orchestrator's, it has no run_id"
-    run_rows = [e for e in events if e["type"] in ("agent_started", "cost_update", "agent_completed")]
-    assert [e["type"] for e in run_rows] == ["agent_started", "cost_update", "agent_completed"], (
-        f"the QA run opens, reports its cost and closes once: {[e['type'] for e in run_rows]}"
+    run_rows = [e for e in events if "run_id" in e]
+    lifecycle = [e["type"] for e in run_rows if e["type"] in ("agent_started", "cost_update", "agent_completed")]
+    assert lifecycle == ["agent_started", "cost_update", "agent_completed"], (
+        f"the QA run opens, reports its cost and closes once: {lifecycle}"
     )
+    assert len(run_rows) > len(lifecycle), "the run has turn rows between opening and closing"
     for e in run_rows:
-        assert (e["node"], e["agent"], e["run_id"]) == ("qa", "qa", "run-0001"), f"{e['type']} seq {e['event_seq']}"
+        assert (e["node"], e.get("agent"), e["run_id"]) == ("qa", "qa", "run-0001"), (
+            f"{e['type']} seq {e['event_seq']} carries {(e['node'], e.get('agent'), e['run_id'])}, "
+            "executor._ids stamps ('qa', 'qa', 'run-0001') on every row of the run"
+        )
     started = events.index(next(e for e in events if e["type"] == "node_started" and e["node"] == "orchestrate_qa"))
     completed = events.index(next(e for e in events if e["type"] == "node_completed" and e["node"] == "orchestrate_qa"))
     for e in qa_rows + run_rows:
         assert started < events.index(e) < completed, f"{e['type']} seq {e['event_seq']} is outside orchestrate_qa"
+    # Inside the bracket there is nothing but the orchestrator's qa_* rows, its and
+    # the sub-task's progress rows, and the one run: no second run, no stray row.
+    for e in events[started + 1 : completed]:
+        assert e in qa_rows or e in run_rows or e["type"] == "progress", (
+            f"{e['type']} seq {e['event_seq']} inside orchestrate_qa belongs to no emitter of the standalone QA job"
+        )
 
 
 def test_fixtures_equal_the_script_output() -> None:

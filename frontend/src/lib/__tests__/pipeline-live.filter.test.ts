@@ -16,6 +16,10 @@ import {
   STANDALONE_QA_QA_EVENTS,
 } from "./standalone-qa-stream";
 
+// Every row of the nested QA agent's run: agent_started, the turn rows,
+// cost_update and agent_completed, all stamped node "qa" and run-0001 (#102).
+const STANDALONE_QA_RUN_EVENTS = STANDALONE_QA_EVENTS.filter((e) => e.run_id === "run-0001");
+
 const GRAPH: PipelineGraph = {
   graph_id: "route-job-fixture-1",
   name: "filter-test",
@@ -109,6 +113,10 @@ describe("filterEventsForNode on a standalone QA job (#90)", () => {
   it("orchestrate_qa shows the nested QA agent's events", () => {
     const out = filterEventsForNode(STANDALONE_QA_GRAPH, STANDALONE_QA_EVENTS, "orchestrate_qa");
     expect(out, "the qa run's cost_update belongs to orchestrate_qa").toContain(QA_COST_UPDATE);
+    expect(STANDALONE_QA_RUN_EVENTS.length, "the fixture holds the run's rows").toBeGreaterThan(3);
+    for (const e of STANDALONE_QA_RUN_EVENTS) {
+      expect(out, `the run's ${e.type} belongs to orchestrate_qa`).toContain(e);
+    }
     for (const e of STANDALONE_QA_QA_EVENTS) {
       expect(out, `${e.type} (${"status" in e ? e.status : "-"}) belongs to orchestrate_qa`).toContain(e);
     }
@@ -123,6 +131,9 @@ describe("filterEventsForNode on a standalone QA job (#90)", () => {
   it("init_orchestrator shows none of the nested QA agent's events", () => {
     const out = filterEventsForNode(STANDALONE_QA_GRAPH, STANDALONE_QA_EVENTS, "init_orchestrator");
     expect(out, "the qa run's cost_update is not init_orchestrator's").not.toContain(QA_COST_UPDATE);
+    for (const e of STANDALONE_QA_RUN_EVENTS) {
+      expect(out, `the run's ${e.type} is not init_orchestrator's`).not.toContain(e);
+    }
     for (const e of STANDALONE_QA_QA_EVENTS) {
       expect(out, `${e.type} is not init_orchestrator's`).not.toContain(e);
     }

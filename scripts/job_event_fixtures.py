@@ -399,15 +399,18 @@ def onboarding() -> list[dict[str, Any]]:
 
 
 def qa() -> list[dict[str, Any]]:
-    """A completed standalone QA job, call for call as its emitters write it (#102).
+    """A completed standalone QA job: the orchestrator's and the executor's calls (#102).
 
     The orchestrator brackets its three nodes with agentless node_started /
     node_completed (embry0/workflows/qa/orchestrator.py, orchestrator_report.py);
     the qa_* rows keep the builders' default node "qa" (orchestrator_helpers.py,
-    subtask_nodes.py); and the QA agent run nested inside orchestrate_qa is stamped
-    node "qa", agent "qa" and its run_id by the executor's _ids (nodes.py runs it
-    with node="qa"). The graph does not know the name "qa": the frontend has to
-    attribute those rows to the node running at the time.
+    subtask_nodes.py); the sub-task's own progress rows name its nodes
+    acquire_sandbox and boot_app (subtask_nodes.py); and the QA agent run nested
+    inside orchestrate_qa is stamped node "qa", agent "qa" and its run_id by the
+    executor's _ids (nodes.py runs it with node="qa"). None of those names is a
+    graph node: the frontend has to attribute such rows to the node running at
+    the time. One thing the wire carries is left out: the sub-task writer's
+    `app` tag on every nested agent row, which the contract does not admit (#107).
     """
     s = Stream("job-0001")
     init_id, orchestrate_id, report_id = (n[0] for n in QA_NODE_IDS)
@@ -419,6 +422,8 @@ def qa() -> list[dict[str, Any]]:
     s.add(ev.qa_apps_resolved(apps=["web"]))
     s.add(ev.qa_subtask_started(app="web", target="managed"))
     s.add(ev.qa_subtask_status(app="web", status="running"))
+    s.add(ev.progress(message="[web] acquiring sandbox", node="acquire_sandbox", app="web"))
+    s.add(ev.progress(message="[web] booting app (target=managed)", node="boot_app", app="web"))
     r: dict[str, Any] = dict(run_id="run-0001", node="qa", agent="qa")
     s.add(ev.agent_started(model="claude-sonnet-5-5", max_turns=100, **r))
     s.add(ev.turn_start(turn_number=1, model="claude-sonnet-5-5", **r))
