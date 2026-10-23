@@ -44,11 +44,14 @@ def _started(attr: str) -> bool:
     )
 
 
-def test_the_loop_reads_its_cap_and_its_collaborators_and_is_started() -> None:
+def test_the_loop_reads_its_caps_and_its_collaborators_and_is_started() -> None:
     call = _construction("ContextAuditLoop")
     passed = {kw.arg: ast.unparse(kw.value) for kw in call.keywords if kw.arg}
     assert passed.get("max_jobs_per_tick") == "config.context_audit_max_jobs_per_tick", (
         "ContextAuditLoop is not given CONTEXT_AUDIT_MAX_JOBS_PER_TICK"
+    )
+    assert passed.get("budget_usd") == "job_budget_usd(config)", (
+        "ContextAuditLoop is not given CONTEXT_AUDIT_JOB_BUDGET_USD"
     )
     assert passed.get("organizations") == "app.state.organizations_repo"
     assert passed.get("registry") == "app.state.repos_repo", "the loop reads the registered repositories"
@@ -65,10 +68,11 @@ def test_the_forge_is_read_with_the_organizations_credential() -> None:
 
 def test_every_scheduled_job_gets_the_hard_budget_and_the_job_path() -> None:
     start = _function("_start_context_audit")
+    assert [a.arg for a in start.args.args] == ["context", "budget_usd"], "the starter takes the loop's cap per job"
     calls = [n for n in ast.walk(start) if isinstance(n, ast.Call) and ast.unparse(n.func) == "start_context_audit_job"]
     assert calls, "_start_context_audit does not start jobs through start_context_audit_job"
     passed = {kw.arg: ast.unparse(kw.value) for kw in calls[0].keywords if kw.arg}
-    assert passed.get("budget_usd") == "job_budget_usd(config)", "the job is not given CONTEXT_AUDIT_JOB_BUDGET_USD"
+    assert passed.get("budget_usd") == "budget_usd", "the job is not given the cap the loop chose for its owner"
     assert passed.get("templates") == "app.state.templates_repo", "the template check needs the templates"
     assert passed.get("jobs") == "app.state.jobs_repo"
     assert "issue_executor" in passed.get("executor", ""), "a job row nobody runs sits in pending forever"

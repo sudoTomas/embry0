@@ -705,8 +705,10 @@ class Embry0Config(BaseSettings):
     # per-job cap is always a hard stop, as the watcher's is
     # (embry0.services.context_audit); 0, non-finite or invalid falls back to
     # the default, never to unlimited. One tick starts at most this many jobs
-    # across every organization, and the due repositories left over wait for
-    # the next tick; 0 starts none.
+    # for each organization, and the due repositories left over wait for the
+    # next tick; 0 starts none. Both are the defaults: an organization's
+    # settings.context_audit_budget_usd and context_audit_max_jobs_per_tick
+    # take their place for it (ADR 0021).
     context_audit_job_budget_usd: float = 2.0
     context_audit_max_jobs_per_tick: int = Field(default=3, ge=0)
 

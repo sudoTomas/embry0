@@ -2044,13 +2044,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async def _context_audit_client(org: _AuditedOrganization) -> Any:
             return await org_forge_client(_audit_request(app), org)
 
-        async def _start_context_audit(context: _RepoContext) -> str:
+        async def _start_context_audit(context: _RepoContext, budget_usd: float) -> str:
             return await start_context_audit_job(
                 context,
                 jobs=app.state.jobs_repo,
                 executor=getattr(app.state, "issue_executor", None),
                 templates=app.state.templates_repo,
-                budget_usd=job_budget_usd(config),
+                budget_usd=budget_usd,
                 db=db,
                 audit_log_path=config.audit_log_path,
             )
@@ -2061,7 +2061,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             jobs=app.state.jobs_repo,
             client_for=_context_audit_client,
             start_job=_start_context_audit,
+            # The deployment's caps: an organization's own settings take their
+            # place for its repositories.
             max_jobs_per_tick=config.context_audit_max_jobs_per_tick,
+            budget_usd=job_budget_usd(config),
         )
         context_audit_task = asyncio.create_task(app.state.context_audit.start())
         app.state.background_tasks.add(context_audit_task)

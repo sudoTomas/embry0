@@ -7,7 +7,14 @@ from typing import Any
 import pytest
 
 from embry0.services import org_webhooks
-from embry0.services.organizations import SETTINGS, context_audit_days, rediscover_hours, validate_settings
+from embry0.services.organizations import (
+    SETTINGS,
+    context_audit_budget_usd,
+    context_audit_days,
+    context_audit_max_jobs_per_tick,
+    rediscover_hours,
+    validate_settings,
+)
 
 
 class Resp:
@@ -148,7 +155,13 @@ async def test_install_fails_closed_when_hooks_are_not_listable_or_the_create_is
 
 
 def test_the_settings_vocabulary_is_closed() -> None:
-    assert SETTINGS == {"auto_register": bool, "rediscover_hours": int, "context_audit_days": int}
+    assert SETTINGS == {
+        "auto_register": bool,
+        "rediscover_hours": int,
+        "context_audit_days": int,
+        "context_audit_budget_usd": float,
+        "context_audit_max_jobs_per_tick": int,
+    }
 
 
 def test_validate_settings_accepts_known_keys_with_their_types() -> None:
@@ -160,6 +173,18 @@ def test_validate_settings_accepts_known_keys_with_their_types() -> None:
     assert validate_settings({"context_audit_days": 1}) == {"context_audit_days": 1}
     assert validate_settings({"context_audit_days": 365}) == {"context_audit_days": 365}
     assert validate_settings({"context_audit_days": None}) == {"context_audit_days": None}, "null switches it off"
+    assert validate_settings({"context_audit_budget_usd": 0.5}) == {"context_audit_budget_usd": 0.5}
+    assert validate_settings({"context_audit_budget_usd": 50}) == {"context_audit_budget_usd": 50.0}
+    assert validate_settings({"context_audit_budget_usd": None}) == {"context_audit_budget_usd": None}
+    assert validate_settings({"context_audit_max_jobs_per_tick": 0}) == {"context_audit_max_jobs_per_tick": 0}
+    assert validate_settings({"context_audit_max_jobs_per_tick": 50}) == {"context_audit_max_jobs_per_tick": 50}
+    assert validate_settings({"context_audit_max_jobs_per_tick": None}) == {"context_audit_max_jobs_per_tick": None}
+
+
+def test_a_budget_written_as_a_whole_number_is_stored_as_a_number_of_dollars() -> None:
+    """JSON writes 5 and 5.0 alike; the row holds a float either way."""
+    stored = validate_settings({"context_audit_budget_usd": 5})["context_audit_budget_usd"]
+    assert stored == 5.0 and type(stored) is float
 
 
 @pytest.mark.parametrize(
@@ -167,7 +192,8 @@ def test_validate_settings_accepts_known_keys_with_their_types() -> None:
     [
         (
             {"auto_regster": True},
-            "unknown setting 'auto_regster'; known settings: auto_register, context_audit_days, rediscover_hours",
+            "unknown setting 'auto_regster'; known settings: auto_register, context_audit_budget_usd, "
+            "context_audit_days, context_audit_max_jobs_per_tick, rediscover_hours",
         ),
         ({"auto_register": "true"}, "setting 'auto_register' must be bool"),
         ({"auto_register": 1}, "setting 'auto_register' must be bool"),
@@ -183,6 +209,21 @@ def test_validate_settings_accepts_known_keys_with_their_types() -> None:
         ({"context_audit_days": True}, "setting 'context_audit_days' must be int or null"),
         ({"context_audit_days": 7.0}, "setting 'context_audit_days' must be int or null"),
         ({"context_audit_days": "7"}, "setting 'context_audit_days' must be int or null"),
+        (
+            {"context_audit_budget_usd": 0},
+            "setting 'context_audit_budget_usd' must be more than 0 and at most 50 or null",
+        ),
+        ({"context_audit_budget_usd": -2.0}, "must be more than 0 and at most 50 or null"),
+        ({"context_audit_budget_usd": 50.01}, "must be more than 0 and at most 50 or null"),
+        ({"context_audit_budget_usd": True}, "setting 'context_audit_budget_usd' must be a number or null"),
+        ({"context_audit_budget_usd": "2"}, "setting 'context_audit_budget_usd' must be a number or null"),
+        ({"context_audit_budget_usd": float("inf")}, "setting 'context_audit_budget_usd' must be a number or null"),
+        ({"context_audit_budget_usd": float("nan")}, "setting 'context_audit_budget_usd' must be a number or null"),
+        ({"context_audit_max_jobs_per_tick": -1}, "'context_audit_max_jobs_per_tick' must be from 0 to 50 or null"),
+        ({"context_audit_max_jobs_per_tick": 51}, "'context_audit_max_jobs_per_tick' must be from 0 to 50 or null"),
+        ({"context_audit_max_jobs_per_tick": True}, "setting 'context_audit_max_jobs_per_tick' must be int or null"),
+        ({"context_audit_max_jobs_per_tick": 3.0}, "setting 'context_audit_max_jobs_per_tick' must be int or null"),
+        ({"context_audit_max_jobs_per_tick": "3"}, "setting 'context_audit_max_jobs_per_tick' must be int or null"),
     ],
 )
 def test_validate_settings_refuses_unknown_keys_and_wrong_types(settings: dict[str, Any], message: str) -> None:
@@ -226,3 +267,42 @@ def test_rediscover_hours_reads_only_a_valid_interval(settings: dict[str, Any], 
 )
 def test_context_audit_days_reads_only_a_valid_interval(settings: dict[str, Any], days: int | None) -> None:
     assert context_audit_days(settings) == days
+
+
+@pytest.mark.parametrize(
+    ("settings", "budget"),
+    [
+        ({"context_audit_budget_usd": 7.5}, 7.5),
+        ({"context_audit_budget_usd": 50}, 50.0),
+        ({}, None),
+        ({"context_audit_budget_usd": None}, None),
+        # POST /orgs stores settings unvalidated: what a PATCH would refuse reads as the deployment's.
+        ({"context_audit_budget_usd": "7.5"}, None),
+        ({"context_audit_budget_usd": True}, None),
+        ({"context_audit_budget_usd": 0}, None),
+        ({"context_audit_budget_usd": 51}, None),
+        ({"context_audit_budget_usd": float("inf")}, None),
+        ({"context_audit_budget_usd": float("nan")}, None),
+    ],
+)
+def test_context_audit_budget_reads_only_a_valid_cap(settings: dict[str, Any], budget: float | None) -> None:
+    assert context_audit_budget_usd(settings) == budget
+
+
+@pytest.mark.parametrize(
+    ("settings", "cap"),
+    [
+        ({"context_audit_max_jobs_per_tick": 5}, 5),
+        ({"context_audit_max_jobs_per_tick": 0}, 0),
+        ({}, None),
+        ({"context_audit_max_jobs_per_tick": None}, None),
+        # POST /orgs stores settings unvalidated: what a PATCH would refuse reads as the deployment's.
+        ({"context_audit_max_jobs_per_tick": "5"}, None),
+        ({"context_audit_max_jobs_per_tick": True}, None),
+        ({"context_audit_max_jobs_per_tick": 5.0}, None),
+        ({"context_audit_max_jobs_per_tick": -1}, None),
+        ({"context_audit_max_jobs_per_tick": 51}, None),
+    ],
+)
+def test_context_audit_max_jobs_per_tick_reads_only_a_valid_cap(settings: dict[str, Any], cap: int | None) -> None:
+    assert context_audit_max_jobs_per_tick(settings) == cap

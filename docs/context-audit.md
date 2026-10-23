@@ -59,10 +59,24 @@ The organization must be `active` and its credential must be able to read the re
 
 ## What it may spend
 
-| Variable | Default | What it bounds |
+Two settings on the organization bound what its audits may spend. An organization that sets neither gets the deployment's two variables ([ADR 0021](adr/0021-context-audit-caps-per-organization.md)):
+
+| Setting | Variable, for an organization without the setting | What it bounds |
 |---|---|---|
-| `CONTEXT_AUDIT_JOB_BUDGET_USD` | `2.0` | Each job's cap, always a hard stop (`ERR_BUDGET_OVERRUN`) whatever `BUDGET_OVERRUN_MODE` says: nobody watches a scheduled job. `0`, non-finite or invalid values fall back to the default |
-| `CONTEXT_AUDIT_MAX_JOBS_PER_TICK` | `3` | Jobs one tick starts, across every organization. The due repositories left over wait for the next tick; `0` starts none |
+| `context_audit_budget_usd`: more than 0 and at most 50, or `null` | `CONTEXT_AUDIT_JOB_BUDGET_USD`, default `2.0` | Each job's cap in USD, always a hard stop (`ERR_BUDGET_OVERRUN`) whatever `BUDGET_OVERRUN_MODE` says: nobody watches a scheduled job. For the variable, `0`, non-finite or invalid values fall back to `2.0` |
+| `context_audit_max_jobs_per_tick`: 0 to 50, or `null` | `CONTEXT_AUDIT_MAX_JOBS_PER_TICK`, default `3` | Jobs one tick starts for the organization. Its due repositories left over wait for the next tick; `0` starts none |
+
+They are set the way the interval is, with the `admin` tier, and `null` hands a cap back to the deployment. The dashboard has no field for them in this release:
+
+```bash
+curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"settings": {"context_audit_budget_usd": 5, "context_audit_max_jobs_per_tick": 2}}'
+```
+
+Each organization's cap is its own: one that reached its cap does not hold back another, so one tick starts at most the sum of the caps of the organizations on the schedule.
 
 The fleet-wide caps still apply to every job: `MAX_BUDGET_USD`, `DAILY_BUDGET_CAP_USD`, `MONTHLY_BUDGET_CAP_USD`, and `RATE_LIMIT_PER_AUTHOR_PER_HOUR`, which counts the schedule's jobs under its actor `embry0:context-audit` like any person's ([configuration.md](configuration.md)). A job the budget gate refuses fails, and counts as an attempt.
 
@@ -89,4 +103,4 @@ curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
   -d '{"settings": {"context_audit_days": null}}'
 ```
 
-In the dashboard, press **Turn off** beside the field, then Save. No new job starts for the organization from the next tick; a job already running finishes. Pausing the organization (`PUT /api/v1/orgs/{owner}/status`) stops it too, and `CONTEXT_AUDIT_MAX_JOBS_PER_TICK=0` stops it for every organization.
+In the dashboard, press **Turn off** beside the field, then Save. No new job starts for the organization from the next tick; a job already running finishes. Pausing the organization (`PUT /api/v1/orgs/{owner}/status`) stops it too, and so does `context_audit_max_jobs_per_tick: 0`. `CONTEXT_AUDIT_MAX_JOBS_PER_TICK=0` stops it for every organization that sets no cap of its own.

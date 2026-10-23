@@ -8,7 +8,9 @@ audited without anyone starting a job: one loop in the orchestrator wakes
 every :data:`TICK_SECONDS`, reads the default branch of each active
 registered repository under each such owner with the organization's
 credential, and starts a :data:`TEMPLATE` job for each repository that is
-due (:func:`due_reason`), at most ``max_jobs_per_tick`` per wake.
+due (:func:`due_reason`), at most the owner's cap per wake, each job with the
+owner's hard budget (:meth:`ContextAuditLoop.jobs_per_tick`,
+:meth:`ContextAuditLoop.budget_usd`).
 
 The schedule is anchored on the recorded jobs, never on the process clock,
 so a restart neither postpones a due audit nor repeats a recent one. The
@@ -37,7 +39,12 @@ from embry0.audit.helpers import emit_audit
 from embry0.orchestration import dispatch_actors
 from embry0.services.instruction_files import instruction_files
 from embry0.services.loop_schedule import seconds_until_next_run
-from embry0.services.organizations import Organization, context_audit_days
+from embry0.services.organizations import (
+    Organization,
+    context_audit_budget_usd,
+    context_audit_days,
+    context_audit_max_jobs_per_tick,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -325,8 +332,8 @@ class _Jobs(Protocol):
 #: The client that reads an organization's repositories with its credential.
 ClientFor = Callable[[Organization], Awaitable[_Forge]]
 
-#: Starts one context-audit job and returns its id.
-StartJob = Callable[[RepoContext], Awaitable[str]]
+#: Starts one context-audit job with that hard cap in USD and returns its id.
+StartJob = Callable[[RepoContext, float], Awaitable[str]]
 
 
 def _detail(exc: Exception) -> str:
@@ -347,6 +354,7 @@ class ContextAuditLoop:
         client_for: ClientFor,
         start_job: StartJob,
         max_jobs_per_tick: int,
+        budget_usd: float,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         tick_seconds: float = TICK_SECONDS,
     ) -> None:
@@ -355,7 +363,9 @@ class ContextAuditLoop:
         self._jobs = jobs
         self._client_for = client_for
         self._start_job = start_job
+        # The deployment's caps, for an owner whose settings name none.
         self._max_jobs_per_tick = max_jobs_per_tick
+        self._budget_usd = budget_usd
         self._clock = clock
         self._tick_seconds = tick_seconds
         # Each repository's last start refused before a job row existed, the
@@ -369,6 +379,16 @@ class ContextAuditLoop:
         # problem is one log line, not one per tick.
         self._noted: dict[str, str] = {}
         self._unread: dict[str, dict[str, str]] = {}
+
+    def jobs_per_tick(self, org: Organization) -> int:
+        """The most jobs one tick starts for ``org``: its ``context_audit_max_jobs_per_tick``, else the deployment's."""
+        own = context_audit_max_jobs_per_tick(org.settings)
+        return self._max_jobs_per_tick if own is None else own
+
+    def budget_usd(self, org: Organization) -> float:
+        """The hard cap in USD of each job ``org`` gets: its ``context_audit_budget_usd``, else the deployment's."""
+        own = context_audit_budget_usd(org.settings)
+        return self._budget_usd if own is None else own
 
     async def _read(self, client: _Forge, repo: str) -> RepoContext | None:
         head = await read_head(client, repo)
@@ -446,29 +466,27 @@ class ContextAuditLoop:
         self._unread[owner] = dict(unread)
 
     async def tick(self) -> list[str]:
-        """Start a job for every due repository, at most ``max_jobs_per_tick``, and return the repositories started.
+        """Start a job for every due repository, at most each owner's cap, and return the repositories started.
 
-        Only active owners with ``context_audit_days`` set are read. An owner
-        that cannot be read (a forge whose trees are not read this way, a
-        credential that cannot be resolved) and a repository that cannot be
-        read are skipped, each with one log line until the reason changes. A
-        start that fails is logged and counts as an attempt, so that
-        repository waits a full interval unless its files change; the other
-        repositories still go. Once the cap is reached the owners not yet
-        read wait for the next tick.
+        Only active owners with ``context_audit_days`` set are read. Each
+        owner's cap is :meth:`jobs_per_tick`: its due repositories past it
+        wait for the next tick, and an owner whose cap is 0 is not read. Each
+        job gets the owner's :meth:`budget_usd`. An owner that cannot be read
+        (a forge whose trees are not read this way, a credential that cannot
+        be resolved) and a repository that cannot be read are skipped, each
+        with one log line until the reason changes. A start that fails is
+        logged and counts as an attempt, so that repository waits a full
+        interval unless its files change; the other repositories still go.
         """
-        cap = self._max_jobs_per_tick
-        if cap < 1:
-            return []
         now = self._clock()
         started: list[str] = []
         for org in await self._organizations.list_all():
             days = context_audit_days(org.settings)
             if org.status != "active" or days is None:
                 continue
-            if len(started) >= cap:
-                logger.info("context_audit_tick_full", cap=cap, next_owner=org.owner)
-                return started
+            cap = self.jobs_per_tick(org)
+            if cap < 1:
+                continue
             try:
                 survey = await self.survey(org, now=now)
             except UnsupportedForge as exc:
@@ -479,15 +497,17 @@ class ContextAuditLoop:
                 continue
             self._noted.pop(org.owner, None)
             self._note_unread(org.owner, survey.unread)
+            budget = self.budget_usd(org)
+            count = 0
             for state in survey.repos:
                 repo = state.context.repo
                 if not state.due:
                     continue
-                if len(started) >= cap:
-                    logger.info("context_audit_tick_full", cap=cap, next_repo=repo)
-                    return started
+                if count >= cap:
+                    logger.info("context_audit_tick_full", owner=org.owner, cap=cap, next_repo=repo)
+                    break
                 try:
-                    job_id = await self._start_job(state.context)
+                    job_id = await self._start_job(state.context, budget)
                 except Exception as exc:  # noqa: BLE001 - one repository's refusal is its own log line
                     self._refused[repo] = Attempt(
                         started_at=now, fingerprint=state.context.fingerprint, head_sha=state.context.head_sha
@@ -502,6 +522,7 @@ class ContextAuditLoop:
                     )
                     continue
                 self._refused.pop(repo, None)
+                count += 1
                 started.append(repo)
                 logger.info(
                     "context_audit_started",
@@ -509,6 +530,7 @@ class ContextAuditLoop:
                     job_id=job_id,
                     reason=state.reason,
                     files=len(state.context.files),
+                    budget_usd=budget,
                 )
         return started
 
@@ -537,7 +559,10 @@ class _Templates(Protocol):
 
 
 def job_budget_usd(config: Any) -> float:
-    """The per-job cap: ``CONTEXT_AUDIT_JOB_BUDGET_USD`` when it is a positive finite number, else the default.
+    """The deployment's per-job cap: ``CONTEXT_AUDIT_JOB_BUDGET_USD`` when positive and finite, else the default.
+
+    An organization's ``context_audit_budget_usd`` takes its place for that
+    organization's jobs (:meth:`ContextAuditLoop.budget_usd`).
 
     0 means unlimited elsewhere in the budget config, and ``inf`` amounts to
     the same; an unattended job never gets that reading.

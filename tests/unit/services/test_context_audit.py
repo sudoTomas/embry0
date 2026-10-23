@@ -175,8 +175,11 @@ class FakeTemplates:
         return [{"id": f"pt-{i}", "name": name} for i, name in enumerate(self.names)]
 
 
-def org(owner: str = "acme", days: Any = 7, *, forge: str = "github", status: str = "active") -> Organization:
-    settings = {} if days is None else {"context_audit_days": days}
+def org(
+    owner: str = "acme", days: Any = 7, *, forge: str = "github", status: str = "active", **settings: Any
+) -> Organization:
+    if days is not None:
+        settings["context_audit_days"] = days
     return Organization(owner=owner, forge=forge, settings=settings, status=status)
 
 
@@ -192,6 +195,7 @@ class World:
         *orgs: Organization,
         repos: tuple[dict[str, Any], ...] = (),
         cap: int = 3,
+        budget: float = 2.0,
         templates: tuple[str, ...] = (TEMPLATE,),
         credential_error: Exception | None = None,
     ) -> None:
@@ -208,10 +212,10 @@ class World:
                 raise self.credential_error
             return self.forge
 
-        async def start_job(context: RepoContext) -> str:
+        async def start_job(context: RepoContext, budget_usd: float) -> str:
             self.attempts.append(context.repo)
             return await start_context_audit_job(
-                context, jobs=self.jobs, executor=self.executor, templates=self.templates, budget_usd=2.0
+                context, jobs=self.jobs, executor=self.executor, templates=self.templates, budget_usd=budget_usd
             )
 
         self.loop = ContextAuditLoop(
@@ -221,6 +225,7 @@ class World:
             client_for=client_for,
             start_job=start_job,
             max_jobs_per_tick=cap,
+            budget_usd=budget,
             clock=self.clock,
         )
 
@@ -416,17 +421,41 @@ async def test_a_tick_starts_jobs_for_due_repositories_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_cap_holds_per_tick_and_the_rest_wait_for_the_next() -> None:
+async def test_the_cap_holds_per_owner_per_tick_and_the_rest_wait_for_the_next() -> None:
     repos = tuple(reg(f"acme/r{i}") for i in range(5)) + (reg("beta/web"),)
     world = World(org("acme"), org("beta"), repos=repos, cap=3)
     for row in repos:
         world.forge.put(row["repo"], HEAD, {"AGENTS.md": "a" * 40})
-    assert await world.loop.tick() == ["acme/r0", "acme/r1", "acme/r2"]
-    assert not any(c.startswith("/repos/beta/") for c in world.forge.calls), "an owner past the cap is not read"
+    assert await world.loop.tick() == ["acme/r0", "acme/r1", "acme/r2", "beta/web"], (
+        "one owner reaching its cap does not hold back another"
+    )
     world.clock.now = T0 + timedelta(minutes=15)
-    assert await world.loop.tick() == ["acme/r3", "acme/r4", "beta/web"], "the started ones are live, the rest go"
+    assert await world.loop.tick() == ["acme/r3", "acme/r4"], "the started ones are live, the rest go"
     world.clock.now = T0 + timedelta(minutes=30)
     assert await world.loop.tick() == []
+
+
+@pytest.mark.asyncio
+async def test_an_owners_own_caps_take_the_place_of_the_deployments() -> None:
+    repos = (reg("acme/a"), reg("acme/b"), reg("beta/a"), reg("beta/b"), reg("quiet/a"), reg("text/a"))
+    world = World(
+        org("acme", context_audit_max_jobs_per_tick=1, context_audit_budget_usd=7.5),
+        org("beta"),
+        org("quiet", context_audit_max_jobs_per_tick=0),
+        # What POST /orgs could have stored unvalidated reads as the deployment's caps.
+        org("text", context_audit_max_jobs_per_tick="1", context_audit_budget_usd=True),
+        repos=repos,
+        cap=2,
+        budget=2.0,
+    )
+    for row in repos:
+        world.forge.put(row["repo"], HEAD, {"CLAUDE.md": "a" * 40})
+    assert await world.loop.tick() == ["acme/a", "beta/a", "beta/b", "text/a"]
+    assert not any(c.startswith("/repos/quiet/") for c in world.forge.calls), "an owner capped at 0 is not read"
+    budgets = {row["repo"]: row["created_with"]["pipeline_config"]["max_budget_usd"] for row in world.jobs.rows}
+    assert budgets == {"acme/a": 7.5, "beta/a": 2.0, "beta/b": 2.0, "text/a": 2.0}
+    world.clock.now = T0 + timedelta(minutes=15)
+    assert await world.loop.tick() == ["acme/b"], "past an owner's cap is the next tick"
 
 
 @pytest.mark.asyncio

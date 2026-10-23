@@ -102,7 +102,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def client_for(org: Organization) -> Any:
         return await organizations_api.org_forge_client(organizations_api.app_request(app), org)
 
-    async def start_job(context: RepoContext) -> str:
+    async def start_job(context: RepoContext, budget_usd: float) -> str:
         raise AssertionError("a read starts no job")
 
     app.state.context_audit = ContextAuditLoop(
@@ -112,6 +112,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
         client_for=client_for,
         start_job=start_job,
         max_jobs_per_tick=3,
+        budget_usd=2.0,
         clock=lambda: datetime(2026, 10, 2, tzinfo=UTC),
     )
     app.state.forge, app.state.tokens = forge, tokens
