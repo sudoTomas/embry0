@@ -53,6 +53,8 @@ curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
   -d '{"settings": {"context_audit_days": 7}}'
 ```
 
+In the dashboard, open **Organizations**, then the organization (`/orgs/<owner>`): the field **Audit agent instructions every … days** sits in the header, under the rediscovery schedule. Type the number of days and press Save. Without the admin tier the header says what the setting is and cannot change it.
+
 The organization must be `active` and its credential must be able to read the repositories, the same credential discovery uses. Only registered, active repositories are read ([onboarding.md](onboarding.md)).
 
 ## What it may spend
@@ -87,4 +89,4 @@ curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
   -d '{"settings": {"context_audit_days": null}}'
 ```
 
-No new job starts for the organization from the next tick; a job already running finishes. Pausing the organization (`PUT /api/v1/orgs/{owner}/status`) stops it too, and `CONTEXT_AUDIT_MAX_JOBS_PER_TICK=0` stops it for every organization.
+In the dashboard, press **Turn off** beside the field, then Save. No new job starts for the organization from the next tick; a job already running finishes. Pausing the organization (`PUT /api/v1/orgs/{owner}/status`) stops it too, and `CONTEXT_AUDIT_MAX_JOBS_PER_TICK=0` stops it for every organization.

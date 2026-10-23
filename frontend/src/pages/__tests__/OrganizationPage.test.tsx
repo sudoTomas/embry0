@@ -90,6 +90,16 @@ describe("OrganizationPage", () => {
     expect(setting.compareDocumentPosition(screen.getByRole("heading", { name: "Latest discovery" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("shows the context audit schedule in the header, beside the rediscovery schedule", async () => {
+    api.org.mockResolvedValue(org({ settings: { rediscover_hours: 24, context_audit_days: 7 } }));
+    renderPage();
+    const setting = await screen.findByTestId("org-context-audit-setting");
+    expect((screen.getByTestId("org-context-audit-days") as HTMLInputElement).value).toBe("7");
+    const rediscover = screen.getByTestId("org-rediscover-setting");
+    expect(rediscover.compareDocumentPosition(setting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(setting.compareDocumentPosition(screen.getByRole("heading", { name: "Latest discovery" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("rediscovers on demand", async () => {
     renderPage();
     fireEvent.click(await screen.findByTestId("org-rediscover"));

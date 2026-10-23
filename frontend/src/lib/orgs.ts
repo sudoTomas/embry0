@@ -200,3 +200,16 @@ export function rediscoverHours(org: Pick<Organization, "settings">): number | n
     ? value
     : null;
 }
+
+/** The bounds of the context audit setting, as the server checks them. */
+export const CONTEXT_AUDIT_MIN_DAYS = 1;
+export const CONTEXT_AUDIT_MAX_DAYS = 365;
+
+/** The owner's context audit interval in days, or null when it is off. Read
+ * the way the server reads it: anything but a whole number in range is off. */
+export function contextAuditDays(org: Pick<Organization, "settings">): number | null {
+  const value = org.settings?.context_audit_days;
+  return typeof value === "number" && Number.isInteger(value) && value >= CONTEXT_AUDIT_MIN_DAYS && value <= CONTEXT_AUDIT_MAX_DAYS
+    ? value
+    : null;
+}
