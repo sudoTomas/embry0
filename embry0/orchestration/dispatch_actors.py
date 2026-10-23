@@ -47,6 +47,9 @@ PR_COMMENT = f"{RESERVED_PREFIX}pr-comment"
 # A pull request review whose trigger named nobody (#30). Rate-limited like
 # any other non-continuation actor.
 PR_REVIEW = f"{RESERVED_PREFIX}pr-review"
+# The context audit schedule (ADR 0020): it acts without a person and is not
+# a continuation, so the per-author limit stays one of its brakes.
+CONTEXT_AUDIT = f"{RESERVED_PREFIX}context-audit"
 # The API's master key (``API_KEY``) names no person, and behind the dashboard
 # proxy all its requests share the proxy's address, so the key is the actor.
 # Rate-limited: it is a person at a keyboard or a script acting for one.

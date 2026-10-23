@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from embry0.services import org_webhooks
-from embry0.services.organizations import SETTINGS, rediscover_hours, validate_settings
+from embry0.services.organizations import SETTINGS, context_audit_days, rediscover_hours, validate_settings
 
 
 class Resp:
@@ -148,7 +148,7 @@ async def test_install_fails_closed_when_hooks_are_not_listable_or_the_create_is
 
 
 def test_the_settings_vocabulary_is_closed() -> None:
-    assert SETTINGS == {"auto_register": bool, "rediscover_hours": int}
+    assert SETTINGS == {"auto_register": bool, "rediscover_hours": int, "context_audit_days": int}
 
 
 def test_validate_settings_accepts_known_keys_with_their_types() -> None:
@@ -157,12 +157,18 @@ def test_validate_settings_accepts_known_keys_with_their_types() -> None:
     assert validate_settings({"rediscover_hours": 1}) == {"rediscover_hours": 1}
     assert validate_settings({"rediscover_hours": 168}) == {"rediscover_hours": 168}
     assert validate_settings({"rediscover_hours": None}) == {"rediscover_hours": None}, "null switches it off"
+    assert validate_settings({"context_audit_days": 1}) == {"context_audit_days": 1}
+    assert validate_settings({"context_audit_days": 365}) == {"context_audit_days": 365}
+    assert validate_settings({"context_audit_days": None}) == {"context_audit_days": None}, "null switches it off"
 
 
 @pytest.mark.parametrize(
     ("settings", "message"),
     [
-        ({"auto_regster": True}, "unknown setting 'auto_regster'; known settings: auto_register, rediscover_hours"),
+        (
+            {"auto_regster": True},
+            "unknown setting 'auto_regster'; known settings: auto_register, context_audit_days, rediscover_hours",
+        ),
         ({"auto_register": "true"}, "setting 'auto_register' must be bool"),
         ({"auto_register": 1}, "setting 'auto_register' must be bool"),
         ({"auto_register": None}, "setting 'auto_register' must be bool$"),
@@ -171,6 +177,12 @@ def test_validate_settings_accepts_known_keys_with_their_types() -> None:
         ({"rediscover_hours": True}, "setting 'rediscover_hours' must be int or null"),
         ({"rediscover_hours": 6.0}, "setting 'rediscover_hours' must be int or null"),
         ({"rediscover_hours": "6"}, "setting 'rediscover_hours' must be int or null"),
+        ({"context_audit_days": 0}, "setting 'context_audit_days' must be from 1 to 365 or null"),
+        ({"context_audit_days": 366}, "setting 'context_audit_days' must be from 1 to 365 or null"),
+        ({"context_audit_days": -7}, "setting 'context_audit_days' must be from 1 to 365 or null"),
+        ({"context_audit_days": True}, "setting 'context_audit_days' must be int or null"),
+        ({"context_audit_days": 7.0}, "setting 'context_audit_days' must be int or null"),
+        ({"context_audit_days": "7"}, "setting 'context_audit_days' must be int or null"),
     ],
 )
 def test_validate_settings_refuses_unknown_keys_and_wrong_types(settings: dict[str, Any], message: str) -> None:
@@ -193,3 +205,24 @@ def test_validate_settings_refuses_unknown_keys_and_wrong_types(settings: dict[s
 )
 def test_rediscover_hours_reads_only_a_valid_interval(settings: dict[str, Any], hours: int | None) -> None:
     assert rediscover_hours(settings) == hours
+
+
+@pytest.mark.parametrize(
+    ("settings", "days"),
+    [
+        ({"context_audit_days": 7}, 7),
+        ({"context_audit_days": 365}, 365),
+        ({}, None),
+        ({"context_audit_days": None}, None),
+        # POST /orgs stores settings unvalidated: what a PATCH would refuse reads as off.
+        ({"context_audit_days": "7"}, None),
+        ({"context_audit_days": True}, None),
+        ({"context_audit_days": 7.0}, None),
+        ({"context_audit_days": 0}, None),
+        ({"context_audit_days": 366}, None),
+        # The other schedule's setting is not this one's.
+        ({"rediscover_hours": 6}, None),
+    ],
+)
+def test_context_audit_days_reads_only_a_valid_interval(settings: dict[str, Any], days: int | None) -> None:
+    assert context_audit_days(settings) == days

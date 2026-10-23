@@ -32,7 +32,10 @@ async def test_exempt_actors_still_hit_the_spend_caps():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("actor", ["linear-reconciler", dispatch_actors.PR_COMMENT, "embry0:something-new", "alex"])
+@pytest.mark.parametrize(
+    "actor",
+    ["linear-reconciler", dispatch_actors.PR_COMMENT, dispatch_actors.CONTEXT_AUDIT, "embry0:something-new", "alex"],
+)
 async def test_everything_else_is_rate_limited(actor):
     """Exemption is an exact closed set: an autonomous actor (the reconciler)
     keeps the limit as a brake, and a new `embry0:` name is not exempt by

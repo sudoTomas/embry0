@@ -29,11 +29,15 @@ STATUSES = ("active", "paused", "removed")
 # the delivery is handled, instead of only recording the need.
 # rediscover_hours: run discovery again when the newest run is this many
 # hours old (ADR 0016); null, the default, leaves the owner off the schedule.
-SETTINGS: dict[str, type] = {"auto_register": bool, "rediscover_hours": int}
+# context_audit_days: audit the files that steer a coding agent in each of the
+# owner's registered repositories on a schedule, when they change and when the
+# newest audit is this many days old and the branch moved since (ADR 0020);
+# null, the default, leaves the owner off the schedule.
+SETTINGS: dict[str, type] = {"auto_register": bool, "rediscover_hours": int, "context_audit_days": int}
 
 # The settings that take null, meaning off, and the bounds of an integer setting.
-NULLABLE_SETTINGS = frozenset({"rediscover_hours"})
-SETTING_RANGES: dict[str, tuple[int, int]] = {"rediscover_hours": (1, 168)}
+NULLABLE_SETTINGS = frozenset({"rediscover_hours", "context_audit_days"})
+SETTING_RANGES: dict[str, tuple[int, int]] = {"rediscover_hours": (1, 168), "context_audit_days": (1, 365)}
 
 
 def validate_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
@@ -68,6 +72,17 @@ def rediscover_hours(settings: Mapping[str, Any]) -> int | None:
     """
     value = settings.get("rediscover_hours")
     low, high = SETTING_RANGES["rediscover_hours"]
+    return value if type(value) is int and low <= value <= high else None
+
+
+def context_audit_days(settings: Mapping[str, Any]) -> int | None:
+    """The owner's context audit interval in days, or None when it is off.
+
+    Read as :func:`rediscover_hours` reads its own: a value a PATCH would
+    refuse reads as off, never as a schedule.
+    """
+    value = settings.get("context_audit_days")
+    low, high = SETTING_RANGES["context_audit_days"]
     return value if type(value) is int and low <= value <= high else None
 
 

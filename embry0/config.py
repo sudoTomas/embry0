@@ -700,6 +700,16 @@ class Embry0Config(BaseSettings):
     # a container uses or a live job's repo needs.
     qa_image_retention_days: int | None = Field(default=None, gt=0, le=3650)
 
+    # Context audit on a schedule (ADR 0020), off until an organization sets
+    # settings.context_audit_days. Nobody watches a scheduled audit, so its
+    # per-job cap is always a hard stop, as the watcher's is
+    # (embry0.services.context_audit); 0, non-finite or invalid falls back to
+    # the default, never to unlimited. One tick starts at most this many jobs
+    # across every organization, and the due repositories left over wait for
+    # the next tick; 0 starts none.
+    context_audit_job_budget_usd: float = 2.0
+    context_audit_max_jobs_per_tick: int = Field(default=3, ge=0)
+
     @field_validator(
         "audit_log_path",
         "job_log_retention_days",
