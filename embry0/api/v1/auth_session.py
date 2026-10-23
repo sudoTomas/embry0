@@ -113,15 +113,21 @@ async def check(request: Request) -> dict[str, Any]:
     key, else the tier of the key's scope), so the dashboard can hide the
     admin-only controls from a key that cannot use them (#101). ``null``
     without a header or for an invalid, revoked or expired key: the probe
-    stays unauthenticated and never answers 401. ``authenticated`` and
-    ``tier`` keep describing the session cookie only.
+    stays unauthenticated and never answers 401, and a repository error
+    while resolving the key is logged and answered with ``null`` too, so
+    the probe never 500s. ``authenticated`` and ``tier`` keep describing
+    the session cookie only.
     """
     config = request.app.state.config
     session = request_session(request)
     key_tier: str | None = None
     authorization = request.headers.get("authorization", "")
     if authorization.startswith("Bearer "):
-        principal = await resolve_bearer_principal(request.app, authorization[7:])
+        try:
+            principal = await resolve_bearer_principal(request.app, authorization[7:])
+        except Exception:  # noqa: BLE001 — the probe never 500s; the key probe decides
+            logger.warning("auth_check_key_tier_failed", exc_info=True)
+            principal = None
         key_tier = principal.tier if principal else None
     return {
         "sso_enabled": config.sso_enabled,

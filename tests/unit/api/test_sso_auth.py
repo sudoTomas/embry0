@@ -416,6 +416,24 @@ def test_check_key_tier_absent_without_bearer_header():
     assert body["key_tier"] is None
 
 
+def test_check_key_tier_null_when_the_keys_repo_raises():
+    """The sign-in probe never 500s on a database blip: no tier, session intact."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    app = _app(_config())
+    keys_repo = MagicMock()
+    keys_repo.get_by_hash = AsyncMock(side_effect=RuntimeError("pool exhausted"))
+    app.state.api_keys_repo = keys_repo
+    client = TestClient(app, raise_server_exceptions=False)
+    client.cookies.set(SESSION_COOKIE, _session_cookie(["embry0-operator"]))
+    resp = client.get("/api/v1/auth/check", headers={"Authorization": "Bearer emb_db-token"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["key_tier"] is None
+    assert body["authenticated"] is True and body["tier"] == "operator"
+    assert body["sso_enabled"] is True and body["api_key_login"] is True
+
+
 def test_check_reports_session_tier_and_key_tier_side_by_side():
     """A session cookie and a key header are two answers, not one."""
     client = TestClient(_app(_config()))
