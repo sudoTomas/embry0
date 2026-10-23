@@ -1,7 +1,7 @@
 # Specialist agents
 
-Eight built-in agents that each do one job on a cloned repository and return
-one Markdown report. All eight are read-only: their tools are Read, Glob, Grep
+Nine built-in agents that each do one job on a cloned repository and return
+one Markdown report. All nine are read-only: their tools are Read, Glob, Grep
 and Bash, they edit nothing and open no pull request. Bash runs the
 repository's own checks in a copy of the clone under `/tmp`, and the small
 scripts an agent writes there to prove a claim.
@@ -12,7 +12,7 @@ agent's behavior is its system prompt
 definitions at startup. Edit one on the Agents page; **Reset** there, `POST
 /api/v1/agents/{type}/reset` or the MCP `agent_reset` tool restores the seed.
 
-## The eight
+## The nine
 
 | Agent | Template | Model | Turns | Wall clock |
 |---|---|---|---|---|
@@ -24,6 +24,7 @@ definitions at startup. Edit one on the Agents page; **Reset** there, `POST
 | `blast-radius` | `blast-radius` | claude-sonnet-5 | 40 | 20 min |
 | `comment-sicko` | `comment-pass` | claude-sonnet-5 | 25 | 10 min |
 | `design-auditor` | `design-audit` | claude-sonnet-5 | 40 | 15 min |
+| `context-auditor` | `context-audit` | claude-sonnet-5 | 40 | 20 min |
 
 The turn caps are defaults (`pipeline_config.agent_max_turns` overrides them
 per job). The model follows the usual resolution order in
@@ -88,6 +89,23 @@ model or a job's `agent_models` outranks the one above.
   conformance points it costs, with a `path:line` example and a fix. A
   program can read the score and count the findings from that start. The
   formula is in [standards.md](standards.md#how-a-design-audit-scores).
+- **context-auditor** audits the files that steer a coding agent: CLAUDE.md
+  and AGENTS.md at any depth, rules, skills, commands and handoff notes (the
+  tracked files that match the globs in `embry0/services/instruction_files.py`),
+  and the files they import. A script it writes resolves every reference in
+  them first: paths, links, imports, package scripts, make and just targets,
+  commands and environment variables. Then it reads each claim an agent would
+  act on against the code and git history: versions, ports, commands, counts,
+  names, status words, two files that contradict each other, a handoff note
+  that history has overtaken. Each finding is `misleads`, `dead` or `drift`.
+  Claims nothing in the repository can confirm and references a clone cannot
+  reach are listed apart and not counted as stale. The report's first line is
+  `Stale: N` (the `misleads` and `dead` findings), the second `Files: M` (the
+  instruction files it read), then a `## Findings` heading and one table with
+  the columns Severity, Location, Claim, Evidence and Fix, then a `## Pull`:
+  one diff that corrects every finding whose fix is certain, checked with
+  `git apply --check` on a copy. A finding whose right value it cannot
+  determine gets a question instead of a fix.
 
 ### What to put in the task
 
@@ -103,12 +121,14 @@ model or a job's `agent_models` outranks the one above.
   set, how many accent colors, where tables are required. Without one it uses
   a default (one accent color, one text font plus one monospace font, colors
   only through tokens, tables for tabular data) and says so.
+- **context-auditor**: the files or directories to audit, or nothing for every
+  instruction file in the repository.
 
 ## Running one
 
 Each template is `triage → agent → output`. A job reaches a specialist only
 by naming its template in the job's `pipeline_template`. No job kind defaults
-to one, triage is not offered the eight when it picks a template for a job
+to one, triage is not offered the nine when it picks a template for a job
 that names none, and if triage names one anyway the job takes its kind's
 default route. Triage still runs first and can ask for missing information.
 The job is recorded as an analysis job, and the agent's report is its
@@ -155,17 +175,18 @@ job_deliverables(job_id)
 
 ## Reserved names
 
-The eight template names (`kintsugi-trace`, `garden`, `interrogate`, `why`,
-`how`, `blast-radius`, `comment-pass`, `design-audit`) and the eight agent
-names (`kintsugi`, `gardener`, `interrogator`, `why`, `how`, `blast-radius`,
-`comment-sicko`, `design-auditor`) are reserved. Check for them before you
-upgrade a deployment that already has its own templates or agents:
+The nine template names (`kintsugi-trace`, `garden`, `interrogate`, `why`,
+`how`, `blast-radius`, `comment-pass`, `design-audit`, `context-audit`) and
+the nine agent names (`kintsugi`, `gardener`, `interrogator`, `why`, `how`,
+`blast-radius`, `comment-sicko`, `design-auditor`, `context-auditor`) are
+reserved. Check for them before you upgrade a deployment that already has its
+own templates or agents:
 
 - The template seeder writes every built-in template at each startup and wins
   over a saved template of the same name: that template is overwritten and
   marked built-in. Duplicate it under another name before you upgrade.
 - The agent seeder only adds agents that are missing. An existing agent with
-  one of the eight names keeps its definition, and the specialist template
+  one of the nine names keeps its definition, and the specialist template
   then runs it in place of the built-in agent. To get the built-in agent,
   delete the custom one (**Delete** on the Agents page, or
   `DELETE /api/v1/agents/{type}`) and restart the orchestrator: the seeder
@@ -178,8 +199,8 @@ upgrade a deployment that already has its own templates or agents:
   prompts forbid changes to `/workspace`, run installs, checks and builds in a
   copy under `/tmp`, and keep scratch files there. The clone lives only in the
   job's sandbox.
-- The clone is shallow (50 commits). The why agent deepens it when history
-  runs out.
+- The clone is shallow (50 commits). The why and context-auditor agents
+  deepen it when history runs out.
 - The report keeps the first 10,000 characters of the agent's final message;
   the prompts put the most important material first.
 - A gate that needs a database, a service or a network the sandbox lacks is

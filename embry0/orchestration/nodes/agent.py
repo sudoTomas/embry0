@@ -78,6 +78,7 @@ DEFAULT_AGENT_MAX_TURNS: dict[str, int] = {
     "interrogator": 40,
     "blast-radius": 40,
     "design-auditor": 40,
+    "context-auditor": 40,
     "gardener": 30,
     "why": 30,
     "how": 30,

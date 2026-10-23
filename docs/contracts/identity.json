@@ -52,6 +52,12 @@
       "display_name": "Comment Sicko",
       "tagline": "Deletes the comments that do the code's job badly."
     },
+    "context-auditor": {
+      "avatar": "ranger",
+      "color": "sky",
+      "display_name": "Context Auditor",
+      "tagline": "Finds the lines that steer agents wrong."
+    },
     "design-auditor": {
       "avatar": "archmage",
       "color": "gold",

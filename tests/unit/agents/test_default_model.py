@@ -47,6 +47,7 @@ _EVERY_AGENT_TYPE = (
     "blast-radius",
     "comment-sicko",
     "design-auditor",
+    "context-auditor",
 )
 
 

@@ -2,6 +2,7 @@
 
 import pytest
 
+from embry0.agents.identity import BUILTIN_IDENTITY
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED, AgentDefinitionsRepository
 from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
@@ -21,6 +22,7 @@ SPECIALISTS = {
     "blast-radius": "blast-radius",
     "comment-sicko": "comment-pass",
     "design-auditor": "design-audit",
+    "context-auditor": "context-audit",
 }
 _FIELDS = ("description", "model", "tools", "skills", "system_prompt", "execution_mode", "auth_mode", "mcp_servers")
 
@@ -46,6 +48,29 @@ async def test_startup_seeding_inserts_each_specialist_once_as_builtin(db_with_m
     for row in rows:
         assert row["is_builtin"] is True, row["type"]
         assert {f: row[f] for f in _FIELDS} == {f: BUILTIN_SEED[row["type"]][f] for f in _FIELDS}, row["type"]
+
+
+@pytest.mark.asyncio
+async def test_a_specialist_newer_than_migration_106_gets_its_identity_from_the_seeder(
+    db_with_migrations: DatabasePool,
+):
+    """Migration 106 wrote the identity of the eight specialists it knew, and only into rows that
+    existed. A deployment that already ran it gains context-auditor at its next start as a missing
+    row, so the identity has to come with the insert."""
+    db = db_with_migrations
+    assert await db.fetchval("SELECT 1 FROM embry0_migrations WHERE version = 106") == 1
+    repo = AgentDefinitionsRepository(db)
+    await seed_missing_builtin_agents(repo)
+    # The deployment as the release before this one left it: the eight, and no ninth row.
+    await db.execute("DELETE FROM agent_definitions WHERE type = 'context-auditor'")
+
+    await seed_missing_builtin_agents(repo)
+
+    row = await repo.get("context-auditor")
+    assert row is not None, "the seeder did not insert the missing specialist"
+    assert row["is_builtin"] is True
+    identity = BUILTIN_IDENTITY["context-auditor"]
+    assert {f: row[f] for f in identity} == identity, "the seeded row is not at the built-in identity"
 
 
 @pytest.mark.asyncio

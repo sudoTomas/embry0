@@ -261,7 +261,7 @@ async def test_reset_restores_builtin_identity(db_with_migrations) -> None:
 
 
 async def test_every_builtin_row_carries_its_identity(agent_repo: AgentDefinitionsRepository) -> None:
-    """All seventeen builtin rows (nine core agents, eight specialists) match BUILTIN_IDENTITY
+    """All eighteen builtin rows (nine core agents, nine specialists) match BUILTIN_IDENTITY
     after the startup seeders run, whether migration 101 wrote the identity or a seeder inserted the row."""
     from embry0.agents.identity import BUILTIN_IDENTITY
 
@@ -271,7 +271,7 @@ async def test_every_builtin_row_carries_its_identity(agent_repo: AgentDefinitio
         for agent_type, ident in BUILTIN_IDENTITY.items()
         if {k: rows.get(agent_type, {}).get(k) for k in ident} != ident
     }
-    assert len(BUILTIN_IDENTITY) == 17, "nine core agents and eight specialists"
+    assert len(BUILTIN_IDENTITY) == 18, "nine core agents and nine specialists"
     assert mismatched == {}, f"builtin rows whose identity differs from BUILTIN_IDENTITY: {mismatched}"
 
 

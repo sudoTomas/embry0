@@ -1,4 +1,4 @@
-"""The eight specialist agents: their seeds, their routes, and every list of
+"""The nine specialist agents: their seeds, their routes, and every list of
 agent types that has to accept them."""
 
 import json
@@ -46,11 +46,12 @@ SPECIALISTS = {
     "blast-radius": "blast-radius",
     "comment-sicko": "comment-pass",
     "design-auditor": "design-audit",
+    "context-auditor": "context-audit",
 }
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"]
 
 
-def test_the_specialists_are_these_eight():
+def test_the_specialists_are_these_nine():
     assert set(SPECIALIST_AGENT_TYPES) == set(SPECIALISTS)
 
 
@@ -123,6 +124,7 @@ def test_each_prompt_carries_its_methods_output_contract():
         "blast-radius": ["one fact it is safe because of", "`unproven`", "Before you merge", "the copy under /tmp/run"],
         "comment-sicko": ["MUST KILL", "Encode instead", "never touch the code"],
         "design-auditor": ["deterministic", "font sizes", "**Conformance**", "**Hygiene**"],
+        "context-auditor": ["git ls-files", "`Stale: N`", "`misleads`", "`## Unverifiable`", "git apply --check"],
     }
     for agent_type, phrases in expected.items():
         prompt = BUILTIN_SEED[agent_type]["system_prompt"]
@@ -315,7 +317,7 @@ def test_template_validates_and_routes_to_the_generic_node(agent_type, template)
     assert specialist_job_kind(plan) == "analysis"
 
 
-def test_the_specialist_templates_are_the_eight_all_specialist_routes():
+def test_the_specialist_templates_are_the_nine_all_specialist_routes():
     assert SPECIALIST_TEMPLATE_NAMES == set(SPECIALISTS.values())
     all_specialist = {
         name
@@ -397,7 +399,7 @@ async def test_generic_node_runs_the_specialist_with_its_definition(agent_type):
 
 def test_the_specialists_that_run_checks_get_more_wall_clock():
     assert DEFAULT_GENERIC_AGENT_TIMEOUT_SECONDS == 600, "research, analysis and ops keep their old limit"
-    for agent_type in ("kintsugi", "interrogator", "blast-radius", "design-auditor", "gardener"):
+    for agent_type in ("kintsugi", "interrogator", "blast-radius", "design-auditor", "context-auditor", "gardener"):
         assert GENERIC_AGENT_TIMEOUT_SECONDS[agent_type] > DEFAULT_GENERIC_AGENT_TIMEOUT_SECONDS, agent_type
     assert not set(GENERIC_AGENT_TIMEOUT_SECONDS) - set(SPECIALISTS)
 

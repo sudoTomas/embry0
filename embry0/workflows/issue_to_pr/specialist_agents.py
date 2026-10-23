@@ -1,11 +1,13 @@
 """System prompts for the specialist builtin agents.
 
-Eight read-only agents, each built around one method: ``kintsugi`` traces
+Nine read-only agents, each built around one method: ``kintsugi`` traces
 the cracks in a repository, ``gardener`` pulls one provable weed,
 ``interrogator`` reviews a diff from four angles, ``why`` and ``how``
 explain a decision and a subsystem, ``blast-radius`` proves what a change
-cannot break, ``comment-sicko`` strips comments that narrate, and
-``design-auditor`` measures a frontend against a design standard.
+cannot break, ``comment-sicko`` strips comments that narrate,
+``design-auditor`` measures a frontend against a design standard, and
+``context-auditor`` checks the files that steer a coding agent against the
+code they describe.
 
 Like research and analysis (``noncode_agents.py``) they run on the generic
 agent node: the behavior is the system prompt below, seeded into
@@ -841,6 +843,7 @@ SPECIALIST_SYSTEM_PROMPTS: dict[str, str] = {
     "blast-radius": BLAST_RADIUS_SYSTEM_PROMPT,
     "comment-sicko": COMMENT_SICKO_SYSTEM_PROMPT,
     "design-auditor": DESIGN_AUDITOR_SYSTEM_PROMPT,
+    "context-auditor": CONTEXT_AUDITOR_SYSTEM_PROMPT,
 }
 
 SPECIALIST_AGENT_TYPES: tuple[str, ...] = tuple(SPECIALIST_SYSTEM_PROMPTS)
@@ -850,5 +853,15 @@ SPECIALIST_AGENT_TYPES: tuple[str, ...] = tuple(SPECIALIST_SYSTEM_PROMPTS)
 # leaves them out, and plan_route drops triage naming one, so a job that names
 # no template never ends as a report when it asked for code.
 SPECIALIST_TEMPLATE_NAMES: frozenset[str] = frozenset(
-    {"kintsugi-trace", "garden", "interrogate", "why", "how", "blast-radius", "comment-pass", "design-audit"}
+    {
+        "kintsugi-trace",
+        "garden",
+        "interrogate",
+        "why",
+        "how",
+        "blast-radius",
+        "comment-pass",
+        "design-audit",
+        "context-audit",
+    }
 )

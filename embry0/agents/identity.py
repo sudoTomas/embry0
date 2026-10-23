@@ -139,6 +139,12 @@ BUILTIN_IDENTITY: Final[dict[str, dict[str, str]]] = {
         "color": "gold",
         "tagline": "Measures a frontend against its standard.",
     },
+    "context-auditor": {
+        "display_name": "Context Auditor",
+        "avatar": "ranger",
+        "color": "sky",
+        "tagline": "Finds the lines that steer agents wrong.",
+    },
 }
 
 
