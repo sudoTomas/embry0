@@ -94,20 +94,21 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
-  it("Infra section contains Sandboxes, Agents, Environments, Credentials in that order", () => {
+  it("Infra section contains Sandboxes, Hosts, Agents, Environments, Credentials in that order", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Infra" })
       .parentElement as HTMLElement;
     const links = within(section).getAllByRole("link");
     expect(links.map((a) => a.textContent?.trim())).toEqual([
       "Sandboxes",
+      "Hosts",
       "Agents",
       "Environments",
       "Credentials",
     ]);
   });
 
-  it("Infra section adds Skills after Agents for an admin session", () => {
+  it("Infra section adds Skills after Agents for an admin session, Hosts after Sandboxes", () => {
     useAuthStore.setState({ status: "authenticated", authMode: "session", user: { email: "a@example.com", name: "A", tier: "admin" } });
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Infra" })
@@ -115,6 +116,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     const links = within(section).getAllByRole("link");
     expect(links.map((a) => a.textContent?.trim())).toEqual([
       "Sandboxes",
+      "Hosts",
       "Agents",
       "Skills",
       "Environments",

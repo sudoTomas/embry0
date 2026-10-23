@@ -117,6 +117,11 @@ describe("Breadcrumbs", () => {
     expect(trail()).toBe("QA/job-123");
   });
 
+  it("names the Infra section on the hosts page", () => {
+    renderAt("/hosts");
+    expect(trail()).toBe("Infra");
+  });
+
   it("names the Work section on the merge approvals list and the ask under it", () => {
     renderAt("/merge-approvals");
     expect(trail()).toBe("Work");

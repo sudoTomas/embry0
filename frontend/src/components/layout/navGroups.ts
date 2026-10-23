@@ -11,6 +11,7 @@ import {
   KeyRound,
   ListChecks,
   ScrollText,
+  Server,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -87,6 +88,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "Infra",
     items: [
       { path: "/sandboxes", label: "Sandboxes", icon: Container },
+      { path: "/hosts", label: "Hosts", icon: Server },
       { path: "/agents", label: "Agents", icon: Bot },
       { path: "/skills", label: "Skills", icon: Sparkles, adminOnly: true },
       { path: "/environments", label: "Environments", icon: Variable },

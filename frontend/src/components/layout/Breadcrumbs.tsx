@@ -14,6 +14,7 @@ const breadcrumbMap: Record<string, string> = {
   issues: "Issues",
   agents: "Agents",
   sandboxes: "Sandboxes",
+  hosts: "Hosts",
   pipelines: "Pipelines",
   qa: "QA",
   watcher: "Watcher",

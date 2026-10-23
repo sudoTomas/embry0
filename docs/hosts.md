@@ -2,7 +2,7 @@
 
 A host is a machine that runs code embry0 maintains. A repository says what the code is; a host says where it runs, how embry0 reaches it, and where its logs come from. Hosts are their own record because the facts a maintainer needs after a merge (the logs, whether the deploy landed) live on machines, not in repositories. See [ADR 0013](adr/0013-hosts.md) for the decision.
 
-This release stores hosts, links them to repositories, checks whether each is reachable, and imports them from a tailnet. Nothing reads a host's logs or deploy markers yet; the record is what later work builds on.
+This release stores hosts, links them to repositories, checks whether each is reachable, and imports them from a tailnet. Nothing reads a host's logs or deploy markers yet; the record is what later work builds on. The dashboard's **Hosts** page (Infra) lists them with the same filters, and adds, edits, probes, removes and imports them through these routes.
 
 ## What a host is
 
