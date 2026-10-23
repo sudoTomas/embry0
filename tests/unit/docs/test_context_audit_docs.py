@@ -1,7 +1,9 @@
 """docs/context-audit.md lists the files the context audit reads (ADR 0020), and stays in step with the code."""
 
+import re
 from pathlib import Path
 
+from embry0.mcp_server import server
 from embry0.services.instruction_files import INSTRUCTION_FILE_GLOBS, SKIPPED_DIRS
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -27,3 +29,12 @@ def test_adr_0021_indexed_and_the_caps_documented():
         text = (ROOT / "docs" / doc).read_text()
         for setting in ("context_audit_budget_usd", "context_audit_max_jobs_per_tick"):
             assert f"`{setting}`" in text, f"docs/{doc} does not name {setting}"
+
+
+def test_the_mcp_section_calls_tools_the_server_has():
+    text = (ROOT / "docs" / "context-audit.md").read_text()
+    section = text.split("## From an MCP client", 1)[1].split("\n## ", 1)[0]
+    called = set(re.findall(r"`([a-z_]+)\(", section))
+    assert {"org_update", "context_audit_status", "context_audit_run", "job_create"} <= called
+    missing = sorted(name for name in called if not callable(getattr(server, name, None)))
+    assert missing == [], f"docs/context-audit.md calls MCP tools the server does not have: {missing}"

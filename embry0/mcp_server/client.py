@@ -681,6 +681,31 @@ class Embry0Client:
             body["display_name"] = display_name
         return _as_dict(await self._request("POST", "/api/v1/orgs", body=body))
 
+    async def org_update(
+        self, owner: str, *, display_name: str | None = None, settings: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """PATCH only the fields given. A setting given as None is sent as null: that turns it off or
+        hands it back to the deployment's default, so it is kept, not dropped."""
+        body: dict[str, Any] = {}
+        if display_name is not None:
+            body["display_name"] = display_name
+        if settings is not None:
+            body["settings"] = dict(settings)
+        return _as_dict(await self._request("PATCH", f"/api/v1/orgs/{_owner(owner)}", body=body))
+
+    async def context_audit_status(self, owner: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/orgs/{_owner(owner)}/context-audit"))
+
+    async def context_audit_run(
+        self, owner: str, *, repo: str | None = None, force: bool = False, limit: int | None = None
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"force": force}
+        if repo is not None:
+            body["repo"] = _repo_path(repo)
+        if limit is not None:
+            body["limit"] = limit
+        return _as_dict(await self._request("POST", f"/api/v1/orgs/{_owner(owner)}/context-audit/run", body=body))
+
     # ------------------------------------------------------------- hosts (ADR 0013)
 
     async def host_list(self, *, source: str | None = None, include_removed: bool = False) -> dict[str, Any]:

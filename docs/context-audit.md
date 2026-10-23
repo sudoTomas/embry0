@@ -115,6 +115,25 @@ Due is the rule above without the setting: with the setting off no interval appl
 
 A job created with `POST /api/v1/jobs` and `"pipeline_template": "context-audit"` runs the same auditor, but records no fingerprint, names no instruction files in its task, and has a hard cap only if it is given one; the schedule sees it as the newest audit of its repository without its fingerprint, so a file changed later is not compared with it until the next scheduled audit. Start one by hand with the run above.
 
+## From an MCP client
+
+The embry0 MCP server (`embry0-mcp`) does all of it. A tool that changes something takes `confirm=true`, passed once the person has approved that call; without it the tool answers `confirmation_required` and does nothing.
+
+| To | Call |
+|---|---|
+| Turn it on for an owner, every 7 days | `org_update(owner="acme", settings={"context_audit_days": 7}, confirm=true)` |
+| Set the caps: 5 USD a job, 2 jobs a tick | `org_update(owner="acme", settings={"context_audit_budget_usd": 5, "context_audit_max_jobs_per_tick": 2}, confirm=true)` |
+| Hand the caps back to the deployment | `org_update(owner="acme", settings={"context_audit_budget_usd": null, "context_audit_max_jobs_per_tick": null}, confirm=true)` |
+| Read what it sees, and why each repository is due or not | `context_audit_status(owner="acme")` |
+| Run one repository now, when it is due | `context_audit_run(owner="acme", repo="acme/widgets", confirm=true)` |
+| Run one repository now, whatever the due rule says | `context_audit_run(owner="acme", repo="acme/widgets", force=true, confirm=true)` |
+| Run every due repository now | `context_audit_run(owner="acme", confirm=true)`, or with `limit=2` for at most two |
+| Turn it off | `org_update(owner="acme", settings={"context_audit_days": null}, confirm=true)` |
+
+`org_update` needs an admin-scope key and `context_audit_run` an operate-scope key; `context_audit_status` reads. `org_update` merges: the settings it names change and the rest stay. Each job a run starts is a job like any other: follow it with `job_wait(job_id=...)` and read its report with `job_deliverables(job_id=...)`.
+
+`job_create(task=..., repo="acme/widgets", pipeline_template="context-audit")` runs the auditor on a repository too, but the schedule does not see that job's fingerprint: it records none, names no instruction files in its task and has a hard cap only if given one, so a file changed after it is not compared with it. `context_audit_run` is the way to run one by hand.
+
 ## Turning it off
 
 Set the setting to `null`:

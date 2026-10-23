@@ -10,13 +10,14 @@ A forge owner (a GitHub organization or user, a GitLab group) registered with it
 - `org-repos` lists one fact row per repository: archived, language, boot hint, frontend, tests, CI, env keys, webhook, and embry0's own state.
 - `org-needs` lists what embry0 still needs from a person to maintain the owner, one need per kind and repository set.
 - `org-webhook` reports whether the organization webhook points at this deployment.
+- `org-context-audit` reports, per registered repository, its instruction files and whether the context audit is due.
 - `org-ui` is the Organizations page and the Add organization wizard, on branches that carry them.
 
 ## How to get to it (user POV)
 
 - The `Organizations` entry in the sidebar, on branches that carry the page.
-- The API: `/api/v1/orgs`, `/api/v1/orgs/<owner>`, `/api/v1/orgs/<owner>/runs`, `/api/v1/orgs/<owner>/repos`, `/api/v1/orgs/<owner>/needs`, `/api/v1/orgs/<owner>/webhook` (all GET).
-- The MCP tools `org_list`, `org_get`, `org_needs` (read-only); `org_register`, `org_webhook_install` and `org_act` write, so an operator runs them.
+- The API: `/api/v1/orgs`, `/api/v1/orgs/<owner>`, `/api/v1/orgs/<owner>/runs`, `/api/v1/orgs/<owner>/repos`, `/api/v1/orgs/<owner>/needs`, `/api/v1/orgs/<owner>/webhook`, `/api/v1/orgs/<owner>/context-audit` (all GET).
+- The MCP tools `org_list`, `org_get`, `org_needs`, `context_audit_status` (read-only); `org_register`, `org_update`, `org_webhook_install`, `org_act` and `context_audit_run` write, so an operator runs them.
 
 ## Driving it with control-embry0
 
@@ -30,6 +31,7 @@ Preconditions:
 - **Facts.** Run `control-embry0 api /api/v1/orgs/<owner>/repos`. Each row carries `facts` with the keys above.
 - **Needs.** Run `control-embry0 api /api/v1/orgs/<owner>/needs`. Each need carries a `kind`, its `repos`, a `status` and, while open, the `case_id` of its healing case.
 - **Webhook.** Run `control-embry0 api /api/v1/orgs/<owner>/webhook`. It says whether an organization hook points here (`installed`) and the `target_url`.
+- **Context audit.** Run `control-embry0 api /api/v1/orgs/<owner>/context-audit`. Each repository carries `files`, `fingerprint`, `due` and a `reason`; it starts nothing.
 - **Page.** On a branch with the page, run `control-embry0 probe --route /orgs` and `control-embry0 shot --route /orgs --width 390 --path artifacts/orgs-390.png`. Rows render, `errors` is empty, `horizontal_scroll` is false.
 
 ## Gotchas

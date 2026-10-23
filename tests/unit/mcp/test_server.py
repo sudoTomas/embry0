@@ -3,6 +3,7 @@
 import pytest
 
 from embry0.mcp_server import server
+from embry0.services.organizations import SETTINGS
 
 EXPECTED_TOOLS = {
     "health",
@@ -49,6 +50,9 @@ EXPECTED_TOOLS = {
     "org_get",
     "org_needs",
     "org_register",
+    "org_update",
+    "context_audit_status",
+    "context_audit_run",
     "host_list",
     "host_get",
     "host_probe",
@@ -93,6 +97,8 @@ CONFIRM_GATED = {
     "env_delete",
     "repo_register",
     "org_register",
+    "org_update",
+    "context_audit_run",
     "host_import_tailnet",
     "standard_set",
     "standard_audit",
@@ -150,6 +156,9 @@ async def test_confirm_gated_tools_refuse_without_confirm(fake_client):
         await server.env_delete("K"),
         await server.repo_register("acme/widgets"),
         await server.org_register("acme"),
+        await server.org_update("acme", settings={"context_audit_days": 7}),
+        await server.context_audit_run("acme"),
+        await server.context_audit_run("acme", repo="acme/widgets", force=True),
         await server.org_webhook_install("acme"),
         await server.org_act("acme", "register", ["acme/widgets"]),
         await server.org_act("acme", "hook", ["acme/widgets"], dry_run=True),
@@ -180,6 +189,8 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
     assert await server.env_delete("K", confirm=True) == {"called": "env_delete"}
     assert await server.repo_register("acme/widgets", confirm=True) == {"called": "repo_register"}
     assert await server.org_register("acme", confirm=True) == {"called": "org_register"}
+    assert await server.org_update("acme", settings={"context_audit_days": 7}, confirm=True) == {"called": "org_update"}
+    assert await server.context_audit_run("acme", confirm=True) == {"called": "context_audit_run"}
     assert await server.org_webhook_install("acme", confirm=True) == {"called": "org_webhook_install"}
     assert await server.org_act("acme", "register", ["acme/widgets"], confirm=True) == {"called": "org_act"}
     assert await server.qa_config_set("acme/widgets", "version: 2", confirm=True) == {"called": "qa_config_set"}
@@ -206,6 +217,8 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
         "env_delete",
         "repo_register",
         "org_register",
+        "org_update",
+        "context_audit_run",
         "org_webhook_install",
         "org_act",
         "qa_config_set",
@@ -339,6 +352,49 @@ async def test_org_read_tools_pass_through(fake_client):
         ("org_get", ("acme",), {}),
         ("org_needs", ("acme",), {}),
     ]
+
+
+async def test_context_audit_tools_relay_every_field(fake_client):
+    assert await server.context_audit_status("acme") == {"called": "context_audit_status"}
+    settings = {"context_audit_days": 7, "context_audit_budget_usd": 5, "context_audit_max_jobs_per_tick": None}
+    assert await server.org_update("acme", settings=settings, confirm=True) == {"called": "org_update"}
+    assert await server.org_update("acme", display_name="Acme", confirm=True) == {"called": "org_update"}
+    assert await server.context_audit_run("acme", limit=2, confirm=True) == {"called": "context_audit_run"}
+    assert await server.context_audit_run("acme", repo="acme/widgets", force=True, confirm=True) == {
+        "called": "context_audit_run"
+    }
+    assert fake_client.calls == [
+        ("context_audit_status", ("acme",), {}),
+        ("org_update", ("acme",), {"display_name": None, "settings": settings}),
+        ("org_update", ("acme",), {"display_name": "Acme", "settings": None}),
+        ("context_audit_run", ("acme",), {"repo": None, "force": False, "limit": 2}),
+        ("context_audit_run", ("acme",), {"repo": "acme/widgets", "force": True, "limit": None}),
+    ]
+
+
+async def test_context_audit_refusals_name_the_action(fake_client):
+    update = await server.org_update("acme", settings={"context_audit_days": None, "context_audit_budget_usd": 5})
+    one = await server.context_audit_run("acme", repo="acme/widgets", force=True)
+    every = await server.context_audit_run("acme", limit=10)
+    assert "org_update" in update["message"]
+    assert "'acme': context_audit_budget_usd, context_audit_days" in update["message"]
+    assert "context_audit_run" in one["message"] and "'acme/widgets'" in one["message"]
+    assert "the due context audits under 'acme'" in every["message"]
+    assert fake_client.calls == []
+
+
+def test_org_update_names_every_setting_an_organization_accepts():
+    """The docstring is the only list a client has: a setting the validator takes and the
+    docstring leaves out is one nobody configures from an MCP client."""
+    doc = server.org_update.__doc__ or ""
+    missing = sorted(key for key in SETTINGS if key not in doc)
+    assert missing == [], f"org_update does not name {missing}"
+
+
+def test_the_instructions_say_context_audits_exist():
+    text = server.mcp.instructions or ""
+    for name in ("org_update", "context_audit_status", "context_audit_run", "CLAUDE.md"):
+        assert name in text, f"the server instructions do not name {name}"
 
 
 async def test_credential_read_tools_pass_through(fake_client):
