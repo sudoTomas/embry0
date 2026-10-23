@@ -172,7 +172,13 @@ def test_expired_session_is_401(monkeypatch):
 def test_check_reports_sso_and_session():
     client = TestClient(_app(_config()))
     body = client.get("/api/v1/auth/check").json()
-    assert body == {"sso_enabled": True, "authenticated": False, "tier": None, "api_key_login": True}
+    assert body == {
+        "sso_enabled": True,
+        "authenticated": False,
+        "tier": None,
+        "api_key_login": True,
+        "key_tier": None,
+    }
     client.cookies.set(SESSION_COOKIE, _session_cookie(["embry0-operator"]))
     body = client.get("/api/v1/auth/check").json()
     assert body["authenticated"] is True and body["tier"] == "operator"
@@ -330,6 +336,112 @@ def test_api_key_bearer_still_works_via_public_host_header():
         headers={"host": "embry0.example.com", "Authorization": "Bearer master-key"},
     )
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# /auth/check reports the Bearer key's tier (#101)
+# ---------------------------------------------------------------------------
+
+
+def _key_row(scope: str):
+    from embry0.storage.repositories.api_keys import ApiKeyRow
+
+    return ApiKeyRow(
+        id="key-0001",
+        user_id=None,
+        name="dashboard",
+        prefix="emb_dash0001",
+        scope=scope,
+        created_by="op@example.com",
+        created_at=None,
+        expires_at=None,
+        last_used_at=None,
+        revoked_at=None,
+    )
+
+
+def _app_with_key(scope: str, token: str = "emb_db-token") -> FastAPI:
+    """An app whose keys repo knows exactly one DB key, of ``scope``."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from embry0.storage.repositories.api_keys import hash_token
+
+    app = _app(_config())
+    keys_repo = MagicMock()
+    keys_repo.get_by_hash = AsyncMock(side_effect=lambda h: _key_row(scope) if h == hash_token(token) else None)
+    keys_repo.touch_last_used = AsyncMock()
+    app.state.api_keys_repo = keys_repo
+    return app
+
+
+@pytest.fixture(autouse=True)
+def _clear_api_key_cache():
+    from embry0.api.deps import bust_api_key_cache
+
+    bust_api_key_cache()
+    yield
+    bust_api_key_cache()
+
+
+def test_check_key_tier_master_key_is_admin():
+    client = TestClient(_app(_config()))
+    body = client.get("/api/v1/auth/check", headers={"Authorization": "Bearer master-key"}).json()
+    assert body["key_tier"] == "admin", body
+
+
+def test_check_key_tier_operate_scope_is_operator():
+    client = TestClient(_app_with_key("operate"))
+    body = client.get("/api/v1/auth/check", headers={"Authorization": "Bearer emb_db-token"}).json()
+    assert body["key_tier"] == "operator", body
+
+
+def test_check_key_tier_read_scope_is_read():
+    client = TestClient(_app_with_key("read"))
+    body = client.get("/api/v1/auth/check", headers={"Authorization": "Bearer emb_db-token"}).json()
+    assert body["key_tier"] == "read", body
+
+
+def test_check_key_tier_unknown_token_is_null_not_401():
+    """The probe stays unauthenticated: a bad key answers 200 with no tier."""
+    client = TestClient(_app_with_key("operate"))
+    resp = client.get("/api/v1/auth/check", headers={"Authorization": "Bearer not-a-key"})
+    assert resp.status_code == 200
+    assert resp.json()["key_tier"] is None, resp.json()
+
+
+def test_check_key_tier_absent_without_bearer_header():
+    client = TestClient(_app(_config()))
+    body = client.get("/api/v1/auth/check").json()
+    assert "key_tier" in body, "the field is always present"
+    assert body["key_tier"] is None
+
+
+def test_check_key_tier_null_when_the_keys_repo_raises():
+    """The sign-in probe never 500s on a database blip: no tier, session intact."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    app = _app(_config())
+    keys_repo = MagicMock()
+    keys_repo.get_by_hash = AsyncMock(side_effect=RuntimeError("pool exhausted"))
+    app.state.api_keys_repo = keys_repo
+    client = TestClient(app, raise_server_exceptions=False)
+    client.cookies.set(SESSION_COOKIE, _session_cookie(["embry0-operator"]))
+    resp = client.get("/api/v1/auth/check", headers={"Authorization": "Bearer emb_db-token"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["key_tier"] is None
+    assert body["authenticated"] is True and body["tier"] == "operator"
+    assert body["sso_enabled"] is True and body["api_key_login"] is True
+
+
+def test_check_reports_session_tier_and_key_tier_side_by_side():
+    """A session cookie and a key header are two answers, not one."""
+    client = TestClient(_app(_config()))
+    client.cookies.set(SESSION_COOKIE, _session_cookie(["embry0-operator"]))
+    body = client.get("/api/v1/auth/check", headers={"Authorization": "Bearer master-key"}).json()
+    assert body["authenticated"] is True
+    assert body["tier"] == "operator"
+    assert body["key_tier"] == "admin"
 
 
 # ---------------------------------------------------------------------------

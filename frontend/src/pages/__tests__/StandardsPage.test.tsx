@@ -46,7 +46,7 @@ function renderPage(path = "/orgs/Acme/standards") {
 
 beforeEach(() => {
   Object.values(api).forEach((m) => m.mockReset());
-  useAuthStore.setState({ authMode: "key", user: null });
+  useAuthStore.setState({ authMode: "key", user: null, keyTier: undefined });
   api.orgs.mockResolvedValue([org({ owner: "other" }), org({ display_name: "Acme Inc" })]);
   api.org.mockRejectedValue(new Error("the view reads the organizations list, not one organization"));
   api.standards.mockResolvedValue(
@@ -127,6 +127,23 @@ describe("StandardsPage", () => {
     const rows = await screen.findAllByTestId("standard-repo-row");
     expect(screen.queryByTestId("standard-mode-select")).toBeNull();
     expect(within(rows[0]).getByTestId("standard-audit-button")).toBeEnabled();
+  });
+
+  it("gives an operate-scope key Audit but not the mode select (#101)", async () => {
+    // The audit route takes any operate-or-above credential; the mode is admin-only.
+    useAuthStore.setState({ authMode: "key", user: null, keyTier: "operator" });
+    renderPage();
+    const rows = await screen.findAllByTestId("standard-repo-row");
+    expect(screen.queryByTestId("standard-mode-select"), "an operate-scope key is not admin").toBeNull();
+    expect(within(rows[0]).getByTestId("standard-audit-button"), "an operate-scope key may audit").toBeEnabled();
+  });
+
+  it("gives a read-scope key neither Audit nor the mode select (#101)", async () => {
+    useAuthStore.setState({ authMode: "key", user: null, keyTier: "read" });
+    renderPage();
+    const rows = await screen.findAllByTestId("standard-repo-row");
+    expect(screen.queryByTestId("standard-mode-select")).toBeNull();
+    expect(within(rows[0]).getByTestId("standard-audit-button"), "a read-scope key cannot POST an audit").toBeDisabled();
   });
 
   it("links back to the organizations list for an owner with a standard but no organization", async () => {

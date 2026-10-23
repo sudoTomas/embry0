@@ -39,7 +39,10 @@ to 30 seconds, and both routes clear that entry.
 
 ## Backend surface
 
-- `GET /api/v1/auth/check` — unauthenticated probe `{sso_enabled, authenticated, tier}`.
+- `GET /api/v1/auth/check` — unauthenticated probe `{sso_enabled, authenticated, tier, api_key_login, key_tier}`.
+  `authenticated` and `tier` describe the session cookie; `key_tier` is the tier of a
+  valid `Authorization: Bearer` key on the request (`admin` for the master key, else the
+  key scope's tier), `null` without one, so the dashboard can gate its admin controls.
 - `GET /api/v1/auth/login` → Auth0 authorize (PKCE; state in a signed cookie).
 - `GET /api/v1/auth/callback` → code exchange, ID-token validation (JWKS), session cookie, relative redirect `/`.
 - `GET /api/v1/auth/me`, `POST /api/v1/auth/logout` (returns the Auth0 `v2/logout` URL).

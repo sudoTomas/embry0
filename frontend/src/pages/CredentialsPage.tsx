@@ -19,7 +19,7 @@ import {
 } from "@/hooks/useCredentials";
 import { useModelsCatalog } from "@/hooks/useProvider";
 import type { Credential, CredentialCreate, ImportEnvReport } from "@/lib/types/credentials";
-import { useAuthStore } from "@/stores/authStore";
+import { useIsAdmin } from "@/stores/authStore";
 
 const DOCS_HREF = "https://github.com/sudoTomas/embry0/blob/main/docs/credentials.md";
 
@@ -77,9 +77,7 @@ function AdminButton({
 }
 
 export function CredentialsPage() {
-  const authMode = useAuthStore((s) => s.authMode);
-  const userTier = useAuthStore((s) => s.user?.tier);
-  const isAdmin = authMode === "key" || userTier === "admin";
+  const isAdmin = useIsAdmin();
 
   const credentialsQuery = useCredentials();
   const createCredential = useCreateCredential();

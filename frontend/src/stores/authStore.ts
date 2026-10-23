@@ -35,6 +35,12 @@ interface AuthState {
   authMode: AuthMode | null;
   /** SSO identity when authMode === "session". */
   user: SsoUser | null;
+  /** The API key's tier when authMode === "key", as `/auth/check` reports
+   *  it (`admin` for the master key, else the key scope's tier). `null`
+   *  when the backend saw no valid key (the probe then only succeeds on a
+   *  server that runs with auth off); `undefined` when it did not report
+   *  the field (an older backend). */
+  keyTier: string | null | undefined;
   /** Whether the backend reports SSO configured: the prompt then redirects
    *  to the identity provider instead of showing a form. */
   ssoEnabled: boolean;
@@ -42,7 +48,11 @@ interface AuthState {
    *  SSO-only origin, where the prompt shows a sign-in-unavailable note
    *  instead; bearer-header API auth is unaffected). */
   apiKeyLogin: boolean;
-  markAuthenticated: (opts?: { mode?: AuthMode; user?: SsoUser | null }) => void;
+  markAuthenticated: (opts?: {
+    mode?: AuthMode;
+    user?: SsoUser | null;
+    keyTier?: string | null;
+  }) => void;
   requirePrompt: (opts?: { sessionExpired?: boolean }) => void;
   markDenied: (user: SsoUser | null) => void;
   setSsoEnabled: (enabled: boolean) => void;
@@ -54,20 +64,25 @@ export const useAuthStore = create<AuthState>()((set) => ({
   sessionExpired: false,
   authMode: null,
   user: null,
+  keyTier: undefined,
   ssoEnabled: false,
   apiKeyLogin: true,
-  markAuthenticated: (opts) =>
+  markAuthenticated: (opts) => {
+    const mode = opts?.mode ?? "key";
     set({
       status: "authenticated",
       sessionExpired: false,
-      authMode: opts?.mode ?? "key",
+      authMode: mode,
       user: opts?.user ?? null,
-    }),
+      keyTier: mode === "key" ? opts?.keyTier : undefined,
+    });
+  },
   requirePrompt: (opts) =>
     set((s) => ({
       status: "prompt",
       authMode: null,
       user: null,
+      keyTier: undefined,
       // Only an authenticated session "expires"; the initial probe failing
       // is just a first visit. A failed retry while already prompting keeps
       // the existing flag so the "session expired" note doesn't vanish.
@@ -81,10 +96,20 @@ export const useAuthStore = create<AuthState>()((set) => ({
 
 /**
  * Whether this session may use the API's admin-only routes (require_admin):
- * the API key does, and an SSO user does when their tier is admin. Controls
+ * a key session does when the key's tier is admin (the master key, or an
+ * admin-scope key), and an SSO user does when their tier is admin. Controls
  * for those routes read this, so an operator is never offered a click that
- * can only fail with 403.
+ * can only fail with 403 (#101).
+ *
+ * A backend that does not report the key's tier (`keyTier` undefined) keeps
+ * the old behaviour, every key is admin, so a new dashboard on an old API
+ * never hides controls. A reported `null` (no valid key, yet the probe
+ * succeeded) means the server runs with auth off and skips its admin gate
+ * too, so that session is admin as well: only a reported non-admin tier
+ * withholds the controls.
  */
 export function useIsAdmin(): boolean {
-  return useAuthStore((s) => s.authMode === "key" || s.user?.tier === "admin");
+  return useAuthStore((s) =>
+    s.authMode === "key" ? s.keyTier == null || s.keyTier === "admin" : s.user?.tier === "admin",
+  );
 }

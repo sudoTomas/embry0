@@ -34,7 +34,7 @@ function renderSidebar(path = "/") {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useAuthStore.setState({ status: "checking", authMode: null, user: null });
+  useAuthStore.setState({ status: "checking", authMode: null, user: null, keyTier: undefined });
   mockFetchQueue.mockResolvedValue({
     depth: 0,
     pending: 0,
@@ -131,6 +131,23 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     const section = screen.getByRole("heading", { level: 3, name: "Infra" })
       .parentElement as HTMLElement;
     expect(within(section).queryByRole("link", { name: "Skills" })).toBeNull();
+  });
+
+  it("Infra section hides Skills from a key session whose tier is operator (#101)", () => {
+    useAuthStore.setState({ status: "authenticated", authMode: "key", user: null, keyTier: "operator" });
+    renderSidebar();
+    const section = screen.getByRole("heading", { level: 3, name: "Infra" })
+      .parentElement as HTMLElement;
+    expect(
+      within(section).queryByRole("link", { name: "Skills" }),
+      "an operate-scope key is not admin",
+    ).toBeNull();
+  });
+
+  it("Infra section shows Skills to a key session whose tier is admin", () => {
+    useAuthStore.setState({ status: "authenticated", authMode: "key", user: null, keyTier: "admin" });
+    renderSidebar();
+    expect(screen.getByRole("link", { name: "Skills" })).toHaveAttribute("href", "/skills");
   });
 
   it("Pipelines & QA section contains Pipelines, Repos, Organizations, QA (central registry, ADR 0010)", () => {

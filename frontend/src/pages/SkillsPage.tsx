@@ -24,7 +24,7 @@ import {
 } from "@/hooks/useSkills";
 import type { InlineSkill, SkillSource, SkillWriteConflict } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
-import { useAuthStore } from "@/stores/authStore";
+import { useIsAdmin } from "@/stores/authStore";
 
 type HttpError = { response?: { status?: number; data?: { detail?: unknown } } };
 
@@ -317,9 +317,7 @@ function InlineSection({ skills, canWrite }: { skills: InlineSkill[]; canWrite: 
 }
 
 export function SkillsPage() {
-  const authMode = useAuthStore((s) => s.authMode);
-  const userTier = useAuthStore((s) => s.user?.tier);
-  const canWrite = authMode === "key" || userTier === "admin";
+  const canWrite = useIsAdmin();
 
   const sourcesQuery = useSkillSources();
   const catalogQuery = useSkills();
