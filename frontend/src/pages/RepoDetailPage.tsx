@@ -1,9 +1,10 @@
+import { useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 import { useQueries, useQuery, type UseQueryOptions } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
 import { fetchRepoDetail } from "@/api/repos";
 import { credentialsQuery, repoCredentialsQuery } from "@/hooks/useCredentials";
-import { repoEnvQuery, useRepoEnv } from "@/hooks/useEnvironments";
+import { repoEnvQuery, useRepoEnv, useResolvedRepoEnv } from "@/hooks/useEnvironments";
 import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import { modelsCatalogQuery } from "@/hooks/useProvider";
 import { qaConfigQuery } from "@/hooks/useQaConfig";
@@ -23,6 +24,9 @@ import { PageError } from "@/components/PageError";
 import { isNotFound } from "@/api/errorDetail";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { Badge } from "@/components/ui/Badge";
+import { Label } from "@/components/ui/Label";
+import { Skeleton } from "@/components/ui/PageSkeleton";
+import { Switch } from "@/components/ui/Switch";
 import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
 import { linkedSetting, type SettingKey } from "@/lib/settingGuide";
 import { providerLabel, statusLabel } from "@/lib/status";
@@ -68,6 +72,11 @@ export function RepoDetailPage() {
     retry: false,
   });
   const { data: envVars = [] } = useRepoEnv(full);
+  // The repo's own values by default; the effective set (global values with
+  // the repo's written over them) on request, fetched only then.
+  const [effective, setEffective] = useState(false);
+  const resolved = useResolvedRepoEnv(full, effective);
+  const ownKeys = new Set(envVars.map((v) => v.key));
   const runs = useQaRunsForRepo(validRepo ? full : undefined, { limit: 10 });
   const readiness = useRepoReadiness(validRepo ? full : "");
   // An address that names an Advanced section (#advanced-accounts) opens the
@@ -136,7 +145,10 @@ export function RepoDetailPage() {
         </AdvancedSection>
 
         <AdvancedSection setting="appSettings">
-          <div className="flex">
+          <div className="flex flex-wrap items-center gap-3">
+            <Switch id="repo-env-effective" checked={effective} onCheckedChange={setEffective} />
+            <Label htmlFor="repo-env-effective">Effective for this repo</Label>
+            <span className="text-xs text-fg-muted">Global values with the repo's written over them, secrets masked.</span>
             <Link
               to={`/environments?repo=${encodeURIComponent(full)}`}
               className="ml-auto text-sm text-fg hover:text-primary hover:underline"
@@ -145,8 +157,14 @@ export function RepoDetailPage() {
               Add or change values
             </Link>
           </div>
-          {envVars.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No repo-scoped environment variables.</p>
+          {effective && resolved.isError ? (
+            <PageError message="Failed to load the effective environment" onRetry={() => void resolved.refetch()} />
+          ) : effective && !resolved.data ? (
+            <Skeleton className="h-10 w-full" />
+          ) : (effective ? resolved.data ?? [] : envVars).length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {effective ? "No variables apply to this repository." : "No repo-scoped environment variables."}
+            </p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="data-table">
@@ -154,11 +172,12 @@ export function RepoDetailPage() {
                   <tr>
                     <th scope="col">Key</th>
                     <th scope="col">Type</th>
+                    {effective && <th scope="col">Source</th>}
                     <th scope="col">Value</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {envVars.map((v) => (
+                  {(effective ? resolved.data ?? [] : envVars).map((v) => (
                     <tr key={v.key} data-testid="repo-env-row">
                       <td className="font-mono text-xs">{v.key}</td>
                       <td className="whitespace-nowrap">
@@ -167,8 +186,13 @@ export function RepoDetailPage() {
                           {v.scope === "qa" && <Badge tone="neutral">QA</Badge>}
                         </span>
                       </td>
+                      {effective && (
+                        <td className="whitespace-nowrap">
+                          <Badge tone={ownKeys.has(v.key) ? "info" : "neutral"}>{ownKeys.has(v.key) ? "Repo" : "Global"}</Badge>
+                        </td>
+                      )}
                       <td className="w-full max-w-0 truncate font-mono text-xs text-fg-muted">
-                        {v.var_type === "secret" ? "****" : v.value}
+                        {v.var_type === "secret" ? v.masked_preview || "****" : v.value}
                       </td>
                     </tr>
                   ))}

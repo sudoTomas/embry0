@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -9,8 +10,10 @@ vi.mock("@/api/repos", () => ({
 }));
 
 const mockUseRepoEnv = vi.fn();
+const mockUseResolvedRepoEnv = vi.fn();
 vi.mock("@/hooks/useEnvironments", () => ({
   useRepoEnv: () => mockUseRepoEnv(),
+  useResolvedRepoEnv: (repo: string, enabled: boolean) => mockUseResolvedRepoEnv(repo, enabled),
 }));
 
 const mockUseQaRunsForRepo = vi.fn();
@@ -215,6 +218,7 @@ beforeEach(() => {
   mockFetchHistory.mockReset();
   mockFetchHistory.mockResolvedValue({ entries: [], before_history: false });
   mockUseRepoEnv.mockReturnValue({ data: [] });
+  mockUseResolvedRepoEnv.mockReset().mockReturnValue({ data: undefined, isPending: false, isError: false, refetch: vi.fn() });
   mockUseQaRunsForRepo.mockReturnValue({ data: [] });
   mockFetchRepoCredentials.mockReset();
   mockFetchRepoCredentials.mockResolvedValue({ repo: "acme/widgets", bindings: [], effective: {} });
@@ -533,5 +537,47 @@ describe("RepoDetailPage (RAV-1253)", () => {
     renderPage();
     await screen.findByTestId("repo-readiness-chip");
     expect(screen.getByTestId("repo-docker-access-section")).toHaveTextContent("not granted");
+  });
+
+  it("shows the effective environment on request, each value marked Repo or Global", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockUseRepoEnv.mockReturnValue({ data: [{ key: "API_URL", value: "https://repo.example.test", var_type: "config", description: "" }] });
+    mockUseResolvedRepoEnv.mockReturnValue({
+      data: [
+        { key: "API_URL", value: "https://repo.example.test", var_type: "config", description: "" },
+        { key: "SHARED_TOKEN", value: "", var_type: "secret", description: "", masked_preview: "SHAR••••7Q2F" },
+      ],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(mockUseResolvedRepoEnv).toHaveBeenLastCalledWith("acme/widgets", false);
+    const toggle = screen.getByRole("switch", { name: "Effective for this repo" });
+    await userEvent.click(toggle);
+    expect(mockUseResolvedRepoEnv).toHaveBeenLastCalledWith("acme/widgets", true);
+    const rows = screen.getAllByTestId("repo-env-row");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText("Repo")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Global")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("SHAR••••7Q2F")).toBeInTheDocument();
+  });
+
+  it("marks every effective variable Global when the repo sets none", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockUseRepoEnv.mockReturnValue({ data: [] });
+    mockUseResolvedRepoEnv.mockReturnValue({
+      data: [{ key: "SHARED", value: "x", var_type: "config", description: "" }],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.getByText("No repo-scoped environment variables.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("switch", { name: "Effective for this repo" }));
+    expect(screen.queryByText("No repo-scoped environment variables.")).toBeNull();
+    expect(within(screen.getByTestId("repo-env-row")).getByText("Global")).toBeInTheDocument();
   });
 });
