@@ -71,10 +71,7 @@ describe("a finished job's outcome on the Job page", () => {
   it("a finished onboard job says where its test setup went (#29)", () => {
     renderJob({ status: "failed", pipeline_template: "onboard", repo: "group/sub/proj", error_message: "smoke failed" });
     expect(screen.getByText("smoke failed")).toBeInTheDocument();
-    expect(screen.getByTestId("onboard-outcome-manual-cta")).toHaveAttribute(
-      "href",
-      "/repos/onboard?repo=group%2Fsub%2Fproj&mode=manual",
-    );
+    expect(screen.getByTestId("onboard-outcome-manual-cta")).toHaveAttribute("href", "/repos/onboard?repo=group%2Fsub%2Fproj");
   });
 });
 

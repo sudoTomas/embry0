@@ -38,12 +38,9 @@ describe("OnboardOutcomeCard", () => {
     expect(screen.queryByTestId("onboard-outcome-config-cta")).toBeNull();
   });
 
-  it("offers the by-hand form, prefilled with the repo, when an onboard job failed", () => {
+  it("offers the by-hand page, prefilled with the repo, when an onboard job failed", () => {
     renderCard({ pipeline_template: "onboard", status: "failed", repo: "owner/name" });
-    expect(screen.getByTestId("onboard-outcome-manual-cta")).toHaveAttribute(
-      "href",
-      "/repos/onboard?repo=owner%2Fname&mode=manual",
-    );
+    expect(screen.getByTestId("onboard-outcome-manual-cta")).toHaveAttribute("href", "/repos/onboard?repo=owner%2Fname");
     expect(screen.queryByTestId("onboard-outcome-config-cta")).toBeNull();
   });
 

@@ -138,8 +138,6 @@ export interface JobCreateRequest {
   additional_context?: string | null;
   /** Per-agent model override: agent type → model id. Outranks triage. */
   agent_models?: Record<string, string> | null;
-  /** Onboard pipeline only: skip the boot/ready-check smoke phase. */
-  skip_smoke?: boolean;
 }
 
 export interface JobFilters {

@@ -189,7 +189,7 @@ export function QaConfigEditor({ repo, showIntro = true }: QaConfigEditorProps) 
               className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
               data-testid="qa-config-bootstrap-cta"
             >
-              Set up testing
+              Fill in a form
             </Link>
             <Button
               variant="outline"

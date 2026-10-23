@@ -80,11 +80,10 @@ describe("QaConfigEditor copy", () => {
 });
 
 describe("QaConfigEditor actions", () => {
-  it("offers the setup page and the template as outline buttons, with no gold", () => {
+  it("offers the form and the template as outline buttons, with no gold", () => {
     stored(null);
     renderEditor("acme/group/widgets");
-    // The page opens on the onboarding agent with the repository chosen (#29).
-    const form = screen.getByRole("link", { name: "Set up testing" });
+    const form = screen.getByRole("link", { name: "Fill in a form" });
     expect(form).toHaveAttribute("href", "/repos/onboard?repo=acme%2Fgroup%2Fwidgets");
     expect(form.className).toContain("border-border-strong");
     expect(form.className).not.toMatch(GOLD);

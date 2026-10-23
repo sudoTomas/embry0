@@ -16,7 +16,7 @@ const BOX = "flex flex-wrap items-center gap-3 rounded-lg border border-border b
  * the repo's test setup, or, in propose mode (ADR 0019), a proposal for the
  * repository page; a failed one stored nothing, and its error is in the job's
  * error banner. The agent's draft lives only in the workflow state and is not
- * served by the job API, so the by-hand form opens with the repo alone.
+ * served by the job API, so the by-hand page opens with the repo alone.
  */
 export function OnboardOutcomeCard({ job }: { job: OnboardJob }) {
   if (job.pipeline_template !== "onboard" || !job.repo) return null;
@@ -57,7 +57,7 @@ export function OnboardOutcomeCard({ job }: { job: OnboardJob }) {
       <div className={BOX} data-testid="onboard-outcome">
         <span className="text-muted-foreground">No test setup was stored. You can fill in the form yourself.</span>
         <Link
-          to={`/repos/onboard?repo=${enc}&mode=manual`}
+          to={`/repos/onboard?repo=${enc}`}
           className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
           data-testid="onboard-outcome-manual-cta"
         >

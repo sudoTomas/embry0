@@ -57,14 +57,12 @@ The repo must be registered (GitHub or GitLab). Without `--branch` the
 agent analyzes the repo's base branch: its `base_branch` preference, else
 the forge's default branch, else `main`.
 
-From the dashboard: the test setup page (`/repos/onboard`, **Set up
-testing** on a repository whose testing is not set up yet) opens on
-**Analyze with the onboarding agent**, which starts the same job and opens
-its job page, where the rounds stream like any other job. A completed job
-links to the stored setup; a failed one shows its error and links to the
-by-hand form (the agent's draft is not kept after a failed run). The
-repository page's **Let embry0 set up testing** runs the agent in propose
-mode instead (below).
+In the dashboard the agent starts from the repository page's **Let embry0
+set up testing**, in propose mode (below). On an onboard job's page, a
+completed job links to the stored setup (or to the proposal on the
+repository page); a failed one shows its error and links to the by-hand
+form with the repository filled in (the agent's draft is not kept after a
+failed run).
 
 API equivalent: `POST /api/v1/jobs` with `{"pipeline": "onboard", "repo":
 ..., "branch": ..., "skip_smoke": ...}`; `branch` and `skip_smoke` are
