@@ -306,3 +306,28 @@ async def test_spend_is_counted_once_when_the_running_row_is_finished(db_with_mi
         stderr_tail=None,
     )
     assert spent == [("claude-opus-5", 1.25)], f"finish must count the spend exactly once, got {spent}"
+
+
+@pytest.mark.asyncio
+async def test_finish_records_the_runs_actions_by_skill(repos: tuple[JobsRepository, TracesRepository]):
+    """Progression spec 2026-10-24: the run's tool calls, by the skill they train, land on the row."""
+    jobs_repo, traces_repo = repos
+    job_id = await jobs_repo.create(repo="a/b", task="Fix bug")
+    await traces_repo.create(job_id=job_id, agent_type="developer", model="m", result="running", trace_id="run-sk")
+    assert (await traces_repo.get("run-sk"))["skill_actions"] == {}, "a new row starts with none"
+    await traces_repo.finish(
+        "run-sk",
+        result="success",
+        cost_usd=0.0,
+        duration_ms=1,
+        tools_called={"Bash": 2},
+        skill_actions={"shell:testing": 2},
+        result_summary="",
+        input_tokens=0,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_creation_tokens=0,
+        error_code=None,
+        stderr_tail=None,
+    )
+    assert (await traces_repo.get("run-sk"))["skill_actions"] == {"shell:testing": 2}

@@ -25,11 +25,15 @@ export function freshEvents(recent: readonly RecentEvent[], seen: string): Recen
   return recent.filter((e) => Date.parse(e.at) > Date.parse(seen)).reverse();
 }
 
-/** The message, in the old game's words. */
-export function chatMessage(event: RecentEvent, skillName: (stat: string) => string): string {
+/** The message, in the old game's words: a level names the character that gained it. */
+export function chatMessage(
+  event: RecentEvent,
+  skillName: (stat: string) => string,
+  characterName: (agentType: string) => string,
+): string {
   if (event.kind === "level") {
     const skill = skillName(event.stat);
-    return `Congratulations, you just advanced a ${skill} level. Your ${skill} level is now ${event.level}.`;
+    return `Congratulations, ${characterName(event.agent_type)} just advanced a ${skill} level. Its ${skill} level is now ${event.level}.`;
   }
   return `Well done! You have reached ${TIER_NAME[event.tier]} in ${event.name}.`;
 }

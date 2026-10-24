@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { progression } from "@/components/progression/__tests__/fixtures";
@@ -6,31 +7,58 @@ import { progression } from "@/components/progression/__tests__/fixtures";
 const mockUseProgression = vi.fn();
 vi.mock("@/hooks/useProgression", () => ({ useProgression: () => mockUseProgression() }));
 vi.mock("@/hooks/useAgentIdentity", () => ({
-  useIdentityLookup: () => (type: string) => ({ displayName: type === "developer" ? "Developer" : type }),
+  useIdentityLookup: () => (type: string) => ({ displayName: type === "developer" ? "Developer" : "Review" }),
 }));
+vi.mock("@/components/agents/AgentAvatar", () => ({ AgentAvatar: () => <span data-testid="avatar" /> }));
 
 import { AchievementsPage } from "../AchievementsPage";
 
-function renderPage() {
+function renderPage(path = "/achievements") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
       <AchievementsPage />
     </MemoryRouter>,
   );
 }
 
 describe("AchievementsPage", () => {
-  it("shows the total level, every skill with who trains it, and the diary", () => {
+  it("leads with the account, then lists its characters by total level", () => {
     mockUseProgression.mockReturnValue({ data: progression() });
     renderPage();
-    expect(screen.getByTestId("total-level")).toHaveTextContent("Total level 937 · 31,000,000 XP · 1 of 3 achievements unlocked");
-    const tiles = screen.getAllByTestId("skill-tile");
-    expect(tiles).toHaveLength(2);
-    expect(tiles[0]).toHaveTextContent("Smithing");
-    expect(tiles[0]).toHaveTextContent("Developer · 250,000 XP to level 85");
-    expect(within(tiles[0]).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "29");
-    expect(tiles[1]).toHaveTextContent("The instance · 13,500,000 XP");
-    expect(within(tiles[1]).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+    expect(screen.getByTestId("account-summary")).toHaveTextContent(
+      "Account 15,134,431 XP · account total 192 · 2 characters · 1 of 3 achievements unlocked",
+    );
+    const characters = screen.getAllByTestId("character");
+    expect(characters.map((c) => c.textContent)).toEqual(["DeveloperCoding 99187", "ReviewCoding 15"]);
+  });
+
+  it("shows the highest character's skill sheet, grouped, until another is picked", async () => {
+    mockUseProgression.mockReturnValue({ data: progression() });
+    renderPage();
+    const sheet = screen.getByTestId("skill-sheet");
+    expect(sheet).toHaveAccessibleName("Developer's skills");
+    expect(within(sheet).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
+      "Build",
+      "Verify",
+      "Investigate",
+      "Care",
+    ]);
+    const tiles = within(sheet).getAllByTestId("skill-tile");
+    expect(tiles).toHaveLength(5);
+    expect(tiles[0]).toHaveTextContent("Coding99");
+    expect(within(tiles[0]).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+    expect(tiles[1]).toHaveTextContent("250,000 XP to level 85");
+    expect(within(tiles[1]).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "29");
+
+    await userEvent.click(screen.getAllByTestId("character")[1]);
+    expect(screen.getByTestId("skill-sheet")).toHaveAccessibleName("Review's skills");
+    expect(screen.getAllByTestId("character")[1]).toHaveAttribute("aria-current", "true");
+  });
+
+  it("opens the character the link names", () => {
+    mockUseProgression.mockReturnValue({ data: progression() });
+    renderPage("/achievements?character=review");
+    expect(screen.getByTestId("skill-sheet")).toHaveAccessibleName("Review's skills");
   });
 
   it("draws seven tier pips, the progress to the next tier, and hides a secret", () => {

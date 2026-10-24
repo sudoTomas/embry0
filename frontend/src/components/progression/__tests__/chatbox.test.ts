@@ -2,17 +2,17 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { RecentEvent } from "@/api/progression";
 import { SEEN_KEY, chatMessage, freshEvents, readSeen, writeSeen } from "../chatbox";
 
-const LEVEL: RecentEvent = { kind: "level", at: "2026-10-24T10:00:00+00:00", stat: "smithing", level: 42, agent_type: "developer" };
+const LEVEL: RecentEvent = { kind: "level", at: "2026-10-24T10:00:00+00:00", stat: "coding", level: 42, agent_type: "developer" };
 const UNLOCK: RecentEvent = { kind: "achievement", at: "2026-10-24T11:00:00+00:00", id: "forged_in_fire", name: "Forged in Fire", tier: "steel" };
 
 afterEach(() => window.localStorage.clear());
 
 describe("chat box messages", () => {
-  it("says a level and an unlock in the old game's words", () => {
-    expect(chatMessage(LEVEL, () => "Smithing")).toBe(
-      "Congratulations, you just advanced a Smithing level. Your Smithing level is now 42.",
+  it("says a character's level and the account's unlock in the old game's words", () => {
+    expect(chatMessage(LEVEL, () => "Coding", (type) => (type === "developer" ? "Forge" : type))).toBe(
+      "Congratulations, Forge just advanced a Coding level. Its Coding level is now 42.",
     );
-    expect(chatMessage(UNLOCK, () => "")).toBe("Well done! You have reached Steel in Forged in Fire.");
+    expect(chatMessage(UNLOCK, () => "", () => "")).toBe("Well done! You have reached Steel in Forged in Fire.");
   });
 
   it("keeps only what is newer than the last one shown, oldest first", () => {

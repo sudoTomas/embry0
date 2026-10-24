@@ -1,11 +1,14 @@
 """Progression (spec 2026-10-24): the work embry0 records, as experience and levels.
 
-Every built-in agent trains one skill, and three skills belong to the
-instance: Slayer (the watcher's healed cases), Mining (the watcher's log
-reads) and Farming (the schedules' starts). An event the database already
-holds is worth a fixed amount of experience in its skill; a skill's level
-follows the classic curve from 1 to 99. Nothing is stored: the levels are
-recomputed from the rows, so the same history always reads the same way.
+Every agent is a character with the same 23 skills, each levelled from 1 to
+99 on the classic curve by what that agent does: every tool call of a run
+that ended without an error earns a little experience in the skill it
+trains (``embry0.execution.skill_actions``), and an outcome (a merge, a QA
+pass, a finished review) earns a lot. The instance is the player's account:
+its experience is its characters' added up, and the work no character does
+(the watcher, the schedules) counts toward its achievements only. Nothing
+is stored: the levels are recomputed from the rows, so the same history
+always reads the same way.
 
 In code a skill is a ``stat``: embry0's Skills page already means agent
 skill packs.
@@ -22,13 +25,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from embry0.execution.skill_actions import actions_from_tools
 from embry0.services.context_audit import report_counts
 from embry0.storage.repositories.progression import Fact, ProgressEvent
 
 MAX_LEVEL = 99
-
-#: ``trained_by`` of a skill no single agent trains.
-INSTANCE = "instance"
 
 
 def _xp_table() -> tuple[int, ...]:
@@ -53,7 +54,7 @@ def level_for_xp(xp: int) -> int:
     return min(bisect_right(XP_TABLE, max(xp, 0)), MAX_LEVEL)
 
 
-#: The gear an agent wears from its level, highest first: (from level, tier).
+#: The gear a character wears from its best skill, highest first: (from level, tier).
 #: Spread over the curve's top, where experience piles up: a few months of an
 #: active deployment reach the 80s, so Divine is kept for 90.
 TIERS: tuple[tuple[int, str], ...] = (
@@ -75,116 +76,174 @@ def tier_for_level(level: int) -> str:
 class Stat:
     id: str
     name: str
-    #: The agent type that trains it, or :data:`INSTANCE`.
-    trained_by: str
+    #: Build, Verify, Investigate or Care: where its tile sits on a skill sheet.
+    group: str
+    #: The classic skill it echoes, which gives it its icon and cape colours.
+    echo: str
 
 
 STATS: tuple[Stat, ...] = (
-    Stat("smithing", "Smithing", "developer"),
-    Stat("defence", "Defence", "review"),
-    Stat("herblore", "Herblore", "qa"),
-    Stat("hunter", "Hunter", "triage"),
-    Stat("magic", "Magic", "analysis"),
-    Stat("runecraft", "Runecraft", "research"),
-    Stat("construction", "Construction", "onboarding"),
-    Stat("firemaking", "Firemaking", "ops"),
-    Stat("prayer", "Prayer", "pr-reviewer"),
-    Stat("fletching", "Fletching", "context-auditor"),
-    Stat("crafting", "Crafting", "design-auditor"),
-    Stat("hitpoints", "Hitpoints", "kintsugi"),
-    Stat("woodcutting", "Woodcutting", "gardener"),
-    Stat("thieving", "Thieving", "interrogator"),
-    Stat("fishing", "Fishing", "why"),
-    Stat("agility", "Agility", "how"),
-    Stat("ranged", "Ranged", "blast-radius"),
-    Stat("attack", "Attack", "comment-sicko"),
-    Stat("slayer", "Slayer", INSTANCE),
-    Stat("mining", "Mining", INSTANCE),
-    Stat("farming", "Farming", INSTANCE),
+    Stat("coding", "Coding", "build", "smithing"),
+    Stat("version_control", "Version control", "build", "woodcutting"),
+    Stat("building", "Building", "build", "construction"),
+    Stat("shell", "Shell", "build", "strength"),
+    Stat("databases", "Databases", "build", "mining"),
+    Stat("testing", "Testing", "verify", "cooking"),
+    Stat("quality_assurance", "Quality assurance", "verify", "herblore"),
+    Stat("browsing", "Browsing", "verify", "agility"),
+    Stat("reviewing", "Reviewing", "verify", "defence"),
+    Stat("linting", "Linting", "verify", "crafting"),
+    Stat("security", "Security", "verify", "prayer"),
+    Stat("reading", "Reading", "investigate", "fishing"),
+    Stat("searching", "Searching", "investigate", "hunter"),
+    Stat("debugging", "Debugging", "investigate", "slayer"),
+    Stat("research", "Research", "investigate", "magic"),
+    Stat("triage", "Triage", "investigate", "attack"),
+    Stat("documentation", "Documentation", "care", "fletching"),
+    Stat("design", "Design", "care", "runecraft"),
+    Stat("operations", "Operations", "care", "firemaking"),
+    Stat("planning", "Planning", "care", "farming"),
+    Stat("delegation", "Delegation", "care", "thieving"),
+    Stat("communication", "Communication", "care", "ranged"),
+    Stat("recovery", "Recovery", "care", "hitpoints"),
 )
 
-_STAT_OF_AGENT = {s.trained_by: s.id for s in STATS if s.trained_by != INSTANCE}
+STAT_IDS = frozenset(s.id for s in STATS)
 
-#: A custom agent's skill: it has no built-in to inherit one from.
-CUSTOM_STAT = "magic"
-
-#: Experience for one successful run of an agent whose events are its runs.
-RUN_XP: dict[str, int] = {
-    "review": 30_000,
-    "triage": 2_000,
-    "analysis": 2_500,
-    "research": 40_000,
-    "onboarding": 150_000,
-    "ops": 40_000,
-    "pr-reviewer": 30_000,
-    "design-auditor": 40_000,
-    "kintsugi": 40_000,
-    "gardener": 40_000,
-    "interrogator": 40_000,
-    "why": 40_000,
-    "how": 40_000,
-    "blast-radius": 40_000,
-    "comment-sicko": 40_000,
+#: Experience for one tool call, by its kind (the part of the action key before the colon).
+ACTION_XP: dict[str, int] = {
+    "edit": 1_400,
+    "shell": 600,
+    "read": 1_000,
+    "search": 800,
+    "browser": 1_000,
+    "log": 400,
+    "web": 2_000,
+    "agent": 2_000,
+    "plan": 2_000,
 }
 
-#: A custom agent's run: the rate of the skill it trains.
-CUSTOM_RUN_XP = RUN_XP["analysis"]
+#: A finished run's outcome, for the agents whose run is the outcome: (skill, XP).
+RUN_OUTCOME: dict[str, tuple[str, int]] = {
+    "review": ("reviewing", 30_000),
+    "pr-reviewer": ("reviewing", 30_000),
+    "triage": ("triage", 2_000),
+    "research": ("research", 40_000),
+    "ops": ("operations", 40_000),
+    "onboarding": ("operations", 40_000),
+    "design-auditor": ("design", 40_000),
+    "blast-radius": ("security", 40_000),
+}
 
-#: Experience for the events that are an outcome rather than a run.
-OUTCOME_XP: dict[str, int] = {
-    "merged": 90_000,
-    "qa_passed": 60_000,
-    "audited": 40_000,
-    "healed": 120_000,
-    "watched": 3_000,
-    "scheduled": 4_000,
+#: The outcomes that are their own event: (skill, XP).
+OUTCOME_XP: dict[str, tuple[str, int]] = {
+    "merged": ("coding", 60_000),
+    "opened": ("version_control", 20_000),
+    "qa_passed": ("quality_assurance", 50_000),
+    "audited": ("documentation", 40_000),
+    "asked": ("communication", 20_000),
+    "comeback": ("recovery", 90_000),
+    "resumed": ("recovery", 90_000),
 }
 
 #: A context audit's bonus per outdated claim its report counted.
 XP_PER_STALE_CLAIM = 1_000
 
-_INSTANCE_STAT = {"healed": "slayer", "watched": "mining", "scheduled": "farming"}
+
+def run_actions(event: ProgressEvent) -> dict[str, int]:
+    """A run's tool calls as action keys: recorded since ``skill_actions``, else read from tool names."""
+    if event.skill_actions:
+        return dict(event.skill_actions)
+    return actions_from_tools(event.tools_called or {})
 
 
-def stat_of_agent(agent_type: str) -> str:
-    return _STAT_OF_AGENT.get(agent_type, CUSTOM_STAT)
-
-
-def price(event: ProgressEvent) -> tuple[str, str | None, int] | None:
-    """The skill an event trains, the agent it credits (None for the instance's), and its experience."""
+def price(event: ProgressEvent) -> list[tuple[str, int]]:
+    """What an event earns its character: (skill, XP) pairs, none for work no character does."""
+    if not event.agent_type:
+        return []
     if event.source == "run":
-        if not event.agent_type:
-            return None
-        return stat_of_agent(event.agent_type), event.agent_type, RUN_XP.get(event.agent_type, CUSTOM_RUN_XP)
-    xp = OUTCOME_XP.get(event.source)
-    if xp is None:
-        return None
+        gains: dict[str, int] = {}
+        for key, calls in run_actions(event).items():
+            kind, _, stat = key.partition(":")
+            if stat in STAT_IDS and kind in ACTION_XP and calls > 0:
+                gains[stat] = gains.get(stat, 0) + ACTION_XP[kind] * calls
+        outcome = RUN_OUTCOME.get(event.agent_type)
+        if outcome is not None:
+            gains[outcome[0]] = gains.get(outcome[0], 0) + outcome[1]
+        return list(gains.items())
+    if event.source not in OUTCOME_XP:
+        return []
+    stat, xp = OUTCOME_XP[event.source]
     if event.source == "audited":
         stale, _files = report_counts(event.report)
         xp += XP_PER_STALE_CLAIM * (stale or 0)
-    if event.source in _INSTANCE_STAT:
-        return _INSTANCE_STAT[event.source], None, xp
-    agent = event.agent_type or ""
-    return stat_of_agent(agent), agent, xp
+    return [(stat, xp)]
 
 
 def _iso(value: datetime) -> str:
     return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
 
 
+def _progress(xp: int) -> dict[str, Any]:
+    level = level_for_xp(xp)
+    return {
+        "xp": xp,
+        "level": level,
+        # Where this level starts, so a progress bar needs no copy of the curve.
+        "level_xp": xp_for_level(level),
+        "xp_to_next": None if level >= MAX_LEVEL else xp_for_level(level + 1) - xp,
+    }
+
+
 @dataclass(frozen=True)
 class LevelUp:
     at: datetime
+    agent_type: str
     stat: str
     level: int
-    #: The agent whose work crossed the level, None for an instance skill.
-    agent_type: str | None
+
+
+@dataclass
+class Character:
+    """One agent's skills: its experience in each."""
+
+    agent_type: str
+    stat_xp: dict[str, int] = field(default_factory=dict)
+
+    def level(self, stat: str) -> int:
+        return level_for_xp(self.stat_xp.get(stat, 0))
+
+    @property
+    def xp(self) -> int:
+        return sum(self.stat_xp.values())
+
+    @property
+    def total_level(self) -> int:
+        return sum(self.level(s.id) for s in STATS)
+
+    @property
+    def best_skill(self) -> str:
+        """Its highest level, the most experience breaking a tie, the catalogue order a full tie."""
+        return max(STATS, key=lambda s: (self.level(s.id), self.stat_xp.get(s.id, 0), -STATS.index(s))).id
+
+    @property
+    def tier(self) -> str:
+        return tier_for_level(self.level(self.best_skill))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "agent_type": self.agent_type,
+            "xp": self.xp,
+            "total_level": self.total_level,
+            "best_skill": self.best_skill,
+            "tier": self.tier,
+            "skills": [{"stat": s.id, **_progress(self.stat_xp.get(s.id, 0))} for s in STATS],
+        }
 
 
 @dataclass
 class Progression:
-    stat_xp: dict[str, int]
-    agent_xp: dict[str, int]
+    characters: dict[str, Character]
     level_ups: list[LevelUp] = field(default_factory=list)
     computed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     #: Each achievement's state and every tier unlock (``services.achievements``), set by the service.
@@ -192,40 +251,24 @@ class Progression:
     unlocks: list[Any] = field(default_factory=list)
 
     @property
-    def total_level(self) -> int:
-        return sum(level_for_xp(self.stat_xp.get(s.id, 0)) for s in STATS)
+    def xp(self) -> int:
+        """The account's experience: every character's added up."""
+        return sum(c.xp for c in self.characters.values())
 
     @property
-    def total_xp(self) -> int:
-        return sum(self.stat_xp.values())
+    def total_level(self) -> int:
+        """The account total: every character's total level added up."""
+        return sum(c.total_level for c in self.characters.values())
 
     def to_dict(self, *, recent: int = 20) -> dict[str, Any]:
-        def progress(xp: int) -> dict[str, Any]:
-            level = level_for_xp(xp)
-            return {
-                "xp": xp,
-                "level": level,
-                # Where this level starts, so a progress bar needs no copy of the curve.
-                "level_xp": xp_for_level(level),
-                "xp_to_next": None if level >= MAX_LEVEL else xp_for_level(level + 1) - xp,
-            }
-
         return {
-            "total_level": self.total_level,
-            "total_xp": self.total_xp,
-            "stats": [
-                {"stat": s.id, "name": s.name, "trained_by": s.trained_by, **progress(self.stat_xp.get(s.id, 0))}
-                for s in STATS
-            ],
-            "agents": [
-                {
-                    "agent_type": agent,
-                    "stat": stat_of_agent(agent),
-                    **progress(xp),
-                    "tier": tier_for_level(level_for_xp(xp)),
-                }
-                for agent, xp in sorted(self.agent_xp.items())
-            ],
+            "account": {
+                "xp": self.xp,
+                "total_level": self.total_level,
+                "characters": len(self.characters),
+            },
+            "skills": [{"id": s.id, "name": s.name, "group": s.group, "echo": s.echo} for s in STATS],
+            "characters": [self.characters[a].to_dict() for a in sorted(self.characters)],
             "achievements": [a.to_dict() for a in self.achievements],
             "recent": self._recent(recent),
             "computed_at": _iso(self.computed_at),
@@ -234,7 +277,7 @@ class Progression:
     def _recent(self, count: int) -> list[dict[str, Any]]:
         """The latest levels reached and achievement tiers unlocked, newest first."""
         levels = [
-            (u.at, {"kind": "level", "at": _iso(u.at), "stat": u.stat, "level": u.level, "agent_type": u.agent_type})
+            (u.at, {"kind": "level", "at": _iso(u.at), "agent_type": u.agent_type, "stat": u.stat, "level": u.level})
             for u in self.level_ups
         ]
         unlocks = [(u.at, u.to_dict()) for u in self.unlocks]
@@ -243,28 +286,26 @@ class Progression:
 
 
 def compute(events: Iterable[ProgressEvent], agent_types: Iterable[str] = ()) -> Progression:
-    """Price every event in time order, and record each level a skill crossed.
+    """Price every event in time order, and record each level a character's skill crossed.
 
-    Every agent in ``agent_types`` is listed, at level 1 when it earned
-    nothing; an agent that earned something but is no longer defined is
-    listed too, since its work happened.
+    Every agent in ``agent_types`` is a character, at level 1 in every skill
+    when it earned nothing; an agent that earned something but is no longer
+    defined is one too, since its work happened.
     """
-    stat_xp = {s.id: 0 for s in STATS}
-    agent_xp = dict.fromkeys(agent_types, 0)
+    characters = {agent: Character(agent) for agent in agent_types}
     level_ups: list[LevelUp] = []
     for event in sorted(events, key=lambda e: e.at):
-        priced = price(event)
-        if priced is None:
+        gains = price(event)
+        if not gains or not event.agent_type:
             continue
-        stat, agent, xp = priced
-        before = level_for_xp(stat_xp[stat])
-        stat_xp[stat] += xp
-        after = level_for_xp(stat_xp[stat])
-        if agent is not None:
-            agent_xp[agent] = agent_xp.get(agent, 0) + xp
-        if after > before:
-            level_ups.append(LevelUp(event.at, stat, after, agent))
-    return Progression(stat_xp, agent_xp, level_ups)
+        character = characters.setdefault(event.agent_type, Character(event.agent_type))
+        for stat, xp in gains:
+            before = character.level(stat)
+            character.stat_xp[stat] = character.stat_xp.get(stat, 0) + xp
+            after = character.level(stat)
+            if after > before:
+                level_ups.append(LevelUp(event.at, event.agent_type, stat, after))
+    return Progression(characters, level_ups)
 
 
 class _Repository(Protocol):

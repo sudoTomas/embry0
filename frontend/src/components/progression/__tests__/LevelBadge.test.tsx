@@ -1,18 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { LevelBadge } from "../LevelBadge";
 
 describe("LevelBadge", () => {
-  it("shows the skill and level, and says the tier and the next level in its title", () => {
-    render(<LevelBadge skill="Smithing" level={84} tier="rune" xpToNext={1234} />);
+  it("shows the total level, says which skill set the tier, and links to the skill sheet", () => {
+    render(
+      <MemoryRouter>
+        <LevelBadge agentType="blast-radius" totalLevel={1234} bestSkill="Coding" bestLevel={84} tier="rune" />
+      </MemoryRouter>,
+    );
     const badge = screen.getByTestId("level-badge");
-    expect(badge).toHaveTextContent("Smithing 84");
+    expect(badge).toHaveTextContent("Total level 1,234");
     expect(badge).toHaveAttribute("data-tier", "rune");
-    expect(badge).toHaveAttribute("title", "Rune tier · 1,234 XP to level 85");
+    expect(badge).toHaveAttribute("title", "Rune tier from Coding 84 · open the skill sheet");
+    expect(badge).toHaveAttribute("href", "/achievements?character=blast-radius");
   });
 
-  it("says level 99 when there is nothing left to the next level", () => {
-    render(<LevelBadge skill="Mining" level={99} tier="divine" xpToNext={null} />);
-    expect(screen.getByTestId("level-badge")).toHaveAttribute("title", "Divine tier · level 99");
+  it("does not let the click reach the row around it", () => {
+    let rowClicks = 0;
+    render(
+      <MemoryRouter>
+        <div onClick={() => (rowClicks += 1)}>
+          <LevelBadge agentType="developer" totalLevel={23} bestSkill="Coding" bestLevel={1} tier="bronze" />
+        </div>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByTestId("level-badge"));
+    expect(rowClicks).toBe(0);
   });
 });

@@ -1352,6 +1352,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 104 | every change to a repository's stored test setup and preferences, newest 100 per repo and surface, outliving the repository (ADR 0019) | `repo_config_revisions`, `idx_repo_config_revisions_repo` |
 | 105 | agent-proposed test setups a person applies, one running or pending proposal per repository (ADR 0019) | `repo_setup_proposals`, `idx_repo_setup_proposals_repo`, `uq_repo_setup_proposals_live` |
 | 106 | the eight specialist agents' identity (`display_name`, `avatar`, `color`, `tagline`) written for rows still at the defaults, as 101 did for the core agents | `agent_definitions` rows |
+| 107 | each run's tool calls by the skill they train, keyed `kind:skill`, for progression (spec 2026-10-24) | `traces.skill_actions` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

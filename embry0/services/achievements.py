@@ -1,11 +1,13 @@
-"""Achievements (spec 2026-10-24): what the instance has done, in seven tiers from Bronze to Divine.
+"""Achievements (spec 2026-10-24): what the account has done, in seven tiers from Bronze to Divine.
 
 An achievement is data: a stable ``id`` (it keys every unlock forever), a
 name in the old-school game's voice, the metric it counts and seven
 thresholds, one per tier. Its metric adds up from rows the database already
 holds, so like experience it is recomputed, never stored: each tier's unlock
 time is the time of the event that crossed its threshold. A secret
-achievement shows as ``???`` until its first signal.
+achievement shows as ``???`` until its first signal. Every achievement
+counts across the whole account: all its characters, and the work no
+character does.
 
 The shape follows the Hermes Agent achievements plugin (MIT): tiered
 progress, discovered and secret entries, a "what counts" line, all derived
@@ -56,7 +58,7 @@ CATALOGUE: tuple[Achievement, ...] = (
     Achievement(
         "guardian_of_the_gate",
         "Guardian of the Gate",
-        "Reviews that ended without an error",
+        "Reviews that finished",
         "reviews",
         (1, 10, 25, 50, 100, 250, 500),
     ),
@@ -73,6 +75,20 @@ CATALOGUE: tuple[Achievement, ...] = (
         "Healing cases judged healed",
         "healed",
         (1, 3, 10, 25, 50, 100, 200),
+    ),
+    Achievement(
+        "prospector",
+        "Prospector",
+        "Watcher runs that read logs",
+        "watched",
+        (10, 100, 500, 1_000, 2_500, 5_000, 10_000),
+    ),
+    Achievement(
+        "green_thumb",
+        "Green Thumb",
+        "Audits the schedules started",
+        "scheduled",
+        (1, 10, 25, 50, 100, 250, 500),
     ),
     Achievement(
         "lines_straightened",
@@ -98,21 +114,21 @@ CATALOGUE: tuple[Achievement, ...] = (
     Achievement(
         "wise_old_agent",
         "Wise Old Agent",
-        "The total level",
-        "total_level",
+        "The highest total level of any character",
+        "best_total",
         (100, 250, 500, 750, 1_000, 1_500, 2_000),
     ),
     Achievement(
         "skill_cape",
         "Skill Cape",
-        "Skills at level 99",
+        "Skill capes earned across every character",
         "capes",
-        (1, 2, 3, 4, 5, 6, 7),
+        (1, 2, 5, 10, 23, 50, 100),
     ),
     Achievement(
         "oh_dear_you_are_dead",
         "Oh Dear, You Are Dead",
-        "Pull requests merged on an issue whose earlier job failed",
+        "Merges on an issue whose earlier job failed",
         "comeback",
         (1, 3, 5, 10, 25, 50, 100),
         secret=True,
@@ -120,14 +136,20 @@ CATALOGUE: tuple[Achievement, ...] = (
     Achievement(
         "click_here_to_continue",
         "Click Here to Continue",
-        "Answers given to an agent that asked",
-        "answered",
+        "Questions an agent asked a person",
+        "asked",
         (1, 5, 10, 25, 50, 100, 250),
     ),
 )
 
-#: A metric's value before any event: the total level starts with every skill at 1.
-_BASE: dict[str, float] = {"total_level": float(len(STATS))}
+#: A metric's value before any event: a character starts with every skill at 1.
+_BASE: dict[str, float] = {"best_total": float(len(STATS))}
+
+#: The events whose count is a metric of the same name.
+_COUNTED = frozenset({"merged", "qa_passed", "healed", "watched", "scheduled", "comeback", "asked"})
+
+#: The agents whose finished run is a review.
+_REVIEWERS = frozenset({"review", "pr-reviewer"})
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -142,9 +164,9 @@ def metric_steps(
     """Every metric as the steps it rose by, each with its time, oldest first."""
     steps: dict[str, list[tuple[datetime, float]]] = defaultdict(list)
     for event in events:
-        if event.source in ("merged", "qa_passed", "healed"):
+        if event.source in _COUNTED:
             steps[event.source].append((event.at, 1))
-        elif event.source == "run" and event.agent_type == "review":
+        elif event.source == "run" and event.agent_type in _REVIEWERS:
             steps["reviews"].append((event.at, 1))
         elif event.source == "audited":
             stale, _files = report_counts(event.report)
@@ -152,10 +174,17 @@ def metric_steps(
                 steps["stale_claims"].append((event.at, stale))
     for fact in facts:
         steps[fact.metric].append((fact.at, fact.value))
-    last = {s.id: 1 for s in STATS}
+    # The highest total level of any character, stepping as its skills level.
+    levels: dict[tuple[str, str], int] = {}
+    totals: dict[str, int] = defaultdict(lambda: len(STATS))
+    best = len(STATS)
     for up in sorted(level_ups, key=lambda u: u.at):
-        steps["total_level"].append((up.at, up.level - last[up.stat]))
-        last[up.stat] = up.level
+        key = (up.agent_type, up.stat)
+        totals[up.agent_type] += up.level - levels.get(key, 1)
+        levels[key] = up.level
+        if totals[up.agent_type] > best:
+            steps["best_total"].append((up.at, totals[up.agent_type] - best))
+            best = totals[up.agent_type]
         if up.level == MAX_LEVEL:
             steps["capes"].append((up.at, 1))
     for series in steps.values():
