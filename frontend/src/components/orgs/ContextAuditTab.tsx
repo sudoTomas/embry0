@@ -68,17 +68,28 @@ function LatestAudit({ row }: { row: ContextAuditRepo }) {
   }
   const when = job.finished_at ?? job.created_at;
   return (
-    <Link to={`/jobs/${job.job_id}`} className="flex flex-col gap-0.5 hover:underline" data-testid="context-audit-job">
-      <span className="flex items-center gap-2">
+    <div className="flex flex-col gap-0.5">
+      <Link to={`/jobs/${job.job_id}`} className="flex items-center gap-2 hover:underline" data-testid="context-audit-job">
         <JobStatusBadge status={job.status as JobStatus} />
         {when && <span className="whitespace-nowrap text-xs text-white/60">{formatDateTime(when)}</span>}
-      </span>
+      </Link>
       {job.status === "failed" && job.error_code && (
         <span className="text-xs text-destructive" data-testid="context-audit-failure">
           {FAILURE[job.error_code] ?? job.error_code}
         </span>
       )}
-    </Link>
+      {job.pr_url && (
+        <a
+          href={job.pr_url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs text-info hover:underline"
+          data-testid="context-audit-pr"
+        >
+          Pull request with the fixes
+        </a>
+      )}
+    </div>
   );
 }
 

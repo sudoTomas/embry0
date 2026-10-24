@@ -20,6 +20,7 @@ function job(overrides: Partial<ContextAuditJob> = {}): ContextAuditJob {
     finished_at: "2026-10-20T12:09:00Z",
     total_cost_usd: 1.5,
     error_code: null,
+    pr_url: null,
     stale: 3,
     files_read: 2,
     ...overrides,
@@ -122,6 +123,14 @@ describe("ContextAuditTable", () => {
     expect(screen.getByTestId("context-audit-unread")).toHaveTextContent(
       "acme/gone was not read: reading the newest commit answered 404",
     );
+  });
+
+  it("links the pull request an audit opened from its fixes", () => {
+    renderTable(survey([row("acme/web", { newest_job: job({ pr_url: "https://github.com/acme/web/pull/12" }) }), row("acme/api")]));
+    const links = screen.getAllByTestId("context-audit-pr");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("href", "https://github.com/acme/web/pull/12");
+    expect(links[0]).toHaveAttribute("target", "_blank");
   });
 
   it("says when no registered repository has instruction files", () => {
