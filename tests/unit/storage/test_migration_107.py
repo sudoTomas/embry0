@@ -20,12 +20,6 @@ def test_migration_107_present_and_gapless() -> None:
     assert "skill_actions" in next(d for v, d, _ in MIGRATIONS if v == 107)
 
 
-def test_migration_107_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_106.py)."""
-    assert MIGRATIONS[-1][0] == 107, "migration 107 must add traces.skill_actions"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_old_rows_read_as_no_actions(db_with_migrations: DatabasePool) -> None:

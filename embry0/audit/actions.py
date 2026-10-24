@@ -109,6 +109,8 @@ AuditAction = Literal[
     "case_accepted",
     "case_closed",
     "merge.decided",
+    # Owner proposals (spec 2026-10-24)
+    "proposal.answered",
 ]
 
 AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
@@ -194,6 +196,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "case_accepted": "Case accepted",
     "case_closed": "Case closed",
     "merge.decided": "Merge decided",
+    "proposal.answered": "Proposal answered",
 }
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))

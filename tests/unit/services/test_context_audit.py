@@ -887,6 +887,33 @@ async def test_a_job_starts_on_the_template_with_a_hard_budget_and_its_reading(m
 
 
 @pytest.mark.asyncio
+async def test_a_job_another_actor_starts_carries_its_task_and_never_anchors_the_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Owner proposals (spec 2026-10-24): a fix an owner asked for names its one claim, and its
+    dispatcher is not the schedule's, so the due rule (which reads only the schedule's jobs) ignores it."""
+
+    async def record(_db: Any, action: str, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(context_audit, "emit_audit", record)
+    jobs = FakeJobs(Clock(T0))
+    await start_context_audit_job(
+        ctx(),
+        jobs=jobs,
+        executor=FakeExecutor(),
+        templates=FakeTemplates(TEMPLATE),
+        budget_usd=1.0,
+        open_pr=True,
+        task="Fix one outdated claim",
+        dispatched_by="embry0:proposals",
+    )
+    created = jobs.rows[0]["created_with"]
+    assert created["task"] == "Fix one outdated claim" and created["dispatched_by"] == "embry0:proposals"
+    assert created["pipeline_config"]["actor"] == "embry0:proposals" and created["pipeline_config"]["open_pr"] is True
+
+
+@pytest.mark.asyncio
 async def test_no_job_row_is_written_without_the_template_or_an_executor() -> None:
     jobs = FakeJobs(Clock(T0))
     with pytest.raises(LookupError, match="no pipeline template named 'context-audit'"):

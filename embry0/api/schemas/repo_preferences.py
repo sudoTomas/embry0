@@ -34,6 +34,10 @@ def validate_git_author_email(v: str | None) -> str | None:
     return v
 
 
+#: A GitHub login: up to 39 letters, digits and single hyphens, not starting or ending with one.
+GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
+
+
 class DevCheck(BaseModel):
     """One pre-PR self-check: run ``command`` when the diff touches any of
     ``paths`` (repo-root-relative prefixes; empty = always)."""
@@ -93,6 +97,9 @@ class RepoPreferencesResponse(BaseModel):
     verification: dict[str, Any] | None = None
     # #30. Untyped on the way out for the same reason as verification.
     pr_review: dict[str, Any] | None = None
+    # Owner proposals (spec 2026-10-24): the GitHub logins that answer for the
+    # repository; null falls back to its CODEOWNERS.
+    owners: list[str] | None = None
     updated_at: datetime
 
 
@@ -118,6 +125,22 @@ class RepoPreferencesUpdateRequest(BaseModel):
     verification: VerificationConfig | None = None
     # #30: pull request review settings, stored whole.
     pr_review: PrReviewSettings | None = None
+    # Owner proposals (spec 2026-10-24): GitHub logins; null or [] falls back to CODEOWNERS.
+    owners: list[str] | None = Field(default=None, max_length=20)
+
+    @field_validator("owners")
+    @classmethod
+    def _logins(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        logins: list[str] = []
+        for raw in v:
+            login = raw.strip().removeprefix("@")
+            if not GITHUB_LOGIN_RE.match(login):
+                raise ValueError(f"{raw!r} is not a GitHub login (letters, digits and single hyphens, up to 39)")
+            if login.lower() not in (seen.lower() for seen in logins):
+                logins.append(login)
+        return logins or None
 
     @field_validator("base_branch")
     @classmethod

@@ -559,6 +559,25 @@ class Embry0Client:
             await self._request("POST", f"/api/v1/cases/{case_id}/accept", body={"accepted_by": accepted_by})
         )
 
+    # ---- owner proposals (spec 2026-10-24)
+
+    async def proposal_list(
+        self, *, owner: str | None = None, kind: str | None = None, since: str | None = None
+    ) -> dict[str, Any]:
+        params = _drop_none({"owner": owner, "kind": kind, "since": since})
+        return _as_dict(await self._request("GET", "/api/v1/proposals", params=params))
+
+    async def proposal_get(self, proposal_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/proposals/{proposal_id}"))
+
+    async def proposal_answer(
+        self, proposal_id: str, decision: str, *, by: str, reason: str = "", until: str | None = None
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"by": by, "reason": reason}
+        if until is not None:
+            body["until"] = until
+        return _as_dict(await self._request("POST", f"/api/v1/proposals/{proposal_id}/{decision}", body=body))
+
     async def case_close(
         self, case_id: str, *, resolution_path: str | None, note: str | None, closed_by: str
     ) -> dict[str, Any]:

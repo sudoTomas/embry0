@@ -34,7 +34,7 @@ from embry0.audit.helpers import emit_audit
 
 router = APIRouter()
 
-_SCOPE_RANK = {"read": 0, "operate": 1, "merge": 1, "admin": 2}
+_SCOPE_RANK = {"read": 0, "operate": 1, "merge": 1, "propose": 1, "admin": 2}
 _TIER_MAX_SCOPE = {"operator": "operate", "admin": "admin"}
 MAX_ALLOWED_REPOS = 100
 
@@ -56,7 +56,7 @@ def _clean_allowed_repos(value: list[str] | None) -> list[str] | None:
 
 class CreateKeyBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    scope: str = Field(pattern="^(read|operate|admin|merge)$")
+    scope: str = Field(pattern="^(read|operate|admin|merge|propose)$")
     expires_days: int | None = Field(default=None, gt=0, le=730)
     service: bool = False
     # Repositories the key may start work on; omitted or empty: unrestricted.
@@ -150,9 +150,10 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
             owner_id = user.id
 
     # `merge` is off the read < operate < admin ladder: it can relay a merge
-    # no operator key can, so only an admin mints one.
-    if body.scope == "merge" and tier != TIER_ADMIN:
-        raise HTTPException(status_code=403, detail="merge-scope keys require admin tier")
+    # no operator key can, so only an admin mints one. `propose` likewise: it
+    # starts the work an owner accepts in a chat (owner proposals).
+    if body.scope in ("merge", "propose") and tier != TIER_ADMIN:
+        raise HTTPException(status_code=403, detail=f"{body.scope}-scope keys require admin tier")
     max_scope = _TIER_MAX_SCOPE.get(tier)
     if max_scope is None or _SCOPE_RANK[body.scope] > _SCOPE_RANK[max_scope]:
         raise HTTPException(status_code=403, detail=f"scope {body.scope!r} exceeds your tier")

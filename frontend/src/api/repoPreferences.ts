@@ -39,6 +39,8 @@ export interface RepoPreferences {
   dev_checks: DevCheck[];
   base_branch: string | null;
   pr_review: StoredPrReviewSettings | null;
+  /** GitHub logins that answer for the repository's proposals; null falls back to CODEOWNERS. */
+  owners?: string[] | null;
   updated_at: string;
 }
 
@@ -53,6 +55,7 @@ export interface RepoPreferencesUpdate {
   dev_checks?: DevCheck[];
   base_branch?: string | null;
   pr_review?: PrReviewSettings;
+  owners?: string[] | null;
 }
 
 export async function fetchRepoPreferences(
