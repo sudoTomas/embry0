@@ -188,6 +188,10 @@ curl -X POST http://localhost:8200/api/v1/agents/developer/skills/superpowers:wr
   -H "X-Requested-With: XMLHttpRequest"
 ```
 
+## Progression
+
+`GET /api/v1/progression` (read tier) answers the instance's skills, levels and each agent's level ([the design](superpowers/specs/2026-10-24-progression-and-achievements-design.md)): `{"total_level", "total_xp", "stats": [{"stat", "name", "trained_by", "xp", "level", "xp_to_next"}], "agents": [{"agent_type", "stat", "xp", "level", "xp_to_next", "tier"}], "recent": [{"kind": "level", "at", "stat", "level", "agent_type"}], "computed_at"}`. Each built-in agent trains one skill and three skills belong to the instance (`trained_by: "instance"`): Slayer from healing cases judged healed, Mining from watcher runs that read logs, Farming from context audits the schedule started. Experience is recomputed from the jobs, traces, healing case events and watcher runs, never stored, at most once a minute; a level follows the classic curve from 1 to 99, and `xp_to_next` is `null` at 99. `tier` is the agent's gear tier from its level: `bronze` from 1, `iron` 15, `steel` 30, `mithril` 45, `adamant` 60, `rune` 75, `divine` 90. `recent` lists the latest 20 levels any skill reached, newest first, with the agent whose work crossed it. An orchestrator that did not start the service answers 503.
+
 ## Pipeline templates
 
 The saved pipeline graphs the editor and the Pipelines page work on, under `/api/v1/pipelines/templates`: list, read, create, update, delete and duplicate. Every authenticated principal may read and write them; the two writes with answers worth knowing:

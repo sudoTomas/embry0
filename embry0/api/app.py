@@ -732,6 +732,12 @@ async def _init_app_state(
     # sync, the PR webhook or the healing ledger normalise a URL through them.
     configure_repo_renames(app_config.repo_renames)
     app.state.repos_repo = ReposRepository(db, default_forge=app_config.default_forge)
+    # Progression (spec 2026-10-24): levels recomputed from the recorded work,
+    # read by GET /progression.
+    from embry0.services.progression import ProgressionService
+    from embry0.storage.repositories.progression import ProgressionRepository
+
+    app.state.progression = ProgressionService(ProgressionRepository(db))
     from embry0.storage.repositories.organizations import OrganizationsRepository
 
     app.state.organizations_repo = OrganizationsRepository(db)
@@ -2390,6 +2396,7 @@ def _register_routers(app: FastAPI) -> None:
         org_needs,
         organizations,
         pipeline_templates,
+        progression,
         qa_artifacts,
         qa_config,
         qa_dashboard,
@@ -2461,6 +2468,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(sandboxes.router, prefix="/api/v1", tags=["sandboxes"], dependencies=auth_deps)
     app.include_router(config.router, prefix="/api/v1", tags=["config"], dependencies=auth_deps)
     app.include_router(stats.router, prefix="/api/v1", tags=["stats"], dependencies=auth_deps)
+    app.include_router(progression.router, prefix="/api/v1", tags=["progression"], dependencies=auth_deps)
     app.include_router(traces.router, prefix="/api/v1", tags=["traces"], dependencies=auth_deps)
     # #278: healing-case lifecycle ledger (read-only).
     app.include_router(cases.router, prefix="/api/v1", tags=["cases"], dependencies=auth_deps)
