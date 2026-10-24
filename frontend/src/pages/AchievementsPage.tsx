@@ -1,9 +1,11 @@
 import { useSearchParams } from "react-router";
 import type { AchievementEntry, Character, Skill, SkillGroup, SkillProgress } from "@/api/progression";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import { RARE_NAMES } from "@/components/progression/chatbox";
 import { PageError } from "@/components/PageError";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
+import type { AgentIdentity } from "@/lib/agentIdentity";
 import { useProgression } from "@/hooks/useProgression";
 import { TIER_COLOR, TIER_NAME, TIER_ORDER } from "@/lib/tiers";
 import { cn, formatDate } from "@/lib/utils";
@@ -49,13 +51,28 @@ function SkillTile({ skill, progress }: { skill: Skill; progress: SkillProgress 
 }
 
 /** A character's 23 skills in the classic three-column grid, grouped Build, Verify, Investigate, Care. */
-function SkillSheet({ character, skills, name }: { character: Character; skills: Skill[]; name: string }) {
+function SkillSheet({ character, skills, identity }: { character: Character; skills: Skill[]; identity: AgentIdentity }) {
   const progressOf = new Map(character.skills.map((s) => [s.stat, s]));
+  const name = identity.displayName;
+  const skillName = new Map(skills.map((s) => [s.id, s.name]));
+  // What it wears for what it earned: the best 99's cape (trimmed for two or more) and its rares.
+  const earned = [
+    ...character.capes.slice(0, 1).map((stat) => `${skillName.get(stat) ?? stat} cape${character.capes.length > 1 ? " (trimmed)" : ""}`),
+    ...character.rares.map((r) => RARE_NAMES[r.id] ?? r.id),
+  ];
   return (
     <section className="space-y-3" data-testid="skill-sheet" aria-label={`${name}'s skills`}>
-      <h2 className="text-section font-semibold">
-        {name}'s skills <span className="font-normal text-fg-secondary">· total level {number(character.total_level)}</span>
-      </h2>
+      <div className="flex items-center gap-3">
+        <AgentAvatar identity={identity} size={64} />
+        <div>
+          <h2 className="text-section font-semibold">
+            {name}'s skills <span className="font-normal text-fg-secondary">· total level {number(character.total_level)}</span>
+          </h2>
+          <p className="text-xs text-muted-foreground" data-testid="worn">
+            {TIER_NAME[character.tier]} gear{earned.length ? ` · ${earned.join(", ")}` : ""}
+          </p>
+        </div>
+      </div>
       {GROUPS.map((group) => (
         <div key={group.id} className="space-y-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">{group.name}</h3>
@@ -193,7 +210,7 @@ export function AchievementsPage() {
         </ul>
       </section>
 
-      {selected && <SkillSheet character={selected} skills={data.skills} name={lookup(selected.agent_type).displayName} />}
+      {selected && <SkillSheet character={selected} skills={data.skills} identity={lookup(selected.agent_type)} />}
     </div>
   );
 }

@@ -100,7 +100,7 @@ An achievement is data: `{ id, name, what_counts, metric, thresholds[7], secret?
 | Oh Dear, You Are Dead | merges on an issue whose earlier job failed (secret) | 1, 3, 5, 10, 25, 50, 100 |
 | Click Here to Continue | questions an agent asked a person | 1, 5, 10, 25, 50, 100, 250 |
 
-**Rares.** A few secrets award a hat instead of a tier: a pull request merged on 25 December gives a party hat (its colour from the character's palette colour), on 31 October a holiday mask, and the first job of a new year a party hat in white. A rare goes to the character whose job earned it.
+**Rares.** A few days award a hat instead of a tier: a pull request merged on 25 December gives a party hat (its colour from the character's palette colour), on 31 October a holiday mask, and the first run of a new year a party hat in white. Dates are UTC. A rare goes to the character whose job earned it, once; each drop is a chat-box message ("Valuable drop: Developer received a party hat!").
 
 ## Quests and repo diaries
 
@@ -136,7 +136,14 @@ Level requirements that change what a character may do, like the requirements to
 - **A character's skill sheet:** an agent card opens its 23 skills as tiles in the classic three-column grid, grouped Build, Verify, Investigate, Care, each with its level and a bar to the next level.
 - **Chat-box messages:** a level gained or an achievement unlocked appears as a short message in the classic chat style, naming the character ("Congratulations, Developer just advanced a Coding level. Its Coding level is now 42."), bottom left, one at a time. The page polls `/progression` every minute; a viewer's last seen time lives in `localStorage`, so each message shows once per browser.
 - **Agent cards:** the character's total level and its best skill.
-- **What characters wear:** each built-in keeps its class and climbs that class's ladder (melee plate, ranged leather to dragonhide, magic robes), from Bronze to Divine. Its tier follows its best skill: Bronze from 1, Iron 15, Steel 30, Mithril 45, Adamant 60, Rune 75, Divine 90. A skill cape, in its echo's colours, replaces the party cape at 99 (the best one if several); an earned rare replaces its head item. The legacy 16-pixel avatars cannot wear gear, so the built-in agents move to composed 32-pixel adventurers; their ids stay and an old row still renders.
+- **What characters wear:** an avatar picks the person and a combat style, and the character climbs that style's ladder from Bronze to Divine. Its tier follows its best skill: Bronze from 1, Iron 15, Steel 30, Mithril 45, Adamant 60, Rune 75, Divine 90.
+
+  | Tier | Melee | Ranged | Magic |
+  |---|---|---|---|
+  | Bronze to Rune | the metal's open helm, platebody, platelegs, kiteshield, scimitar | leather, hardened, studded, then green, blue and red dragonhide, with a bow from shortbow to magic longbow | wizard, dark, enchanted, mystic, astral and archmage robes, with a staff whose orb brightens |
+  | Divine | pale-gold plate | blessed white hide and a crystal bow | celestial robes and a divine staff |
+
+  The helm is open-faced so a character stays recognisable in its gear. From Mithril up a character carries the party cape and an amulet. The monk, the pirate and the two skillers keep their look; only their tool takes the tier's metal. A skill cape in its echo's colours replaces the party cape at 99, with a drape over the shoulders so it shows from the front (the best 99 if several, trimmed for two or more); an earned rare replaces the head item. The twelve 16-pixel avatars could not wear gear, so they became composed 32-pixel people in their class's Bronze kit; their ids stay and an old row still renders. Any sprite of a character the app knows wears its outfit; the agent form's picker shows the avatars as drawn.
 
 ## Art
 
@@ -150,10 +157,11 @@ New parts and items (the Divine tier and the class ladders, skill capes, party h
 {
   account: { xp, total_level, characters },   // quest_points arrives with quests
   skills: [{ id, name, group, echo }],
-  characters: [{ agent_type, xp, total_level, best_skill, tier,
+  characters: [{ agent_type, xp, total_level, best_skill, tier, capes: [stat], rares: [{ id, at }],
                  skills: [{ stat, xp, level, level_xp, xp_to_next }] }],
   achievements: [{ id, name, what_counts, secret, state, tier, tiers_reached, value, next_threshold, thresholds, unlocked_at }],
-  recent: [{ kind: "level", at, agent_type, stat, level } | { kind: "achievement", at, id, name, tier }]
+  recent: [{ kind: "level", at, agent_type, stat, level } | { kind: "rare", at, agent_type, id }
+           | { kind: "achievement", at, id, name, tier }]
 }
 ```
 

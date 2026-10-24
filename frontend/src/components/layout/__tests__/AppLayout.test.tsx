@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { Link, MemoryRouter, Routes, Route } from "react-router";
 
@@ -21,6 +21,7 @@ vi.mock("@/components/dashboard/BriefBar", () => ({
 // The chat box reads progression through the query client, which these
 // shell tests do not provide; its own tests cover it.
 vi.mock("@/components/progression/Chatbox", () => ({ Chatbox: () => null }));
+vi.mock("@/components/progression/OutfitProvider", () => ({ OutfitProvider: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/stores/layoutStore", () => ({
   useLayoutStore: (selector?: (s: { densityMode: string }) => unknown) =>
     selector ? selector({ densityMode: "comfortable" }) : { densityMode: "comfortable" },

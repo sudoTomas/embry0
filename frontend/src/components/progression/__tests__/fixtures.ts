@@ -20,6 +20,8 @@ export function character(overrides: Partial<Character> = {}): Character {
     total_level: 187,
     best_skill: "coding",
     tier: "divine",
+    capes: ["coding"],
+    rares: [],
     skills: [
       skill("coding", { xp: 13_500_000, level: 99, level_xp: 13_034_431, xp_to_next: null }),
       skill("version_control", { xp: 2_100_000, level: 84, level_xp: 2_000_000, xp_to_next: 250_000 }),
@@ -53,7 +55,7 @@ export function progression(overrides: Partial<Progression> = {}): Progression {
     account: { xp: 15_134_431, total_level: 192, characters: 2 },
     skills: SKILLS,
     characters: [
-      character({ agent_type: "review", xp: 0, total_level: 5, best_skill: "coding", tier: "bronze", skills: SKILLS.map((s) => skill(s.id)) }),
+      character({ agent_type: "review", xp: 0, total_level: 5, best_skill: "coding", tier: "bronze", capes: [], rares: [], skills: SKILLS.map((s) => skill(s.id)) }),
       character(),
     ],
     achievements: [

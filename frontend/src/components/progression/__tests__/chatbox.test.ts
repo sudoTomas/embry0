@@ -13,6 +13,8 @@ describe("chat box messages", () => {
       "Congratulations, Forge just advanced a Coding level. Its Coding level is now 42.",
     );
     expect(chatMessage(UNLOCK, () => "", () => "")).toBe("Well done! You have reached Steel in Forged in Fire.");
+    const drop: RecentEvent = { kind: "rare", at: "2026-12-25T10:00:00+00:00", agent_type: "developer", id: "party-hat" };
+    expect(chatMessage(drop, () => "", () => "Forge")).toBe("Valuable drop: Forge received a party hat!");
   });
 
   it("keeps only what is newer than the last one shown, oldest first", () => {
