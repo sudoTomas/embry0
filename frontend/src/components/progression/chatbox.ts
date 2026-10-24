@@ -44,6 +44,7 @@ export function chatMessage(
     const skill = skillName(event.stat);
     return `Congratulations, ${characterName(event.agent_type)} just advanced a ${skill} level. Its ${skill} level is now ${event.level}.`;
   }
+  if (event.kind === "agent_level") return `Congratulations, ${characterName(event.agent_type)}'s level is now ${event.level}.`;
   if (event.kind === "quest") return `Congratulations! Quest complete: ${event.name}.`;
   if (event.kind === "diary") {
     return `Well done! You have completed the ${DIARY_TIER_NAME[event.tier]} tasks in the ${event.repo} diary.`;

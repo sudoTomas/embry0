@@ -4,16 +4,16 @@ import { MemoryRouter } from "react-router";
 import { LevelBadge } from "../LevelBadge";
 
 describe("LevelBadge", () => {
-  it("shows the total level, says which skill set the tier, and links to the skill sheet", () => {
+  it("shows the level, gives the total level and the skill that set the tier, and links to the skill sheet", () => {
     render(
       <MemoryRouter>
-        <LevelBadge agentType="blast-radius" totalLevel={1234} bestSkill="Coding" bestLevel={84} tier="rune" />
+        <LevelBadge agentType="blast-radius" level={96} totalLevel={1234} bestSkill="Coding" bestLevel={84} tier="rune" />
       </MemoryRouter>,
     );
     const badge = screen.getByTestId("level-badge");
-    expect(badge).toHaveTextContent("Total level 1,234");
+    expect(badge).toHaveTextContent("Level 96");
     expect(badge).toHaveAttribute("data-tier", "rune");
-    expect(badge).toHaveAttribute("title", "Rune tier from Coding 84 · open the skill sheet");
+    expect(badge).toHaveAttribute("title", "Total level 1,234 · Rune tier from Coding 84 · open the skill sheet");
     expect(badge).toHaveAttribute("href", "/achievements?character=blast-radius");
   });
 
@@ -22,7 +22,7 @@ describe("LevelBadge", () => {
     render(
       <MemoryRouter>
         <div onClick={() => (rowClicks += 1)}>
-          <LevelBadge agentType="developer" totalLevel={23} bestSkill="Coding" bestLevel={1} tier="bronze" />
+          <LevelBadge agentType="developer" level={1} totalLevel={23} bestSkill="Coding" bestLevel={1} tier="bronze" />
         </div>
       </MemoryRouter>,
     );

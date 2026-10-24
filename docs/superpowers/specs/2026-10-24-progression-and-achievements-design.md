@@ -18,7 +18,8 @@ The tone is the old-school adventure game the roster already draws (the game UI 
 | action | One tool call of a run, classified into the skill it trains |
 | experience (XP) | Points a character's skill gains from an action or an outcome the database records |
 | level | 1 to 99 from XP, on the classic curve: `xp(L) = floor(sum_{n=1}^{L-1} floor(n + 300 * 2^(n/7)) / 4)`; level 99 is 13,034,431 XP and level 92 is half of that |
-| total level | A character's 23 levels added up, 23 to 2,277: the number on its card |
+| level (of a character) | Its one number, 1 to 126, on its card: the combat-level formula with its best skills in the combat slots, `floor(0.25 * (s3 + s4 + floor(s5 / 2)) + 0.325 * (s1 + s2))` for its skill levels best first. The two best stand where Attack and Strength do, the next three where Defence, Hitpoints and Prayer do; every skill at 99 makes 126 |
+| total level | A character's 23 levels added up, 23 to 2,277: on its skill sheet |
 | best skill | A character's highest level; it sets the gear tier the character wears |
 | tier | Bronze, Iron, Steel, Mithril, Adamant, Rune, Divine: an achievement's seven steps, and the gear a character wears |
 
@@ -133,9 +134,9 @@ Level requirements that change what a character may do, like the requirements to
 ## Where it shows
 
 - **Account page** (`/achievements`, under Overview): the account XP, the account total and quest points; the achievement diary with tier pips, progress to the next tier, the "What counts" line, and secrets as `???`; the roster of characters with total level and best skill; quests and repo diaries in their slice.
-- **A character's skill sheet:** an agent card opens its 23 skills as tiles in the classic three-column grid, grouped Build, Verify, Investigate, Care, each with its level and a bar to the next level.
+- **A character's skill sheet:** the character dressed in what it earned, its level and total level, what it wears, and its 23 skills as tiles in the classic three-column grid, grouped Build, Verify, Investigate, Care, each with its level and a bar to the next level. It shows on the account page and opens the agent's own page, whose configuration (identity, model and runtime, tools, skill packs, MCP servers, prompt) folds into parts that close to a line saying what each holds, with expand all and collapse all; a saved agent opens on its character with its configuration closed, a new one with every part open, and a save error opens the part it names. A rise of the level is a chat-box message ("Congratulations, Developer's level is now 96.").
 - **Chat-box messages:** a level gained or an achievement unlocked appears as a short message in the classic chat style, naming the character ("Congratulations, Developer just advanced a Coding level. Its Coding level is now 42."), bottom left, one at a time. The page polls `/progression` every minute; a viewer's last seen time lives in `localStorage`, so each message shows once per browser.
-- **Agent cards:** the character's total level and its best skill.
+- **Agent cards:** the character's level; its title gives the total level and the skill that set its tier.
 - **What characters wear:** an avatar picks the person and a combat style, and the character climbs that style's ladder from Bronze to Divine. Its tier follows its best skill: Bronze from 1, Iron 15, Steel 30, Mithril 45, Adamant 60, Rune 75, Divine 90.
 
   | Tier | Melee | Ranged | Magic |
@@ -157,12 +158,13 @@ New parts and items (the Divine tier and the class ladders, skill capes, party h
 {
   account: { xp, total_level, characters, quest_points, divine_trim },
   skills: [{ id, name, group, echo }],
-  characters: [{ agent_type, xp, total_level, best_skill, tier, capes: [stat], rares: [{ id, at }], quest_cape,
+  characters: [{ agent_type, level, xp, total_level, best_skill, tier, capes: [stat], rares: [{ id, at }], quest_cape,
                  skills: [{ stat, xp, level, level_xp, xp_to_next }] }],
   achievements: [{ id, name, what_counts, secret, state, tier, tiers_reached, value, next_threshold, thresholds, unlocked_at }],
   quests: [{ id, name, points, reward, state, requirement, requirement_met, where, steps: [{ text, done_at }], completed_at }],
   diaries: [{ repo, tiers: [{ tier, tasks: [{ text, done_at }], completed_at }] }],
-  recent: [{ kind: "level", at, agent_type, stat, level } | { kind: "rare", at, agent_type, id }
+  recent: [{ kind: "level", at, agent_type, stat, level } | { kind: "agent_level", at, agent_type, level }
+           | { kind: "rare", at, agent_type, id }
            | { kind: "achievement", at, id, name, tier } | { kind: "quest", at, id, name } | { kind: "diary", at, repo, tier }]
 }
 ```

@@ -62,7 +62,8 @@ async def test_the_read_answers_the_account_its_characters_and_achievements() ->
     developer = body["characters"][0]
     assert developer["agent_type"] == "developer" and developer["best_skill"] == "coding"
     assert len(developer["skills"]) == 23
-    assert {r["kind"] for r in body["recent"]} == {"level", "achievement"}
+    assert {r["kind"] for r in body["recent"]} == {"level", "agent_level", "achievement"}
+    assert developer["level"] >= 1
     assert len(body["achievements"]) == 14 and body["achievements"][1]["id"] == "forged_in_fire"
 
 

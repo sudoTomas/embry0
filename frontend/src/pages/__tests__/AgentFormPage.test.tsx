@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Progression } from "@/api/progression";
+import { progression as progressionFixture } from "@/components/progression/__tests__/fixtures";
 import { useAuthStore } from "@/stores/authStore";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -57,6 +59,8 @@ const modelsState = vi.hoisted(() => {
   return { NO_CATALOG, CATALOG, NO_CREDENTIALS, current: NO_CATALOG };
 });
 vi.mock("@/hooks/useModels", () => ({ useModels: () => modelsState.current }));
+const progressionState: { current: { data?: Progression } } = { current: {} };
+vi.mock("@/hooks/useProgression", () => ({ useProgression: () => progressionState.current }));
 // Hoisted so each hook call returns the same array, as react-query does.
 const catalogs = vi.hoisted(() => ({
   tools: [
@@ -120,6 +124,7 @@ beforeEach(() => {
   mockUpdateMutate.mockReset();
   mockCreateMutate.mockReset();
   modelsState.current = modelsState.NO_CATALOG;
+  progressionState.current = {};
   mockUseAgent.mockReturnValue({ data: EXISTING, isLoading: false });
 });
 
@@ -403,5 +408,56 @@ describe("identity and skills (spec 3.6)", () => {
     mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, skills: ["old:skill"], orphan_skills: ["old:skill"] }, isLoading: false });
     renderEdit("grok-dev");
     expect(screen.getByText(/no source lists/i)).toHaveTextContent("old:skill");
+  });
+});
+
+describe("AgentFormPage as a character sheet (progression spec 2026-10-24)", () => {
+  const section = (id: string) => screen.getByTestId(`agent-section-${id}`) as HTMLDetailsElement;
+
+  beforeEach(() => {
+    mockUseAgent.mockReturnValue({ data: EXISTING, isLoading: false });
+    progressionState.current = { data: progressionFixture() };
+  });
+
+  it("opens a saved agent on its character, with level, total level and skills, and its configuration closed to a line each", () => {
+    renderEdit();
+    expect(section("character").open).toBe(true);
+    expect(within(section("character")).getByTestId("agent-section-summary")).toHaveTextContent("Level 59 · total level 187 · Divine gear");
+    expect(within(section("character")).getByTestId("sheet-levels")).toHaveTextContent("level 59 · total level 187");
+    expect(within(section("character")).getAllByTestId("skill-tile").length).toBeGreaterThan(0);
+    for (const id of ["identity", "model", "tools", "packs", "mcp", "prompt"]) expect(section(id).open, id).toBe(false);
+    const summary = (id: string) => within(section(id)).getByTestId("agent-section-summary");
+    expect(summary("model")).toHaveTextContent("claude-opus-5 · cli · oauth");
+    expect(summary("tools")).toHaveTextContent("2 tools: Read, Edit");
+    expect(summary("packs")).toHaveTextContent("None");
+    expect(summary("mcp")).toHaveTextContent("playwright");
+    expect(summary("prompt")).toHaveTextContent("15 characters");
+  });
+
+  it("opens and closes every part at once", async () => {
+    const user = userEvent.setup();
+    renderEdit();
+    await user.click(screen.getByRole("button", { name: "Expand all" }));
+    for (const id of ["character", "identity", "model", "tools", "packs", "mcp", "prompt"]) expect(section(id).open, id).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Collapse all" }));
+    for (const id of ["character", "identity", "model", "tools", "packs", "mcp", "prompt"]) expect(section(id).open, id).toBe(false);
+  });
+
+  it("opens the part a save error names", async () => {
+    const user = userEvent.setup();
+    renderEdit();
+    expect(section("mcp").open).toBe(false);
+    const editor = screen.getByLabelText("MCP servers (JSON)");
+    await user.clear(editor);
+    await user.type(editor, "not json");
+    expect(within(section("mcp")).getByTestId("agent-section-summary")).toHaveTextContent("Not valid JSON");
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(section("mcp").open).toBe(true);
+  });
+
+  it("opens every part for a new agent, with no character yet", () => {
+    renderNew();
+    expect(screen.queryByTestId("agent-section-character")).toBeNull();
+    for (const id of ["identity", "model", "tools", "packs", "mcp", "prompt"]) expect(section(id).open, id).toBe(true);
   });
 });

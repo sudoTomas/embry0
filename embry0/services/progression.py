@@ -215,6 +215,13 @@ NEW_YEAR_RARE = "white-party-hat"
 
 
 @dataclass(frozen=True)
+class AgentLevelUp:
+    at: datetime
+    agent_type: str
+    level: int
+
+
+@dataclass(frozen=True)
 class RareDrop:
     at: datetime
     agent_type: str
@@ -242,6 +249,17 @@ class Character:
         return sum(self.level(s.id) for s in STATS)
 
     @property
+    def agent_level(self) -> int:
+        """Its one level, 1 to 126: the combat-level formula with its best skills in the combat slots.
+
+        The two best stand where Attack and Strength do, the next three where
+        Defence, Hitpoints and Prayer do (Prayer counting half), so depth and
+        breadth both count and every skill at 99 makes 126.
+        """
+        top = sorted((self.level(s.id) for s in STATS), reverse=True)
+        return math.floor(0.25 * (top[2] + top[3] + top[4] // 2) + 0.325 * (top[0] + top[1]))
+
+    @property
     def best_skill(self) -> str:
         """Its highest level, the most experience breaking a tie, the catalogue order a full tie."""
         return max(STATS, key=lambda s: (self.level(s.id), self.stat_xp.get(s.id, 0), -STATS.index(s))).id
@@ -259,6 +277,7 @@ class Character:
     def to_dict(self, *, quest_cape: bool = False) -> dict[str, Any]:
         return {
             "agent_type": self.agent_type,
+            "level": self.agent_level,
             "xp": self.xp,
             "total_level": self.total_level,
             "best_skill": self.best_skill,
@@ -275,6 +294,7 @@ class Progression:
     characters: dict[str, Character]
     level_ups: list[LevelUp] = field(default_factory=list)
     drops: list[RareDrop] = field(default_factory=list)
+    agent_level_ups: list[AgentLevelUp] = field(default_factory=list)
     computed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     #: Each achievement's state and every tier unlock (``services.achievements``), set by the service.
     achievements: list[Any] = field(default_factory=list)
@@ -339,6 +359,10 @@ class Progression:
         drops = [
             (d.at, {"kind": "rare", "at": _iso(d.at), "agent_type": d.agent_type, "id": d.rare}) for d in self.drops
         ]
+        agent_levels = [
+            (u.at, {"kind": "agent_level", "at": _iso(u.at), "agent_type": u.agent_type, "level": u.level})
+            for u in self.agent_level_ups
+        ]
         unlocks = [(u.at, u.to_dict()) for u in self.unlocks]
         quests = [
             (q.completed_at, {"kind": "quest", "at": _iso(q.completed_at), "id": q.id, "name": q.name})
@@ -351,7 +375,9 @@ class Progression:
             for t in d.tiers
             if t.completed_at
         ]
-        merged = sorted(levels + drops + unlocks + quests + diaries, key=lambda item: item[0], reverse=True)
+        merged = sorted(
+            levels + agent_levels + drops + unlocks + quests + diaries, key=lambda item: item[0], reverse=True
+        )
         return [entry for _at, entry in merged[:count]]
 
 
@@ -375,6 +401,8 @@ def compute(
     """
     characters = {agent: Character(agent) for agent in agent_types}
     level_ups: list[LevelUp] = []
+    agent_level_ups: list[AgentLevelUp] = []
+    agent_levels: dict[str, int] = {}
     drops: list[RareDrop] = []
     last_run_year: int | None = None
 
@@ -391,6 +419,11 @@ def compute(
         after = character.level(stat)
         if after > before:
             level_ups.append(LevelUp(at, agent, stat, after))
+            # A skill's level moved, so the agent's own level may have too.
+            reached = character.agent_level
+            if reached > agent_levels.get(agent, 1):
+                agent_levels[agent] = reached
+                agent_level_ups.append(AgentLevelUp(at, agent, reached))
 
     timeline: list[tuple[datetime, ProgressEvent | Reward]] = [(e.at, e) for e in events]
     timeline += list(rewards)
@@ -412,7 +445,7 @@ def compute(
             continue
         for stat, xp in price(event):
             gain(event.agent_type, stat, xp, event.at)
-    return Progression(characters, level_ups, drops)
+    return Progression(characters, level_ups, drops, agent_level_ups)
 
 
 def first_total(level_ups: Iterable[LevelUp], total: int) -> datetime | None:

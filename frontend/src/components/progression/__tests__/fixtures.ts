@@ -16,6 +16,7 @@ export function skill(stat: string, overrides: Partial<SkillProgress> = {}): Ski
 export function character(overrides: Partial<Character> = {}): Character {
   return {
     agent_type: "developer",
+    level: 59,
     xp: 15_134_431,
     total_level: 187,
     best_skill: "coding",
@@ -56,7 +57,7 @@ export function progression(overrides: Partial<Progression> = {}): Progression {
     account: { xp: 15_134_431, total_level: 192, characters: 2, quest_points: 2, divine_trim: false },
     skills: SKILLS,
     characters: [
-      character({ agent_type: "review", xp: 0, total_level: 5, best_skill: "coding", tier: "bronze", capes: [], rares: [], skills: SKILLS.map((s) => skill(s.id)) }),
+      character({ agent_type: "review", level: 1, xp: 0, total_level: 5, best_skill: "coding", tier: "bronze", capes: [], rares: [], skills: SKILLS.map((s) => skill(s.id)) }),
       character(),
     ],
     achievements: [

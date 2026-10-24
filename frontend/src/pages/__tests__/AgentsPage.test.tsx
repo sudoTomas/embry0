@@ -22,6 +22,7 @@ const PROGRESSION = {
   characters: [
     {
       agent_type: "developer",
+      level: 34,
       xp: 2_100_000,
       total_level: 105,
       best_skill: "coding",
@@ -275,13 +276,13 @@ describe("AgentsPage identity", () => {
     expect(rowOf("mystery").querySelector('[data-avatar="golem"]'), "the default avatar tile").not.toBeNull();
   });
 
-  it("shows each character's total level, and nothing for an agent progression does not list", () => {
+  it("shows each character's level, and nothing for an agent progression does not list", () => {
     mockUseProgression.mockReturnValue({ data: PROGRESSION });
     renderPage();
     const badges = screen.getAllByTestId("level-badge");
     expect(badges).toHaveLength(1);
-    expect(badges[0]).toHaveTextContent("Total level 105");
-    expect(badges[0]).toHaveAttribute("title", "Rune tier from Coding 83 · open the skill sheet");
+    expect(badges[0]).toHaveTextContent("Level 34");
+    expect(badges[0]).toHaveAttribute("title", "Total level 105 · Rune tier from Coding 83 · open the skill sheet");
     expect(badges[0]).toHaveAttribute("data-tier", "rune");
   });
 });

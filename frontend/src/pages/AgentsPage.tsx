@@ -31,7 +31,7 @@ export function AgentsPage() {
   const navigate = useNavigate();
   const lookup = useIdentityLookup();
   const isAdmin = useIsAdmin();
-  // Each character's total level and best skill (spec 2026-10-24); a page without them still lists the agents.
+  // Each character's level and best skill (spec 2026-10-24); a page without them still lists the agents.
   const progression = useProgression();
   const skillName = new Map((progression.data?.skills ?? []).map((s) => [s.id, s.name]));
   const characterOf = new Map((progression.data?.characters ?? []).map((c) => [c.agent_type, c]));
@@ -157,6 +157,7 @@ export function AgentsPage() {
                                 {character && (
                                   <LevelBadge
                                     agentType={agent.type}
+                                    level={character.level}
                                     totalLevel={character.total_level}
                                     bestSkill={skillName.get(character.best_skill) ?? character.best_skill}
                                     bestLevel={best?.level ?? 1}
