@@ -6,8 +6,9 @@ Run via the ``embry0-mcp`` console script (stdio transport). Configure with
 Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``job_answer``, ``agent_create``, ``agent_update``, ``agent_delete``,
 ``agent_reset``, ``env_set``, ``env_delete``, ``merge_decide``, ``case_accept``,
-``case_close``, ``repo_register``, ``org_register``, ``org_webhook_install``,
-``org_act``, ``qa_config_set``, ``credential_bind``, ``host_import_tailnet``,
+``case_close``, ``repo_register``, ``org_register``, ``org_update``,
+``org_webhook_install``, ``org_act``, ``context_audit_run``, ``qa_config_set``,
+``credential_bind``, ``host_import_tailnet``,
 ``skill_source_add``, ``skill_source_update``, ``skill_source_sync``,
 ``skill_source_remove``, ``inline_skill_put``, ``inline_skill_remove``,
 ``agent_skill_add``, ``agent_skill_remove``, ``standard_set``,
@@ -39,6 +40,11 @@ mcp = MCPServer(
         "templates, the log watcher, healing cases, merge approvals, per-repo environment "
         "variables, forge credentials (list, resolve, bind), the hosts that run the "
         "code (list, get, probe, import from a tailnet), "
+        "organizations (list, get, needs, register, update settings, webhook, actions), "
+        "the context audit that finds stale or wrong lines in the files that steer a coding agent "
+        "(CLAUDE.md, AGENTS.md, skills, rules) in an organization's repositories: its schedule and "
+        "caps are organization settings set with org_update, context_audit_status reads it, and "
+        "context_audit_run starts the due audits now, "
         "skills (catalog, sources, inline skills, per-agent add/remove), the tool catalog, "
         "and an owner's standards (get, set, audit a repository against one). "
         "Destructive tools require confirm=true after explicit user approval. "
@@ -921,6 +927,74 @@ async def org_register(
     return await _get_client().org_register(
         owner, forge=forge, credential_id=credential_id, display_name=display_name, probe=probe
     )
+
+
+@_tool
+async def org_update(
+    owner: str,
+    display_name: str | None = None,
+    settings: dict[str, Any] | None = None,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Change an organization's display name or settings. Settings merge: the keys given are set and
+    the rest stay; a key set to null turns it off or hands it back to the deployment's default. The
+    keys an organization accepts, and no others:
+    auto_register (boolean): a webhook delivery for an unregistered repository under the owner
+    registers it first.
+    rediscover_hours (integer 1 to 168, or null for off): rediscover the owner on a schedule.
+    context_audit_days (integer 1 to 365, or null for off): audit the files that steer a coding agent
+    (CLAUDE.md, AGENTS.md, skills, rules) in each registered repository on a schedule, when they
+    change and this many days after the newest audit once the branch moved.
+    context_audit_budget_usd (number more than 0 and at most 50, or null for the deployment's
+    default): the hard cap in USD of each context-audit job started for the owner.
+    context_audit_max_jobs_per_tick (integer 0 to 50, or null for the deployment's default): the most
+    context-audit jobs one tick of the schedule (every 15 minutes) starts for the owner; 0 starts none.
+    An unknown key, a wrong type or a value out of range is refused. Returns the organization. Needs
+    an admin-scope key. Requires confirm=true (changes what embry0 does, and may spend, for every
+    repository under the owner)."""
+    if not confirm:
+        changed = sorted(settings or {}) + (["display_name"] if display_name is not None else [])
+        return _confirmation_refusal("org_update", f"update organization {owner!r}: {', '.join(changed) or 'nothing'}")
+    return await _get_client().org_update(owner, display_name=display_name, settings=settings)
+
+
+@_tool
+async def context_audit_status(owner: str) -> dict[str, Any]:
+    """What the context audit reads for one GitHub organization: its context_audit_days (null is
+    off) and, for each active registered repository with files that steer a coding agent (CLAUDE.md,
+    AGENTS.md, skills, rules), how many there are, their fingerprint, the head read, the newest
+    context-audit job (job_id, status, created_at), whether the schedule would start one now (due)
+    and why (reason: first, changed, aged, live, current or off). unread lists the repositories the
+    forge did not answer for, with why. Reads the forge and starts nothing, whatever the setting
+    says. Read-only."""
+    return await _get_client().context_audit_status(owner)
+
+
+@_tool
+async def context_audit_run(
+    owner: str,
+    repo: str | None = None,
+    force: bool = False,
+    limit: int | None = None,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Start an organization's due context audits now, whether or not its schedule is on, through the
+    schedule's own start, so the schedule counts them and does not repeat them. Without repo: every
+    due repository, at most limit (1 to 50; default the organization's
+    context_audit_max_jobs_per_tick). With repo ("group/name", one of the owner's active registered
+    repositories): that one when it is due, or whatever the due rule says with force=true; force
+    needs repo. With the schedule off no interval applies: due is no audit yet, or changed files.
+    Never while a context-audit job of the repository is live, force or not. Each job's hard cap is
+    the organization's context_audit_budget_usd, else the deployment's default. Returns started (repo, job_id, reason) and
+    skipped (repo, reason: live, current, limit, refused, unread or no_instruction_files, and
+    detail); follow a job with job_wait and job_deliverables. Use this rather than
+    job_create(pipeline_template="context-audit"): that job records no fingerprint, so the schedule
+    cannot compare a later change with it. Needs an operate-scope key, and a key limited to some
+    repositories must name one with repo. Requires confirm=true (starts paid jobs)."""
+    if not confirm:
+        action = f"start the context audit of {repo!r}" if repo else f"start the due context audits under {owner!r}"
+        return _confirmation_refusal("context_audit_run", action)
+    return await _get_client().context_audit_run(owner, repo=repo, force=force, limit=limit)
 
 
 @_tool

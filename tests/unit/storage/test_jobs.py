@@ -436,3 +436,50 @@ async def test_skipped_is_terminal(jobs_repo: JobsRepository, then: JobStatus):
 
     with pytest.raises(ValueError, match="skipped ->"):
         await jobs_repo.update(job_id, status=then)
+
+
+# ---- ADR 0020: the newest job per repository, for the context audit schedule ----
+
+
+@pytest.mark.asyncio
+async def test_newest_per_repo_answers_the_newest_job_of_each_repository_and_whether_one_is_live(
+    jobs_repo: JobsRepository,
+):
+    db = jobs_repo._db
+    actor = "embry0:context-audit"
+
+    async def job(repo: str, hours_ago: int, status: JobStatus | None = None, **kw: object) -> str:
+        job_id = await jobs_repo.create(repo=repo, task="t", dispatched_by=kw.pop("by", None), **kw)
+        await db.execute(
+            "UPDATE jobs SET created_at = NOW() - make_interval(hours => $2) WHERE job_id = $1", job_id, hours_ago
+        )
+        if status is not None:
+            await jobs_repo.update(job_id, status=JobStatus.RUNNING)
+            if status != JobStatus.RUNNING:
+                await jobs_repo.update(job_id, status=status)
+        return job_id
+
+    fp = {"context_fingerprint": "f" * 64, "head_sha": "1" * 40}
+    old_web = await job("acme/web", 48, JobStatus.COMPLETED, pipeline_template="context-audit")
+    new_web = await job("acme/web", 2, JobStatus.FAILED, pipeline_template="context-audit", pipeline_config=fp)
+    await job("acme/web", 1, JobStatus.COMPLETED, pipeline_template="analysis-default")  # another template
+    held = await job("acme/api", 30, JobStatus.RUNNING, pipeline_template="context-audit")
+    newer_api = await job("acme/api", 3, JobStatus.COMPLETED, pipeline_template="context-audit")
+    # plan_route rewrote the template column; the schedule's own actor still finds it.
+    rerouted = await job("acme/ops", 5, None, pipeline_template="code-default", by=actor)
+    await job("acme/other", 1, JobStatus.COMPLETED, pipeline_template="context-audit")  # not asked about
+
+    newest = await jobs_repo.newest_per_repo(
+        ["acme/web", "acme/api", "acme/ops", "acme/none"], pipeline_template="context-audit", dispatched_by=actor
+    )
+    assert set(newest) == {"acme/web", "acme/api", "acme/ops"}, "a repository with no such job is absent"
+    web, api, ops = newest["acme/web"], newest["acme/api"], newest["acme/ops"]
+    assert web["job_id"] == new_web != old_web and web["status"] == "failed"
+    assert web["pipeline_config"] == fp and web["live"] is False
+    assert "task" not in web, "the task text is not read"
+    assert api["job_id"] == newer_api != held
+    assert api["live"] is True, "an older job still running holds the repository, not only the newest"
+    assert ops["job_id"] == rerouted and ops["live"] is True, "pending is live"
+    assert await jobs_repo.newest_per_repo([], pipeline_template="context-audit") == {}
+    without_actor = await jobs_repo.newest_per_repo(["acme/ops"], pipeline_template="context-audit")
+    assert without_actor == {}

@@ -2028,6 +2028,51 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.org_rediscovery = None
         logger.critical("org_rediscovery_unavailable", exc_info=True)
 
+    # ADR 0020: the context audit on a schedule. For the owners whose
+    # context_audit_days setting is on (it is off by default), the loop reads
+    # each registered repository's default branch with the organization's
+    # credential and starts a context-audit job, the way POST /jobs starts
+    # one, for each repository that is due. GET /orgs/{owner}/context-audit
+    # reads through the same loop.
+    try:
+        from embry0.api.v1.organizations import app_request as _audit_request
+        from embry0.api.v1.organizations import org_forge_client
+        from embry0.services.context_audit import ContextAuditLoop, job_budget_usd, start_context_audit_job
+        from embry0.services.context_audit import RepoContext as _RepoContext
+        from embry0.services.organizations import Organization as _AuditedOrganization
+
+        async def _context_audit_client(org: _AuditedOrganization) -> Any:
+            return await org_forge_client(_audit_request(app), org)
+
+        async def _start_context_audit(context: _RepoContext, budget_usd: float) -> str:
+            return await start_context_audit_job(
+                context,
+                jobs=app.state.jobs_repo,
+                executor=getattr(app.state, "issue_executor", None),
+                templates=app.state.templates_repo,
+                budget_usd=budget_usd,
+                db=db,
+                audit_log_path=config.audit_log_path,
+            )
+
+        app.state.context_audit = ContextAuditLoop(
+            organizations=app.state.organizations_repo,
+            registry=app.state.repos_repo,
+            jobs=app.state.jobs_repo,
+            client_for=_context_audit_client,
+            start_job=_start_context_audit,
+            # The deployment's caps: an organization's own settings take their
+            # place for its repositories.
+            max_jobs_per_tick=config.context_audit_max_jobs_per_tick,
+            budget_usd=job_budget_usd(config),
+        )
+        context_audit_task = asyncio.create_task(app.state.context_audit.start())
+        app.state.background_tasks.add(context_audit_task)
+        context_audit_task.add_done_callback(app.state.background_tasks.discard)
+    except Exception:
+        app.state.context_audit = None
+        logger.critical("context_audit_unavailable", exc_info=True)
+
     # Merge approvals (#319 phase 2): a job's PR on an enabled repo is asked
     # about in the operator's approval chat, and a relayed "merge it" is
     # checked and merged here. The executor holds it as an optional

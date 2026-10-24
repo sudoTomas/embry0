@@ -1,13 +1,17 @@
-"""The eight specialist agents: their seeds, their routes, and every list of
+"""The nine specialist agents: their seeds, their routes, and every list of
 agent types that has to accept them."""
 
 import json
 import re
+import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from embry0.agents.output_text import MAX_OUTPUT_CHARS, tail_on_line_boundary
 from embry0.orchestration.nodes.agent import DEFAULT_AGENT_MAX_TURNS
+from embry0.safety.patterns import is_dangerous_command
+from embry0.services.instruction_files import INSTRUCTION_FILE_GLOBS, SKIPPED_DIRS, instruction_files
 from embry0.services.standards import MAX_FINDING_ROWS
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
 from embry0.storage.seeds.pipeline_templates_builtin import BUILTIN_PIPELINE_TEMPLATES
@@ -27,7 +31,12 @@ from embry0.workflows.issue_to_pr.route_plan import (
     specialist_job_kind,
     step_template_config,
 )
-from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_AGENT_TYPES, SPECIALIST_TEMPLATE_NAMES
+from embry0.workflows.issue_to_pr.specialist_agents import (
+    CONTEXT_AUDITOR_SYSTEM_PROMPT,
+    REPORT_TARGET_CHARS,
+    SPECIALIST_AGENT_TYPES,
+    SPECIALIST_TEMPLATE_NAMES,
+)
 
 # Agent type -> the template that routes a job to it. Written out rather than
 # imported, so dropping or renaming one fails here.
@@ -40,11 +49,12 @@ SPECIALISTS = {
     "blast-radius": "blast-radius",
     "comment-sicko": "comment-pass",
     "design-auditor": "design-audit",
+    "context-auditor": "context-audit",
 }
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"]
 
 
-def test_the_specialists_are_these_eight():
+def test_the_specialists_are_these_nine():
     assert set(SPECIALIST_AGENT_TYPES) == set(SPECIALISTS)
 
 
@@ -102,7 +112,7 @@ def test_each_prompt_carries_its_methods_output_contract():
             "Weed kind",
             "git apply",
             "no weeds found",
-            "rm -rf /tmp/garden && cp -a /workspace /tmp/garden",
+            "cd /tmp && rm -rf garden && cp -a /workspace garden",
         ],
         "interrogator": [
             "Adversarial",
@@ -117,6 +127,7 @@ def test_each_prompt_carries_its_methods_output_contract():
         "blast-radius": ["one fact it is safe because of", "`unproven`", "Before you merge", "the copy under /tmp/run"],
         "comment-sicko": ["MUST KILL", "Encode instead", "never touch the code"],
         "design-auditor": ["deterministic", "font sizes", "**Conformance**", "**Hygiene**"],
+        "context-auditor": ["git ls-files", "`Stale: N`", "`misleads`", "`## Unverifiable`", "git apply --check"],
     }
     for agent_type, phrases in expected.items():
         prompt = BUILTIN_SEED[agent_type]["system_prompt"]
@@ -130,8 +141,44 @@ def test_checks_run_in_a_copy_so_the_workspace_stays_untouched():
     # The rm first: cp -a onto an existing /tmp/run nests the second copy.
     for agent_type in SPECIALISTS:
         prompt = BUILTIN_SEED[agent_type]["system_prompt"]
-        assert "rm -rf /tmp/run && cp -a /workspace /tmp/run" in prompt, agent_type
+        assert "cd /tmp && rm -rf run && cp -a /workspace run" in prompt, agent_type
         assert "never runs in /workspace" in prompt, agent_type
+
+
+def test_the_prompts_say_which_end_of_a_long_report_the_job_keeps():
+    # The executor keeps the tail of a final message. The prompts used to
+    # promise the head, so a report that ran long lost its counts and its
+    # findings table, the part they told the agent to put first.
+    report = "Stale: 3\nFiles: 6\n" + "row\n" * MAX_OUTPUT_CHARS
+    assert not tail_on_line_boundary(report).startswith("Stale: 3")
+    assert REPORT_TARGET_CHARS < MAX_OUTPUT_CHARS
+    for agent_type in SPECIALISTS:
+        prompt = BUILTIN_SEED[agent_type]["system_prompt"]
+        assert f"keeps only the last {MAX_OUTPUT_CHARS:,} characters" in prompt, agent_type
+        assert f"under {REPORT_TARGET_CHARS:,} characters" in prompt, agent_type
+        assert "wc -m /tmp/report.md" in prompt, agent_type
+        assert "first 10,000" not in prompt, agent_type
+
+
+def _quoted_commands(prompt: str) -> list[str]:
+    """Every fenced block and every inline code span of a prompt."""
+    fenced = re.findall(r"```[^\n]*\n(.*?)```", prompt, re.S)
+    inline = re.findall(r"(?<!`)`([^`\n]+)`(?!`)", prompt)
+    return fenced + inline
+
+
+def test_no_prompt_prescribes_a_command_the_safety_policy_blocks():
+    # The sandbox runs every Bash call through the same patterns: a command a
+    # prompt prescribes and the policy blocks costs the agent a turn, then it
+    # improvises. `rm -rf /tmp/run` did, in every specialist (an absolute path
+    # after `rm -rf` is blocked whatever it names).
+    blocked = {
+        (agent_type, command, pattern)
+        for agent_type in SPECIALISTS
+        for command in _quoted_commands(BUILTIN_SEED[agent_type]["system_prompt"])
+        if (pattern := is_dangerous_command(command)) is not None
+    }
+    assert not blocked
 
 
 def test_design_audit_report_opens_with_the_score_and_the_findings_table():
@@ -176,6 +223,130 @@ def test_design_audit_weights_sum_to_100_in_each_score():
     assert sum(conformance_weights.values()) == sum(hygiene_weights.values()) == 100
 
 
+def test_context_audit_prompt_carries_the_instruction_file_list():
+    # The context-audit schedule fingerprints instruction_files(); the agent
+    # audits what the prompt's command lists, so the prompt carries the
+    # module's globs and skipped directories, not a copy of them.
+    prompt = CONTEXT_AUDITOR_SYSTEM_PROMPT
+    missing = [glob for glob in INSTRUCTION_FILE_GLOBS if f"':(glob){glob}'" not in prompt]
+    assert not missing, f"the context-audit prompt lost the globs {missing}"
+    searched = [d for d in SKIPPED_DIRS if f"':(exclude,glob)**/{d}/**'" not in prompt]
+    assert not searched, f"the context-audit prompt searches the skipped directories {searched}"
+
+
+def test_context_audit_command_lists_what_instruction_files_lists(tmp_path):
+    # git's glob magic is not the module's matcher, so run the prompt's own
+    # command in a repository that holds listed, unlisted and vendored files.
+    paths = [
+        "CLAUDE.md",
+        "apps/hub/src/app/api/CLAUDE.md",
+        "CLAUDE.local.md",
+        "AGENTS.md",
+        "AGENTS.override.md",
+        "services/api/GEMINI.md",
+        "notes/HANDOFF.md",
+        "llms.txt",
+        ".cursorrules",
+        "sub/.windsurfrules",
+        "sub/.clinerules",
+        ".github/copilot-instructions.md",
+        ".github/instructions/frontend.instructions.md",
+        ".github/instructions/deep/api.instructions.md",
+        ".cursor/rules/style.mdc",
+        "pkg/.cursor/rules/deep/style.md",
+        ".claude/skills/verify-app/SKILL.md",
+        "apps/hub/.claude/commands/ship.md",
+        ".claude/agents/reviewer.md",
+        ".claude/rules/tests.md",
+        ".grok/skills/verify/SKILL.md",
+        ".grok/rules/style.md",
+        ".codex/prompts/review.md",
+        ".agents/notes/a.md",
+        # Not instruction files.
+        "README.md",
+        "docs/CLAUDE.md.bak",
+        "docs/MY-CLAUDE.md",
+        "apps/.github/copilot-instructions.md",
+        ".github/instructions/notes.md",
+        ".claude/settings.json",
+        "src/claude.ts",
+        # Instruction files of vendored or generated trees.
+        "node_modules/pkg/CLAUDE.md",
+        "frontend/node_modules/x/.claude/skills/a/SKILL.md",
+        "vendor/lib/AGENTS.md",
+        "build/CLAUDE.md",
+        "a/dist/b/AGENTS.md",
+        ".venv/lib/CLAUDE.md",
+        "venv/AGENTS.md",
+    ]
+    for path in paths:
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text("x\n")
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+
+    command = re.search(r"\n```\n(git ls-files -- [^\n]+)\n```\n", CONTEXT_AUDITOR_SYSTEM_PROMPT)
+    assert command, "the prompt hands the agent the command in a code block of its own"
+    listed = subprocess.run(
+        ["sh", "-c", command.group(1)], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.split()
+
+    assert len(instruction_files(paths)) == 24, "the repository must hold files on both sides of the list"
+    assert sorted(listed) == instruction_files(paths), "the prompt's command and instruction_files() disagree"
+
+
+def test_context_audit_report_opens_with_the_stale_and_file_counts():
+    # The first two lines are fixed so a program can read the counts.
+    prompt = CONTEXT_AUDITOR_SYSTEM_PROMPT
+    assert "The first line is `Stale: N` and nothing else" in prompt
+    assert "where N is the number of `misleads` and `dead` findings" in prompt
+    assert "The second line is `Files: M` and nothing else" in prompt
+    assert prompt.index("`Stale: N`") < prompt.index("`Files: M`") < prompt.index("a `## Findings` heading")
+    assert "\n| Severity | Location | Claim | Evidence | Fix |\n" in prompt
+    assert "at most 40 rows" in prompt
+    sections = [
+        "`## Pull`",
+        "`## Unverifiable`",
+        "`## Unreachable from a clone`",
+        "`## Not covered`",
+        "`## Assumptions`",
+    ]
+    positions = [prompt.index(section) for section in sections]
+    assert positions == sorted(positions), "the sections after the table keep their order"
+    assert prompt.index("| Severity | Location |") < positions[0]
+    assert "`Stale: 0`, then `Files: 0`" in prompt, "a repository with no instruction files still opens with both"
+
+
+def test_context_audit_report_says_what_to_cut_to_fit():
+    # Its pull is the longest part: a 24,731-character audit lost its head to
+    # the executor's cut. The prompt bounds the whole report, diff included,
+    # and keeps the counts and the misleads rows whatever else goes.
+    shape = CONTEXT_AUDITOR_SYSTEM_PROMPT.split("## Deliverable shape", 1)[1]
+    assert f"the diff included, stays under {REPORT_TARGET_CHARS:,}" in shape
+    assert "the `drift` rows and their hunks" in shape
+    assert "Never cut the first two lines or a `misleads` row" in shape
+
+
+def test_context_audit_checks_references_by_script_and_proves_its_pull():
+    prompt = CONTEXT_AUDITOR_SYSTEM_PROMPT
+    method = prompt.split("## Method", 1)[1].split("## Severity", 1)[0]
+    phrases = [
+        "Write one script under /tmp",
+        "about twice as many",
+        "`runtime`",
+        "`history`",
+        "unverifiable, not stale",
+        "file:line only, never the value",
+        "git -C /tmp/run apply --check",
+        "never in /workspace",
+        "a question, not a guess",
+    ]
+    missing = [p for p in phrases if p not in method]
+    assert not missing, f"the context-audit method lost {missing}"
+    severity = prompt.split("## Severity", 1)[1].split("## Deliverable shape", 1)[0]
+    assert all(f"- `{word}`:" in severity for word in ("misleads", "dead", "drift"))
+
+
 # ---- the routes ----------------------------------------------------------------
 
 
@@ -195,7 +366,7 @@ def test_template_validates_and_routes_to_the_generic_node(agent_type, template)
     assert specialist_job_kind(plan) == "analysis"
 
 
-def test_the_specialist_templates_are_the_eight_all_specialist_routes():
+def test_the_specialist_templates_are_the_nine_all_specialist_routes():
     assert SPECIALIST_TEMPLATE_NAMES == set(SPECIALISTS.values())
     all_specialist = {
         name
@@ -277,7 +448,7 @@ async def test_generic_node_runs_the_specialist_with_its_definition(agent_type):
 
 def test_the_specialists_that_run_checks_get_more_wall_clock():
     assert DEFAULT_GENERIC_AGENT_TIMEOUT_SECONDS == 600, "research, analysis and ops keep their old limit"
-    for agent_type in ("kintsugi", "interrogator", "blast-radius", "design-auditor", "gardener"):
+    for agent_type in ("kintsugi", "interrogator", "blast-radius", "design-auditor", "context-auditor", "gardener"):
         assert GENERIC_AGENT_TIMEOUT_SECONDS[agent_type] > DEFAULT_GENERIC_AGENT_TIMEOUT_SECONDS, agent_type
     assert not set(GENERIC_AGENT_TIMEOUT_SECONDS) - set(SPECIALISTS)
 

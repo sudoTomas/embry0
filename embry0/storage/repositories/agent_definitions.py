@@ -283,6 +283,21 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "auth_mode": None,
         "mcp_servers": {},
     },
+    "context-auditor": {
+        "description": (
+            "Checks the files that steer a coding agent (CLAUDE.md, AGENTS.md, "
+            "rules, skills, handoff notes) against the code and its history, and "
+            "returns the stale lines with their evidence, the claims nothing can "
+            "confirm, and a diff that corrects the certain ones. Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["context-auditor"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
 }
 
 # Every builtin carries its identity (embry0/agents/identity.py). Merged here so

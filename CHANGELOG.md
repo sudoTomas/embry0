@@ -44,10 +44,11 @@ describes what embry0 does rather than listing changes.
   deployment's logs into draft issues ([docs/self-watching.md](docs/self-watching.md));
   merge approvals ask a human in a chat before embry0 merges a pull request it
   opened ([docs/merge-approvals.md](docs/merge-approvals.md)).
-- **Specialist agents.** Eight read-only built-in agents, each run only when
+- **Specialist agents.** Nine read-only built-in agents, each run only when
   a job names its pipeline template, that return one report on a repository:
-  kintsugi, gardener, interrogator, why, how, blast-radius, comment-sicko and
-  design-auditor ([docs/specialist-agents.md](docs/specialist-agents.md)).
+  kintsugi, gardener, interrogator, why, how, blast-radius, comment-sicko,
+  design-auditor and context-auditor
+  ([docs/specialist-agents.md](docs/specialist-agents.md)).
 - **OpenAI-compatible providers.** Agents can run on OpenAI, OpenRouter,
   Gemini, Groq, DeepSeek or a model server of the operator's own (Ollama,
   vLLM, LM Studio) through embry0's own tool loop over chat completions. Each
@@ -64,13 +65,14 @@ describes what embry0 does rather than listing changes.
 
 ### Upgrade notes
 
-- **Reserved names.** The specialist agents reserve eight agent names
+- **Reserved names.** The specialist agents reserve nine agent names
   (`kintsugi`, `gardener`, `interrogator`, `why`, `how`, `blast-radius`,
-  `comment-sicko`, `design-auditor`) and eight pipeline template names
-  (`kintsugi-trace`, `garden`, `interrogate`, `why`, `how`, `blast-radius`,
-  `comment-pass`, `design-audit`). The template seeder upserts by name, so a
-  deployment's own template with one of those names is overwritten at the
-  first start: duplicate it under another name before you upgrade. A custom
+  `comment-sicko`, `design-auditor`, `context-auditor`) and nine pipeline
+  template names (`kintsugi-trace`, `garden`, `interrogate`, `why`, `how`,
+  `blast-radius`, `comment-pass`, `design-audit`, `context-audit`). The
+  template seeder upserts by name, so a deployment's own template with one of
+  those names is overwritten at the first start: duplicate it under another
+  name before you upgrade. A custom
   agent with one of those names is kept, and its specialist template runs it
   in place of the built-in
   ([reserved names](docs/specialist-agents.md#reserved-names)).

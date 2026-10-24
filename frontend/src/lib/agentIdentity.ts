@@ -35,6 +35,7 @@ export const BUILTIN_IDENTITY: Record<string, BuiltinIdentity> = {
   analysis: { avatar: "oracle", color: "violet", display_name: "Analysis", tagline: "Finds the pattern." },
   "blast-radius": { avatar: "scout", color: "amber", display_name: "Blast Radius", tagline: "Finds what a change breaks beyond the diff." },
   "comment-sicko": { avatar: "pirate", color: "cyan", display_name: "Comment Sicko", tagline: "Deletes the comments that do the code's job badly." },
+  "context-auditor": { avatar: "ranger", color: "sky", display_name: "Context Auditor", tagline: "Finds the lines that steer agents wrong." },
   "design-auditor": { avatar: "archmage", color: "gold", display_name: "Design Auditor", tagline: "Measures a frontend against its standard." },
   developer: { avatar: "smith", color: "amber", display_name: "Developer", tagline: "Forges the change." },
   gardener: { avatar: "skiller", color: "emerald", display_name: "Gardener", tagline: "Pulls one weed per run, provably." },

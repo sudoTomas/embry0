@@ -37,12 +37,14 @@ logger = structlog.get_logger(__name__)
 
 # Wall-clock cap on one generic agent run. A read-and-report pass fits the
 # default; the specialists that run a repository's own checks (a dependency
-# install from the lockfile, then a test suite or a build) get room for them.
+# install from the lockfile, then a test suite or a build) get room for them,
+# and the context auditor for the history behind every instruction file.
 GENERIC_AGENT_TIMEOUT_SECONDS: dict[str, int] = {
     "kintsugi": 1800,
     "interrogator": 1200,
     "blast-radius": 1200,
     "design-auditor": 900,
+    "context-auditor": 1200,
     "gardener": 900,
 }
 DEFAULT_GENERIC_AGENT_TIMEOUT_SECONDS = 600

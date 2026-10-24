@@ -98,6 +98,7 @@ _SPECIALIST_TYPES = (
     "blast-radius",
     "comment-sicko",
     "design-auditor",
+    "context-auditor",
 )
 
 

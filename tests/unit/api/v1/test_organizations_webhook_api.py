@@ -155,6 +155,58 @@ async def test_patch_sets_and_clears_the_rediscovery_interval(app: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_patch_sets_and_clears_the_context_audit_interval(app: Any) -> None:
+    """ADR 0020: a whole number of days from 1 to 365 puts the owner on the schedule, null takes it off."""
+    async with _client(app) as client:
+        on = await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_days": 7}})
+        off = await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_days": None}})
+        refused = [
+            await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_days": value}})
+            for value in (0, 366, True, 1.5, "7")
+        ]
+    assert on.status_code == 200, on.text
+    assert on.json()["settings"] == {"context_audit_days": 7}
+    assert off.status_code == 200 and off.json()["settings"] == {"context_audit_days": None}
+    assert [r.status_code for r in refused] == [422] * 5
+    assert "must be from 1 to 365 or null" in refused[0].json()["detail"]
+    assert "must be int or null" in refused[2].json()["detail"]
+    assert app.state.organizations_repo.orgs["acme"].settings == {"context_audit_days": None}
+
+
+@pytest.mark.asyncio
+async def test_patch_sets_and_clears_the_context_audit_caps(app: Any) -> None:
+    """An organization's own caps for the context audit; null hands them back to the deployment."""
+    async with _client(app) as client:
+        on = await client.patch(
+            "/api/v1/orgs/acme",
+            json={"settings": {"context_audit_budget_usd": 5, "context_audit_max_jobs_per_tick": 0}},
+        )
+        off = await client.patch(
+            "/api/v1/orgs/acme",
+            json={"settings": {"context_audit_budget_usd": None, "context_audit_max_jobs_per_tick": None}},
+        )
+        refused = [
+            await client.patch("/api/v1/orgs/acme", json={"settings": settings})
+            for settings in (
+                {"context_audit_budget_usd": 0},
+                {"context_audit_budget_usd": 51},
+                {"context_audit_budget_usd": "5"},
+                {"context_audit_max_jobs_per_tick": 51},
+                {"context_audit_max_jobs_per_tick": 1.5},
+            )
+        ]
+    assert on.status_code == 200, on.text
+    assert on.json()["settings"] == {"context_audit_budget_usd": 5.0, "context_audit_max_jobs_per_tick": 0}
+    assert off.status_code == 200
+    assert off.json()["settings"] == {"context_audit_budget_usd": None, "context_audit_max_jobs_per_tick": None}
+    assert [r.status_code for r in refused] == [422] * 5
+    assert "must be more than 0 and at most 50 or null" in refused[0].json()["detail"]
+    assert "must be a number or null" in refused[2].json()["detail"]
+    assert "must be from 0 to 50 or null" in refused[3].json()["detail"]
+    assert "must be int or null" in refused[4].json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_patch_refuses_a_setting_outside_settings(app: Any) -> None:
     async with _client(app) as client:
         resp = await client.patch("/api/v1/orgs/acme", json={"auto_register": True})

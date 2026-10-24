@@ -18,6 +18,8 @@ from embry0.agents.identity import BUILTIN_IDENTITY
 from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import MIGRATIONS, run_migrations
 
+# The eight specialists 106 writes. One added later never needs it: the seeder
+# inserts its row with the identity (test_specialist_agents_seed.py).
 SPECIALISTS = ("kintsugi", "gardener", "interrogator", "why", "how", "blast-radius", "comment-sicko", "design-auditor")
 FIELDS = ("display_name", "avatar", "color", "tagline")
 

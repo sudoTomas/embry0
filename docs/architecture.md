@@ -1563,6 +1563,7 @@ service actor (`embry0/orchestration/dispatch_actors.py`):
 | `embry0:auto-retriage` | triage re-run with auto-answered questions folded in | exempt |
 | `embry0:answer-resume` | fresh run after the last blocking answer arrived on a channel that names nobody | exempt |
 | `embry0:pr-comment` | PR follow-up whose comment named no author | limited |
+| `embry0:context-audit` | the context audit schedule's jobs ([ADR 0020](adr/0020-context-audit-schedule.md)) | limited |
 | `embry0:master-key` | an API request made with the master key (`API_KEY`) | limited |
 | `embry0:anonymous` | an API request with no identity, which only `AUTH_DEV_MODE` lets in | limited |
 | `linear-reconciler` | the Linear dispatch reconciler | limited |
@@ -1573,9 +1574,10 @@ its own timer under its own hard per-job budget, and because the count includes
 the job being checked, a limit of 1 would otherwise refuse every tick. The two
 continuations carry on a job a person already spent a slot on and are bounded
 by the question-round caps. An actor that acts without a person and is not a
-continuation — the reconciler — stays limited on purpose. `embry0:` is reserved:
-`actor_of` treats a human payload claiming it as naming nobody. A path that
-still has no actor leaves `dispatched_by` NULL and skips layer 3.
+continuation — the reconciler, the context audit schedule — stays limited on
+purpose. `embry0:` is reserved: `actor_of` treats a human payload claiming it
+as naming nobody. A path that still has no actor leaves `dispatched_by` NULL
+and skips layer 3.
 
 The gate fails **open** only on a *connection* error — a dropped or exhausted
 pool, a socket failure, a timeout. The caps live in the same Postgres as the

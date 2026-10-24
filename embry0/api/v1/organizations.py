@@ -13,13 +13,16 @@ from typing import Any, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.types import Scope
 
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.audit.helpers import emit_audit
 from embry0.services import org_discovery, org_maintain, org_webhooks
 from embry0.services import organizations as org_service
+from embry0.services.context_audit import InvalidRun, UnknownRepository, UnsupportedForge
 from embry0.services.org_discovery import Discovery
 from embry0.services.organizations import FORGES, STATUSES, AccessProbe, Organization
 from embry0.storage.repositories.org_repos import OrgReposRepository
@@ -552,8 +555,8 @@ def webhook_origin(request: Request) -> str | None:
 
 
 def make_forge_client(request: Request, org: Organization, token: str) -> Any:
-    """The client the webhook routes call the forge with. A module function so
-    tests swap in a fake."""
+    """The client the webhook routes and the context audit call the forge
+    with. A module function so tests swap in a fake."""
     from embry0.execution.github_client import GitHubClient
 
     return GitHubClient(default_token=token, max_attempts=2)
@@ -660,3 +663,98 @@ async def organization_runs(owner: str, request: Request, limit: int = 20) -> di
     if await _repo(request).get(owner) is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
     return {"owner": owner.lower(), "runs": await _facts_repo(request).list_runs(owner, limit=max(1, min(limit, 100)))}
+
+
+# ---- the context audit schedule (ADR 0020) ----
+
+
+async def org_forge_client(request: Request, org: Organization) -> Any:
+    """The client that reads the owner's repositories with the organization's
+    credential, the one discovery reads them with. Raises HTTPException as
+    the routes answer when the credential cannot be resolved."""
+    token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
+    return make_forge_client(request, org, token)
+
+
+@router.get("/orgs/{owner}/context-audit")
+async def organization_context_audit(owner: str, request: Request) -> dict[str, Any]:
+    """Each active registered repository under the owner with files that steer
+    a coding agent: how many, their fingerprint, the newest context-audit job,
+    and whether the schedule would start one now, and why.
+
+    Reads the default branches with the organization's credential and starts
+    nothing, whatever ``context_audit_days`` says.
+    """
+    org = await _repo(request).get(owner)
+    if org is None:
+        raise HTTPException(status_code=404, detail=f"no organization {owner}")
+    schedule = getattr(request.app.state, "context_audit", None)
+    if schedule is None:
+        raise HTTPException(status_code=503, detail="the context audit schedule is not initialized")
+    try:
+        survey = await schedule.survey(org)
+    except UnsupportedForge as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return cast("dict[str, Any]", survey.to_dict())
+
+
+class ContextAuditRunBody(BaseModel):
+    # forbid: a misspelled "force" would otherwise answer 200 and force nothing.
+    model_config = ConfigDict(extra="forbid")
+
+    repo: str | None = Field(
+        default=None, description="one registered repository under the owner; absent runs every due one"
+    )
+    force: bool = Field(default=False, description="with repo: start it whatever the due rule says, never while live")
+    limit: int | None = Field(
+        default=None, ge=1, le=50, description="the most jobs a run without repo starts; absent is the owner's cap"
+    )
+
+    @field_validator("repo")
+    @classmethod
+    def _validate_repo(cls, v: str | None) -> str | None:
+        return None if v is None else validate_repo_path(v)
+
+
+@router.post("/orgs/{owner}/context-audit/run")
+async def run_organization_context_audit(owner: str, body: ContextAuditRunBody, request: Request) -> dict[str, Any]:
+    """Start the owner's due context audits now, whether or not its schedule is on.
+
+    Without ``repo``, every due repository, at most ``limit``, the owner's
+    cap per tick when absent; with ``repo``, that one when it is due, or
+    whatever the due rule says with ``force``. Never while a context-audit
+    job of the repository is live. Each job starts through the schedule's own
+    start, under its actor, so the schedule anchors on it; the
+    ``organization.context_audit_run`` audit row names the caller. The tier
+    of ``POST /jobs``, with its repository allowlist: a key limited to some
+    repositories names one of them.
+    """
+    org = await _repo(request).get(owner)
+    if org is None:
+        raise HTTPException(status_code=404, detail=f"no organization {owner}")
+    if org.status != "active":
+        raise HTTPException(status_code=409, detail=f"organization {org.owner} is {org.status}")
+    schedule = getattr(request.app.state, "context_audit", None)
+    if schedule is None:
+        raise HTTPException(status_code=503, detail="the context audit schedule is not initialized")
+    await enforce_repo_allowlist(request, body.repo, action="start a context audit")
+    try:
+        result = await schedule.run(org, repo=body.repo, force=body.force, limit=body.limit)
+    except (UnsupportedForge, InvalidRun) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except UnknownRepository as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await emit_audit(
+        getattr(request.app.state, "db", None),
+        "organization.context_audit_run",
+        actor=request_actor(request),
+        details={
+            "owner": org.owner,
+            "repo": result.repo,
+            "force": body.force,
+            "limit": result.limit,
+            "started": [s.job_id for s in result.started],
+            "skipped": len(result.skipped),
+        },
+    )
+    return cast("dict[str, Any]", result.to_dict())

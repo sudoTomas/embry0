@@ -284,6 +284,13 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
         "standard in the job and delivers ranked findings with two reproducible 0 to 100 scores: "
         "conformance to the standard and code hygiene.",
     ),
+    "context-audit": _specialist_route(
+        "context-audit",
+        "context-auditor",
+        "Read-only: triage → context-auditor → output. Checks the files that steer a coding agent "
+        "against the code and its history and delivers the stale lines with their evidence and a "
+        "diff that corrects the certain ones.",
+    ),
 }
 
 

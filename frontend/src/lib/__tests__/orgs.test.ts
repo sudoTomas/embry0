@@ -3,6 +3,7 @@ import { need, org, repo } from "@/components/orgs/__tests__/fixtures";
 import {
   SENSES,
   actionLabel,
+  contextAuditDays,
   credentialLabel,
   groupNeeds,
   isMissing,
@@ -117,5 +118,20 @@ describe("rediscoverHours", () => {
     expect(rediscoverHours(org({ settings: { rediscover_hours: 169 } }))).toBeNull();
     expect(rediscoverHours(org({ settings: { rediscover_hours: 1.5 } }))).toBeNull();
     expect(rediscoverHours(org({ settings: { rediscover_hours: true } }))).toBeNull();
+  });
+});
+
+describe("contextAuditDays", () => {
+  it("reads a whole number of days in range, and anything else as off", () => {
+    expect(contextAuditDays(org({ settings: { context_audit_days: 7 } }))).toBe(7);
+    expect(contextAuditDays(org({ settings: { context_audit_days: 1 } }))).toBe(1);
+    expect(contextAuditDays(org({ settings: { context_audit_days: 365 } }))).toBe(365);
+    expect(contextAuditDays(org({ settings: { context_audit_days: null } }))).toBeNull();
+    expect(contextAuditDays(org({ settings: {} }))).toBeNull();
+    expect(contextAuditDays(org({ settings: { context_audit_days: 0 } }))).toBeNull();
+    expect(contextAuditDays(org({ settings: { context_audit_days: 366 } }))).toBeNull();
+    expect(contextAuditDays(org({ settings: { context_audit_days: 1.5 } }))).toBeNull();
+    expect(contextAuditDays(org({ settings: { context_audit_days: "7" } }))).toBeNull();
+    expect(contextAuditDays(org({ settings: { rediscover_hours: 24 } }))).toBeNull();
   });
 });

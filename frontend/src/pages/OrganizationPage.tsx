@@ -4,6 +4,7 @@ import { formatErrorDetail } from "@/api/errorDetail";
 import { toastApiError } from "@/api/errorToast";
 import { AdminButton } from "@/components/auth/AdminButton";
 import { AccessChips } from "@/components/orgs/AccessChips";
+import { ContextAuditSetting } from "@/components/orgs/ContextAuditSetting";
 import { DiscoveryStatus } from "@/components/orgs/DiscoveryStatus";
 import { OrgActPanel } from "@/components/orgs/OrgActPanel";
 import { OrgCredential } from "@/components/orgs/OrgCredential";
@@ -149,6 +150,7 @@ export function OrganizationPage() {
           {` · discovered ${o.discovered_at ? formatDate(o.discovered_at) : "never"}`}
         </p>
         <RediscoverSetting org={o} isAdmin={isAdmin} />
+        <ContextAuditSetting org={o} isAdmin={isAdmin} />
         {typeof o.access.detail === "string" && o.access.detail && (
           <p className="text-xs text-muted-foreground">{o.access.detail}</p>
         )}

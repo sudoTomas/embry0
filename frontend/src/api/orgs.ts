@@ -154,6 +154,8 @@ export async function fetchOrganization(owner: string): Promise<Organization> {
 export interface OrgSettingsPatch {
   /** Hours between discovery runs, 1 to 168; null takes the owner off the schedule. */
   rediscover_hours?: number | null;
+  /** Days after which the files that steer a coding agent are audited again, 1 to 365; null takes the owner off that schedule. */
+  context_audit_days?: number | null;
   /** Register a repository under this owner when a webhook delivery names one nobody registered. */
   auto_register?: boolean;
 }

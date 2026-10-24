@@ -10,10 +10,11 @@ there. Discovery, the needs list and the wizard build on it.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeGuard
 from urllib.parse import quote
 
 import structlog
@@ -29,18 +30,50 @@ STATUSES = ("active", "paused", "removed")
 # the delivery is handled, instead of only recording the need.
 # rediscover_hours: run discovery again when the newest run is this many
 # hours old (ADR 0016); null, the default, leaves the owner off the schedule.
-SETTINGS: dict[str, type] = {"auto_register": bool, "rediscover_hours": int}
+# context_audit_days: audit the files that steer a coding agent in each of the
+# owner's registered repositories on a schedule, when they change and when the
+# newest audit is this many days old and the branch moved since (ADR 0020);
+# null, the default, leaves the owner off the schedule.
+# context_audit_budget_usd: the hard cap, in USD, of each context-audit job
+# started for the owner; null, the default, is the deployment's
+# CONTEXT_AUDIT_JOB_BUDGET_USD.
+# context_audit_max_jobs_per_tick: the most context-audit jobs one tick of the
+# schedule starts for the owner, 0 starting none; null, the default, is the
+# deployment's CONTEXT_AUDIT_MAX_JOBS_PER_TICK.
+SETTINGS: dict[str, type] = {
+    "auto_register": bool,
+    "rediscover_hours": int,
+    "context_audit_days": int,
+    "context_audit_budget_usd": float,
+    "context_audit_max_jobs_per_tick": int,
+}
 
-# The settings that take null, meaning off, and the bounds of an integer setting.
-NULLABLE_SETTINGS = frozenset({"rediscover_hours"})
-SETTING_RANGES: dict[str, tuple[int, int]] = {"rediscover_hours": (1, 168)}
+# The settings that take null, meaning off or the deployment's default, the
+# bounds of an integer setting, both included, and the bounds of a number
+# setting, more than the first and at most the second.
+NULLABLE_SETTINGS = frozenset(
+    {"rediscover_hours", "context_audit_days", "context_audit_budget_usd", "context_audit_max_jobs_per_tick"}
+)
+SETTING_RANGES: dict[str, tuple[int, int]] = {
+    "rediscover_hours": (1, 168),
+    "context_audit_days": (1, 365),
+    "context_audit_max_jobs_per_tick": (0, 50),
+}
+NUMBER_RANGES: dict[str, tuple[float, float]] = {"context_audit_budget_usd": (0.0, 50.0)}
+
+
+def _number(value: Any) -> TypeGuard[int | float]:
+    """A JSON number: an int or a finite float, never a bool (``type(True) is bool``)."""
+    return type(value) is int or (type(value) is float and math.isfinite(value))
 
 
 def validate_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
     """The settings a PATCH may write: known keys, right types, nothing else.
 
     ``type(value) is`` rather than ``isinstance``: a JSON ``true`` is a Python
-    bool, which is an int, and must not pass as a number of hours.
+    bool, which is an int, and must not pass as a number of hours. A number
+    setting takes an integer too, since JSON writes 5 and 5.0 alike, and is
+    stored as a float.
     """
     out: dict[str, Any] = {}
     for key, value in settings.items():
@@ -48,14 +81,23 @@ def validate_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
         if expected is None:
             raise ValueError(f"unknown setting {key!r}; known settings: {', '.join(sorted(SETTINGS))}")
         nullable = key in NULLABLE_SETTINGS
+        or_null = " or null" if nullable else ""
         if value is None and nullable:
             out[key] = None
             continue
+        if expected is float:
+            low, high = NUMBER_RANGES[key]
+            if not _number(value):
+                raise ValueError(f"setting {key!r} must be a number{or_null}")
+            if not low < value <= high:
+                raise ValueError(f"setting {key!r} must be more than {low:g} and at most {high:g}{or_null}")
+            out[key] = float(value)
+            continue
         if type(value) is not expected:
-            raise ValueError(f"setting {key!r} must be {expected.__name__}{' or null' if nullable else ''}")
+            raise ValueError(f"setting {key!r} must be {expected.__name__}{or_null}")
         bounds = SETTING_RANGES.get(key)
         if bounds is not None and isinstance(value, int) and not bounds[0] <= value <= bounds[1]:
-            raise ValueError(f"setting {key!r} must be from {bounds[0]} to {bounds[1]}{' or null' if nullable else ''}")
+            raise ValueError(f"setting {key!r} must be from {bounds[0]} to {bounds[1]}{or_null}")
         out[key] = value
     return out
 
@@ -68,6 +110,39 @@ def rediscover_hours(settings: Mapping[str, Any]) -> int | None:
     """
     value = settings.get("rediscover_hours")
     low, high = SETTING_RANGES["rediscover_hours"]
+    return value if type(value) is int and low <= value <= high else None
+
+
+def context_audit_days(settings: Mapping[str, Any]) -> int | None:
+    """The owner's context audit interval in days, or None when it is off.
+
+    Read as :func:`rediscover_hours` reads its own: a value a PATCH would
+    refuse reads as off, never as a schedule.
+    """
+    value = settings.get("context_audit_days")
+    low, high = SETTING_RANGES["context_audit_days"]
+    return value if type(value) is int and low <= value <= high else None
+
+
+def context_audit_budget_usd(settings: Mapping[str, Any]) -> float | None:
+    """The hard cap in USD of each of the owner's context-audit jobs, or None for the deployment's.
+
+    Read as :func:`context_audit_days` reads its own: a value a PATCH would
+    refuse reads as the deployment's cap, never as the owner's.
+    """
+    value = settings.get("context_audit_budget_usd")
+    low, high = NUMBER_RANGES["context_audit_budget_usd"]
+    return float(value) if _number(value) and low < value <= high else None
+
+
+def context_audit_max_jobs_per_tick(settings: Mapping[str, Any]) -> int | None:
+    """The most context-audit jobs one tick starts for the owner, or None for the deployment's.
+
+    0 is a cap, the one that starts none. Read as :func:`context_audit_days`
+    reads its own: a value a PATCH would refuse reads as the deployment's.
+    """
+    value = settings.get("context_audit_max_jobs_per_tick")
+    low, high = SETTING_RANGES["context_audit_max_jobs_per_tick"]
     return value if type(value) is int and low <= value <= high else None
 
 

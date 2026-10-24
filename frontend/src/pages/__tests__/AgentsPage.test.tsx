@@ -173,7 +173,7 @@ describe("AgentsPage shows what a run uses", () => {
   });
 });
 
-// The eight read-only specialists the backend seeds as built-ins.
+// The nine read-only specialists the backend seeds as built-ins.
 const SPECIALISTS = [
   "kintsugi",
   "gardener",
@@ -183,6 +183,7 @@ const SPECIALISTS = [
   "blast-radius",
   "comment-sicko",
   "design-auditor",
+  "context-auditor",
 ];
 
 const SPECIALIST_ROWS = SPECIALISTS.map((type) => ({
@@ -233,7 +234,7 @@ describe("AgentsPage specialist agents", () => {
       expect(row.querySelector("svg[class*='lucide-']:not([class*='lucide-rotate-ccw'])"), `${type} has no lucide tile beside the sprite`).toBeNull();
       return `${sprite!.getAttribute("data-avatar")}/${sprite!.getAttribute("data-color") ?? ""}`;
     });
-    expect(new Set(sprites).size, "the eight specialists are told apart by their sprites").toBe(SPECIALISTS.length);
+    expect(new Set(sprites).size, "the nine specialists are told apart by their sprites").toBe(SPECIALISTS.length);
   });
 });
 

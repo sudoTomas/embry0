@@ -79,6 +79,7 @@ def test_default_map_covers_pipeline_roles():
         "blast-radius",
         "comment-sicko",
         "design-auditor",
+        "context-auditor",
     }
     assert DEFAULT_AGENT_MAX_TURNS["developer"] == 40  # unchanged from flat era
     # RAV-1055: busy watcher log windows blew the original 25-turn analysis
