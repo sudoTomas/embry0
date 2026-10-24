@@ -17,6 +17,8 @@ import { runModelOf } from "@/lib/effectiveModel";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { agentTypeToOperation } from "@/components/divine/operations";
 import { toastApiError } from "@/api/errorToast";
+import { useProgression } from "@/hooks/useProgression";
+import { LevelBadge } from "@/components/progression/LevelBadge";
 
 type Filter = "all" | "builtin" | "custom";
 
@@ -29,6 +31,10 @@ export function AgentsPage() {
   const navigate = useNavigate();
   const lookup = useIdentityLookup();
   const isAdmin = useIsAdmin();
+  // Each agent's skill and level (spec 2026-10-24); a page without them still lists the agents.
+  const progression = useProgression();
+  const skillName = new Map((progression.data?.stats ?? []).map((s) => [s.stat, s.name]));
+  const levelOf = new Map((progression.data?.agents ?? []).map((a) => [a.agent_type, a]));
 
   const [filter, setFilter] = useState<Filter>("all");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -131,6 +137,7 @@ export function AgentsPage() {
                       const identity = lookup(agent.type);
                       const op = agentTypeToOperation(agent.type);
                       const run = runModelOf(agent);
+                      const level = levelOf.get(agent.type);
                       return (
                         <tr
                           key={agent.type}
@@ -145,6 +152,14 @@ export function AgentsPage() {
                                 <div className="whitespace-nowrap text-sm font-semibold text-white/90">{identity.displayName}</div>
                                 {identity.displayName !== agent.type && (
                                   <div className="font-mono text-xs text-white/40">{agent.type}</div>
+                                )}
+                                {level && (
+                                  <LevelBadge
+                                    skill={skillName.get(level.stat) ?? level.stat}
+                                    level={level.level}
+                                    tier={level.tier}
+                                    xpToNext={level.xp_to_next}
+                                  />
                                 )}
                                 {agent.is_builtin && <Badge tone="neutral">Built-in</Badge>}
                               </div>

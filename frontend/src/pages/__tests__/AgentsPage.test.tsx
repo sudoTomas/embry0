@@ -4,6 +4,7 @@ import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 const mockUseAgents = vi.fn();
+const mockUseProgression = vi.fn();
 
 vi.mock("@/hooks/useAgents", () => ({
   useAgents: () => mockUseAgents(),
@@ -11,7 +12,18 @@ vi.mock("@/hooks/useAgents", () => ({
   useResetAgent: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
+vi.mock("@/hooks/useProgression", () => ({ useProgression: () => mockUseProgression() }));
+
 import { AgentsPage } from "../AgentsPage";
+
+const PROGRESSION = {
+  total_level: 120,
+  total_xp: 1_000_000,
+  stats: [{ stat: "smithing", name: "Smithing", trained_by: "developer", xp: 2_100_000, level: 83, xp_to_next: 50_000 }],
+  agents: [{ agent_type: "developer", stat: "smithing", xp: 2_100_000, level: 83, xp_to_next: 50_000, tier: "rune" }],
+  recent: [],
+  computed_at: "2026-10-24T00:00:00Z",
+};
 
 const AGENTS = [
   {
@@ -71,6 +83,7 @@ function rowOf(type: string): HTMLElement {
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseAgents.mockReturnValue({ data: AGENTS, isLoading: false });
+  mockUseProgression.mockReturnValue({ data: undefined });
 });
 
 describe("AgentsPage provider column", () => {
@@ -251,5 +264,14 @@ describe("AgentsPage identity", () => {
   it("paints a row without identity fields as the default golem", () => {
     renderPage();
     expect(rowOf("mystery").querySelector('[data-avatar="golem"]'), "the default avatar tile").not.toBeNull();
+  });
+
+  it("shows each agent's skill and level, and nothing for an agent progression does not list", () => {
+    mockUseProgression.mockReturnValue({ data: PROGRESSION });
+    renderPage();
+    const badges = screen.getAllByTestId("level-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent("Smithing 83");
+    expect(badges[0]).toHaveAttribute("data-tier", "rune");
   });
 });
