@@ -483,3 +483,40 @@ async def test_newest_per_repo_answers_the_newest_job_of_each_repository_and_whe
     assert await jobs_repo.newest_per_repo([], pipeline_template="context-audit") == {}
     without_actor = await jobs_repo.newest_per_repo(["acme/ops"], pipeline_template="context-audit")
     assert without_actor == {}
+
+
+@pytest.mark.asyncio
+async def test_newest_per_repo_leaves_out_a_job_the_budget_gate_refused(jobs_repo: JobsRepository):
+    """A refused job did no work, so it anchors nothing: before this, every
+    start past the actor's hourly limit became the repository's newest
+    attempt, and a repository whose files never changed waited an interval
+    for a first audit that never ran."""
+    db = jobs_repo._db
+
+    async def job(repo: str, hours_ago: int, status: str, error_code: str | None = None, overrun: float = 0) -> str:
+        job_id = await jobs_repo.create(repo=repo, task="t", pipeline_template="context-audit")
+        await db.execute(
+            "UPDATE jobs SET created_at = NOW() - make_interval(hours => $2), status = $3,"
+            " error_code = $4, budget_overrun_usd = $5 WHERE job_id = $1",
+            job_id,
+            hours_ago,
+            status,
+            error_code,
+            overrun,
+        )
+        return job_id
+
+    audited = await job("acme/web", 48, "completed")
+    await job("acme/web", 1, "failed", "ERR_BUDGET_REFUSED")
+    await job("acme/api", 1, "failed", "ERR_BUDGET_REFUSED")
+    # Written before the gate had its own code: an overrun with no spend and no trace.
+    await job("acme/old", 1, "failed", "ERR_BUDGET_OVERRUN")
+    stopped = await job("acme/ops", 1, "failed", "ERR_BUDGET_OVERRUN", overrun=0.4)
+
+    newest = await jobs_repo.newest_per_repo(
+        ["acme/web", "acme/api", "acme/old", "acme/ops"], pipeline_template="context-audit"
+    )
+    assert newest["acme/web"]["job_id"] == audited, "the refused job is not the newest attempt"
+    assert "acme/api" not in newest, "a repository whose only job was refused has no attempt"
+    assert "acme/old" not in newest, "a refusal recorded before ERR_BUDGET_REFUSED is one too"
+    assert newest["acme/ops"]["job_id"] == stopped, "a job hard-stopped in its run did work and counts"

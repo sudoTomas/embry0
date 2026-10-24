@@ -2037,12 +2037,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         from embry0.api.v1.organizations import app_request as _audit_request
         from embry0.api.v1.organizations import org_forge_client
+        from embry0.services.context_audit import ACTOR as _CONTEXT_AUDIT_ACTOR
         from embry0.services.context_audit import ContextAuditLoop, job_budget_usd, start_context_audit_job
         from embry0.services.context_audit import RepoContext as _RepoContext
         from embry0.services.organizations import Organization as _AuditedOrganization
 
         async def _context_audit_client(org: _AuditedOrganization) -> Any:
             return await org_forge_client(_audit_request(app), org)
+
+        async def _context_audit_gate() -> Any:
+            # Asked before each start (#284): a refusal writes no job. With no
+            # executor the start itself refuses ("executor not initialized").
+            executor = getattr(app.state, "issue_executor", None)
+            return None if executor is None else await executor.dispatch_refusal(actor=_CONTEXT_AUDIT_ACTOR)
 
         async def _start_context_audit(context: _RepoContext, budget_usd: float) -> str:
             return await start_context_audit_job(
@@ -2061,6 +2068,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             jobs=app.state.jobs_repo,
             client_for=_context_audit_client,
             start_job=_start_context_audit,
+            ask_gate=_context_audit_gate,
             # The deployment's caps: an organization's own settings take their
             # place for its repositories.
             max_jobs_per_tick=config.context_audit_max_jobs_per_tick,

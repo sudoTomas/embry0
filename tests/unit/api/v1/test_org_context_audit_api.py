@@ -105,12 +105,16 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def start_job(context: RepoContext, budget_usd: float) -> str:
         raise AssertionError("a read starts no job")
 
+    async def open_gate() -> None:
+        return None
+
     app.state.context_audit = ContextAuditLoop(
         organizations=app.state.organizations_repo,
         registry=FakeRegistry(),
         jobs=FakeJobs(),
         client_for=client_for,
         start_job=start_job,
+        ask_gate=open_gate,
         max_jobs_per_tick=3,
         budget_usd=2.0,
         clock=lambda: datetime(2026, 10, 2, tzinfo=UTC),

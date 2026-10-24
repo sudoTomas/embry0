@@ -77,3 +77,23 @@ def test_every_scheduled_job_gets_the_hard_budget_and_the_job_path() -> None:
     assert passed.get("jobs") == "app.state.jobs_repo"
     assert "issue_executor" in passed.get("executor", ""), "a job row nobody runs sits in pending forever"
     assert passed.get("db") == "db", "the job_created audit row goes to the database"
+
+
+def test_each_start_asks_the_executors_gate_for_the_context_audit_actor() -> None:
+    """#284: without the ask, every start past the actor's hourly rate limit
+    became a failed job that anchored its repository for a whole interval."""
+    passed = {kw.arg: ast.unparse(kw.value) for kw in _construction("ContextAuditLoop").keywords if kw.arg}
+    assert passed.get("ask_gate") == "_context_audit_gate", "ContextAuditLoop is built without ask_gate"
+    gate = _function("_context_audit_gate")
+    asks = [n for n in ast.walk(gate) if isinstance(n, ast.Call) and ast.unparse(n.func).endswith(".dispatch_refusal")]
+    assert asks, "_context_audit_gate never asks the executor's dispatch_refusal"
+    actor = {kw.arg: ast.unparse(kw.value) for kw in asks[0].keywords}.get("actor")
+    imported = {
+        alias.asname or alias.name: alias.name
+        for node in ast.walk(_tree())
+        if isinstance(node, ast.ImportFrom) and node.module == "embry0.services.context_audit"
+        for alias in node.names
+    }
+    assert actor is not None and imported.get(actor) == "ACTOR", (
+        f"the gate is asked for actor={actor}, not the context audit's ACTOR"
+    )
