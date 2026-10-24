@@ -34,11 +34,12 @@ describe("identity contract mirror (docs/contracts/identity.json)", () => {
       );
     }
   });
-  it("appends the adventurer presets to the twelve legacy avatars, in the presets' order", () => {
+  it("appends the adventurer presets to the twelve original avatars, and composes every one", () => {
     expect(LEGACY_AVATARS).toHaveLength(12);
-    expect([...ADVENTURER_AVATARS]).toEqual(PRESET_IDS);
+    expect([...ADVENTURER_AVATARS]).toEqual(PRESET_IDS.slice(0, ADVENTURER_AVATARS.length));
+    expect([...PRESET_IDS].sort(), "a preset per avatar (progression spec 2026-10-24)").toEqual([...AVATARS].sort());
     expect([...AVATARS]).toEqual([...LEGACY_AVATARS, ...ADVENTURER_AVATARS]);
-    expect(contract.avatars.slice(12)).toEqual(PRESET_IDS);
+    expect(contract.avatars.slice(12)).toEqual([...ADVENTURER_AVATARS]);
     expect(isAdventurerId("rune-warrior") && isAvatarId("rune-warrior") && !isLegacyAvatarId("rune-warrior")).toBe(true);
     expect(isLegacyAvatarId("golem") && !isAdventurerId("golem")).toBe(true);
   });

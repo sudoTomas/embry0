@@ -1,12 +1,14 @@
 /**
  * The named adventurers an agent can wear: a level-3 starter, a warrior
  * per metal tier and a maxed champion, three orders of mage, four archers,
- * and four extras. Each is a different person at a glance: skin, hair,
- * beard and the cloth under the gear vary, not only the gear. The ids
- * are ADVENTURER_AVATARS in lib/agentIdentity.ts (the contract-pinned
- * list); a preset missing or extra there fails to compile here.
+ * four extras, and the twelve original avatars the built-in agents wear,
+ * each in its class's Bronze kit (outfit.ts dresses it for its tier). Each
+ * is a different person at a glance: skin, hair, beard and the cloth under
+ * the gear vary, not only the gear. The ids are AVATARS in
+ * lib/agentIdentity.ts (the contract-pinned list); a preset missing or
+ * extra there fails to compile here.
  */
-import type { AdventurerId } from "@/lib/agentIdentity";
+import type { AvatarId } from "@/lib/agentIdentity";
 import type { Appearance } from "./types.ts";
 
 export const PRESETS = {
@@ -114,7 +116,68 @@ export const PRESETS = {
     colours: { hair: "brown", torso: "cream", legs: "charcoal", feet: "black" },
     equipment: { head: "mining-helmet", weapon: "pickaxe", feet: "metal-boots" },
   },
-} as const satisfies Record<AdventurerId, Appearance>;
+  // the original twelve: melee in bronze plate with an open helm, magic in wizard blue, ranged in leather
+  smith: {
+    skin: "brown", hair: "short", beard: "full",
+    colours: { hair: "black", torso: "umber", legs: "charcoal", feet: "black" },
+    equipment: { head: "bronze-med-helm", body: "bronze-platebody", legs: "bronze-platelegs", shield: "bronze-kiteshield", weapon: "bronze-scimitar" },
+  },
+  warden: {
+    skin: "dark", hair: "short", beard: "goatee",
+    colours: { hair: "black", torso: "red", legs: "charcoal", feet: "black" },
+    equipment: { head: "bronze-med-helm", body: "bronze-platebody", legs: "bronze-platelegs", shield: "bronze-kiteshield", weapon: "bronze-scimitar" },
+  },
+  arbiter: {
+    skin: "light", hair: "bald", beard: "long",
+    colours: { hair: "grey", torso: "teal", legs: "charcoal", feet: "black" },
+    equipment: { head: "bronze-med-helm", body: "bronze-platebody", legs: "bronze-platelegs", shield: "bronze-kiteshield", weapon: "bronze-scimitar" },
+  },
+  golem: {
+    skin: "stone", hair: "bald", beard: null,
+    colours: { hair: "grey", torso: "charcoal", legs: "charcoal", feet: "charcoal" },
+    equipment: { head: "bronze-med-helm", body: "bronze-platebody", legs: "bronze-platelegs", shield: "bronze-kiteshield", weapon: "bronze-scimitar" },
+  },
+  seer: {
+    skin: "light", hair: "long", beard: null,
+    colours: { hair: "white", torso: "purple", legs: "purple", feet: "charcoal" },
+    equipment: { head: "wizard-hat", body: "wizard-robe", legs: "wizard-skirt", feet: "wizard-boots", weapon: "staff", neck: "amulet" },
+  },
+  oracle: {
+    skin: "brown", hair: "fringe", beard: null,
+    colours: { hair: "black", torso: "purple", legs: "charcoal", feet: "charcoal" },
+    equipment: { head: "wizard-hat", body: "wizard-robe", legs: "wizard-skirt", feet: "wizard-boots", weapon: "staff" },
+  },
+  scholar: {
+    skin: "dark", hair: "short", beard: "moustache",
+    colours: { hair: "grey", torso: "cream", legs: "umber", feet: "brown" },
+    equipment: { head: "wizard-hat", body: "wizard-robe", legs: "wizard-skirt", feet: "wizard-boots", weapon: "staff", neck: "pendant" },
+  },
+  alchemist: {
+    skin: "light", hair: "curly", beard: null,
+    colours: { hair: "auburn", torso: "green", legs: "green", feet: "brown" },
+    equipment: { head: "wizard-hat", body: "wizard-robe", legs: "wizard-skirt", feet: "wizard-boots", weapon: "staff" },
+  },
+  herald: {
+    skin: "tan", hair: "long", beard: null,
+    colours: { hair: "blonde", torso: "blue", legs: "cream", feet: "brown" },
+    equipment: { body: "leather-body", legs: "leather-chaps", hands: "leather-vambraces", feet: "leather-boots", weapon: "shortbow" },
+  },
+  engineer: {
+    skin: "light", hair: "spiky", beard: "goatee",
+    colours: { hair: "brown", torso: "charcoal", legs: "blue", feet: "black" },
+    equipment: { body: "leather-body", legs: "leather-chaps", hands: "leather-vambraces", feet: "leather-boots", weapon: "shortbow" },
+  },
+  rogue: {
+    skin: "tan", hair: "fringe", beard: null,
+    colours: { hair: "auburn", torso: "charcoal", legs: "charcoal", feet: "black" },
+    equipment: { body: "leather-body", legs: "leather-chaps", hands: "leather-vambraces", feet: "leather-boots", weapon: "shortbow" },
+  },
+  bard: {
+    skin: "brown", hair: "curly", beard: "moustache",
+    colours: { hair: "blonde", torso: "red", legs: "cream", feet: "brown" },
+    equipment: { body: "leather-body", legs: "leather-chaps", hands: "leather-vambraces", feet: "leather-boots", weapon: "shortbow" },
+  },
+} as const satisfies Record<AvatarId, Appearance>;
 
 export type PresetId = keyof typeof PRESETS;
 export const PRESET_IDS = Object.keys(PRESETS) as PresetId[];

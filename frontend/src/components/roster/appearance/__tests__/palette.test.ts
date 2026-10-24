@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
-  CAPE_FILL, CAPE_SHADE, CLOTH, COLOURS, GOLD, HAIR, LEATHER, MAGE, METAL, OUTLINE, SKIN, dark, light, mix, tones,
+  CAPE_FILL, CAPE_SHADE, CLOTH, COLOURS, GOLD, HAIR, HIDE, LEATHER, MAGE, METAL, OUTLINE, ROBE, SKILL_CAPE, SKIN, dark, light, mix, tones,
 } from "../palette";
 
 const HEX = /^#[0-9a-f]{6}$/;
 
 describe("appearance palette", () => {
   it("names the tones the brief asks for, every one a six-digit hex", () => {
-    expect(Object.keys(SKIN)).toEqual(["light", "tan", "brown", "dark"]);
+    expect(Object.keys(SKIN)).toEqual(["light", "tan", "brown", "dark", "stone"]);
     expect(Object.keys(HAIR)).toHaveLength(6);
     expect(Object.keys(CLOTH)).toHaveLength(8);
-    expect(Object.keys(METAL)).toEqual(["bronze", "iron", "steel", "black", "mithril", "adamant", "rune", "dragon"]);
+    expect(Object.keys(METAL)).toEqual(["bronze", "iron", "steel", "black", "mithril", "adamant", "rune", "dragon", "divine"]);
     expect(Object.keys(LEATHER)).toEqual(["plain", "green", "blue", "red", "black"]);
     expect(Object.keys(MAGE)).toEqual(["wizard", "mystic", "high"]);
-    for (const table of [SKIN, HAIR, CLOTH, METAL, LEATHER, MAGE]) {
+    for (const table of [SKIN, HAIR, CLOTH, METAL, LEATHER, MAGE, HIDE]) {
       for (const [name, hex] of Object.entries(table)) expect(hex, name).toMatch(HEX);
     }
     expect(GOLD).toMatch(HEX);
@@ -42,6 +42,18 @@ describe("appearance palette", () => {
     expect(key["6"]).toBe(light("#e3b94b"));
     expect(key.o).toBe(OUTLINE);
     expect(Object.keys(tones("#9c6b2f")).sort()).toEqual(["1", "2", "3", "o"]);
+  });
+
+  it("gives the two ladders seven steps each and every skill cape a body and a trim (progression spec 2026-10-24)", () => {
+    expect(Object.keys(HIDE)).toHaveLength(7);
+    expect(Object.keys(ROBE)).toHaveLength(7);
+    expect(Object.keys(SKILL_CAPE)).toHaveLength(23);
+    for (const table of [ROBE, SKILL_CAPE]) {
+      for (const [name, { base, trim }] of Object.entries(table)) {
+        expect(base, name).toMatch(HEX);
+        expect(trim, name).toMatch(HEX);
+      }
+    }
   });
 
   it("gives the cape the party colour token, the only non-hex colour", () => {

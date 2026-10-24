@@ -2,8 +2,8 @@
  * Renders an appearance: the body-kit parts and the worn items are laid on
  * the grid in draw order (cape, legs, feet, body, arms with hands, head,
  * hair, beard, head slot, neck, shield, weapon), then the cells are grouped
- * by colour into one SVG path per colour, the run-length idea of
- * sprites.ts's compileFrame generalised to any grid and any colour key.
+ * by colour into one SVG path per colour: run-length rectangles over any
+ * grid and any colour key.
  *
  * A pose moves the arm and weapon layers and sets the face; everything
  * else stays put. POSES gives every sprite state its frames.
@@ -91,6 +91,8 @@ export function layersOf(a: Appearance, pose: Pose): NamedLayer[] {
   put("arm-left", arm("left", pose.arms.left, sleeve, hand));
   put("arm-right", arm("right", pose.arms.right, sleeve, hand));
   put("shoulders", itemLayer(body, body?.shoulders));
+  const cape = worn(a, "cape");
+  if (cape?.drape) put("shoulders", itemLayer(cape, cape.drape));
   put("head", head(a.skin, pose.face));
   if (!headItem?.over) put("hair", hair(a.hair, a.colours.hair));
   if (a.beard && headItem?.over !== "beard") put("beard", beard(a.beard, a.colours.hair));

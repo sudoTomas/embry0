@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { compileFrame } from "../../sprites";
 import { GHOST_FILL, POSES, SPARK, SWEAT, compose, layersOf, paint, runLength, type NamedLayer, type Pose } from "../compose";
 import { ITEMS } from "../items";
 import { COLOURS, OUTLINE } from "../palette";
@@ -131,10 +130,8 @@ describe("compose", () => {
     expect(() => runLength([["#000000", "#000000", null], [null, "#ffffff", "#ffffff"]])).not.toThrow();
   });
 
-  it("run-length encodes a grid as compileFrame does a 16-cell frame", () => {
-    const rows = ["o.ff............", ...Array.from({ length: 15 }, () => "................")];
-    const grid = rows.map((r) => [...r].map((c) => (c === "." ? null : c)));
-    expect(runLength(grid)).toEqual(compileFrame(rows));
+  it("run-length encodes a grid into one rectangle path per colour", () => {
+    expect(runLength([["o", null, "f", "f"]])).toEqual({ o: "M0 0h1v1h-1z", f: "M2 0h2v1h-2z" });
     expect(runLength([["a", "a", null], ["a", "a", "b"], ["a", null, "b"]]), "runs repeated below merge into one rectangle").toEqual({
       a: "M0 0h2v2h-2zM0 2h1v1h-1z",
       b: "M2 1h1v2h-1z",

@@ -4,7 +4,7 @@ import { ARMS, BEARDS, FEET, HAIR_STYLES, LEGS, TORSO, arm, beard, feet, hair, h
 
 const HAIRS: HairStyle[] = ["short", "spiky", "long", "mohawk", "bald", "curly", "fringe"];
 const BEARD_STYLES: BeardStyle[] = ["goatee", "full", "moustache", "long"];
-const SKINS: SkinTone[] = ["light", "tan", "brown", "dark"];
+const SKINS: SkinTone[] = ["light", "tan", "brown", "dark", "stone"];
 const POSES: ArmPose[] = ["down", "up", "slump"];
 
 function cells(rows: readonly string[]): string[] {

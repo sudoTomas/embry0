@@ -1,6 +1,6 @@
 export { Sprite, type SpriteProps } from "./Sprite";
-export { COMPILED, FRAME_COUNTS, SPRITES, SPRITE_STATES, compileFrame } from "./sprites";
-export type { CharClass, CompiledFrame, Frame, SpriteState } from "./sprites";
+export { FRAME_COUNTS, SPRITE_STATES } from "./sprites";
+export type { SpriteState } from "./sprites";
 export { stateFor, stateForNode } from "./spriteState";
-export { COMPOSED, PRESETS, PRESET_IDS, compose, composeState } from "./appearance";
-export type { Appearance, ComposedFrame, PresetId } from "./appearance";
+export { COMPOSED, PRESETS, PRESET_IDS, STYLE, compose, composeState, dress } from "./appearance";
+export type { Appearance, ComposedFrame, Outfit, PresetId, Rare } from "./appearance";
