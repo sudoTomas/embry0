@@ -11,6 +11,7 @@ const JobDetailPage = lazy(() => import("../pages/JobDetailPage").then(m => ({ d
 const MergeApprovalsPage = lazy(() => import("../pages/MergeApprovalsPage").then(m => ({ default: m.MergeApprovalsPage })));
 const MergeApprovalPage = lazy(() => import("../pages/MergeApprovalPage").then(m => ({ default: m.MergeApprovalPage })));
 const AgentsPage = lazy(() => import("../pages/AgentsPage").then(m => ({ default: m.AgentsPage })));
+const AchievementsPage = lazy(() => import("../pages/AchievementsPage").then(m => ({ default: m.AchievementsPage })));
 const AgentFormPage = lazy(() => import("../pages/AgentFormPage").then(m => ({ default: m.AgentFormPage })));
 const SandboxesPage = lazy(() => import("../pages/SandboxesPage").then(m => ({ default: m.SandboxesPage })));
 const SandboxFormPage = lazy(() => import("../pages/SandboxFormPage").then(m => ({ default: m.SandboxFormPage })));
@@ -66,6 +67,7 @@ export const router = createBrowserRouter([
       { path: "merge-approvals", element: <ErrorBoundary inline><Suspense fallback={fallback}><MergeApprovalsPage /></Suspense></ErrorBoundary> },
       { path: "merge-approvals/:approvalId", element: <ErrorBoundary inline><Suspense fallback={fallback}><MergeApprovalPage /></Suspense></ErrorBoundary> },
       { path: "agents", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentsPage /></Suspense></ErrorBoundary> },
+      { path: "achievements", element: <ErrorBoundary inline><Suspense fallback={fallback}><AchievementsPage /></Suspense></ErrorBoundary> },
       { path: "agents/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
       { path: "agents/:type", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
       { path: "skills", element: <ErrorBoundary inline><Suspense fallback={fallback}><SkillsPage /></Suspense></ErrorBoundary> },

@@ -4,6 +4,7 @@ import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { BriefBar } from "@/components/dashboard/BriefBar";
+import { Chatbox } from "@/components/progression/Chatbox";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +49,8 @@ export function AppLayout() {
           </main>
         </div>
       </div>
+      {/* Levels reached and achievements unlocked, one message at a time (spec 2026-10-24). */}
+      <Chatbox />
     </div>
   );
 }

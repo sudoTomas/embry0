@@ -171,20 +171,22 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     expect(links.map((a) => a.textContent?.trim())).toEqual(["Settings", "LLM providers"]);
   });
 
-  it("Overview section contains a single Overview link to /", () => {
+  it("Overview section holds the Overview, then the instance's Achievements", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Overview" })
       .parentElement as HTMLElement;
     const links = within(section).getAllByRole("link");
-    expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute("href", "/");
-    expect(links[0].textContent?.trim()).toBe("Overview");
+    expect(links.map((l) => [l.textContent?.trim(), l.getAttribute("href")])).toEqual([
+      ["Overview", "/"],
+      ["Achievements", "/achievements"],
+    ]);
   });
 
   it("every nav item points to its expected route (blocker-ticket coverage check)", () => {
     renderSidebar();
     const expectedHrefs: Record<string, string> = {
       Overview: "/",
+      Achievements: "/achievements",
       Console: "/console",
       Issues: "/issues",
       Jobs: "/jobs",

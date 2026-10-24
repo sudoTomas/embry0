@@ -12,6 +12,8 @@ export interface StatProgress {
   trained_by: string;
   xp: number;
   level: number;
+  /** The experience this level starts at. */
+  level_xp: number;
   /** Experience left to the next level; null at 99. */
   xp_to_next: number | null;
 }
@@ -21,6 +23,7 @@ export interface AgentProgress {
   stat: string;
   xp: number;
   level: number;
+  level_xp: number;
   xp_to_next: number | null;
   tier: Tier;
 }
@@ -34,13 +37,42 @@ export interface LevelUp {
   agent_type: string | null;
 }
 
+/** One achievement; a secret before its first signal carries no name, metric or thresholds. */
+export interface AchievementEntry {
+  id: string;
+  name: string;
+  what_counts: string | null;
+  secret: boolean;
+  state: "unlocked" | "discovered" | "secret";
+  /** The highest tier reached, or null before Bronze. */
+  tier: Tier | null;
+  tiers_reached: number;
+  value: number;
+  next_threshold: number | null;
+  /** The value of each tier, Bronze to Divine. */
+  thresholds: number[] | null;
+  unlocked_at: string | null;
+}
+
+export interface AchievementUnlock {
+  kind: "achievement";
+  at: string;
+  id: string;
+  name: string;
+  tier: Tier;
+}
+
+export type RecentEvent = LevelUp | AchievementUnlock;
+
 /** GET /progression: levels recomputed from the work embry0 recorded. */
 export interface Progression {
   total_level: number;
   total_xp: number;
   stats: StatProgress[];
   agents: AgentProgress[];
-  recent: LevelUp[];
+  achievements: AchievementEntry[];
+  /** Levels reached and tiers unlocked, newest first. */
+  recent: RecentEvent[];
   computed_at: string;
 }
 
