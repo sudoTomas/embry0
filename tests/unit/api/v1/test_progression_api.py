@@ -31,16 +31,24 @@ def _app(service: Any) -> FastAPI:
 
 
 @pytest.mark.asyncio
-async def test_the_read_answers_skills_total_level_agents_and_recent_level_ups() -> None:
+async def test_the_read_answers_the_account_its_characters_and_achievements() -> None:
     async with AsyncClient(transport=ASGITransport(app=_app(FakeService())), base_url="http://test") as client:
         resp = await client.get("/api/v1/progression")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body) == {"total_level", "total_xp", "stats", "agents", "achievements", "recent", "computed_at"}
-    assert body["total_xp"] == 90_000 and len(body["stats"]) == 21
-    assert body["agents"][0]["agent_type"] == "developer" and body["agents"][0]["stat"] == "smithing"
+    assert set(body) == {"account", "skills", "characters", "achievements", "recent", "computed_at"}
+    assert body["account"] == {"xp": 60_000, "total_level": body["characters"][0]["total_level"], "characters": 1}
+    assert len(body["skills"]) == 23 and body["skills"][0] == {
+        "id": "coding",
+        "name": "Coding",
+        "group": "build",
+        "echo": "smithing",
+    }
+    developer = body["characters"][0]
+    assert developer["agent_type"] == "developer" and developer["best_skill"] == "coding"
+    assert len(developer["skills"]) == 23
     assert {r["kind"] for r in body["recent"]} == {"level", "achievement"}
-    assert len(body["achievements"]) == 12 and body["achievements"][1]["id"] == "forged_in_fire"
+    assert len(body["achievements"]) == 14 and body["achievements"][1]["id"] == "forged_in_fire"
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ from embry0.agents.model_policy import build_model_policy, resolve_tier_models
 from embry0.agents.resolver import resolve_agent_invocation
 from embry0.agents.session import AgentSession
 from embry0.execution.auth_provider import AuthConfigError
+from embry0.execution.skill_actions import count_action
 from embry0.orchestration.budget import (
     BudgetCheckResult,
     BudgetOverrunError,
@@ -573,6 +574,19 @@ async def run_agent_node(
         except Exception:
             logger.warning("trace_finish_persist_failed", agent_type=agent_type, exc_info=True)
 
+    # Progression (spec 2026-10-24): each tool call this run makes, by the
+    # skill it trains, counted from the events as they stream past.
+    skill_actions: dict[str, int] = {}
+
+    def _count_then_forward(event: dict[str, Any]) -> None:
+        if event.get("type") == "tool_call":
+            tool_input = event.get("tool_input")
+            count_action(
+                skill_actions, str(event.get("tool_name") or ""), tool_input if isinstance(tool_input, dict) else None
+            )
+        if on_event is not None:
+            on_event(event)
+
     try:
         # Production path: docker-exec the sandbox runner with the serialized
         # invocation; the in-container SdkAgentExecutor handles the actual
@@ -581,7 +595,7 @@ async def run_agent_node(
             container=container,
             config=serialized,
             network=network,
-            on_event=on_event,
+            on_event=_count_then_forward,
             resume_session=resume_session,
         )
     except AuthConfigError as exc:
@@ -632,6 +646,7 @@ async def run_agent_node(
         cost_usd=result.cost_usd,
         duration_ms=result.duration_ms,
         tools_called=result.tools_called or {},
+        skill_actions=skill_actions,
         result_summary=result.error_message or result.output or "",
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { RecentEvent } from "@/api/progression";
+import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useProgression } from "@/hooks/useProgression";
 import { chatMessage, freshEvents, readSeen, writeSeen } from "./chatbox";
 
@@ -14,6 +15,7 @@ export const MESSAGE_MS = 6_000;
  */
 export function Chatbox() {
   const { data } = useProgression();
+  const lookup = useIdentityLookup();
   const [queue, setQueue] = useState<RecentEvent[]>([]);
   const [current, setCurrent] = useState<RecentEvent | null>(null);
 
@@ -41,7 +43,7 @@ export function Chatbox() {
   }, [current]);
 
   if (!current || !data) return null;
-  const names = new Map(data.stats.map((s) => [s.stat, s.name]));
+  const names = new Map(data.skills.map((s) => [s.id, s.name]));
   return (
     <div
       role="status"
@@ -49,7 +51,11 @@ export function Chatbox() {
       data-testid="chatbox-message"
       className="pointer-events-none fixed bottom-4 left-4 z-50 max-w-sm rounded-sm border-2 border-[#5d5447] bg-[#d8cba4] px-3 py-2 text-sm text-[#1a1208] shadow-lg"
     >
-      {chatMessage(current, (stat) => names.get(stat) ?? stat)}
+      {chatMessage(
+        current,
+        (stat) => names.get(stat) ?? stat,
+        (agentType) => lookup(agentType).displayName,
+      )}
     </div>
   );
 }

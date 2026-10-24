@@ -829,3 +829,51 @@ async def test_run_agent_node_serializes_the_sandboxs_skill_mounts() -> None:
     )
     runner.skill_mounts.assert_awaited_once_with("c1")
     assert runner.run.call_args.kwargs["config"]["skill_mounts"] == [spec]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_counts_each_tool_call_by_the_skill_it_trains() -> None:
+    """Progression spec 2026-10-24: tool-call events are classified as they stream, forwarded unchanged, and the
+    counts land on the trace."""
+    seen: list[dict[str, Any]] = []
+    out = AgentOutput(agent_type="developer", output="ok", tools_called={"Bash": 2, "Edit": 1})
+
+    async def _run(**kwargs: Any) -> AgentOutput:
+        for event in (
+            {"type": "tool_call", "tool_name": "Bash", "tool_input": {"command": "git status"}},
+            {"type": "tool_call", "tool_name": "Bash", "tool_input": {"command": "uv run pytest"}},
+            {"type": "tool_call", "tool_name": "Edit", "tool_input": {"file_path": "docs/a.md"}},
+            {"type": "tool_call", "tool_name": "Skill", "tool_input": {}},
+            {"type": "text", "text": "done"},
+        ):
+            kwargs["on_event"](event)
+        return out
+
+    runner = AsyncMock()
+    runner.run = AsyncMock(side_effect=_run)
+    traces_repo = AsyncMock()
+    await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+        agent_runner=runner,
+        agent_type="developer",
+        prompt="do it",
+        on_event=seen.append,
+        agent_definition={
+            "model": "claude-opus-4-7",
+            "tools": ["Bash", "Edit"],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+        credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+        config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+    )
+
+    assert len(seen) == 5, "every event still reaches the caller's callback"
+    assert traces_repo.finish.call_args.kwargs["skill_actions"] == {
+        "shell:version_control": 1,
+        "shell:testing": 1,
+        "edit:documentation": 1,
+    }

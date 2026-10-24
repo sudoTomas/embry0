@@ -33,6 +33,7 @@ class TracesRepository:
         cost_usd: float = 0.0,
         duration_ms: int = 0,
         tools_called: dict[str, int] | None = None,
+        skill_actions: dict[str, int] | None = None,
         result_summary: str = "",
         input_tokens: int = 0,
         output_tokens: int = 0,
@@ -59,9 +60,9 @@ class TracesRepository:
                 trace_id, job_id, agent_type, model, result,
                 cost_usd, duration_ms, tools_called, result_summary,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                error_code, stderr_tail
+                error_code, stderr_tail, skill_actions
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             """,
             trace_id,
             job_id,
@@ -78,6 +79,7 @@ class TracesRepository:
             cache_creation_tokens,
             error_code,
             stderr_tail,
+            skill_actions or {},
         )
         logger.info("trace_created", trace_id=trace_id, job_id=job_id, agent_type=agent_type)
         if self._metrics is not None and cost_usd > 0:
@@ -99,6 +101,7 @@ class TracesRepository:
         cache_creation_tokens: int,
         error_code: str | None,
         stderr_tail: str | None,
+        skill_actions: dict[str, int] | None = None,
     ) -> None:
         """Finalize the row written at run start (result='running').
 
@@ -108,7 +111,7 @@ class TracesRepository:
             """
             UPDATE traces SET result = $2, cost_usd = $3, duration_ms = $4, tools_called = $5, result_summary = $6,
                 input_tokens = $7, output_tokens = $8, cache_read_tokens = $9, cache_creation_tokens = $10,
-                error_code = $11, stderr_tail = $12
+                error_code = $11, stderr_tail = $12, skill_actions = $13
             WHERE trace_id = $1
             """,
             trace_id,
@@ -123,6 +126,7 @@ class TracesRepository:
             cache_creation_tokens,
             error_code,
             stderr_tail,
+            skill_actions or {},
         )
         logger.info("trace_finished", trace_id=trace_id, result=result)
         if self._metrics is not None and cost_usd > 0:

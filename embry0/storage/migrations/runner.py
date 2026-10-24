@@ -3051,6 +3051,16 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         WHERE agent_definitions.type = v.type AND agent_definitions.display_name = '';
         """,
     ),
+    (
+        107,
+        "traces.skill_actions: each run's tool calls by the skill they train (progression spec 2026-10-24)",
+        # Keys are ``kind:skill`` from embry0/execution/skill_actions.py,
+        # values call counts. Older rows keep '{}' and progression reads
+        # their tools_called instead.
+        """
+        ALTER TABLE traces ADD COLUMN IF NOT EXISTS skill_actions JSONB NOT NULL DEFAULT '{}';
+        """,
+    ),
 ]
 
 

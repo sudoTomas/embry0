@@ -45,12 +45,6 @@ def test_migration_106_present_and_gapless() -> None:
     assert "specialist" in description
 
 
-def test_migration_106_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_105.py)."""
-    assert MIGRATIONS[-1][0] == 106, "migration 106 must write the specialist identities"
-
-
 def test_migration_106_writes_the_identity_that_identity_py_carries() -> None:
     """The migration's VALUES rows equal BUILTIN_IDENTITY for the eight specialists, field by field.
 

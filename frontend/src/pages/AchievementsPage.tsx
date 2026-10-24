@@ -1,4 +1,6 @@
-import type { AchievementEntry, StatProgress } from "@/api/progression";
+import { useSearchParams } from "react-router";
+import type { AchievementEntry, Character, Skill, SkillGroup, SkillProgress } from "@/api/progression";
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { PageError } from "@/components/PageError";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
@@ -8,32 +10,66 @@ import { cn, formatDate } from "@/lib/utils";
 
 const number = (n: number) => n.toLocaleString("en-US");
 
-/** A skill: its level, a bar to the next level, and who trains it. */
-function SkillTile({ stat, trainer }: { stat: StatProgress; trainer: string }) {
-  const span = stat.xp_to_next === null ? 0 : stat.xp - stat.level_xp + stat.xp_to_next;
-  const filled = span === 0 ? 1 : (stat.xp - stat.level_xp) / span;
+const GROUPS: { id: SkillGroup; name: string }[] = [
+  { id: "build", name: "Build" },
+  { id: "verify", name: "Verify" },
+  { id: "investigate", name: "Investigate" },
+  { id: "care", name: "Care" },
+];
+
+/** One skill of a character: its level and a bar to the next level. */
+function SkillTile({ skill, progress }: { skill: Skill; progress: SkillProgress }) {
+  const span = progress.xp_to_next === null ? 0 : progress.xp - progress.level_xp + progress.xp_to_next;
+  const filled = span === 0 ? 1 : (progress.xp - progress.level_xp) / span;
   return (
-    <div className="rounded-md border border-border bg-white/[0.02] p-3" data-testid="skill-tile">
+    <div className="rounded-md border border-border bg-white/[0.02] p-2.5" data-testid="skill-tile" data-skill={skill.id}>
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-sm font-semibold text-white/90">{stat.name}</span>
-        <span className="font-mono text-lg font-semibold text-white/90" data-testid="skill-level">
-          {stat.level}
+        <span className="truncate text-sm font-semibold text-white/90">{skill.name}</span>
+        <span className="font-mono text-base font-semibold text-white/90" data-testid="skill-level">
+          {progress.level}
         </span>
       </div>
       <div
-        className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"
+        className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10"
         role="progressbar"
-        aria-label={`${stat.name} progress to level ${Math.min(stat.level + 1, 99)}`}
+        aria-label={`${skill.name} progress to level ${Math.min(progress.level + 1, 99)}`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(filled * 100)}
       >
         <div className="h-full bg-white/50" style={{ width: `${Math.round(filled * 100)}%` }} />
       </div>
-      <p className="mt-1.5 text-xs text-muted-foreground">
-        {trainer} · {stat.xp_to_next === null ? `${number(stat.xp)} XP` : `${number(stat.xp_to_next)} XP to level ${stat.level + 1}`}
+      <p className="mt-1 text-xs text-muted-foreground">
+        {progress.xp_to_next === null
+          ? `${number(progress.xp)} XP`
+          : `${number(progress.xp_to_next)} XP to level ${progress.level + 1}`}
       </p>
     </div>
+  );
+}
+
+/** A character's 23 skills in the classic three-column grid, grouped Build, Verify, Investigate, Care. */
+function SkillSheet({ character, skills, name }: { character: Character; skills: Skill[]; name: string }) {
+  const progressOf = new Map(character.skills.map((s) => [s.stat, s]));
+  return (
+    <section className="space-y-3" data-testid="skill-sheet" aria-label={`${name}'s skills`}>
+      <h2 className="text-section font-semibold">
+        {name}'s skills <span className="font-normal text-fg-secondary">· total level {number(character.total_level)}</span>
+      </h2>
+      {GROUPS.map((group) => (
+        <div key={group.id} className="space-y-1.5">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">{group.name}</h3>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {skills
+              .filter((s) => s.group === group.id)
+              .map((skill) => {
+                const progress = progressOf.get(skill.id);
+                return progress ? <SkillTile key={skill.id} skill={skill} progress={progress} /> : null;
+              })}
+          </div>
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -77,13 +113,15 @@ function AchievementCard({ entry }: { entry: AchievementEntry }) {
 }
 
 /**
- * The instance's progression (spec 2026-10-24): its total level, each skill
- * with who trains it, and the achievement diary in seven tiers, Bronze to
- * Divine, recomputed from the work embry0 recorded.
+ * The account (spec 2026-10-24): the player's experience and totals, the
+ * achievement diary it earned across everything, its characters as a roster,
+ * and the selected character's skill sheet. `?character=<agent type>` picks
+ * the sheet; without it, the highest total level shows.
  */
 export function AchievementsPage() {
   const progression = useProgression();
   const lookup = useIdentityLookup();
+  const [params, setParams] = useSearchParams();
 
   if (progression.isError) {
     return <PageError message="Progression did not load" onRetry={() => void progression.refetch()} />;
@@ -91,29 +129,19 @@ export function AchievementsPage() {
   if (!progression.data) return <Skeleton className="h-64 w-full" />;
   const { data } = progression;
   const unlocked = data.achievements.filter((a) => a.state === "unlocked").length;
+  const roster = [...data.characters].sort((a, b) => b.total_level - a.total_level || a.agent_type.localeCompare(b.agent_type));
+  const skillName = new Map(data.skills.map((s) => [s.id, s.name]));
+  const selected = roster.find((c) => c.agent_type === params.get("character")) ?? roster[0];
 
   return (
     <div className="space-y-6" data-testid="achievements-page">
       <header className="space-y-1">
         <h1 className="title-pixel text-xl font-bold">Achievements</h1>
-        <p className="text-sm text-fg-secondary" data-testid="total-level">
-          Total level {number(data.total_level)} · {number(data.total_xp)} XP · {unlocked} of {data.achievements.length} achievements
-          unlocked
+        <p className="text-sm text-fg-secondary" data-testid="account-summary">
+          Account {number(data.account.xp)} XP · account total {number(data.account.total_level)} ·{" "}
+          {number(data.account.characters)} characters · {unlocked} of {data.achievements.length} achievements unlocked
         </p>
       </header>
-
-      <section className="space-y-2">
-        <h2 className="text-section font-semibold">Skills</h2>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {data.stats.map((stat) => (
-            <SkillTile
-              key={stat.stat}
-              stat={stat}
-              trainer={stat.trained_by === "instance" ? "The instance" : lookup(stat.trained_by).displayName}
-            />
-          ))}
-        </div>
-      </section>
 
       <section className="space-y-2">
         <h2 className="text-section font-semibold">Achievement diary</h2>
@@ -123,6 +151,49 @@ export function AchievementsPage() {
           ))}
         </div>
       </section>
+
+      <section className="space-y-2">
+        <h2 className="text-section font-semibold">Characters</h2>
+        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {roster.map((character) => {
+            const identity = lookup(character.agent_type);
+            const best = character.skills.find((s) => s.stat === character.best_skill);
+            const isSelected = character === selected;
+            return (
+              <li key={character.agent_type}>
+                <button
+                  type="button"
+                  data-testid="character"
+                  aria-current={isSelected ? "true" : undefined}
+                  onClick={() => setParams({ character: character.agent_type }, { replace: true })}
+                  className={cn(
+                    "flex w-full items-center gap-2.5 rounded-md border p-2.5 text-left",
+                    isSelected ? "border-white/40 bg-white/[0.06]" : "border-border bg-white/[0.02] hover:bg-white/[0.04]",
+                  )}
+                >
+                  <AgentAvatar identity={identity} size={32} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-white/90">{identity.displayName}</span>
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span
+                        aria-hidden="true"
+                        className="h-2 w-2 rounded-[1px]"
+                        style={{ backgroundColor: TIER_COLOR[character.tier] }}
+                      />
+                      {skillName.get(character.best_skill) ?? character.best_skill} {best?.level ?? 1}
+                    </span>
+                  </span>
+                  <span className="font-mono text-sm font-semibold text-white/90" title="Total level">
+                    {number(character.total_level)}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      {selected && <SkillSheet character={selected} skills={data.skills} name={lookup(selected.agent_type).displayName} />}
     </div>
   );
 }

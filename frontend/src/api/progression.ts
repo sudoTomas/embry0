@@ -1,15 +1,25 @@
 import { api } from "./client";
 
-/** An agent's gear tier from its level (spec 2026-10-24): Bronze from 1 to Divine from 90. */
+/** A character's gear tier from its best skill (spec 2026-10-24): Bronze from 1 to Divine from 90. */
 export type Tier = "bronze" | "iron" | "steel" | "mithril" | "adamant" | "rune" | "divine";
 
-export interface StatProgress {
-  /** The skill's id, such as `smithing`. */
-  stat: string;
-  /** Its name, such as `Smithing`. */
+/** Where a skill's tile sits on a skill sheet. */
+export type SkillGroup = "build" | "verify" | "investigate" | "care";
+
+/** One of the 23 skills every character has. */
+export interface Skill {
+  /** Its id, such as `version_control`. */
+  id: string;
+  /** Its name, such as `Version control`. */
   name: string;
-  /** The agent type that trains it, or `instance`. */
-  trained_by: string;
+  group: SkillGroup;
+  /** The classic skill it echoes, which gives it its icon and cape colours. */
+  echo: string;
+}
+
+/** A character's progress in one skill. */
+export interface SkillProgress {
+  stat: string;
   xp: number;
   level: number;
   /** The experience this level starts at. */
@@ -18,23 +28,34 @@ export interface StatProgress {
   xp_to_next: number | null;
 }
 
-export interface AgentProgress {
+/** An agent type as a character: its 23 skills, their total, and the gear its best skill wears. */
+export interface Character {
   agent_type: string;
-  stat: string;
   xp: number;
-  level: number;
-  level_xp: number;
-  xp_to_next: number | null;
+  /** Its 23 levels added up, 23 to 2,277. */
+  total_level: number;
+  best_skill: string;
   tier: Tier;
+  /** Every skill, in sheet order. */
+  skills: SkillProgress[];
+}
+
+/** The instance as the player's account. */
+export interface Account {
+  /** Every character's experience added up. */
+  xp: number;
+  /** Every character's total level added up. */
+  total_level: number;
+  characters: number;
 }
 
 export interface LevelUp {
   kind: "level";
   at: string;
+  /** The character whose skill crossed the level. */
+  agent_type: string;
   stat: string;
   level: number;
-  /** The agent whose work crossed the level; null for an instance skill. */
-  agent_type: string | null;
 }
 
 /** One achievement; a secret before its first signal carries no name, metric or thresholds. */
@@ -64,12 +85,11 @@ export interface AchievementUnlock {
 
 export type RecentEvent = LevelUp | AchievementUnlock;
 
-/** GET /progression: levels recomputed from the work embry0 recorded. */
+/** GET /progression: the account, its characters and its achievements, recomputed from the work embry0 recorded. */
 export interface Progression {
-  total_level: number;
-  total_xp: number;
-  stats: StatProgress[];
-  agents: AgentProgress[];
+  account: Account;
+  skills: Skill[];
+  characters: Character[];
   achievements: AchievementEntry[];
   /** Levels reached and tiers unlocked, newest first. */
   recent: RecentEvent[];

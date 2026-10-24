@@ -31,10 +31,10 @@ export function AgentsPage() {
   const navigate = useNavigate();
   const lookup = useIdentityLookup();
   const isAdmin = useIsAdmin();
-  // Each agent's skill and level (spec 2026-10-24); a page without them still lists the agents.
+  // Each character's total level and best skill (spec 2026-10-24); a page without them still lists the agents.
   const progression = useProgression();
-  const skillName = new Map((progression.data?.stats ?? []).map((s) => [s.stat, s.name]));
-  const levelOf = new Map((progression.data?.agents ?? []).map((a) => [a.agent_type, a]));
+  const skillName = new Map((progression.data?.skills ?? []).map((s) => [s.id, s.name]));
+  const characterOf = new Map((progression.data?.characters ?? []).map((c) => [c.agent_type, c]));
 
   const [filter, setFilter] = useState<Filter>("all");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -137,7 +137,8 @@ export function AgentsPage() {
                       const identity = lookup(agent.type);
                       const op = agentTypeToOperation(agent.type);
                       const run = runModelOf(agent);
-                      const level = levelOf.get(agent.type);
+                      const character = characterOf.get(agent.type);
+                      const best = character?.skills.find((s) => s.stat === character.best_skill);
                       return (
                         <tr
                           key={agent.type}
@@ -153,12 +154,13 @@ export function AgentsPage() {
                                 {identity.displayName !== agent.type && (
                                   <div className="font-mono text-xs text-white/40">{agent.type}</div>
                                 )}
-                                {level && (
+                                {character && (
                                   <LevelBadge
-                                    skill={skillName.get(level.stat) ?? level.stat}
-                                    level={level.level}
-                                    tier={level.tier}
-                                    xpToNext={level.xp_to_next}
+                                    agentType={agent.type}
+                                    totalLevel={character.total_level}
+                                    bestSkill={skillName.get(character.best_skill) ?? character.best_skill}
+                                    bestLevel={best?.level ?? 1}
+                                    tier={character.tier}
                                   />
                                 )}
                                 {agent.is_builtin && <Badge tone="neutral">Built-in</Badge>}

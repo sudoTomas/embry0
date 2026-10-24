@@ -1,92 +1,172 @@
-# Progression and achievements: levels, an achievement diary, and what agents wear
+# Progression and achievements: characters, an account, and what they earn
 
-**Goal.** The work embry0 already records becomes experience. Each agent trains a skill, levels from 1 to 99 on the classic experience curve, and the instance has a total level. Achievements, in seven metal tiers from Bronze to Divine, mark what the instance and its agents have done. Unlocks show in four places: an Achievements page, chat-box messages, agent cards, and the agents' sprites, which wear the gear tier, skill cape or rare hat they earned.
+**Goal.** The work embry0 already records becomes experience, the way an old-school adventure game counts it. **Every agent is a character** with the same 23 development skills, each levelled from 1 to 99 on the classic experience curve by what that agent does in its jobs. **The embry0 instance is the player's account**: its experience is all its characters' experience, and its achievement diary, quests and repo diaries count across everything the account has done. Unlocks show on an account page, as chat-box messages, on agent cards, and on the sprites, which wear the gear, skill capes and rares their character earned.
+
+*Revised 2026-10-24.* The first version gave the instance 21 skills, one per agent plus three of its own, which made an agent's level read as the player's. Levels now belong to characters, achievements to the account, and the skills are ones a development agent actually uses.
 
 The tone is the old-school adventure game the roster already draws (the game UI design, 2026-10-18, and the adventurer roster, 2026-10-20). The reference for achievements is the Hermes Agent achievements plugin (MIT): stable ids, tiered progress, secret entries, a "What counts" line per entry, all recomputed from history.
 
-**Non-goals.** Nothing here changes what an agent does or may do: levels are read, never gates. No leaderboard across deployments, no network calls, no sounds. No trademarked names in code, docs or strings; the art is original pixel art in the style, never copied. No new runtime dependency.
+**Non-goals.** Until the trust slice (below), levels are read, never gates. No leaderboard across deployments, no network calls, no sounds. No trademarked names in code, docs or strings; the art is original pixel art in the style, never copied. No new runtime dependency.
 
 ## Words
 
 | Word | Meaning |
 |---|---|
-| skill | One of the trained abilities below. In code and URLs it is `stat` (`/progression`), because embry0's **Skills** page already means agent skill packs |
-| experience (XP) | Points a skill gains from an event the database already records |
+| character | An agent type, built-in or custom, with its own 23 skills. A custom agent is its own character from level 1 |
+| account | The embry0 instance: the player who owns every character |
+| skill | One of the 23 below. In code and URLs it is `stat` (`/progression`), because embry0's **Skills** page already means agent skill packs |
+| action | One tool call of a run, classified into the skill it trains |
+| experience (XP) | Points a character's skill gains from an action or an outcome the database records |
 | level | 1 to 99 from XP, on the classic curve: `xp(L) = floor(sum_{n=1}^{L-1} floor(n + 300 * 2^(n/7)) / 4)`; level 99 is 13,034,431 XP and level 92 is half of that |
-| total level | The sum of every skill's level across the instance |
-| tier | Bronze, Iron, Steel, Mithril, Adamant, Rune, Divine: an achievement's seven steps, and the gear an agent wears |
+| total level | A character's 23 levels added up, 23 to 2,277: the number on its card |
+| best skill | A character's highest level; it sets the gear tier the character wears |
+| tier | Bronze, Iron, Steel, Mithril, Adamant, Rune, Divine: an achievement's seven steps, and the gear a character wears |
 
-## Skills and what trains them
+## Skills
 
-Every built-in agent type trains one skill, 18 in all, and three instance skills come from work no single agent does; the total level runs to 2,079. The XP of an event is fixed per source, chosen so that the busiest agent of an active deployment reaches 99 in about a year and the first levels come in the first week, as on the classic curve.
+Each skill echoes one classic skill, which gives it its icon and its cape colours.
 
-| Skill | Trained by | Event (all already in the database) | XP |
+| Group | Skill | Echoes | Trained by |
 |---|---|---|---|
-| Smithing | developer | a job's pull request merged (`jobs.status = pr_merged`) | 90,000 |
-| Defence | review | a review run that ended without an error | 30,000 |
-| Herblore | qa | a QA job that completed | 60,000 |
-| Hunter | triage | a triage run that ended without an error | 2,000 |
-| Magic | analysis | an analysis run that ended without an error | 2,500 |
-| Runecraft | research | a research run that ended without an error | 40,000 |
-| Construction | onboarding | an onboarding run that ended without an error | 150,000 |
-| Firemaking | ops | an ops run that ended without an error | 40,000 |
-| Prayer | pr-reviewer | a pull request review run that ended without an error | 30,000 |
-| Fletching | context-auditor | a context audit completed, plus 1,000 per outdated claim found | 40,000 |
-| Crafting | design-auditor | a design audit run that ended without an error | 40,000 |
-| Hitpoints, Woodcutting, Thieving, Fishing, Agility, Ranged, Attack | kintsugi, gardener, interrogator, why, how, blast-radius, comment-sicko | a run of that specialist that ended without an error | 40,000 |
-| Slayer | the watcher (instance) | a healing case verified healed | 120,000 |
-| Mining | the watcher (instance) | a watcher run that analysed logs | 3,000 |
-| Farming | the schedules (instance) | a context audit the schedule started and the budget gate let run | 4,000 |
+| Build | Coding | Smithing | edits to source files; a pull request merged |
+| Build | Version control | Woodcutting | git commands; a pull request opened |
+| Build | Building | Construction | build, compile and install commands |
+| Build | Shell | Strength | every other shell command |
+| Build | Databases | Mining | SQL and migration edits, database commands |
+| Verify | Testing | Cooking | test-runner commands; edits to test files |
+| Verify | Quality assurance | Herblore | a QA job that completed |
+| Verify | Browsing | Agility | browser actions (navigate, click, screenshot, evaluate) |
+| Verify | Reviewing | Defence | a review that finished |
+| Verify | Linting | Crafting | lint, format and type-check commands |
+| Verify | Security | Prayer | security-scan commands; a blast-radius run |
+| Investigate | Reading | Fishing | file reads and globs |
+| Investigate | Searching | Hunter | grep and tool searches |
+| Investigate | Debugging | Slayer | log queries |
+| Investigate | Research | Magic | web searches and fetches; a research run |
+| Investigate | Triage | Attack | an issue triaged |
+| Care | Documentation | Fletching | edits to docs; outdated claims a context audit found |
+| Care | Design | Runecraft | a design audit; edits to styles and assets |
+| Care | Operations | Firemaking | container, deploy and infra commands and files; an ops or onboarding run |
+| Care | Planning | Farming | plan and to-do updates |
+| Care | Delegation | Thieving | a sub-agent started |
+| Care | Communication | Ranged | a question the agent asked a person |
+| Care | Recovery | Hitpoints | a merge on an issue whose earlier job failed; an interrupted job resumed to the end |
 
-A custom agent trains the skill of the built-in it was copied from, else Magic. Failed and refused jobs earn nothing. XP is recomputed from the rows, never stored, so a changed table re-reads the past the same way for everyone.
+**Actions.** The runner already counts each run's tool calls by name (`traces.tools_called`), and it sees each call's input. From this slice on it also classifies every call into its skill and stores the counts on the trace (`traces.skill_actions`, a new JSON column): a shell command by its program (`git`, a test runner, a linter, a build tool, `docker`, a scanner), a file edit by its path (docs, tests, migrations, styles, infra files, else Coding). Older traces have only tool names, so their shell calls train Shell and their edits train Coding. Version control, Building, Databases, Linting, the test-runner half of Testing and Security therefore start near level 1 and fill from now on.
+
+**Rates.** An action earns a small fixed XP for its skill; an outcome (a merge, a QA pass, a finished review, a triaged issue) earns a large one. The starting rates come from the current history, chosen so that the busiest character's main skill reaches 99 in about a year and its first levels come in the first week:
+
+| Source | XP |
+|---|---|
+| an edit (Coding, Documentation, Testing, Design, Databases, Operations by path) | 1,400 |
+| a shell command (by its kind) | 600 |
+| a file read or glob; a search | 1,000; 800 |
+| a browser action | 1,000 |
+| a log query | 400 |
+| a web search or fetch; a sub-agent; a plan update | 2,000 |
+| a pull request merged (Coding); opened (Version control) | 60,000; 20,000 |
+| a QA job completed | 50,000 |
+| a review finished | 30,000 |
+| an issue triaged | 2,000 |
+| a context audit completed, plus 1,000 per outdated claim (Documentation) | 40,000 |
+| a research, ops, onboarding, design-audit or blast-radius run | 40,000 |
+| a question asked | 20,000 |
+| a recovery (comeback merge or resumed job) | 90,000 |
+
+Failed, refused and abandoned runs earn nothing; an action counts only on a run that ended without an error. XP is recomputed from the rows, never stored, so a changed rate re-reads the past the same way for everyone.
+
+## The account
+
+The account shows its XP (every character's added up), the account total (every character's total level added up), its characters as a roster, and its achievement diary. Work no character does (the watcher's log reads and healed cases, the schedules' starts) earns no levels; it counts toward the account's achievements only.
 
 ## Achievements
 
-An achievement is data: `{ id, name, description, what_counts, skill?, metric, thresholds[7], secret?, reward? }`. `id` is stable forever (it keys the unlock); `thresholds` are the metric's value for Bronze through Divine. An achievement is **unlocked** at its first tier, **discovered** with its progress shown while locked, or **secret**, shown as `???` until its first signal. Its unlock time is the time the metric crossed the threshold, so it is derived from history like XP.
-
-The first catalogue (names in the game's voice; the metrics are embry0's):
+An achievement is data: `{ id, name, what_counts, metric, thresholds[7], secret? }`. `id` is stable forever (it keys the unlock); `thresholds` are the metric's value for Bronze through Divine. An achievement is **unlocked** at its first tier, **discovered** with its progress shown while locked, or **secret**, shown as `???` until its first signal. Its unlock time is the time the metric crossed the threshold, so it is derived from history like XP. Every achievement counts across the whole account.
 
 | Name | What counts | Tiers (Bronze → Divine) |
 |---|---|---|
-| Fresh off the Tutorial | jobs completed | 1, 10, 50, 100, 250, 500, 1,000 |
+| Fresh off the Tutorial | jobs completed | 1, 25, 100, 250, 1,000, 2,500, 5,000 |
 | Forged in Fire | pull requests merged | 1, 5, 15, 30, 60, 120, 250 |
-| Guardian of the Gate | reviews with a verdict | 1, 10, 25, 50, 100, 250, 500 |
-| Potion Master | QA runs passed | 1, 5, 15, 30, 60, 120, 250 |
-| Slayer Task Complete | healing cases verified | 1, 3, 10, 25, 50, 100, 200 |
+| Guardian of the Gate | reviews finished | 1, 10, 25, 50, 100, 250, 500 |
+| Potion Master | QA jobs completed | 1, 5, 15, 30, 60, 120, 250 |
+| Slayer Task Complete | healing cases judged healed | 1, 3, 10, 25, 50, 100, 200 |
+| Prospector | watcher runs that read logs | 10, 100, 500, 1,000, 2,500, 5,000, 10,000 |
+| Green Thumb | audits the schedules started | 1, 10, 25, 50, 100, 250, 500 |
 | Lines Straightened | outdated claims a context audit found | 10, 50, 100, 250, 500, 1,000, 2,500 |
-| Bank Value | USD spent on jobs | 10, 50, 100, 250, 500, 1,000, 2,500 |
-| Tick Perfect | jobs completed in under two minutes | 1, 10, 25, 50, 100, 250, 500 |
-| Wise Old Agent | total level | 50, 100, 250, 500, 750, 1,000, 1,250 |
-| Skill Cape | skills at 99 | 1 to 7 |
-| Oh Dear, You Are Dead | jobs that failed, then a retry that merged (secret) | 1, 5, 10, 25, 50, 100, 250 |
-| Click Here to Continue | questions answered for an agent that asked (`awaiting_input`) | 1, 5, 10, 25, 50, 100, 250 |
+| Bank Value | USD the jobs spent | 10, 50, 100, 250, 500, 1,000, 2,500 |
+| Tick Perfect | jobs finished within 15 seconds | 1, 5, 10, 25, 50, 100, 250 |
+| Wise Old Agent | the highest total level of any character | 100, 250, 500, 750, 1,000, 1,500, 2,000 |
+| Skill Cape | skill capes earned across every character | 1, 2, 5, 10, 23, 50, 100 |
+| Oh Dear, You Are Dead | merges on an issue whose earlier job failed (secret) | 1, 3, 5, 10, 25, 50, 100 |
+| Click Here to Continue | questions an agent asked a person | 1, 5, 10, 25, 50, 100, 250 |
 
-**Rares.** A few secrets award a hat instead of a tier: a pull request merged on 25 December gives a party hat (its colour from the agent's palette colour), on 31 October a holiday mask, and the first job of a new year a party hat in white. A rare goes to the agent whose job earned it.
+**Rares.** A few secrets award a hat instead of a tier: a pull request merged on 25 December gives a party hat (its colour from the character's palette colour), on 31 October a holiday mask, and the first job of a new year a party hat in white. A rare goes to the character whose job earned it.
+
+## Quests and repo diaries
+
+**Quests** are multi-step goals the account completes, each with steps, an optional skill requirement and a reward: quest points for the account, and an XP reward to the characters who did the steps. Like everything else they are recomputed from history. The first set:
+
+| Quest | Steps | Reward |
+|---|---|---|
+| The Repo's Assistant | a repo onboarded, its first job finished, its first pull request merged | 1 quest point; Operations and Coding XP |
+| The Restless Build | an issue whose job failed, then a later job on it merged | 1 quest point; Recovery XP |
+| Gatekeeper | a pull request reviewed, QA passed and merged on one issue | 2 quest points; Reviewing and Quality assurance XP |
+| Divine Slayer | requires a character at total level 1,000: 100 merges and a repo diary at Elite | 5 quest points; a Divine trim on every cape |
+
+Every quest done gives the account a quest cape, worn by its highest-level character.
+
+**Repo diaries** are an achievement diary per repository, in four tiers:
+
+| Tier | Tasks |
+|---|---|
+| Easy | an issue triaged, a job finished, a QA run |
+| Medium | a pull request merged, a QA pass, a context audit |
+| Hard | 10 pull requests merged, a context audit with no outdated claims, 10 reviews |
+| Elite | 50 pull requests merged, 30 days without a failed job, every task above |
+
+A completed tier shows on the repo's diary card on the account page.
+
+## Trust (the last slice; its own spec first)
+
+Level requirements that change what a character may do, like the requirements to wield an item. Examples: a character needs Reviewing 60 before its approval counts toward an automatic merge; Coding 40 before it takes issues marked large. Each requirement is off by default and turned on per organization. Its own spec, written before any code, settles which actions are gated, whether levels count instance-wide or per organization, and how a person overrides a gate.
 
 ## Where it shows
 
-- **Achievements page** (`/achievements`, under Overview): the instance's total level and each skill as a level tile, then the achievements grouped by skill, each with its tier pips (Bronze to Divine), progress to the next tier and its "What counts" line; secrets as `???`. Per-agent pages show the agent's skill, level, progress bar and earned items.
-- **Chat-box messages:** a level gained or an achievement unlocked appears as a short message in the classic chat style ("Congratulations, you just advanced a Smithing level. Your Smithing level is now 42."), bottom left, one at a time. The page polls `/progression` every minute; a viewer's last seen time lives in `localStorage`, so each message shows once per browser.
-- **Agent cards:** the agent's skill icon and level beside its name.
-- **What agents wear:** an agent's gear tier follows its level (Bronze from 1, Iron 15, Steel 30, Mithril 45, Adamant 60, Rune 75, Divine 90: experience piles up at the curve's top, and a few months of an active deployment already reach the 80s), a skill cape replaces its party cape at 99, and an earned rare replaces its head item. The cape keeps the party colour except a skill cape, which has the skill's own.
-
-The legacy 16-pixel avatars cannot wear gear, so the built-in agents move to composed adventurers: smith, warden, alchemist, seer, herald, arbiter, scholar, oracle, engineer, rogue, bard and golem get 32-pixel appearances built from parts and items. Their ids stay; an old row still renders.
+- **Account page** (`/achievements`, under Overview): the account XP, the account total and quest points; the achievement diary with tier pips, progress to the next tier, the "What counts" line, and secrets as `???`; the roster of characters with total level and best skill; quests and repo diaries in their slice.
+- **A character's skill sheet:** an agent card opens its 23 skills as tiles in the classic three-column grid, grouped Build, Verify, Investigate, Care, each with its level and a bar to the next level.
+- **Chat-box messages:** a level gained or an achievement unlocked appears as a short message in the classic chat style, naming the character ("Congratulations, Developer just advanced a Coding level. Its Coding level is now 42."), bottom left, one at a time. The page polls `/progression` every minute; a viewer's last seen time lives in `localStorage`, so each message shows once per browser.
+- **Agent cards:** the character's total level and its best skill.
+- **What characters wear:** each built-in keeps its class and climbs that class's ladder (melee plate, ranged leather to dragonhide, magic robes), from Bronze to Divine. Its tier follows its best skill: Bronze from 1, Iron 15, Steel 30, Mithril 45, Adamant 60, Rune 75, Divine 90. A skill cape, in its echo's colours, replaces the party cape at 99 (the best one if several); an earned rare replaces its head item. The legacy 16-pixel avatars cannot wear gear, so the built-in agents move to composed 32-pixel adventurers; their ids stay and an old row still renders.
 
 ## Art
 
-New parts and items (the Divine tier, skill capes, party hats, the holiday mask, the twelve converted characters) are drawn with PixelLab and stored as the roster stores everything: palette-indexed text grids compiled to SVG. A generation takes our current sprite as its starting image and style, and the roster palette as its forced palette; its output is cut into the layer it belongs to and checked in the contact sheet. No image file enters the repository, and the roster directory's source budget rises from 120 KB to 200 KB.
+New parts and items (the Divine tier and the class ladders, skill capes, party hats, the holiday mask, the converted characters) are drawn with PixelLab and stored as the roster stores everything: palette-indexed text grids compiled to SVG. A generation takes our current sprite as its starting image and style, and the roster palette as its forced palette; its output is cut into the layer it belongs to and checked in the contact sheet. No image file enters the repository, and the roster directory's source budget rises from 120 KB to 200 KB.
 
 ## API
 
-`GET /api/v1/progression` (read tier): `{ total_level, total_xp, stats: [{ stat, xp, level, xp_to_next, trained_by }], agents: [{ agent_type, stat, xp, level, tier, cape, rare }], achievements: [{ id, name, what_counts, tier, progress, next_threshold, state, unlocked_at }], recent: [{ kind, at, ... }] }`. Computed from the jobs, traces, QA runs, healing cases and audit rows with a few aggregate queries, cached for 60 seconds. No migration.
+`GET /api/v1/progression` (read tier):
+
+```
+{
+  account: { xp, total_level, characters },   // quest_points arrives with quests
+  skills: [{ id, name, group, echo }],
+  characters: [{ agent_type, xp, total_level, best_skill, tier,
+                 skills: [{ stat, xp, level, level_xp, xp_to_next }] }],
+  achievements: [{ id, name, what_counts, secret, state, tier, tiers_reached, value, next_threshold, thresholds, unlocked_at }],
+  recent: [{ kind: "level", at, agent_type, stat, level } | { kind: "achievement", at, id, name, tier }]
+}
+```
+
+Computed from the jobs, traces, QA runs, healing cases and audit rows with a few aggregate queries, cached for 60 seconds. One migration: `traces.skill_actions JSONB DEFAULT '{}'`.
 
 ## Slices
 
-1. The progression engine, its API, and levels on agent cards (this spec ships with it).
-2. The achievements catalogue, the Achievements page and the chat-box messages.
-3. The built-in agents as composed adventurers, the Divine tier, skill capes and rares, worn from progression.
-4. The PixelLab art pass over parts and items.
+1. **Characters and the account** (this revision ships with it): the 23 skills, the action classifier and its column, per-character levels and level-ups, the account page and skill sheets, the chat box naming the character, the achievements re-pointed. It replaces the 21-skill model of the first two slices.
+2. **Wearing what they earn:** the built-in agents as composed adventurers, the class ladders up to Divine, gear from the best skill, skill capes, rares.
+3. **Quests and repo diaries.**
+4. **The PixelLab art pass** over parts and items.
+5. **Trust:** its spec, then level requirements behind a per-organization flag, off by default.
 
 ## Testing
 
-The XP curve against its published points (level 2 at 83, 50 at 101,333, 92 at 6,517,253, 99 at 13,034,431); each source's query against Postgres with seeded rows; failed, refused and abandoned jobs earning nothing; unlock times derived from the crossing event; secrets hidden until their first signal; the API shape; the chat-box message shown once per browser; every composed character in every state and tier; the roster budget.
+The XP curve against its published points (level 2 at 83, 50 at 101,333, 92 at 6,517,253, 99 at 13,034,431); the classifier on a table of commands and paths; history without `skill_actions` falling back to tool names; each source's query against Postgres with seeded rows; failed, refused and abandoned runs earning nothing; per-character level-ups, and two custom agents levelling apart; unlock times derived from the crossing event; secrets hidden until their first signal; the API shape; the chat-box message naming the character, shown once per browser; every composed character in every state and tier; the roster budget.

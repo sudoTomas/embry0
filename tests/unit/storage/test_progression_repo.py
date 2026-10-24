@@ -34,19 +34,36 @@ async def _job(
     )
 
 
-async def _trace(db, trace_id: str, job_id: str, agent: str, error: str | None = None) -> None:
+async def _trace(
+    db,
+    trace_id: str,
+    job_id: str,
+    agent: str,
+    error: str | None = None,
+    *,
+    result: str = "success",
+    tools: dict | None = None,
+    actions: dict | None = None,
+) -> None:
     await db.execute(
-        "INSERT INTO traces (trace_id, job_id, agent_type, model, result, error_code) VALUES ($1, $2, $3, 'm', 'r', $4)",
+        """
+        INSERT INTO traces (trace_id, job_id, agent_type, model, result, error_code, tools_called, skill_actions)
+        VALUES ($1, $2, $3, 'm', $4, $5, $6, $7)
+        """,
         trace_id,
         job_id,
         agent,
+        result,
         error,
+        tools or {},  # the pool's jsonb codec encodes it
+        actions or {},
     )
 
 
 async def test_every_source_yields_its_events_and_nothing_else(db_with_migrations) -> None:
     db = db_with_migrations
     await _job(db, "job-merged", status="pr_merged")
+    await db.execute("UPDATE jobs SET pr_url = 'https://forge/pr/1' WHERE job_id = 'job-merged'")
     await _job(db, "job-qa", status="completed", template="qa")
     await _job(db, "job-qa-failed", status="failed", template="qa")
     await _job(db, "job-audit", status="completed", template="context-audit", report="Stale: 3\nFiles: 1\n")
@@ -62,7 +79,9 @@ async def test_every_source_yields_its_events_and_nothing_else(db_with_migration
     await _job(db, "job-run", status="completed")
     await _trace(db, "trc-review", "job-run", "review")
     await _trace(db, "trc-review-err", "job-run", "review", error="ERR_AGENT_MAX_TURNS")
-    await _trace(db, "trc-dev", "job-run", "developer")  # the developer earns from merges, not runs
+    await _trace(db, "trc-running", "job-run", "review", result="running")  # not finished: nothing yet
+    await _trace(db, "trc-dev", "job-run", "developer", tools={"Bash": 2}, actions={"shell:testing": 2})
+    await db.execute("INSERT INTO audit_log (action, actor) VALUES ('issue.input_created', 'triage')")
     await db.execute("INSERT INTO healing_cases (id, repo, origin) VALUES ('hc-1', 'o/r', 'watcher')")
     for verdict in ("healed", "not_healed"):
         await db.execute(
@@ -81,17 +100,22 @@ async def test_every_source_yields_its_events_and_nothing_else(db_with_migration
     assert got == sorted(
         [
             ("merged", "developer"),
+            ("opened", "developer"),
             ("qa_passed", "qa"),
             ("audited", "context-auditor"),
             ("audited", "context-auditor"),  # the scheduled audit completed too
             ("scheduled", None),
             ("run", "review"),
+            ("run", "developer"),
+            ("asked", "triage"),
             ("healed", None),
             ("watched", None),
         ]
     ), got
     audit = next(e for e in events if e.source == "audited" and e.report)
     assert audit.report == "Stale: 3\nFiles: 1\n", "the report is read for the claims bonus"
+    developer_run = next(e for e in events if e.source == "run" and e.agent_type == "developer")
+    assert developer_run.tools_called == {"Bash": 2} and developer_run.skill_actions == {"shell:testing": 2}
     assert [e.at for e in events] == sorted(e.at for e in events), "oldest first"
 
 
@@ -128,10 +152,16 @@ async def test_the_facts_achievements_count(db_with_migrations) -> None:
     await job("job-failed", "failed", 60, issue="iss-1", minutes_ago=10)
     await job("job-merged", "pr_merged", 600, issue="iss-1", cost=1.5)
     await job("job-cancelled", "cancelled", 3)
-    await db.execute("INSERT INTO audit_log (action, actor) VALUES ('issue.input_created', 'alex')")
+    await db.execute("UPDATE jobs SET resume_attempts = 1 WHERE job_id IN ('job-slow', 'job-cancelled')")
+    await _trace(db, "trc-slow", "job-slow", "qa")
 
-    facts = await ProgressionRepository(db).facts()
+    repo = ProgressionRepository(db)
     counted: dict[str, float] = {}
-    for fact in facts:
+    for fact in await repo.facts():
         counted[fact.metric] = counted.get(fact.metric, 0) + fact.value
-    assert counted == {"completed": 3, "spent": 1.75, "quick": 1, "comeback": 1, "answered": 1}, counted
+    assert counted == {"completed": 3, "spent": 1.75, "quick": 1}, counted
+    events = await repo.events()
+    assert sorted((e.source, e.agent_type) for e in events if e.source in ("comeback", "resumed")) == [
+        ("comeback", "developer"),
+        ("resumed", "qa"),
+    ], "a merge after a failure, and a resumed job credited to its last run's agent; a cancelled one is not"

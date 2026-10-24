@@ -1,4 +1,4 @@
-"""Progression API (spec 2026-10-24): the instance's skills, total level and each agent's level."""
+"""Progression API (spec 2026-10-24): the account, its characters' skills and levels, and its achievements."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ router = APIRouter()
 
 @router.get("/progression")
 async def read_progression(request: Request) -> dict[str, Any]:
-    """Each skill's experience and level, the total level, each agent's level and tier, and the latest level-ups.
+    """The account's experience and totals, each character's 23 skills, the achievements and the latest unlocks.
 
     Recomputed from the jobs, traces, healing cases and watcher runs at most
     once a minute; read-only.
