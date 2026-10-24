@@ -169,7 +169,8 @@ async def _refuse_if_over_budget(
     gate = self._get_budget_gate()
     if gate is None:
         return False
-    decision = await gate.check(actor=actor)
+    # The job's own pending row is not one of the actor's other jobs (#116).
+    decision = await gate.check(actor=actor, excluding=job_id)
     if decision.allowed:
         return False
 

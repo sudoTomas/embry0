@@ -89,7 +89,7 @@ class BudgetGate:
         self._spend_repo = spend_repo
         self._clock = clock or (lambda: datetime.now(UTC))
 
-    async def check(self, *, actor: str | None = None) -> DispatchDecision:
+    async def check(self, *, actor: str | None = None, excluding: str | None = None) -> DispatchDecision:
         """Decide whether a job may start.
 
         ``actor`` is the identity that asked for the job (``jobs.dispatched_by``
@@ -97,6 +97,12 @@ class BudgetGate:
         identifiable asked, which is the common case for triage-created
         sub-issues: those skip layer 3 entirely rather than sharing a bucket
         with the trigger that spawned their parent.
+
+        ``excluding`` is the job being decided on when its row already exists
+        (the runner's check). Left out of the rate count, it does not count
+        against itself, so the runner and a caller that asks before creating
+        the job (``IssueExecutor.dispatch_refusal``) count the same jobs and
+        ``RATE_LIMIT_PER_AUTHOR_PER_HOUR`` jobs an hour run, not one fewer (#116).
         """
         try:
             config = await self._config_repo.get()
@@ -133,7 +139,7 @@ class BudgetGate:
         if actor and rate_limit > 0 and not is_rate_limit_exempt(actor):
             since = self._clock() - timedelta(hours=1)
             try:
-                dispatched = await self._spend_repo.dispatch_count_since(actor, since)
+                dispatched = await self._spend_repo.dispatch_count_since(actor, since, excluding=excluding)
             except _TRANSIENT_DB_ERRORS:
                 logger.warning("budget_gate_rate_read_failed", actor=actor, exc_info=True)
                 return DispatchDecision(allowed=True)

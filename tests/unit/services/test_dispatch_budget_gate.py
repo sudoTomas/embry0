@@ -104,7 +104,7 @@ async def test_issue_less_refusal_skips_the_issue_write():
 async def test_the_actor_is_passed_through_to_the_gate():
     ex = _executor(DispatchDecision(allowed=True))
     await ex._refuse_if_over_budget("job-1", issue_id="iss-1", actor="alex")
-    ex._budget_gate.check.assert_awaited_once_with(actor="alex")
+    ex._budget_gate.check.assert_awaited_once_with(actor="alex", excluding="job-1")
 
 
 @pytest.mark.asyncio
@@ -165,7 +165,7 @@ async def test_run_workflow_buckets_on_the_job_dispatcher_not_the_issue_author()
 
     await executor._run_workflow(None, "job-1", {"title": "t", "body": "", "created_by": "webhook-label"})
 
-    gate.check.assert_awaited_once_with(actor="octocat")
+    gate.check.assert_awaited_once_with(actor="octocat", excluding="job-1")
 
 
 @pytest.mark.asyncio

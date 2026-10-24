@@ -47,6 +47,7 @@ FROM jobs
 WHERE dispatched_by = $1
   AND created_at >= $2
   AND NOT {gate_refusal_sql("jobs")}
+  AND job_id IS DISTINCT FROM $3
 """
 
 
@@ -63,7 +64,11 @@ class BudgetSpendRepository:
             return {"daily": 0.0, "monthly": 0.0}
         return {"daily": float(row["daily"] or 0.0), "monthly": float(row["monthly"] or 0.0)}
 
-    async def dispatch_count_since(self, actor: str, since: datetime) -> int:
-        """Jobs ``actor`` dispatched since ``since``, excluding refused ones."""
-        count = await self._db.fetchval(_ACTOR_COUNT_SQL, actor, since)
+    async def dispatch_count_since(self, actor: str, since: datetime, *, excluding: str | None = None) -> int:
+        """Jobs ``actor`` dispatched since ``since``, excluding refused ones and the job ``excluding`` names.
+
+        ``excluding`` is the job the runner is about to start (#116): its row
+        already exists, and counting it made the job count against itself.
+        """
+        count = await self._db.fetchval(_ACTOR_COUNT_SQL, actor, since, excluding)
         return int(count or 0)

@@ -34,12 +34,14 @@ class FakeSpendRepo:
         self._rollup = {"daily": daily, "monthly": monthly}
         self._actor_count = actor_count
         self.actor_calls: list[tuple[str, datetime]] = []
+        self.excluded: list[str | None] = []
 
     async def spend_rollup(self):
         return dict(self._rollup)
 
-    async def dispatch_count_since(self, actor, since):
+    async def dispatch_count_since(self, actor, since, *, excluding=None):
         self.actor_calls.append((actor, since))
+        self.excluded.append(excluding)
         return self._actor_count
 
 
@@ -91,6 +93,21 @@ async def test_refuses_when_the_actor_hit_the_hourly_rate_limit():
 
 
 @pytest.mark.asyncio
+async def test_the_job_being_checked_is_left_out_of_its_own_count():
+    """#116: the runner checks a job whose pending row already exists. The
+    gate passes its id down so the count is the actor's other jobs, the same
+    count a caller that asks before creating the job gets."""
+    spend = FakeSpendRepo(actor_count=4)
+    decision = await _gate(FakeConfigRepo(rate_limit_per_author_per_hour=5), spend).check(
+        actor="alex", excluding="job-5"
+    )
+    assert decision.allowed is True, "four other jobs against a limit of five: the fifth runs"
+    assert spend.excluded == ["job-5"]
+    assert (await _gate(FakeConfigRepo(rate_limit_per_author_per_hour=5), spend).check(actor="alex")).allowed is True
+    assert spend.excluded == ["job-5", None], "an ask before the job exists leaves nothing out"
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_is_skipped_without_an_actor():
     spend = FakeSpendRepo(actor_count=99)
     assert (await _gate(spend_repo=spend).check()).allowed is True
@@ -125,7 +142,7 @@ class _RaisingSpendRepo(FakeSpendRepo):
     async def spend_rollup(self):
         raise self._exc
 
-    async def dispatch_count_since(self, actor, since):
+    async def dispatch_count_since(self, actor, since, *, excluding=None):
         raise self._exc
 
 
@@ -169,7 +186,7 @@ async def test_a_broken_gate_fails_loud_instead_of_disabling_the_caps(exc):
 @pytest.mark.asyncio
 async def test_a_broken_rate_query_fails_loud_too():
     class BadRate(FakeSpendRepo):
-        async def dispatch_count_since(self, actor, since):
+        async def dispatch_count_since(self, actor, since, *, excluding=None):
             raise asyncpg.exceptions.UndefinedColumnError('column "dispatched_by" does not exist')
 
     with pytest.raises(asyncpg.exceptions.UndefinedColumnError):
@@ -179,7 +196,7 @@ async def test_a_broken_rate_query_fails_loud_too():
 @pytest.mark.asyncio
 async def test_a_transient_rate_query_failure_still_fails_open():
     class FlakyRate(FakeSpendRepo):
-        async def dispatch_count_since(self, actor, since):
+        async def dispatch_count_since(self, actor, since, *, excluding=None):
             raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed")
 
     assert (await _gate(spend_repo=FlakyRate()).check(actor="alex")).allowed is True

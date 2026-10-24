@@ -51,7 +51,7 @@ async def test_dispatch_count_passes_actor_and_window():
     since = datetime(2026, 9, 17, 11, 0, tzinfo=UTC)
     db = FakeDB(value=3)
     assert await BudgetSpendRepository(db).dispatch_count_since("alex", since) == 3
-    assert db.queries[0][1] == ("alex", since)
+    assert db.queries[0][1] == ("alex", since, None)
 
 
 @pytest.mark.asyncio
@@ -171,6 +171,9 @@ async def test_actor_count_sql_against_the_migrated_schema(db_with_migrations):
     assert await repo.dispatch_count_since("alex", since) == 2
     assert await repo.dispatch_count_since("octocat", since) == 1
     assert await repo.dispatch_count_since("nobody", since) == 0
+    # #116: the runner's own job is not one of the actor's other jobs.
+    assert await repo.dispatch_count_since("alex", since, excluding="job-b") == 1
+    assert await repo.dispatch_count_since("alex", since, excluding="job-missing") == 2
 
 
 @pytest.mark.requires_postgres
