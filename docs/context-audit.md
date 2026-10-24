@@ -117,6 +117,22 @@ Due is the rule above without the setting: with the setting off no interval appl
 
 A job created with `POST /api/v1/jobs` and `"pipeline_template": "context-audit"` runs the same auditor, but records no fingerprint, names no instruction files in its task, and has a hard cap only if it is given one; the schedule sees it as the newest audit of its repository without its fingerprint, so a file changed later is not compared with it until the next scheduled audit. Start one by hand with the run above.
 
+## Pull requests from its fixes
+
+An organization can have each audit's fixes opened as a pull request ([ADR 0022](adr/0022-context-audit-pull-requests.md)). The setting is `context_audit_open_prs`, `false` by default, and needs the `admin` tier; in the dashboard it is the **Context audit pull requests** switch on the organization's Settings tab:
+
+```bash
+curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"settings": {"context_audit_open_prs": true}}'
+```
+
+With it on, a job that finds outdated claims takes the patch from its report, the one it checked with `git apply --check`, commits it on its own branch and pushes it through the git proxy. At completion embry0 opens the pull request: titled with the number of claims it corrects, its body the report's findings table, labelled `embry0`, and asked about in the merge-approval chat when the repository has merge approvals on. The pull request changes only instruction files, and a person merges it.
+
+One is open per repository at a time: while an earlier audit's pull request is open, a later audit only reports. An audit that finds nothing, a report with no patch, and a patch that no longer applies open nothing; the findings stay in the report. The Context audit tab links each audit's pull request.
+
 ## From an MCP client
 
 The embry0 MCP server (`embry0-mcp`) does all of it. A tool that changes something takes `confirm=true`, passed once the person has approved that call; without it the tool answers `confirmation_required` and does nothing.
@@ -130,6 +146,7 @@ The embry0 MCP server (`embry0-mcp`) does all of it. A tool that changes somethi
 | Run one repository now, when it is due | `context_audit_run(owner="acme", repo="acme/widgets", confirm=true)` |
 | Run one repository now, whatever the due rule says | `context_audit_run(owner="acme", repo="acme/widgets", force=true, confirm=true)` |
 | Run every due repository now | `context_audit_run(owner="acme", confirm=true)`, or with `limit=2` for at most two |
+| Open a pull request from each audit's fixes | `org_update(owner="acme", settings={"context_audit_open_prs": true}, confirm=true)` |
 | Turn it off | `org_update(owner="acme", settings={"context_audit_days": null}, confirm=true)` |
 
 `org_update` needs an admin-scope key and `context_audit_run` an operate-scope key; `context_audit_status` reads. `org_update` merges: the settings it names change and the rest stay. Each job a run starts is a job like any other: follow it with `job_wait(job_id=...)` and read its report with `job_deliverables(job_id=...)`.

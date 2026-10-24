@@ -1055,6 +1055,10 @@ async def _run_workflow(
                 initial_state["execution_mode_override"] = overrides["execution_mode_override"]
             if overrides.get("auth_mode_override"):
                 initial_state["auth_mode_override"] = overrides["auth_mode_override"]
+            # ADR 0022: a context audit opens a pull request from its checked
+            # patch only when its organization turned that on.
+            if overrides.get("open_pr") is True:
+                initial_state["open_pr"] = True
 
         # RAV-1058: honour a job-create sandbox_profile and pipeline_template.
         # Both were persisted to the job row but never consumed on this path

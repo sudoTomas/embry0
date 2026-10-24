@@ -61,6 +61,7 @@ async def test_run_workflow_surfaces_pipeline_config_overrides():
                 "budget_overrun_mode": "hard",
                 "execution_mode_override": "cli",
                 "auth_mode_override": "oauth",
+                "open_pr": True,
             },
         }
     )
@@ -72,6 +73,7 @@ async def test_run_workflow_surfaces_pipeline_config_overrides():
     assert state["budget_overrun_mode_override"] == "hard"
     assert state["execution_mode_override"] == "cli"
     assert state["auth_mode_override"] == "oauth"
+    assert state["open_pr"] is True, "a context audit's open_pr reaches the output step (ADR 0022)"
 
 
 @pytest.mark.asyncio
@@ -104,8 +106,16 @@ async def test_run_workflow_omits_absent_overrides():
         "auth_mode_override",
         "sandbox_profile",
         "pipeline_template_request",
+        "open_pr",
     ):
         assert key not in state, f"{key} must not be set when the job row carries no override"
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_opens_no_pr_for_an_open_pr_that_is_not_true():
+    executor, captured = _executor_with_job_row({"trace_id": None, "pipeline_config": {"open_pr": "yes"}})
+    await executor._run_workflow(None, "job-4", _ISSUE)
+    assert "open_pr" not in captured["initial_state"], "only a stored true asks for a pull request"
 
 
 # ---------------------------------------------------------------------------

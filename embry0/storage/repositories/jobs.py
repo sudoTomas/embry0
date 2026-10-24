@@ -298,7 +298,7 @@ class JobsRepository:
         rows = await self._db.fetch(
             f"""
             SELECT DISTINCT ON (repo)
-                repo, job_id, status, created_at, finished_at, pipeline_config, total_cost_usd, error_code,
+                repo, job_id, status, created_at, finished_at, pipeline_config, total_cost_usd, error_code, pr_url,
                 bool_or(NOT (status = ANY($4::text[]))) OVER (PARTITION BY repo) AS live
             FROM jobs
             WHERE repo = ANY($1::text[]) AND (pipeline_template = $2 OR dispatched_by = $3)

@@ -31,6 +31,13 @@ def test_adr_0021_indexed_and_the_caps_documented():
             assert f"`{setting}`" in text, f"docs/{doc} does not name {setting}"
 
 
+def test_adr_0022_indexed_and_the_setting_documented():
+    assert (ROOT / "docs" / "adr" / "0022-context-audit-pull-requests.md").exists()
+    assert "0022-context-audit-pull-requests.md" in (ROOT / "docs" / "adr" / "README.md").read_text()
+    for doc in ("context-audit.md", "api.md"):
+        assert "`context_audit_open_prs`" in (ROOT / "docs" / doc).read_text(), f"docs/{doc} does not name it"
+
+
 def test_the_mcp_section_calls_tools_the_server_has():
     text = (ROOT / "docs" / "context-audit.md").read_text()
     section = text.split("## From an MCP client", 1)[1].split("\n## ", 1)[0]

@@ -12,6 +12,7 @@ from embry0.services.organizations import (
     context_audit_budget_usd,
     context_audit_days,
     context_audit_max_jobs_per_tick,
+    context_audit_open_prs,
     rediscover_hours,
     validate_settings,
 )
@@ -161,6 +162,7 @@ def test_the_settings_vocabulary_is_closed() -> None:
         "context_audit_days": int,
         "context_audit_budget_usd": float,
         "context_audit_max_jobs_per_tick": int,
+        "context_audit_open_prs": bool,
     }
 
 
@@ -179,6 +181,22 @@ def test_validate_settings_accepts_known_keys_with_their_types() -> None:
     assert validate_settings({"context_audit_max_jobs_per_tick": 0}) == {"context_audit_max_jobs_per_tick": 0}
     assert validate_settings({"context_audit_max_jobs_per_tick": 50}) == {"context_audit_max_jobs_per_tick": 50}
     assert validate_settings({"context_audit_max_jobs_per_tick": None}) == {"context_audit_max_jobs_per_tick": None}
+    assert validate_settings({"context_audit_open_prs": True}) == {"context_audit_open_prs": True}
+    assert validate_settings({"context_audit_open_prs": False}) == {"context_audit_open_prs": False}
+
+
+def test_pull_requests_from_audits_are_on_only_when_stored_true() -> None:
+    """ADR 0022: off by default, and a value POST /orgs stored unvalidated reads as off."""
+    assert context_audit_open_prs({"context_audit_open_prs": True}) is True
+    for settings in (
+        {},
+        {"context_audit_open_prs": False},
+        {"context_audit_open_prs": "true"},
+        {"context_audit_open_prs": 1},
+    ):
+        assert context_audit_open_prs(settings) is False, settings
+    with pytest.raises(ValueError, match="must be bool"):
+        validate_settings({"context_audit_open_prs": None})
 
 
 def test_a_budget_written_as_a_whole_number_is_stored_as_a_number_of_dollars() -> None:
@@ -193,7 +211,7 @@ def test_a_budget_written_as_a_whole_number_is_stored_as_a_number_of_dollars() -
         (
             {"auto_regster": True},
             "unknown setting 'auto_regster'; known settings: auto_register, context_audit_budget_usd, "
-            "context_audit_days, context_audit_max_jobs_per_tick, rediscover_hours",
+            "context_audit_days, context_audit_max_jobs_per_tick, context_audit_open_prs, rediscover_hours",
         ),
         ({"auto_register": "true"}, "setting 'auto_register' must be bool"),
         ({"auto_register": 1}, "setting 'auto_register' must be bool"),

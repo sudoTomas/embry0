@@ -264,10 +264,15 @@ class World:
                 raise self.credential_error
             return self.forge
 
-        async def start_job(context: RepoContext, budget_usd: float) -> str:
+        async def start_job(context: RepoContext, budget_usd: float, open_pr: bool) -> str:
             self.attempts.append(context.repo)
             return await start_context_audit_job(
-                context, jobs=self.jobs, executor=self.executor, templates=self.templates, budget_usd=budget_usd
+                context,
+                jobs=self.jobs,
+                executor=self.executor,
+                templates=self.templates,
+                budget_usd=budget_usd,
+                open_pr=open_pr,
             )
 
         self.loop = ContextAuditLoop(
@@ -745,6 +750,7 @@ async def test_the_survey_says_per_repository_what_the_read_endpoint_shows() -> 
                     "finished_at": (T0 - timedelta(days=2)).isoformat(),
                     "total_cost_usd": None,
                     "error_code": None,
+                    "pr_url": None,
                     "stale": None,
                     "files_read": None,
                 },
@@ -820,6 +826,24 @@ async def test_the_forge_is_read_a_handful_of_repositories_at_a_time_in_registry
     assert [repo for repo, _detail in survey.unread] == ["acme/r11"]
 
 
+@pytest.mark.asyncio
+async def test_an_organization_that_turned_pull_requests_on_gets_them_on_every_start() -> None:
+    """ADR 0022: the schedule's starts and a start by hand both carry the
+    owner's choice into the job, where the output step reads it."""
+    world = World(
+        org("acme", days=7, context_audit_open_prs=True), org("zeta", days=7), repos=(reg("acme/web"), reg("zeta/api"))
+    )
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    world.forge.put("zeta/api", HEAD, {"CLAUDE.md": "b" * 40})
+    assert await world.loop.tick() == ["acme/web", "zeta/api"]
+    chosen = {row["repo"]: row["pipeline_config"]["open_pr"] for row in world.jobs.rows}
+    assert chosen == {"acme/web": True, "zeta/api": False}, "each organization's own choice; off unless turned on"
+    world.forge.put("acme/web", "2" * 40, {"CLAUDE.md": "c" * 40})
+    world.jobs.finish("acme/web", "completed", T0)
+    run = await world.loop.run(org("acme", days=7, context_audit_open_prs=True), repo="acme/web")
+    assert [s.repo for s in run.started] == ["acme/web"] and world.jobs.rows[-1]["pipeline_config"]["open_pr"] is True
+
+
 # ---- starting a job ----
 
 
@@ -846,6 +870,7 @@ async def test_a_job_starts_on_the_template_with_a_hard_budget_and_its_reading(m
         "context_fingerprint": FP,
         "head_sha": HEAD,
         "actor": ACTOR,
+        "open_pr": False,
     }
     assert audits == [("job_created", ACTOR, {"job_id": job_id, "repo": "acme/web", "pipeline_template": TEMPLATE})]
     assert executor.submitted == [

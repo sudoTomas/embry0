@@ -68,11 +68,14 @@ def test_the_forge_is_read_with_the_organizations_credential() -> None:
 
 def test_every_scheduled_job_gets_the_hard_budget_and_the_job_path() -> None:
     start = _function("_start_context_audit")
-    assert [a.arg for a in start.args.args] == ["context", "budget_usd"], "the starter takes the loop's cap per job"
+    assert [a.arg for a in start.args.args] == ["context", "budget_usd", "open_pr"], (
+        "the starter takes the loop's cap per job and whether the job opens a pull request"
+    )
     calls = [n for n in ast.walk(start) if isinstance(n, ast.Call) and ast.unparse(n.func) == "start_context_audit_job"]
     assert calls, "_start_context_audit does not start jobs through start_context_audit_job"
     passed = {kw.arg: ast.unparse(kw.value) for kw in calls[0].keywords if kw.arg}
     assert passed.get("budget_usd") == "budget_usd", "the job is not given the cap the loop chose for its owner"
+    assert passed.get("open_pr") == "open_pr", "the organization's choice must reach the job (ADR 0022)"
     assert passed.get("templates") == "app.state.templates_repo", "the template check needs the templates"
     assert passed.get("jobs") == "app.state.jobs_repo"
     assert "issue_executor" in passed.get("executor", ""), "a job row nobody runs sits in pending forever"

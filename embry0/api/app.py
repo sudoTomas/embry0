@@ -2051,13 +2051,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             executor = getattr(app.state, "issue_executor", None)
             return None if executor is None else await executor.dispatch_refusal(actor=_CONTEXT_AUDIT_ACTOR)
 
-        async def _start_context_audit(context: _RepoContext, budget_usd: float) -> str:
+        async def _start_context_audit(context: _RepoContext, budget_usd: float, open_pr: bool) -> str:
             return await start_context_audit_job(
                 context,
                 jobs=app.state.jobs_repo,
                 executor=getattr(app.state, "issue_executor", None),
                 templates=app.state.templates_repo,
                 budget_usd=budget_usd,
+                open_pr=open_pr,
                 db=db,
                 audit_log_path=config.audit_log_path,
             )
