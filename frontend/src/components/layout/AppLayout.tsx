@@ -5,6 +5,7 @@ import { TopBar } from "./TopBar";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { BriefBar } from "@/components/dashboard/BriefBar";
 import { Chatbox } from "@/components/progression/Chatbox";
+import { OutfitProvider } from "@/components/progression/OutfitProvider";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { cn } from "@/lib/utils";
 
@@ -23,34 +24,37 @@ export function AppLayout() {
   // are in, main is laid out but not drawn there, and both arrive together.
   const [briefReady, setBriefReady] = useState(false);
   return (
-    <div className="flex h-dvh flex-col bg-background text-foreground" data-density={densityMode}>
-      <TopBar />
-      <div className="flex min-h-0 flex-1">
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {isRoot ? <BriefBar onReady={setBriefReady} /> : <Breadcrumbs />}
-          <main
-            className={cn(
-              "flex-1 overflow-auto overscroll-contain [scrollbar-gutter:stable] p-[var(--density-padding)]",
-              isRoot && !briefReady && "max-sm:invisible",
-            )}
-          >
-            {/* Keyed by the path, so a page that opens arrives (.motion-enter)
-                instead of swapping in a frame, while a search change (a tab, a
-                filter) keeps the page and its state. One grid cell at least as
-                tall as the content area: a page that fills that height (h-full)
-                still can, and a long page still ends on main's bottom padding. */}
-            <div
-              key={pathname}
-              className="motion-enter grid min-h-full grid-cols-[minmax(0,1fr)] grid-rows-[1fr] items-start"
+    // Every sprite in the shell wears what its character earned (progression spec 2026-10-24).
+    <OutfitProvider>
+      <div className="flex h-dvh flex-col bg-background text-foreground" data-density={densityMode}>
+        <TopBar />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar />
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            {isRoot ? <BriefBar onReady={setBriefReady} /> : <Breadcrumbs />}
+            <main
+              className={cn(
+                "flex-1 overflow-auto overscroll-contain [scrollbar-gutter:stable] p-[var(--density-padding)]",
+                isRoot && !briefReady && "max-sm:invisible",
+              )}
             >
-              <Outlet />
-            </div>
-          </main>
+              {/* Keyed by the path, so a page that opens arrives (.motion-enter)
+                  instead of swapping in a frame, while a search change (a tab, a
+                  filter) keeps the page and its state. One grid cell at least as
+                  tall as the content area: a page that fills that height (h-full)
+                  still can, and a long page still ends on main's bottom padding. */}
+              <div
+                key={pathname}
+                className="motion-enter grid min-h-full grid-cols-[minmax(0,1fr)] grid-rows-[1fr] items-start"
+              >
+                <Outlet />
+              </div>
+            </main>
+          </div>
         </div>
+        {/* Levels reached and achievements unlocked, one message at a time (spec 2026-10-24). */}
+        <Chatbox />
       </div>
-      {/* Levels reached and achievements unlocked, one message at a time (spec 2026-10-24). */}
-      <Chatbox />
-    </div>
+    </OutfitProvider>
   );
 }

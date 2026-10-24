@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { useOutfit } from "@/components/progression/outfits";
 import { Sprite, stateForNode } from "@/components/roster";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { useAgents } from "@/hooks/useAgents";
@@ -24,6 +25,7 @@ export function PartyNode({ data, selected }: NodeProps) {
   const agentType = data.agentType as string;
   const label = data.label as string | undefined;
   const identity = useAgentIdentity(agentType);
+  const outfit = useOutfit(agentType);
   const { data: agents } = useAgents();
   const mode = data.mode === "live" ? "live" : "editor";
   const liveState = data.state as NodeLiveState["state"] | undefined;
@@ -60,7 +62,7 @@ export function PartyNode({ data, selected }: NodeProps) {
         )}
         <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-card" style={{ border: `2px solid ${identity.hex}`, top: "50%" }} />
         <div className="party-tile absolute inset-1 flex items-center justify-center bg-card">
-          <Sprite avatar={identity.avatar} color={identity.color} state={spriteState} size={48} label={identity.displayName} />
+          <Sprite avatar={identity.avatar} color={identity.color} state={spriteState} size={48} label={identity.displayName} outfit={outfit} />
         </div>
         <div data-ring={ring} aria-hidden="true" className="party-ring absolute inset-1" style={{ "--party-colour": identity.hex } as CSSProperties} />
         <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-card" style={{ border: `2px solid ${identity.hex}`, top: "50%" }} />

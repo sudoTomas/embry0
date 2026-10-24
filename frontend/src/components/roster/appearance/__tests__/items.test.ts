@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ITEMS, type Item } from "../items";
-import { CAPE_FILL } from "../palette";
+import { CAPE_FILL, SKILL_CAPE } from "../palette";
 import { GRID, type EquipmentSlot, type Frame } from "../types";
 
 const SLOTS: EquipmentSlot[] = ["head", "cape", "neck", "weapon", "body", "shield", "legs", "hands", "feet"];
@@ -10,6 +10,7 @@ function framesOf(item: Item): [string, Frame][] {
   const out: [string, Frame][] = [];
   if (item.layer) out.push(["layer", item.layer]);
   if (item.shoulders) out.push(["shoulders", item.shoulders]);
+  if (item.drape) out.push(["drape", item.drape]);
   if (item.weapon) out.push(["rest", item.weapon.rest], ["raised", item.weapon.raised]);
   return out;
 }
@@ -56,20 +57,31 @@ describe("equipment catalogue", () => {
   it("covers the hair under every helm, hood and hat that says so, and the beard only under a full helm", () => {
     for (const [key, item] of items) {
       if (item.over) expect(item.slot, `${key} over= is for the head slot`).toBe("head");
-      if (key.endsWith("-helm")) expect(item.over, key).toBe("beard");
+      if (key.endsWith("-med-helm")) expect(item.over, `${key} shows the face and beard`).toBe("hair");
+      else if (key.endsWith("-helm")) expect(item.over, key).toBe("beard");
       if (key.endsWith("-coif")) expect(item.over, key).toBe("hair");
     }
     expect((ITEMS["wizard-hat"] as Item).over, "a hat leaves the hair at the sides").toBeUndefined();
   });
 
-  it("gives the cape alone the party colour token", () => {
+  it("gives the party colour token to the cape and the party hat alone", () => {
     const wearing = items.filter(([, item]) => Object.values(item.colours).some((c) => c.includes(CAPE_FILL)));
-    expect(wearing.map(([key]) => key).sort()).toEqual(["cape", "trimmed-cape"]);
-    for (const [, item] of wearing) expect(item.slot).toBe("cape");
+    expect(wearing.map(([key]) => key).sort()).toEqual(["cape", "party-hat", "trimmed-cape"]);
+  });
+
+  it("draws a plain and a trimmed skill cape for every echoed skill, in its own colours", () => {
+    for (const echo of Object.keys(SKILL_CAPE)) {
+      const plain = ITEMS[`${echo}-cape` as keyof typeof ITEMS] as Item;
+      const trimmed = ITEMS[`${echo}-cape-t` as keyof typeof ITEMS] as Item;
+      expect(plain.slot, echo).toBe("cape");
+      expect(trimmed.slot, echo).toBe("cape");
+      expect(plain.colours.c, echo).toBe(SKILL_CAPE[echo as keyof typeof SKILL_CAPE].base);
+      expect(trimmed.layer, `${echo} trimmed`).not.toEqual(plain.layer);
+    }
   });
 
   it("has a full set per metal tier and the three mage orders", () => {
-    for (const tier of ["bronze", "iron", "steel", "mithril", "adamant", "rune", "dragon"]) {
+    for (const tier of ["bronze", "iron", "steel", "mithril", "adamant", "rune", "dragon", "divine"]) {
       for (const piece of ["helm", "platebody", "platelegs", "kiteshield", "scimitar"]) expect(ITEMS, `${tier}-${piece}`).toHaveProperty(`${tier}-${piece}`);
     }
     for (const order of ["wizard", "mystic", "archmage"]) {

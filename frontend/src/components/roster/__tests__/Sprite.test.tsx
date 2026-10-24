@@ -5,22 +5,21 @@ import css from "../roster.css?raw";
 import { Sprite } from "../Sprite";
 
 describe("Sprite", () => {
-  it("renders a crisp 16x16 image tinted by the palette token, named for assistive tech", () => {
+  it("renders a crisp 32x32 composed image with the palette token, named for assistive tech", () => {
     const { container } = render(<Sprite avatar="smith" color="amber" state="idle" size={32} label="Developer" />);
     const svg = container.querySelector("svg")!;
     expect(svg).toHaveAttribute("role", "img");
     expect(svg).toHaveAttribute("aria-label", "Developer, idle");
-    expect(svg).toHaveAttribute("viewBox", "0 0 16 16");
+    expect(svg).toHaveAttribute("viewBox", "0 0 32 32");
     expect(svg).toHaveAttribute("width", "32");
     expect(svg).toHaveAttribute("shape-rendering", "crispEdges");
     expect(svg).toHaveAttribute("data-avatar", "smith");
     expect(svg).toHaveAttribute("data-color", "amber");
     expect(svg).toHaveAttribute("data-state", "idle");
     expect(svg.style.getPropertyValue("--sprite-fill")).toBe("var(--color-palette-amber)");
-    const fills = [...svg.querySelectorAll("path")].map((p) => p.getAttribute("fill"));
-    expect(fills).toContain("color-mix(in srgb, var(--sprite-fill) 30%, black)");
-    expect(fills).toContain("var(--sprite-fill)");
-    expect(fills).toContain("var(--color-background)");
+    expect(svg).not.toHaveAttribute("data-tier");
+    const fills = [...svg.querySelectorAll('g[data-frame="0"] path')].map((p) => p.getAttribute("fill")!);
+    expect(fills.every((f) => /^#[0-9a-f]{6}$/.test(f)), "a bronze smith wears no party cape yet").toBe(true);
   });
 
   it("stacks both frames of a two-frame state and one frame otherwise", () => {
@@ -77,7 +76,6 @@ describe("Sprite", () => {
     expect(fills).toEqual(["color-mix(in srgb, var(--sprite-fill) 45%, transparent)"]);
     rerender(<Sprite avatar="smith" color="amber" state="idle" />);
     fills = [...container.querySelectorAll("path")].map((p) => p.getAttribute("fill"));
-    expect(fills).toContain("var(--color-background)");
     expect(fills).not.toContain("color-mix(in srgb, var(--sprite-fill) 45%, transparent)");
   });
 
@@ -117,9 +115,12 @@ describe("Sprite", () => {
       expect(fills).not.toContain("color-mix(in srgb, var(--sprite-fill) 30%, black)");
     });
 
-    it("keeps the legacy avatars at 16x16", () => {
-      const { container } = render(<Sprite avatar="smith" color="amber" state="idle" />);
-      expect(container.querySelector("svg")).toHaveAttribute("viewBox", "0 0 16 16");
+    it("composes the twelve original avatars too", () => {
+      for (const avatar of ["seer", "smith", "warden", "alchemist", "herald", "arbiter", "scholar", "oracle", "engineer", "rogue", "bard", "golem"]) {
+        const { container, unmount } = render(<Sprite avatar={avatar} color="amber" state="idle" />);
+        expect(container.querySelector("svg"), avatar).toHaveAttribute("viewBox", "0 0 32 32");
+        unmount();
+      }
     });
 
     it("renders every preset in every state, pending as the one dim-tint path", () => {
@@ -140,6 +141,34 @@ describe("Sprite", () => {
       const { container } = render(<Sprite avatar="scout" color="cyan" state="tool" still />);
       expect(container.querySelector("svg")).toHaveAttribute("data-frames", "1");
       expect(container.querySelectorAll("g.sprite-frame")).toHaveLength(1);
+    });
+  });
+
+  describe("wearing an outfit (progression spec 2026-10-24)", () => {
+    const paths = (el: HTMLElement) => [...el.querySelectorAll('g[data-frame="0"] path')].map((p) => `${p.getAttribute("fill")}:${p.getAttribute("d")}`).join("|");
+
+    it("dresses the avatar for its tier and says the tier", () => {
+      const plain = render(<Sprite avatar="smith" color="amber" state="idle" />);
+      const rune = render(<Sprite avatar="smith" color="amber" state="idle" outfit={{ tier: "rune", capes: [], rares: [] }} />);
+      expect(rune.container.querySelector("svg")).toHaveAttribute("data-tier", "rune");
+      expect(paths(rune.container)).not.toBe(paths(plain.container));
+      const fills = [...rune.container.querySelectorAll('g[data-frame="0"] path')].map((p) => p.getAttribute("fill"));
+      expect(fills, "from mithril up the party cape").toContain("var(--sprite-fill)");
+    });
+
+    it("draws the same outfit the same way twice, and a skill cape instead of the party cape", () => {
+      const outfit = { tier: "rune" as const, capes: ["smithing" as const], rares: [] };
+      const a = render(<Sprite avatar="smith" color="amber" state="idle" outfit={outfit} />);
+      const b = render(<Sprite avatar="smith" color="amber" state="idle" outfit={{ ...outfit }} />);
+      expect(paths(a.container)).toBe(paths(b.container));
+      const fills = [...a.container.querySelectorAll('g[data-frame="0"] path')].map((p) => p.getAttribute("fill"));
+      expect(fills).not.toContain("var(--sprite-fill)");
+    });
+
+    it("puts a party hat in the party colour on the head", () => {
+      const { container } = render(<Sprite avatar="seer" color="violet" state="idle" outfit={{ tier: "bronze", capes: [], rares: ["party-hat"] }} />);
+      const fills = [...container.querySelectorAll('g[data-frame="0"] path')].map((p) => p.getAttribute("fill"));
+      expect(fills).toContain("var(--sprite-fill)");
     });
   });
 });

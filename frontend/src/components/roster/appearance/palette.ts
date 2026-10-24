@@ -2,8 +2,9 @@
  * The named colours of the adventurer roster. Every hex was picked by eye
  * for how a tier reads in an old-school MMO (bronze warm brown, iron grey,
  * steel light grey, mithril deep blue, adamant green, rune teal-blue, dragon
- * red); nothing is sampled from any game, wiki or asset. Colours are fixed
- * per part and per item; the cape alone wears the party colour token.
+ * red, divine pale gold); nothing is sampled from any game, wiki or asset.
+ * Colours are fixed per part and per item; the cape and the party hat alone
+ * wear the party colour token.
  *
  * Imports inside appearance/ carry the .ts extension because
  * scripts/adventurer_sheet.mts runs this module under Node without a
@@ -21,6 +22,7 @@ export const SKIN: Record<SkinTone, Hex> = {
   tan: "#d49a66",
   brown: "#9b6a3e",
   dark: "#5a3a22",
+  stone: "#8d8b83",
 };
 
 export const HAIR = {
@@ -55,6 +57,7 @@ export const METAL = {
   adamant: "#2f7a4a",
   rune: "#3f7fa8",
   dragon: "#b3261e",
+  divine: "#e2c766",
 } as const;
 export type MetalTier = keyof typeof METAL;
 
@@ -72,6 +75,31 @@ export const MAGE = {
   high: "#2a1e4d",
 } as const;
 
+/**
+ * The ranged ladder's hides, Bronze to Divine: tanned leather, hardened,
+ * studded, then dragonhide in green, blue and red, and blessed white hide.
+ */
+export const HIDE = {
+  leather: "#8a5a2b",
+  hard: "#4f3119",
+  studded: "#7d5536",
+  green: "#3f6e2d",
+  blue: "#2f5f8f",
+  red: "#8f2f2f",
+  blessed: "#e8e0c8",
+} as const;
+
+/** The magic ladder's robes, Bronze to Divine, each with its trim. */
+export const ROBE = {
+  wizard: { base: "#2b58c8", trim: "#7f9be6" },
+  dark: { base: "#2b2a30", trim: "#9a9aa2" },
+  enchanted: { base: "#24306e", trim: "#c8c8d0" },
+  mystic: { base: "#8a3fb8", trim: "#e3b94b" },
+  astral: { base: "#1f6f8f", trim: "#e6e6ea" },
+  archmage: { base: "#2a1e4d", trim: "#e3b94b" },
+  celestial: { base: "#efe6cf", trim: "#e3b94b" },
+} as const;
+
 export const GOLD: Hex = "#e3b94b";
 export const WOOD: Hex = "#7a4a22";
 export const STRING: Hex = "#e6dcc0";
@@ -79,6 +107,39 @@ export const STRING: Hex = "#e6dcc0";
 /** The cape's two tones: the party colour and a darker mix of it, so it still reads as that team's cape. */
 export const CAPE_FILL: Hex = "var(--sprite-fill)";
 export const CAPE_SHADE: Hex = "color-mix(in srgb, var(--sprite-fill) 55%, black)";
+
+/**
+ * A skill cape's body and trim, keyed by the classic skill a development
+ * skill echoes (progression spec 2026-10-24). Picked by eye for what the
+ * skill evokes: forge orange on iron for smithing, a red cross on white for
+ * hitpoints; nothing is sampled from any game.
+ */
+export const SKILL_CAPE = {
+  attack: { base: "#7a2a2a", trim: "#e3b94b" },
+  strength: { base: "#2f6a3a", trim: "#c0392b" },
+  defence: { base: "#2f4f9e", trim: "#d8ccaa" },
+  ranged: { base: "#3a6a2a", trim: "#c9a86a" },
+  prayer: { base: "#efe9da", trim: "#e3b94b" },
+  magic: { base: "#3a2f7a", trim: "#7fb0ff" },
+  runecraft: { base: "#c9a227", trim: "#2a2a2e" },
+  construction: { base: "#8a6a4a", trim: "#d8ccaa" },
+  hitpoints: { base: "#d8d8d8", trim: "#c0392b" },
+  agility: { base: "#2a3550", trim: "#9a9aa2" },
+  herblore: { base: "#2f7a4a", trim: "#d8ccaa" },
+  thieving: { base: "#3a2a4a", trim: "#9a9aa2" },
+  crafting: { base: "#7a5a3a", trim: "#e3b94b" },
+  fletching: { base: "#2a6a6a", trim: "#c9a86a" },
+  slayer: { base: "#2b2a30", trim: "#9e2b2b" },
+  hunter: { base: "#5c4a2a", trim: "#3f6e2d" },
+  mining: { base: "#3a3f55", trim: "#6fb7c9" },
+  smithing: { base: "#4a4a52", trim: "#e07b2a" },
+  fishing: { base: "#2f6f9e", trim: "#d8ccaa" },
+  cooking: { base: "#e8e2d0", trim: "#9e2b2b" },
+  firemaking: { base: "#c8641e", trim: "#f2c14e" },
+  woodcutting: { base: "#3f6b2f", trim: "#8a5a2b" },
+  farming: { base: "#4a7a2a", trim: "#c9a227" },
+} as const;
+export type Echo = keyof typeof SKILL_CAPE;
 
 function channel(hex: Hex, i: number): number {
   return parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16);

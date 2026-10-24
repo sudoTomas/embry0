@@ -6,7 +6,7 @@
  * the weapon hand is the left (viewer's left) one, down at x 8..10 rows
  * 19..21 and raised at x 7..9 rows 7..8; the shield arm is the right one.
  */
-import { CAPE_FILL, CAPE_SHADE, GOLD, LEATHER, MAGE, METAL, OUTLINE, STRING, WOOD, dark, light, tones, type Hex, type MetalTier } from "./palette.ts";
+import { CAPE_FILL, CAPE_SHADE, GOLD, HIDE, LEATHER, MAGE, METAL, OUTLINE, ROBE, SKILL_CAPE, STRING, WOOD, dark, light, tones, type Echo, type Hex, type MetalTier } from "./palette.ts";
 import { FEET, LEGS } from "./parts.ts";
 import type { ColourKey, EquipmentSlot, Frame } from "./types.ts";
 
@@ -19,6 +19,8 @@ export interface Item {
   weapon?: { rest: Frame; raised: Frame };
   /** A body item's pauldrons, drawn over the arms. */
   shoulders?: Frame;
+  /** A skill cape's drape over the shoulders, drawn over the arms, so its colours show from the front. */
+  drape?: Frame;
   colours: ColourKey;
   /** `hair`: the item covers the hair. `beard`: a full helm, covering hair and beard both. */
   over?: "hair" | "beard";
@@ -111,6 +113,38 @@ const MINING_HELMET: Frame = { x: 11, y: 1, rows: [
   ".o322221o.",
   "o32266221o",
   "oooooooooo",
+] };
+
+/** An open-faced helm: the crown and cheek guards in metal, the face and beard showing. The ladder's helm (progression spec 2026-10-24), so a character stays recognisable in its gear. */
+const MED_HELM: Frame = { x: 10, y: 1, rows: [
+  "..oooooooo..",
+  ".o32222221o.",
+  "o3322222211o",
+  "o32oooooo11o",
+  "o3o......o1o",
+  "o3o......o1o",
+  ".o........o.",
+] };
+
+/** A paper crown with three points: the rare a merge on 25 December earns. */
+const PARTY_HAT: Frame = { x: 11, y: 0, rows: [
+  ".o..oo..o.",
+  "o2oo22oo2o",
+  "o32222221o",
+  "o11111111o",
+  "oooooooooo",
+] };
+
+/** A grinning mask over the whole head: the rare a merge on 31 October earns. */
+const HOLIDAY_MASK: Frame = { x: 11, y: 2, rows: [
+  ".oooooooo.",
+  "o32222221o",
+  "o32222221o",
+  "o2oo22oo1o",
+  "o22222221o",
+  "o2o2o2o21o",
+  ".o222221o.",
+  "..oooooo..",
 ] };
 
 // --- body slot ---------------------------------------------------------------
@@ -333,6 +367,14 @@ const TRIMMED_CAPE: Frame = { x: 5, y: 11, rows: [
   "o5cccccccccccccccccC5o",
   "o55555555555555555555o",
   "oooooooooooooooooooooo",
+] };
+
+/** A skill cape over the shoulders, where the pauldrons sit: the colours that say which 99 it is. */
+const CAPE_DRAPE: Frame = { x: 7, y: 11, rows: [
+  "oooo..........oooo",
+  "occ5..........5cco",
+  "oCC5..........5CCo",
+  ".ooo..........ooo.",
 ] };
 
 // --- weapons: rest in the down hand, raised above the up hand ----------------
@@ -668,6 +710,48 @@ const gloves = (id: string, base: Hex): Item => ({ id, slot: "hands", colours: {
 const staff = (id: string, frames: { rest: Frame; raised: Frame }, orb: Hex): Item => ({ id, slot: "weapon", weapon: frames, colours: tones(WOOD, orb) });
 const bow = (id: string, frames: { rest: Frame; raised: Frame }, wood: Hex): Item => ({ id, slot: "weapon", weapon: frames, colours: { ...tones(wood), "5": STRING } });
 
+/** The ladder tiers (progression spec 2026-10-24): the achievement tiers, Bronze to Divine. */
+export const GEAR_TIERS = ["bronze", "iron", "steel", "mithril", "adamant", "rune", "divine"] as const;
+export type GearTier = (typeof GEAR_TIERS)[number];
+
+/** One item per gear tier, keyed `<tier>-<piece>`. */
+function perTier<K extends string>(piece: K, make: (id: string, tier: GearTier) => Item) {
+  return Object.fromEntries(GEAR_TIERS.map((t) => [`${t}-${piece}`, make(`${t}-${piece}`, t)])) as Record<`${GearTier}-${K}`, Item>;
+}
+
+/** A hide set: coif, body, chaps, vambraces and boots of one material. */
+function hideSet<M extends string>(m: M, base: Hex, trim: Hex, body: Frame) {
+  return {
+    [`${m}-coif`]: { id: `${m}-coif`, slot: "head", layer: COIF, colours: tones(base), over: "hair" },
+    [`${m}-body`]: { id: `${m}-body`, slot: "body", layer: body, colours: tones(base, trim) },
+    [`${m}-chaps`]: { id: `${m}-chaps`, slot: "legs", layer: LEGS, colours: tones(base) },
+    [`${m}-vambraces`]: gloves(`${m}-vambraces`, base),
+    [`${m}-boots`]: boots(`${m}-boots`, dark(base)),
+  } as Record<`${M}-${"coif" | "body" | "chaps" | "vambraces" | "boots"}`, Item>;
+}
+
+/** A robe set: hat, robe, skirt and boots of one order. */
+function robeSet<M extends string>(m: M, robe: { base: Hex; trim: Hex }, hat: Frame, skirt: Frame) {
+  return {
+    [`${m}-hat`]: { id: `${m}-hat`, slot: "head", layer: hat, colours: { ...tones(robe.base, robe.trim), "6": RUBY } },
+    [`${m}-robe`]: { id: `${m}-robe`, slot: "body", layer: ROBE_TOP, colours: tones(robe.base, robe.trim), sleeves: robe.base },
+    [`${m}-skirt`]: { id: `${m}-skirt`, slot: "legs", layer: skirt, colours: tones(robe.base, robe.trim) },
+    [`${m}-boots`]: boots(`${m}-boots`, dark(robe.base)),
+  } as Record<`${M}-${"hat" | "robe" | "skirt" | "boots"}`, Item>;
+}
+
+/** A skill cape and its trimmed form (two or more skills at 99), keyed by the classic skill its skill echoes. */
+const SKILL_CAPES = Object.fromEntries(
+  (Object.keys(SKILL_CAPE) as Echo[]).flatMap((e): [string, Item][] => {
+    const { base, trim } = SKILL_CAPE[e];
+    const colours = { o: OUTLINE, c: base, C: dark(base), "5": trim };
+    return [
+      [`${e}-cape`, { id: `${e}-cape`, slot: "cape", layer: CAPE, drape: CAPE_DRAPE, colours }],
+      [`${e}-cape-t`, { id: `${e}-cape-t`, slot: "cape", layer: TRIMMED_CAPE, drape: CAPE_DRAPE, colours }],
+    ];
+  }),
+) as Record<`${Echo}-cape` | `${Echo}-cape-t`, Item>;
+
 export const ITEMS = {
   // warriors, one full set per metal tier
   "bronze-helm": helm("bronze-helm", "bronze"),
@@ -764,6 +848,41 @@ export const ITEMS = {
   "amulet": { id: "amulet", slot: "neck", layer: AMULET, colours: { o: OUTLINE, "5": GOLD, r: RUBY } } satisfies Item,
   "cape": { id: "cape", slot: "cape", layer: CAPE, colours: { o: OUTLINE, c: CAPE_FILL, C: CAPE_SHADE } } satisfies Item,
   "trimmed-cape": { id: "trimmed-cape", slot: "cape", layer: TRIMMED_CAPE, colours: { o: OUTLINE, c: CAPE_FILL, C: CAPE_SHADE, "5": GOLD } } satisfies Item,
+  // the ladders (progression spec 2026-10-24): what a character wears for its tier
+  "divine-helm": helm("divine-helm", "divine"),
+  "divine-platebody": platebody("divine-platebody", "divine"),
+  "divine-platelegs": platelegs("divine-platelegs", "divine"),
+  "divine-kiteshield": kiteshield("divine-kiteshield", "divine"),
+  "divine-scimitar": scimitar("divine-scimitar", "divine"),
+  "divine-boots": boots("divine-boots", METAL.divine),
+  ...perTier("med-helm", (id, t) => ({ id, slot: "head", layer: MED_HELM, colours: tones(METAL[t]), over: "hair" })),
+  ...perTier("axe", (id, t) => ({ id, slot: "weapon", weapon: AXE, colours: { ...tones(METAL[t]), "4": WOOD } })),
+  ...perTier("pickaxe", (id, t) => ({ id, slot: "weapon", weapon: PICKAXE, colours: { ...tones(METAL[t]), "4": WOOD } })),
+  "leather-coif": { id: "leather-coif", slot: "head", layer: COIF, colours: tones(HIDE.leather), over: "hair" } satisfies Item,
+  ...hideSet("hard", HIDE.hard, LEATHER_TRIM, JERKIN),
+  ...hideSet("studded", HIDE.studded, METAL.steel, JERKIN),
+  ...hideSet("blue", HIDE.blue, LEATHER_TRIM, STRAPPED_BODY),
+  ...hideSet("red", HIDE.red, LEATHER_TRIM, STRAPPED_BODY),
+  ...hideSet("blessed", HIDE.blessed, GOLD, STRAPPED_BODY),
+  "oak-shortbow": bow("oak-shortbow", SHORTBOW, "#a8743a"),
+  "willow-longbow": bow("willow-longbow", LONGBOW, "#b89a5a"),
+  "yew-longbow": bow("yew-longbow", LONGBOW, "#5e3218"),
+  "magic-longbow": bow("magic-longbow", LONGBOW, "#3d5a4a"),
+  "crystal-bow": bow("crystal-bow", LONGBOW, "#a9dcf0"),
+  ...robeSet("dark", ROBE.dark, WIZARD_HAT, SKIRT),
+  ...robeSet("enchanted", ROBE.enchanted, BANDED_HAT, BANDED_SKIRT),
+  ...robeSet("astral", ROBE.astral, BANDED_HAT, BANDED_SKIRT),
+  ...robeSet("celestial", ROBE.celestial, GEMMED_HAT, RUNED_SKIRT),
+  "iron-staff": staff("iron-staff", STAFF, "#e6e6ea"),
+  "steel-staff": staff("steel-staff", STAFF, "#8fe39a"),
+  "adamant-staff": staff("adamant-staff", ORB_STAFF, "#7fe3c0"),
+  "divine-staff": staff("divine-staff", CRYSTAL_STAFF, "#fff3b0"),
+  // a skill cape replaces the party cape at 99
+  ...SKILL_CAPES,
+  // rares: the party hat wears the party colour, like the cape
+  "party-hat": { id: "party-hat", slot: "head", layer: PARTY_HAT, colours: { o: OUTLINE, "1": CAPE_SHADE, "2": CAPE_FILL, "3": "color-mix(in srgb, var(--sprite-fill) 60%, white)" } } satisfies Item,
+  "white-party-hat": { id: "white-party-hat", slot: "head", layer: PARTY_HAT, colours: tones("#f2f0ea") } satisfies Item,
+  "holiday-mask": { id: "holiday-mask", slot: "head", layer: HOLIDAY_MASK, colours: tones("#3d9a3a"), over: "beard" } satisfies Item,
 } as const satisfies Record<string, Item>;
 
 export type ItemId = keyof typeof ITEMS;

@@ -203,12 +203,28 @@ class LevelUp:
     level: int
 
 
+#: The rares (spec 2026-10-24) a merge earns on a day of the year (UTC), by (month, day).
+RARE_DAYS: dict[tuple[int, int], str] = {(12, 25): "party-hat", (10, 31): "holiday-mask"}
+
+#: The rare the first run of a new year earns.
+NEW_YEAR_RARE = "white-party-hat"
+
+
+@dataclass(frozen=True)
+class RareDrop:
+    at: datetime
+    agent_type: str
+    rare: str
+
+
 @dataclass
 class Character:
-    """One agent's skills: its experience in each."""
+    """One agent's skills, its experience in each, and the rares its work earned."""
 
     agent_type: str
     stat_xp: dict[str, int] = field(default_factory=dict)
+    #: Each rare it holds and when it first earned it.
+    rares: dict[str, datetime] = field(default_factory=dict)
 
     def level(self, stat: str) -> int:
         return level_for_xp(self.stat_xp.get(stat, 0))
@@ -230,6 +246,12 @@ class Character:
     def tier(self) -> str:
         return tier_for_level(self.level(self.best_skill))
 
+    @property
+    def capes(self) -> list[str]:
+        """Its skills at 99, the most experience first: the first is the cape it wears."""
+        maxed = [s.id for s in STATS if self.level(s.id) >= MAX_LEVEL]
+        return sorted(maxed, key=lambda stat: -self.stat_xp.get(stat, 0))
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "agent_type": self.agent_type,
@@ -237,6 +259,8 @@ class Character:
             "total_level": self.total_level,
             "best_skill": self.best_skill,
             "tier": self.tier,
+            "capes": self.capes,
+            "rares": [{"id": rare, "at": _iso(at)} for rare, at in sorted(self.rares.items(), key=lambda r: r[1])],
             "skills": [{"stat": s.id, **_progress(self.stat_xp.get(s.id, 0))} for s in STATS],
         }
 
@@ -245,6 +269,7 @@ class Character:
 class Progression:
     characters: dict[str, Character]
     level_ups: list[LevelUp] = field(default_factory=list)
+    drops: list[RareDrop] = field(default_factory=list)
     computed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     #: Each achievement's state and every tier unlock (``services.achievements``), set by the service.
     achievements: list[Any] = field(default_factory=list)
@@ -275,26 +300,53 @@ class Progression:
         }
 
     def _recent(self, count: int) -> list[dict[str, Any]]:
-        """The latest levels reached and achievement tiers unlocked, newest first."""
+        """The latest levels reached, rares dropped and achievement tiers unlocked, newest first."""
         levels = [
             (u.at, {"kind": "level", "at": _iso(u.at), "agent_type": u.agent_type, "stat": u.stat, "level": u.level})
             for u in self.level_ups
         ]
+        drops = [
+            (d.at, {"kind": "rare", "at": _iso(d.at), "agent_type": d.agent_type, "id": d.rare}) for d in self.drops
+        ]
         unlocks = [(u.at, u.to_dict()) for u in self.unlocks]
-        merged = sorted(levels + unlocks, key=lambda item: item[0], reverse=True)
+        merged = sorted(levels + drops + unlocks, key=lambda item: item[0], reverse=True)
         return [entry for _at, entry in merged[:count]]
 
 
+def _utc(at: datetime) -> datetime:
+    return at.astimezone(UTC) if at.tzinfo else at.replace(tzinfo=UTC)
+
+
 def compute(events: Iterable[ProgressEvent], agent_types: Iterable[str] = ()) -> Progression:
-    """Price every event in time order, and record each level a character's skill crossed.
+    """Price every event in time order, and record each level a character's skill crossed and each rare it earned.
 
     Every agent in ``agent_types`` is a character, at level 1 in every skill
     when it earned nothing; an agent that earned something but is no longer
-    defined is one too, since its work happened.
+    defined is one too, since its work happened. A merge on 25 December earns
+    a party hat and on 31 October a holiday mask; the first run of a new year
+    earns a white party hat. A character holds each rare once.
     """
     characters = {agent: Character(agent) for agent in agent_types}
     level_ups: list[LevelUp] = []
+    drops: list[RareDrop] = []
+    last_run_year: int | None = None
+
+    def earn(agent: str, rare: str, at: datetime) -> None:
+        character = characters.setdefault(agent, Character(agent))
+        if rare not in character.rares:
+            character.rares[rare] = at
+            drops.append(RareDrop(at, agent, rare))
+
     for event in sorted(events, key=lambda e: e.at):
+        if event.agent_type and event.source == "merged":
+            day = _utc(event.at)
+            if (day.month, day.day) in RARE_DAYS:
+                earn(event.agent_type, RARE_DAYS[(day.month, day.day)], event.at)
+        if event.agent_type and event.source == "run":
+            year = _utc(event.at).year
+            if last_run_year is not None and year > last_run_year:
+                earn(event.agent_type, NEW_YEAR_RARE, event.at)
+            last_run_year = year
         gains = price(event)
         if not gains or not event.agent_type:
             continue
@@ -305,7 +357,7 @@ def compute(events: Iterable[ProgressEvent], agent_types: Iterable[str] = ()) ->
             after = character.level(stat)
             if after > before:
                 level_ups.append(LevelUp(event.at, event.agent_type, stat, after))
-    return Progression(characters, level_ups)
+    return Progression(characters, level_ups, drops)
 
 
 class _Repository(Protocol):

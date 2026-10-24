@@ -37,6 +37,7 @@ describe("AchievementsPage", () => {
     renderPage();
     const sheet = screen.getByTestId("skill-sheet");
     expect(sheet).toHaveAccessibleName("Developer's skills");
+    expect(within(sheet).getByTestId("worn")).toHaveTextContent("Divine gear · Coding cape");
     expect(within(sheet).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
       "Build",
       "Verify",
@@ -59,6 +60,7 @@ describe("AchievementsPage", () => {
     mockUseProgression.mockReturnValue({ data: progression() });
     renderPage("/achievements?character=review");
     expect(screen.getByTestId("skill-sheet")).toHaveAccessibleName("Review's skills");
+    expect(screen.getByTestId("worn")).toHaveTextContent(/^Bronze gear$/);
   });
 
   it("draws seven tier pips, the progress to the next tier, and hides a secret", () => {

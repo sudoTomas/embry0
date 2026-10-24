@@ -3,8 +3,9 @@
  * beard and four colour slots) plus what is worn in nine equipment slots.
  * compose.ts renders one by layering the body-kit parts (parts.ts) and the
  * worn items (items.ts) on a 32 by 32 cell grid, the way an old-school MMO
- * draws a player from its appearance record. The twelve legacy avatars in
- * ../sprites.ts are drawn, not composed, and keep their own module.
+ * draws a player from its appearance record. Every avatar is composed: the
+ * twelve original ones were 16-pixel drawings until the progression spec
+ * (2026-10-24) gave them a person here, so they can wear what they earn.
  */
 import type { Hex } from "./palette.ts";
 import type { ItemId } from "./items.ts";
@@ -12,7 +13,8 @@ import type { ItemId } from "./items.ts";
 /** Cells per side of a composed frame. The character stands about 14 wide and 30 tall; row 0 is free for the bob and the spark. */
 export const GRID = 32;
 
-export type SkinTone = "light" | "tan" | "brown" | "dark";
+/** `stone` is the golem's. */
+export type SkinTone = "light" | "tan" | "brown" | "dark" | "stone";
 export type HairStyle = "short" | "spiky" | "long" | "mohawk" | "bald" | "curly" | "fringe";
 export type BeardStyle = "goatee" | "full" | "moustache" | "long";
 export type ColourId =

@@ -4,7 +4,7 @@
  * sides (agentIdentity.contract.test.ts). Replaces the hard-coded colour,
  * icon and role maps each surface used to keep.
  */
-/** The twelve drawn avatars of components/roster/sprites.ts. */
+/** The twelve original avatars the built-in agents wear: once 16-pixel drawings, composed people since the progression spec (2026-10-24). */
 export const LEGACY_AVATARS = [
   "seer", "smith", "warden", "alchemist", "herald", "arbiter", "scholar", "oracle", "engineer", "rogue", "bard", "golem",
 ] as const;

@@ -25,7 +25,14 @@ export function freshEvents(recent: readonly RecentEvent[], seen: string): Recen
   return recent.filter((e) => Date.parse(e.at) > Date.parse(seen)).reverse();
 }
 
-/** The message, in the old game's words: a level names the character that gained it. */
+/** How a rare reads in a message. */
+export const RARE_NAMES: Record<string, string> = {
+  "party-hat": "party hat",
+  "white-party-hat": "white party hat",
+  "holiday-mask": "holiday mask",
+};
+
+/** The message, in the old game's words: a level or a drop names the character that earned it. */
 export function chatMessage(
   event: RecentEvent,
   skillName: (stat: string) => string,
@@ -34,6 +41,9 @@ export function chatMessage(
   if (event.kind === "level") {
     const skill = skillName(event.stat);
     return `Congratulations, ${characterName(event.agent_type)} just advanced a ${skill} level. Its ${skill} level is now ${event.level}.`;
+  }
+  if (event.kind === "rare") {
+    return `Valuable drop: ${characterName(event.agent_type)} received a ${RARE_NAMES[event.id] ?? event.id}!`;
   }
   return `Well done! You have reached ${TIER_NAME[event.tier]} in ${event.name}.`;
 }

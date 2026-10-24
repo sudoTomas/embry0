@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { AgentState } from "@/hooks/useAgentStates";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
+import { useOutfit } from "@/components/progression/outfits";
 import { Sprite, stateFor } from "@/components/roster";
 import { motionIndex } from "@/lib/motion";
 
@@ -34,6 +35,7 @@ function Member({
 }) {
   const identityFor = useIdentityLookup();
   const identity = identityFor(agent.agent);
+  const outfit = useOutfit(agent.agent);
   const state = stateFor(agent);
   const i = useArrivalTurn(turn);
   return (
@@ -49,7 +51,7 @@ function Member({
       } ${agent.status === "pending" ? "opacity-70" : ""}`}
       style={{ ...motionIndex(i), ...(selected ? { boxShadow: `0 0 0 1px ${identity.hex}` } : {}) }}
     >
-      <Sprite avatar={identity.avatar} color={identity.color} state={state} size={32} decorative />
+      <Sprite avatar={identity.avatar} color={identity.color} state={state} size={32} decorative outfit={outfit} />
       <span className="sprite-nameplate truncate w-full text-center" style={{ color: identity.hex }}>
         {identity.displayName}
       </span>

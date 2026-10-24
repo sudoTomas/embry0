@@ -5,6 +5,7 @@ import itemsSrc from "../items.ts?raw";
 import paletteSrc from "../palette.ts?raw";
 import partsSrc from "../parts.ts?raw";
 import presetsSrc from "../presets.ts?raw";
+import outfitSrc from "../outfit.ts?raw";
 import typesSrc from "../types.ts?raw";
 import { FRAME_COUNTS, SPRITE_STATES } from "../../sprites";
 import { POSES, compose, composeState, layersOf, paint } from "../compose";
@@ -78,9 +79,9 @@ describe("adventurer presets", () => {
     for (const [id, a] of caped) expect(Object.keys(compose(a, POSES.idle[0]).paths).some((c) => c.includes(CAPE_FILL)), id).toBe(true);
   });
 
-  it("keeps the appearance module under 120 KB of source", () => {
-    const total = [composeSrc, indexSrc, itemsSrc, paletteSrc, partsSrc, presetsSrc, typesSrc].reduce((n, s) => n + s.length, 0);
+  it("keeps the appearance module under 200 KB of source (progression spec 2026-10-24)", () => {
+    const total = [composeSrc, indexSrc, itemsSrc, outfitSrc, paletteSrc, partsSrc, presetsSrc, typesSrc].reduce((n, s) => n + s.length, 0);
     expect(total).toBeGreaterThan(20_000);
-    expect(total).toBeLessThan(120_000);
+    expect(total).toBeLessThan(200_000);
   });
 });

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { cn, highlightJson } from "@/lib/utils";
 import type { LogEvent } from "@/lib/types";
+import { useOutfitLookup } from "@/components/progression/outfits";
 import { Sprite } from "@/components/roster";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import type { AgentIdentity } from "@/lib/agentIdentity";
@@ -235,13 +236,14 @@ function TurnCard({
   offeredRuns: Set<string>;
   onFullTranscript?: (run: { runId: string; agent: string }) => void;
 }) {
+  const outfitFor = useOutfitLookup();
   return (
     <div className="space-y-1">
       {turn.divider && (
         <div data-testid="run-divider" className="flex items-center gap-2 pt-3">
           <div className="h-px flex-1 bg-border" />
           {turn.agent && (
-            <Sprite avatar={identityFor(turn.agent).avatar} color={identityFor(turn.agent).color} state="idle" size={16} still decorative />
+            <Sprite avatar={identityFor(turn.agent).avatar} color={identityFor(turn.agent).color} state="idle" size={16} still decorative outfit={outfitFor(turn.agent)} />
           )}
           <span className="text-xs text-muted-foreground font-mono">
             {turn.divider}

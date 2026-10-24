@@ -212,3 +212,44 @@ async def test_the_service_computes_at_most_once_per_minute() -> None:
     now[0] += 2
     await service.read()
     assert Repo.calls == 2
+
+
+# ---- what a character wears ----
+
+
+def test_capes_list_the_99s_most_experience_first() -> None:
+    character = Character("developer", {"coding": 14_000_000, "reading": 13_500_000, "shell": 2_000_000})
+    assert character.capes == ["coding", "reading"]
+    assert Character("review").capes == []
+
+
+def test_a_merge_on_the_holidays_drops_a_rare_once() -> None:
+    christmas = datetime(2026, 12, 25, 15, tzinfo=UTC)
+    events = [
+        ProgressEvent("merged", "developer", christmas),
+        ProgressEvent("merged", "developer", christmas + timedelta(minutes=5)),
+        ProgressEvent("merged", "developer", datetime(2026, 10, 31, 23, 59, tzinfo=UTC)),
+        ProgressEvent("merged", "developer", datetime(2026, 11, 1, 0, 1, tzinfo=UTC)),  # a day late in UTC
+    ]
+    result = compute(events, ["developer"])
+    assert set(result.characters["developer"].rares) == {"party-hat", "holiday-mask"}
+    assert [(d.rare, d.at) for d in result.drops] == [
+        ("holiday-mask", datetime(2026, 10, 31, 23, 59, tzinfo=UTC)),
+        ("party-hat", christmas),
+    ], "each rare once, when first earned"
+    body = result.to_dict()["characters"][0]
+    assert [r["id"] for r in body["rares"]] == ["holiday-mask", "party-hat"]
+    assert body["capes"] == []
+
+
+def test_the_first_run_of_a_new_year_drops_a_white_party_hat() -> None:
+    events = [
+        ProgressEvent("run", "triage", datetime(2026, 12, 31, 23, tzinfo=UTC)),
+        ProgressEvent("run", "qa", datetime(2027, 1, 1, 0, 30, tzinfo=UTC)),
+        ProgressEvent("run", "triage", datetime(2027, 1, 1, 1, tzinfo=UTC)),
+    ]
+    result = compute(events, [])
+    assert result.characters["qa"].rares == {"white-party-hat": datetime(2027, 1, 1, 0, 30, tzinfo=UTC)}
+    assert result.characters["triage"].rares == {}, "the year's first run only, and never the very first run"
+    recent = result.to_dict()["recent"]
+    assert {"kind": "rare", "at": "2027-01-01T00:30:00+00:00", "agent_type": "qa", "id": "white-party-hat"} in recent

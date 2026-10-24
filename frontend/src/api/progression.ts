@@ -36,6 +36,10 @@ export interface Character {
   total_level: number;
   best_skill: string;
   tier: Tier;
+  /** Its skills at 99, the most experience first: the first is the skill cape it wears. */
+  capes: string[];
+  /** The rares its work earned (`party-hat`, `holiday-mask`, `white-party-hat`), first earned first. */
+  rares: { id: string; at: string }[];
   /** Every skill, in sheet order. */
   skills: SkillProgress[];
 }
@@ -83,7 +87,15 @@ export interface AchievementUnlock {
   tier: Tier;
 }
 
-export type RecentEvent = LevelUp | AchievementUnlock;
+/** A rare a character's work earned. */
+export interface RareDrop {
+  kind: "rare";
+  at: string;
+  agent_type: string;
+  id: string;
+}
+
+export type RecentEvent = LevelUp | RareDrop | AchievementUnlock;
 
 /** GET /progression: the account, its characters and its achievements, recomputed from the work embry0 recorded. */
 export interface Progression {
@@ -91,7 +103,7 @@ export interface Progression {
   skills: Skill[];
   characters: Character[];
   achievements: AchievementEntry[];
-  /** Levels reached and tiers unlocked, newest first. */
+  /** Levels reached, rares dropped and tiers unlocked, newest first. */
   recent: RecentEvent[];
   computed_at: string;
 }
