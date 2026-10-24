@@ -124,7 +124,7 @@ def make_app(monkeypatch: pytest.MonkeyPatch, **config: Any) -> Any:
     async def client_for(org: Organization) -> Any:
         return await organizations_api.org_forge_client(organizations_api.app_request(app), org)
 
-    async def start_job(context: RepoContext, budget_usd: float) -> str:
+    async def start_job(context: RepoContext, budget_usd: float, open_pr: bool) -> str:
         job_id = f"job-{len(jobs.rows) + 1}"
         jobs.rows.append({"job_id": job_id, "repo": context.repo, "status": "pending", "created_at": NOW})
         started.append((context.repo, budget_usd))

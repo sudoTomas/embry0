@@ -156,6 +156,7 @@ async def test_the_read_lists_each_repository_with_instruction_files_and_why_it_
                     "finished_at": "2026-10-01T00:09:00+00:00",
                     "total_cost_usd": 1.25,
                     "error_code": None,
+                    "pr_url": None,
                     "stale": 3,
                     "files_read": 2,
                 },

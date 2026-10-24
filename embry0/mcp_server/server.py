@@ -949,6 +949,8 @@ async def org_update(
     default): the hard cap in USD of each context-audit job started for the owner.
     context_audit_max_jobs_per_tick (integer 0 to 50, or null for the deployment's default): the most
     context-audit jobs one tick of the schedule (every 15 minutes) starts for the owner; 0 starts none.
+    context_audit_open_prs (boolean, default false): a context audit that finds outdated claims opens
+    a pull request from the patch it checked, one at a time per repository, for a person to merge.
     An unknown key, a wrong type or a value out of range is refused. Returns the organization. Needs
     an admin-scope key. Requires confirm=true (changes what embry0 does, and may spend, for every
     repository under the owner)."""

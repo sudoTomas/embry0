@@ -56,6 +56,7 @@ from embry0.services.organizations import (
     context_audit_budget_usd,
     context_audit_days,
     context_audit_max_jobs_per_tick,
+    context_audit_open_prs,
 )
 
 logger = structlog.get_logger(__name__)
@@ -378,6 +379,7 @@ class RepoState:
                 "finished_at": _iso(job.get("finished_at")),
                 "total_cost_usd": float(cost) if isinstance(cost, int | float) else None,
                 "error_code": job.get("error_code"),
+                "pr_url": job.get("pr_url"),
                 "stale": stale,
                 "files_read": files_read,
             }
@@ -490,8 +492,9 @@ class _Reading(NamedTuple):
 #: The client that reads an organization's repositories with its credential.
 ClientFor = Callable[[Organization], Awaitable[_Forge]]
 
-#: Starts one context-audit job with that hard cap in USD and returns its id.
-StartJob = Callable[[RepoContext, float], Awaitable[str]]
+#: Starts one context-audit job with that hard cap in USD, opening a pull
+#: request from its patch when the third argument is true, and returns its id.
+StartJob = Callable[[RepoContext, float, bool], Awaitable[str]]
 
 
 class _Refusal(Protocol):
@@ -732,6 +735,7 @@ class ContextAuditLoop:
             self._noted.pop(org.owner, None)
             self._note_unread(org.owner, survey.unread)
             budget = self.budget_usd(org)
+            open_pr = context_audit_open_prs(org.settings)
             count = 0
             for state in survey.repos:
                 repo = state.context.repo
@@ -741,7 +745,7 @@ class ContextAuditLoop:
                     logger.info("context_audit_tick_full", owner=org.owner, cap=cap, next_repo=repo)
                     break
                 try:
-                    job_id = await self._start(state.context, budget_usd=budget, now=now)
+                    job_id = await self._start(state.context, budget_usd=budget, open_pr=open_pr, now=now)
                 except GateRefused as exc:
                     logger.info(
                         "context_audit_gate_refused", owner=org.owner, repo=repo, limit=exc.limit, detail=exc.message
@@ -771,7 +775,7 @@ class ContextAuditLoop:
                 )
         return started
 
-    async def _start(self, context: RepoContext, *, budget_usd: float, now: datetime) -> str | None:
+    async def _start(self, context: RepoContext, *, budget_usd: float, open_pr: bool, now: datetime) -> str | None:
         """Start ``context``'s job and return its id, or None when a context-audit job of it is live.
 
         The survey read the jobs a moment earlier, and the tick and a start by
@@ -793,7 +797,7 @@ class ContextAuditLoop:
             if refusal is not None:
                 raise GateRefused(refusal.limit, refusal.message)
             try:
-                job_id = await self._start_job(context, budget_usd)
+                job_id = await self._start_job(context, budget_usd, open_pr)
             except Exception:
                 self._refused[repo] = Attempt(
                     started_at=now, fingerprint=context.fingerprint, head_sha=context.head_sha
@@ -835,6 +839,7 @@ class ContextAuditLoop:
         survey = await self._survey(org, repos, now=now, by_hand=True)
         cap = 1 if repo is not None else limit if limit is not None else self.jobs_per_tick(org)
         budget = self.budget_usd(org)
+        open_pr = context_audit_open_prs(org.settings)
         started: list[Started] = []
         skipped: list[Skipped] = []
         gated: GateRefused | None = None
@@ -850,7 +855,7 @@ class ContextAuditLoop:
                 skipped.append(Skipped(name, GATED, str(gated)))
                 continue
             try:
-                job_id = await self._start(state.context, budget_usd=budget, now=now)
+                job_id = await self._start(state.context, budget_usd=budget, open_pr=open_pr, now=now)
             except GateRefused as exc:
                 gated = exc
                 logger.info(
@@ -964,13 +969,15 @@ async def start_context_audit_job(
     executor: _Executor | None,
     templates: _Templates | None,
     budget_usd: float,
+    open_pr: bool = False,
     db: Any = None,
     audit_log_path: Any = None,
 ) -> str:
     """Start one context-audit job the way ``POST /jobs`` starts a job, and return its id.
 
     The job row, the ``job_created`` audit row naming :data:`ACTOR`, then the
-    workflow on the executor. Refused with :class:`LookupError` before any
+    workflow on the executor. With ``open_pr`` the job opens a pull request
+    from the patch its report carries (ADR 0022). Refused with :class:`LookupError` before any
     row exists while no template is named :data:`TEMPLATE`: plan_route sends
     a job whose template is missing to the default template of its kind, a
     code job, rather than failing it.
@@ -995,6 +1002,8 @@ async def start_context_audit_job(
             "context_fingerprint": context.fingerprint,
             "head_sha": context.head_sha,
             "actor": ACTOR,
+            # Read by the executor into the job's state; the output step reads it there.
+            "open_pr": open_pr,
         },
         trace_id=f"trc-{uuid.uuid4().hex[:12]}",
         dispatched_by=ACTOR,

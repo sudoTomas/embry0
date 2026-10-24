@@ -360,6 +360,15 @@ class JobState(TypedDict, total=False):
     pin_full_pipeline: Annotated[bool | None, FoldingLastValue]
     execution_mode_override: Annotated[str | None, FoldingLastValue]
     auth_mode_override: Annotated[str | None, FoldingLastValue]
+    # ADR 0022: a context audit's job opens a pull request from the patch its
+    # report carries. Set once by the executor from the job's pipeline_config;
+    # read by finalize_output_node. MUST stay declared here.
+    open_pr: Annotated[bool | None, FoldingLastValue]
+    # The title and closing note of a pull request the executor opens from a
+    # branch a step other than the developer pushed (the context audit's);
+    # absent, the executor's defaults for a developer's branch.
+    pr_title: Annotated[str | None, FoldingLastValue]
+    pr_note: Annotated[str | None, FoldingLastValue]
     # RAV-1254: per-repo pre-PR self-checks from repo_preferences.dev_checks
     # ([{name, paths, command}]), seeded by _run_workflow and rendered into
     # the developer prompt. MUST stay declared here — LangGraph's state-merge

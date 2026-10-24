@@ -505,7 +505,13 @@ async def _open_fallback_pr(
         if not repo_for_pr or "/" not in repo_for_pr:
             return None, job_row
         task_text = str(state.get("task") or (job_row or {}).get("task") or "").strip()
-        pr_title = (task_text.splitlines()[0][:100] if task_text else "") or f"embry0: {state['branch_name']}"
+        # A step other than the developer that pushed the branch (the context
+        # audit's, ADR 0022) names the PR and its closing note itself.
+        pr_title = (
+            str(state.get("pr_title") or "")[:100]
+            or (task_text.splitlines()[0][:100] if task_text else "")
+            or f"embry0: {state['branch_name']}"
+        )
         issue_number = state.get("issue_number") or (job_row or {}).get("issue_number")
         if issue_number is None and issue_id:
             # #213: jobs.issue_number is GitHub-only (#161), so GitLab jobs
@@ -538,7 +544,10 @@ async def _open_fallback_pr(
             summary = _developer_summary(state)
             if summary:
                 body_parts.append(summary)
-            body_parts.append("Opened by the embry0 orchestrator from the branch the developer pushed.")
+            body_parts.append(
+                str(state.get("pr_note") or "")
+                or "Opened by the embry0 orchestrator from the branch the developer pushed."
+            )
         # #163: mark orchestrator-opened PRs. A failed job's also says a person
         # must merge it; a gate-blocked one gets that label from its verdict.
         labels = ["embry0"] if not error_code or gate_blocked else ["embry0", HUMAN_MERGE_LABEL]

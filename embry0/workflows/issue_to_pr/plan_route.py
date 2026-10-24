@@ -550,16 +550,19 @@ async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) ->
 
     The ``pr`` deliverable is NOT built here: code-kind jobs usually end
     without an ``output`` step, so the executor synthesizes it from
-    ``pr_url`` at completion for every job uniformly.
+    ``pr_url`` at completion for every job uniformly. A context audit whose
+    job asks for one (``open_pr``, ADR 0022) pushes its report's patch here,
+    after the artifacts are collected, and the executor opens that PR.
     """
     writer = get_stream_writer()
     writer(events.node_started(node="finalize_output"))
 
-    summary = ""
+    report = ""
     for entry in reversed(state.get("agent_outputs") or []):
         if not entry.get("is_error") and (entry.get("output") or "").strip():
-            summary = str(entry["output"]).strip()[:RESULT_SUMMARY_MAX_CHARS]
+            report = str(entry["output"]).strip()
             break
+    summary = report[:RESULT_SUMMARY_MAX_CHARS]
 
     deliverables: list[dict[str, Any]] = []
     if summary:
@@ -572,9 +575,16 @@ async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) ->
         )
     deliverables.extend(await _collect_artifacts(state, config))
 
+    delivered: dict[str, Any] = {}
+    if state.get("open_pr") and report:
+        from embry0.workflows.issue_to_pr.audit_delivery import deliver_audit_patch
+
+        delivered = await deliver_audit_patch(state, config, report)
+
     writer(events.node_completed(node="finalize_output", deliverables=len(deliverables)))
     return {
         "result_summary": summary,
         "deliverables": deliverables,
         "current_stage": "output_finalized",
+        **delivered,
     }

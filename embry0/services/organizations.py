@@ -40,12 +40,16 @@ STATUSES = ("active", "paused", "removed")
 # context_audit_max_jobs_per_tick: the most context-audit jobs one tick of the
 # schedule starts for the owner, 0 starting none; null, the default, is the
 # deployment's CONTEXT_AUDIT_MAX_JOBS_PER_TICK.
+# context_audit_open_prs: a context audit that finds outdated claims opens a
+# pull request from the patch it checked, for a person to review and merge
+# (ADR 0022); false, the default, leaves its findings in the job's report.
 SETTINGS: dict[str, type] = {
     "auto_register": bool,
     "rediscover_hours": int,
     "context_audit_days": int,
     "context_audit_budget_usd": float,
     "context_audit_max_jobs_per_tick": int,
+    "context_audit_open_prs": bool,
 }
 
 # The settings that take null, meaning off or the deployment's default, the
@@ -144,6 +148,15 @@ def context_audit_max_jobs_per_tick(settings: Mapping[str, Any]) -> int | None:
     value = settings.get("context_audit_max_jobs_per_tick")
     low, high = SETTING_RANGES["context_audit_max_jobs_per_tick"]
     return value if type(value) is int and low <= value <= high else None
+
+
+def context_audit_open_prs(settings: Mapping[str, Any]) -> bool:
+    """Whether the owner's context audits open a pull request from the patch they checked.
+
+    Only a stored ``true`` turns it on: any other value, as one ``POST /orgs``
+    stored unvalidated, reads as off.
+    """
+    return settings.get("context_audit_open_prs") is True
 
 
 @dataclass

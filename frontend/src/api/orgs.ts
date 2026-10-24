@@ -158,6 +158,8 @@ export interface OrgSettingsPatch {
   context_audit_days?: number | null;
   /** Register a repository under this owner when a webhook delivery names one nobody registered. */
   auto_register?: boolean;
+  /** Open a pull request from each context audit's checked patch. */
+  context_audit_open_prs?: boolean;
 }
 
 /** Change an owner's settings (admin). The server merges them into the stored ones. */
@@ -310,6 +312,8 @@ export interface ContextAuditJob {
   finished_at: string | null;
   total_cost_usd: number | null;
   error_code: string | null;
+  /** The pull request it opened from its patch, when its organization has that on. */
+  pr_url: string | null;
   /** Outdated claims the report counted; null until the job completed, or when its report lost the count. */
   stale: number | null;
   /** Instruction files the audit read. */

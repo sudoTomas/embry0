@@ -536,3 +536,10 @@ async def test_result_summaries_answers_each_jobs_report(jobs_repo: JobsReposito
     assert await jobs_repo.result_summaries([]) == {}
     newest = await jobs_repo.newest_per_repo(["acme/web"], pipeline_template="context-audit")
     assert newest["acme/web"]["total_cost_usd"] == 1.5
+    await jobs_repo._db.execute(
+        "UPDATE jobs SET pr_url = $2 WHERE job_id = $1", done, "https://github.com/acme/web/pull/3"
+    )
+    newest = await jobs_repo.newest_per_repo(["acme/web"], pipeline_template="context-audit")
+    assert newest["acme/web"]["pr_url"] == "https://github.com/acme/web/pull/3", (
+        "the read endpoint links the audit's PR"
+    )

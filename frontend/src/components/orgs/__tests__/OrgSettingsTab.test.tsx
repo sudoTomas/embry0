@@ -71,6 +71,14 @@ describe("OrgSettingsTab", () => {
     expect(update).toHaveBeenCalledWith({ settings: { auto_register: true } }, expect.anything());
   });
 
+  it("switches pull requests from context audits on through the settings patch, off by default", async () => {
+    render(<OrgSettingsTab org={org()} isAdmin />);
+    const prs = screen.getByRole("switch", { name: "Open a pull request from each audit's fixes" });
+    expect(prs).toHaveAttribute("aria-checked", "false");
+    await userEvent.click(prs);
+    expect(update).toHaveBeenCalledWith({ settings: { context_audit_open_prs: true } }, expect.anything());
+  });
+
   it("shows whether the webhook points here, lists the hooks the credential sees, and installs one", async () => {
     install.mockImplementation((_v: unknown, opts: { onSuccess: (r: unknown) => void }) =>
       opts.onSuccess({ owner: "acme", target_url: WEBHOOK.target_url, outcome: "already", hook: WEBHOOK.hook, detail: "" }),
@@ -121,6 +129,7 @@ describe("OrgSettingsTab", () => {
     const auto = screen.getByRole("switch", { name: "Register repositories automatically" });
     expect(auto).toBeDisabled();
     expect(auto).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("switch", { name: "Open a pull request from each audit's fixes" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Install webhook" })).toBeDisabled();
     const gold = [...document.querySelectorAll("*")].filter((el) => /(^|\s)(bg-primary|bg-primary-dim|text-primary)(\s|$)/.test(el.getAttribute("class") ?? ""));
