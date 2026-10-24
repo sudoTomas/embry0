@@ -31,6 +31,8 @@ export interface SkillProgress {
 /** An agent type as a character: its 23 skills, their total, and the gear its best skill wears. */
 export interface Character {
   agent_type: string;
+  /** Its one level, 1 to 126: the combat-level formula with its best skills in the combat slots. */
+  level: number;
   xp: number;
   /** Its 23 levels added up, 23 to 2,277. */
   total_level: number;
@@ -136,6 +138,14 @@ export interface DiaryComplete {
   tier: DiaryTierName;
 }
 
+/** A character's own level rising. */
+export interface AgentLevelUp {
+  kind: "agent_level";
+  at: string;
+  agent_type: string;
+  level: number;
+}
+
 /** A rare a character's work earned. */
 export interface RareDrop {
   kind: "rare";
@@ -144,7 +154,7 @@ export interface RareDrop {
   id: string;
 }
 
-export type RecentEvent = LevelUp | RareDrop | AchievementUnlock | QuestComplete | DiaryComplete;
+export type RecentEvent = LevelUp | AgentLevelUp | RareDrop | AchievementUnlock | QuestComplete | DiaryComplete;
 
 /** GET /progression: the account, its characters and its achievements, recomputed from the work embry0 recorded. */
 export interface Progression {

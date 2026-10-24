@@ -8,7 +8,6 @@ import {
   OPERATION_ELEMENT,
   OPERATION_NUMERAL,
 } from "@/components/divine/operations";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button, buttonVariants } from "@/components/ui/Button";
 import { AdminButton } from "@/components/auth/AdminButton";
 import { Badge } from "@/components/ui/Badge";
@@ -17,10 +16,14 @@ import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { AgentIdentityFields } from "@/components/agents/AgentIdentityFields";
+import { ConfigSection } from "@/components/agents/ConfigSection";
+import { SkillSheet } from "@/components/progression/SkillSheet";
+import { TIER_NAME } from "@/lib/tiers";
 import { ToolChecklist } from "@/components/agents/ToolChecklist";
 import { SkillPicker } from "@/components/skills/SkillPicker";
 import { useAgent, useCreateAgent, useUpdateAgent } from "@/hooks/useAgents";
 import { useModels } from "@/hooks/useModels";
+import { useProgression } from "@/hooks/useProgression";
 import { useSkills } from "@/hooks/useSkills";
 import { useTools } from "@/hooks/useTools";
 import { DEFAULT_AVATAR, DEFAULT_COLOR, identityOf, type AvatarId, type PaletteId } from "@/lib/agentIdentity";
@@ -48,6 +51,28 @@ interface FormState {
   auth_mode: "" | "api_key" | "oauth";
   /** JSON text of the mcp_servers object; validated on save. */
   mcpServersText: string;
+}
+
+/** The page's parts, top to bottom: the character it has become, then what it is configured to be. */
+const SECTIONS = ["character", "identity", "model", "tools", "packs", "mcp", "prompt"] as const;
+type SectionId = (typeof SECTIONS)[number];
+
+/** A new agent opens every part to fill in; a saved one opens on its character, its configuration closed to a line each. */
+function initialSections(isEdit: boolean): Record<SectionId, boolean> {
+  return Object.fromEntries(SECTIONS.map((id) => [id, !isEdit || id === "character"])) as Record<SectionId, boolean>;
+}
+
+/** The MCP servers text in a line: how many, none, or not JSON yet. */
+function mcpSummary(text: string): string {
+  if (!text.trim()) return "None";
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "Not a JSON object";
+    const names = Object.keys(parsed);
+    return names.length ? names.join(", ") : "None";
+  } catch {
+    return "Not valid JSON";
+  }
 }
 
 const DEFAULT_MODEL = "claude-sonnet-5";
@@ -111,6 +136,14 @@ export function AgentFormPage() {
   const updateAgent = useUpdateAgent();
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [sections, setSections] = useState(() => initialSections(isEdit));
+  const openSection = (id: SectionId) => setSections((prev) => ({ ...prev, [id]: true }));
+  const setAllSections = (open: boolean) =>
+    setSections(Object.fromEntries(SECTIONS.map((id) => [id, open])) as Record<SectionId, boolean>);
+
+  // What the agent has become (progression spec 2026-10-24): its level, total level and skills.
+  const progression = useProgression();
+  const character = isEdit ? progression.data?.characters.find((c) => c.agent_type === typeParam) : undefined;
 
   // Populate form when editing an existing agent
   useEffect(() => {
@@ -185,10 +218,12 @@ export function AgentFormPage() {
 
   const handleSave = () => {
     if (!isEdit && !form.type.trim()) {
+      openSection("identity");
       toast.error("Agent type is required");
       return;
     }
     if (!resolvedModel.trim()) {
+      openSection("model");
       toast.error("Model is required");
       return;
     }
@@ -200,11 +235,13 @@ export function AgentFormPage() {
       try {
         const parsed: unknown = JSON.parse(form.mcpServersText);
         if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+          openSection("mcp");
           toast.error("MCP servers must be a JSON object mapping name → config");
           return;
         }
         mcpServers = parsed as Record<string, unknown>;
       } catch {
+        openSection("mcp");
         toast.error("MCP servers is not valid JSON");
         return;
       }
@@ -312,213 +349,259 @@ export function AgentFormPage() {
         </div>
       </div>
 
-      {/* Identity */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Identity</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="agent-type">Type (slug)</Label>
-              <Input
-                id="agent-type"
-                placeholder="e.g. code-reviewer"
-                value={form.type}
-                onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
-                disabled={isEdit}
-                className="mt-1 font-mono"
-              />
-              {isEdit && (
-                <p className="text-xs text-white/30 mt-1">Agent type cannot be changed after creation.</p>
-              )}
-            </div>
-            <AgentIdentityFields
-              type={form.type}
-              value={form}
-              onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
-            />
-            <div>
-              <Label htmlFor="agent-description">Description</Label>
-              <Textarea
-                id="agent-description"
-                placeholder="Describe what this agent does..."
-                value={form.description}
-                onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-                className="mt-1 min-h-[80px] bg-overlay border-white/[0.08]"
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Every part closes to a line saying what it holds; a save error opens the part it names. */}
+      <div className="flex justify-end gap-2 text-xs">
+        <Button variant="ghost" size="sm" onClick={() => setAllSections(true)}>
+          Expand all
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setAllSections(false)}>
+          Collapse all
+        </Button>
+      </div>
 
-      {/* Execution */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Execution</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-5">
-            {/* Model */}
-            <div>
-              <Label htmlFor="agent-model">Model</Label>
-              <Select
-                id="agent-model"
-                value={form.model}
-                onChange={(e) => setForm((prev) => ({ ...prev, model: e.target.value }))}
-                className="mt-1"
-                disabled={modelsLoading}
-              >
-                {offeredModels.map((m) => {
-                  const notReady = notReadyModels.has(m);
-                  return (
-                    <option key={m} value={m} disabled={notReady && m !== existing?.model}>
-                      {notReady ? `${m} (no credential)` : m}
-                    </option>
-                  );
-                })}
-                <option value="__custom__">Custom...</option>
-              </Select>
-              {form.model === "__custom__" && (
-                <Input
-                  className="mt-2 font-mono"
-                  placeholder="Enter model ID"
-                  value={form.customModel}
-                  onChange={(e) => setForm((prev) => ({ ...prev, customModel: e.target.value }))}
-                />
-              )}
-              {chosenProvider && (
-                <p
-                  className="mt-1 flex items-center gap-2 text-xs text-white/40"
-                  data-testid="model-provider-readiness"
-                >
-                  {chosenProvider.name ? (
-                    <span>
-                      Provider: {providerLabel(chosenProvider.name)}
-                    </span>
-                  ) : (
-                    <span>No configured provider serves this model</span>
-                  )}
-                  {chosenProvider.ready ? (
-                    <Badge tone="success">Ready</Badge>
-                  ) : (
-                    <Badge
-                      tone="error"
-                      title={
-                        chosenProvider.name
-                          ? "No credential is configured for this provider"
-                          : "No configured provider serves this model"
-                      }
-                    >
-                      Not ready
-                    </Badge>
-                  )}
-                </p>
-              )}
-              {runNote && (
-                <p className="mt-1 text-xs text-warning" data-testid="model-run-override">
-                  {runNote}
-                </p>
-              )}
-            </div>
+      {character && progression.data && (
+        <ConfigSection
+          id="character"
+          title="Character"
+          summary={`Level ${character.level} · total level ${character.total_level.toLocaleString("en-US")} · ${TIER_NAME[character.tier]} gear`}
+          open={sections.character}
+          onToggle={(open) => setSections((prev) => ({ ...prev, character: open }))}
+        >
+          <SkillSheet character={character} skills={progression.data.skills} identity={identityOf({ ...form, type: typeParam ?? "" })} />
+        </ConfigSection>
+      )}
 
-            {/* Tools */}
-            <div>
-              <Label>Tools</Label>
-              <ToolChecklist value={form.tools} onToggle={handleToolToggle} catalog={toolCatalog ?? []} />
-            </div>
-
-            {/* Skills */}
-            <div>
-              <Label htmlFor="agent-skills">Skills</Label>
-              <div className="mt-1">
-                <SkillPicker
-                  id="agent-skills"
-                  value={form.skills}
-                  onChange={(skills) => setForm((prev) => ({ ...prev, skills }))}
-                  catalog={skillCatalog ?? []}
-                  isLoading={skillsLoading}
-                />
-              </div>
-              {isEdit && orphanSkills.length > 0 && (
-                <p className="text-xs text-amber-300/80 mt-1">
-                  No source lists: {orphanSkills.join(", ")}. They keep running; adding a new unknown name is refused.
-                </p>
-              )}
-            </div>
-
-            {/* Execution / auth mode (RAV-1058) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="agent-execution-mode">Execution mode</Label>
-                <Select
-                  id="agent-execution-mode"
-                  value={form.execution_mode}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, execution_mode: e.target.value as FormState["execution_mode"] }))
-                  }
-                  className="mt-1"
-                >
-                  <option value="">Inherit default</option>
-                  <option value="sdk">sdk — Agent SDK executor</option>
-                  <option value="cli">cli — Claude CLI subprocess</option>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="agent-auth-mode">Auth mode</Label>
-                <Select
-                  id="agent-auth-mode"
-                  value={form.auth_mode}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, auth_mode: e.target.value as FormState["auth_mode"] }))
-                  }
-                  className="mt-1"
-                >
-                  <option value="">Inherit default</option>
-                  <option value="api_key">api_key — Anthropic API key</option>
-                  <option value="oauth">oauth — Claude Code OAuth token</option>
-                </Select>
-              </div>
-            </div>
-
-            {/* MCP servers (RAV-1058) */}
-            <div>
-              <Label htmlFor="agent-mcp-servers">MCP servers (JSON)</Label>
-              <Textarea
-                id="agent-mcp-servers"
-                placeholder={'{\n  "my-server": { "type": "stdio", "command": "my-mcp", "args": ["--flag"] }\n}'}
-                value={form.mcpServersText}
-                onChange={(e) => setForm((prev) => ({ ...prev, mcpServersText: e.target.value }))}
-                className="mt-1 font-mono text-sm min-h-[120px] bg-overlay border-white/[0.08]"
-              />
-              <p className="text-xs text-white/30 mt-1">
-                Object mapping server name → config, injected into the sandbox agent. Leave empty for none. The QA
-                agent's browser server (Playwright or Vibium) is selected by the repo's qa.yaml{' '}
-                <span className="font-mono">browser_backend</span> field at dispatch — not edited here.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Prompt */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Prompt</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <ConfigSection
+        id="identity"
+        title="Identity"
+        summary={`${form.display_name.trim() || form.type || "New agent"} · ${form.avatar} · ${form.color}`}
+        open={sections.identity}
+        onToggle={(open) => setSections((prev) => ({ ...prev, identity: open }))}
+      >
+        <div className="space-y-4">
           <div>
-            <Label htmlFor="agent-system-prompt">System prompt</Label>
+            <Label htmlFor="agent-type">Type (slug)</Label>
+            <Input
+              id="agent-type"
+              placeholder="e.g. code-reviewer"
+              value={form.type}
+              onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
+              disabled={isEdit}
+              className="mt-1 font-mono"
+            />
+            {isEdit && (
+              <p className="text-xs text-white/30 mt-1">Agent type cannot be changed after creation.</p>
+            )}
+          </div>
+          <AgentIdentityFields
+            type={form.type}
+            value={form}
+            onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
+          />
+          <div>
+            <Label htmlFor="agent-description">Description</Label>
             <Textarea
-              id="agent-system-prompt"
-              placeholder="Enter the system prompt for this agent..."
-              value={form.system_prompt}
-              onChange={(e) => setForm((prev) => ({ ...prev, system_prompt: e.target.value }))}
-              className="mt-1 font-mono text-sm min-h-[160px] bg-overlay border-white/[0.08]"
+              id="agent-description"
+              placeholder="Describe what this agent does..."
+              value={form.description}
+              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+              className="mt-1 min-h-[80px] bg-overlay border-white/[0.08]"
             />
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </ConfigSection>
+
+      <ConfigSection
+        id="model"
+        title="Model and runtime"
+        summary={[resolvedModel || "No model", form.execution_mode || "inherited execution", form.auth_mode || "inherited auth"].join(" · ")}
+        open={sections.model}
+        onToggle={(open) => setSections((prev) => ({ ...prev, model: open }))}
+      >
+        <div className="space-y-5">
+          {/* Model */}
+          <div>
+            <Label htmlFor="agent-model">Model</Label>
+            <Select
+              id="agent-model"
+              value={form.model}
+              onChange={(e) => setForm((prev) => ({ ...prev, model: e.target.value }))}
+              className="mt-1"
+              disabled={modelsLoading}
+            >
+              {offeredModels.map((m) => {
+                const notReady = notReadyModels.has(m);
+                return (
+                  <option key={m} value={m} disabled={notReady && m !== existing?.model}>
+                    {notReady ? `${m} (no credential)` : m}
+                  </option>
+                );
+              })}
+              <option value="__custom__">Custom...</option>
+            </Select>
+            {form.model === "__custom__" && (
+              <Input
+                className="mt-2 font-mono"
+                placeholder="Enter model ID"
+                value={form.customModel}
+                onChange={(e) => setForm((prev) => ({ ...prev, customModel: e.target.value }))}
+              />
+            )}
+            {chosenProvider && (
+              <p
+                className="mt-1 flex items-center gap-2 text-xs text-white/40"
+                data-testid="model-provider-readiness"
+              >
+                {chosenProvider.name ? (
+                  <span>
+                    Provider: {providerLabel(chosenProvider.name)}
+                  </span>
+                ) : (
+                  <span>No configured provider serves this model</span>
+                )}
+                {chosenProvider.ready ? (
+                  <Badge tone="success">Ready</Badge>
+                ) : (
+                  <Badge
+                    tone="error"
+                    title={
+                      chosenProvider.name
+                        ? "No credential is configured for this provider"
+                        : "No configured provider serves this model"
+                    }
+                  >
+                    Not ready
+                  </Badge>
+                )}
+              </p>
+            )}
+            {runNote && (
+              <p className="mt-1 text-xs text-warning" data-testid="model-run-override">
+                {runNote}
+              </p>
+            )}
+          </div>
+
+          {/* Execution and auth mode */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="agent-execution-mode">Execution mode</Label>
+              <Select
+                id="agent-execution-mode"
+                value={form.execution_mode}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, execution_mode: e.target.value as FormState["execution_mode"] }))
+                }
+                className="mt-1"
+              >
+                <option value="">Inherit default</option>
+                <option value="sdk">sdk — Agent SDK executor</option>
+                <option value="cli">cli — Claude CLI subprocess</option>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="agent-auth-mode">Auth mode</Label>
+              <Select
+                id="agent-auth-mode"
+                value={form.auth_mode}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, auth_mode: e.target.value as FormState["auth_mode"] }))
+                }
+                className="mt-1"
+              >
+                <option value="">Inherit default</option>
+                <option value="api_key">api_key — Anthropic API key</option>
+                <option value="oauth">oauth — Claude Code OAuth token</option>
+              </Select>
+            </div>
+          </div>
+        </div>
+      </ConfigSection>
+
+      <ConfigSection
+        id="tools"
+        title="Tools"
+        summary={form.tools.length ? `${form.tools.length} tools: ${form.tools.join(", ")}` : "No tools"}
+        open={sections.tools}
+        onToggle={(open) => setSections((prev) => ({ ...prev, tools: open }))}
+      >
+        {/* Tools */}
+        <div>
+          <Label className="sr-only">Tools</Label>
+          <ToolChecklist value={form.tools} onToggle={handleToolToggle} catalog={toolCatalog ?? []} />
+        </div>
+      </ConfigSection>
+
+      <ConfigSection
+        id="packs"
+        title="Skill packs"
+        summary={form.skills.length ? form.skills.join(", ") : "None"}
+        open={sections.packs}
+        onToggle={(open) => setSections((prev) => ({ ...prev, packs: open }))}
+      >
+        {/* Skills */}
+        <div>
+          <Label htmlFor="agent-skills">Skill packs</Label>
+          <div className="mt-1">
+            <SkillPicker
+              id="agent-skills"
+              value={form.skills}
+              onChange={(skills) => setForm((prev) => ({ ...prev, skills }))}
+              catalog={skillCatalog ?? []}
+              isLoading={skillsLoading}
+            />
+          </div>
+          {isEdit && orphanSkills.length > 0 && (
+            <p className="text-xs text-amber-300/80 mt-1">
+              No source lists: {orphanSkills.join(", ")}. They keep running; adding a new unknown name is refused.
+            </p>
+          )}
+        </div>
+      </ConfigSection>
+
+      <ConfigSection
+        id="mcp"
+        title="MCP servers"
+        summary={mcpSummary(form.mcpServersText)}
+        open={sections.mcp}
+        onToggle={(open) => setSections((prev) => ({ ...prev, mcp: open }))}
+      >
+        
+        <div>
+          <Label htmlFor="agent-mcp-servers">MCP servers (JSON)</Label>
+          <Textarea
+            id="agent-mcp-servers"
+            placeholder={'{\n  "my-server": { "type": "stdio", "command": "my-mcp", "args": ["--flag"] }\n}'}
+            value={form.mcpServersText}
+            onChange={(e) => setForm((prev) => ({ ...prev, mcpServersText: e.target.value }))}
+            className="mt-1 font-mono text-sm min-h-[120px] bg-overlay border-white/[0.08]"
+          />
+          <p className="text-xs text-white/30 mt-1">
+            Object mapping server name → config, injected into the sandbox agent. Leave empty for none. The QA
+            agent's browser server (Playwright or Vibium) is selected by the repo's qa.yaml{' '}
+            <span className="font-mono">browser_backend</span> field at dispatch — not edited here.
+          </p>
+        </div>
+      </ConfigSection>
+
+      <ConfigSection
+        id="prompt"
+        title="Prompt"
+        summary={form.system_prompt.trim() ? `${form.system_prompt.length.toLocaleString("en-US")} characters` : "Empty"}
+        open={sections.prompt}
+        onToggle={(open) => setSections((prev) => ({ ...prev, prompt: open }))}
+      >
+        <div>
+          <Label htmlFor="agent-system-prompt">System prompt</Label>
+          <Textarea
+            id="agent-system-prompt"
+            placeholder="Enter the system prompt for this agent..."
+            value={form.system_prompt}
+            onChange={(e) => setForm((prev) => ({ ...prev, system_prompt: e.target.value }))}
+            className="mt-1 font-mono text-sm min-h-[160px] bg-overlay border-white/[0.08]"
+          />
+        </div>
+      </ConfigSection>
     </div>
   );
 }

@@ -22,14 +22,14 @@ function renderPage(path = "/achievements") {
 }
 
 describe("AchievementsPage", () => {
-  it("leads with the account, then lists its characters by total level", () => {
+  it("leads with the account, then lists its characters by level", () => {
     mockUseProgression.mockReturnValue({ data: progression() });
     renderPage();
     expect(screen.getByTestId("account-summary")).toHaveTextContent(
       "Account 15,134,431 XP · account total 192 · 2 characters · 1 of 3 achievements unlocked · 2 quest points",
     );
     const characters = screen.getAllByTestId("character");
-    expect(characters.map((c) => c.textContent)).toEqual(["DeveloperCoding 99187", "ReviewCoding 15"]);
+    expect(characters.map((c) => c.textContent)).toEqual(["DeveloperCoding 9959", "ReviewCoding 11"]);
   });
 
   it("shows the highest character's skill sheet, grouped, until another is picked", async () => {
@@ -38,6 +38,7 @@ describe("AchievementsPage", () => {
     const sheet = screen.getByTestId("skill-sheet");
     expect(sheet).toHaveAccessibleName("Developer's skills");
     expect(within(sheet).getByTestId("worn")).toHaveTextContent("Divine gear · Coding cape");
+    expect(within(sheet).getByTestId("sheet-levels")).toHaveTextContent("· level 59 · total level 187");
     expect(within(sheet).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
       "Build",
       "Verify",

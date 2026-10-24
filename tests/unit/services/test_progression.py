@@ -305,3 +305,28 @@ def test_every_quest_done_gives_the_highest_character_the_quest_cape() -> None:
     body = result.to_dict()
     assert {c["agent_type"]: c["quest_cape"] for c in body["characters"]} == {"developer": True, "review": False}
     assert {r["kind"] for r in body["recent"]} >= {"quest", "level"}
+
+
+# ---- the agent's one level ----
+
+
+def test_the_agent_level_is_the_combat_formula_over_its_best_skills() -> None:
+    assert Character("fresh").agent_level == 1
+    maxed = Character("maxed", {s.id: xp_for_level(99) for s in STATS})
+    assert maxed.agent_level == 126, "every skill at 99 is the formula's top"
+    levels = {"coding": 84, "version_control": 75, "reading": 75, "shell": 74, "testing": 60}
+    developer = Character("developer", {stat: xp_for_level(level) for stat, level in levels.items()})
+    # floor(0.25 * (75 + 74 + 60 // 2) + 0.325 * (84 + 75))
+    assert developer.agent_level == 96
+    assert developer.to_dict()["level"] == 96
+
+
+def test_the_agent_level_rises_as_its_skills_do_and_shows_in_recent() -> None:
+    result = compute([ev("merged", "developer", minutes=i) for i in range(30)], ["developer"])
+    ups = [u for u in result.agent_level_ups if u.agent_type == "developer"]
+    assert ups and [u.level for u in ups] == sorted({u.level for u in ups}), "each level once, rising"
+    assert ups[-1].level == result.characters["developer"].agent_level
+    recent = result.to_dict()["recent"]
+    assert {"kind": "agent_level", "agent_type": "developer", "level": ups[-1].level}.items() <= next(
+        r for r in recent if r["kind"] == "agent_level"
+    ).items()

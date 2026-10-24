@@ -15,6 +15,8 @@ describe("chat box messages", () => {
     expect(chatMessage(UNLOCK, () => "", () => "")).toBe("Well done! You have reached Steel in Forged in Fire.");
     const drop: RecentEvent = { kind: "rare", at: "2026-12-25T10:00:00+00:00", agent_type: "developer", id: "party-hat" };
     expect(chatMessage(drop, () => "", () => "Forge")).toBe("Valuable drop: Forge received a party hat!");
+    const up: RecentEvent = { kind: "agent_level", at: "2026-10-24T10:00:00+00:00", agent_type: "developer", level: 96 };
+    expect(chatMessage(up, () => "", () => "Forge")).toBe("Congratulations, Forge's level is now 96.");
     const quest: RecentEvent = { kind: "quest", at: "2026-10-24T10:00:00+00:00", id: "gatekeeper", name: "Gatekeeper" };
     expect(chatMessage(quest, () => "", () => "")).toBe("Congratulations! Quest complete: Gatekeeper.");
     const diary: RecentEvent = { kind: "diary", at: "2026-10-24T10:00:00+00:00", repo: "o/app", tier: "medium" };

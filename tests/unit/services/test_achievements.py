@@ -121,7 +121,7 @@ def test_recent_mixes_levels_and_unlocks_newest_first() -> None:
     recent = progression.to_dict()["recent"]
     assert [r["at"] for r in recent] == sorted((r["at"] for r in recent), reverse=True)
     kinds = {r["kind"] for r in recent}
-    assert kinds == {"level", "achievement"}
+    assert kinds == {"level", "agent_level", "achievement"}
     first_unlock = next(r for r in recent if r["kind"] == "achievement" and r["id"] == "forged_in_fire")
     assert first_unlock == {
         "kind": "achievement",
