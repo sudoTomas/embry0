@@ -91,7 +91,7 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
         "owner: string",
         "repo: string|null = null",
     ],
-    "context_audit_status": ["owner: string"],
+    "context_audit_status": ["owner: string", "refresh: boolean = false"],
     "credential_list": [],
     "credential_resolve": ["repo: string", 'role: string = "forge"'],
     "env_delete": ["confirm: boolean = false", "key: string", "repo: string|null = null"],

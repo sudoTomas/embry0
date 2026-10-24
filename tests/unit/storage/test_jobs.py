@@ -520,3 +520,19 @@ async def test_newest_per_repo_leaves_out_a_job_the_budget_gate_refused(jobs_rep
     assert "acme/api" not in newest, "a repository whose only job was refused has no attempt"
     assert "acme/old" not in newest, "a refusal recorded before ERR_BUDGET_REFUSED is one too"
     assert newest["acme/ops"]["job_id"] == stopped, "a job hard-stopped in its run did work and counts"
+    assert newest["acme/ops"]["error_code"] == "ERR_BUDGET_OVERRUN", "the read endpoint says why it failed"
+    assert "total_cost_usd" in newest["acme/ops"]
+
+
+@pytest.mark.asyncio
+async def test_result_summaries_answers_each_jobs_report(jobs_repo: JobsRepository):
+    done = await jobs_repo.create(repo="acme/web", task="t", pipeline_template="context-audit")
+    await jobs_repo._db.execute(
+        "UPDATE jobs SET result_summary = $2, total_cost_usd = 1.5 WHERE job_id = $1", done, "Stale: 2\nFiles: 1\n"
+    )
+    pending = await jobs_repo.create(repo="acme/api", task="t", pipeline_template="context-audit")
+    summaries = await jobs_repo.result_summaries([done, pending, "job-missing"])
+    assert summaries == {done: "Stale: 2\nFiles: 1\n", pending: None}, "a job that does not exist is absent"
+    assert await jobs_repo.result_summaries([]) == {}
+    newest = await jobs_repo.newest_per_repo(["acme/web"], pipeline_template="context-audit")
+    assert newest["acme/web"]["total_cost_usd"] == 1.5

@@ -38,11 +38,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
+import re
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 import structlog
 
@@ -77,6 +78,11 @@ DEFAULT_JOB_BUDGET_USD = 2.0
 
 #: Files the task names one by one; past it the task says how many more.
 TASK_FILE_LIMIT = 200
+
+#: Repositories read from the forge at once. One after another, an owner
+#: with 150 repositories took 40 seconds to read, longer than a browser
+#: waits; a handful at a time stays far below the forge's limits.
+READ_CONCURRENCY = 8
 
 # Why a repository is due, or why not.
 #: A context-audit job of the repository is pending, running, awaiting input
@@ -174,6 +180,27 @@ def fingerprint(blobs: Mapping[str, str]) -> str:
     """
     text = "\n".join(f"{path}\t{sha}" for path, sha in sorted(blobs.items()))
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+# The two lines the context-auditor's report starts with; its prompt fixes them
+# (``CONTEXT_AUDITOR_SYSTEM_PROMPT``: "Programs read the counts from the start
+# of your report").
+_STALE_LINE = re.compile(r"^Stale:[ \t]*(\d+)[ \t]*$", re.MULTILINE)
+_FILES_LINE = re.compile(r"^Files:[ \t]*(\d+)[ \t]*$", re.MULTILINE)
+
+
+def report_counts(report: str | None) -> tuple[int | None, int | None]:
+    """The counts an audit's report starts with: its stale findings and the instruction files it read.
+
+    Each is None when the report does not carry it, such as a report cut
+    short. The job's report can hold the agent's own lines before them, so
+    each is the first line of its form, wherever it stands.
+    """
+    if not report:
+        return None, None
+    stale = _STALE_LINE.search(report)
+    files = _FILES_LINE.search(report)
+    return (int(stale.group(1)) if stale else None, int(files.group(1)) if files else None)
 
 
 def due_reason(
@@ -330,6 +357,9 @@ class RepoState:
     newest_job: Mapping[str, Any] | None
     refused_at: datetime | None
     reason: str
+    #: The counts the newest job's report starts with (:func:`report_counts`),
+    #: when it completed and they were asked for.
+    report: tuple[int | None, int | None] | None = None
 
     @property
     def due(self) -> bool:
@@ -339,10 +369,17 @@ class RepoState:
         job = self.newest_job
         newest = None
         if job is not None:
+            stale, files_read = self.report or (None, None)
+            cost = job.get("total_cost_usd")
             newest = {
                 "job_id": job.get("job_id"),
                 "status": job.get("status"),
                 "created_at": _iso(job.get("created_at")),
+                "finished_at": _iso(job.get("finished_at")),
+                "total_cost_usd": float(cost) if isinstance(cost, int | float) else None,
+                "error_code": job.get("error_code"),
+                "stale": stale,
+                "files_read": files_read,
             }
         return {
             "repo": self.context.repo,
@@ -365,11 +402,14 @@ class Survey:
     repos: tuple[RepoState, ...]
     #: Repositories whose head or tree could not be read, with why.
     unread: tuple[tuple[str, str], ...] = ()
+    #: When the oldest forge reading in it was taken; None with no repository.
+    read_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "owner": self.owner,
             "context_audit_days": self.days,
+            "read_at": _iso(self.read_at),
             "template": TEMPLATE,
             "repos": [state.to_dict() for state in self.repos],
             "unread": [{"repo": repo, "detail": detail} for repo, detail in self.unread],
@@ -434,6 +474,18 @@ class _Jobs(Protocol):
         self, repos: Collection[str], *, pipeline_template: str, dispatched_by: str | None = None
     ) -> dict[str, dict[str, Any]]: ...
 
+    async def result_summaries(self, job_ids: Collection[str]) -> dict[str, str | None]: ...
+
+
+class _Reading(NamedTuple):
+    """One repository's last forge reading."""
+
+    at: datetime
+    #: None for a repository with no commit, or one the forge did not answer for.
+    context: RepoContext | None
+    #: Why the forge did not answer, when it did not.
+    unread: str | None
+
 
 #: The client that reads an organization's repositories with its credential.
 ClientFor = Callable[[Organization], Awaitable[_Forge]]
@@ -494,6 +546,9 @@ class ContextAuditLoop:
         # The last reading of each repository: a head that has not moved has
         # the same tree, so it is not read again.
         self._contexts: dict[str, RepoContext] = {}
+        # Each repository's last reading and when it was taken, for a survey
+        # that asks for no fresh one.
+        self._last_read: dict[str, _Reading] = {}
         # What was last logged about each owner skipped, and about each
         # repository of an owner its last read could not read, so a standing
         # problem is one log line, not one per tick.
@@ -542,33 +597,78 @@ class ContextAuditLoop:
             if str(row["repo"]).split("/", 1)[0].lower() == org.owner and row.get("forge") == org.forge
         ]
 
-    async def survey(self, org: Organization, *, now: datetime | None = None) -> Survey:
+    async def survey(
+        self, org: Organization, *, now: datetime | None = None, refresh: bool = True, reports: bool = False
+    ) -> Survey:
         """Every active registered repository of ``org`` with instruction files, and whether each is due.
 
         Reads the forge and the jobs table and starts nothing; the read
         endpoint answers with it. A repository with no instruction files, or
         no commit, is left out, and one whose reads failed is listed in
-        ``unread``. Raises :class:`UnsupportedForge` for an owner on a forge
-        whose trees are not read this way, and what ``client_for`` raises
-        when the owner's credential cannot be resolved.
+        ``unread``. With ``refresh`` false, each repository's last reading is
+        used when there is one, so only the jobs are read (the forge, one
+        repository after another, takes seconds per dozen) and ``read_at``
+        says how old the oldest reading is. With ``reports``, each completed
+        newest job carries the counts its report starts with
+        (:func:`report_counts`). Raises :class:`UnsupportedForge` for an
+        owner on a forge whose trees are not read this way, and what
+        ``client_for`` raises when the owner's credential cannot be resolved
+        and the forge has to be read.
         """
-        return await self._survey(org, await self._registered(org), now=now or self._clock())
+        repos = await self._registered(org)
+        survey = await self._survey(org, repos, now=now or self._clock(), refresh=refresh)
+        return await self._with_reports(survey) if reports else survey
 
-    async def _survey(self, org: Organization, repos: list[str], *, now: datetime, by_hand: bool = False) -> Survey:
+    async def _with_reports(self, survey: Survey) -> Survey:
+        """``survey`` with the counts of each completed newest job's report."""
+        completed = {
+            str(state.newest_job["job_id"])
+            for state in survey.repos
+            if state.newest_job is not None and state.newest_job.get("status") == "completed"
+        }
+        if not completed:
+            return survey
+        summaries = await self._jobs.result_summaries(completed)
+        repos = tuple(
+            replace(state, report=report_counts(summaries.get(str(state.newest_job["job_id"]))))
+            if state.newest_job is not None and str(state.newest_job["job_id"]) in completed
+            else state
+            for state in survey.repos
+        )
+        return replace(survey, repos=repos)
+
+    async def _survey(
+        self, org: Organization, repos: list[str], *, now: datetime, by_hand: bool = False, refresh: bool = True
+    ) -> Survey:
         """:meth:`survey` over ``repos``, each due by :func:`due_reason` with ``by_hand``."""
         days = context_audit_days(org.settings)
         if not repos:
             return Survey(org.owner, days, ())
-        client = await self._client_for(org)
         newest = await self._jobs.newest_per_repo(repos, pipeline_template=TEMPLATE, dispatched_by=ACTOR)
+        stale = [repo for repo in repos if refresh or repo not in self._last_read]
+        if stale:
+            client = await self._client_for(org)
+            slots = asyncio.Semaphore(READ_CONCURRENCY)
+
+            async def read(repo: str) -> _Reading:
+                async with slots:
+                    try:
+                        return _Reading(now, await self._read(client, repo), None)
+                    except Exception as exc:  # noqa: BLE001 - one repository's failure is its own entry
+                        return _Reading(now, None, str(exc) if isinstance(exc, ForgeReadError) else type(exc).__name__)
+
+            for repo, fresh in zip(stale, await asyncio.gather(*(read(repo) for repo in stale)), strict=True):
+                self._last_read[repo] = fresh
         states: list[RepoState] = []
         unread: list[tuple[str, str]] = []
+        read_at: list[datetime] = []
         for repo in repos:
-            try:
-                context = await self._read(client, repo)
-            except Exception as exc:  # noqa: BLE001 - one repository's failure is its own entry
-                unread.append((repo, str(exc) if isinstance(exc, ForgeReadError) else type(exc).__name__))
+            reading = self._last_read[repo]
+            read_at.append(reading.at)
+            if reading.unread is not None:
+                unread.append((repo, reading.unread))
                 continue
+            context = reading.context
             if context is None or not context.files:
                 continue
             job = newest.get(repo)
@@ -577,7 +677,7 @@ class ContextAuditLoop:
             live = bool(job and job.get("live"))
             reason = due_reason(attempt, context, days=days, now=now, live=live, by_hand=by_hand)
             states.append(RepoState(context, job, refused.started_at if refused else None, reason))
-        return Survey(org.owner, days, tuple(states), tuple(unread))
+        return Survey(org.owner, days, tuple(states), tuple(unread), min(read_at))
 
     def _note(self, owner: str, *, level: str = "warning", **fields: Any) -> None:
         """Log why an owner is skipped once, and again only when the reason changes."""

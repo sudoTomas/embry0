@@ -5,6 +5,7 @@ import { toastApiError } from "@/api/errorToast";
 import { AdminButton } from "@/components/auth/AdminButton";
 import { AccessChips } from "@/components/orgs/AccessChips";
 import { ContextAuditSetting } from "@/components/orgs/ContextAuditSetting";
+import { ContextAuditTab } from "@/components/orgs/ContextAuditTab";
 import { DiscoveryStatus } from "@/components/orgs/DiscoveryStatus";
 import { OrgActPanel } from "@/components/orgs/OrgActPanel";
 import { OrgCredential } from "@/components/orgs/OrgCredential";
@@ -30,7 +31,7 @@ import {
   useReprobeOrganization,
 } from "@/hooks/useOrgs";
 import { useOwnerStandards } from "@/hooks/useStandards";
-import { ORG_WIZARD_PATH } from "@/lib/orgs";
+import { ORG_WIZARD_PATH, contextAuditDays } from "@/lib/orgs";
 import { ORG_TABS, orgTab } from "@/lib/orgTabs";
 import { useIsAdmin } from "@/stores/authStore";
 import { cn, formatDate } from "@/lib/utils";
@@ -204,6 +205,9 @@ export function OrganizationPage() {
               <Skeleton className="h-32 w-full" />
             )}
           </Section>
+        </TabsContent>
+        <TabsContent value="context-audit" className="mt-6">
+          <ContextAuditTab owner={o.owner} days={contextAuditDays(o)} />
         </TabsContent>
         <TabsContent value="settings" className="mt-6">
           <OrgSettingsTab org={o} isAdmin={isAdmin} />

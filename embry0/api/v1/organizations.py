@@ -677,13 +677,17 @@ async def org_forge_client(request: Request, org: Organization) -> Any:
 
 
 @router.get("/orgs/{owner}/context-audit")
-async def organization_context_audit(owner: str, request: Request) -> dict[str, Any]:
+async def organization_context_audit(owner: str, request: Request, refresh: bool = False) -> dict[str, Any]:
     """Each active registered repository under the owner with files that steer
-    a coding agent: how many, their fingerprint, the newest context-audit job,
-    and whether the schedule would start one now, and why.
+    a coding agent: how many, their fingerprint, the newest context-audit job
+    with what its report counted, and whether the schedule would start one
+    now, and why.
 
-    Reads the default branches with the organization's credential and starts
-    nothing, whatever ``context_audit_days`` says.
+    Serves each repository's last reading of its default branch, the
+    schedule's or an earlier read's, with the jobs as they are now; a
+    repository never read, or every one with ``refresh``, is read with the
+    organization's credential. Starts nothing, whatever
+    ``context_audit_days`` says.
     """
     org = await _repo(request).get(owner)
     if org is None:
@@ -692,7 +696,7 @@ async def organization_context_audit(owner: str, request: Request) -> dict[str, 
     if schedule is None:
         raise HTTPException(status_code=503, detail="the context audit schedule is not initialized")
     try:
-        survey = await schedule.survey(org)
+        survey = await schedule.survey(org, refresh=refresh, reports=True)
     except UnsupportedForge as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return cast("dict[str, Any]", survey.to_dict())

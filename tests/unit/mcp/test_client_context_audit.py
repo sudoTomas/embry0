@@ -24,12 +24,14 @@ async def test_paths_and_bodies() -> None:
     await client.org_update("acme", settings={"context_audit_days": 7, "context_audit_budget_usd": None})
     await client.org_update("acme", display_name="Acme")
     await client.context_audit_status("acme")
+    await client.context_audit_status("acme", refresh=True)
     await client.context_audit_run("acme")
     await client.context_audit_run("acme", limit=2)
     await client.context_audit_run("acme", repo="acme/widgets", force=True)
     assert [(r.method, r.url.path) for r in seen] == [
         ("PATCH", "/api/v1/orgs/acme"),
         ("PATCH", "/api/v1/orgs/acme"),
+        ("GET", "/api/v1/orgs/acme/context-audit"),
         ("GET", "/api/v1/orgs/acme/context-audit"),
         ("POST", "/api/v1/orgs/acme/context-audit/run"),
         ("POST", "/api/v1/orgs/acme/context-audit/run"),
@@ -41,10 +43,12 @@ async def test_paths_and_bodies() -> None:
         {"settings": {"context_audit_days": 7, "context_audit_budget_usd": None}},
         {"display_name": "Acme"},
         None,
+        None,
         {"force": False},
         {"force": False, "limit": 2},
         {"force": True, "repo": "acme/widgets"},
     ]
+    assert [r.url.query for r in seen[2:4]] == [b"", b"refresh=true"], "refresh reads the forge again only when asked"
     assert all(r.headers["X-Requested-With"] == "XMLHttpRequest" for r in seen)
     assert all(r.headers["Authorization"] == "Bearer test-key" for r in seen)
 

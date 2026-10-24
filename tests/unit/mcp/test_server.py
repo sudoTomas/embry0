@@ -364,7 +364,7 @@ async def test_context_audit_tools_relay_every_field(fake_client):
         "called": "context_audit_run"
     }
     assert fake_client.calls == [
-        ("context_audit_status", ("acme",), {}),
+        ("context_audit_status", ("acme",), {"refresh": False}),
         ("org_update", ("acme",), {"display_name": None, "settings": settings}),
         ("org_update", ("acme",), {"display_name": "Acme", "settings": None}),
         ("context_audit_run", ("acme",), {"repo": None, "force": False, "limit": 2}),

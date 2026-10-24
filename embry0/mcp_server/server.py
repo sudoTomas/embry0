@@ -959,15 +959,18 @@ async def org_update(
 
 
 @_tool
-async def context_audit_status(owner: str) -> dict[str, Any]:
+async def context_audit_status(owner: str, refresh: bool = False) -> dict[str, Any]:
     """What the context audit reads for one GitHub organization: its context_audit_days (null is
     off) and, for each active registered repository with files that steer a coding agent (CLAUDE.md,
     AGENTS.md, skills, rules), how many there are, their fingerprint, the head read, the newest
-    context-audit job (job_id, status, created_at), whether the schedule would start one now (due)
-    and why (reason: first, changed, aged, live, current or off). unread lists the repositories the
-    forge did not answer for, with why. Reads the forge and starts nothing, whatever the setting
-    says. Read-only."""
-    return await _get_client().context_audit_status(owner)
+    context-audit job (job_id, status, created_at, finished_at, total_cost_usd, error_code, and for a
+    completed one stale and files_read, the counts its report starts with), whether the schedule
+    would start one now (due) and why (reason: first, changed, aged, live, current or off). unread
+    lists the repositories the forge did not answer for, with why. Each repository's last reading
+    is served, read_at says when the oldest was taken; refresh=true reads every default branch again,
+    one repository after another, so it is slow. Starts nothing, whatever the setting says.
+    Read-only."""
+    return await _get_client().context_audit_status(owner, refresh=refresh)
 
 
 @_tool
