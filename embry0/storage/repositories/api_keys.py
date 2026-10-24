@@ -23,7 +23,7 @@ from typing import Any
 from embry0.storage.database import DatabasePool
 
 # `merge` is the chat relay's narrow scope (#319 phase 2); see api/deps.py.
-VALID_SCOPES = frozenset({"read", "operate", "admin", "merge"})
+VALID_SCOPES = frozenset({"read", "operate", "admin", "merge", "propose"})
 TOKEN_PREFIX = "emb_"
 # last_used_at is a coarse activity signal, not per-request telemetry —
 # writes are throttled to once a minute per key.

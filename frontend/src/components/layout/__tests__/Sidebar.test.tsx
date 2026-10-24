@@ -81,7 +81,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
-  it("Work section contains Console, Issues, Jobs, Merge approvals in that order", () => {
+  it("Work section contains Console, Issues, Owner proposals, Jobs, Merge approvals in that order", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Work" })
       .parentElement as HTMLElement;
@@ -89,6 +89,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     expect(links.map((a) => a.textContent?.trim())).toEqual([
       "Console",
       "Issues",
+      "Owner proposals",
       "Jobs",
       "Merge approvals",
     ]);

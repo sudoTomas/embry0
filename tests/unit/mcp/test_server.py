@@ -80,6 +80,11 @@ EXPECTED_TOOLS = {
     "agent_skill_add",
     "agent_skill_remove",
     "tool_list",
+    "proposal_list",
+    "proposal_get",
+    "proposal_accept",
+    "proposal_decline",
+    "proposal_snooze",
 }
 
 CONFIRM_GATED = {
@@ -114,6 +119,9 @@ CONFIRM_GATED = {
     "inline_skill_remove",
     "agent_skill_add",
     "agent_skill_remove",
+    "proposal_accept",
+    "proposal_decline",
+    "proposal_snooze",
 }
 
 
@@ -573,3 +581,23 @@ async def test_agent_delete_refusal_names_the_agent(fake_client):
     assert refusal["error"] == "confirmation_required"
     assert "lantern" in refusal["message"] and "agent_delete" in refusal["message"]
     assert fake_client.calls == []
+
+
+async def test_proposal_tools_relay_the_owner_and_refuse_without_confirm(fake_client):
+    """Owner proposals (spec 2026-10-24): an answer names the owner who gave it, and only their yes sets confirm."""
+    assert (await server.proposal_accept("issue:i-1", by="octo"))["error"] == "confirmation_required"
+    assert (await server.proposal_decline("finding:ab", by="octo"))["error"] == "confirmation_required"
+    assert (await server.proposal_snooze("case:hc-1", by="octo", until="2026-11-01T00:00:00Z"))[
+        "error"
+    ] == "confirmation_required"
+    assert fake_client.calls == []
+    await server.proposal_list(owner="octo", kind="finding")
+    await server.proposal_accept("issue:i-1", by="octo", confirm=True)
+    await server.proposal_decline("finding:ab", by="octo", reason="it says what I want", confirm=True)
+    await server.proposal_snooze("case:hc-1", by="octo", until="2026-11-01T00:00:00Z", confirm=True)
+    assert fake_client.calls == [
+        ("proposal_list", (), {"owner": "octo", "kind": "finding", "since": None}),
+        ("proposal_answer", ("issue:i-1", "accept"), {"by": "octo"}),
+        ("proposal_answer", ("finding:ab", "decline"), {"by": "octo", "reason": "it says what I want"}),
+        ("proposal_answer", ("case:hc-1", "snooze"), {"by": "octo", "reason": "", "until": "2026-11-01T00:00:00Z"}),
+    ]

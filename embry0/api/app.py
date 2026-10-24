@@ -781,6 +781,10 @@ async def _init_app_state(
     from embry0.storage.repositories.healing_cases import HealingCasesRepository
 
     app.state.healing_cases_repo = HealingCasesRepository(db)
+    # Owner proposals (spec 2026-10-24): the feed an assistant reads to ask owners.
+    from embry0.storage.repositories.proposals import ProposalsRepository
+
+    app.state.proposals_repo = ProposalsRepository(db)
     app.state.healing_cases = HealingCaseService(app.state.healing_cases_repo, metrics=loop_metrics)
     # #278 part 2: the fail-open face of the ledger that the watcher, the
     # dispatch path and the job lifecycle report to.
@@ -2397,6 +2401,7 @@ def _register_routers(app: FastAPI) -> None:
         organizations,
         pipeline_templates,
         progression,
+        proposals,
         qa_artifacts,
         qa_config,
         qa_dashboard,
@@ -2472,6 +2477,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(traces.router, prefix="/api/v1", tags=["traces"], dependencies=auth_deps)
     # #278: healing-case lifecycle ledger (read-only).
     app.include_router(cases.router, prefix="/api/v1", tags=["cases"], dependencies=auth_deps)
+    app.include_router(proposals.router, prefix="/api/v1", tags=["proposals"], dependencies=auth_deps)
     # #319 phase 2: the chat merge-approval loop.
     app.include_router(merge_approvals.router, prefix="/api/v1", tags=["merge-approvals"], dependencies=auth_deps)
     # RAV-657: watcher audit trail + manual tick trigger.

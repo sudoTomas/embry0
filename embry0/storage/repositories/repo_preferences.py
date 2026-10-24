@@ -18,7 +18,7 @@ logger = structlog.get_logger(__name__)
 
 _COLUMNS = (
     "repo, sandbox_profile, language_hint, notes, execution_mode, auth_mode, "
-    "git_author_name, git_author_email, dev_checks, base_branch, verification, pr_review, updated_at"
+    "git_author_name, git_author_email, dev_checks, base_branch, verification, pr_review, owners, updated_at"
 )
 
 
@@ -35,8 +35,9 @@ _WRITABLE = (
     "base_branch",
     "verification",
     "pr_review",
+    "owners",
 )
-_CASTS = {"dev_checks": "::jsonb", "verification": "::jsonb", "pr_review": "::jsonb"}
+_CASTS = {"dev_checks": "::jsonb", "verification": "::jsonb", "pr_review": "::jsonb", "owners": "::jsonb"}
 
 
 def _db_value(column: str, value: Any) -> Any:
@@ -45,7 +46,7 @@ def _db_value(column: str, value: Any) -> Any:
         return value or ""
     if column == "dev_checks":
         return value or []
-    if column in ("verification", "pr_review"):
+    if column in ("verification", "pr_review", "owners"):
         return value or None
     return value
 

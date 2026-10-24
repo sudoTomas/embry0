@@ -237,3 +237,31 @@ describe("RepoPreferencesSection first frame", () => {
     expect(painted).toEqual([1]);
   });
 });
+
+describe("RepoPreferencesSection owners (owner proposals, spec 2026-10-24)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseRepoPreferences.mockReturnValue({ data: { ...PREFS, owners: ["octo", "pat"] }, isLoading: false });
+  });
+
+  it("shows the stored owners and saves edited ones as logins", async () => {
+    const user = userEvent.setup();
+    renderSection();
+    const input = screen.getByLabelText("Owners");
+    expect(input).toHaveValue("octo, pat");
+    await user.clear(input);
+    await user.type(input, "@octo,  lee-1 ");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mockMutate).toHaveBeenCalled());
+    expect(mockMutate.mock.calls[0][0].update.owners).toEqual(["octo", "lee-1"]);
+  });
+
+  it("sends null for no owners, so CODEOWNERS answers", async () => {
+    const user = userEvent.setup();
+    renderSection();
+    await user.clear(screen.getByLabelText("Owners"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mockMutate).toHaveBeenCalled());
+    expect(mockMutate.mock.calls[0][0].update.owners).toBeNull();
+  });
+});

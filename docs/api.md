@@ -196,6 +196,15 @@ curl -X POST http://localhost:8200/api/v1/agents/developer/skills/superpowers:wr
 
 `quests` holds the four quests, each `{"id", "name", "points", "reward", "state", "requirement", "requirement_met", "where", "steps": [{"text", "done_at"}], "completed_at"}`: `state` is `not_started`, `in_progress` or `complete`, `where` the repository or issue whose steps got furthest, and a completed quest's XP reward is already in its characters' levels. The account's `quest_points` adds up the completed quests' points; every quest done gives the highest total level `quest_cape: true`, and Divine Slayer sets `divine_trim`. `diaries` holds a diary per repository with at least one task done, furthest along first, each `{"repo", "tiers": [{"tier", "tasks": [{"text", "done_at"}], "completed_at"}]}` for `easy`, `medium`, `hard` and `elite`. An orchestrator that did not start the service answers 503.
 
+## Owner proposals
+
+Work embry0 asks a repository's owners to start ([the design](superpowers/specs/2026-10-24-owner-proposals-design.md)). A chat assistant reads the feed through the MCP server, messages an owner, and answers with the owner's reply.
+
+- `GET /api/v1/proposals?owner=&kind=&since=` (read): `{"proposals": [{"id", "kind", "repo", "owners", "title", "summary", "details", "action", "url", "created_at", ...}], "count"}`, newest first. `kind` is `case` (a watcher finding at stage `tracked` on an enabled stack), `issue` (an issue open with no job) or `finding` (one row of a repository's newest completed context audit's findings table, which adds `path`, `line`, `claim`, `fix` and `audit_job_id`; its id is a hash of the repository, file and claim, so the next audit finding the same thing asks nothing new). `owners` is the repository's `owners` preference, else the users its `CODEOWNERS` names for `*` (teams skipped), read with its organization's credential and kept an hour. `owner` filters by GitHub login, without regard to case or a leading `@`.
+- `GET /api/v1/proposals/{id}`: one proposal still asked; 404 once it is answered or has moved on (a case accepted on the dashboard, an issue triaged).
+- `POST /api/v1/proposals/{id}/accept` (`{"by": "<login>"}`, 202): starts it through its kind's own path, `POST /cases/{id}/accept` or `POST /issues/{id}/triage`, or for a finding a context-audit job narrowed to its file that opens a pull request for that claim (whatever the organization's `context_audit_open_prs`: the owner asked for this one; refused 429 while the budget gate refuses). The answer is recorded only once the start worked; the response carries the `job_id`.
+- `POST /api/v1/proposals/{id}/decline` (`{"by", "reason"}`) and `/snooze` (`{"by", "until"}`, a future time): it is not asked again, or not until `until`. Every answer is a `proposal.answered` audit row.
+
 ## Pipeline templates
 
 The saved pipeline graphs the editor and the Pipelines page work on, under `/api/v1/pipelines/templates`: list, read, create, update, delete and duplicate. Every authenticated principal may read and write them; the two writes with answers worth knowing:
@@ -471,6 +480,10 @@ The PUT replaces every field it does not mention — except `verification`
 (the orchestrator-run test gate and tier path rules, `docs/verification.md`):
 omitted or `null` keeps the stored value, `{}` clears it.
 
+`owners` is a list of GitHub logins that answer for the repository's owner
+proposals (below); `null` or `[]` falls back to the users its `CODEOWNERS`
+names for every file. A login is validated and kept once, without its `@`.
+
 ## Repository history and undo
 
 Every change to a repository's stored test setup (`PUT` and `DELETE
@@ -683,6 +696,12 @@ revokes every key. The plaintext appears once, in the mint response. Settings
 | `PUT /api/v1/apikeys/{key_id}/allowed-repos` | the key's owner, admin |
 | `DELETE /api/v1/apikeys/{key_id}` | the key's owner, admin |
 
+Two scopes sit off the read < operate < admin ladder, and only an admin mints
+them: `merge`, the chat relay's (read, decide merge approvals, accept watcher
+findings, answer agent questions), and `propose`, a chat assistant's for owner
+proposals (read, and answer proposals: `POST /proposals/{id}/accept`,
+`/decline`, `/snooze`). Any other mutation answers 403.
+
 ### Repository allowlist
 
 A key may be limited to a list of repositories with `allowed_repos`. A
@@ -702,7 +721,8 @@ other repository:
   names none is refused, since it would start work on any repository under
   the owner);
 - `POST /cases/{id}/accept`, `POST /merge-approvals/{id}/decide`,
-  `POST /watcher/run` (the stack ticked; with none named, every watched
+  `POST /proposals/{id}/accept`, `/decline` and `/snooze` (the proposal's
+  repository), `POST /watcher/run` (the stack ticked; with none named, every watched
   stack, all checked before any ticks), `POST /qa/images/build` and
   `POST /repos/bootstrap`;
 - the steps of setting up testing: `POST /repos/{repo}/setup/propose`,

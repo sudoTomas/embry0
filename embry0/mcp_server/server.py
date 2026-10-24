@@ -749,6 +749,61 @@ async def case_get(case_id: str) -> dict[str, Any]:
     return await _get_client().case_get(case_id)
 
 
+# ---------------------------------------------------------- owner proposals
+
+
+@_tool
+async def proposal_list(owner: str | None = None, kind: str | None = None, since: str | None = None) -> dict[str, Any]:
+    """The proposals still asked: work a repository's owners could start, newest first.
+
+    Each is {id, kind, repo, owners, title, summary, details, action, url, created_at}.
+    kind is "case" (a problem the watcher keeps seeing in production), "issue" (an issue
+    open and not started) or "finding" (one claim the context auditor thinks is wrong in
+    a file that steers coding agents: ask the owner whether it is what they want).
+    owner: a GitHub login, only its repositories' proposals. since: an ISO time, only
+    proposals asked after it. Message an owner with the summary and the id; answer with
+    proposal_accept, proposal_decline or proposal_snooze, naming the id."""
+    return await _get_client().proposal_list(owner=owner, kind=kind, since=since)
+
+
+@_tool
+async def proposal_get(proposal_id: str) -> dict[str, Any]:
+    """One proposal still asked, by id ("case:...", "issue:..." or "finding:..."): read it again
+    before acting on a reply, since a chat may not hold the message that asked."""
+    return await _get_client().proposal_get(proposal_id)
+
+
+@_tool
+async def proposal_accept(proposal_id: str, by: str, confirm: bool = False) -> dict[str, Any]:
+    """Start a proposal an owner said yes to: a case runs its fix pipeline, an issue goes to
+    triage, a finding gets a fix job that opens a pull request for that one claim. by: the
+    GitHub login of the owner who said yes. Returns the job_id it started. Requires
+    confirm=true, given only for the owner's own yes."""
+    if not confirm:
+        return _confirmation_refusal("proposal_accept", f"start proposal {proposal_id}")
+    return await _get_client().proposal_answer(proposal_id, "accept", by=by)
+
+
+@_tool
+async def proposal_decline(proposal_id: str, by: str, reason: str = "", confirm: bool = False) -> dict[str, Any]:
+    """Record an owner's no, with their reason (for a finding: that the file says what they
+    want). It is not asked again. Requires confirm=true."""
+    if not confirm:
+        return _confirmation_refusal("proposal_decline", f"decline proposal {proposal_id}")
+    return await _get_client().proposal_answer(proposal_id, "decline", by=by, reason=reason)
+
+
+@_tool
+async def proposal_snooze(
+    proposal_id: str, by: str, until: str, reason: str = "", confirm: bool = False
+) -> dict[str, Any]:
+    """Record an owner's "not now": the proposal is asked again after until (an ISO time).
+    Requires confirm=true."""
+    if not confirm:
+        return _confirmation_refusal("proposal_snooze", f"snooze proposal {proposal_id}")
+    return await _get_client().proposal_answer(proposal_id, "snooze", by=by, reason=reason, until=until)
+
+
 # ---------------------------------------------------------- merge approvals
 
 

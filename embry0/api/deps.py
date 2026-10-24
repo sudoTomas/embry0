@@ -23,7 +23,18 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # answer agent questions — and nothing else, so a leaked copy cannot cancel
 # or create jobs, edit env vars or trigger the watcher.
 TIER_MERGE = "merge"
-_SCOPE_TIER = {"read": "read", "operate": TIER_OPERATOR, "admin": TIER_ADMIN, "merge": TIER_MERGE}
+# `propose` sits off the ladder too (owner proposals, spec 2026-10-24): the
+# key a chat assistant holds to ask a repository's owners. It may read and
+# answer proposals, and nothing else; accepting one runs that proposal's own
+# start path, under the key's repo allowlist.
+TIER_PROPOSE = "propose"
+_SCOPE_TIER = {
+    "read": "read",
+    "operate": TIER_OPERATOR,
+    "admin": TIER_ADMIN,
+    "merge": TIER_MERGE,
+    "propose": TIER_PROPOSE,
+}
 
 #: The only mutations a merge-scope key may make, as (method, route template).
 #: Matched on the full route template (``route_template``), not the raw path,
@@ -44,6 +55,16 @@ MERGE_SCOPE_MUTATIONS = frozenset(
         ("POST", "/api/v1/issues/{issue_id}/inputs/{input_id}/answer"),
         # Read-only despite the verb: validates a graph, stores nothing.
         ("POST", "/api/v1/pipelines/validate"),
+    }
+)
+
+
+#: The only mutations a propose-scope key may make, matched on the route template as the merge scope's are.
+PROPOSE_SCOPE_MUTATIONS = frozenset(
+    {
+        ("POST", "/api/v1/proposals/{proposal_id}/accept"),
+        ("POST", "/api/v1/proposals/{proposal_id}/decline"),
+        ("POST", "/api/v1/proposals/{proposal_id}/snooze"),
     }
 )
 
@@ -250,6 +271,12 @@ async def _auth_dependency(
                 status_code=403,
                 detail="merge-scope key may only decide merge approvals, accept watcher findings and answer agent questions",
             )
+        if (
+            principal.tier == TIER_PROPOSE
+            and request.method not in SAFE_METHODS
+            and (request.method, route_template(request)) not in PROPOSE_SCOPE_MUTATIONS
+        ):
+            raise HTTPException(status_code=403, detail="propose-scope key may only answer proposals")
         return
     if await _resolve_session_auth(request) is not None:
         return

@@ -29,6 +29,15 @@ interface DevCheckDraft {
   command: string;
 }
 
+/** The owners field's logins: split on commas and spaces, the @ dropped; none clears it. */
+function ownerLogins(text: string): string[] | null {
+  const logins = text
+    .split(/[\s,]+/)
+    .map((login) => login.replace(/^@/, ""))
+    .filter(Boolean);
+  return logins.length ? logins : null;
+}
+
 function toDrafts(checks: DevCheck[] | undefined): DevCheckDraft[] {
   return (checks ?? []).map((c) => ({ name: c.name, paths: c.paths.join(", "), command: c.command }));
 }
@@ -59,6 +68,7 @@ export function RepoPreferencesSection({ repo, showIntro = true }: RepoPreferenc
   const [gitAuthorName, setGitAuthorName] = useState<string>("");
   const [gitAuthorEmail, setGitAuthorEmail] = useState<string>("");
   const [baseBranch, setBaseBranch] = useState<string>("");
+  const [owners, setOwners] = useState<string>("");
   const [devChecks, setDevChecks] = useState<DevCheckDraft[]>([]);
   const [dirty, setDirty] = useState(false);
 
@@ -72,6 +82,7 @@ export function RepoPreferencesSection({ repo, showIntro = true }: RepoPreferenc
     setGitAuthorName(prefs?.git_author_name ?? "");
     setGitAuthorEmail(prefs?.git_author_email ?? "");
     setBaseBranch(prefs?.base_branch ?? "");
+    setOwners((prefs?.owners ?? []).join(", "));
     setDevChecks(toDrafts(prefs?.dev_checks));
     setDirty(false);
   }, [prefs]);
@@ -87,6 +98,7 @@ export function RepoPreferencesSection({ repo, showIntro = true }: RepoPreferenc
           git_author_name: gitAuthorName || null,
           git_author_email: gitAuthorEmail || null,
           base_branch: baseBranch.trim() || null,
+          owners: ownerLogins(owners),
           // PUT is a partial update (#350): fields this form doesn't edit
           // (execution_mode, auth_mode, verification) are left out and kept.
           dev_checks: fromDrafts(devChecks),
@@ -225,6 +237,24 @@ export function RepoPreferencesSection({ repo, showIntro = true }: RepoPreferenc
           <p className="text-xs text-muted-foreground">
             The branch jobs clone, diff against, and target with the merge/pull request. Leave
             blank to use the forge project&apos;s own default branch.
+          </p>
+        </div>
+
+        <div className="space-y-1">
+          <Label htmlFor="repo-prefs-owners">Owners</Label>
+          <Input
+            id="repo-prefs-owners"
+            value={owners}
+            placeholder="GitHub logins, comma separated — blank reads CODEOWNERS"
+            onChange={(e) => {
+              setOwners(e.target.value);
+              setDirty(true);
+            }}
+          />
+          <p className="text-xs text-muted-foreground">
+            Who is asked about this repository&apos;s proposals: problems the watcher found, open issues
+            nobody started, and what the context audit flagged. Leave blank to use the users its
+            CODEOWNERS names for every file.
           </p>
         </div>
 

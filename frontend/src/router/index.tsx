@@ -12,6 +12,7 @@ const MergeApprovalsPage = lazy(() => import("../pages/MergeApprovalsPage").then
 const MergeApprovalPage = lazy(() => import("../pages/MergeApprovalPage").then(m => ({ default: m.MergeApprovalPage })));
 const AgentsPage = lazy(() => import("../pages/AgentsPage").then(m => ({ default: m.AgentsPage })));
 const AchievementsPage = lazy(() => import("../pages/AchievementsPage").then(m => ({ default: m.AchievementsPage })));
+const OwnerProposalsPage = lazy(() => import("../pages/OwnerProposalsPage").then(m => ({ default: m.OwnerProposalsPage })));
 const AgentFormPage = lazy(() => import("../pages/AgentFormPage").then(m => ({ default: m.AgentFormPage })));
 const SandboxesPage = lazy(() => import("../pages/SandboxesPage").then(m => ({ default: m.SandboxesPage })));
 const SandboxFormPage = lazy(() => import("../pages/SandboxFormPage").then(m => ({ default: m.SandboxFormPage })));
@@ -76,6 +77,7 @@ export const router = createBrowserRouter([
       { path: "sandboxes/:name", element: <ErrorBoundary inline><Suspense fallback={fallback}><SandboxFormPage /></Suspense></ErrorBoundary> },
       { path: "hosts", element: <ErrorBoundary inline><Suspense fallback={fallback}><HostsPage /></Suspense></ErrorBoundary> },
       { path: "pipelines", element: <ErrorBoundary inline><Suspense fallback={fallback}><PipelinesPage /></Suspense></ErrorBoundary> },
+      { path: "owner-proposals", element: <ErrorBoundary inline><Suspense fallback={fallback}><OwnerProposalsPage /></Suspense></ErrorBoundary> },
       { path: "issues", element: <ErrorBoundary inline><Suspense fallback={fallback}><IssuesPage /></Suspense></ErrorBoundary> },
       { path: "issues/:id", element: <ErrorBoundary inline><Suspense fallback={fallback}><IssueDetailPage /></Suspense></ErrorBoundary> },
       { path: "environments", element: <ErrorBoundary inline><Suspense fallback={fallback}><EnvironmentsPage /></Suspense></ErrorBoundary> },

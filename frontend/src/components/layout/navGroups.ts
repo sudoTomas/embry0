@@ -8,6 +8,7 @@ import {
   FolderGit2,
   Gauge,
   GitMerge,
+  Inbox,
   KeyRound,
   ListChecks,
   ScrollText,
@@ -60,6 +61,8 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       { path: "/console", label: "Console", icon: SquareTerminal },
       { path: "/issues", label: "Issues", icon: CircleDot },
+      // Owner proposals (spec 2026-10-24): what embry0 asks repositories' owners to start.
+      { path: "/owner-proposals", label: "Owner proposals", icon: Inbox },
       { path: "/jobs", label: "Jobs", icon: Zap },
       { path: "/merge-approvals", label: "Merge approvals", icon: GitMerge },
     ],

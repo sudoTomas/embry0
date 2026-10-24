@@ -972,6 +972,8 @@ async def start_context_audit_job(
     open_pr: bool = False,
     db: Any = None,
     audit_log_path: Any = None,
+    task: str | None = None,
+    dispatched_by: str = ACTOR,
 ) -> str:
     """Start one context-audit job the way ``POST /jobs`` starts a job, and return its id.
 
@@ -981,13 +983,17 @@ async def start_context_audit_job(
     row exists while no template is named :data:`TEMPLATE`: plan_route sends
     a job whose template is missing to the default template of its kind, a
     code job, rather than failing it.
+
+    ``task`` replaces the audit's own (a fix an owner asked for names its one
+    claim), and ``dispatched_by`` the schedule's actor: a job dispatched by
+    another never anchors the schedule's due rule, which reads only its own.
     """
     rows = await templates.list_all() if templates is not None else []
     if not any(row.get("name") == TEMPLATE for row in rows):
         raise LookupError(f"no pipeline template named {TEMPLATE!r}")
     if executor is None:
         raise RuntimeError("executor not initialized")
-    task = audit_task(context)
+    task = task or audit_task(context)
     job_id = await jobs.create(
         repo=context.repo,
         task=task,
@@ -1001,17 +1007,17 @@ async def start_context_audit_job(
             # What the due rule compares the next reading with.
             "context_fingerprint": context.fingerprint,
             "head_sha": context.head_sha,
-            "actor": ACTOR,
+            "actor": dispatched_by,
             # Read by the executor into the job's state; the output step reads it there.
             "open_pr": open_pr,
         },
         trace_id=f"trc-{uuid.uuid4().hex[:12]}",
-        dispatched_by=ACTOR,
+        dispatched_by=dispatched_by,
     )
     await emit_audit(
         db,
         "job_created",
-        actor=ACTOR,
+        actor=dispatched_by,
         details={"job_id": job_id, "repo": context.repo, "pipeline_template": TEMPLATE},
         audit_log_path=audit_log_path,
     )

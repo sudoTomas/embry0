@@ -3061,6 +3061,33 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE traces ADD COLUMN IF NOT EXISTS skill_actions JSONB NOT NULL DEFAULT '{}';
         """,
     ),
+    (
+        108,
+        "owner proposals: repo owners, the answers owners give, the propose key scope (docs/superpowers/specs/2026-10-24-owner-proposals-design.md)",
+        # owners: the GitHub logins that answer for a repository; NULL falls
+        # back to its CODEOWNERS. proposal_decisions: one row per answer, the
+        # newest per proposal deciding whether it is still asked. The
+        # `propose` scope: read, plus answering proposals (embry0/api/deps.py).
+        """
+        ALTER TABLE repo_preferences ADD COLUMN IF NOT EXISTS owners JSONB;
+        CREATE TABLE IF NOT EXISTS proposal_decisions (
+            id           BIGSERIAL PRIMARY KEY,
+            proposal_id  TEXT NOT NULL,
+            repo         TEXT NOT NULL,
+            kind         TEXT NOT NULL CHECK (kind IN ('case', 'issue', 'finding')),
+            decision     TEXT NOT NULL CHECK (decision IN ('accept', 'decline', 'snooze')),
+            decided_by   TEXT NOT NULL,
+            reason       TEXT NOT NULL DEFAULT '',
+            until        TIMESTAMPTZ,
+            job_id       TEXT,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_proposal_decisions_proposal ON proposal_decisions (proposal_id, created_at DESC);
+        ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS api_keys_scope_check;
+        ALTER TABLE api_keys ADD CONSTRAINT api_keys_scope_check
+            CHECK (scope IN ('read', 'operate', 'admin', 'merge', 'propose'));
+        """,
+    ),
 ]
 
 

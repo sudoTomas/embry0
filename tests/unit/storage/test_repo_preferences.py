@@ -208,3 +208,12 @@ async def test_an_upsert_that_does_not_mention_pr_review_keeps_it(prefs_repo: Re
 @pytest.mark.asyncio
 async def test_a_fresh_row_has_no_pr_review(prefs_repo: RepoPreferencesRepository):
     assert (await prefs_repo.upsert(repo="acme/new"))["pr_review"] is None
+
+
+@pytest.mark.asyncio
+async def test_owners_are_stored_and_cleared(prefs_repo: RepoPreferencesRepository):
+    """Owner proposals (spec 2026-10-24): the logins that answer for a repository; none falls back to CODEOWNERS."""
+    row = await prefs_repo.upsert(repo="acme/app", owners=["octo", "pat"])
+    assert row["owners"] == ["octo", "pat"]
+    cleared = await prefs_repo.upsert(repo="acme/app", owners=[])
+    assert cleared["owners"] is None
