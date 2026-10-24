@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from embry0.services.context_audit import report_counts
-from embry0.storage.repositories.progression import ProgressEvent
+from embry0.storage.repositories.progression import Fact, ProgressEvent
 
 MAX_LEVEL = 99
 
@@ -187,6 +187,9 @@ class Progression:
     agent_xp: dict[str, int]
     level_ups: list[LevelUp] = field(default_factory=list)
     computed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    #: Each achievement's state and every tier unlock (``services.achievements``), set by the service.
+    achievements: list[Any] = field(default_factory=list)
+    unlocks: list[Any] = field(default_factory=list)
 
     @property
     def total_level(self) -> int:
@@ -202,6 +205,8 @@ class Progression:
             return {
                 "xp": xp,
                 "level": level,
+                # Where this level starts, so a progress bar needs no copy of the curve.
+                "level_xp": xp_for_level(level),
                 "xp_to_next": None if level >= MAX_LEVEL else xp_for_level(level + 1) - xp,
             }
 
@@ -221,12 +226,20 @@ class Progression:
                 }
                 for agent, xp in sorted(self.agent_xp.items())
             ],
-            "recent": [
-                {"kind": "level", "at": _iso(u.at), "stat": u.stat, "level": u.level, "agent_type": u.agent_type}
-                for u in reversed(self.level_ups[-recent:])
-            ],
+            "achievements": [a.to_dict() for a in self.achievements],
+            "recent": self._recent(recent),
             "computed_at": _iso(self.computed_at),
         }
+
+    def _recent(self, count: int) -> list[dict[str, Any]]:
+        """The latest levels reached and achievement tiers unlocked, newest first."""
+        levels = [
+            (u.at, {"kind": "level", "at": _iso(u.at), "stat": u.stat, "level": u.level, "agent_type": u.agent_type})
+            for u in self.level_ups
+        ]
+        unlocks = [(u.at, u.to_dict()) for u in self.unlocks]
+        merged = sorted(levels + unlocks, key=lambda item: item[0], reverse=True)
+        return [entry for _at, entry in merged[:count]]
 
 
 def compute(events: Iterable[ProgressEvent], agent_types: Iterable[str] = ()) -> Progression:
@@ -255,6 +268,8 @@ def compute(events: Iterable[ProgressEvent], agent_types: Iterable[str] = ()) ->
 
 
 class _Repository(Protocol):
+    async def facts(self) -> list[Fact]: ...
+
     async def events(self) -> list[ProgressEvent]: ...
 
     async def agent_types(self) -> list[str]: ...
@@ -277,6 +292,12 @@ class ProgressionService:
             now = self._clock()
             if self._cached is not None and now - self._cached[0] < self._ttl:
                 return self._cached[1]
-            progression = compute(await self._repository.events(), await self._repository.agent_types())
+            from embry0.services.achievements import evaluate
+
+            events = await self._repository.events()
+            progression = compute(events, await self._repository.agent_types())
+            progression.achievements, progression.unlocks = evaluate(
+                events, await self._repository.facts(), progression.level_ups
+            )
             self._cached = (now, progression)
             return progression
