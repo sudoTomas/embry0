@@ -36,8 +36,23 @@ async def test_the_read_answers_the_account_its_characters_and_achievements() ->
         resp = await client.get("/api/v1/progression")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body) == {"account", "skills", "characters", "achievements", "recent", "computed_at"}
-    assert body["account"] == {"xp": 60_000, "total_level": body["characters"][0]["total_level"], "characters": 1}
+    assert set(body) == {
+        "account",
+        "skills",
+        "characters",
+        "achievements",
+        "quests",
+        "diaries",
+        "recent",
+        "computed_at",
+    }
+    assert body["account"] == {
+        "xp": 60_000,
+        "total_level": body["characters"][0]["total_level"],
+        "characters": 1,
+        "quest_points": 0,
+        "divine_trim": False,
+    }
     assert len(body["skills"]) == 23 and body["skills"][0] == {
         "id": "coding",
         "name": "Coding",

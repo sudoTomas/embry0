@@ -59,6 +59,14 @@ describe("outfits (progression spec 2026-10-24)", () => {
     expect(dress(PRESETS.smith, "melee", { ...bronze, capes: ["smithing", "mining"] }).equipment.cape).toBe("smithing-cape-t");
   });
 
+  it("wears the quest cape when no skill cape outranks it, and a Divine trim on any cape", () => {
+    expect(dress(PRESETS.smith, "melee", { ...bronze, questCape: true }).equipment.cape).toBe("quest-cape");
+    expect(dress(PRESETS.smith, "melee", { ...bronze, questCape: true, capes: ["smithing"] }).equipment.cape).toBe("smithing-cape");
+    expect(dress(PRESETS.smith, "melee", { ...bronze, tier: "rune", divineTrim: true }).equipment.cape).toBe("cape-divine");
+    expect(dress(PRESETS.smith, "melee", { ...bronze, capes: ["smithing", "mining"], divineTrim: true }).equipment.cape).toBe("smithing-cape-t-divine");
+    expect(dress(PRESETS.smith, "melee", { ...bronze, divineTrim: true }).equipment.cape, "no cape at Bronze, nothing to trim").toBeUndefined();
+  });
+
   it("wears the rarest rare on its head", () => {
     expect(RARES[0]).toBe("white-party-hat");
     expect(dress(PRESETS.warden, "melee", { ...bronze, rares: ["holiday-mask", "party-hat"] }).equipment.head).toBe("party-hat");
@@ -66,7 +74,8 @@ describe("outfits (progression spec 2026-10-24)", () => {
   });
 
   it("keys an outfit by everything that changes how it looks", () => {
-    expect(outfitKey({ tier: "rune", capes: ["smithing", "mining"], rares: ["party-hat"] })).toBe("rune|smithing,mining|party-hat");
+    expect(outfitKey({ tier: "rune", capes: ["smithing", "mining"], rares: ["party-hat"] })).toBe("rune|smithing,mining|party-hat|");
+    expect(outfitKey({ ...bronze, questCape: true, divineTrim: true })).toBe("bronze|||qd");
     expect(outfitKey(bronze)).not.toBe(outfitKey({ ...bronze, tier: "iron" }));
   });
 });

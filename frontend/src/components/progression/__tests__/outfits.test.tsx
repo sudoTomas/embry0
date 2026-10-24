@@ -15,13 +15,14 @@ function Probe({ type }: { type: string }) {
 describe("outfits (progression spec 2026-10-24)", () => {
   it("reads a character's tier, its 99s as cape echoes and its known rares", () => {
     const c = character({ capes: ["coding", "reading", "no-such-skill"], rares: [{ id: "party-hat", at: "x" }, { id: "top-hat", at: "y" }] });
-    expect(outfitOf(c, SKILLS)).toEqual({ tier: "divine", capes: ["smithing", "fishing"], rares: ["party-hat"] });
+    expect(outfitOf(c, SKILLS)).toEqual({ tier: "divine", capes: ["smithing", "fishing"], rares: ["party-hat"], questCape: false, divineTrim: false });
+    expect(outfitOf({ ...c, quest_cape: true }, SKILLS, true)).toMatchObject({ questCape: true, divineTrim: true });
   });
 
   it("dresses every sprite under the provider, and none without progression", () => {
     mockUseProgression.mockReturnValue({ data: progression() });
     const { getByTestId, rerender } = render(<OutfitProvider><Probe type="developer" /></OutfitProvider>);
-    expect(JSON.parse(getByTestId("probe").textContent!)).toEqual({ tier: "divine", capes: ["smithing"], rares: [] });
+    expect(JSON.parse(getByTestId("probe").textContent!)).toEqual({ tier: "divine", capes: ["smithing"], rares: [], questCape: false, divineTrim: false });
     rerender(<OutfitProvider><Probe type="nobody" /></OutfitProvider>);
     expect(getByTestId("probe")).toHaveTextContent("null");
     mockUseProgression.mockReturnValue({ data: undefined });

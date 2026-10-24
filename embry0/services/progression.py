@@ -27,7 +27,8 @@ from typing import Any, Protocol
 
 from embry0.execution.skill_actions import actions_from_tools
 from embry0.services.context_audit import report_counts
-from embry0.storage.repositories.progression import Fact, ProgressEvent
+from embry0.services.quests import Reward, evaluate_diaries, evaluate_quests, quest_rewards
+from embry0.storage.repositories.progression import Fact, Journal, ProgressEvent
 
 MAX_LEVEL = 99
 
@@ -146,6 +147,9 @@ OUTCOME_XP: dict[str, tuple[str, int]] = {
     "resumed": ("recovery", 90_000),
 }
 
+#: The total level a character needs before Divine Slayer can complete.
+DIVINE_SLAYER_TOTAL = 1_000
+
 #: A context audit's bonus per outdated claim its report counted.
 XP_PER_STALE_CLAIM = 1_000
 
@@ -252,7 +256,7 @@ class Character:
         maxed = [s.id for s in STATS if self.level(s.id) >= MAX_LEVEL]
         return sorted(maxed, key=lambda stat: -self.stat_xp.get(stat, 0))
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, quest_cape: bool = False) -> dict[str, Any]:
         return {
             "agent_type": self.agent_type,
             "xp": self.xp,
@@ -260,6 +264,7 @@ class Character:
             "best_skill": self.best_skill,
             "tier": self.tier,
             "capes": self.capes,
+            "quest_cape": quest_cape,
             "rares": [{"id": rare, "at": _iso(at)} for rare, at in sorted(self.rares.items(), key=lambda r: r[1])],
             "skills": [{"stat": s.id, **_progress(self.stat_xp.get(s.id, 0))} for s in STATS],
         }
@@ -274,6 +279,25 @@ class Progression:
     #: Each achievement's state and every tier unlock (``services.achievements``), set by the service.
     achievements: list[Any] = field(default_factory=list)
     unlocks: list[Any] = field(default_factory=list)
+    #: Each quest's state and every repo diary (``services.quests``), set by the service.
+    quests: list[Any] = field(default_factory=list)
+    diaries: list[Any] = field(default_factory=list)
+
+    @property
+    def quest_points(self) -> int:
+        return sum(q.points for q in self.quests if q.completed_at)
+
+    @property
+    def divine_trim(self) -> bool:
+        """Divine Slayer's reward: a Divine trim on every cape."""
+        return any(q.id == "divine_slayer" and q.completed_at for q in self.quests)
+
+    @property
+    def quest_cape_owner(self) -> str | None:
+        """Every quest done: the quest cape, worn by the highest total level."""
+        if not self.quests or not all(q.completed_at for q in self.quests) or not self.characters:
+            return None
+        return min(self.characters.values(), key=lambda c: (-c.total_level, c.agent_type)).agent_type
 
     @property
     def xp(self) -> int:
@@ -291,16 +315,23 @@ class Progression:
                 "xp": self.xp,
                 "total_level": self.total_level,
                 "characters": len(self.characters),
+                "quest_points": self.quest_points,
+                "divine_trim": self.divine_trim,
             },
             "skills": [{"id": s.id, "name": s.name, "group": s.group, "echo": s.echo} for s in STATS],
-            "characters": [self.characters[a].to_dict() for a in sorted(self.characters)],
+            "characters": [
+                self.characters[a].to_dict(quest_cape=a == self.quest_cape_owner) for a in sorted(self.characters)
+            ],
             "achievements": [a.to_dict() for a in self.achievements],
+            "quests": [q.to_dict() for q in self.quests],
+            # A repo whose diary has no task done yet is left out: every repo a job ever touched has one.
+            "diaries": [d.to_dict() for d in self.diaries if d.started],
             "recent": self._recent(recent),
             "computed_at": _iso(self.computed_at),
         }
 
     def _recent(self, count: int) -> list[dict[str, Any]]:
-        """The latest levels reached, rares dropped and achievement tiers unlocked, newest first."""
+        """The latest levels reached, rares dropped, achievement tiers unlocked, quests and diary tiers completed, newest first."""
         levels = [
             (u.at, {"kind": "level", "at": _iso(u.at), "agent_type": u.agent_type, "stat": u.stat, "level": u.level})
             for u in self.level_ups
@@ -309,7 +340,18 @@ class Progression:
             (d.at, {"kind": "rare", "at": _iso(d.at), "agent_type": d.agent_type, "id": d.rare}) for d in self.drops
         ]
         unlocks = [(u.at, u.to_dict()) for u in self.unlocks]
-        merged = sorted(levels + drops + unlocks, key=lambda item: item[0], reverse=True)
+        quests = [
+            (q.completed_at, {"kind": "quest", "at": _iso(q.completed_at), "id": q.id, "name": q.name})
+            for q in self.quests
+            if q.completed_at
+        ]
+        diaries = [
+            (t.completed_at, {"kind": "diary", "at": _iso(t.completed_at), "repo": d.repo, "tier": t.tier})
+            for d in self.diaries
+            for t in d.tiers
+            if t.completed_at
+        ]
+        merged = sorted(levels + drops + unlocks + quests + diaries, key=lambda item: item[0], reverse=True)
         return [entry for _at, entry in merged[:count]]
 
 
@@ -317,14 +359,19 @@ def _utc(at: datetime) -> datetime:
     return at.astimezone(UTC) if at.tzinfo else at.replace(tzinfo=UTC)
 
 
-def compute(events: Iterable[ProgressEvent], agent_types: Iterable[str] = ()) -> Progression:
+def compute(
+    events: Iterable[ProgressEvent],
+    agent_types: Iterable[str] = (),
+    rewards: Iterable[tuple[datetime, Reward]] = (),
+) -> Progression:
     """Price every event in time order, and record each level a character's skill crossed and each rare it earned.
 
     Every agent in ``agent_types`` is a character, at level 1 in every skill
     when it earned nothing; an agent that earned something but is no longer
     defined is one too, since its work happened. A merge on 25 December earns
     a party hat and on 31 October a holiday mask; the first run of a new year
-    earns a white party hat. A character holds each rare once.
+    earns a white party hat. A character holds each rare once. ``rewards``
+    are completed quests' XP, each added at its quest's completion.
     """
     characters = {agent: Character(agent) for agent in agent_types}
     level_ups: list[LevelUp] = []
@@ -337,7 +384,21 @@ def compute(events: Iterable[ProgressEvent], agent_types: Iterable[str] = ()) ->
             character.rares[rare] = at
             drops.append(RareDrop(at, agent, rare))
 
-    for event in sorted(events, key=lambda e: e.at):
+    def gain(agent: str, stat: str, xp: int, at: datetime) -> None:
+        character = characters.setdefault(agent, Character(agent))
+        before = character.level(stat)
+        character.stat_xp[stat] = character.stat_xp.get(stat, 0) + xp
+        after = character.level(stat)
+        if after > before:
+            level_ups.append(LevelUp(at, agent, stat, after))
+
+    timeline: list[tuple[datetime, ProgressEvent | Reward]] = [(e.at, e) for e in events]
+    timeline += list(rewards)
+    for at, item in sorted(timeline, key=lambda pair: pair[0]):
+        if isinstance(item, Reward):
+            gain(item.agent_type, item.stat, item.xp, at)
+            continue
+        event = item
         if event.agent_type and event.source == "merged":
             day = _utc(event.at)
             if (day.month, day.day) in RARE_DAYS:
@@ -347,21 +408,30 @@ def compute(events: Iterable[ProgressEvent], agent_types: Iterable[str] = ()) ->
             if last_run_year is not None and year > last_run_year:
                 earn(event.agent_type, NEW_YEAR_RARE, event.at)
             last_run_year = year
-        gains = price(event)
-        if not gains or not event.agent_type:
+        if not event.agent_type:
             continue
-        character = characters.setdefault(event.agent_type, Character(event.agent_type))
-        for stat, xp in gains:
-            before = character.level(stat)
-            character.stat_xp[stat] = character.stat_xp.get(stat, 0) + xp
-            after = character.level(stat)
-            if after > before:
-                level_ups.append(LevelUp(event.at, event.agent_type, stat, after))
+        for stat, xp in price(event):
+            gain(event.agent_type, stat, xp, event.at)
     return Progression(characters, level_ups, drops)
+
+
+def first_total(level_ups: Iterable[LevelUp], total: int) -> datetime | None:
+    """When a character's total level first reached ``total``, or None."""
+    levels: dict[tuple[str, str], int] = {}
+    totals: dict[str, int] = {}
+    for up in sorted(level_ups, key=lambda u: u.at):
+        key = (up.agent_type, up.stat)
+        totals[up.agent_type] = totals.get(up.agent_type, len(STATS)) + up.level - levels.get(key, 1)
+        levels[key] = up.level
+        if totals[up.agent_type] >= total:
+            return up.at
+    return None
 
 
 class _Repository(Protocol):
     async def facts(self) -> list[Fact]: ...
+
+    async def journal(self) -> Journal: ...
 
     async def events(self) -> list[ProgressEvent]: ...
 
@@ -388,9 +458,15 @@ class ProgressionService:
             from embry0.services.achievements import evaluate
 
             events = await self._repository.events()
-            progression = compute(events, await self._repository.agent_types())
+            journal = await self._repository.journal()
+            # Quest XP feeds the levels, so the quests that give it are read first.
+            progression = compute(events, await self._repository.agent_types(), quest_rewards(journal))
             progression.achievements, progression.unlocks = evaluate(
                 events, await self._repository.facts(), progression.level_ups
+            )
+            progression.diaries = evaluate_diaries(journal)
+            progression.quests = evaluate_quests(
+                journal, progression.diaries, first_total(progression.level_ups, DIVINE_SLAYER_TOTAL)
             )
             self._cached = (now, progression)
             return progression

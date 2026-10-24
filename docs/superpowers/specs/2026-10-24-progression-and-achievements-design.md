@@ -108,23 +108,23 @@ An achievement is data: `{ id, name, what_counts, metric, thresholds[7], secret?
 
 | Quest | Steps | Reward |
 |---|---|---|
-| The Repo's Assistant | a repo onboarded, its first job finished, its first pull request merged | 1 quest point; Operations and Coding XP |
-| The Restless Build | an issue whose job failed, then a later job on it merged | 1 quest point; Recovery XP |
-| Gatekeeper | a pull request reviewed, QA passed and merged on one issue | 2 quest points; Reviewing and Quality assurance XP |
+| The Repo's Assistant | a repo onboarded (an `onboard` job completed), then its first job finished, then its first pull request merged | 1 quest point; 40,000 Operations XP to onboarding, 40,000 Coding XP to developer |
+| The Restless Build | a job on an issue failed, then a later job on that issue merged | 1 quest point; 60,000 Recovery XP to developer |
+| Gatekeeper | a review run, a QA run and a merge on one issue | 2 quest points; 50,000 Reviewing XP to review, 50,000 Quality assurance XP to qa |
 | Divine Slayer | requires a character at total level 1,000: 100 merges and a repo diary at Elite | 5 quest points; a Divine trim on every cape |
 
-Every quest done gives the account a quest cape, worn by its highest-level character.
+A quest completes when its last step (and its requirement) is met, and its XP lands then, feeding the levels like any other XP; the journal shows the repo or issue that got furthest. Every quest done gives the account a quest cape, worn by its highest total level unless a skill cape outranks it. The quest list keeps the old colours: red not started, yellow in progress, green complete, with done steps struck through.
 
 **Repo diaries** are an achievement diary per repository, in four tiers:
 
 | Tier | Tasks |
 |---|---|
 | Easy | an issue triaged, a job finished, a QA run |
-| Medium | a pull request merged, a QA pass, a context audit |
+| Medium | a pull request merged, a QA pass (a completed QA job, or a merge on an issue QA ran on), a context audit |
 | Hard | 10 pull requests merged, a context audit with no outdated claims, 10 reviews |
-| Elite | 50 pull requests merged, 30 days without a failed job, every task above |
+| Elite | 50 pull requests merged, 30 days without a failed job (a finished job a full 30 days after the repo's last failure, or its first job), every task above |
 
-A completed tier shows on the repo's diary card on the account page.
+A tier completes when its last task does. The account page lists the diaries with a task done, furthest along first, each row opening onto its tasks; a tier completed is a chat-box message ("Well done! You have completed the Medium tasks in the <repo> diary.").
 
 ## Trust (the last slice; its own spec first)
 
@@ -155,13 +155,15 @@ New parts and items (the Divine tier and the class ladders, skill capes, party h
 
 ```
 {
-  account: { xp, total_level, characters },   // quest_points arrives with quests
+  account: { xp, total_level, characters, quest_points, divine_trim },
   skills: [{ id, name, group, echo }],
-  characters: [{ agent_type, xp, total_level, best_skill, tier, capes: [stat], rares: [{ id, at }],
+  characters: [{ agent_type, xp, total_level, best_skill, tier, capes: [stat], rares: [{ id, at }], quest_cape,
                  skills: [{ stat, xp, level, level_xp, xp_to_next }] }],
   achievements: [{ id, name, what_counts, secret, state, tier, tiers_reached, value, next_threshold, thresholds, unlocked_at }],
+  quests: [{ id, name, points, reward, state, requirement, requirement_met, where, steps: [{ text, done_at }], completed_at }],
+  diaries: [{ repo, tiers: [{ tier, tasks: [{ text, done_at }], completed_at }] }],
   recent: [{ kind: "level", at, agent_type, stat, level } | { kind: "rare", at, agent_type, id }
-           | { kind: "achievement", at, id, name, tier }]
+           | { kind: "achievement", at, id, name, tier } | { kind: "quest", at, id, name } | { kind: "diary", at, repo, tier }]
 }
 ```
 

@@ -165,3 +165,25 @@ async def test_the_facts_achievements_count(db_with_migrations) -> None:
         ("comeback", "developer"),
         ("resumed", "qa"),
     ], "a merge after a failure, and a resumed job credited to its last run's agent; a cancelled one is not"
+
+
+async def test_the_journal_is_every_job_and_every_successful_run_with_its_repo(db_with_migrations) -> None:
+    db = db_with_migrations
+    await db.execute("INSERT INTO issues (id, title, repo) VALUES ('iss-j', 't', 'o/r')")
+    await _job(db, "job-audit", status="completed", template="context-audit", report="Stale: 0\nFiles: 2\n")
+    await _job(db, "job-fixed", status="pr_merged")
+    await _job(db, "job-broken", status="failed", report="ignored: not an audit")
+    await db.execute("UPDATE jobs SET issue_id = 'iss-j' WHERE job_id IN ('job-fixed', 'job-broken')")
+    await db.execute("INSERT INTO jobs (job_id, repo, task, status) VALUES ('job-norepo', NULL, 't', 'completed')")
+    await _trace(db, "trc-qa", "job-fixed", "qa")
+    await _trace(db, "trc-qa-err", "job-fixed", "qa", error="ERR_AGENT_MAX_TURNS")
+    await _trace(db, "trc-running", "job-fixed", "review", result="running")
+
+    journal = await ProgressionRepository(db).journal()
+    rows = {(j.template, j.status, j.issue_id, j.report) for j in journal.jobs}
+    assert rows == {
+        ("context-audit", "completed", None, "Stale: 0\nFiles: 2\n"),
+        (None, "pr_merged", "iss-j", None),
+        (None, "failed", "iss-j", None),
+    }, "no repo-less job, and a report only for a completed audit"
+    assert [(r.agent_type, r.repo, r.issue_id) for r in journal.runs] == [("qa", "o/r", "iss-j")]
