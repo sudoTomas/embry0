@@ -109,6 +109,27 @@ class ProgressionRepository:
             if r["at"] is not None
         ]
 
+    async def journal(self) -> Journal:
+        """Every job and every successful run, with its repo and issue: what quests and repo diaries read."""
+        jobs: list[Any] = await self._db.fetch(_JOBS_SQL)
+        runs: list[Any] = await self._db.fetch(_RUNS_SQL)
+        return Journal(
+            jobs=[
+                JobRow(
+                    str(r["repo"]),
+                    r["issue_id"],
+                    r["template"],
+                    str(r["status"]),
+                    r["created_at"],
+                    r["at"],
+                    r["report"],
+                )
+                for r in jobs
+                if r["at"] is not None
+            ],
+            runs=[RunRow(str(r["agent_type"]), str(r["repo"]), r["issue_id"], r["at"]) for r in runs],
+        )
+
     async def agent_types(self) -> list[str]:
         """Every agent the instance defines, built-in and custom."""
         return [str(r["type"]) for r in await self._db.fetch("SELECT type FROM agent_definitions ORDER BY type")]
@@ -143,4 +164,52 @@ FROM jobs j
 WHERE j.status IN ('completed', 'pr_merged') AND j.started_at IS NOT NULL AND j.finished_at IS NOT NULL
   AND j.finished_at - j.started_at < INTERVAL '15 seconds'
 ORDER BY at
+"""
+
+
+@dataclass(frozen=True)
+class JobRow:
+    """One job, for quests and repo diaries (spec 2026-10-24)."""
+
+    repo: str
+    issue_id: str | None
+    template: str | None
+    status: str
+    created_at: datetime
+    #: When it finished, else when it last changed.
+    at: datetime
+    #: A completed context audit's report, for its outdated claims; None for every other job.
+    report: str | None = None
+
+
+@dataclass(frozen=True)
+class RunRow:
+    """One agent run that ended without an error, with its job's repo and issue."""
+
+    agent_type: str
+    repo: str
+    issue_id: str | None
+    at: datetime
+
+
+@dataclass(frozen=True)
+class Journal:
+    jobs: list[JobRow]
+    runs: list[RunRow]
+
+
+_JOBS_SQL = """
+SELECT j.repo, j.issue_id, j.pipeline_template AS template, j.status, j.created_at,
+       COALESCE(j.delivery_state_at, j.finished_at, j.updated_at) AS at,
+       CASE WHEN j.pipeline_template = 'context-audit' AND j.status = 'completed' THEN j.result_summary END AS report
+FROM jobs j
+WHERE j.repo IS NOT NULL
+ORDER BY at
+"""
+
+_RUNS_SQL = """
+SELECT t.agent_type, j.repo, j.issue_id, t.created_at AS at
+FROM traces t JOIN jobs j ON j.job_id = t.job_id
+WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL AND j.repo IS NOT NULL
+ORDER BY t.created_at
 """

@@ -8,7 +8,7 @@ export function OutfitProvider({ children }: { children: ReactNode }) {
   const { data } = useProgression();
   const lookup = useMemo<OutfitLookup>(() => {
     if (!data) return () => null;
-    const outfits = new Map(data.characters.map((c) => [c.agent_type, outfitOf(c, data.skills)]));
+    const outfits = new Map(data.characters.map((c) => [c.agent_type, outfitOf(c, data.skills, data.account.divine_trim)]));
     return (agentType) => (agentType ? outfits.get(resolveAgentType(agentType)) ?? null : null);
   }, [data]);
   return <OutfitContext.Provider value={lookup}>{children}</OutfitContext.Provider>;

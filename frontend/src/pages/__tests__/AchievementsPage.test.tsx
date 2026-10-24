@@ -26,7 +26,7 @@ describe("AchievementsPage", () => {
     mockUseProgression.mockReturnValue({ data: progression() });
     renderPage();
     expect(screen.getByTestId("account-summary")).toHaveTextContent(
-      "Account 15,134,431 XP · account total 192 · 2 characters · 1 of 3 achievements unlocked",
+      "Account 15,134,431 XP · account total 192 · 2 characters · 1 of 3 achievements unlocked · 2 quest points",
     );
     const characters = screen.getAllByTestId("character");
     expect(characters.map((c) => c.textContent)).toEqual(["DeveloperCoding 99187", "ReviewCoding 15"]);

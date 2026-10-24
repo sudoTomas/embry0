@@ -24,9 +24,15 @@ export interface Outfit {
   /** The echoes of its skills at 99, best first: the first is worn, two or more trim it. */
   capes: Echo[];
   rares: Rare[];
+  /** Every quest done and this the highest total level: the quest cape, unless a skill cape outranks it. */
+  questCape?: boolean;
+  /** Divine Slayer done: every cape trimmed in the Divine metal. */
+  divineTrim?: boolean;
 }
 
 type Kit = Partial<Record<EquipmentSlot, ItemId>>;
+/** A cape a Divine trim can go on: every cape but one already trimmed in it. */
+type CapeItem = Exclude<Extract<ItemId, "cape" | "trimmed-cape" | "quest-cape" | `${Echo}-cape` | `${Echo}-cape-t`>, `${string}-divine`>;
 
 /** From mithril up a character carries the party cape and an amulet, as the warrior presets do. */
 function finery(tier: GearTier): Kit {
@@ -93,6 +99,8 @@ export function dress(base: Appearance, style: CombatStyle | null, outfit: Outfi
     : retooled(base.equipment, outfit.tier);
   const [cape] = outfit.capes;
   if (cape) equipment.cape = outfit.capes.length > 1 ? `${cape}-cape-t` : `${cape}-cape`;
+  else if (outfit.questCape) equipment.cape = "quest-cape";
+  if (outfit.divineTrim && equipment.cape) equipment.cape = `${equipment.cape as CapeItem}-divine`;
   const rare = RARES.find((r) => outfit.rares.includes(r));
   if (rare) equipment.head = rare;
   return { ...base, equipment };
@@ -100,5 +108,5 @@ export function dress(base: Appearance, style: CombatStyle | null, outfit: Outfi
 
 /** One string per outfit, for caching what it composes to. */
 export function outfitKey(o: Outfit): string {
-  return `${o.tier}|${o.capes.join(",")}|${o.rares.join(",")}`;
+  return `${o.tier}|${o.capes.join(",")}|${o.rares.join(",")}|${o.questCape ? "q" : ""}${o.divineTrim ? "d" : ""}`;
 }

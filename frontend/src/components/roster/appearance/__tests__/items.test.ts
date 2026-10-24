@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ITEMS, type Item } from "../items";
-import { CAPE_FILL, SKILL_CAPE } from "../palette";
+import { CAPE_FILL, METAL, SKILL_CAPE } from "../palette";
 import { GRID, type EquipmentSlot, type Frame } from "../types";
 
 const SLOTS: EquipmentSlot[] = ["head", "cape", "neck", "weapon", "body", "shield", "legs", "hands", "feet"];
@@ -66,7 +66,7 @@ describe("equipment catalogue", () => {
 
   it("gives the party colour token to the cape and the party hat alone", () => {
     const wearing = items.filter(([, item]) => Object.values(item.colours).some((c) => c.includes(CAPE_FILL)));
-    expect(wearing.map(([key]) => key).sort()).toEqual(["cape", "party-hat", "trimmed-cape"]);
+    expect(wearing.map(([key]) => key).sort()).toEqual(["cape", "cape-divine", "party-hat", "trimmed-cape", "trimmed-cape-divine"]);
   });
 
   it("draws a plain and a trimmed skill cape for every echoed skill, in its own colours", () => {
@@ -86,6 +86,20 @@ describe("equipment catalogue", () => {
     }
     for (const order of ["wizard", "mystic", "archmage"]) {
       for (const piece of ["hat", "robe", "skirt", "boots"]) expect(ITEMS, `${order}-${piece}`).toHaveProperty(`${order}-${piece}`);
+    }
+  });
+});
+
+describe("quest cape and Divine trim (progression spec 2026-10-24)", () => {
+  it("gives every cape a Divine-trimmed form on the trimmed cape, in the Divine metal", () => {
+    const capes = items.filter(([, item]) => item.slot === "cape");
+    const plain = capes.filter(([key]) => !key.endsWith("-divine"));
+    expect(plain.map(([key]) => key)).toContain("quest-cape");
+    for (const [key, item] of plain) {
+      const divine = ITEMS[`${key}-divine` as keyof typeof ITEMS] as Item;
+      expect(divine, key).toBeDefined();
+      expect(divine.colours["5"], key).toBe(METAL.divine);
+      expect(divine.colours.c, key).toBe(item.colours.c);
     }
   });
 });

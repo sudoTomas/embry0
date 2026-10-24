@@ -1,4 +1,4 @@
-import type { RecentEvent } from "@/api/progression";
+import type { DiaryTierName, RecentEvent } from "@/api/progression";
 import { TIER_NAME } from "@/lib/tiers";
 
 /** Where a browser keeps the time of the newest event it showed. */
@@ -25,6 +25,8 @@ export function freshEvents(recent: readonly RecentEvent[], seen: string): Recen
   return recent.filter((e) => Date.parse(e.at) > Date.parse(seen)).reverse();
 }
 
+export const DIARY_TIER_NAME: Record<DiaryTierName, string> = { easy: "Easy", medium: "Medium", hard: "Hard", elite: "Elite" };
+
 /** How a rare reads in a message. */
 export const RARE_NAMES: Record<string, string> = {
   "party-hat": "party hat",
@@ -41,6 +43,10 @@ export function chatMessage(
   if (event.kind === "level") {
     const skill = skillName(event.stat);
     return `Congratulations, ${characterName(event.agent_type)} just advanced a ${skill} level. Its ${skill} level is now ${event.level}.`;
+  }
+  if (event.kind === "quest") return `Congratulations! Quest complete: ${event.name}.`;
+  if (event.kind === "diary") {
+    return `Well done! You have completed the ${DIARY_TIER_NAME[event.tier]} tasks in the ${event.repo} diary.`;
   }
   if (event.kind === "rare") {
     return `Valuable drop: ${characterName(event.agent_type)} received a ${RARE_NAMES[event.id] ?? event.id}!`;

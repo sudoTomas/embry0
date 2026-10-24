@@ -2,6 +2,8 @@ import { useSearchParams } from "react-router";
 import type { AchievementEntry, Character, Skill, SkillGroup, SkillProgress } from "@/api/progression";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { RARE_NAMES } from "@/components/progression/chatbox";
+import { QuestJournal } from "@/components/progression/QuestJournal";
+import { RepoDiaries } from "@/components/progression/RepoDiaries";
 import { PageError } from "@/components/PageError";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
@@ -58,6 +60,7 @@ function SkillSheet({ character, skills, identity }: { character: Character; ski
   // What it wears for what it earned: the best 99's cape (trimmed for two or more) and its rares.
   const earned = [
     ...character.capes.slice(0, 1).map((stat) => `${skillName.get(stat) ?? stat} cape${character.capes.length > 1 ? " (trimmed)" : ""}`),
+    ...(character.quest_cape && character.capes.length === 0 ? ["quest cape"] : []),
     ...character.rares.map((r) => RARE_NAMES[r.id] ?? r.id),
   ];
   return (
@@ -131,8 +134,9 @@ function AchievementCard({ entry }: { entry: AchievementEntry }) {
 
 /**
  * The account (spec 2026-10-24): the player's experience and totals, the
- * achievement diary it earned across everything, its characters as a roster,
- * and the selected character's skill sheet. `?character=<agent type>` picks
+ * achievement diary it earned across everything, its quests and repo
+ * diaries, its characters as a roster, and the selected character's skill
+ * sheet. `?character=<agent type>` picks
  * the sheet; without it, the highest total level shows.
  */
 export function AchievementsPage() {
@@ -156,7 +160,8 @@ export function AchievementsPage() {
         <h1 className="title-pixel text-xl font-bold">Achievements</h1>
         <p className="text-sm text-fg-secondary" data-testid="account-summary">
           Account {number(data.account.xp)} XP · account total {number(data.account.total_level)} ·{" "}
-          {number(data.account.characters)} characters · {unlocked} of {data.achievements.length} achievements unlocked
+          {number(data.account.characters)} characters · {unlocked} of {data.achievements.length} achievements unlocked ·{" "}
+          {data.account.quest_points} quest points
         </p>
       </header>
 
@@ -168,6 +173,10 @@ export function AchievementsPage() {
           ))}
         </div>
       </section>
+
+      <QuestJournal quests={data.quests} points={data.account.quest_points} />
+
+      <RepoDiaries diaries={data.diaries} />
 
       <section className="space-y-2">
         <h2 className="text-section font-semibold">Characters</h2>

@@ -13,12 +13,14 @@ from embry0.services.progression import (
     Character,
     ProgressionService,
     compute,
+    first_total,
     level_for_xp,
     price,
     tier_for_level,
     xp_for_level,
 )
-from embry0.storage.repositories.progression import ProgressEvent
+from embry0.services.quests import Reward
+from embry0.storage.repositories.progression import JobRow, Journal, ProgressEvent
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 
@@ -155,7 +157,10 @@ def test_levels_add_up_per_character_with_every_level_crossed_recorded() -> None
         "xp": 180_000,
         "total_level": result.characters["developer"].total_level + 23,
         "characters": 2,
+        "quest_points": 0,
+        "divine_trim": False,
     }
+    assert body["quests"] == [] and body["diaries"] == [], "set by the service"
     assert [s["id"] for s in body["skills"]] == [s.id for s in STATS]
     developer = next(c for c in body["characters"] if c["agent_type"] == "developer")
     level = level_for_xp(180_000)
@@ -204,9 +209,21 @@ async def test_the_service_computes_at_most_once_per_minute() -> None:
         async def facts(self) -> list:
             return []
 
+        async def journal(self) -> Journal:
+            return Journal(
+                [
+                    JobRow("o/app", "i-1", None, "failed", T0, T0),
+                    JobRow("o/app", "i-1", None, "pr_merged", T0, T0 + timedelta(hours=1)),
+                ],
+                [],
+            )
+
     now = [100.0]
     service = ProgressionService(Repo(), ttl_seconds=60, clock=lambda: now[0])
     first = await service.read()
+    assert [q.id for q in first.quests if q.completed_at] == ["restless_build"]
+    assert first.characters["developer"].stat_xp["recovery"] == 60_000, "the quest's XP reached the levels"
+    assert [d.repo for d in first.diaries] == ["o/app"]
     now[0] += 59
     assert await service.read() is first and Repo.calls == 1
     now[0] += 2
@@ -253,3 +270,38 @@ def test_the_first_run_of_a_new_year_drops_a_white_party_hat() -> None:
     assert result.characters["triage"].rares == {}, "the year's first run only, and never the very first run"
     recent = result.to_dict()["recent"]
     assert {"kind": "rare", "at": "2027-01-01T00:30:00+00:00", "agent_type": "qa", "id": "white-party-hat"} in recent
+
+
+# ---- quests feed the levels ----
+
+
+def test_a_quest_reward_adds_xp_at_its_completion() -> None:
+    result = compute(
+        [ev("merged", "developer")],
+        ["developer"],
+        [(T0 + timedelta(hours=2), Reward("qa", "quality_assurance", 50_000))],
+    )
+    assert result.characters["qa"].stat_xp == {"quality_assurance": 50_000}
+    assert result.level_ups[-1].at == T0 + timedelta(hours=2) and result.level_ups[-1].agent_type == "qa"
+
+
+def test_first_total_is_when_a_character_reached_it() -> None:
+    result = compute([ev("merged", "developer", minutes=i) for i in range(250)], ["developer"])
+    reached = first_total(result.level_ups, 23 + 98)
+    assert reached is not None and result.characters["developer"].level("coding") == 99
+    assert first_total(result.level_ups, 2_000) is None
+
+
+def test_every_quest_done_gives_the_highest_character_the_quest_cape() -> None:
+    from embry0.services.quests import evaluate_quests
+
+    result = compute([ev("merged", "developer")], ["developer", "review"])
+    result.quests = evaluate_quests(Journal([], []), [], None)
+    assert result.quest_cape_owner is None
+    for q in result.quests:
+        q.steps = [type(s)(s.text, T0) for s in q.steps]
+        q.requirement_met_at = T0
+    assert result.quest_cape_owner == "developer" and result.quest_points == 9 and result.divine_trim
+    body = result.to_dict()
+    assert {c["agent_type"]: c["quest_cape"] for c in body["characters"]} == {"developer": True, "review": False}
+    assert {r["kind"] for r in body["recent"]} >= {"quest", "level"}

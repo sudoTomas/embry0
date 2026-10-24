@@ -40,6 +40,8 @@ export interface Character {
   capes: string[];
   /** The rares its work earned (`party-hat`, `holiday-mask`, `white-party-hat`), first earned first. */
   rares: { id: string; at: string }[];
+  /** Every quest done: the highest total level wears the quest cape. */
+  quest_cape: boolean;
   /** Every skill, in sheet order. */
   skills: SkillProgress[];
 }
@@ -51,6 +53,10 @@ export interface Account {
   /** Every character's total level added up. */
   total_level: number;
   characters: number;
+  /** The points of every quest completed. */
+  quest_points: number;
+  /** Divine Slayer's reward: a Divine trim on every cape. */
+  divine_trim: boolean;
 }
 
 export interface LevelUp {
@@ -87,6 +93,49 @@ export interface AchievementUnlock {
   tier: Tier;
 }
 
+/** A step of a quest or a task of a repo diary, and when it was done. */
+export interface Task {
+  text: string;
+  done_at: string | null;
+}
+
+export interface Quest {
+  id: string;
+  name: string;
+  points: number;
+  /** What completing it gives, in words. */
+  reward: string;
+  state: "not_started" | "in_progress" | "complete";
+  requirement: string | null;
+  requirement_met: boolean;
+  /** The repository or issue its steps happened on, when they belong to one. */
+  where: string | null;
+  steps: Task[];
+  completed_at: string | null;
+}
+
+export type DiaryTierName = "easy" | "medium" | "hard" | "elite";
+
+/** A repository's achievement diary, Easy to Elite. */
+export interface Diary {
+  repo: string;
+  tiers: { tier: DiaryTierName; tasks: Task[]; completed_at: string | null }[];
+}
+
+export interface QuestComplete {
+  kind: "quest";
+  at: string;
+  id: string;
+  name: string;
+}
+
+export interface DiaryComplete {
+  kind: "diary";
+  at: string;
+  repo: string;
+  tier: DiaryTierName;
+}
+
 /** A rare a character's work earned. */
 export interface RareDrop {
   kind: "rare";
@@ -95,7 +144,7 @@ export interface RareDrop {
   id: string;
 }
 
-export type RecentEvent = LevelUp | RareDrop | AchievementUnlock;
+export type RecentEvent = LevelUp | RareDrop | AchievementUnlock | QuestComplete | DiaryComplete;
 
 /** GET /progression: the account, its characters and its achievements, recomputed from the work embry0 recorded. */
 export interface Progression {
@@ -103,7 +152,10 @@ export interface Progression {
   skills: Skill[];
   characters: Character[];
   achievements: AchievementEntry[];
-  /** Levels reached, rares dropped and tiers unlocked, newest first. */
+  quests: Quest[];
+  /** The diaries with at least one task done, the furthest along first. */
+  diaries: Diary[];
+  /** Levels reached, rares dropped, tiers unlocked, quests and diary tiers completed, newest first. */
   recent: RecentEvent[];
   computed_at: string;
 }

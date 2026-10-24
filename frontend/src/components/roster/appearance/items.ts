@@ -6,7 +6,7 @@
  * the weapon hand is the left (viewer's left) one, down at x 8..10 rows
  * 19..21 and raised at x 7..9 rows 7..8; the shield arm is the right one.
  */
-import { CAPE_FILL, CAPE_SHADE, GOLD, HIDE, LEATHER, MAGE, METAL, OUTLINE, ROBE, SKILL_CAPE, STRING, WOOD, dark, light, tones, type Echo, type Hex, type MetalTier } from "./palette.ts";
+import { CAPE_FILL, CAPE_SHADE, GOLD, HIDE, LEATHER, MAGE, METAL, OUTLINE, QUEST_CAPE, ROBE, SKILL_CAPE, STRING, WOOD, dark, light, tones, type Echo, type Hex, type MetalTier } from "./palette.ts";
 import { FEET, LEGS } from "./parts.ts";
 import type { ColourKey, EquipmentSlot, Frame } from "./types.ts";
 
@@ -752,7 +752,7 @@ const SKILL_CAPES = Object.fromEntries(
   }),
 ) as Record<`${Echo}-cape` | `${Echo}-cape-t`, Item>;
 
-export const ITEMS = {
+const BASE_ITEMS = {
   // warriors, one full set per metal tier
   "bronze-helm": helm("bronze-helm", "bronze"),
   "iron-helm": helm("iron-helm", "iron"),
@@ -848,6 +848,8 @@ export const ITEMS = {
   "amulet": { id: "amulet", slot: "neck", layer: AMULET, colours: { o: OUTLINE, "5": GOLD, r: RUBY } } satisfies Item,
   "cape": { id: "cape", slot: "cape", layer: CAPE, colours: { o: OUTLINE, c: CAPE_FILL, C: CAPE_SHADE } } satisfies Item,
   "trimmed-cape": { id: "trimmed-cape", slot: "cape", layer: TRIMMED_CAPE, colours: { o: OUTLINE, c: CAPE_FILL, C: CAPE_SHADE, "5": GOLD } } satisfies Item,
+  // every quest done: the account's quest cape, worn by its highest-level character
+  "quest-cape": { id: "quest-cape", slot: "cape", layer: CAPE, drape: CAPE_DRAPE, colours: { o: OUTLINE, c: QUEST_CAPE.base, C: dark(QUEST_CAPE.base), "5": QUEST_CAPE.trim } } satisfies Item,
   // the ladders (progression spec 2026-10-24): what a character wears for its tier
   "divine-helm": helm("divine-helm", "divine"),
   "divine-platebody": platebody("divine-platebody", "divine"),
@@ -884,5 +886,19 @@ export const ITEMS = {
   "white-party-hat": { id: "white-party-hat", slot: "head", layer: PARTY_HAT, colours: tones("#f2f0ea") } satisfies Item,
   "holiday-mask": { id: "holiday-mask", slot: "head", layer: HOLIDAY_MASK, colours: tones("#3d9a3a"), over: "beard" } satisfies Item,
 } as const satisfies Record<string, Item>;
+
+type CapeId = "cape" | "trimmed-cape" | "quest-cape" | `${Echo}-cape` | `${Echo}-cape-t`;
+
+/** Divine Slayer's reward (spec 2026-10-24): every cape, trimmed in the Divine metal. */
+const DIVINE_CAPES = Object.fromEntries(
+  (Object.values(BASE_ITEMS) as Item[])
+    .filter((item) => item.slot === "cape")
+    .map((item): [string, Item] => [
+      `${item.id}-divine`,
+      { ...item, id: `${item.id}-divine`, layer: TRIMMED_CAPE, colours: { ...item.colours, "5": METAL.divine } },
+    ]),
+) as Record<`${CapeId}-divine`, Item>;
+
+export const ITEMS = { ...BASE_ITEMS, ...DIVINE_CAPES } as const satisfies Record<string, Item>;
 
 export type ItemId = keyof typeof ITEMS;

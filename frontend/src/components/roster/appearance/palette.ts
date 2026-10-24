@@ -141,6 +141,9 @@ export const SKILL_CAPE = {
 } as const;
 export type Echo = keyof typeof SKILL_CAPE;
 
+/** The quest cape: every quest the account offers, done. */
+export const QUEST_CAPE = { base: "#2f4a8f", trim: "#ece6d4" } as const;
+
 function channel(hex: Hex, i: number): number {
   return parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16);
 }
