@@ -1,0 +1,102 @@
+"""The events progression reads, against the migrated schema: what earns experience and what never does."""
+
+from __future__ import annotations
+
+import pytest
+
+from embry0.storage.repositories.progression import ProgressionRepository
+
+pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
+
+
+async def _job(
+    db,
+    job_id: str,
+    *,
+    status: str,
+    template: str | None = None,
+    by: str | None = None,
+    error: str | None = None,
+    report: str | None = None,
+) -> None:
+    await db.execute(
+        """
+        INSERT INTO jobs (job_id, repo, task, status, pipeline_template, dispatched_by, error_code, result_summary,
+                          finished_at, budget_overrun_usd)
+        VALUES ($1, 'o/r', 't', $2, $3, $4, $5, $6, NOW(), 0)
+        """,
+        job_id,
+        status,
+        template,
+        by,
+        error,
+        report,
+    )
+
+
+async def _trace(db, trace_id: str, job_id: str, agent: str, error: str | None = None) -> None:
+    await db.execute(
+        "INSERT INTO traces (trace_id, job_id, agent_type, model, result, error_code) VALUES ($1, $2, $3, 'm', 'r', $4)",
+        trace_id,
+        job_id,
+        agent,
+        error,
+    )
+
+
+async def test_every_source_yields_its_events_and_nothing_else(db_with_migrations) -> None:
+    db = db_with_migrations
+    await _job(db, "job-merged", status="pr_merged")
+    await _job(db, "job-qa", status="completed", template="qa")
+    await _job(db, "job-qa-failed", status="failed", template="qa")
+    await _job(db, "job-audit", status="completed", template="context-audit", report="Stale: 3\nFiles: 1\n")
+    await _job(db, "job-sched", status="completed", template="context-audit", by="embry0:context-audit")
+    await _job(
+        db,
+        "job-refused",
+        status="failed",
+        template="context-audit",
+        by="embry0:context-audit",
+        error="ERR_BUDGET_REFUSED",
+    )
+    await _job(db, "job-run", status="completed")
+    await _trace(db, "trc-review", "job-run", "review")
+    await _trace(db, "trc-review-err", "job-run", "review", error="ERR_AGENT_MAX_TURNS")
+    await _trace(db, "trc-dev", "job-run", "developer")  # the developer earns from merges, not runs
+    await db.execute("INSERT INTO healing_cases (id, repo, origin) VALUES ('hc-1', 'o/r', 'watcher')")
+    for verdict in ("healed", "not_healed"):
+        await db.execute(
+            "INSERT INTO healing_case_events (case_id, event, to_stage, detail) VALUES ('hc-1', 'verdict_recorded', 'verified', $1::jsonb)",
+            {"updates": {"healed_verdict": verdict}},  # the pool's jsonb codec encodes it
+        )
+    for run_id, lines in (("wr-read", 40), ("wr-quiet", 0)):
+        await db.execute(
+            "INSERT INTO watcher_runs (id, window_start, window_end, action, log_lines) VALUES ($1, NOW(), NOW(), 'no_issue', $2)",
+            run_id,
+            lines,
+        )
+
+    events = await ProgressionRepository(db).events()
+    got = sorted((e.source, e.agent_type) for e in events)
+    assert got == sorted(
+        [
+            ("merged", "developer"),
+            ("qa_passed", "qa"),
+            ("audited", "context-auditor"),
+            ("audited", "context-auditor"),  # the scheduled audit completed too
+            ("scheduled", None),
+            ("run", "review"),
+            ("healed", None),
+            ("watched", None),
+        ]
+    ), got
+    audit = next(e for e in events if e.source == "audited" and e.report)
+    assert audit.report == "Stale: 3\nFiles: 1\n", "the report is read for the claims bonus"
+    assert [e.at for e in events] == sorted(e.at for e in events), "oldest first"
+
+
+async def test_the_agents_are_every_defined_type(db_with_migrations) -> None:
+    db = db_with_migrations
+    await db.execute("INSERT INTO agent_definitions (type, description, model) VALUES ('zz-custom', 'd', 'm')")
+    types = await ProgressionRepository(db).agent_types()
+    assert "zz-custom" in types and types == sorted(types)
