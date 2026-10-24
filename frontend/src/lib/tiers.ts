@@ -15,3 +15,6 @@ export const TIER_COLOR: Record<Tier, string> = {
 export const TIER_NAME: Record<Tier, string> = {
   bronze: "Bronze", iron: "Iron", steel: "Steel", mithril: "Mithril", adamant: "Adamant", rune: "Rune", divine: "Divine",
 };
+
+/** The seven tiers, Bronze first, as an achievement's thresholds run. */
+export const TIER_ORDER: readonly Tier[] = ["bronze", "iron", "steel", "mithril", "adamant", "rune", "divine"];

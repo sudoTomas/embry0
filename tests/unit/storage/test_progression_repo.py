@@ -100,3 +100,38 @@ async def test_the_agents_are_every_defined_type(db_with_migrations) -> None:
     await db.execute("INSERT INTO agent_definitions (type, description, model) VALUES ('zz-custom', 'd', 'm')")
     types = await ProgressionRepository(db).agent_types()
     assert "zz-custom" in types and types == sorted(types)
+
+
+async def test_the_facts_achievements_count(db_with_migrations) -> None:
+    db = db_with_migrations
+
+    async def job(
+        job_id: str, status: str, seconds: int, *, issue: str | None = None, cost: float = 0.0, minutes_ago: int = 0
+    ) -> None:
+        await db.execute(
+            """
+            INSERT INTO jobs (job_id, repo, task, status, issue_id, total_cost_usd, created_at, started_at, finished_at)
+            VALUES ($1, 'o/r', 't', $2, $3, $4, NOW() - make_interval(mins => $5),
+                    NOW() - make_interval(mins => $5), NOW() - make_interval(mins => $5) + make_interval(secs => $6))
+            """,
+            job_id,
+            status,
+            issue,
+            cost,
+            minutes_ago,
+            seconds,
+        )
+
+    await db.execute("INSERT INTO issues (id, title, repo) VALUES ('iss-1', 't', 'o/r')")
+    await job("job-quick", "completed", 5, cost=0.25)
+    await job("job-slow", "completed", 300)
+    await job("job-failed", "failed", 60, issue="iss-1", minutes_ago=10)
+    await job("job-merged", "pr_merged", 600, issue="iss-1", cost=1.5)
+    await job("job-cancelled", "cancelled", 3)
+    await db.execute("INSERT INTO audit_log (action, actor) VALUES ('issue.input_created', 'alex')")
+
+    facts = await ProgressionRepository(db).facts()
+    counted: dict[str, float] = {}
+    for fact in facts:
+        counted[fact.metric] = counted.get(fact.metric, 0) + fact.value
+    assert counted == {"completed": 3, "spent": 1.75, "quick": 1, "comeback": 1, "answered": 1}, counted

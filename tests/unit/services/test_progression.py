@@ -119,6 +119,7 @@ def test_levels_add_up_from_history_with_every_level_crossed_recorded() -> None:
         "stat": "smithing",
         "xp": 270_000,
         "level": level_for_xp(270_000),
+        "level_xp": xp_for_level(level_for_xp(270_000)),
         "xp_to_next": xp_for_level(level_for_xp(270_000) + 1) - 270_000,
         "tier": tier_for_level(level_for_xp(270_000)),
     }
@@ -142,6 +143,9 @@ async def test_the_service_computes_at_most_once_per_minute() -> None:
 
         async def agent_types(self) -> list[str]:
             return ["developer"]
+
+        async def facts(self) -> list:
+            return []
 
     now = [100.0]
     service = ProgressionService(Repo(), ttl_seconds=60, clock=lambda: now[0])

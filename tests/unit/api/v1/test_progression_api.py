@@ -10,13 +10,17 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from embry0.api.v1 import progression as progression_api
+from embry0.services.achievements import evaluate
 from embry0.services.progression import compute
 from embry0.storage.repositories.progression import ProgressEvent
 
 
 class FakeService:
     async def read(self) -> Any:
-        return compute([ProgressEvent("merged", "developer", datetime(2026, 10, 1, tzinfo=UTC))], ["developer"])
+        events = [ProgressEvent("merged", "developer", datetime(2026, 10, 1, tzinfo=UTC))]
+        progression = compute(events, ["developer"])
+        progression.achievements, progression.unlocks = evaluate(events, [], progression.level_ups)
+        return progression
 
 
 def _app(service: Any) -> FastAPI:
@@ -32,10 +36,11 @@ async def test_the_read_answers_skills_total_level_agents_and_recent_level_ups()
         resp = await client.get("/api/v1/progression")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body) == {"total_level", "total_xp", "stats", "agents", "recent", "computed_at"}
+    assert set(body) == {"total_level", "total_xp", "stats", "agents", "achievements", "recent", "computed_at"}
     assert body["total_xp"] == 90_000 and len(body["stats"]) == 21
     assert body["agents"][0]["agent_type"] == "developer" and body["agents"][0]["stat"] == "smithing"
-    assert body["recent"][0]["kind"] == "level" and body["recent"][0]["agent_type"] == "developer"
+    assert {r["kind"] for r in body["recent"]} == {"level", "achievement"}
+    assert len(body["achievements"]) == 12 and body["achievements"][1]["id"] == "forged_in_fire"
 
 
 @pytest.mark.asyncio

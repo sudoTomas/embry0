@@ -16,10 +16,11 @@ import {
   ShieldCheck,
   Sparkles,
   SquareTerminal,
+  Trophy,
+  UsersRound,
   Variable,
   Workflow,
   Zap,
-  UsersRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -51,6 +52,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "Overview",
     items: [
       { path: "/", label: "Overview", icon: Gauge },
+      { path: "/achievements", label: "Achievements", icon: Trophy },
     ],
   },
   {

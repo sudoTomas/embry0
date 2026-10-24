@@ -78,3 +78,48 @@ class ProgressionRepository:
     async def agent_types(self) -> list[str]:
         """Every agent the instance defines, built-in and custom."""
         return [str(r["type"]) for r in await self._db.fetch("SELECT type FROM agent_definitions ORDER BY type")]
+
+    async def facts(self) -> list[Fact]:
+        """The counted facts achievements read that experience does not, oldest first."""
+        rows: list[Any] = await self._db.fetch(_FACTS_SQL)
+        return [Fact(str(r["metric"]), r["at"], float(r["value"])) for r in rows if r["at"] is not None]
+
+
+@dataclass(frozen=True)
+class Fact:
+    """One step of an achievement's metric: ``value`` added at ``at``."""
+
+    metric: str
+    at: datetime
+    value: float = 1.0
+
+
+_FACTS_SQL = """
+-- a job that finished its work: completed, or its pull request merged
+SELECT 'completed' AS metric, COALESCE(j.finished_at, j.updated_at) AS at, 1::float8 AS value
+FROM jobs j WHERE j.status IN ('completed', 'pr_merged')
+UNION ALL
+-- what a job spent, in USD, when it finished
+SELECT 'spent', COALESCE(j.finished_at, j.updated_at), j.total_cost_usd
+FROM jobs j WHERE j.total_cost_usd > 0
+UNION ALL
+-- a job that finished its work within 15 seconds of starting
+SELECT 'quick', COALESCE(j.finished_at, j.updated_at), 1
+FROM jobs j
+WHERE j.status IN ('completed', 'pr_merged') AND j.started_at IS NOT NULL AND j.finished_at IS NOT NULL
+  AND j.finished_at - j.started_at < INTERVAL '15 seconds'
+UNION ALL
+-- a merged pull request on an issue whose earlier job had failed
+SELECT 'comeback', COALESCE(m.delivery_state_at, m.finished_at, m.updated_at), 1
+FROM jobs m
+WHERE m.status = 'pr_merged' AND m.issue_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1 FROM jobs f
+    WHERE f.issue_id = m.issue_id AND f.status = 'failed' AND f.created_at < m.created_at
+  )
+UNION ALL
+-- an answer a person gave an agent that asked
+SELECT 'answered', a.created_at, 1
+FROM audit_log a WHERE a.action = 'issue.input_created'
+ORDER BY at
+"""

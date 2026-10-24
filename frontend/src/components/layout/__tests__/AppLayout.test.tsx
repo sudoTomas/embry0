@@ -18,6 +18,9 @@ vi.mock("@/components/dashboard/BriefBar", () => ({
     <button type="button" data-testid="stub-briefbar" onClick={() => onReady?.(true)} />
   ),
 }));
+// The chat box reads progression through the query client, which these
+// shell tests do not provide; its own tests cover it.
+vi.mock("@/components/progression/Chatbox", () => ({ Chatbox: () => null }));
 vi.mock("@/stores/layoutStore", () => ({
   useLayoutStore: (selector?: (s: { densityMode: string }) => unknown) =>
     selector ? selector({ densityMode: "comfortable" }) : { densityMode: "comfortable" },
