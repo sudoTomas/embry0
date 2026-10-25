@@ -151,6 +151,75 @@ class CommentDispatchService:
 
     # ---- dispatch ---------------------------------------------------------
 
+    async def start_followup(
+        self,
+        repo: str,
+        pr_number: int,
+        *,
+        request: str,
+        dispatched_by: str,
+        title: str,
+        kind: str,
+        asks: str = "the comment",
+        pipeline_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Start a pr-followup job on an open pull request's own branch, adopting the session of the job that opened it.
+
+        ``request`` completes "PR follow-up for <repo>#<n> (<url>), ..." with who
+        asked and what: a tagged comment, or notes the player sent the work
+        back with (the world, spec 2026-10-25). Returns ``dispatched`` and
+        the job, or ``dispatched: False`` with the reason. Never gated here:
+        each caller has its own gate.
+        """
+        try:
+            pr = await self._fetch_pr(repo, pr_number)
+        except Exception as exc:
+            logger.warning("comment_dispatch_pr_fetch_failed", repo=repo, pr=pr_number, error=str(exc))
+            return {"dispatched": False, "reason": "pr_fetch_failed"}
+        if pr.get("state") != "open":
+            return {"dispatched": False, "reason": "pr_not_open"}
+        head_ref = ((pr.get("head") or {}).get("ref")) or ""
+        pr_url = pr.get("html_url") or ""
+        if not head_ref:
+            return {"dispatched": False, "reason": "missing_head_ref"}
+
+        donor_job = await self._find_donor_job(pr_url, head_ref)
+        task = (
+            f"PR follow-up for {repo}#{pr_number} ({pr_url}), {request}\n\n"
+            f"The workspace has branch {head_ref} checked out — the PR's existing "
+            f"branch. Implement what {asks} asks, commit, and push to "
+            f"{head_ref}. The PR already exists: do NOT create a new PR or branch."
+        )
+        context: dict[str, Any] = {"type": "git", "repo": repo, "ref": head_ref}
+        if donor_job:
+            context["resume_from_job_id"] = donor_job
+
+        trace_id = f"trc-{uuid.uuid4().hex[:12]}"
+        job_id = await self._jobs.create(
+            repo=repo,
+            task=task,
+            trace_id=trace_id,
+            context=context,
+            pipeline_template="pr-followup",
+            dispatched_by=dispatched_by,
+            **({"pipeline_config": pipeline_config} if pipeline_config else {}),
+        )
+        await self._jobs.update(job_id, pr_url=pr_url)
+        # #344: an issue-less follow-up never reaches job_dispatched; link it
+        # to the case owning this PR. Fail-open: the dispatch never waits on
+        # or fails for its own bookkeeping.
+        await record_case_event(
+            self, "pr_followup_dispatched", pr_url=pr_url, job_id=job_id, log_ids={"job_id": job_id, "pr_url": pr_url}
+        )
+        self._executor.submit_job(job_id, repo=repo, title=title, body=task, kind=kind)
+        return {
+            "dispatched": True,
+            "job_id": job_id,
+            "pr": pr_number,
+            "branch": head_ref,
+            "adopted_session_from": donor_job,
+        }
+
     async def handle_pr_comment(self, payload: dict[str, Any]) -> dict[str, Any]:
         ok, reason = self.should_dispatch(payload)
         if not ok:
@@ -165,69 +234,26 @@ class CommentDispatchService:
         if not repo or pr_number is None:
             return {"dispatched": False, "reason": "missing_repo_or_number"}
 
-        try:
-            pr = await self._fetch_pr(repo, int(pr_number))
-        except Exception as exc:
-            logger.warning("comment_dispatch_pr_fetch_failed", repo=repo, pr=pr_number, error=str(exc))
-            return {"dispatched": False, "reason": "pr_fetch_failed"}
-        if pr.get("state") != "open":
-            return {"dispatched": False, "reason": "pr_not_open"}
-        head_ref = ((pr.get("head") or {}).get("ref")) or ""
-        pr_url = pr.get("html_url") or ""
-        if not head_ref:
-            return {"dispatched": False, "reason": "missing_head_ref"}
-
-        donor_job = await self._find_donor_job(pr_url, head_ref)
         author = ((comment.get("user") or {}).get("login")) or "unknown"
-        task = (
-            f"PR follow-up for {repo}#{pr_number} ({pr_url}), requested by @{author} "
-            f"in a PR comment:\n\n{comment.get('body', '')}\n\n"
-            f"The workspace has branch {head_ref} checked out — the PR's existing "
-            f"branch. Implement what the comment asks, commit, and push to "
-            f"{head_ref}. The PR already exists: do NOT create a new PR or branch."
-        )
-        context: dict[str, Any] = {"type": "git", "repo": repo, "ref": head_ref}
-        if donor_job:
-            context["resume_from_job_id"] = donor_job
-
-        trace_id = f"trc-{uuid.uuid4().hex[:12]}"
-        job_id = await self._jobs.create(
-            repo=repo,
-            task=task,
-            trace_id=trace_id,
-            context=context,
-            pipeline_template="pr-followup",
+        result = await self.start_followup(
+            repo,
+            int(pr_number),
+            request=f"requested by @{author} in a PR comment:\n\n{comment.get('body', '')}",
             # #281: the person who wrote the comment asked for this job.
             dispatched_by=author if author != "unknown" else dispatch_actors.PR_COMMENT,
-        )
-        await self._jobs.update(job_id, pr_url=pr_url)
-        # #344: an issue-less follow-up never reaches job_dispatched; link it
-        # to the case owning this PR. Fail-open: the dispatch never waits on
-        # or fails for its own bookkeeping.
-        await record_case_event(
-            self, "pr_followup_dispatched", pr_url=pr_url, job_id=job_id, log_ids={"job_id": job_id, "pr_url": pr_url}
-        )
-        self._executor.submit_job(
-            job_id,
-            repo=repo,
             title=f"[pr-comment] {repo}#{pr_number}",
-            body=task,
             kind="comment_dispatch",
         )
+        if not result.get("dispatched"):
+            return result
         self._seen_comment_ids.append(comment.get("id"))
         logger.info(
             "comment_dispatch_job_created",
-            job_id=job_id,
+            job_id=result["job_id"],
             repo=repo,
             pr=pr_number,
-            branch=head_ref,
-            donor_job_id=donor_job,
+            branch=result["branch"],
+            donor_job_id=result["adopted_session_from"],
             author=author,
         )
-        return {
-            "dispatched": True,
-            "job_id": job_id,
-            "pr": pr_number,
-            "branch": head_ref,
-            "adopted_session_from": donor_job,
-        }
+        return result

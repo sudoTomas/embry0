@@ -1,0 +1,198 @@
+/*
+ * The world's look (spec 2026-10-25): an old-school game interface, drawn
+ * in CSS. Stone panels with a bevelled frame, gold and orange lettering in
+ * the pixel font, a parchment scroll for a finished quest, a chat box at
+ * the bottom. Original styling; no image of any game's interface.
+ */
+
+.world {
+  --stone: #2b2620;
+  --stone-light: #3d362c;
+  --stone-dark: #1a1612;
+  --frame: #5c5141;
+  --frame-light: #807058;
+  --gold: #ffcf3f;
+  --orange: #ff981f;
+  --parchment: #e9dcb4;
+  --parchment-dark: #c9b78a;
+  --ink: #2b1d0e;
+  --chat: #0000ff;
+  --win: #4cd964;
+  --loss: #ff4b3e;
+  font-family: var(--font-pixel);
+}
+
+.world-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(0, 0, 0, 0.12)),
+    repeating-linear-gradient(45deg, var(--stone) 0 6px, var(--stone-light) 6px 7px);
+  border: 2px solid var(--frame);
+  box-shadow:
+    inset 1px 1px 0 var(--frame-light),
+    inset -1px -1px 0 var(--stone-dark),
+    0 2px 0 var(--stone-dark);
+  border-radius: 2px;
+}
+
+.world-title {
+  color: var(--gold);
+  text-shadow: 1px 1px 0 #000;
+  letter-spacing: 0.02em;
+}
+
+.world-subtitle {
+  color: var(--orange);
+  text-shadow: 1px 1px 0 #000;
+}
+
+.world-text {
+  color: #f0e6cc;
+  text-shadow: 1px 1px 0 #000;
+}
+
+.world-muted {
+  color: #b9ab8c;
+}
+
+.world-button {
+  background: linear-gradient(180deg, #5a4d3b, #3b3227);
+  border: 2px solid #1d1913;
+  box-shadow: inset 1px 1px 0 #8a7a5e, inset -1px -1px 0 #241e17;
+  color: var(--gold);
+  text-shadow: 1px 1px 0 #000;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.875rem;
+  border-radius: 2px;
+}
+.world-button:hover:not(:disabled) {
+  background: linear-gradient(180deg, #6b5c46, #463b2e);
+  color: #fff3b0;
+}
+.world-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.world-button[data-tone="win"] {
+  color: var(--win);
+}
+.world-button[data-tone="loss"] {
+  color: var(--loss);
+}
+
+.world-slot {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid #000;
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.6), inset -1px -1px 0 rgba(255, 255, 255, 0.06);
+}
+.world-slot[data-selected="true"] {
+  outline: 2px solid var(--gold);
+}
+.world-slot:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* A finished quest's scroll. */
+.world-scroll {
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.35), transparent 60%),
+    linear-gradient(180deg, var(--parchment), var(--parchment-dark));
+  color: var(--ink);
+  border: 3px solid #6b4f2a;
+  box-shadow: inset 0 0 0 2px #d8c48f, 0 6px 0 #3a2a14;
+  border-radius: 4px;
+}
+.world-scroll .scroll-title {
+  color: #7a1f00;
+  text-shadow: none;
+}
+.world-scroll .scroll-rule {
+  border-top: 2px dotted #8a6a3a;
+}
+
+/* The bottom-left chat box. */
+.world-chat {
+  background: rgba(210, 196, 160, 0.92);
+  border: 2px solid #5c5141;
+  color: #000;
+  text-shadow: none;
+}
+.world-chat [data-tone="win"] {
+  color: #005a00;
+}
+.world-chat [data-tone="loss"] {
+  color: #8b0000;
+}
+.world-chat [data-tone="alert"] {
+  color: var(--chat);
+}
+
+/* A level, coloured as a creature's level reads against your character's. */
+.world-level[data-band="low"] {
+  color: var(--win);
+}
+.world-level[data-band="even"] {
+  color: #ffff00;
+}
+.world-level[data-band="high"] {
+  color: var(--loss);
+}
+
+/* Experience floating up over a character. */
+@keyframes world-xp-drop {
+  0% {
+    transform: translate(-50%, 0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -44px);
+    opacity: 0;
+  }
+}
+.world-xp-drop {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  color: #fff;
+  font-size: 0.75rem;
+  text-shadow: 1px 1px 0 #000;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: world-xp-drop 2.4s ease-out forwards;
+}
+
+/* A character waiting for the player: its speech bubble bobs. */
+@keyframes world-bob {
+  50% {
+    transform: translateY(-2px);
+  }
+}
+.world-bubble {
+  background: #fff;
+  color: #000;
+  border: 2px solid #000;
+  border-radius: 6px;
+  padding: 0 0.35rem;
+  font-size: 0.7rem;
+  animation: world-bob 1.2s steps(2) infinite;
+}
+
+/* The unread quests: a pulsing gold edge. */
+@keyframes world-glow {
+  50% {
+    box-shadow: 0 0 0 2px var(--gold), 0 0 12px rgba(255, 207, 63, 0.6);
+  }
+}
+.world-unread {
+  animation: world-glow 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .world-xp-drop,
+  .world-bubble,
+  .world-unread {
+    animation: none;
+  }
+}

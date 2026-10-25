@@ -113,6 +113,10 @@ AuditAction = Literal[
     "merge.decided",
     # Owner proposals (spec 2026-10-24)
     "proposal.answered",
+    # The world (spec 2026-10-25): the player's evaluation of a finished quest
+    "quest.evaluated",
+    "quest.sent_back",
+    "quest.rejected",
 ]
 
 AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
@@ -200,6 +204,9 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "case_closed": "Case closed",
     "merge.decided": "Merge decided",
     "proposal.answered": "Proposal answered",
+    "quest.evaluated": "Quest evaluated",
+    "quest.sent_back": "Quest sent back",
+    "quest.rejected": "Quest rejected",
 }
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))

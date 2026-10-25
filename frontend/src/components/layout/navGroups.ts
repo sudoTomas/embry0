@@ -1,5 +1,6 @@
 import {
   Bot,
+  Castle,
   Building2,
   CircleDot,
   Container,
@@ -52,7 +53,9 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: "Overview",
     items: [
-      { path: "/", label: "Overview", icon: Gauge },
+      // The world (spec 2026-10-25): the home screen, where the player runs their guild.
+      { path: "/", label: "Guild", icon: Castle },
+      { path: "/overview", label: "Overview", icon: Gauge },
       { path: "/achievements", label: "Achievements", icon: Trophy },
     ],
   },

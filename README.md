@@ -67,6 +67,7 @@ graph TB
 
 - **Issue-to-PR pipeline** — triage scores confidence, splits oversized issues, and configures model tiers, validator modes, and sandbox profiles per job; the developer agent owns code, git, and PR creation; the reviewer loops it until approved.
 - **Browser-verified QA gate** — boots your app's compose stack inside DinD and drives headless Chromium via Playwright against your acceptance criteria, with screenshots, console, network, and container logs as evidence.
+- **The guild** — the home screen: your agents as characters in a guild hall, the work embry0 found as a quest board, every job a quest you send a party on, watch live and judge when it comes back (merge, send back with notes, reject, rate). See [docs/world.md](docs/world.md).
 - **Specialist agents** — ten read-only built-ins that each return one report on a repository: a ledger of its cracks (kintsugi), one provable weed (gardener), a four-angle review (interrogator), why and how answers, a proven blast radius, a comment pass, a design audit, an audit of the instruction files that steer coding agents (context-auditor) and a map of a monorepo's areas (area-mapper). See [docs/specialist-agents.md](docs/specialist-agents.md).
 - **Human-in-the-loop** — agents pause to ask questions, dispatched to the dashboard, Telegram, or a GitHub comment; the pipeline resumes when answered from any channel.
 - **Issue tracker with GitHub two-way sync** — board and list views, webhook-triggered or manual dispatch.

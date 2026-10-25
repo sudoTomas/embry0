@@ -1,0 +1,254 @@
+"""The world API (spec 2026-10-25): the guild hall, a character's quest log, a quest's scroll and the player's evaluation."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from embry0.api.app import create_app
+from embry0.api.v1 import world as world_api
+from embry0.config import Embry0Config
+from embry0.services.progression import Character, Progression
+from embry0.services.world import WorldCache
+
+HEADERS = {"X-Requested-With": "XMLHttpRequest"}
+NOW = datetime.now(UTC)
+
+
+class FakeRepo:
+    def __init__(self) -> None:
+        self.ratings: list[dict[str, Any]] = []
+        self.quest_row: dict[str, Any] | None = {
+            "job_id": "job-1",
+            "repo": "acme/web",
+            "area": "Billing",
+            "task": "[watcher] Fix the sender\n\ndetails",
+            "status": "completed",
+            "delivery_state": "pr_open",
+            "pr_url": "https://github.com/acme/web/pull/7",
+            "pipeline_template": "full-magnum-opus",
+            "created_at": NOW - timedelta(hours=1),
+            "started_at": NOW - timedelta(hours=1),
+            "finished_at": NOW,
+            "error_code": None,
+            "total_cost_usd": 2.5,
+            "result_summary": "Fixed the sender.",
+            "rating": None,
+            "verdict": None,
+            "note": None,
+            "followup_job_id": None,
+            "rated_by": None,
+            "rated_at": None,
+        }
+
+    async def jobs(self, *, returning_seconds: float, limit: int = 60) -> list[dict[str, Any]]:
+        return [
+            {
+                "job_id": "job-live",
+                "repo": "acme/web",
+                "task": "Fix it",
+                "status": "running",
+                "created_at": NOW,
+                "started_at": NOW,
+            },
+        ]
+
+    async def agent_runs(self, ids: list[str]) -> dict[str, list[tuple[str, str]]]:
+        return {
+            "job-live": [("agent_started", "triage"), ("agent_completed", "triage"), ("agent_started", "developer")]
+        }
+
+    async def lead_links(self, ids: list[str]) -> dict[str, str]:
+        return {i: "case:3" for i in ids if i == "job-live"}
+
+    async def last_event_at(self, ids: list[str]) -> dict[str, Any]:
+        return {i: NOW for i in ids}
+
+    async def stats(self, agent: str | None = None) -> dict[str, dict[str, Any]]:
+        return {"developer": {"quests": 2, "succeeded": 1, "last_quest_at": NOW}}
+
+    async def inbox(self, *, days: int, player_actors: list[str], limit: int = 30) -> list[dict[str, Any]]:
+        return [{**self.quest_row, "agent_type": "developer"}]  # type: ignore[dict-item]
+
+    async def loot(self, *, days: int, limit: int = 30) -> list[dict[str, Any]]:
+        return [{**self.quest_row, "delivery_state_at": NOW}]  # type: ignore[dict-item]
+
+    async def quest_log(self, agent: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        return [{**self.quest_row, "cost_usd": 1.2, "duration_ms": 90_000}]  # type: ignore[dict-item]
+
+    async def quest(self, job_id: str) -> dict[str, Any] | None:
+        return dict(self.quest_row) if self.quest_row and job_id == "job-1" else None
+
+    async def quest_runs(self, job_id: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "agent_type": "developer",
+                "cost_usd": 2.0,
+                "duration_ms": 60_000,
+                "result": "success",
+                "error_code": None,
+                "created_at": NOW,
+                "tools_called": {"Edit": 2},
+                "skill_actions": None,
+            },
+            {
+                "agent_type": "review",
+                "cost_usd": 0.5,
+                "duration_ms": 30_000,
+                "result": "success",
+                "error_code": None,
+                "created_at": NOW,
+                "tools_called": {"Read": 4},
+                "skill_actions": None,
+            },
+        ]
+
+    async def merge_approval(self, job_id: str) -> dict[str, Any] | None:
+        return {"id": "ma-1", "status": "pending", "pr_url": "https://github.com/acme/web/pull/7"}
+
+    async def rate(self, job_id: str, *, rated_by: str, **fields: Any) -> dict[str, Any]:
+        self.ratings.append({"job_id": job_id, "rated_by": rated_by, **fields})
+        return {"rated_by": rated_by, "rated_at": NOW, **{k: v for k, v in fields.items() if v is not None}}
+
+
+class FakeProgression:
+    async def read(self) -> Progression:
+        return Progression(characters={a: Character(a) for a in ("developer", "review", "why")})
+
+
+@pytest.fixture
+def app(monkeypatch: pytest.MonkeyPatch) -> Any:
+    app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
+    app.state.db = None
+    app.state.world_repo = FakeRepo()
+    app.state.world_cache = WorldCache()
+    app.state.progression = FakeProgression()
+
+    async def leads(request: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "case:3",
+                "kind": "case",
+                "repo": "acme/web",
+                "severity": "high",
+                "occurrences": 9,
+                "title": "Null sender",
+            }
+        ]
+
+    async def regions(request: Any) -> dict[str, Any]:
+        return {
+            "regions": [{"repo": "acme/web", "jobs": 3, "areas": [{"name": "Billing", "slug": "billing"}]}],
+            "frontier": ["acme/old"],
+        }
+
+    async def no_pr_stats(request: Any, pr_url: str | None) -> None:
+        return None
+
+    monkeypatch.setattr(world_api, "_leads", leads)
+    monkeypatch.setattr(world_api, "_regions", regions)
+    monkeypatch.setattr(world_api, "_pr_stats", no_pr_stats)
+    return app
+
+
+async def _client(app: Any) -> AsyncClient:
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+async def test_the_guild_hall_shows_every_character_the_board_and_the_inbox(app: Any) -> None:
+    async with await _client(app) as client:
+        world = (await client.get("/api/v1/world")).json()
+    characters = {c["agent_type"]: c for c in world["characters"]}
+    assert characters["developer"]["state"] == "working" and characters["developer"]["job_id"] == "job-live"
+    assert characters["why"]["state"] == "idle"
+    assert world["parties"][0]["lead_id"] == "case:3" and world["parties"][0]["party"] == ["triage", "developer"]
+    assert world["quests"][0]["verb"] == "Attack" and world["quests"][0]["level"] > 1
+    assert world["inbox"][0] == {
+        "job_id": "job-1",
+        "repo": "acme/web",
+        "area": "Billing",
+        "title": "Fix the sender",
+        "outcome": "pr_open",
+        "leader": "developer",
+        "pr_url": "https://github.com/acme/web/pull/7",
+        "finished_at": world["inbox"][0]["finished_at"],
+        "cost_usd": 2.5,
+        "failure": None,
+    }
+    assert world["regions"][0]["areas"][0]["name"] == "Billing" and world["frontier"] == ["acme/old"]
+    assert world["loot"][0]["merged"] is False
+
+
+async def test_a_character_has_its_quest_log_and_an_unknown_one_is_404(app: Any) -> None:
+    async with await _client(app) as client:
+        dev = (await client.get("/api/v1/world/characters/developer")).json()
+        missing = await client.get("/api/v1/world/characters/nobody")
+    assert dev["stats"]["quests"] == 2 and dev["stats"]["success_rate"] == 0.5
+    assert dev["quest_log"][0]["title"] == "Fix the sender" and dev["quest_log"][0]["seconds"] == 90.0
+    assert missing.status_code == 404
+
+
+async def test_a_quest_scroll_says_what_it_did_and_what_it_earned(app: Any) -> None:
+    async with await _client(app) as client:
+        scroll = (await client.get("/api/v1/world/quests/job-1")).json()
+        missing = await client.get("/api/v1/world/quests/job-404")
+    assert scroll["title"] == "Fix the sender" and scroll["report"] == "Fixed the sender."
+    assert scroll["merge_approval"] == {
+        "id": "ma-1",
+        "status": "pending",
+        "pr_url": "https://github.com/acme/web/pull/7",
+    }
+    assert [p["agent_type"] for p in scroll["party"]] == ["developer", "review"]
+    assert scroll["xp"] and scroll["cost_usd"] == 2.5 and scroll["seconds"] == pytest.approx(3600, abs=5)
+    assert scroll["evaluation"] is None and missing.status_code == 404
+
+
+async def test_the_player_rates_a_quest_once_it_is_back(app: Any) -> None:
+    async with await _client(app) as client:
+        empty = await client.put("/api/v1/world/quests/job-1/evaluation", json={}, headers=HEADERS)
+        rated = await client.put(
+            "/api/v1/world/quests/job-1/evaluation", json={"rating": "good", "note": "clean"}, headers=HEADERS
+        )
+        app.state.world_repo.quest_row["status"] = "running"
+        early = await client.put("/api/v1/world/quests/job-1/evaluation", json={"rating": "bad"}, headers=HEADERS)
+    assert empty.status_code == 422
+    assert rated.status_code == 200 and rated.json()["rating"] == "good"
+    assert early.status_code == 409
+    assert app.state.world_repo.ratings[0]["rating"] == "good" and app.state.world_repo.ratings[0]["note"] == "clean"
+
+
+async def test_sending_work_back_starts_a_follow_up_on_its_pull_request(app: Any) -> None:
+    dispatch = AsyncMock()
+    dispatch.start_followup = AsyncMock(return_value={"dispatched": True, "job_id": "job-2", "branch": "embry0/x"})
+    app.state.comment_dispatch = dispatch
+    async with await _client(app) as client:
+        sent = await client.post(
+            "/api/v1/world/quests/job-1/send-back", json={"notes": "Handle the empty list too."}, headers=HEADERS
+        )
+    assert sent.status_code == 202 and sent.json()["followup_job_id"] == "job-2"
+    args, kwargs = dispatch.start_followup.await_args
+    assert args == ("acme/web", 7)
+    assert "Handle the empty list too." in kwargs["request"] and kwargs["asks"] == "the notes"
+    assert kwargs["kind"] == "send_back" and kwargs["pipeline_config"] is None
+    assert app.state.world_repo.ratings[-1] == {
+        "job_id": "job-1",
+        "rated_by": app.state.world_repo.ratings[-1]["rated_by"],
+        "verdict": "sent_back",
+        "rating": "needs_work",
+        "note": "Handle the empty list too.",
+        "followup_job_id": "job-2",
+    }
+
+
+async def test_work_without_a_pull_request_cannot_be_sent_back_and_rejecting_records_it(app: Any) -> None:
+    app.state.world_repo.quest_row["pr_url"] = None
+    async with await _client(app) as client:
+        refused = await client.post("/api/v1/world/quests/job-1/send-back", json={"notes": "x"}, headers=HEADERS)
+        rejected = await client.post("/api/v1/world/quests/job-1/reject", json={"note": "not wanted"}, headers=HEADERS)
+    assert refused.status_code == 409
+    assert rejected.status_code == 200 and rejected.json()["closed_pr"] is False
+    assert app.state.world_repo.ratings[-1]["verdict"] == "rejected"

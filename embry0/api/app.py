@@ -853,6 +853,13 @@ async def _init_app_state(
     from embry0.storage.repositories.leads import LeadsRepository
 
     app.state.leads_repo = LeadsRepository(db)
+
+    # The world (spec 2026-10-25): read-only over jobs, their log, traces and answers, plus the player's ratings.
+    from embry0.services.world import WorldCache
+    from embry0.storage.repositories.world import WorldRepository
+
+    app.state.world_repo = WorldRepository(db)
+    app.state.world_cache = WorldCache()
     app.state.healing_cases = HealingCaseService(app.state.healing_cases_repo, metrics=loop_metrics)
     # #278 part 2: the fail-open face of the ledger that the watcher, the
     # dispatch path and the job lifecycle report to.
@@ -2556,6 +2563,7 @@ def _register_routers(app: FastAPI) -> None:
         watcher,
         watcher_stacks,
         webhooks,
+        world,
     )
     from embry0.api.ws import streaming
 
@@ -2613,6 +2621,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(leads.router, prefix="/api/v1", tags=["leads"], dependencies=auth_deps)
     # Areas (spec 2026-10-25): a repository's areas file, and mapping it with an agent.
     app.include_router(areas.router, prefix="/api/v1", tags=["areas"], dependencies=auth_deps)
+    # The world (spec 2026-10-25): the guild hall, the quest board and the quests' scrolls.
+    app.include_router(world.router, prefix="/api/v1", tags=["world"], dependencies=auth_deps)
     # Run with (spec 2026-10-25): the keys a dashboard action may run a job with.
     app.include_router(run_with.router, prefix="/api/v1", tags=["run-with"], dependencies=auth_deps)
     # #319 phase 2: the chat merge-approval loop.

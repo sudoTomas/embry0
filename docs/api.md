@@ -84,6 +84,17 @@ curl http://localhost:8200/api/v1/jobs/{job_id}/agents/developer/session
 
 A job's `area` (on the list and on `GET /jobs/{job_id}`) is the part of a monorepo the pull request embry0 opened for it changes, from the repository's `.embry0/areas.yml` ([areas](areas.md)); `null` when the repository names none or the change falls in none. `GET /repos/{repo}/areas` reads that file, and `POST /repos/{repo}/areas/map` starts the agent that writes it as a pull request ([map areas](areas.md#map-areas)).
 
+## The world
+
+The guild screen's API ([the guild](world.md), [spec](superpowers/specs/2026-10-25-world-design.md)). Sending a party is `POST /proposals/{id}/accept` or `POST /jobs`; these routes add only the reading and the judging.
+
+- `GET /api/v1/world` (read): `characters` (with `state`: idle, travelling, working, waiting, returning, defeated, recalled or following; the `job_id` it is drawn at; `stats`; `idle_too_long`; `can_quest` and `quest_template`), `parties` (jobs out now and back in the last three minutes: `leader`, `party`, `working`, `lead_id`, `stuck`, `failure`), `quests` (the board: each proposal with `level` 1-126, `verb`, `creature`, `leader`), `inbox` (finished quests a person sent, or that brought back a pull request, not yet judged), `loot`, `recent`, `regions`, `frontier`.
+- `GET /api/v1/world/characters/{agent_type}` (read): the character, its `stats` and its `quest_log` (each job it ran in: outcome, pull request, its share of cost and time, `rating`, `verdict`).
+- `GET /api/v1/world/quests/{job_id}` (read): the scroll: `report`, `failure`, `pr` (files, additions, deletions, from the forge when it answers in time), `merge_approval`, `verification`, `party`, `xp` per character and skill, `cost_usd`, `seconds`, `evaluation`.
+- `PUT /api/v1/world/quests/{job_id}/evaluation` (`{"rating": "good"|"needs_work"|"bad", "verdict": "merged", "note"}`, any of them): 409 while the quest is out.
+- `POST /api/v1/world/quests/{job_id}/send-back` (`{"notes", "run_with"}`, 202): a pr-followup job on the quest's GitHub pull request branch with the notes; 409 without one, or when the pull request is not open.
+- `POST /api/v1/world/quests/{job_id}/reject` (`{"note", "close_pr"}`): records the rejection; with `close_pr`, closes the pull request with the note as a comment.
+
 ## Run with
 
 Every route that starts agent work takes an optional `run_with`: `{"model": "<model id>", "credential_id": "<stored LLM key>"}`, either or both ([the design](superpowers/specs/2026-10-25-run-with-design.md)). Every agent of the job runs the model, except one the request names itself in `agent_models`; the key serves its provider for the job ([precedence](credentials.md)). Leaving it out is the usual run.
