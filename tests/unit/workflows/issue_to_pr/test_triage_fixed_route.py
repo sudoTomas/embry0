@@ -12,6 +12,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langgraph.types import Command
 
 from embry0.workflows.issue_to_pr.nodes._triage import fixed_route_decision
 
@@ -63,7 +64,8 @@ async def test_the_node_hands_over_without_running_the_agent():
             {"configurable": {"agent_runner": MagicMock(), "credentials": {}}},
         )
     run.assert_not_awaited()
-    assert isinstance(update, dict)
-    assert update["current_stage"] == "triage_complete"
-    assert update["triage_decision"]["pipeline_template"] == "map-areas"
+    # Triage routes only by Command: a plain update ended the job right here.
+    assert isinstance(update, Command) and update.goto == "plan_route"
+    assert update.update["current_stage"] == "triage_complete"
+    assert update.update["triage_decision"]["pipeline_template"] == "map-areas"
     assert [e["type"] for e in events] == ["node_started", "progress", "node_completed"]
