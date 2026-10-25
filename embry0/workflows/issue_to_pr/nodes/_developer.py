@@ -151,6 +151,12 @@ def _developer_delta_sections(state: dict[str, Any]) -> list[str]:
     focus_files = state.get("developer_focus_files") or []
     if focus_files:
         parts.append("\nFocus files:\n" + "\n".join(f"- {f}" for f in focus_files))
+    # Salvage: the earlier run stopped and embry0 committed what it left.
+    from embry0.workflows.issue_to_pr.nodes._salvage import prompt_section
+
+    unfinished = prompt_section(state.get("unfinished_work"))
+    if unfinished:
+        parts.append(unfinished)
     return parts
 
 
@@ -518,21 +524,13 @@ async def _verify_branch_pushed(
     return bool(out and branch in out)
 
 
-def _hit_turn_cap(result: dict[str, Any]) -> bool:
-    """Did this developer run end on its turn cap (rather than any other error)?"""
-    from embry0.agents.session import is_max_turns_error
-
-    outputs = result.get("agent_outputs") or []
-    last = outputs[-1] if outputs else None
-    return bool(last and last.get("is_error") and is_max_turns_error(last.get("error_message")))
-
-
 async def _commit_unfinished_work(
     *,
     docker: Any,
     container_id: str | None,
     branch: str,
     job_id: str | None = None,
+    message: str | None = None,
 ) -> bool:
     """Commit what the agent left in the worktree, so it can be pushed (#358).
 
@@ -550,8 +548,12 @@ async def _commit_unfinished_work(
     that embry0 wrote the commit and that the change is unfinished; nothing
     downstream may present it as completed work.
 
-    Called ONLY after ``_verify_branch_pushed`` reported the branch absent and
-    only when the run hit its turn cap. Returns True when a commit was created.
+    Called for a run that stopped (``_salvage``): a turn cap, any error, the
+    job's budget. ``message`` names why; the default is #358's. The commit goes
+    on ``branch``: when the agent never created it, a branch of that name is
+    started where the worktree stands; when another branch is checked out and
+    ``branch`` exists too, nothing is committed rather than guess. Returns True
+    when a commit was created.
     """
     if not docker or not container_id or not branch or branch == "main":
         return False
@@ -565,6 +567,8 @@ async def _commit_unfinished_work(
         if not (dirty or "").strip():
             return False
         entries = len(dirty.strip().splitlines())
+        if not await _on_job_branch(docker=docker, container_id=container_id, branch=branch, job_id=job_id):
+            return False
         await docker.run_cmd(
             docker.build_exec_cmd(container_id, ["git", "-C", "/workspace", "add", "-A"]),
             timeout=60,
@@ -578,7 +582,8 @@ async def _commit_unfinished_work(
                     "/workspace",
                     "commit",
                     "-m",
-                    "wip: unfinished work preserved after the developer hit its turn cap\n\n"
+                    message
+                    or "wip: unfinished work preserved after the developer hit its turn cap\n\n"
                     "Committed by embry0, NOT by the agent. The developer run ended on its\n"
                     "turn cap before it could commit, so this change is incomplete and was\n"
                     "never self-reviewed. It is preserved here so the run is not lost;\n"
@@ -591,6 +596,48 @@ async def _commit_unfinished_work(
         logger.warning("dev_rescue_commit_failed", branch=branch, job_id=job_id, error=str(exc))
         return False
     logger.info("dev_rescue_commit_created", branch=branch, job_id=job_id, dirty_entries=entries)
+    return True
+
+
+async def _on_job_branch(*, docker: Any, container_id: str, branch: str, job_id: str | None) -> bool:
+    """Put the worktree on ``branch`` before a salvage commit; False when that cannot be done safely.
+
+    An unreadable HEAD keeps #358's behaviour (commit where it stands). The
+    agent normally creates the branch itself; when it never did, the work is
+    still on the base branch, and ``git switch -c`` carries it to a new branch
+    of the job's name.
+    """
+    head = (
+        await docker.run_cmd(
+            docker.build_exec_cmd(container_id, ["git", "-C", "/workspace", "rev-parse", "--abbrev-ref", "HEAD"]),
+            timeout=15,
+        )
+        or ""
+    ).strip()
+    if not head or head == branch:
+        return True
+    # A missing branch exits 1, which run_cmd logs as an error (#402): ask so it exits 0.
+    exists = (
+        await docker.run_cmd(
+            docker.build_exec_cmd(
+                container_id,
+                [
+                    "bash",
+                    "-c",
+                    f"git -C /workspace rev-parse --verify --quiet refs/heads/{shlex.quote(branch)} || true",
+                ],
+            ),
+            timeout=15,
+        )
+        or ""
+    ).strip()
+    if exists:
+        logger.warning("dev_salvage_other_branch_checked_out", branch=branch, head=head[:200], job_id=job_id)
+        return False
+    await docker.run_cmd(
+        docker.build_exec_cmd(container_id, ["git", "-C", "/workspace", "switch", "-c", branch]),
+        timeout=30,
+    )
     return True
 
 
@@ -1157,6 +1204,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         updates["developer_prompt_addendum"] = None
     if state.get("developer_focus_files"):
         updates["developer_focus_files"] = []
+    if state.get("unfinished_work"):
+        updates["unfinished_work"] = None
 
     # Self-routing: decide the next node based on the updates we just produced
     # and the state we were handed. Priority:
@@ -1165,15 +1214,33 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     #   3. Budget overrun also diverts to max_retries.
     #   4. Otherwise proceed to review.
     from embry0.orchestration.routing.conditions import check_budget
+    from embry0.workflows.issue_to_pr.nodes import _salvage
+
+    # Salvage (spec 2026-10-25): a run that stops before it pushes keeps its
+    # work. Every route below that ends the coding step without a verified
+    # push commits what the run left uncommitted and pushes it, unfinished.
+    salvage: dict[str, Any] = {
+        "docker": configurable.get("docker"),
+        "container_id": state.get("sandbox_container_id"),
+        "branch": branch,
+        "job_id": state.get("job_id"),
+        "agent": _salvage.coding_agent(result, state),
+    }
 
     if updates.get("agent_questions_exhausted") or state.get("agent_questions_exhausted"):
         goto = "max_retries"
+        kept = await _salvage.preserve_unfinished_work(**salvage, reason=_salvage.QUESTIONS)
+        if kept and kept["committed"]:
+            updates["unfinished_work"] = kept
     elif updates.get("pending_agent_questions") or state.get("pending_agent_questions"):
         goto = "ask_user_interrupt"
     elif check_budget({**state, **updates}) == "over_budget":
         # soft overrun mode only: `hard` never gets here, run_agent_node
         # raises BudgetOverrunError at the ceiling.
         goto = "max_retries"
+        kept = await _salvage.preserve_unfinished_work(**salvage, reason=_salvage.BUDGET)
+        if kept and kept["committed"]:
+            updates["unfinished_work"] = kept
     else:
         # Programmatic verification: the LLM is INSTRUCTED to push the branch
         # (prompt step 5) but doesn't always follow through. If we proceed to
@@ -1186,22 +1253,20 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
             container_id=state.get("sandbox_container_id"),
             branch=branch,
         )
-        rescued_unfinished = False
         push_diagnostics: dict[str, Any] = {}
-        if not push_ok:
-            # #358: after a turn-cap death the work is typically UNCOMMITTED, and
-            # _rescue_push_branch refuses a branch with no commits of its own —
-            # so the run's whole output was discarded. Commit it first, then the
-            # existing rescue has something to push. Gated on the turn cap: any
-            # other ending (a clean finish that left a dirty tree, a crash) keeps
-            # the old behaviour, where an empty branch correctly means "pause".
-            if _hit_turn_cap(result):
-                rescued_unfinished = await _nodes._commit_unfinished_work(
-                    docker=configurable.get("docker"),
-                    container_id=state.get("sandbox_container_id"),
-                    branch=branch,
-                    job_id=state.get("job_id"),
-                )
+        # #358, widened by salvage: a run that STOPPED (turn cap, any error)
+        # typically leaves its work uncommitted, and _rescue_push_branch refuses
+        # a branch with no commits of its own, so the run's output was
+        # discarded. Commit it, then push it, whether or not an earlier push
+        # put the branch on origin. A clean finish keeps the old behaviour,
+        # where an empty branch correctly means "pause".
+        stopped = _salvage.stop_reason(result)
+        kept = None
+        if stopped:
+            kept = await _salvage.preserve_unfinished_work(**salvage, reason=stopped, diagnostics=push_diagnostics)
+            push_ok = push_ok or kept is not None
+        rescued_unfinished = bool(kept and kept["committed"])
+        if not push_ok and not stopped:
             # Before stranding a finished branch behind a human decision, try
             # the one mechanical step the agent missed (see _rescue_push_branch).
             push_ok = await _nodes._rescue_push_branch(
@@ -1231,9 +1296,11 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 "dev_run_unfinished_but_preserved",
                 branch=branch,
                 job_id=state.get("job_id"),
+                reason=stopped,
             )
+            updates["unfinished_work"] = kept
             updates["errors"] = (state.get("errors") or []) + [
-                f"Developer hit its turn cap before committing. embry0 committed its work and "
+                f"The {salvage['agent']} stopped ({stopped}) before committing. embry0 committed its work and "
                 f"pushed it to {branch!r} so the run is not lost, but the change is UNFINISHED "
                 f"and was never self-reviewed. Continue from that branch rather than starting over."
             ]

@@ -365,10 +365,11 @@ async def test_turn_cap_death_commits_and_pushes_the_uncommitted_work():
 
 
 @pytest.mark.asyncio
-async def test_commit_rescue_is_gated_on_the_turn_cap():
+async def test_commit_rescue_is_gated_on_a_stopped_run():
     """A clean finish that left a dirty tree keeps the old behaviour.
 
-    Only a turn-cap death gets its work committed on its behalf. Any other
+    Only a run that STOPPED (its turn cap, any error, the job's budget) gets
+    its work committed on its behalf (salvage, spec 2026-10-25). A clean
     ending with no commits still means "the agent produced nothing worth
     pushing", and pausing is correct — committing there would invent a delivery.
     """
@@ -394,7 +395,7 @@ async def test_commit_rescue_is_gated_on_the_turn_cap():
         )
 
     joined = [" ".join(c) for c in calls]
-    assert not any(" commit " in f" {j} " for j in joined), "committed on a non-cap ending"
+    assert not any(" commit " in f" {j} " for j in joined), "committed on a clean ending"
     assert cmd.goto == "max_retries"
     assert cmd.update["error_code"] == ErrorCode.DEV_BRANCH_NOT_PUSHED.value
 

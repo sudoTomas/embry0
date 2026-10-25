@@ -439,6 +439,12 @@ class JobState(TypedDict, total=False):
     # result the PR fallback reads holds only the last node's fragment. MUST
     # stay declared — LangGraph's merge reducer drops undeclared keys.
     developer_summary: Annotated[str | None, FoldingLastValue]
+    # Salvage (spec 2026-10-25): {branch, agent, reason, committed} when a
+    # coding run stopped before it pushed and embry0 committed and pushed what
+    # it left, unfinished. The next coding attempt is told to finish it; a run
+    # that read it clears it. MUST stay declared (the merge reducer drops
+    # undeclared keys).
+    unfinished_work: Annotated[dict[str, Any] | None, FoldingLastValue]
     result_summary: Annotated[str | None, FoldingLastValue]
     # RAV-603: typed deliverables collected by finalize_output_node
     # ({type, title, content, url, storage_bucket, storage_key, media_type,
