@@ -113,11 +113,16 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         logger.info("triage_skipped_fixed_route", job_id=state.get("job_id"), template=fixed["pipeline_template"])
         writer(events.progress(message="The job names its route, so triage has nothing to choose", node="triage"))
         writer(events.node_completed(node="triage", agent="triage", attempt=attempt, action="proceed"))
-        return {
-            "triage_decision": fixed,
-            "pipeline_config": apply_job_config_overrides(fixed.get("pipeline_config") or {}, state),
-            "current_stage": "triage_complete",
-        }
+        # Triage routes only by Command: the graph has no edge out of it, so a
+        # plain update would end the job here.
+        return Command(
+            goto="plan_route",
+            update={
+                "triage_decision": fixed,
+                "pipeline_config": apply_job_config_overrides(fixed.get("pipeline_config") or {}, state),
+                "current_stage": "triage_complete",
+            },
+        )
 
     # EMB-35: TRIAGE_MODEL lets triage tier independently of the pipeline
     # default (it's a bounded classification pass — a haiku-class experiment
