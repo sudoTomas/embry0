@@ -252,3 +252,22 @@ async def test_work_without_a_pull_request_cannot_be_sent_back_and_rejecting_rec
     assert refused.status_code == 409
     assert rejected.status_code == 200 and rejected.json()["closed_pr"] is False
     assert app.state.world_repo.ratings[-1]["verdict"] == "rejected"
+
+
+async def test_closing_the_pull_request_on_reject_needs_admin(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Closing a pull request is as weighty as merging one, which already needs admin."""
+    from fastapi import HTTPException
+
+    from embry0.api.v1 import world as world_api
+
+    async def not_admin(request: Any) -> None:
+        raise HTTPException(status_code=403, detail="admin only")
+
+    monkeypatch.setattr(world_api, "ensure_admin", not_admin)
+    async with await _client(app) as client:
+        closing = await client.post(
+            "/api/v1/world/quests/job-1/reject", json={"note": "no", "close_pr": True}, headers=HEADERS
+        )
+        keeping = await client.post("/api/v1/world/quests/job-1/reject", json={"note": "no"}, headers=HEADERS)
+    assert closing.status_code == 403
+    assert keeping.status_code == 200 and keeping.json()["closed_pr"] is False

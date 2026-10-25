@@ -27,7 +27,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from embry0.api.deps import request_actor
+from embry0.api.deps import ensure_admin, request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
@@ -441,6 +441,10 @@ class RejectBody(BaseModel):
 async def reject(job_id: str, body: RejectBody, request: Request) -> dict[str, Any]:
     """The work is not wanted: record it, and close its pull request when asked."""
     quest = await _quest_or_404(request, job_id)
+    if body.close_pr:
+        # Closing a pull request is a forge action as weighty as merging one,
+        # and a merge already needs admin (merge approvals).
+        await ensure_admin(request)
     closed = False
     match = _GITHUB_PR.match(str(quest.get("pr_url") or ""))
     if body.close_pr and match is not None and quest.get("delivery_state") != "merged":
