@@ -88,10 +88,10 @@ export function WorldPage() {
   const repos = [...new Set(data.regions.map((r) => r.repo))].sort();
 
   return (
-    <div className="world space-y-3" data-testid="world-page">
+    <div className="world hud space-y-3" data-testid="world-page">
       <header className="world-panel flex flex-wrap items-center justify-between gap-2 p-3">
         <div>
-          <h1 className="world-title text-xl">Your guild</h1>
+          <h1 className="world-title title-pixel text-xl">Your guild</h1>
           <p className="world-muted text-xs" data-testid="world-summary">
             {data.characters.length} characters · {data.characters.filter((c) => c.state !== "idle").length} out ·{" "}
             {data.quests.length} quests on the board · account total {data.account.total_level.toLocaleString("en-US")}

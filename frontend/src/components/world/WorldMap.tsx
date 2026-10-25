@@ -144,7 +144,7 @@ export function WorldMap({ art, regions, quests, parties, characters, onPickLead
               <span
                 key={`label-${r.repo}`}
                 className="pointer-events-none absolute -translate-x-1/2 whitespace-nowrap rounded-sm px-1 text-[10px]"
-                style={{ left: r.label.x, top: r.label.y - 14, zIndex: 50_000, color: "#ffcf3f", background: "rgba(0,0,0,0.55)", fontFamily: "var(--font-pixel)" }}
+                style={{ left: r.label.x, top: r.label.y - 14, zIndex: 50_000, color: "#ffcf3f", background: "rgba(0,0,0,0.55)" }}
               >
                 {placeOf(r.repo)}
               </span>
@@ -154,7 +154,7 @@ export function WorldMap({ art, regions, quests, parties, characters, onPickLead
                 <span
                   key={`town-${r.repo}-${t.name}`}
                   className="pointer-events-none absolute -translate-x-1/2 whitespace-nowrap text-[8px]"
-                  style={{ left: t.x, top: t.y + 2, zIndex: 50_000, color: "#fff", textShadow: "1px 1px 0 #000", fontFamily: "var(--font-pixel)" }}
+                  style={{ left: t.x, top: t.y + 2, zIndex: 50_000, color: "#fff", textShadow: "1px 1px 0 #000" }}
                 >
                   {t.name}
                 </span>

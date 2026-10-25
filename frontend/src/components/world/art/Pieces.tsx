@@ -77,7 +77,7 @@ export function EffectAt({
       {label !== undefined && (
         <span
           className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-white"
-          style={{ textShadow: "1px 1px 0 #000", fontFamily: "var(--font-pixel)" }}
+          style={{ textShadow: "1px 1px 0 #000" }}
         >
           {label}
         </span>

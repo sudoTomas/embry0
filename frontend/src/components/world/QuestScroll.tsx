@@ -48,9 +48,9 @@ function ScrollBody({ quest, skillName, canAct, onClose }: { quest: Scroll; skil
   const headline = quest.status === "running" || quest.outcome === "out" ? "Quest in progress" : tone === "loss" ? "Quest failed" : "Quest complete!";
   const xpTotal = quest.xp.reduce((sum, g) => sum + g.xp, 0);
   return (
-    <div className="world-scroll max-h-[85vh] space-y-3 overflow-y-auto p-5" data-testid="quest-scroll" data-outcome={quest.outcome}>
+    <div className="world-scroll hud max-h-[85vh] space-y-3 overflow-y-auto p-5" data-testid="quest-scroll" data-outcome={quest.outcome}>
       <div className="text-center">
-        <h2 className="scroll-title text-xl" style={{ fontFamily: "var(--font-pixel)" }}>
+        <h2 className="scroll-title title-pixel text-xl">
           {headline}
         </h2>
         <p className="text-sm font-semibold">{quest.title}</p>

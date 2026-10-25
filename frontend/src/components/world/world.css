@@ -19,7 +19,6 @@
   --chat: #0000ff;
   --win: #4cd964;
   --loss: #ff4b3e;
-  font-family: var(--font-pixel);
 }
 
 .world-panel {
