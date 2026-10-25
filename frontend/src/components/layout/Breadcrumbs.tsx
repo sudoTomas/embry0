@@ -7,7 +7,8 @@ import { NAV_GROUPS } from "./navGroups";
 const breadcrumbMap: Record<string, string> = {
   // "Overview" matches the sidebar label; the competing "Dashboard" name is
   // retired.
-  "": "Overview",
+  "": "Guild",
+  overview: "Overview",
   console: "Console",
   jobs: "Jobs",
   "merge-approvals": "Merge approvals",

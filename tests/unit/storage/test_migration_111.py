@@ -14,12 +14,6 @@ def test_migration_111_present() -> None:
     assert "analysed_at" in next(sql for v, _, sql in MIGRATIONS if v == 111)
 
 
-def test_migration_111_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_110.py)."""
-    assert MIGRATIONS[-1][0] == 111, "migration 111 must add the log_signatures analysis memory"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_the_analysis_columns_exist_and_start_empty(db_with_migrations: DatabasePool) -> None:

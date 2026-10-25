@@ -109,15 +109,15 @@ function blank(): Grid {
   return Array.from({ length: GRID }, () => Array<Hex | null>(GRID).fill(null));
 }
 
-function place(grid: Grid, layer: NamedLayer, dy: number): void {
+function place(grid: Grid, layer: NamedLayer, dy: number, lift: (x: number) => number = () => 0): void {
   layer.frame.rows.forEach((row, j) => {
-    const y = layer.frame.y + j + dy;
-    if (y < 0 || y >= GRID) return;
     for (let i = 0; i < row.length; i++) {
       const c = row[i];
       if (c === ".") continue;
       const x = layer.frame.x + i;
       if (x < 0 || x >= GRID) continue;
+      const y = layer.frame.y + j + dy + lift(x);
+      if (y < 0 || y >= GRID) continue;
       if (c === "x") { grid[y][x] = null; continue; }
       const colour = layer.colours[c];
       if (colour === undefined) throw new Error(`appearance: layer ${layer.name} has no colour for ${JSON.stringify(c)}`);
@@ -181,6 +181,21 @@ export function runLength(grid: Grid): Record<Hex, string> {
 
 export function compose(a: Appearance, pose: Pose): ComposedFrame {
   return { size: GRID, paths: runLength(paint(a, pose)) };
+}
+
+/**
+ * Two walking frames (the world, spec 2026-10-25): the left leg lifted a row,
+ * then the right, the rest of the figure as it stands, so a character walks
+ * in the gear it earned.
+ */
+export function walkFrames(a: Appearance): ComposedFrame[] {
+  const layers = layersOf(a, STAND);
+  return [0, 1].map((step) => {
+    const grid = blank();
+    const lifted = (x: number) => ((x < GRID / 2) === (step === 0) ? -1 : 0);
+    for (const layer of layers) place(grid, layer, 0, layer.name === "legs" || layer.name === "feet" ? lifted : undefined);
+    return { size: GRID, paths: runLength(grid) };
+  });
 }
 
 /** Every frame of one state: two for idle, thinking and tool, one otherwise. */

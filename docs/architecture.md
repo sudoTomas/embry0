@@ -1357,6 +1357,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 109 | the area of a monorepo a job's pull request changes, from the repository's `.embry0/areas.yml` (spec 2026-10-25) | `jobs.area` |
 | 110 | leads: work embry0 finds by itself (backlog tickets, failing CI on the default branch, dependency and code-scanning alerts, flaky checks, unanswered review threads), upserted by the finders and marked gone, never deleted; the proposal answer kinds widen to match (spec 2026-10-25) | `leads`, `idx_leads_state_repo_kind`, `proposal_decisions_kind_check` |
 | 111 | what the last analysis found in each log signature, for the watcher's novelty gate (spec 2026-10-25) | `log_signatures.analysed_at`, `analysed_verdict`, `analysed_count` |
+| 112 | the player's evaluation of a finished quest: a rating, what they did with the work and the follow-up a send-back started (the world, spec 2026-10-25) | `job_ratings` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

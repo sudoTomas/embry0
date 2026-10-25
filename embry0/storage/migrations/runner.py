@@ -3143,6 +3143,25 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE log_signatures ADD COLUMN IF NOT EXISTS analysed_count INTEGER;
         """,
     ),
+    (
+        112,
+        "job_ratings: the player's evaluation of a finished quest (docs/superpowers/specs/2026-10-25-world-design.md)",
+        # One row per job: how the person judged the work (good, needs work,
+        # bad), what they did with it (merged, sent back, rejected) and the
+        # follow-up job a send-back started. Shown in the character's quest
+        # log; it feeds no experience.
+        """
+        CREATE TABLE IF NOT EXISTS job_ratings (
+            job_id          TEXT PRIMARY KEY,
+            rating          TEXT CHECK (rating IN ('good', 'needs_work', 'bad')),
+            verdict         TEXT CHECK (verdict IN ('merged', 'sent_back', 'rejected')),
+            note            TEXT NOT NULL DEFAULT '',
+            followup_job_id TEXT,
+            rated_by        TEXT NOT NULL,
+            rated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+    ),
 ]
 
 

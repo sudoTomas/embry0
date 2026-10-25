@@ -1,0 +1,255 @@
+import { api } from "./client";
+import { type RunWith, runWithBody } from "./runWith";
+import type { RecentEvent } from "./progression";
+
+/** The world (spec 2026-10-25): the guild hall, the quest board and the quests' scrolls. */
+
+/** Where a character, or a party, is. */
+export type PartyState = "travelling" | "working" | "waiting" | "returning" | "defeated" | "recalled";
+export type CharacterState = PartyState | "idle" | "following";
+export type Outcome = "merged" | "pr_open" | "closed" | "done" | "failed" | "recalled" | "out";
+export type Rating = "good" | "needs_work" | "bad";
+export type Verdict = "merged" | "sent_back" | "rejected";
+
+export interface CharacterStats {
+  quests: number;
+  succeeded: number;
+  failed: number;
+  merged: number;
+  success_rate: number | null;
+  avg_cost_usd: number | null;
+  avg_seconds: number | null;
+  last_quest_at: string | null;
+  ratings: Record<Rating, number>;
+}
+
+export interface WorldCharacter {
+  agent_type: string;
+  level: number;
+  total_level: number;
+  xp: number;
+  tier: string;
+  best_skill: string;
+  capes: string[];
+  skills: { stat: string; level: number; xp: number }[];
+  state: CharacterState;
+  job_id: string | null;
+  quests_out: number;
+  stats: CharacterStats;
+  idle_too_long: boolean;
+  /** The template a quest the player writes for it runs; null for the developer's usual pipeline. */
+  quest_template: string | null;
+  can_quest: boolean;
+}
+
+export interface Party {
+  job_id: string;
+  repo: string | null;
+  area: string | null;
+  title: string;
+  status: string;
+  state: PartyState;
+  leader: string;
+  party: string[];
+  working: string | null;
+  lead_id: string | null;
+  template: string | null;
+  since: string | null;
+  finished_at: string | null;
+  pr_url: string | null;
+  delivery_state: string | null;
+  stuck: boolean;
+  failure: string | null;
+}
+
+export interface Lead {
+  id: string;
+  kind: string;
+  repo: string;
+  area: string | null;
+  owners: string[];
+  title: string;
+  summary: string;
+  details: string;
+  action: string;
+  url: string | null;
+  created_at: string;
+  level: number;
+  verb: string;
+  creature: string;
+  leader: string;
+  severity?: string;
+  occurrences?: number;
+  path?: string;
+}
+
+export interface InboxQuest {
+  job_id: string;
+  repo: string | null;
+  area: string | null;
+  title: string;
+  outcome: Outcome;
+  leader: string;
+  pr_url: string | null;
+  finished_at: string | null;
+  cost_usd: number;
+  failure: string | null;
+}
+
+export interface Loot {
+  job_id: string;
+  repo: string | null;
+  area: string | null;
+  title: string;
+  pr_url: string;
+  merged: boolean;
+  at: string | null;
+}
+
+export interface Region {
+  repo: string;
+  jobs: number;
+  last_job_at: string | null;
+  owned: boolean;
+  watched: boolean;
+  areas: { name: string; slug: string }[];
+}
+
+export interface World {
+  generated_at: string;
+  account: { xp: number; total_level: number; characters: number; quest_points: number };
+  skills: { id: string; name: string }[];
+  characters: WorldCharacter[];
+  parties: Party[];
+  quests: Lead[];
+  inbox: InboxQuest[];
+  loot: Loot[];
+  recent: RecentEvent[];
+  regions: Region[];
+  frontier: string[];
+}
+
+export interface QuestLogEntry {
+  job_id: string;
+  repo: string | null;
+  area: string | null;
+  title: string;
+  outcome: Outcome;
+  pr_url: string | null;
+  template: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  cost_usd: number;
+  seconds: number;
+  rating: Rating | null;
+  verdict: Verdict | null;
+}
+
+export interface CharacterDetail extends WorldCharacter {
+  quest_log: QuestLogEntry[];
+}
+
+export interface Evaluation {
+  rating: Rating | null;
+  verdict: Verdict | null;
+  note: string;
+  followup_job_id: string | null;
+  by: string | null;
+  at: string | null;
+}
+
+export interface QuestScroll {
+  job_id: string;
+  repo: string | null;
+  area: string | null;
+  title: string;
+  task: string;
+  status: string;
+  outcome: Outcome;
+  template: string | null;
+  lead_id: string | null;
+  report: string;
+  report_truncated: boolean;
+  failure: string | null;
+  error_code: string | null;
+  pr_url: string | null;
+  pr: { number: number; state: string; files: number | null; additions: number | null; deletions: number | null; commits: number | null } | null;
+  merge_approval: { id: string; status: string; pr_url: string } | null;
+  verification: { verdict: string | null; summary: string | null } | null;
+  party: { agent_type: string; runs: number; cost_usd: number; seconds: number; failed: number }[];
+  xp: { agent_type: string; stat: string; xp: number }[];
+  cost_usd: number;
+  seconds: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  evaluation: Evaluation | null;
+}
+
+export async function fetchWorld(): Promise<World> {
+  const { data } = await api.get<World>("/world");
+  return data;
+}
+
+export async function fetchCharacter(agentType: string): Promise<CharacterDetail> {
+  const { data } = await api.get<CharacterDetail>(`/world/characters/${encodeURIComponent(agentType)}`);
+  return data;
+}
+
+export async function fetchQuest(jobId: string): Promise<QuestScroll> {
+  const { data } = await api.get<QuestScroll>(`/world/quests/${encodeURIComponent(jobId)}`);
+  return data;
+}
+
+export async function evaluateQuest(
+  jobId: string,
+  body: { rating?: Rating; verdict?: "merged"; note?: string },
+): Promise<Evaluation> {
+  const { data } = await api.put<Evaluation>(`/world/quests/${encodeURIComponent(jobId)}/evaluation`, body);
+  return data;
+}
+
+export async function sendQuestBack(jobId: string, notes: string, runWith?: RunWith): Promise<Evaluation> {
+  const { data } = await api.post<Evaluation>(`/world/quests/${encodeURIComponent(jobId)}/send-back`, {
+    notes,
+    ...runWithBody(runWith),
+  });
+  return data;
+}
+
+export async function rejectQuest(jobId: string, note: string, closePr: boolean): Promise<Evaluation & { closed_pr: boolean }> {
+  const { data } = await api.post<Evaluation & { closed_pr: boolean }>(`/world/quests/${encodeURIComponent(jobId)}/reject`, {
+    note,
+    close_pr: closePr,
+  });
+  return data;
+}
+
+/** Send a party at a quest on the board: the owner proposal's yes, as the signed-in player. */
+export async function acceptLead(leadId: string, by: string, runWith?: RunWith): Promise<{ job_id: string | null }> {
+  const { data } = await api.post<{ job_id: string | null }>(`/proposals/${encodeURIComponent(leadId)}/accept`, {
+    by,
+    ...runWithBody(runWith),
+  });
+  return data;
+}
+
+/** A quest the player writes for one character: a job on a repository, on that character's template. */
+export async function writeQuest(body: {
+  repo: string;
+  task: string;
+  template: string | null;
+  runWith?: RunWith;
+}): Promise<{ job_id: string }> {
+  const { data } = await api.post<{ job_id: string }>("/jobs", {
+    repo: body.repo,
+    task: body.task,
+    ...(body.template ? { pipeline_template: body.template } : {}),
+    ...runWithBody(body.runWith),
+  });
+  return data;
+}
+
+/** Merge a quest's pull request through its merge approval (the dashboard's form). */
+export async function approveMerge(approvalId: string): Promise<void> {
+  await api.post(`/merge-approvals/${encodeURIComponent(approvalId)}/decide`, { decision: "approve" });
+}

@@ -172,13 +172,14 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     expect(links.map((a) => a.textContent?.trim())).toEqual(["Settings", "LLM providers"]);
   });
 
-  it("Overview section holds the Overview, then the instance's Achievements", () => {
+  it("Overview section holds the guild (the home screen), the Overview, then the instance's Achievements", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Overview" })
       .parentElement as HTMLElement;
     const links = within(section).getAllByRole("link");
     expect(links.map((l) => [l.textContent?.trim(), l.getAttribute("href")])).toEqual([
-      ["Overview", "/"],
+      ["Guild", "/"],
+      ["Overview", "/overview"],
       ["Achievements", "/achievements"],
     ]);
   });
@@ -186,7 +187,8 @@ describe("Sidebar — unified IA (ticket 011)", () => {
   it("every nav item points to its expected route (blocker-ticket coverage check)", () => {
     renderSidebar();
     const expectedHrefs: Record<string, string> = {
-      Overview: "/",
+      Guild: "/",
+      Overview: "/overview",
       Achievements: "/achievements",
       Console: "/console",
       Issues: "/issues",

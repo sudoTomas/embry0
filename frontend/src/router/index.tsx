@@ -5,6 +5,8 @@ import { PageError } from "../components/PageError";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const DashboardPage = lazy(() => import("../pages/DashboardPage").then(m => ({ default: m.DashboardPage })));
+// The world (spec 2026-10-25) is the home screen: the guild, the quest board, the quests' scrolls.
+const WorldPage = lazy(() => import("../pages/WorldPage").then(m => ({ default: m.WorldPage })));
 const ConsolePage = lazy(() => import("../pages/ConsolePage").then(m => ({ default: m.ConsolePage })));
 const JobsPage = lazy(() => import("../pages/JobsPage").then(m => ({ default: m.JobsPage })));
 const JobDetailPage = lazy(() => import("../pages/JobDetailPage").then(m => ({ default: m.JobDetailPage })));
@@ -60,7 +62,8 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     errorElement: <PageError message="Something went wrong" />,
     children: [
-      { index: true, element: <ErrorBoundary inline><Suspense fallback={fallback}><DashboardPage /></Suspense></ErrorBoundary> },
+      { index: true, element: <ErrorBoundary inline><Suspense fallback={fallback}><WorldPage /></Suspense></ErrorBoundary> },
+      { path: "overview", element: <ErrorBoundary inline><Suspense fallback={fallback}><DashboardPage /></Suspense></ErrorBoundary> },
       { path: "console", element: <ErrorBoundary inline><Suspense fallback={fallback}><ConsolePage /></Suspense></ErrorBoundary> },
       { path: "jobs", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobsPage /></Suspense></ErrorBoundary> },
       { path: "jobs/:jobId", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobDetailPage /></Suspense></ErrorBoundary> },
