@@ -55,3 +55,7 @@ The deployment's assistant polls `proposal_list` for the owners it serves (every
 ## Testing
 
 Owners from preferences and from `CODEOWNERS`, teams skipped; each kind's source query against Postgres with seeded rows; the findings parser on real-shaped tables, malformed rows skipped, the id stable across audits; each answer for each kind, and a second answer refused; snooze returning a proposal; a proposal leaving the feed when its case or issue moves on; the `propose` scope allowed exactly its routes; the MCP tools' confirm gates.
+
+## Addendum (2026-10-25): briefs and the readiness floor
+
+An owner could not say yes or no from a proposal's `summary`, and its id says nothing to a person. Each proposal now carries a `brief`, its title, problem, fix and size in plain words, written by a model in the background, and a backlog ticket is asked only at readiness 60 and up. See [proposal briefs](2026-10-25-proposal-briefs-design.md).

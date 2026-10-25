@@ -864,6 +864,10 @@ async def _init_app_state(
     from embry0.storage.repositories.leads import LeadsRepository
 
     app.state.leads_repo = LeadsRepository(db)
+    # Proposal briefs (spec 2026-10-25): each proposal in plain words, for its owner.
+    from embry0.storage.repositories.proposal_briefs import ProposalBriefsRepository
+
+    app.state.proposal_briefs_repo = ProposalBriefsRepository(db)
 
     # The world (spec 2026-10-25): read-only over jobs, their log, traces and answers, plus the player's ratings.
     from embry0.services.world import WorldCache
@@ -2398,6 +2402,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     account_wait_task = asyncio.create_task(app.state.account_waits.start())
     app.state.background_tasks.add(account_wait_task)
     account_wait_task.add_done_callback(app.state.background_tasks.discard)
+
+    # Proposal briefs (spec 2026-10-25): writes each owner proposal in plain
+    # words on the brief model, a few a minute; the feed only reads them.
+    from embry0.api.v1.proposals import open_proposals
+    from embry0.services.proposal_briefs import ProposalBriefWriter
+
+    local_first = _watcher_local_first_model(app)
+
+    async def brief_model() -> str:
+        return str(getattr(config, "proposal_brief_model", "") or "").strip() or await local_first()
+
+    app.state.proposal_brief_writer = ProposalBriefWriter(
+        proposals=lambda: open_proposals(app.state),
+        model=brief_model,
+        briefs=app.state.proposal_briefs_repo,
+        resolver=getattr(app.state, "credential_resolver", None),
+        min_readiness=config.proposals_ticket_min_readiness,
+        per_tick=config.proposal_briefs_per_tick,
+        interval_seconds=config.proposal_brief_interval_seconds,
+    )
+    brief_task = asyncio.create_task(app.state.proposal_brief_writer.start())
+    app.state.background_tasks.add(brief_task)
+    brief_task.add_done_callback(app.state.background_tasks.discard)
 
     logger.info("embry0_started")
     yield

@@ -15,12 +15,6 @@ def test_migration_116_present() -> None:
     assert "account_wait" in sql and "JSONB" in sql
 
 
-def test_migration_116_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_115.py)."""
-    assert MIGRATIONS[-1][0] == 116, "migration 116 must add jobs.account_wait"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_a_parked_job_is_listed_and_claimed_once(db_with_migrations: DatabasePool) -> None:

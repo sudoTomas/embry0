@@ -18,7 +18,17 @@ const KIND_LABEL: Record<OwnerProposalKind, string> = {
   case: "Watcher problem",
   issue: "Open issue",
   finding: "Context finding",
+  ticket: "Backlog ticket",
+  ci: "Failing CI",
+  alert: "Alert",
+  flaky: "Flaky check",
+  review: "Unanswered review",
 };
+
+const SIZE_TONE = { small: "success", medium: "info", large: "warning" } as const;
+
+/** The kinds the filter offers: the three owner kinds and the backlog tickets. */
+const FILTER_KINDS = ["", "case", "issue", "finding", "ticket"] as const;
 
 /** How long "Later" waits before asking again. */
 const LATER_DAYS = 7;
@@ -58,13 +68,36 @@ function ProposalCard({
           {proposal.owners.length ? `Owners: ${proposal.owners.join(", ")}` : "No owners set"} · {formatDateTime(proposal.created_at)}
         </span>
       </div>
-      <p className="mt-2 text-sm text-white/90">{proposal.summary}</p>
-      {proposal.details && (
-        <button type="button" className="mt-1 text-xs text-white/50 underline hover:text-white" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? "Hide details" : "Details"}
-        </button>
+      {proposal.brief ? (
+        <div className="mt-2 space-y-1 text-sm" data-testid="owner-proposal-brief">
+          <p className="flex flex-wrap items-baseline gap-2 font-semibold text-white/95">
+            {proposal.brief.title}
+            <Badge tone={SIZE_TONE[proposal.brief.size]} title="How much work the fix is">
+              {proposal.brief.size}
+            </Badge>
+          </p>
+          <p className="text-white/85">
+            <span className="font-medium text-white/60">Problem: </span>
+            {proposal.brief.problem}
+          </p>
+          <p className="text-white/85">
+            <span className="font-medium text-white/60">Fix: </span>
+            {proposal.brief.fix}
+          </p>
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-white/90">{proposal.summary}</p>
       )}
-      {open && <pre className="mt-1 whitespace-pre-wrap text-xs text-white/70" data-testid="owner-proposal-details">{proposal.details}</pre>}
+      <button type="button" className="mt-1 text-xs text-white/50 underline hover:text-white" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? "Hide details" : "Details"}
+      </button>
+      {open && (
+        <div className="mt-1 space-y-1 text-xs text-white/70" data-testid="owner-proposal-details">
+          {proposal.brief && <p>{proposal.summary}</p>}
+          {proposal.details && <pre className="whitespace-pre-wrap">{proposal.details}</pre>}
+          <p className="font-mono text-white/40">{proposal.id}</p>
+        </div>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">Yes: {proposal.action}</span>
         {proposal.url && (
@@ -103,6 +136,45 @@ function ProposalCard({
   );
 }
 
+/** The proposals asked, then the held backlog tickets folded below them (proposal briefs, spec 2026-10-25). */
+function ProposalList({
+  proposals,
+  owner,
+  canAnswer,
+  by,
+  runWith,
+}: {
+  proposals: OwnerProposal[];
+  owner: string;
+  canAnswer: boolean;
+  by: string;
+  runWith: RunWith;
+}) {
+  const asked = proposals.filter((p) => !p.held);
+  const held = proposals.filter((p) => p.held);
+  return (
+    <div className="space-y-2">
+      {asked.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Nothing to ask{owner ? ` ${owner}` : ""} right now.</p>
+      ) : (
+        asked.map((p) => <ProposalCard key={p.id} proposal={p} canAnswer={canAnswer} by={by} runWith={runWith} />)
+      )}
+      {held.length > 0 && (
+        <details className="rounded-md border border-border p-2" data-testid="owner-proposals-held">
+          <summary className="cursor-pointer text-sm text-fg-secondary">
+            Not ready enough to ask ({held.length}): backlog tickets below the readiness floor
+          </summary>
+          <div className="mt-2 space-y-2">
+            {held.map((p) => (
+              <ProposalCard key={p.id} proposal={p} canAnswer={canAnswer} by={by} runWith={runWith} />
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 /**
  * Owner proposals (spec 2026-10-24): what embry0 asks a repository's owners to
  * start — problems the watcher keeps seeing, open issues nobody started, and
@@ -113,7 +185,8 @@ export function OwnerProposalsPage() {
   const [params, setParams] = useSearchParams();
   const owner = params.get("owner") ?? "";
   const kind = (params.get("kind") ?? "") as OwnerProposalKind | "";
-  const proposals = useOwnerProposals({ ...(owner ? { owner } : {}), ...(kind ? { kind } : {}) });
+  // Held backlog tickets come too: a chat does not ask them, this page shows them folded.
+  const proposals = useOwnerProposals({ ...(owner ? { owner } : {}), ...(kind ? { kind } : {}), include_held: true });
   const isAdmin = useIsAdmin();
   const by = useAuthStore((s) => s.user?.email) ?? "dashboard";
   const [runWith, setRunWith] = useState<RunWith>({});
@@ -142,7 +215,7 @@ export function OwnerProposalsPage() {
           value={owner}
           onChange={(e) => setParam("owner", e.target.value.trim())}
         />
-        {(["", "case", "issue", "finding"] as const).map((k) => (
+        {FILTER_KINDS.map((k) => (
           <Button key={k || "all"} size="sm" variant={kind === k ? "default" : "ghost"} onClick={() => setParam("kind", k)}>
             {k ? KIND_LABEL[k] : "All"}
           </Button>
@@ -153,14 +226,8 @@ export function OwnerProposalsPage() {
         <PageError message="Proposals did not load" onRetry={() => void proposals.refetch()} />
       ) : !proposals.data ? (
         <Skeleton className="h-40 w-full" />
-      ) : proposals.data.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nothing to ask{owner ? ` ${owner}` : ""} right now.</p>
       ) : (
-        <div className="space-y-2">
-          {proposals.data.map((p) => (
-            <ProposalCard key={p.id} proposal={p} canAnswer={isAdmin} by={by} runWith={runWith} />
-          ))}
-        </div>
+        <ProposalList proposals={proposals.data} owner={owner} canAnswer={isAdmin} by={by} runWith={runWith} />
       )}
     </div>
   );
