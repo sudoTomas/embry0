@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import structlog
@@ -52,6 +53,33 @@ def _log_triage_agent_failure(event: str, output: dict[str, Any], *, fallback: s
     return message
 
 
+def fixed_route_decision(state: dict[str, Any]) -> dict[str, Any] | None:
+    """The decision for a job whose specialist template fixes its route, or None when triage must decide.
+
+    A re-entry with something to decide (a QA failure, a person's answers)
+    still goes to the agent.
+    """
+    from embry0.orchestration.nodes.triage import parse_triage_response
+
+    requested = str(state.get("pipeline_template_request") or "")
+    if requested not in SPECIALIST_TEMPLATE_NAMES:
+        return None
+    if (state.get("qa") or {}).get("final_status") == "failed" or state.get("user_answers"):
+        return None
+    decision = parse_triage_response(
+        json.dumps(
+            {
+                "action": "proceed",
+                "job_kind": "analysis",
+                "confidence": 1.0,
+                "pipeline_template": requested,
+                "reasoning": f"The job names the {requested} template; its route is fixed.",
+            }
+        )
+    )
+    return dict(decision)
+
+
 async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any] | Command[str]:
     """Run triage agent via AgentRunner inside the sandbox.
 
@@ -71,6 +99,25 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     writer = _nodes.get_stream_writer()
     attempt = agent_attempt(state, "triage")
     writer(events.node_started(node="triage", agent="triage", attempt=attempt))
+
+    # A job that names a specialist template (a context audit, a map of a
+    # repository's areas, a design audit) already has its route: plan_route
+    # runs the named template whatever triage picks. Asking the classifier
+    # anyway costs a model call, and handed the specialist's task with the
+    # repository's tools it starts doing that task itself and can run out of
+    # time before it decides.
+    fixed = fixed_route_decision(state)
+    if fixed is not None:
+        from embry0.orchestration.nodes.triage import apply_job_config_overrides
+
+        logger.info("triage_skipped_fixed_route", job_id=state.get("job_id"), template=fixed["pipeline_template"])
+        writer(events.progress(message="The job names its route, so triage has nothing to choose", node="triage"))
+        writer(events.node_completed(node="triage", agent="triage", attempt=attempt, action="proceed"))
+        return {
+            "triage_decision": fixed,
+            "pipeline_config": apply_job_config_overrides(fixed.get("pipeline_config") or {}, state),
+            "current_stage": "triage_complete",
+        }
 
     # EMB-35: TRIAGE_MODEL lets triage tier independently of the pipeline
     # default (it's a bounded classification pass — a haiku-class experiment
