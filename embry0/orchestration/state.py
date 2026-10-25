@@ -130,6 +130,9 @@ class AgentOutputEntry(TypedDict, total=False):
     # Ledger provider of the account that served this run ("anthropic" or
     # "xai"). The outcome hook quarantines only this provider's llm use.
     provider: str
+    # Spent account waits: the wait (AccountWait.record()) a run in a pipeline
+    # that parks at a point of its own leaves for that point to raise.
+    account_wait: dict[str, Any]
     # Plan C: post-run conversation state forwarded by run_agent_node so
     # workflow nodes (developer/triage/review) can persist via
     # AgentSessionsRepository. ``messages`` for api_key mode;

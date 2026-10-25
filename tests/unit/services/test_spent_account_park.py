@@ -304,3 +304,39 @@ async def test_a_sandbox_the_proxies_will_not_take_back_parks_the_job_again() ->
     assert call.kwargs["status"] == "paused"
     again = AccountWait.from_record(call.kwargs["account_wait"])
     assert again is not None and again.until <= datetime.now(UTC) + timedelta(minutes=6) and not again.watch
+
+
+@pytest.mark.parametrize("pipeline", ["qa", "onboard", "pr-review"])
+async def test_a_pipeline_that_parks_at_its_own_point_starts_again_from_nothing(
+    monkeypatch: pytest.MonkeyPatch, pipeline: str
+) -> None:
+    wait = AccountWait("anthropic", "quota_exhausted", UNTIL, agent="pr-reviewer")
+
+    async def stream(*args: Any, **_kwargs: Any) -> Any:
+        args[5]["sandbox_container_id"] = "sandbox-7"  # what the graph streamed before it parked
+        raise AccountWaitInterrupt(wait)
+
+    purged: list[str] = []
+
+    async def purge(_url: str, thread_id: str) -> None:
+        purged.append(thread_id)
+
+    monkeypatch.setattr("embry0.orchestration.checkpoint.purge_thread", purge)
+    executor = _streaming_executor(monkeypatch, _Resolver({}), stream)
+    executor._sandbox = MagicMock()
+    executor._sandbox.destroy = AsyncMock()
+    with pytest.raises(JobParked):
+        await executor._execute_workflow_stream({"repo": "acme/app"}, "", "job-1", pipeline=pipeline)
+    executor._sandbox.destroy.assert_awaited_once_with("sandbox-7")
+    assert purged == ["job-1"], "the relaunch starts a fresh run"
+    assert _parked(executor)["mode"] == "relaunch"
+
+
+async def test_the_pr_reviewers_per_job_model_moves_like_the_run_does() -> None:
+    resolver = _Resolver(SPENT)
+    override = {"agent_models_override": {"pr-reviewer": "claude-opus-5"}}
+    _state, providers, _kinds, _ids, fallbacks = await _precheck(_executor(resolver, ["grok-4.7"]), override)
+    assert fallbacks["anthropic"]["model"] == "grok-4.7", "the executor's model, not a person's"
+    with pytest.raises(AccountWaitRequired) as held:
+        await _precheck(_executor(resolver), override)
+    assert not held.value.wait.chosen, "with nothing to move to it waits, as the main provider does"

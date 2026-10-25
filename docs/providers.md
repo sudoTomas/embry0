@@ -422,13 +422,26 @@ UTC.
   parks the job before any sandbox exists (`mode: relaunch`). A job that
   prefers its local model while a slot is free is not parked for its main
   provider, and neither is a job whose Run with names every agent's model.
-- **Inside the job.** In a pipeline whose graph resumes from a checkpoint
-  (every pipeline but qa, onboard and pr-review), a run whose provider is
-  spent with no stand-in stops the graph inside that node, found either
-  before it runs or after it failed. The job is parked with
-  `mode: resume`, and its sandbox stays. For qa, onboard and pr-review the
-  pre-check and the move above apply, and a run that finds its account spent
-  with nowhere to move still fails.
+- **Inside the job.** A run whose provider is spent with no stand-in,
+  found either before it runs (it is then not started) or after it failed,
+  parks the job:
+  - in a pipeline whose graph resumes from a checkpoint (every pipeline but
+    qa, onboard and pr-review), the graph stops inside that node, and the job
+    is parked with `mode: resume`. Its sandbox stays, and the node runs
+    again;
+  - pr-review and onboard park from their `cleanup` node, once the sandbox
+    is destroyed. Nothing has been posted to the forge or written to the
+    config store or setup proposal by then. qa parks from `orchestrate_qa`,
+    once every app's run has released its sandbox and before the results are
+    stored or reported. These start again from the beginning
+    (`mode: relaunch`): the job's checkpoint, sandbox and volumes are
+    removed when it parks;
+  - a qa run of any pipeline (the qa stage of issue-to-pr too) never parks
+    from inside the fan-out. Each app's run leaves its wait on its result, and
+    `orchestrate_qa` parks after them all, with the latest reset.
+
+  A model the executor sets per job (the pr-reviewer's) is not one a person
+  chose: it moves like any other.
 
 Every minute the account-wait loop goes on with a parked job whose `until`
 has passed. A wait read from the registry (`watch`) goes on earlier, as soon
@@ -442,6 +455,10 @@ account is still spent is parked again.
 `system` event in words. The job page shows what the job waits for and when
 it goes on, in the viewer's own time, with **Try now** and **Cancel**. In the
 world the party is waiting, and the quest scroll says what for.
+
+A qa job that fails with an app whose agent run the account refused (a
+refused token, or a spent account that named no end) carries that account
+code as its own `error_code`, not `ERR_QA_INCONCLUSIVE`.
 
 **The watcher.** Before a tick pays for an analysis, it asks the same
 question about the analysis job it would start. If the job would wait, the
@@ -486,10 +503,7 @@ died frees its slot. A run that has to use the local model (it is the
 fallback, or the job named it) waits for a slot up to
 `LOCAL_LLM_SLOT_WAIT_SECONDS` (900), saying so in a `progress` event. Then
 the job is parked for five minutes and tries again
-([Spent account waits](#spent-account-waits)); in a pipeline that cannot be
-parked (qa, onboard, pr-review) the run fails with `ERR_LOCAL_MODEL_BUSY`
-without having run, and the job's next agents on the custom provider move,
-as for a spent account ([Provider fallback](#provider-fallback)).
+([Spent account waits](#spent-account-waits)).
 
 **Local-first for the watcher.** `watcher_local_model` in the provider
 settings (`""`, the default, is off) is a `custom/<model>` the watcher's log

@@ -27,7 +27,8 @@ from langgraph.config import get_stream_writer
 from embry0.execution import events
 from embry0.orchestration.budget import BudgetOverrunError, resolve_job_cap
 from embry0.orchestration.nodes.agent import evaluate_job_cap
-from embry0.safety.error_codes import ErrorCode
+from embry0.safety.error_codes import ACCOUNT_FAILURE_CODES, ErrorCode
+from embry0.services.account_waits import AccountWait, AccountWaitInterrupt
 from embry0.workflows.pipeline_graphs import qa_pipeline_graph
 from embry0.workflows.qa._orchestrator_workspace import (
     compute_changed_files_via_diff,
@@ -1061,6 +1062,10 @@ async def _qa_orchestrator_node_impl(
     child_config["configurable"] = {
         **early_configurable,
         "qa_parent_writer": writer,
+        # Spent account waits: an app's run never parks the job from inside
+        # the fan-out (its siblings would run on and its sandbox would stay).
+        # It leaves the wait on its result, and this node parks after them all.
+        "account_waits": False,
         # #264: the job's per-job cap and overrun mode, for the QA agent turns.
         # Sub-task states are built fresh, so the parent's cap rides here.
         "qa_job_budget": {
@@ -1088,6 +1093,22 @@ async def _qa_orchestrator_node_impl(
         config=child_config,
         budget_spent=_job_budget_spent,
     )
+
+    # Spent account waits (spec 2026-10-25, addendum): an app whose run found
+    # its account spent with nothing ready to move to parks the job here,
+    # after every app's run released its sandbox and before anything is
+    # stored or reported. The job runs this fan-out again when it goes on.
+    waits = [w for r in per_app_results if (w := AccountWait.from_record(r.account_wait)) is not None]
+    if waits:
+        latest = max(waits, key=lambda w: w.until)
+        logger.info(
+            "qa_parked_for_account",
+            parent_run_id=state["job_id"],
+            apps=[r.app_name for r in per_app_results if r.account_wait],
+            provider=latest.provider,
+            until=latest.until.isoformat(),
+        )
+        raise AccountWaitInterrupt(latest)
 
     # 6. Persist (idempotent upsert).  Phase 5A: route through
     # upsert_with_boot_phase so the new boot_phase JSONB column is populated.
@@ -1139,6 +1160,11 @@ async def _qa_orchestrator_node_impl(
         failure_summary=failure_summary,
         validation_warnings=warnings,
     )
+    # #469: an app whose agent run the LLM account refused (a refused token,
+    # a spent account that named no end) gives the job that code.
+    account_code = next((r.error_code for r in per_app_results if r.error_code in ACCOUNT_FAILURE_CODES), None)
+    if account_code and overall != "passed":
+        qa_state["error_code"] = account_code
 
     qa_state["outcome"] = _outcome_to_dict(outcome)
     qa_state["per_app_results"] = [r.to_dict() for r in per_app_results]

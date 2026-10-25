@@ -786,6 +786,7 @@ async def _wait_before_start(
 
     from embry0.agents.fallback import model_provider
     from embry0.agents.providers import provider_for_model
+    from embry0.agents.resolver import _chosen_for_job
     from embry0.services.account_waits import main_provider, provider_pause, wait_for
 
     if getattr(resolver, "pinned_pause", None) is None:
@@ -803,9 +804,10 @@ async def _wait_before_start(
         default_model = (model_policy or {}).get("default_model")
         main = main_provider(definitions, model_policy)
         checks.append((main, False, default_model if isinstance(default_model, str) and default_model else None))
-    for model in (override or {}).values() if isinstance(override, dict) else ():
+    for agent, model in (override or {}).items() if isinstance(override, dict) else ():
         if isinstance(model, str) and model.strip():
-            checks.append((model_provider(model.strip()), True, model.strip()))
+            # The pr-reviewer's per-job model is the executor's, not a person's: it moves.
+            checks.append((model_provider(model.strip()), _chosen_for_job(str(agent), override), model.strip()))
     for provider in providers if job_id else ():
         pinned, _ = await resolver.pinned_pause(job_id, provider)
         if pinned:
@@ -1011,14 +1013,29 @@ async def _execute_workflow_stream(
         account_waits=pipeline not in NOT_RESUMABLE_PIPELINES,
     )
 
+    # What the graph streamed, for the sandbox a relaunch park destroys when
+    # the caller keeps no sink of its own.
+    sink = state_sink if state_sink is not None else {}
     try:
         return await _stream_workflow(
-            self, workflow, input_value, issue_id, job_id, pipeline, state_sink, graph_config, llm_ids, llm_kinds
+            self, workflow, input_value, issue_id, job_id, pipeline, sink, graph_config, llm_ids, llm_kinds
         )
     except AccountWaitInterrupt as exc:
-        # A run inside the graph found its account spent with nothing to move
-        # to. LangGraph kept the last checkpoint; the node runs again then.
-        await _park_for_account(self, job_id, exc.wait.with_mode("resume"))
+        if pipeline not in NOT_RESUMABLE_PIPELINES:
+            # A run inside the graph found its account spent with nothing to
+            # move to. LangGraph kept the last checkpoint; the node runs again.
+            await _park_for_account(self, job_id, exc.wait.with_mode("resume"))
+        # qa, onboard and pr-review park at a point of their own, after their
+        # cleanup and before anything is posted (spec addendum). They start
+        # again from the beginning: no sandbox, volume or checkpoint is kept.
+        await _cleanup_sandbox(self, sink or None, job_id)
+        from embry0.orchestration.checkpoint import purge_thread
+
+        try:
+            await purge_thread(self._database_url, job_id)
+        except Exception:
+            logger.warning("account_wait_checkpoint_purge_failed", job_id=job_id, exc_info=True)
+        await _park_for_account(self, job_id, exc.wait.with_mode("relaunch"))
 
 
 async def _park_for_account(self: IssueExecutor, job_id: str, wait: Any) -> NoReturn:

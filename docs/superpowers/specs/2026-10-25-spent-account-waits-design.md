@@ -36,7 +36,7 @@ When a run ends with one of the two account codes:
 
 **Inside the job.** For pipelines whose graph resumes from a checkpoint (every one but qa, onboard and pr-review), a run whose provider is spent with no stand-in, found before it runs or after it failed, stops the graph inside that node. It raises `AccountWaitInterrupt`, a `BaseException` like the drain's `ShutdownInterrupt`, so no node's failure path turns it into a failed job. LangGraph keeps the last checkpoint, and the job is parked with `mode: "resume"`. The sandbox stays. A forced local run that found no slot parks the same way for five minutes.
 
-For qa, onboard and pr-review the pre-check parking and the move of section 1 apply. A run of theirs that finds a spent account mid-job with no stand-in still fails, as before.
+For qa, onboard and pr-review see the addendum below: they park too, and start again from the beginning.
 
 ## Going on
 
@@ -67,6 +67,36 @@ Before it pays for an analysis, the tick asks the same question about the analys
 - it creates no job and leaves the window where it is, so the next tick reads those logs again.
 
 An analysis job that parks mid-run anyway is cancelled by the tick, which records the same action. The new action counts neither as analysed nor as a verdict.
+
+## Addendum: qa, onboard and pr-review park too
+
+**Why they did not.** Their graphs are checkpointed like the others, but a resume cannot go on from inside them:
+
+- pr-review and onboard create their own sandbox in their first node, and qa's runs create one per app inside the fan-out. A resume would have to re-enroll each of them.
+- Their nodes wrap the agent run in `except Exception` so that their cleanup node always runs. An interrupt raised from inside the run would skip that cleanup.
+- qa's per-app runs are sub-graphs gathered with `asyncio.gather`. A `BaseException` from one of them escapes the gather, leaves its siblings running and skips its own `release_sandbox`. This was also true of the qa stage of issue-to-pr after the first change.
+
+**What they do now.** Each starts again from its beginning once the account is ready (`mode: "relaunch"`). Before a pipeline parks, it reaches a point where its own cleanup has run and nothing has been posted:
+
+| Pipeline | Where it parks | What has happened by then | Why starting again is safe |
+|---|---|---|---|
+| pr-review | the `cleanup` node, after it destroys the review sandbox | a sandbox, a checkout, the spent run | the review is posted only by `publish`, which a failed review skips; nothing reached the forge |
+| onboard | the `cleanup` node, after it destroys the analysis sandbox; `analyze` marks the run failed so the graph goes straight there | a sandbox, the spent run | the config store, or the setup proposal, is written only after `validate` and `smoke`; the proposal is not failed |
+| qa | `orchestrate_qa`, after every app's run has released its sandbox and before the results are stored | the per-app runs, each ended and cleaned up | `qa_report` posts the check and the comment after this node; per-app rows are upserted, so the run writes them again |
+
+The same point serves the qa stage of issue-to-pr, which parks with `mode: "resume"`: the stage's fan-out runs again from the checkpoint before it.
+
+**How the wait reaches that point.** An agent run in a pipeline that cannot park from inside a node does not raise. It records the wait on its output entry (`account_wait`), and this works in three cases:
+
+- a run that found its account spent with nowhere to move;
+- a run that would have started on an account already known to be spent, which is not started at all;
+- a forced local run that found no slot.
+
+The qa per-app runs never raise either, in any pipeline. Each app's result carries the run's `error_code` and `account_wait`, and a failed qa job takes an account code as its own `error_code` (#469). The pipeline raises `AccountWaitInterrupt` at its point above, with the latest `until` of the waits it collected.
+
+**Parking a relaunch.** The executor sees which pipeline raised. For qa, onboard and pr-review it destroys the job's sandbox and volumes, deletes the job's checkpoint thread (a relaunch starts a fresh run), and parks with `mode: "relaunch"`. The account-wait loop starts it from its launch record.
+
+**A per-job model is not a person's.** The pre-check no longer waits for the pr-reviewer's per-job model as if a person had chosen it. Like the run itself, it moves to the fallback order's model.
 
 ## Limits
 

@@ -17,6 +17,7 @@ from langgraph.config import get_stream_writer
 
 from embry0.execution import events
 from embry0.safety.error_codes import ErrorCode
+from embry0.services.account_waits import AccountWait, AccountWaitInterrupt
 from embry0.workflows.pipeline_graphs import pr_review_pipeline_graph
 from embry0.workflows.pr_review import publish as _publish
 from embry0.workflows.pr_review.agent_seed import AGENT_TYPE, PR_REVIEWER_AGENT_SEED
@@ -396,6 +397,10 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     if not last or last.get("is_error"):
         code = str(result.get("error_code") or (last or {}).get("error_code") or ErrorCode.PR_REVIEW_NO_VERDICT.value)
         error = str((last or {}).get("error_message") or "no output")
+        wait = (last or {}).get("account_wait")
+        if wait:
+            # Spent account waits: cleanup parks the job once the sandbox is gone.
+            rv["account_wait"] = wait
         return {**result, **_failed(rv, code, f"the pull request reviewer failed: {error}")}
     output = str(last.get("output") or "")
     verdict = parse_verdict(output)
@@ -551,4 +556,11 @@ async def cleanup_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
             }
         )
     writer(events.node_completed(node="cleanup"))
+    wait = AccountWait.from_record(rv.get("account_wait"))
+    if wait is not None:
+        # Spent account waits (spec 2026-10-25, addendum): the reviewer's
+        # account was spent with nothing ready to move to. Nothing was posted
+        # (publish skips a failed review) and the sandbox is gone, so the job
+        # parks and starts again from its beginning.
+        raise AccountWaitInterrupt(wait)
     return {"pr_review": rv, "sandbox_container_id": None}

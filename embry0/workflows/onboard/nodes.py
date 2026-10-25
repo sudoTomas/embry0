@@ -26,6 +26,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from embry0.execution import events
+from embry0.services.account_waits import AccountWait, AccountWaitInterrupt
 from embry0.workflows.pipeline_graphs import onboard_pipeline_graph
 
 logger = structlog.get_logger(__name__)
@@ -245,7 +246,16 @@ async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
 
     ob["round"] = round_n
     writer(events.node_completed(node="analyze", agent="onboarding", attempt=attempt, round=round_n))
-    return {"onboard": ob, "agent_outputs": out.get("agent_outputs", []) or []}
+    outputs = out.get("agent_outputs", []) or []
+    wait = (outputs[-1] if outputs else {}).get("account_wait")
+    if wait:
+        # Spent account waits (spec 2026-10-25, addendum): the agent's account
+        # was spent with nothing ready to move to. Straight to cleanup, which
+        # parks the job once the sandbox is gone; no round is spent on it.
+        failed = _fail(state, "the onboarding agent's LLM account is spent; the job waits for it")
+        failed["onboard"].update(round=round_n, account_wait=wait)
+        return {**failed, "agent_outputs": outputs}
+    return {"onboard": ob, "agent_outputs": outputs}
 
 
 async def validate_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
@@ -576,6 +586,12 @@ async def cleanup_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
         )
     ob["finished_at"] = time.time()
     writer(events.node_completed(node="cleanup"))
+    wait = AccountWait.from_record(ob.get("account_wait"))
+    if wait is not None:
+        # Spent account waits: nothing was written to the config store or the
+        # setup proposal, and the sandbox is gone. The job parks and starts
+        # again from its beginning.
+        raise AccountWaitInterrupt(wait)
     return {"onboard": ob}
 
 

@@ -10,7 +10,7 @@ import pytest
 from embry0.agents.fallback import Pause
 from embry0.execution.agent_runner import AgentOutput
 from embry0.orchestration.nodes.agent import run_agent_node
-from embry0.services.account_waits import LOCAL_BUSY, AccountWaitInterrupt
+from embry0.services.account_waits import LOCAL_BUSY, AccountWait, AccountWaitInterrupt
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
 
 _ROW = {
@@ -174,11 +174,24 @@ async def test_with_nowhere_to_move_the_job_waits_for_the_reset() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_pipeline_that_cannot_resume_keeps_the_failure() -> None:
+async def test_a_pipeline_that_parks_at_its_own_point_gets_the_wait_on_the_entry() -> None:
     updates, ran, _traces, health, _seen = await _run(order=[], results=[_spent("triage")], waits=False)
     assert ran == ["claude-sonnet-5"], "not run again on the same spent account"
-    assert updates["agent_outputs"][-1]["error_code"] == "ERR_PROVIDER_QUOTA_EXHAUSTED"
+    entry = updates["agent_outputs"][-1]
+    assert entry["error_code"] == "ERR_PROVIDER_QUOTA_EXHAUSTED"
+    wait = AccountWait.from_record(entry["account_wait"])
+    assert wait is not None and wait.until == RESET and wait.agent == "triage", "the pipeline's own point parks on it"
     assert health.reports, "still quarantined at once"
+
+
+@pytest.mark.asyncio
+async def test_such_a_pipeline_does_not_start_a_run_on_an_account_known_spent() -> None:
+    quarantined = _Resolver(paused={"anthropic": Pause("anthropic", "quota_exhausted", RESET)})
+    updates, ran, _traces, _health, _seen = await _run(order=[], resolver=quarantined, waits=False)
+    assert ran == [], "not started"
+    entry = updates["agent_outputs"][-1]
+    assert entry["is_error"] and entry["error_code"] == "ERR_PROVIDER_QUOTA_EXHAUSTED"
+    assert entry["provider"] == "anthropic" and entry["account_wait"]["until"] == RESET.isoformat()
 
 
 @pytest.mark.asyncio
@@ -237,3 +250,30 @@ async def test_a_forced_local_run_with_no_slot_waits_instead_of_failing(monkeypa
     with pytest.raises(AccountWaitInterrupt) as stopped:
         await _run(state={"agent_models_override": {"triage": "custom/qwen"}}, providers=("anthropic", "custom"))
     assert stopped.value.wait.reason == LOCAL_BUSY and stopped.value.wait.provider == "custom"
+
+
+@pytest.mark.asyncio
+async def test_a_forced_local_run_with_no_slot_leaves_its_wait_where_it_cannot_park(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import embry0.orchestration.nodes.agent as agent_mod
+
+    class _Slots:
+        async def acquire(self, **_kwargs: Any) -> None:
+            return None
+
+        async def release(self, _lease: str) -> None:
+            return None
+
+    async def _slots(_config: Any) -> tuple[_Slots, int]:
+        return _Slots(), 1
+
+    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
+    monkeypatch.setattr(agent_mod, "_local_slots", _slots)
+    monkeypatch.setattr(agent_mod, "_slot_wait_seconds", lambda _config: 0.0)
+    updates, ran, _traces, _health, _seen = await _run(
+        state={"agent_models_override": {"triage": "custom/qwen"}}, providers=("anthropic", "custom"), waits=False
+    )
+    entry = updates["agent_outputs"][-1]
+    assert ran == [] and entry["error_code"] == "ERR_LOCAL_MODEL_BUSY"
+    assert entry["account_wait"]["reason"] == LOCAL_BUSY

@@ -1093,6 +1093,11 @@ async def emit_result_node(state: SubTaskState, config: RunnableConfig) -> dict[
         turbo_remote_hits=list(partial.get("turbo_remote_hits", [])),
         turbo_remote_misses=list(partial.get("turbo_remote_misses", [])),
     )
+    # The agent's last run, when it ended on an error: its code, and the wait
+    # it left when its account was spent (spent account waits).
+    outputs = state.get("agent_outputs") or []
+    last = outputs[-1] if outputs and isinstance(outputs[-1], dict) else None
+    last_error = last if last and last.get("is_error") else None
     result = SubTaskResult(
         app_name=state["app_name"],
         status=status,
@@ -1104,6 +1109,8 @@ async def emit_result_node(state: SubTaskState, config: RunnableConfig) -> dict[
         # persisted via QAAppResultsRepository.upsert_with_boot_phase. None
         # when boot passed (legacy behavior preserved) or never ran.
         boot_phase=state.get("boot_phase"),
+        error_code=str(last_error["error_code"]) if last_error and last_error.get("error_code") else None,
+        account_wait=last_error.get("account_wait") if last_error else None,
     )
 
     # spec 3.7: the final per-app status rides the job stream too, so it is
