@@ -69,6 +69,12 @@ class SubTaskResult:
     # the panel) or when the sub-task ran on legacy code that didn't capture
     # boot_phase. Shape mirrors embry0.api.schemas.qa_dashboard.BootPhaseDetail.
     boot_phase: dict[str, Any] | None = None
+    # The error code the app's QA agent run ended with, when it ended on one
+    # (#469: the job takes an account code as its own), and the wait for a
+    # spent account it left (spent account waits): the orchestrator parks the
+    # job on it instead of reporting the app.
+    error_code: str | None = None
+    account_wait: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

@@ -525,7 +525,13 @@ def _slot_wait_seconds(config: Any) -> float:
 
 
 def _local_busy_updates(agent_type: str, model: str, wait_seconds: float, state: dict[str, Any]) -> dict[str, Any]:
-    """The failed run's state update when no local slot came free: nothing ran."""
+    """The failed run's state update when no local slot came free: nothing ran.
+
+    The entry carries the wait (spent account waits), for a pipeline that
+    parks at a point of its own rather than from inside the run.
+    """
+    from embry0.services.account_waits import local_busy_wait
+
     exc = AuthConfigError(
         ErrorCode.LOCAL_MODEL_BUSY,
         f"{model} runs on the local model server, and every one of its slots stayed taken for "
@@ -535,6 +541,19 @@ def _local_busy_updates(agent_type: str, model: str, wait_seconds: float, state:
     entry = updates["agent_outputs"][0]
     entry["error_code"] = exc.error_code.value
     entry["provider"] = "custom"
+    entry["account_wait"] = local_busy_wait(model, agent_type, datetime.now(UTC)).record()
+    return updates
+
+
+def _spent_before_run_updates(agent_type: str, wait: Any, state: dict[str, Any]) -> dict[str, Any]:
+    """The state update of a run not started because its account is spent: the wait rides on the entry."""
+    code = ErrorCode.PROVIDER_RATE_LIMITED if wait.reason == "rate_limited" else ErrorCode.PROVIDER_QUOTA_EXHAUSTED
+    exc = AuthConfigError(code, f"not started: {wait.describe()}")
+    updates = _auth_error_updates(agent_type, exc, state)
+    entry = updates["agent_outputs"][0]
+    entry["error_code"] = code.value
+    entry["provider"] = wait.provider
+    entry["account_wait"] = wait.record()
     return updates
 
 
@@ -662,8 +681,6 @@ async def _after_spent_account(
             moves = False
         if moves:
             return retry_state
-    if not account_waits:
-        return None
     watch = pinned
     if not watch and resolver is not None and getattr(resolver, "job_uses_registry", None) is not None and job_id:
         try:
@@ -679,8 +696,12 @@ async def _after_spent_account(
         chosen=pinned or chosen_model,
         watch=watch,
     )
-    if wait is not None:
+    if wait is not None and account_waits:
         raise AccountWaitInterrupt(wait)
+    if wait is not None:
+        # A pipeline that parks at a point of its own (qa, onboard, pr-review,
+        # every qa per-app run) reads the wait off the entry.
+        output_entry["account_wait"] = wait.record()
     return None
 
 
@@ -812,6 +833,8 @@ async def run_agent_node(
     order = runnable_fallback_models(fallback_order(model_policy), (model_policy or {}).get("disabled_models") or ())
     chosen_model = _chosen_for_job(agent_type, job_agent_models)
 
+    spent_wait: Any = None
+
     async def _resolve_ready(local_first_model: str | None) -> Any:
         """Resolve, then make sure the run does not start on a spent account.
 
@@ -820,7 +843,7 @@ async def run_agent_node(
         the next ready model of the order, like the plan would have. With
         nowhere to move, a spent account with a known end parks the job.
         """
-        nonlocal model_fallbacks
+        nonlocal model_fallbacks, spent_wait
         resolved = _resolve(local_first_model)
         for _ in range(_MAX_ACCOUNT_MOVES):
             provider = resolved.provider or "anthropic"
@@ -848,6 +871,9 @@ async def run_agent_node(
             )
             if wait is not None and account_waits:
                 raise AccountWaitInterrupt(wait)
+            # A pipeline that parks at a point of its own: the run is not
+            # started, and its entry carries the wait to that point.
+            spent_wait = wait
             return resolved
         return resolved
 
@@ -855,6 +881,8 @@ async def run_agent_node(
         invocation = await _resolve_ready(local_first)
     except AuthConfigError as exc:
         return _stamp_loaded_preferences(_auth_error_updates(agent_type, exc, state), state, loaded_prefs)
+    if spent_wait is not None:
+        return _stamp_loaded_preferences(_spent_before_run_updates(agent_type, spent_wait, state), state, loaded_prefs)
 
     # Local models: a run on the operator's own server holds one of its slots
     # for the length of the run. A local-first run takes one only if it is
@@ -881,6 +909,10 @@ async def run_agent_node(
                     except AuthConfigError as exc:
                         return _stamp_loaded_preferences(
                             _auth_error_updates(agent_type, exc, state), state, loaded_prefs
+                        )
+                    if spent_wait is not None:
+                        return _stamp_loaded_preferences(
+                            _spent_before_run_updates(agent_type, spent_wait, state), state, loaded_prefs
                         )
                     if on_event is not None:
                         on_event(
