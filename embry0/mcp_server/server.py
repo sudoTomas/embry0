@@ -756,10 +756,14 @@ async def case_get(case_id: str) -> dict[str, Any]:
 async def proposal_list(owner: str | None = None, kind: str | None = None, since: str | None = None) -> dict[str, Any]:
     """The proposals still asked: work a repository's owners could start, newest first.
 
-    Each is {id, kind, repo, owners, title, summary, details, action, url, created_at}.
+    Each is {id, kind, repo, area, owners, title, summary, details, action, url, created_at}.
     kind is "case" (a problem the watcher keeps seeing in production), "issue" (an issue
-    open and not started) or "finding" (one claim the context auditor thinks is wrong in
-    a file that steers coding agents: ask the owner whether it is what they want).
+    open and not started), "finding" (one claim the context auditor thinks is wrong in
+    a file that steers coding agents: ask the owner whether it is what they want), or a
+    lead embry0 found by itself, with severity and effort: "ticket" (a backlog ticket
+    nobody sent to embry0 that reads as ready), "ci" (a check failing on the default
+    branch), "alert" (a dependency or code-scanning alert), "flaky" (a check that failed
+    and then passed on the same commit) or "review" (review threads nobody answered).
     owner: a GitHub login, only its repositories' proposals. since: an ISO time, only
     proposals asked after it. Message an owner with the summary and the id; answer with
     proposal_accept, proposal_decline or proposal_snooze, naming the id."""
@@ -768,7 +772,8 @@ async def proposal_list(owner: str | None = None, kind: str | None = None, since
 
 @_tool
 async def proposal_get(proposal_id: str) -> dict[str, Any]:
-    """One proposal still asked, by id ("case:...", "issue:..." or "finding:..."): read it again
+    """One proposal still asked, by id ("case:...", "issue:...", "finding:...", or a lead's
+    "ticket:...", "ci:...", "alert:...", "flaky:...", "review:..."): read it again
     before acting on a reply, since a chat may not hold the message that asked."""
     return await _get_client().proposal_get(proposal_id)
 
@@ -776,7 +781,9 @@ async def proposal_get(proposal_id: str) -> dict[str, Any]:
 @_tool
 async def proposal_accept(proposal_id: str, by: str, confirm: bool = False) -> dict[str, Any]:
     """Start a proposal an owner said yes to: a case runs its fix pipeline, an issue goes to
-    triage, a finding gets a fix job that opens a pull request for that one claim. by: the
+    triage, a finding gets a fix job that opens a pull request for that one claim, a ticket
+    runs through its tracker's own path, a ci, alert or flaky lead becomes a fix job, and a
+    review lead a follow-up job on the pull request's branch. by: the
     GitHub login of the owner who said yes. Returns the job_id it started. Requires
     confirm=true, given only for the owner's own yes."""
     if not confirm:

@@ -712,6 +712,26 @@ class Embry0Config(BaseSettings):
     context_audit_job_budget_usd: float = 2.0
     context_audit_max_jobs_per_tick: int = Field(default=3, ge=0)
 
+    # Leads (spec 2026-10-25): work embry0 finds by itself on the repositories
+    # someone answers for (owners set, or a watched stack) and offers as owner
+    # proposals. LEADS_ENABLED=false stops the loop; the proposals already
+    # stored stay until answered. LEADS_FINDERS names the finders that run:
+    # ticket (the backlog intake), ci, alert, flaky, review. Each adds at most
+    # LEADS_MAX_NEW_PER_REPO_PER_DAY new leads per repository a day, the worst
+    # first. The backlog intake runs every LEADS_BACKLOG_INTERVAL_HOURS, the
+    # rest every LEADS_INTERVAL_HOURS.
+    leads_enabled: bool = True
+    leads_finders: str = "ticket,ci,alert,flaky,review"
+    leads_interval_hours: float = Field(default=6.0, gt=0)
+    leads_backlog_interval_hours: float = Field(default=24.0, gt=0)
+    leads_max_new_per_repo_per_day: int = Field(default=5, ge=0)
+    # The lowest readiness (0 to 100) a backlog ticket must score to be offered.
+    leads_ticket_min_score: int = Field(default=40, ge=0, le=100)
+    # Days a review thread waits for an answer before it is a lead.
+    leads_review_stale_days: int = Field(default=3, ge=0)
+    # Commits of the default branch the flaky-check finder reads.
+    leads_flaky_commits: int = Field(default=10, ge=1, le=50)
+
     @field_validator(
         "audit_log_path",
         "job_log_retention_days",

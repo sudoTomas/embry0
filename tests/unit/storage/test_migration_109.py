@@ -15,12 +15,6 @@ def test_migration_109_present_and_gapless() -> None:
     assert "area" in next(d for v, d, _ in MIGRATIONS if v == 109)
 
 
-def test_migration_109_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_108.py)."""
-    assert MIGRATIONS[-1][0] == 109, "migration 109 must add jobs.area"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_a_job_has_no_area_until_one_is_recorded(db_with_migrations: DatabasePool) -> None:
