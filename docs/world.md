@@ -7,7 +7,7 @@ embry0 opens on your guild: the agents are your characters, the work embry0 foun
 - **Quests back** (top): the quests that came back and wait for your judgement, failures and open pull requests first. A quest stays here until you rate it, merge it, send it back or reject it. It covers the quests a person sent and any that brought back a pull request; the watcher's routine log reads are not here.
 - **Guild hall**: every character with its level, the gear it earned, its best skills, what it is doing now, and its record (quests, how many it won, how you rated it). A party that has gone quiet for 20 minutes is flagged, and a character idle for two weeks too. Click a character for its panel.
 - **Quest board**: what embry0 found (watcher problems, open issues, outdated instructions, and later backlog tickets and the finders' leads), each with a level from its severity and reach, coloured against your strongest character's level. Filter by region, area, kind and level. Click one to send a party.
-- **Map**: the regions (repositories) around the guild hall, their towns (areas), the quests standing in them, and each party at its quest.
+- **Map**: the regions (repositories) around the guild hall, their towns (areas), the quests standing in them as creatures, and each party walking to its quest.
 - **The chat box** (bottom left): what changed since you opened the page: a party setting out, needing your answer, coming back, falling.
 
 ## Sending a party
@@ -33,4 +33,6 @@ Only an admin session judges, sends and recalls; others see everything read-only
 
 ## Art
 
-`frontend/public/world/manifest.json` names the world's art (creatures, terrain, buildings, props, effects; the schema is in the spec). Anything it does not name is drawn as a placeholder.
+The hall's inside sits above the cards: every character at its station (empty while it is out, a `?` while it waits for you), the quest board, and the loot chest, which opens once a pull request came back and turns gold once one merged; a click on any of them does what the card, the board or the inbox does. The map is a tile map: the guild hall in the middle, a road to each region's square, the quests as creatures standing in their region (a click sends a party), each party walking out to its quest and back. Experience, level-ups and hits show as effects over the characters; reduced motion stops them.
+
+`frontend/public/world/manifest.json` names the art and `frontend/public/world/README.md` is its schema. Anything the manifest does not name is drawn as a placeholder.

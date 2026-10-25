@@ -6,12 +6,11 @@ import json
 import struct
 from pathlib import Path
 
+from embry0.services.world import LEAD_KINDS
+
 REPO = Path(__file__).resolve().parents[3]
 WORLD = REPO / "frontend" / "public" / "world"
 MANIFEST = json.loads((WORLD / "manifest.json").read_text())
-
-#: The lead kinds of the world spec's table, each of which needs a creature.
-LEAD_KINDS = {"case", "ci_failure", "security_alert", "flaky_test", "review_comment", "ticket", "issue", "finding"}
 
 
 def _png_size(path: Path) -> tuple[int, int]:
@@ -58,8 +57,13 @@ def test_every_frame_lies_inside_its_sheet_and_every_anchor_inside_its_frame() -
 
 def test_every_lead_kind_has_a_creature_and_one_only() -> None:
     kinds = [kind for creature in MANIFEST["creatures"].values() for kind in creature["leadKinds"]]
-    assert set(kinds) >= LEAD_KINDS and len(kinds) == len(set(kinds))
+    assert set(kinds) >= set(LEAD_KINDS) and len(kinds) == len(set(kinds))
     assert {c["interaction"] for c in MANIFEST["creatures"].values()} <= {"attack", "talk", "start_quest", "repair"}
+
+
+def test_the_backend_draws_each_kind_as_the_creature_the_art_lists_it_under() -> None:
+    for kind, drawn in LEAD_KINDS.items():
+        assert kind in MANIFEST["creatures"][drawn.creature]["leadKinds"], kind
 
 
 def test_every_asset_has_a_recorded_source() -> None:

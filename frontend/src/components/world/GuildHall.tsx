@@ -1,10 +1,12 @@
-import type { Party, WorldCharacter } from "@/api/world";
+import type { Loot, Party, WorldCharacter } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { TIER_COLOR, TIER_NAME } from "@/lib/tiers";
 import { STATE_POSE, STATE_WORDS, bestSkills, formatPercent, placeOf } from "@/lib/world";
 import { cn } from "@/lib/utils";
 import type { Tier } from "@/api/progression";
+import type { ArtManifest } from "./art/manifest";
+import { HallScene } from "./HallScene";
 
 interface CharacterCardProps {
   character: WorldCharacter;
@@ -86,18 +88,27 @@ export function CharacterCard({ character, party, skillName, xpDrop, selected, o
 }
 
 interface GuildHallProps {
+  art: ArtManifest;
   characters: readonly WorldCharacter[];
   parties: readonly Party[];
+  loot: readonly Loot[];
   skillName: (stat: string) => string;
   xpDrops: Map<string, number>;
+  levelUps: ReadonlySet<string>;
   selected: string | null;
   onSelect: (agentType: string) => void;
+  onBoard: () => void;
+  onLoot: (jobId: string) => void;
 }
 
 const ORDER: Record<string, number> = { waiting: 0, working: 1, travelling: 2, returning: 3, defeated: 4, following: 5, recalled: 6, idle: 7 };
 
-/** The hall: every character, the ones that need you first, then the ones out, then the idle by level. */
-export function GuildHall({ characters, parties, skillName, xpDrops, selected, onSelect }: GuildHallProps) {
+/**
+ * The hall: its inside drawn with every character at its station, then every
+ * character's card, the ones that need you first, then the ones out, then the
+ * idle by level. With no art the scene stays out and the cards are the hall.
+ */
+export function GuildHall({ art, characters, parties, loot, skillName, xpDrops, levelUps, selected, onSelect, onBoard, onLoot }: GuildHallProps) {
   const byJob = new Map(parties.map((p) => [p.job_id, p]));
   const sorted = [...characters].sort(
     (a, b) => (ORDER[a.state] ?? 9) - (ORDER[b.state] ?? 9) || b.level - a.level || a.agent_type.localeCompare(b.agent_type),
@@ -113,6 +124,18 @@ export function GuildHall({ characters, parties, skillName, xpDrops, selected, o
           {out} out · {characters.length - out} in the hall
         </span>
       </div>
+      {Object.keys(art.tilesets).length > 0 && (
+        <HallScene
+          art={art}
+          characters={characters}
+          loot={loot}
+          xpDrops={xpDrops}
+          levelUps={levelUps}
+          onSelect={onSelect}
+          onBoard={onBoard}
+          onLoot={onLoot}
+        />
+      )}
       <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {sorted.map((c) => (
           <li key={c.agent_type}>

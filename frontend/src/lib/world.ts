@@ -125,6 +125,18 @@ export function xpDrops(before: readonly WorldCharacter[] | null, after: readonl
   return drops;
 }
 
+/** The characters whose level rose between two reads, each with the level it reached. */
+export function levelUps(before: readonly WorldCharacter[] | null, after: readonly WorldCharacter[]): Map<string, number> {
+  const ups = new Map<string, number>();
+  if (before === null) return ups;
+  const previous = new Map(before.map((c) => [c.agent_type, c.level]));
+  for (const c of after) {
+    const was = previous.get(c.agent_type);
+    if (was !== undefined && c.level > was) ups.set(c.agent_type, c.level);
+  }
+  return ups;
+}
+
 export interface LeadFilters {
   repo: string;
   area: string;
@@ -152,10 +164,10 @@ export const KIND_WORDS: Record<string, string> = {
   issue: "Open issues",
   finding: "Outdated instructions",
   ticket: "Backlog tickets",
-  ci_failure: "Broken builds",
-  security_alert: "Security alerts",
-  flaky_test: "Flaky tests",
-  review_comment: "Unanswered reviews",
+  ci: "Broken builds",
+  alert: "Security alerts",
+  flaky: "Flaky tests",
+  review: "Unanswered reviews",
 };
 
 /** The level's colour band, as a monster's level reads against yours: green below, yellow near, red above. */

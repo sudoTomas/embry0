@@ -12,10 +12,11 @@ import { SendPartyDialog } from "@/components/world/SendPartyDialog";
 import { WorldChat } from "@/components/world/WorldChat";
 import { WorldMap } from "@/components/world/WorldMap";
 import { WriteQuestDialog } from "@/components/world/WriteQuestDialog";
+import { useArt } from "@/components/world/art/manifest";
 import "@/components/world/world.css";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useWorld } from "@/hooks/useWorld";
-import { narrate, xpDrops, type NarrationLine } from "@/lib/world";
+import { levelUps, narrate, xpDrops, type NarrationLine } from "@/lib/world";
 import { useAuthStore, useIsAdmin } from "@/stores/authStore";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +32,7 @@ const XP_DROP_MS = 2_600;
  */
 export function WorldPage() {
   const world = useWorld();
+  const art = useArt();
   const lookup = useIdentityLookup();
   const isAdmin = useIsAdmin();
   const by = useAuthStore((s) => s.user?.email) ?? "dashboard";
@@ -38,20 +40,27 @@ export function WorldPage() {
   const previous = useRef<World | null>(null);
   const [lines, setLines] = useState<NarrationLine[]>([]);
   const [drops, setDrops] = useState<Map<string, number>>(new Map());
+  const [ups, setUps] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
     if (!world.data) return;
     const before = previous.current;
     const said = narrate(before?.parties ?? null, world.data.parties, (agent) => lookup(agent).displayName);
+    const rose = levelUps(before?.characters ?? null, world.data.characters);
+    for (const [agent, level] of rose)
+      said.push({ key: `${agent}:level:${level}`, text: `Congratulations, ${lookup(agent).displayName} reached level ${level}!`, tone: "win" });
     if (said.length) setLines((l) => [...l, ...said].slice(-30));
     const gained = xpDrops(before?.characters ?? null, world.data.characters);
-    if (gained.size) {
+    previous.current = world.data;
+    if (gained.size || rose.size) {
       setDrops(gained);
-      const timer = window.setTimeout(() => setDrops(new Map()), XP_DROP_MS);
-      previous.current = world.data;
+      setUps(new Set(rose.keys()));
+      const timer = window.setTimeout(() => {
+        setDrops(new Map());
+        setUps(new Set());
+      }, XP_DROP_MS);
       return () => window.clearTimeout(timer);
     }
-    previous.current = world.data;
   }, [world.data, lookup]);
 
   const set = (key: string, value: string | null) => {
@@ -105,6 +114,7 @@ export function WorldPage() {
 
       {view === "map" ? (
         <WorldMap
+          art={art}
           regions={data.regions}
           quests={data.quests}
           parties={data.parties}
@@ -115,12 +125,17 @@ export function WorldPage() {
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_380px]">
           <GuildHall
+            art={art}
             characters={data.characters}
             parties={data.parties}
+            loot={data.loot}
             skillName={skillName}
             xpDrops={drops}
+            levelUps={ups}
             selected={selectedCharacter?.agent_type ?? null}
             onSelect={(agent) => set("character", agent)}
+            onBoard={() => document.getElementById("quest-board-title")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            onLoot={(jobId) => set("quest", jobId)}
           />
           <div className="lg:sticky lg:top-3 lg:max-h-[calc(100vh-6rem)]">
             <QuestBoard quests={data.quests} partyLevel={strongest} onPick={(lead) => set("lead", lead.id)} />

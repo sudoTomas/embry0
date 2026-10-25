@@ -1,12 +1,18 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Lead, Party, Region, WorldCharacter } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { STATE_POSE, placeOf } from "@/lib/world";
-import { layoutRegions, mapBounds, spotIn } from "@/lib/worldMap";
+import { buildTileMap, hash, leadSpot, TERRAINS, type TileMap } from "@/lib/worldTiles";
+import { ArtSprite } from "./art/ArtSprite";
+import { ArtObjectAt, EffectAt } from "./art/Pieces";
+import { anchored } from "./art/style";
+import { TerrainCanvas } from "./art/TerrainCanvas";
+import { creatureFor, type ArtManifest } from "./art/manifest";
 import { CreatureIcon } from "./CreatureIcon";
 
 interface WorldMapProps {
+  art: ArtManifest;
   regions: readonly Region[];
   quests: readonly Lead[];
   parties: readonly Party[];
@@ -15,135 +21,182 @@ interface WorldMapProps {
   onPickCharacter: (agentType: string) => void;
 }
 
-/**
- * The overworld, phase 1: regions around the guild hall, towns for areas,
- * the board's creatures where they stand, and every party at its quest (or
- * walking there: a party's place moves, and the move is animated). Drawn as
- * SVG and HTML over it; the art manifest's tiles replace the flat ground
- * when they land.
- */
-export function WorldMap({ regions, quests, parties, characters, onPickLead, onPickCharacter }: WorldMapProps) {
-  const lookup = useIdentityLookup();
-  const placed = useMemo(() => layoutRegions(regions), [regions]);
-  const bounds = useMemo(() => mapBounds(placed), [placed]);
-  const boxOf = useMemo(() => new Map(placed.map((p) => [p.region.repo, p.box])), [placed]);
-  const pct = (x: number, y: number) => ({ left: `${((x - bounds.x) / bounds.w) * 100}%`, top: `${((y - bounds.y) / bounds.h) * 100}%` });
-  const hall = { x: 0, y: 0 };
+/** How long a party walks between the hall and its quest. */
+const WALK_MS = 4_000;
 
-  const leadSpot = (lead: { id: string; repo: string }) => {
-    const box = boxOf.get(lead.repo);
-    return box ? spotIn(box, lead.id) : hall;
+/** Where a party stands: at its quest while out, at the hall's door once back. */
+function partyTarget(map: TileMap, party: Party): { x: number; y: number } {
+  if (party.state === "returning" || party.state === "recalled") return { x: map.hall.x + 20, y: map.hall.y + 40 };
+  if (!party.repo || !map.regions.some((r) => r.repo === party.repo)) return { x: map.hall.x + 40, y: map.hall.y + 48 };
+  const spot = party.lead_id ? leadSpot(map, party.repo, party.lead_id) : map.regions.find((r) => r.repo === party.repo)!.centre;
+  return { x: spot.x + 20, y: spot.y };
+}
+
+/** One party on the map: it sets out from the hall's door and walks to its quest, and back. */
+function PartyOnMap({ map, art, party, onPick }: { map: TileMap; art: ArtManifest; party: Party; onPick: () => void }) {
+  const identity = useIdentityLookup()(party.leader);
+  const target = partyTarget(map, party);
+  const [at, setAt] = useState({ x: map.hall.x, y: map.hall.y + 40 });
+  const [walking, setWalking] = useState(true);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setAt(target));
+    setWalking(true);
+    const done = window.setTimeout(() => setWalking(false), WALK_MS);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(done);
+    };
+    // The party walks whenever its destination changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target.x, target.y]);
+  const moving = walking && (party.state === "travelling" || party.state === "returning" || party.state === "working" || party.state === "waiting");
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      title={`${identity.displayName}: ${party.title}`}
+      data-testid="map-party"
+      data-state={party.state}
+      style={{
+        ...anchored(at.x, at.y, { x: 16, y: 32 }),
+        width: 32,
+        height: 32,
+        transition: `left ${WALK_MS}ms linear, top ${WALK_MS}ms linear`,
+      }}
+    >
+      {party.state === "waiting" && <span className="world-bubble absolute -top-4 left-1/2 -translate-x-1/2">?</span>}
+      <AgentAvatar identity={identity} size={32} state={STATE_POSE[party.state]} walking={moving} />
+      {party.state === "defeated" && <EffectAt art={art} name="hitsplat" x={16} y={20} label="0" className="world-hitsplat" />}
+      {party.state === "returning" && party.pr_url && <EffectAt art={art} name="loot_sparkle" x={16} y={36} />}
+    </button>
+  );
+}
+
+/**
+ * The overworld (spec 2026-10-25, Places): a tile map of grass, dirt paths
+ * from the guild hall to every region's cobbled square, towns for areas,
+ * forest, rock and ponds where no region is; each quest's creature in its
+ * region, and every party at its quest or walking there. Drag to look around;
+ * everything on it is a button.
+ */
+export function WorldMap({ art, regions, quests, parties, characters, onPickLead, onPickCharacter }: WorldMapProps) {
+  const lookup = useIdentityLookup();
+  const map = useMemo(() => buildTileMap(regions, art.tileSize), [regions, art.tileSize]);
+  const layers = useMemo(() => TERRAINS.map((t) => ({ terrain: t, mask: map.masks[t] })), [map]);
+  const [zoom, setZoom] = useState(1);
+  const scroller = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const width = map.cols * map.tile;
+  const height = map.rows * map.tile;
+
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollLeft = map.hall.x * zoom - el.clientWidth / 2;
+    el.scrollTop = map.hall.y * zoom - el.clientHeight / 2;
+  }, [map, zoom]);
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    const el = scroller.current;
+    if (el) drag.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
   };
-  const partySpot = (party: Party) => {
-    if (party.state === "returning" || party.state === "recalled") return hall;
-    const box = party.repo ? boxOf.get(party.repo) : undefined;
-    if (!box) return hall;
-    return party.lead_id ? spotIn(box, party.lead_id) : spotIn(box, party.job_id, 0.35);
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const el = scroller.current;
+    if (!drag.current || !el) return;
+    el.scrollLeft = drag.current.left - (e.clientX - drag.current.x);
+    el.scrollTop = drag.current.top - (e.clientY - drag.current.y);
   };
-  const shown = quests.filter((q) => boxOf.has(q.repo)).slice(0, 120);
-  const out = parties.filter((p) => p.state !== "returning" && p.state !== "recalled" && p.state !== "defeated");
-  const home = characters.filter((c) => c.state === "idle").slice(0, 12);
+  const shownQuests = quests.filter((q) => map.regions.some((r) => r.repo === q.repo)).slice(0, 150);
+  const out = parties.filter((p) => p.state !== "recalled");
+  const fought = new Set(out.filter((p) => p.state === "working" && p.lead_id).map((p) => p.lead_id));
+  const home = characters.filter((c) => c.state === "idle").slice(0, 10);
 
   return (
-    <section className="world-panel overflow-hidden p-2" data-testid="world-map" aria-label="The world map">
-      <div className="relative w-full" style={{ aspectRatio: `${bounds.w} / ${bounds.h}`, minHeight: 320, background: "#3f6b2f" }}>
-        <svg className="absolute inset-0 h-full w-full" viewBox={`${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}`} preserveAspectRatio="none" aria-hidden="true">
-          <defs>
-            <pattern id="grass" width="16" height="16" patternUnits="userSpaceOnUse">
-              <rect width="16" height="16" fill="#46782f" />
-              <rect x="3" y="5" width="1" height="2" fill="#5a9440" />
-              <rect x="11" y="10" width="1" height="2" fill="#5a9440" />
-            </pattern>
-          </defs>
-          <rect x={bounds.x} y={bounds.y} width={bounds.w} height={bounds.h} fill="url(#grass)" />
-          {placed.map((p) => (
-            <line
-              key={`road-${p.region.repo}`}
-              x1={0}
-              y1={0}
-              x2={p.box.x + p.box.w / 2}
-              y2={p.box.y + p.box.h / 2}
-              stroke="#a08355"
-              strokeWidth={6}
-              strokeDasharray="10 4"
-              opacity={0.75}
-            />
-          ))}
-          {placed.map((p) => (
-            <g key={p.region.repo}>
-              <rect x={p.box.x} y={p.box.y} width={p.box.w} height={p.box.h} fill={p.region.watched ? "#557a3a" : "#4d6f35"} stroke="#2b3b1d" strokeWidth={3} rx={6} />
-              {p.towns.map((t) => (
-                <g key={t.name}>
-                  <rect x={t.x - 9} y={t.y - 7} width={18} height={14} fill="#8b6b45" stroke="#3a2a14" strokeWidth={2} />
-                  <polygon points={`${t.x - 11},${t.y - 7} ${t.x},${t.y - 16} ${t.x + 11},${t.y - 7}`} fill="#a33d2b" stroke="#3a2a14" strokeWidth={2} />
-                </g>
-              ))}
-            </g>
-          ))}
-          <rect x={-34} y={-26} width={68} height={52} fill="#7a6248" stroke="#2b1d0e" strokeWidth={3} />
-          <polygon points="-42,-26 0,-56 42,-26" fill="#6b2b20" stroke="#2b1d0e" strokeWidth={3} />
-          <rect x={-8} y={4} width={16} height={22} fill="#3a2614" />
-        </svg>
-
-        {placed.map((p) => (
-          <span key={`name-${p.region.repo}`} className="world-title pointer-events-none absolute -translate-x-1/2 text-[11px]" style={pct(p.box.x + p.box.w / 2, p.box.y + 4)}>
-            {placeOf(p.region.repo)}
-          </span>
-        ))}
-        {placed.flatMap((p) =>
-          p.towns.map((t) => (
-            <span key={`town-${p.region.repo}-${t.name}`} className="world-text pointer-events-none absolute -translate-x-1/2 text-[9px]" style={pct(t.x, t.y + 10)}>
-              {t.name}
-            </span>
-          )),
-        )}
-        <span className="world-title pointer-events-none absolute -translate-x-1/2 text-xs" style={pct(0, 30)}>
-          Guild hall
+    <section className="world-panel space-y-2 p-2" data-testid="world-map" aria-label="The world map">
+      <div className="flex items-center justify-between gap-2 px-1">
+        <span className="world-muted text-xs">
+          {map.regions.length} regions · drag to look around · click a creature to send a party
         </span>
-
-        {shown.map((q) => {
-          const spot = leadSpot(q);
-          return (
-            <button
-              key={q.id}
-              type="button"
-              className="absolute -translate-x-1/2 -translate-y-1/2"
-              style={pct(spot.x, spot.y)}
-              title={`${q.title} (level ${q.level})`}
-              onClick={() => onPickLead(q)}
-              data-testid="map-lead"
-            >
-              <CreatureIcon creature={q.creature} size={24} label={q.title} />
-            </button>
-          );
-        })}
-
-        {out.map((p) => {
-          const spot = partySpot(p);
-          const identity = lookup(p.leader);
-          return (
-            <button
-              key={p.job_id}
-              type="button"
-              className="absolute -translate-x-1/2 -translate-y-full transition-[left,top] duration-[2500ms] ease-linear"
-              style={pct(spot.x + 12, spot.y)}
-              title={`${identity.displayName}: ${p.title}`}
-              onClick={() => onPickCharacter(p.leader)}
-              data-testid="map-party"
-              data-state={p.state}
-            >
-              {p.state === "waiting" && <span className="world-bubble absolute -top-4 left-1/2 -translate-x-1/2">?</span>}
-              <AgentAvatar identity={identity} size={32} state={STATE_POSE[p.state]} />
-            </button>
-          );
-        })}
-
-        <div className="absolute flex -translate-x-1/2 gap-0.5" style={pct(0, -4)}>
-          {home.map((c) => (
-            <button key={c.agent_type} type="button" title={lookup(c.agent_type).displayName} onClick={() => onPickCharacter(c.agent_type)}>
-              <AgentAvatar identity={lookup(c.agent_type)} size={16} state="idle" />
+        <span className="flex gap-1">
+          {[1, 2].map((z) => (
+            <button key={z} type="button" className="world-button" aria-pressed={zoom === z} onClick={() => setZoom(z)}>
+              {z}×
             </button>
           ))}
+        </span>
+      </div>
+      <div
+        ref={scroller}
+        className="relative h-[70vh] min-h-[320px] cursor-grab overflow-auto active:cursor-grabbing"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={() => (drag.current = null)}
+        onPointerLeave={() => (drag.current = null)}
+      >
+        <div style={{ width: width * zoom, height: height * zoom, position: "relative" }}>
+          <div style={{ position: "absolute", left: 0, top: 0, width, height, transform: `scale(${zoom})`, transformOrigin: "0 0" }}>
+            <TerrainCanvas art={art} cols={map.cols} rows={map.rows} base="grass" layers={layers} />
+            {map.objects.map((o, i) => (
+              <ArtObjectAt key={`${o.name}-${i}`} art={art} name={o.name} x={o.x} y={o.y} />
+            ))}
+            {map.regions.map((r) => (
+              <span
+                key={`label-${r.repo}`}
+                className="pointer-events-none absolute -translate-x-1/2 whitespace-nowrap rounded-sm px-1 text-[10px]"
+                style={{ left: r.label.x, top: r.label.y - 14, zIndex: 50_000, color: "#ffcf3f", background: "rgba(0,0,0,0.55)", fontFamily: "var(--font-pixel)" }}
+              >
+                {placeOf(r.repo)}
+              </span>
+            ))}
+            {map.regions.flatMap((r) =>
+              r.towns.map((t) => (
+                <span
+                  key={`town-${r.repo}-${t.name}`}
+                  className="pointer-events-none absolute -translate-x-1/2 whitespace-nowrap text-[8px]"
+                  style={{ left: t.x, top: t.y + 2, zIndex: 50_000, color: "#fff", textShadow: "1px 1px 0 #000", fontFamily: "var(--font-pixel)" }}
+                >
+                  {t.name}
+                </span>
+              )),
+            )}
+            {shownQuests.map((q) => {
+              const spot = leadSpot(map, q.repo, q.id);
+              const found = creatureFor(art, q.kind);
+              const atlas = found ? art.atlases[found[1].atlas] : undefined;
+              const label = { type: "button" as const, title: `${q.title} (level ${q.level})`, "aria-label": `${q.verb}: ${q.title}`, "data-testid": "map-lead" };
+              if (!found || !atlas)
+                return (
+                  <button key={q.id} {...label} onClick={() => onPickLead(q)} style={{ ...anchored(spot.x, spot.y, { x: 12, y: 24 }), width: 24, height: 24 }}>
+                    <CreatureIcon kind={q.kind} creature={q.creature} size={24} />
+                  </button>
+                );
+              const [name, c] = found;
+              return (
+                <button key={q.id} {...label} onClick={() => onPickLead(q)} style={{ ...anchored(spot.x, spot.y, c.anchor), width: c.frames[0][2], height: c.frames[0][3] }}>
+                  <ArtSprite image={atlas.image} rect={c.frames[0]} frames={c.frames} animation={`creature-${name}`} fps={c.fps} loop={c.loop} />
+                  {fought.has(q.id) && (
+                    <EffectAt art={art} name="hitsplat" x={c.anchor.x} y={c.anchor.y - 8} label={String(1 + (hash(q.id) % 9))} className="world-hitsplat" />
+                  )}
+                </button>
+              );
+            })}
+            {out.map((p) => (
+              <PartyOnMap key={p.job_id} map={map} art={art} party={p} onPick={() => onPickCharacter(p.leader)} />
+            ))}
+            {home.map((c, i) => (
+              <button
+                key={c.agent_type}
+                type="button"
+                title={lookup(c.agent_type).displayName}
+                aria-label={lookup(c.agent_type).displayName}
+                onClick={() => onPickCharacter(c.agent_type)}
+                style={{ ...anchored(map.hall.x - 80 + (i % 5) * 34, map.hall.y + 44 + Math.floor(i / 5) * 30, { x: 16, y: 32 }), width: 32, height: 32 }}
+              >
+                <AgentAvatar identity={lookup(c.agent_type)} size={32} state="idle" />
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </section>

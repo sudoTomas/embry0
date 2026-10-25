@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { InboxQuest, Lead, Party, Region, WorldCharacter } from "@/api/world";
-import { describeEvent, filterLeads, formatCost, formatSeconds, inboxOrder, levelBand, narrate, NO_FILTERS, placeOf, xpDrops } from "../world";
+import type { InboxQuest, Lead, Party, WorldCharacter } from "@/api/world";
+import { describeEvent, filterLeads, formatCost, formatSeconds, inboxOrder, levelBand, levelUps, narrate, NO_FILTERS, placeOf, xpDrops } from "../world";
 import type { LogEvent } from "@/lib/types";
-import { hash, layoutRegions, mapBounds, spiralCell, spotIn } from "../worldMap";
 
 const party = (over: Partial<Party>): Party => ({
   job_id: "job-1",
@@ -49,6 +48,12 @@ describe("experience drops", () => {
     expect(xpDrops([c(10)], [c(250)]).get("developer")).toBe(240);
     expect(xpDrops([c(10)], [c(10)]).size).toBe(0);
   });
+  it("and a level-up names the level reached", () => {
+    const at = (level: number) => ({ agent_type: "developer", level }) as WorldCharacter;
+    expect(levelUps(null, [at(5)]).size).toBe(0);
+    expect(levelUps([at(5)], [at(7)]).get("developer")).toBe(7);
+    expect(levelUps([at(5)], [at(5)]).size).toBe(0);
+  });
 });
 
 describe("the quest board's filters and colours", () => {
@@ -75,36 +80,6 @@ describe("the inbox and the words", () => {
     expect([formatSeconds(42), formatSeconds(600), formatSeconds(4_500), formatSeconds(null)]).toEqual(["42s", "10m", "1h 15m", "—"]);
     expect([formatCost(0.001), formatCost(2.5)]).toEqual(["<$0.01", "$2.50"]);
     expect([placeOf("acme/web", "Billing"), placeOf(null)]).toEqual(["web · Billing", "the wilds"]);
-  });
-});
-
-describe("the map's layout", () => {
-  const region = (repo: string, jobs: number): Region => ({ repo, jobs, last_job_at: null, owned: false, watched: false, areas: [{ name: "Billing", slug: "billing" }] });
-  it("is the same for the same regions, the busiest nearest the hall", () => {
-    const regions = [region("acme/a", 1), region("acme/b", 50), region("acme/c", 5)];
-    const one = layoutRegions(regions);
-    const two = layoutRegions([...regions].reverse());
-    expect(one).toEqual(two);
-    expect(one[0].region.repo).toBe("acme/b");
-    expect(one[0].towns[0].name).toBe("Billing");
-    expect(one[0].box.w).toBeGreaterThan(one[2].box.w);
-  });
-  it("walks a square spiral and keeps a spot inside its box", () => {
-    expect([0, 1, 2, 3, 4].map(spiralCell)).toEqual([
-      { col: 1, row: 0 },
-      { col: 1, row: 1 },
-      { col: 0, row: 1 },
-      { col: -1, row: 1 },
-      { col: -1, row: 0 },
-    ]);
-    const box = { x: 0, y: 0, w: 100, h: 50 };
-    const spot = spotIn(box, "case:7");
-    expect(spot).toEqual(spotIn(box, "case:7"));
-    expect(spot.x).toBeGreaterThanOrEqual(15);
-    expect(spot.x).toBeLessThanOrEqual(85);
-    expect(hash("a")).not.toBe(hash("b"));
-    const bounds = mapBounds(layoutRegions([region("acme/a", 1)]));
-    expect(bounds.w).toBeGreaterThan(0);
   });
 });
 

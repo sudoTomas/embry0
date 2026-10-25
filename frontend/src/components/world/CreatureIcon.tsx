@@ -1,5 +1,5 @@
-import type { CSSProperties } from "react";
-import { assetUrl, useWorldManifest } from "./manifest";
+import { ArtSprite } from "./art/ArtSprite";
+import { creatureFor, useArt } from "./art/manifest";
 
 /**
  * What stands in the world for a lead: the art manifest's sheet when it has
@@ -8,7 +8,7 @@ import { assetUrl, useWorldManifest } from "./manifest";
  */
 const GLYPHS: Record<string, { rows: string[]; colours: Record<string, string> }> = {
   // A squat green creature with a club: a production error.
-  creature: {
+  case_bug: {
     rows: [
       "............",
       "...gggg.....",
@@ -26,7 +26,7 @@ const GLYPHS: Record<string, { rows: string[]; colours: Record<string, string> }
     colours: { g: "#5aa02c", w: "#ffffff", k: "#2b1d0e", b: "#8b5a2b" },
   },
   // A figure with a gold exclamation mark: someone with a task.
-  "quest-giver": {
+  quest_giver: {
     rows: [
       ".....y......",
       ".....y......",
@@ -44,7 +44,7 @@ const GLYPHS: Record<string, { rows: string[]; colours: Record<string, string> }
     colours: { y: "#ffcf3f", s: "#e0b48a", d: "#2b1d0e", c: "#3a6ea5", k: "#2b1d0e" },
   },
   // A crumbling signpost: an instruction that steers wrong.
-  signpost: {
+  audit_signpost: {
     rows: [
       "............",
       ".wwwwwwww...",
@@ -62,7 +62,7 @@ const GLYPHS: Record<string, { rows: string[]; colours: Record<string, string> }
     colours: { w: "#c9a46a", k: "#5b3b1a", b: "#7a5230", g: "#4f7f2a" },
   },
   // A stone golem across the road: a broken build.
-  golem: {
+  ci_golem: {
     rows: [
       "....rrrr....",
       "...rrrrrr...",
@@ -80,7 +80,7 @@ const GLYPHS: Record<string, { rows: string[]; colours: Record<string, string> }
     colours: { r: "#8d8a83", o: "#ff981f" },
   },
   // A red wyrm: a security alert.
-  wyrm: {
+  alert_wyrm: {
     rows: [
       "..rr........",
       ".rrrr.......",
@@ -98,7 +98,7 @@ const GLYPHS: Record<string, { rows: string[]; colours: Record<string, string> }
     colours: { r: "#c0392b", y: "#ffcf3f", w: "#7d1f15" },
   },
   // A flickering imp: a flaky test.
-  imp: {
+  flaky_imp: {
     rows: [
       "..p......p..",
       "..pp....pp..",
@@ -116,7 +116,7 @@ const GLYPHS: Record<string, { rows: string[]; colours: Record<string, string> }
     colours: { p: "#9b59b6", y: "#fff3b0", k: "#2b1d0e" },
   },
   // A pale ghost with a question: an unanswered review comment.
-  ghost: {
+  review_ghost: {
     rows: [
       "....wwww....",
       "...wwwwww...",
@@ -165,28 +165,33 @@ function Glyph({ creature, size }: { creature: string; size: number }) {
   );
 }
 
-/** One lead's creature at ``size`` pixels: the manifest's art, else the glyph. */
-export function CreatureIcon({ creature, size = 32, label }: { creature: string; size?: number; label?: string }) {
-  const manifest = useWorldManifest();
-  const asset = manifest.creatures[creature];
-  return (
-    <span role="img" aria-label={label ?? creature} className="inline-flex shrink-0" data-creature={creature} style={{ width: size, height: size }}>
-      {asset ? (
-        <span
-          className="block"
-          style={
-            {
-              width: size,
-              height: size,
-              backgroundImage: `url(${assetUrl(asset)})`,
-              backgroundSize: `${(asset.frames ?? 1) * size}px ${size}px`,
-              imageRendering: "pixelated",
-            } as CSSProperties
-          }
-        />
-      ) : (
+/**
+ * A lead's creature in a box of ``size`` pixels: the art manifest's creature
+ * for its kind, its idle loop stepping, at a whole-number scale (a creature
+ * larger than the box is drawn at half); the glyph when the art has none.
+ */
+export function CreatureIcon({ kind, creature, size = 32, label }: { kind: string; creature: string; size?: number; label?: string }) {
+  const art = useArt();
+  const found = creatureFor(art, kind);
+  const atlas = found ? art.atlases[found[1].atlas] : undefined;
+  if (!found || !atlas) {
+    return (
+      <span role="img" aria-label={label ?? kind} className="inline-flex shrink-0" data-creature={creature} style={{ width: size, height: size }}>
         <Glyph creature={creature} size={size} />
-      )}
+      </span>
+    );
+  }
+  const [name, c] = found;
+  const scale = c.size <= size ? Math.max(1, Math.floor(size / c.size)) : 0.5;
+  return (
+    <span
+      role="img"
+      aria-label={label ?? kind}
+      className="inline-flex shrink-0 items-end justify-center overflow-hidden"
+      data-creature={name}
+      style={{ width: size, height: size }}
+    >
+      <ArtSprite image={atlas.image} rect={c.frames[0]} frames={c.frames} animation={`creature-${name}`} fps={c.fps} loop={c.loop} scale={scale} />
     </span>
   );
 }

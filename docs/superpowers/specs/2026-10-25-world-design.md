@@ -85,7 +85,7 @@ Per region, off by default: a switch on the region's banner lets idle characters
 - `GET /api/v1/world` (read): `characters` (each with `state`, the `job_id` it is drawn at, `quests_out`, `stats`, `idle_too_long`, and whether the player can write it a quest), `parties` (the jobs out now and those back in the last three minutes: leader, members, the one working, the lead it came from, `stuck`, a defeat's reason), `quests` (the board, each with `level`, `verb`, `creature`, `leader`), `inbox` (finished quests a person sent, or that brought back a pull request, with no evaluation yet, newest 14 days), `loot` (pull requests of the last week), `recent` (progression's levels and unlocks), `regions` and `frontier`. The quest board, the regions and the totals are kept a minute; the parties are read on every call.
 - `GET /api/v1/world/characters/{agent_type}`: the character, its totals and its quest log.
 - `GET /api/v1/world/quests/{job_id}`: the scroll.
-- `PUT /api/v1/world/quests/{job_id}/evaluation`, `POST .../send-back`, `POST .../reject`: the judgement, stored in `job_ratings` (migration 113, one row per job) with an audit row (`quest.evaluated`, `quest.sent_back`, `quest.rejected`).
+- `PUT /api/v1/world/quests/{job_id}/evaluation`, `POST .../send-back`, `POST .../reject`: the judgement, stored in `job_ratings` (migration 112, one row per job) with an audit row (`quest.evaluated`, `quest.sent_back`, `quest.rejected`).
 - A party's lead is the owner proposal whose accept started its job (`proposal_decisions.job_id`); no new column.
 - Who a job is drawn as: the agent working now, else the last that worked other than triage, else its template's agent; the inbox and the scroll draw a finished quest as the agent whose runs cost the most.
 
@@ -97,23 +97,28 @@ Per region, off by default: a switch on the region's banner lets idle characters
 
 ## Rendering (as built)
 
-The guild hall, the board, the scroll and the panels are HTML in an old-school game frame drawn in CSS (stone panels, gold lettering in the pixel font, a parchment scroll, a chat box); the map is an SVG with HTML over it, and a party's move between two reads is a CSS transition. No canvas engine: the counts are small (tens of sprites), the characters are already crisp SVG composed from their parts, and every element stays clickable and accessible. A canvas engine (PixiJS) earns its weight with tiled terrain and many animated sprites, which phase 2's art may bring; the manifest keeps that open.
+The board, the scroll, the inbox and the panels are HTML in an old-school game frame drawn in CSS (stone panels, gold lettering in the pixel font, a parchment scroll, a chat box). The hall's inside and the overworld are drawn from the art, with no canvas engine: the terrain is one `<canvas>` painted once, and everything that stands on it (objects, creatures, characters, effects) is an HTML element, so every one of them stays a button with a label. The counts are small (a few hundred sprites at most), and the characters are already crisp SVG composed from their parts.
 
-**The manifest** (`frontend/public/world/manifest.json`, `version: 1`): `tileSize`, and maps of name to sheet (`src` relative to `/world/`, `width`, `height`, `frames` in one horizontal strip, `fps`) under `creatures` (creature, quest-giver, signpost, golem, wyrm, imp, ghost, mystery), `terrain` (grass, path, water, shore, cliff, forest, town), `buildings` (guild-hall, guild-hall-interior), `props` (quest-board, loot-chest, the stations, signpost, tree, rock) and `vfx` (xp-drop, hitsplat, level-up, loot-sparkle). Anything it does not name is drawn as a placeholder: the creatures as small original pixel glyphs.
+- **The art** is described by `frontend/public/world/manifest.json`, whose schema is `frontend/public/world/README.md`: corner tilesets, atlases, objects with an anchor and a category, creatures with their frames and the lead kinds they stand for, and effects. The page reads it once; a missing manifest leaves the hall as its cards and the map as flat grass with small pixel glyphs for creatures.
+- **Terrain**: a grid of corners, one mask per terrain (water, forest, rock, dirt, cobbles over grass). A tile is chosen from its four corners, `8·NW + 4·NE + 2·SW + 1·SE`, in the tileset that pairs that terrain with grass; tiles are drawn at the art's size and shown with `image-rendering: pixelated`.
+- **The overworld** (`src/lib/worldTiles.ts`): the guild hall in the centre cell; each region, busiest first, on the next cell of a square spiral, as a cobbled square sized by its activity with a house per area (a house and a well when it has none), a banner and a signpost; a one-tile dirt path from the hall's door to every square; the cells no region takes grown over with forest (and trees), rock (and a boulder) or a pond; scenery on the grass. The same regions always give the same map. A lead stands on a grass spot of its region's cell that its id picks. Drag to look around; 1× or 2×.
+- **Depth**: an element is placed by its anchor (where its feet are) and drawn in front by that point's height on the map.
+- **Animation**: a creature's or an effect's frames step with CSS `steps()` keyframes generated from the manifest's frame rectangles. A party walks from the hall's door to its quest (and back) as a CSS transition, stepping on a two-frame walk composed from its own parts, each frame lifting one leg. Reduced motion stops every loop.
+- **The hall's inside**: the hall tileset's floor walled on every side; each character standing at its station (the developer at the anvil, the readers at lecterns, QA and Kintsugi at the alchemy table, the analysts at the map table, everyone else at a desk), its station empty while it is out, with a `?` when it waits for you; torches, bookshelves, the quest board (a click goes to the board), and the loot chest: closed, open once a pull request came back, gold and sparkling once one merged (a click opens that quest's scroll). As many stations to a row as fit, never more than three rows; past that it scrolls sideways. It is drawn at 1×, or 2× when the room is wide.
+- **Effects**: an XP drop with the amount over a character's station when its experience rises between two reads, level-up fireworks with a line in the chat box, a flashing hitsplat over a creature a party is fighting and over a defeated party, a sparkle over a party coming back with a pull request.
 
-## Art (phase 2)
+## Art (phase 2, built)
 
-Original pixel art made with PixelLab, constrained by embry0's palette and a style image from the roster so it does not drift to generic fantasy; no traced or copied game art and no trademarked names.
+Original pixel art made with PixelLab, constrained by embry0's palette and a style image from the roster so it does not drift to generic fantasy; no traced or copied game art and no trademarked names. Where each image came from is in `frontend/public/world/SOURCES.md`.
 
-- Terrain: a top-down tileset (grass, path, water, shore, cliff, forest, town floor), map objects (trees, rocks, signposts, fences).
-- Buildings: the guild hall's outside, and its interior with the stations, the quest board and the chest.
-- Creatures: one animated sprite per lead kind (idle loop, hit, defeat).
-- Effects: XP drop, hitsplat, level-up fireworks, loot sparkle.
-- `frontend/public/world/manifest.json` names every asset (tile size, sheets, frame counts and rates); the renderer reads it and draws placeholders for anything missing, so the art can land after the engine.
+- Terrain: corner tilesets of grass with dirt, water, rock, cobbles and forest, and the hall's floor with its wall.
+- Objects: trees, bushes, flowers, rocks, a fence, signposts, houses, a well, a banner; the guild hall's outside; the stations, the quest board, torches, bookshelves and the chest closed, open and full of gold.
+- Creatures, each a five-frame idle loop: `case_bug` (watcher case), `ci_golem` (failing CI), `alert_wyrm` (security or dependency alert), `flaky_imp` (flaky test), `review_ghost` (unanswered review comment), `quest_giver` (open issue, backlog ticket), `audit_signpost` (context-audit finding). The renderer draws hits itself.
+- Effects: XP drop, level-up, loot sparkle, hitsplat.
 
 ## Phases
 
-1. **The management loop** (built): the API, the guild as the home screen, the hall with every character and its quest log, the quest board and Write a quest, the scroll and the judgement (merge, send back, reject, rate), watching a party live, answering it, recalling it; a first map with parties at their quests; XP drops and the chat box. Not yet: walking frames generated from the parts (the map moves a character with its existing poses), the hall's interior scene, and the art.
-2. **Art**: the PixelLab set behind the manifest.
+1. **The management loop** (built): the API, the guild as the home screen, the hall with every character and its quest log, the quest board and Write a quest, the scroll and the judgement (merge, send back, reject, rate), watching a party live, answering it, recalling it; a first map with parties at their quests; XP drops and the chat box.
+2. **Art** (built): the PixelLab set behind the manifest, the overworld as a tile map, the hall's inside, the creatures and effects, walking frames composed from each character's parts.
 3. **AFK mode**.
 4. **Polish**: fog of war, a minimap, sound (off by default), seasonal touches.

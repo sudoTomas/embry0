@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { DEFAULT_AVATAR, DEFAULT_COLOR, isAvatarId, isPaletteId, type AvatarId } from "@/lib/agentIdentity";
 import { cn } from "@/lib/utils";
-import { COMPOSED, GRID, PRESETS, STYLE, composeState, dress, outfitKey, type ComposedFrame, type Outfit } from "./appearance";
+import { COMPOSED, GRID, PRESETS, STYLE, composeState, dress, outfitKey, walkFrames, type ComposedFrame, type Outfit } from "./appearance";
 import type { SpriteState } from "./sprites";
 import "./roster.css";
 
@@ -20,6 +20,8 @@ export interface SpriteProps {
   still?: boolean;
   /** What the character earned (progression spec 2026-10-24): its tier's gear, a skill cape, a rare. None draws the avatar as it is. */
   outfit?: Outfit | null;
+  /** Walking (the world, spec 2026-10-25): its two walk frames in place of the state's. */
+  walking?: boolean;
   className?: string;
 }
 
@@ -31,22 +33,23 @@ const STATE_WORDS: Record<SpriteState, string> = {
 /** Dressed frames, by avatar, outfit and state: a roster of the same characters composes each once. */
 const DRESSED = new Map<string, ComposedFrame[]>();
 
-function framesOf(avatar: AvatarId, state: SpriteState, outfit: Outfit | null | undefined): ComposedFrame[] {
-  if (!outfit) return COMPOSED[avatar][state];
-  const key = `${avatar}|${outfitKey(outfit)}|${state}`;
+function framesOf(avatar: AvatarId, state: SpriteState, outfit: Outfit | null | undefined, walking = false): ComposedFrame[] {
+  if (!outfit && !walking) return COMPOSED[avatar][state];
+  const key = `${avatar}|${outfit ? outfitKey(outfit) : "-"}|${walking ? "walk" : state}`;
   let frames = DRESSED.get(key);
   if (!frames) {
-    frames = composeState(dress(PRESETS[avatar], STYLE[avatar], outfit), state);
+    const appearance = outfit ? dress(PRESETS[avatar], STYLE[avatar], outfit) : PRESETS[avatar];
+    frames = walking ? walkFrames(appearance) : composeState(appearance, state);
     DRESSED.set(key, frames);
   }
   return frames;
 }
 
 /** One avatar in one state: a crisp 32x32 SVG, its cape tinted by the palette token, stepping between two frames by CSS. */
-export function Sprite({ avatar, color, state, size = 32, label, decorative = false, still = false, outfit, className }: SpriteProps) {
+export function Sprite({ avatar, color, state, size = 32, label, decorative = false, still = false, outfit, walking = false, className }: SpriteProps) {
   const av = isAvatarId(avatar) ? avatar : DEFAULT_AVATAR;
   const col = isPaletteId(color) ? color : DEFAULT_COLOR;
-  const all = framesOf(av, state, outfit);
+  const all = framesOf(av, state, outfit, walking);
   const frames = still ? all.slice(0, 1) : all;
   return (
     <svg

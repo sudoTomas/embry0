@@ -48,7 +48,7 @@ export function SendPartyDialog({ lead, characters, by, canSend, onClose, onSent
     <Dialog onClose={onClose} label={`Quest: ${lead.title}`} className="world max-w-xl">
       <div className="world-panel space-y-3 p-4" data-testid="send-party">
         <div className="flex items-start gap-3">
-          <CreatureIcon creature={lead.creature} size={48} label={KIND_WORDS[lead.kind] ?? lead.kind} />
+          <CreatureIcon kind={lead.kind} creature={lead.creature} size={48} label={KIND_WORDS[lead.kind] ?? lead.kind} />
           <div className="min-w-0 flex-1">
             <h2 className="world-title text-base">{lead.title}</h2>
             <p className="world-muted text-xs">

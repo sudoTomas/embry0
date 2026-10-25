@@ -57,20 +57,20 @@ class LeadKind:
 
 #: Every kind of lead the quest board knows; a kind not here reads as a mystery to investigate.
 LEAD_KINDS: dict[str, LeadKind] = {
-    "case": LeadKind("Attack", "creature", "developer"),
-    "issue": LeadKind("Start quest", "quest-giver", "developer"),
-    "finding": LeadKind("Repair", "signpost", "context-auditor"),
+    "case": LeadKind("Attack", "case_bug", "developer"),
+    "issue": LeadKind("Start quest", "quest_giver", "developer"),
+    "finding": LeadKind("Repair", "audit_signpost", "context-auditor"),
     # The leads finders bring in (spec 2026-10-25, leads).
-    "ticket": LeadKind("Start quest", "quest-giver", "developer"),
-    "ci_failure": LeadKind("Attack", "golem", "developer"),
-    "security_alert": LeadKind("Attack", "wyrm", "developer"),
-    "flaky_test": LeadKind("Attack", "imp", "developer"),
-    "review_comment": LeadKind("Talk", "ghost", "developer"),
+    "ticket": LeadKind("Start quest", "quest_giver", "developer"),
+    "ci": LeadKind("Attack", "ci_golem", "developer"),
+    "alert": LeadKind("Attack", "alert_wyrm", "developer"),
+    "flaky": LeadKind("Attack", "flaky_imp", "developer"),
+    "review": LeadKind("Talk", "review_ghost", "developer"),
 }
 UNKNOWN_KIND = LeadKind("Investigate", "mystery", "developer")
 
 _SEVERITY = {"critical": 4, "high": 3, "medium": 2, "low": 1, "misleads": 2, "dead": 1, "drift": 1}
-_BASE_LEVEL = {"finding": 9, "ci_failure": 45, "security_alert": 40, "flaky_test": 30, "review_comment": 12}
+_BASE_LEVEL = {"finding": 9, "ci": 45, "alert": 40, "flaky": 30, "review": 12}
 
 #: The character that leads a job of each template when no agent has started yet.
 LEADER_BY_TEMPLATE: dict[str, str] = {
@@ -140,7 +140,7 @@ def lead_level(lead: Mapping[str, Any]) -> int:
         labels = {str(label).lower() for label in lead.get("labels") or []}
         return _clamp(10 + min(40, asks // 150) + (10 if "bug" in labels else 0))
     base = _BASE_LEVEL.get(kind, 20)
-    return _clamp(base + (8 * (severity - 2) if kind == "security_alert" else 0))
+    return _clamp(base + (8 * (severity - 2) if kind == "alert" else 0))
 
 
 def lead_entry(proposal: Mapping[str, Any]) -> dict[str, Any]:

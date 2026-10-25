@@ -98,7 +98,7 @@ export function QuestBoard({ quests, partyLevel, onPick }: QuestBoardProps) {
               data-testid="quest"
               data-kind={q.kind}
             >
-              <CreatureIcon creature={q.creature} size={32} label={KIND_WORDS[q.kind] ?? q.kind} />
+              <CreatureIcon kind={q.kind} creature={q.creature} size={32} label={KIND_WORDS[q.kind] ?? q.kind} />
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline justify-between gap-2">
                   <span className="world-text truncate text-sm">{q.title}</span>

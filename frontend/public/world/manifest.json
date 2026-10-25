@@ -626,7 +626,7 @@
         41
       ],
       "leadKinds": [
-        "ci_failure"
+        "ci"
       ],
       "interaction": "attack"
     },
@@ -678,8 +678,7 @@
         50
       ],
       "leadKinds": [
-        "security_alert",
-        "dependency_alert"
+        "alert"
       ],
       "interaction": "attack"
     },
@@ -731,7 +730,7 @@
         26
       ],
       "leadKinds": [
-        "flaky_test"
+        "flaky"
       ],
       "interaction": "attack"
     },
@@ -783,7 +782,7 @@
         26
       ],
       "leadKinds": [
-        "review_comment"
+        "review"
       ],
       "interaction": "talk"
     },

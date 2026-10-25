@@ -29,14 +29,14 @@ def test_a_lead_is_as_menacing_as_its_severity_and_its_reach():
     assert lead_level({"kind": "issue", "details": "x" * 3_000, "labels": ["bug"]}) > lead_level(
         {"kind": "issue", "details": "short"}
     )
-    assert lead_level({"kind": "finding"}) < lead_level({"kind": "ci_failure"})
+    assert lead_level({"kind": "finding"}) < lead_level({"kind": "ci"})
     assert lead_level({"kind": "ticket", "level": 500}) == 126, "a finder's own estimate is kept, within the scale"
     assert lead_level({"kind": "something-new"}) == 20
 
 
 def test_each_kind_has_its_verb_creature_and_leader():
     case = lead_entry({"id": "case:1", "kind": "case", "severity": "high", "occurrences": 3})
-    assert (case["verb"], case["creature"], case["leader"]) == ("Attack", "creature", "developer")
+    assert (case["verb"], case["creature"], case["leader"]) == ("Attack", "case_bug", "developer")
     finding = lead_entry({"id": "finding:1", "kind": "finding"})
     assert (finding["verb"], finding["leader"]) == ("Repair", "context-auditor")
     unknown = lead_entry({"id": "x:1", "kind": "omen"})

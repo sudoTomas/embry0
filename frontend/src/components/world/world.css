@@ -189,10 +189,31 @@
   animation: world-glow 1.6s ease-in-out infinite;
 }
 
+/* A hit landing: the hitsplat flashes up and fades, again and again while the fight goes on. */
+@keyframes world-hitsplat {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  20%,
+  70% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.world-hitsplat {
+  animation: world-hitsplat 1.4s steps(7) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .world-xp-drop,
   .world-bubble,
-  .world-unread {
+  .world-unread,
+  .world-hitsplat,
+  .art-anim {
     animation: none;
   }
 }

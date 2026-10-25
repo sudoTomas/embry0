@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GHOST_FILL, POSES, SPARK, SWEAT, compose, layersOf, paint, runLength, type NamedLayer, type Pose } from "../compose";
+import { GHOST_FILL, POSES, SPARK, SWEAT, compose, layersOf, paint, runLength, walkFrames, type NamedLayer, type Pose } from "../compose";
 import { ITEMS } from "../items";
 import { COLOURS, OUTLINE } from "../palette";
 import { GRID, type Appearance } from "../types";
@@ -138,5 +138,17 @@ describe("compose", () => {
     });
     expect(compose(bare, idle).size).toBe(GRID);
     expect(compose(bare, idle).paths[OUTLINE]).toMatch(/^M\d+ \d+h\d+v1h-\d+z/);
+  });
+});
+
+describe("walkFrames", () => {
+  it("steps in two frames, one leg lifted in each, the same size as a pose", () => {
+    const [left, right] = walkFrames(armed);
+    const still = compose(armed, idle);
+    expect(left.size).toBe(GRID);
+    expect(right.size).toBe(GRID);
+    expect(left.paths).not.toEqual(right.paths);
+    expect(left.paths).not.toEqual(still.paths);
+    expect(walkFrames(armed)).toEqual([left, right]);
   });
 });

@@ -3144,7 +3144,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        113,
+        112,
         "job_ratings: the player's evaluation of a finished quest (docs/superpowers/specs/2026-10-25-world-design.md)",
         # One row per job: how the person judged the work (good, needs work,
         # bad), what they did with it (merged, sent back, rejected) and the

@@ -29,7 +29,37 @@ vi.mock("@/hooks/useAgentIdentity", () => ({
   useIdentityLookup: () => (type: string) => identityOf(type),
   useAgentIdentity: (type: string) => identityOf(type),
 }));
-vi.mock("@/components/world/manifest", () => ({ useWorldManifest: () => ({ creatures: {} }), assetUrl: () => "" }));
+// Just enough art for the hall and the map to draw: a hall and a grass tileset, a few objects, one creature.
+const ART = {
+  version: 1,
+  tileSize: 32,
+  tilesets: {
+    hall: { image: "tiles/hall.png", layout: "corner-4x4", terrains: { "0": "floor", "1": "wall" } },
+    path: { image: "tiles/path.png", layout: "corner-4x4", terrains: { "0": "dirt", "1": "grass" } },
+  },
+  atlases: { objects: { image: "atlas/objects.png", width: 512, height: 256 }, creatures: { image: "atlas/creatures.png", width: 512, height: 256 } },
+  objects: Object.fromEntries(
+    ["anvil", "desk", "lectern", "quest_board", "chest_closed", "chest_open", "chest_gold", "torch", "bookshelf", "guild_hall"].map((name) => [
+      name,
+      { atlas: "objects", rect: [0, 0, 32, 32], anchor: { x: 16, y: 30 }, bounds: [0, 0, 32, 32], category: "station" },
+    ]),
+  ),
+  creatures: {
+    case_bug: {
+      atlas: "creatures",
+      frames: [[0, 0, 32, 32], [32, 0, 32, 32]],
+      fps: 5,
+      loop: true,
+      size: 32,
+      anchor: { x: 16, y: 30 },
+      bounds: [0, 0, 32, 32],
+      leadKinds: ["case"],
+      interaction: "attack",
+    },
+  },
+  vfx: {},
+};
+vi.mock("@/components/world/art/manifest", async (original) => ({ ...(await original<object>()), useArt: () => ART }));
 vi.mock("@/hooks/useRunWith", () => ({ useRunWithKeys: () => ({ data: [] }) }));
 vi.mock("@/hooks/useModels", () => ({ useModels: () => ({ models: ["claude-sonnet-5"], providers: [], isLoading: false }) }));
 vi.mock("@/stores/authStore", () => ({
@@ -99,7 +129,7 @@ const WORLD = {
       created_at: "2026-10-25T10:00:00Z",
       level: 55,
       verb: "Attack",
-      creature: "creature",
+      creature: "case_bug",
       leader: "developer",
     },
   ],
@@ -208,6 +238,32 @@ describe("WorldPage (the guild, spec 2026-10-25)", () => {
     await userEvent.click(within(scroll).getByRole("button", { name: "Reject" }));
     await userEvent.click(within(scroll).getByRole("button", { name: "Reject the work" }));
     expect(reject.mock.calls[0][0]).toEqual({ jobId: "job-1", note: "Handle the empty list.", closePr: true });
+  });
+
+  it("draws the hall's inside: each character at its station, the one out gone from it, the chest by the loot", async () => {
+    state.world = { ...WORLD, loot: [{ job_id: "job-1", repo: "acme/web", area: null, title: "Add the export", pr_url: "https://github.com/acme/web/pull/7", merged: true, at: null }] };
+    renderAt();
+    const scene = screen.getByTestId("hall-scene");
+    const [developer, why] = within(scene).getAllByTestId("hall-character");
+    expect(developer).toHaveAttribute("data-home", "false");
+    expect(developer).toHaveAttribute("title", "Developer (out)");
+    expect(why).toHaveAttribute("data-home", "true");
+
+    await userEvent.click(why);
+    expect(screen.getByTestId("character-panel")).toBeInTheDocument();
+
+    const chest = within(scene).getByTestId("loot-chest");
+    expect(chest).toHaveAttribute("data-chest", "chest_gold");
+    await userEvent.click(chest);
+    expect(screen.getByTestId("quest-scroll")).toBeInTheDocument();
+  });
+
+  it("puts each quest's creature on the map in its region, and a click on it sends a party", async () => {
+    renderAt("/?view=map");
+    const map = screen.getByTestId("world-map");
+    expect(within(map).getByTestId("map-party")).toHaveAttribute("data-state", "working");
+    await userEvent.click(within(map).getByTestId("map-lead"));
+    expect(screen.getByTestId("send-party")).toBeInTheDocument();
   });
 
   it("says why a failed quest failed", () => {
