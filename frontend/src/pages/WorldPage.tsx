@@ -19,7 +19,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useWorld } from "@/hooks/useWorld";
 import { useWorldChatDock } from "@/hooks/useWorldChatDock";
-import { levelUps, narrate, xpDrops, type NarrationLine } from "@/lib/world";
+import {
+  inboxOrder,
+  levelUps,
+  narrate,
+  xpDrops,
+  type NarrationLine,
+} from "@/lib/world";
 import { useAuthStore, useIsAdmin } from "@/stores/authStore";
 
 /** How long an experience drop floats before it clears. */
@@ -49,7 +55,11 @@ export function WorldPage() {
   useEffect(() => {
     if (!world.data) return;
     const before = previous.current;
-    const said = narrate(before?.parties ?? null, world.data.parties, (agent) => lookup(agent).displayName);
+    const said = narrate(
+      before?.parties ?? null,
+      world.data.parties,
+      (agent) => lookup(agent).displayName,
+    );
     const rose = levelUps(before?.characters ?? null, world.data.characters);
     for (const [agent, level] of rose)
       said.push({
@@ -75,37 +85,70 @@ export function WorldPage() {
 
   const set = (key: string, value: string | null) => {
     const next = new URLSearchParams(params);
-    for (const k of ["character", "quest", "lead", "write"]) if (k !== key && key !== "view") next.delete(k);
+    for (const k of ["character", "quest", "lead", "write"])
+      if (k !== key && key !== "view") next.delete(k);
     if (value === null) next.delete(key);
     else next.set(key, value);
     setParams(next, { replace: true });
   };
 
   const skillName = useMemo(() => {
-    const names = new Map((world.data?.skills ?? []).map((s) => [s.id, s.name]));
+    const names = new Map(
+      (world.data?.skills ?? []).map((s) => [s.id, s.name]),
+    );
     return (stat: string) => names.get(stat) ?? stat;
   }, [world.data?.skills]);
 
-  if (world.isError) return <PageError message="The world did not load" onRetry={() => void world.refetch()} />;
+  if (world.isError)
+    return (
+      <PageError
+        message="The world did not load"
+        onRetry={() => void world.refetch()}
+      />
+    );
   if (!world.data) return <Skeleton className="h-96 w-full" />;
   const data = world.data;
-  const partyOf = new Map<string, Party>(data.parties.map((p) => [p.job_id, p]));
-  const selectedCharacter: WorldCharacter | undefined = data.characters.find((c) => c.agent_type === params.get("character"));
-  const selectedLead: Lead | undefined = data.quests.find((q) => q.id === params.get("lead"));
+  const partyOf = new Map<string, Party>(
+    data.parties.map((p) => [p.job_id, p]),
+  );
+  const selectedCharacter: WorldCharacter | undefined = data.characters.find(
+    (c) => c.agent_type === params.get("character"),
+  );
+  const selectedLead: Lead | undefined = data.quests.find(
+    (q) => q.id === params.get("lead"),
+  );
   const questId = params.get("quest");
+  // The inbox in the order it shows: a verdict or a skip moves the report to the quest after this one.
+  const reviewOrder = inboxOrder(data.inbox).map((q) => q.job_id);
+  const reviewAt = questId ? reviewOrder.indexOf(questId) : -1;
+  const nextQuest =
+    reviewAt >= 0
+      ? (reviewOrder[reviewAt + 1] ??
+        reviewOrder.find((id) => id !== questId) ??
+        null)
+      : null;
   const view = params.get("view") === "map" ? "map" : "guild";
   const strongest = Math.max(1, ...data.characters.map((c) => c.level));
   const repos = [...new Set(data.regions.map((r) => r.repo))].sort();
 
   return (
-    <Tabs defaultValue="guild" value={view} onValueChange={(v) => set("view", v === "map" ? "map" : null)}>
+    <Tabs
+      defaultValue="guild"
+      value={view}
+      onValueChange={(v) => set("view", v === "map" ? "map" : null)}
+    >
       <div className="space-y-4" data-testid="world-page">
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
             <h1 className="title-pixel text-xl font-bold">Guild</h1>
-            <p className="text-sm text-fg-secondary" data-testid="world-summary">
-              {data.characters.length} agents · {data.characters.filter((c) => c.state !== "idle").length} busy · {data.quests.length} leads · account
-              total {data.account.total_level.toLocaleString("en-US")}
+            <p
+              className="text-sm text-fg-secondary"
+              data-testid="world-summary"
+            >
+              {data.characters.length} agents ·{" "}
+              {data.characters.filter((c) => c.state !== "idle").length} busy ·{" "}
+              {data.quests.length} leads · account total{" "}
+              {data.account.total_level.toLocaleString("en-US")}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -114,7 +157,11 @@ export function WorldPage() {
               <TabsTrigger value="map">Map</TabsTrigger>
             </TabsList>
             {dock === "closed" && (
-              <Button variant="outline" onClick={() => setDock("open")} data-testid="show-activity">
+              <Button
+                variant="outline"
+                onClick={() => setDock("open")}
+                data-testid="show-activity"
+              >
                 Activity
               </Button>
             )}
@@ -124,7 +171,11 @@ export function WorldPage() {
           </div>
         </header>
 
-        <QuestInbox quests={data.inbox} onOpen={(jobId) => set("quest", jobId)} />
+        <QuestInbox
+          quests={data.inbox}
+          canAct={isAdmin}
+          onOpen={(jobId) => set("quest", jobId)}
+        />
 
         <TabsContent value="map" className="mt-0">
           <WorldMap
@@ -149,11 +200,19 @@ export function WorldPage() {
               levelUps={ups}
               selected={selectedCharacter?.agent_type ?? null}
               onSelect={(agent) => set("character", agent)}
-              onBoard={() => document.getElementById("quest-board-title")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              onBoard={() =>
+                document
+                  .getElementById("quest-board-title")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
               onLoot={(jobId) => set("quest", jobId)}
             />
             <div className="lg:sticky lg:top-3 lg:max-h-[calc(100vh-6rem)]">
-              <QuestBoard quests={data.quests} partyLevel={strongest} onPick={(lead) => set("lead", lead.id)} />
+              <QuestBoard
+                quests={data.quests}
+                partyLevel={strongest}
+                onPick={(lead) => set("lead", lead.id)}
+              />
             </div>
           </div>
         </TabsContent>
@@ -167,7 +226,11 @@ export function WorldPage() {
         {selectedCharacter && (
           <CharacterPanel
             character={selectedCharacter}
-            party={selectedCharacter.job_id ? partyOf.get(selectedCharacter.job_id) : undefined}
+            party={
+              selectedCharacter.job_id
+                ? partyOf.get(selectedCharacter.job_id)
+                : undefined
+            }
             skillName={skillName}
             canAct={isAdmin}
             onClose={() => set("character", null)}
@@ -190,12 +253,32 @@ export function WorldPage() {
             onSent={() => set("lead", null)}
           />
         )}
-        {questId && <QuestScrollDialog jobId={questId} skillName={skillName} canAct={isAdmin} onClose={() => set("quest", null)} />}
+        {questId && (
+          <QuestScrollDialog
+            jobId={questId}
+            skillName={skillName}
+            canAct={isAdmin}
+            onClose={() => set("quest", null)}
+            onDone={() => set("quest", nextQuest)}
+            onSkip={
+              reviewAt >= 0 && nextQuest
+                ? () => set("quest", nextQuest)
+                : undefined
+            }
+            position={
+              reviewAt >= 0
+                ? `${reviewAt + 1} of ${reviewOrder.length}`
+                : undefined
+            }
+          />
+        )}
         {params.get("write") && (
           <WriteQuestDialog
             characters={data.characters}
             repos={repos}
-            initialAgent={params.get("write") === "1" ? null : params.get("write")}
+            initialAgent={
+              params.get("write") === "1" ? null : params.get("write")
+            }
             onClose={() => set("write", null)}
             onSent={() => set("write", null)}
           />

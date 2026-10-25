@@ -96,6 +96,8 @@ The guild screen's API ([the guild](world.md), [spec](superpowers/specs/2026-10-
 - `PUT /api/v1/world/quests/{job_id}/evaluation` (`{"rating": "good"|"needs_work"|"bad", "verdict": "merged", "note"}`, any of them): 409 while the quest is out.
 - `POST /api/v1/world/quests/{job_id}/send-back` (`{"notes", "run_with"}`, 202): a pr-followup job on the quest's GitHub pull request branch with the notes; 409 without one, or when the pull request is not open.
 - `POST /api/v1/world/quests/{job_id}/reject` (`{"note", "close_pr"}`): records the rejection; with `close_pr`, closes the pull request with the note as a comment.
+- `POST /api/v1/world/quests/{job_id}/run-again` (`{"run_with"}`, 202): starts the quest again as a new job from its launch record (same repo, task, pipeline and settings; a Run with choice replaces the old one) and records the new job as the quest's follow-up, so it leaves the inbox. 409 while the quest is still out, or for a job with no launch record.
+- `POST /api/v1/world/quests/{job_id}/dismiss`: seen, nothing to do; the quest leaves the inbox with no rating or verdict. 409 while it is still out.
 
 ## Run with
 

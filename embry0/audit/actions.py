@@ -118,6 +118,8 @@ AuditAction = Literal[
     "quest.evaluated",
     "quest.sent_back",
     "quest.rejected",
+    "quest.restarted",
+    "quest.dismissed",
 ]
 
 AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
@@ -209,6 +211,8 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "quest.evaluated": "Quest evaluated",
     "quest.sent_back": "Quest sent back",
     "quest.rejected": "Quest rejected",
+    "quest.restarted": "Quest run again",
+    "quest.dismissed": "Quest dismissed",
 }
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))

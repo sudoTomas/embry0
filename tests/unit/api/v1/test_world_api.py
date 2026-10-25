@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -292,3 +292,84 @@ async def test_closing_the_pull_request_on_reject_needs_admin(app: Any, monkeypa
         keeping = await client.post("/api/v1/world/quests/job-1/reject", json={"note": "no"}, headers=HEADERS)
     assert closing.status_code == 403
     assert keeping.status_code == 200 and keeping.json()["closed_pr"] is False
+
+
+class FakeJobs:
+    def __init__(self, row: dict[str, Any] | None) -> None:
+        self.row = row
+        self.created: list[dict[str, Any]] = []
+        self.updates: list[tuple[str, dict[str, Any]]] = []
+
+    async def get(self, job_id: str) -> dict[str, Any] | None:
+        return dict(self.row) if self.row and job_id == self.row["job_id"] else None
+
+    async def create(self, **fields: Any) -> str:
+        self.created.append(fields)
+        return "job-again"
+
+    async def update(self, job_id: str, **fields: Any) -> None:
+        self.updates.append((job_id, fields))
+
+
+def _failed_job(**overrides: Any) -> dict[str, Any]:
+    return {
+        "job_id": "job-1",
+        "repo": "acme/web",
+        "task": "[watcher] Fix the sender",
+        "issue_number": None,
+        "issue_id": "iss-1",
+        "pipeline_template": "full-magnum-opus",
+        "pipeline_config": {"agent_models_override": {"developer": "grok-4.7"}},
+        "sandbox_profile": None,
+        "context": {"type": "git", "repo": "acme/web"},
+        "job_kind": "code",
+        "area": "Billing",
+        "launch": {"runner": "workflow", "issue_id": "iss-1"},
+        **overrides,
+    }
+
+
+async def test_a_finished_quest_runs_again_as_a_new_job_from_its_launch_record(app: Any) -> None:
+    app.state.world_repo.quest_row.update(status="failed", pr_url=None, delivery_state=None)
+    app.state.jobs_repo = FakeJobs(_failed_job())
+    executor = MagicMock()
+    app.state.issue_executor = executor
+    async with await _client(app) as client:
+        again = await client.post("/api/v1/world/quests/job-1/run-again", json={}, headers=HEADERS)
+    assert again.status_code == 202 and again.json()["followup_job_id"] == "job-again"
+    created = app.state.jobs_repo.created[0]
+    assert created["repo"] == "acme/web" and created["task"] == "[watcher] Fix the sender"
+    assert created["issue_id"] == "iss-1" and created["pipeline_template"] == "full-magnum-opus"
+    assert created["pipeline_config"] == {"agent_models_override": {"developer": "grok-4.7"}}
+    assert app.state.jobs_repo.updates == [("job-again", {"job_kind": "code", "area": "Billing"})]
+    args, kwargs = executor.run_again.call_args
+    assert args == ("job-again", {"runner": "workflow", "issue_id": "iss-1"}) and kwargs["issue_id"] == "iss-1"
+    assert app.state.world_repo.ratings[-1]["followup_job_id"] == "job-again"
+    assert "verdict" not in app.state.world_repo.ratings[-1], "running it again is no verdict on the work"
+
+
+async def test_a_quest_still_out_or_without_a_launch_record_is_not_run_again(app: Any) -> None:
+    app.state.issue_executor = MagicMock()
+    app.state.world_repo.quest_row["status"] = "running"
+    app.state.jobs_repo = FakeJobs(_failed_job())
+    async with await _client(app) as client:
+        out = await client.post("/api/v1/world/quests/job-1/run-again", json={}, headers=HEADERS)
+        app.state.world_repo.quest_row["status"] = "failed"
+        app.state.jobs_repo = FakeJobs(_failed_job(launch=None))
+        old = await client.post("/api/v1/world/quests/job-1/run-again", json={}, headers=HEADERS)
+    assert out.status_code == 409 and old.status_code == 409
+    assert "launch record" in old.json()["detail"]
+    app.state.issue_executor.run_again.assert_not_called()
+
+
+async def test_dismissing_a_quest_takes_it_out_of_the_inbox_with_no_rating(app: Any) -> None:
+    app.state.world_repo.quest_row["status"] = "failed"
+    async with await _client(app) as client:
+        dismissed = await client.post("/api/v1/world/quests/job-1/dismiss", headers=HEADERS)
+        app.state.world_repo.quest_row["status"] = "running"
+        early = await client.post("/api/v1/world/quests/job-1/dismiss", headers=HEADERS)
+    assert dismissed.status_code == 200 and early.status_code == 409
+    assert app.state.world_repo.ratings[-1] == {
+        "job_id": "job-1",
+        "rated_by": app.state.world_repo.ratings[-1]["rated_by"],
+    }

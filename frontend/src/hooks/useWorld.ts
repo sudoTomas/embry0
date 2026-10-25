@@ -4,11 +4,13 @@ import type { RunWith } from "@/api/runWith";
 import {
   acceptLead,
   approveMerge,
+  dismissQuest,
   evaluateQuest,
   fetchCharacter,
   fetchQuest,
   fetchWorld,
   rejectQuest,
+  runQuestAgain,
   sendQuestBack,
   writeQuest,
   type Rating,
@@ -66,6 +68,14 @@ export function useSendBack() {
 
 export function useRejectQuest() {
   return useWorldMutation((v: { jobId: string; note: string; closePr: boolean }) => rejectQuest(v.jobId, v.note, v.closePr));
+}
+
+export function useRunAgain() {
+  return useWorldMutation((v: { jobId: string; runWith?: RunWith }) => runQuestAgain(v.jobId, v.runWith));
+}
+
+export function useDismissQuest() {
+  return useWorldMutation((jobId: string) => dismissQuest(jobId));
 }
 
 export function useApproveMerge() {

@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
@@ -8,6 +9,12 @@ import { formatDateTime } from "@/lib/utils";
 
 const state: { quest: QuestScroll | undefined } = { quest: undefined };
 const mutation = () => ({ mutate: vi.fn(), isPending: false });
+// A mutation that succeeds at once, so the bar's next step (the next quest) runs.
+const succeeding = {
+  again: vi.fn((_vars: unknown, opts?: { onSuccess?: (r: unknown) => void }) =>
+    opts?.onSuccess?.({ followup_job_id: "job-2" }),
+  ),
+};
 
 vi.mock("@/hooks/useWorld", () => ({
   useQuest: () => ({ data: state.quest, isError: false }),
@@ -15,6 +22,8 @@ vi.mock("@/hooks/useWorld", () => ({
   useSendBack: () => mutation(),
   useRejectQuest: () => mutation(),
   useApproveMerge: () => mutation(),
+  useRunAgain: () => ({ mutate: succeeding.again, isPending: false }),
+  useDismissQuest: () => mutation(),
 }));
 vi.mock("@/hooks/useAgentIdentity", () => ({
   useIdentityLookup: () => (type: string) => identityOf(type),
@@ -40,7 +49,9 @@ const SCROLL = {
   pr: null,
   merge_approval: null,
   verification: null,
-  party: [{ agent_type: "developer", runs: 2, cost_usd: 2, seconds: 60, failed: 0 }],
+  party: [
+    { agent_type: "developer", runs: 2, cost_usd: 2, seconds: 60, failed: 0 },
+  ],
   xp: [],
   cost_usd: 2.5,
   seconds: 3600,
@@ -51,11 +62,18 @@ const SCROLL = {
 
 function renderScroll(quest: QuestScroll) {
   state.quest = quest;
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <QuestScrollDialog jobId="job-1" skillName={(s) => s} canAct={false} onClose={() => {}} />
+        <QuestScrollDialog
+          jobId="job-1"
+          skillName={(s) => s}
+          canAct={false}
+          onClose={() => {}}
+        />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -98,7 +116,12 @@ describe("QuestScroll account wait", () => {
     renderScroll({
       ...SCROLL,
       status: "paused",
-      account_wait: { provider: "anthropic", reason: "quota_exhausted", until, chosen: true },
+      account_wait: {
+        provider: "anthropic",
+        reason: "quota_exhausted",
+        until,
+        chosen: true,
+      },
     });
     const box = screen.getByTestId("quest-account-wait");
     expect(box).toHaveTextContent("the Anthropic account is quota exhausted");
@@ -109,5 +132,52 @@ describe("QuestScroll account wait", () => {
   it("shows nothing for a quest that waits for nothing", () => {
     renderScroll({ ...SCROLL, account_wait: null });
     expect(screen.queryByTestId("quest-account-wait")).toBeNull();
+  });
+});
+
+describe("QuestScroll review bar", () => {
+  it("offers a failed quest Run again first, and moves on to the next quest once it is answered", async () => {
+    state.quest = {
+      ...SCROLL,
+      status: "failed",
+      outcome: "failed",
+      pr_url: null,
+      pr: null,
+      merge_approval: null,
+    } as QuestScroll;
+    const onDone = vi.fn();
+    const onSkip = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <QuestScrollDialog
+            jobId="job-1"
+            skillName={(s) => s}
+            canAct
+            onClose={vi.fn()}
+            onDone={onDone}
+            onSkip={onSkip}
+            position="2 of 3"
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const bar = screen.getByTestId("quest-judgement");
+    expect(within(bar).getByTestId("review-again")).toHaveTextContent(
+      "Run again",
+    );
+    expect(within(bar).getByTestId("review-dismiss")).toBeInTheDocument();
+    expect(within(bar).queryByTestId("review-merge")).not.toBeInTheDocument();
+    expect(within(bar).getByTestId("review-position")).toHaveTextContent(
+      "2 of 3",
+    );
+    await userEvent.click(within(bar).getByTestId("review-skip"));
+    expect(onSkip).toHaveBeenCalledOnce();
+    await userEvent.click(within(bar).getByTestId("review-again"));
+    expect(succeeding.again.mock.calls[0][0]).toEqual({
+      jobId: "job-1",
+      runWith: {},
+    });
+    expect(onDone).toHaveBeenCalledOnce();
   });
 });
