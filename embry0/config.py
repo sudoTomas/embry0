@@ -632,6 +632,21 @@ class Embry0Config(BaseSettings):
     # store (``xai_grok_cli_store``, default ~/.grok/auth.json) and then owned by
     # embry0. Requires ENVIRONMENT_SECRET_KEY. Defaults False (opt-in) — leaving it
     # off keeps grok on the EMB-36 CLI/console-key path.
+    # Local models (docs/providers.md): the operator's own OpenAI-compatible
+    # model server, the custom provider's. Set, the orchestrator launches the
+    # local-llm-proxy, which forwards a sandbox's model calls to this one API
+    # root (http://host:port/v1) and nowhere else, so no sandbox needs an
+    # egress exception for the server's machine. The key is the one the server
+    # checks, held by the proxy only; empty sends none. Requests over the size
+    # cap are refused. The context window, when set, overrides what the
+    # server's /models reports. A run that must use the server waits at most
+    # the slot wait for one of its slots (provider_config.local_max_runs).
+    local_llm_upstream: Annotated[str, NOT_SECRET] = ""
+    local_llm_api_key: SecretSetting = ""
+    local_llm_max_request_bytes: Annotated[int, NOT_SECRET] = 8 * 1024 * 1024
+    local_llm_context_tokens: Annotated[int, NOT_SECRET] = 0
+    local_llm_slot_wait_seconds: Annotated[int, NOT_SECRET] = 900
+
     xai_proxy_enabled: bool = False
     xai_credential_path: Annotated[str, NOT_SECRET] = "/data/embry0/xai_credential.enc"
     xai_grok_cli_store: str = ""

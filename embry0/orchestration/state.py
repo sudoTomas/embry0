@@ -503,6 +503,10 @@ class JobState(TypedDict, total=False):
     # stay declared here or LangGraph's state-merge reducer silently drops it
     # (it did exactly that until this declaration was added).
     agent_models_override: Annotated[dict[str, str], FoldingLastValue]
+    # Local models: the model on the operator's own server the job prefers for
+    # every agent it names no model for, while a slot is free (the watcher's
+    # analyses). From the job row's pipeline_config.local_first_model.
+    local_first_model: Annotated[str | None, FoldingLastValue]
     # Set True by Phase 2's QA pipeline when running QA jobs; gates injection
     # of scope='qa' user env vars at the sandbox boundary. Defaults to False.
     qa_active: Annotated[bool, FoldingLastValue]

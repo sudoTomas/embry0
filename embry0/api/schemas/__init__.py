@@ -595,8 +595,14 @@ class ProviderConfigUpdate(BaseModel):
     # Provider fallback (spec 2026-10-25): catalogue models, in order, an
     # agent runs on when its own model's provider has no usable account; []
     # turns it off. The API layer refuses an unknown, unpriced, chat-only,
-    # disabled or repeated id.
+    # disabled or repeated id. A custom/<model> of the operator's own server
+    # is allowed too (local models), priced at $0.
     fallback_models: list[str] | None = None
+    # Local models (docs/providers.md): how many agent runs the operator's own
+    # model server takes at once, and the custom/<model> the watcher's
+    # analyses run on first while one of its slots is free ("" turns that off).
+    local_max_runs: int | None = Field(default=None, ge=1, le=64)
+    watcher_local_model: str | None = None
 
 
 # --- QA Presign ---

@@ -81,3 +81,6 @@ class AgentInvocation:
     # from it. The sandbox has no copy of the catalog, so the run's rates ride
     # here; None for every model the static price table covers.
     pricing_usd_per_mtok: tuple[float, float] | None = None
+    # Local models: set when ``model`` is the job's local-first model, run in
+    # place of the resolved one, as ``{"instead_of"}``. Orchestrator-side only.
+    local_first: dict[str, Any] | None = None

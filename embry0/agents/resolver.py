@@ -257,6 +257,7 @@ def resolve_agent_invocation(
     model_policy: dict[str, Any] | None = None,
     job_agent_models: Mapping[str, str] | None = None,
     model_fallbacks: Mapping[str, ModelFallback] | None = None,
+    local_first_model: str | None = None,
 ) -> AgentInvocation:
     """Resolve a fully-validated AgentInvocation from the five-level chain.
 
@@ -278,6 +279,12 @@ def resolve_agent_invocation(
     provider: ModelFallback}`` (``embry0.agents.fallback``): a resolved model
     whose provider it names runs on the plan's model, and every check below
     applies to that one. A model the job names itself is never replaced.
+
+    ``local_first_model`` is a model on the operator's own server that the job
+    prefers (local models: the watcher's analyses): the run moves to it, the
+    checks below apply to it, and the invocation records what it replaced.
+    A preference, never a pin: a model the job names itself stays, and the
+    caller resolves again without it when the server has no free slot.
 
     Validation raises AuthConfigError with the appropriate error_code.
     """
@@ -324,7 +331,6 @@ def resolve_agent_invocation(
 
     from embry0.agents.providers import (
         chat_only_message,
-        provider_for_model,
         unpriced_models,
         unpriced_models_message,
     )
@@ -351,6 +357,23 @@ def resolve_agent_invocation(
             disabled_model=final.disabled_model,
         )
     final_model = final.model
+
+    from embry0.agents.providers import provider_for_model
+
+    # Local models: the job prefers its local model for every agent it did not
+    # name a model for. Before provider fallback, whose plan never pauses the
+    # local server when the caller passes a preference.
+    local_first_record: dict[str, Any] | None = None
+    if (
+        local_first_model
+        and local_first_model != final_model
+        and not _chosen_for_job(agent_type, job_agent_models)
+        and provider_for_model(local_first_model) is not None
+        and provider_for_model(local_first_model) is not provider_for_model(final_model)
+    ):
+        local_first_record = {"instead_of": final_model}
+        logger.info("agent_model_local_first", agent_type=agent_type, model=local_first_model, instead_of=final_model)
+        final_model = local_first_model
 
     # Provider fallback (spec 2026-10-25): the resolved model's provider has
     # no usable account, so the run moves to the plan's model. Before the
@@ -460,6 +483,7 @@ def resolve_agent_invocation(
         provider=provider.name if provider else None,
         fallback=fallback_record,
         pricing_usd_per_mtok=catalog_rates(final_model),
+        local_first=local_first_record,
     )
 
 

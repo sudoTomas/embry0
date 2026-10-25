@@ -13,6 +13,13 @@ The key and, for the custom provider, the base URL are read from the sandbox env
 orchestrator env, reserved from repository override). They are never on argv.
 Missing either fails the run before any request. httpx only: no provider SDK is
 baked into the sandbox image.
+
+A custom provider reached through the local-llm-proxy (``EMBRY0_LLM_CUSTOM_VIA_PROXY``)
+has no key in the sandbox: the run authenticates to the proxy with the
+sandbox's bearer file. Its model's context window (the operator's setting, else
+what the server's ``/models`` reports) bounds every request: old tool output is
+elided to fit it, and a conversation that still does not fit fails with
+``ERR_CONTEXT_WINDOW_EXCEEDED`` (``embry0.agents.context_fit``).
 """
 
 from __future__ import annotations
@@ -34,12 +41,21 @@ from embry0.agents._tool_loop import (
     price_run,
     run_tool_loop,
 )
+from embry0.agents.context_fit import (
+    DEFAULT_TOKENS_PER_CHAR,
+    ContextWindowExceeded,
+    calibrated_ratio,
+    fit_messages,
+    request_chars,
+    window_from_models,
+)
 from embry0.agents.invocation import AgentInvocation
 from embry0.agents.mcp_client import McpStdioClient, summarize_content
 from embry0.agents.providers import ModelProvider, provider_named, upstream_model
 from embry0.agents.xai_tools import execute_tool
 from embry0.execution.agent_runner import AgentOutput
 from embry0.safety.error_codes import ErrorCode, classify_agent_error
+from embry0.sandbox.local_llm_token import LOCAL_LLM_CONTEXT_ENV, LOCAL_LLM_PROXY_FLAG, read_local_llm_proxy_token
 
 if TYPE_CHECKING:
     from langchain_core.runnables.config import RunnableConfig
@@ -131,12 +147,21 @@ class _ChatCompletionsWire:
     """OpenAI chat completions with function tools."""
 
     def __init__(
-        self, client: httpx.AsyncClient, *, provider: str, model: str, extras: dict[str, Any] | None = None
+        self,
+        client: httpx.AsyncClient,
+        *,
+        provider: str,
+        model: str,
+        extras: dict[str, Any] | None = None,
+        window: int | None = None,
     ) -> None:
         self._client = client
         self._provider = provider
         self._model = model
         self._extras = dict(extras or {})
+        # The model's context window when known; each request is fitted to it.
+        self._window = window
+        self._tokens_per_char = DEFAULT_TOKENS_PER_CHAR
 
     def tool_defs(self, defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
@@ -171,6 +196,15 @@ class _ChatCompletionsWire:
             await asyncio.sleep(_RETRY_BASE_SECONDS * attempt)
 
     async def turn(self, *, system: str, tools: list[dict[str, Any]], messages: list[dict[str, Any]]) -> Turn:
+        if self._window:
+            messages = fit_messages(
+                system=system,
+                tools=tools,
+                messages=messages,
+                window=self._window,
+                model=self._model,
+                tokens_per_char=self._tokens_per_char,
+            )
         body: dict[str, Any] = {
             "model": self._model,
             "messages": [{"role": "system", "content": system}, *messages],
@@ -192,6 +226,10 @@ class _ChatCompletionsWire:
         usage: Usage | None = None
         if isinstance(raw_usage, dict):
             prompt_tokens = int(raw_usage.get("prompt_tokens") or 0)
+            if self._window:
+                self._tokens_per_char = calibrated_ratio(
+                    prompt_tokens, request_chars(system, tools, messages), self._tokens_per_char
+                )
             details = raw_usage.get("prompt_tokens_details")
             cached = int((details.get("cached_tokens") if isinstance(details, dict) else 0) or 0)
             # prompt_tokens counts the cached ones; the loop prices cached input apart.
@@ -245,6 +283,8 @@ class _ChatCompletionsWire:
         return out
 
     def failure(self, exc: BaseException) -> tuple[str | None, str]:
+        if isinstance(exc, ContextWindowExceeded):
+            return ErrorCode.CONTEXT_WINDOW_EXCEEDED.value, str(exc)
         if isinstance(exc, ProviderHTTPError):
             return exc.error_code.value, str(exc)
         if isinstance(exc, httpx.TransportError):
@@ -256,6 +296,31 @@ class _ChatCompletionsWire:
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+def _flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
+async def _context_window(provider: ModelProvider, base_url: str, api_key: str, model: str) -> int | None:
+    """The context window of ``model`` on the operator's server: the setting, else its ``/models``.
+
+    None when neither says: the run is then not fitted, and a request the
+    server refuses as too long still fails with ERR_CONTEXT_WINDOW_EXCEEDED.
+    """
+    configured = os.environ.get(LOCAL_LLM_CONTEXT_ENV, "").strip()
+    if configured.isdigit() and int(configured) > 0:
+        return int(configured)
+    client = _make_client(base_url, api_key)
+    try:
+        resp = await client.get("models", timeout=10.0)
+        if resp.status_code >= 400:
+            return None
+        return window_from_models(resp.json(), model)
+    except (httpx.HTTPError, ValueError):
+        return None
+    finally:
+        await client.aclose()
 
 
 def _endpoint(provider: ModelProvider) -> str:
@@ -287,7 +352,17 @@ class OpenAICompatibleExecutor:
                 invocation.agent_type,
                 f"no base URL for provider {provider.name!r}: {provider.sandbox_base_url_env} is not set in the sandbox",
             )
-        api_key = os.environ.get(provider.sandbox_key_env, "").strip()
+        via_proxy = provider.name == "custom" and _flag(LOCAL_LLM_PROXY_FLAG)
+        if via_proxy:
+            api_key = read_local_llm_proxy_token()
+            if not api_key:
+                return error_output(
+                    invocation.agent_type,
+                    f"model {invocation.model!r} runs through the local-llm-proxy, and this sandbox holds no "
+                    "bearer for it (the orchestrator writes it at create; dispatch the job again)",
+                )
+        else:
+            api_key = os.environ.get(provider.sandbox_key_env, "").strip()
         if not api_key:
             return error_output(
                 invocation.agent_type,
@@ -296,11 +371,12 @@ class OpenAICompatibleExecutor:
             )
         model = upstream_model(provider, invocation.model)
         extras = dict(provider.request_extras.get(invocation.model, {}))
+        window = await _context_window(provider, base_url, api_key, model) if provider.name == "custom" else None
         return await run_tool_loop(
             invocation,
             config,
             make_wire=lambda: _ChatCompletionsWire(
-                _make_client(base_url, api_key), provider=provider.name, model=model, extras=extras
+                _make_client(base_url, api_key), provider=provider.name, model=model, extras=extras, window=window
             ),
             execute_builtin=execute_tool,
             make_mcp_client=_make_mcp_client,

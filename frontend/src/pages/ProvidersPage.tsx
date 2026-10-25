@@ -3,8 +3,8 @@ import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Label } from "@/components/ui/Label";
 import { Input } from "@/components/ui/Input";
+import { Label } from "@/components/ui/Label";
 import { LONG_MODEL_LIST, ModelSelect } from "@/components/models/ModelSelect";
 import { PageError } from "@/components/PageError";
 import { formatDate } from "@/lib/utils";
@@ -478,6 +478,91 @@ function FallbackOrderCard({
   );
 }
 
+/**
+ * Local models: the operator's own model server (the custom provider). It is
+ * shared hardware, so agents run on it a few at a time; the watcher's log
+ * analyses can run on it first while a slot is free.
+ */
+function LocalModelCard({
+  savedRuns,
+  savedModel,
+  isAdmin,
+  pending,
+  onSave,
+}: {
+  savedRuns: number;
+  savedModel: string;
+  isAdmin: boolean;
+  pending: boolean;
+  onSave: (runs: number, model: string, done: () => void) => void;
+}) {
+  const [runs, setRuns] = useState<string | null>(null);
+  const [model, setModel] = useState<string | null>(null);
+  const runsValue = runs ?? String(savedRuns);
+  const modelValue = model ?? savedModel;
+  const parsedRuns = Number(runsValue);
+  const runsValid = Number.isInteger(parsedRuns) && parsedRuns >= 1 && parsedRuns <= 64;
+  const modelValid = modelValue.trim() === "" || /^custom\/.+/.test(modelValue.trim());
+  const changed = parsedRuns !== savedRuns || modelValue.trim() !== savedModel;
+
+  return (
+    <Card data-testid="local-model">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg">Local model</CardTitle>
+          <Button
+            size="sm"
+            onClick={() =>
+              onSave(parsedRuns, modelValue.trim(), () => {
+                setRuns(null);
+                setModel(null);
+              })
+            }
+            disabled={!isAdmin || !changed || !runsValid || !modelValid || pending}
+          >
+            {pending ? "Saving..." : "Save"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Your own model server, reached as custom/&lt;model&gt;. Agents run on it at most this many at a time; one
+          that has to use it waits for a free slot. Log analyses can run on it first: with a slot free they use
+          it, otherwise they run on their own model at once.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <Label htmlFor="local_max_runs">Runs at once</Label>
+            <Input
+              id="local_max_runs"
+              type="number"
+              min={1}
+              max={64}
+              className="w-24"
+              value={runsValue}
+              disabled={!isAdmin}
+              onChange={(e) => setRuns(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="watcher_local_model">Log analyses run first on</Label>
+            <Input
+              id="watcher_local_model"
+              className="w-72 font-mono"
+              placeholder="custom/<model> (empty: off)"
+              value={modelValue}
+              disabled={!isAdmin}
+              onChange={(e) => setModel(e.target.value)}
+            />
+          </div>
+        </div>
+        {!runsValid && <p className="mt-2 text-xs text-destructive">Runs at once is a whole number from 1 to 64.</p>}
+        {!modelValid && <p className="mt-2 text-xs text-destructive">The model starts with custom/.</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function ProvidersPage() {
   const { data: catalog, isLoading, isError, refetch } = useModelsCatalog();
   const { data: providerConfig } = useProviderConfig();
@@ -509,13 +594,14 @@ export function ProvidersPage() {
 
   // Fallback options: enabled catalog models that call tools — a fallback
   // replaces the model of agents that use them, and the API refuses the rest.
-  const fallbackOptions = useMemo(
-    () =>
-      (catalog?.providers ?? []).flatMap((p) =>
-        p.models.filter((m) => m.enabled && m.tool_calling !== false).map((m) => m.model),
-      ),
-    [catalog],
-  );
+  const fallbackOptions = useMemo(() => {
+    const fromCatalog = (catalog?.providers ?? []).flatMap((p) =>
+      p.models.filter((m) => m.enabled && m.tool_calling !== false).map((m) => m.model),
+    );
+    // The local model lists no catalogue; the one set below can end the order.
+    const local = providerConfig?.watcher_local_model;
+    return local && !fromCatalog.includes(local) ? [...fromCatalog, local] : fromCatalog;
+  }, [catalog, providerConfig]);
 
   // Default-model options: enabled catalog models only — the API refuses an
   // id outside the catalog, and one that is disabled. The saved value is
@@ -664,6 +750,27 @@ export function ProvidersPage() {
                   toast.success(order.length ? "Fallback order saved" : "Fallback turned off");
                 },
                 onError: (e) => toastApiError(e, "Failed to save the fallback order"),
+              },
+            )
+          }
+        />
+      )}
+
+      {providerConfig?.local_max_runs !== undefined && (
+        <LocalModelCard
+          savedRuns={providerConfig.local_max_runs}
+          savedModel={providerConfig.watcher_local_model ?? ""}
+          isAdmin={isAdmin}
+          pending={updateProvider.isPending}
+          onSave={(runs, model, done) =>
+            updateProvider.mutate(
+              { local_max_runs: runs, watcher_local_model: model },
+              {
+                onSuccess: () => {
+                  done();
+                  toast.success("Local model saved");
+                },
+                onError: (e) => toastApiError(e, "Failed to save the local model"),
               },
             )
           }

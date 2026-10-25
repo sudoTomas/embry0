@@ -3197,6 +3197,34 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'A provider''s live model list (OpenRouter): models = the last good list, skipped = what it left out by reason.';
         """,
     ),
+    (
+        115,
+        "local models: the local server's run cap, the watcher's local-first model, and the leases on its slots (docs/providers.md, local models)",
+        # The cap and the watcher's model ride the single provider_config row.
+        # A lease is one run on the operator's local model server: taken
+        # before the run, deleted after it, and expired by itself if the
+        # process that took it died first.
+        """
+        ALTER TABLE provider_config ADD COLUMN IF NOT EXISTS local_max_runs INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE provider_config DROP CONSTRAINT IF EXISTS provider_config_local_max_runs_check;
+        ALTER TABLE provider_config ADD CONSTRAINT provider_config_local_max_runs_check
+            CHECK (local_max_runs BETWEEN 1 AND 64);
+        COMMENT ON COLUMN provider_config.local_max_runs IS
+            'how many agent runs the local model server takes at once (the custom provider); the rest wait or go elsewhere.';
+        ALTER TABLE provider_config ADD COLUMN IF NOT EXISTS watcher_local_model TEXT NOT NULL DEFAULT '';
+        COMMENT ON COLUMN provider_config.watcher_local_model IS
+            'custom/<model> the watcher analyses run on first while a local slot is free; empty = off.';
+        CREATE TABLE IF NOT EXISTS local_model_leases (
+            lease_id    TEXT PRIMARY KEY,
+            job_id      TEXT NOT NULL DEFAULT '',
+            agent_type  TEXT NOT NULL DEFAULT '',
+            model       TEXT NOT NULL DEFAULT '',
+            acquired_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            expires_at  TIMESTAMPTZ NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_local_model_leases_expires ON local_model_leases (expires_at);
+        """,
+    ),
 ]
 
 

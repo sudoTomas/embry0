@@ -30,7 +30,15 @@ _HARDCODED_FALLBACKS = {
 # RAV-1297: disabled_models (JSONB list of catalog model ids) rides the same
 # single row — no env-derived default; absent row means "nothing disabled".
 # fallback_models (the provider fallback order) likewise: absent means off.
-_UPDATABLE_FIELDS = frozenset(_HARDCODED_FALLBACKS.keys()) | {"disabled_models", "fallback_models"}
+# local_max_runs and watcher_local_model (local models) likewise: absent means
+# one run at a time and no local-first.
+_UPDATABLE_FIELDS = frozenset(_HARDCODED_FALLBACKS.keys()) | {
+    "disabled_models",
+    "fallback_models",
+    "local_max_runs",
+    "watcher_local_model",
+}
+DEFAULT_LOCAL_MAX_RUNS = 1
 
 # Legacy columns still present in the provider_config table but no longer
 # part of the config surface (RAV-1239).
@@ -77,6 +85,9 @@ class ProviderConfigRepository:
         data["disabled_models"] = list(raw_disabled) if isinstance(raw_disabled, list) else []
         raw_fallback = data.get("fallback_models")
         data["fallback_models"] = list(raw_fallback) if isinstance(raw_fallback, list) else []
+        raw_runs = data.get("local_max_runs")
+        data["local_max_runs"] = raw_runs if isinstance(raw_runs, int) and raw_runs > 0 else DEFAULT_LOCAL_MAX_RUNS
+        data["watcher_local_model"] = str(data.get("watcher_local_model") or "")
 
         data["api_key_set"] = bool(os.environ.get("ANTHROPIC_API_KEY"))
         # Historically CLAUDE_MAX_OAUTH_TOKEN; renamed to CLAUDE_CODE_OAUTH_TOKEN

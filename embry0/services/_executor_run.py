@@ -727,6 +727,39 @@ async def _plan_model_fallbacks(
     )
 
 
+async def _resolve_local_first(
+    resolver: Any, repo: str, local_first_model: Any, resolved: dict[str, Any], job_id: str
+) -> str | None:
+    """The local-first model's provider, added to ``resolved``, when the job may use it.
+
+    Local models (docs/providers.md): a job that prefers a model on the
+    operator's own server (the watcher's analyses) needs that provider's
+    route in its sandbox as well as its own models' keys, so a run that
+    finds every local slot taken can still run on its own model. Not when
+    the model no longer routes, the provider is paused, or it does not
+    resolve: the job then runs as if it had no preference.
+    """
+    from embry0.agents.fallback import model_provider
+    from embry0.agents.providers import provider_for_model
+    from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
+
+    if not isinstance(local_first_model, str) or not local_first_model or provider_for_model(local_first_model) is None:
+        return None
+    provider = model_provider(local_first_model)
+    if provider in resolved:
+        return provider
+    try:
+        pause_of = getattr(resolver, "llm_pause", None)
+        if pause_of is not None and await pause_of(repo, provider) is not None:
+            logger.info("local_first_paused", job_id=job_id, provider=provider)
+            return None
+        resolved.update(await resolver.resolve_llm_for_job(repo, (provider,), job_id=job_id))
+    except (CredentialMissingError, CredentialUnavailableError) as exc:
+        logger.info("local_first_unavailable", job_id=job_id, provider=provider, error=str(exc)[:200])
+        return None
+    return provider if provider in resolved else None
+
+
 async def _precheck_llm_accounts(
     self: IssueExecutor,
     job_id: str,
@@ -766,6 +799,7 @@ async def _precheck_llm_accounts(
         state = {
             "repo": str((job or {}).get("repo") or ""),
             "agent_models_override": overrides.get("agent_models_override") or {},
+            "local_first_model": overrides.get("local_first_model"),
         }
 
     from embry0.services.credentials.providers import providers_for_job
@@ -794,6 +828,9 @@ async def _precheck_llm_accounts(
             logger.info("provider_fallback_paused_provider_dropped", job_id=job_id, provider=paused)
     if plan:
         providers = tuple(sorted(resolved))
+    local_provider = await _resolve_local_first(resolver, repo, state.get("local_first_model"), resolved, job_id)
+    if local_provider is not None:
+        providers = tuple(sorted({*providers, local_provider}))
     # spec 3.6: registry secrets are registered at startup; an env-fallback
     # credential is not, so register whatever this job resolved to.
     register_known_secrets(cred.secret for cred in resolved.values() if isinstance(cred.secret, str))
@@ -1116,6 +1153,9 @@ async def _run_workflow(
             agent_models_override = overrides.get("agent_models_override")
             if agent_models_override:
                 initial_state["agent_models_override"] = agent_models_override
+            # Local models: the watcher's analyses prefer the local model.
+            if isinstance(overrides.get("local_first_model"), str) and overrides["local_first_model"]:
+                initial_state["local_first_model"] = overrides["local_first_model"]
             if overrides.get("max_budget_usd") is not None:
                 initial_state["max_budget_usd"] = overrides["max_budget_usd"]
             if overrides.get("budget_overrun_mode"):

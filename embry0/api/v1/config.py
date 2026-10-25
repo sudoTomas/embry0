@@ -293,13 +293,20 @@ def _check_fallback_order(order: list[str], disabled: set[str], *, changed: bool
     disabled interlock is checked either way, so a model the order names can
     no more be disabled than a tier model can.
     """
-    from embry0.agents.providers import chat_only_models, known_models, unpriced_models, unpriced_models_message
+    from embry0.agents.providers import (
+        chat_only_models,
+        is_custom_model,
+        known_models,
+        unpriced_models,
+        unpriced_models_message,
+    )
 
     if changed:
         repeated = sorted({m for m in order if order.count(m) > 1})
         if repeated:
             raise HTTPException(status_code=422, detail=f"fallback_models names a model more than once: {repeated}")
-        unknown = [m for m in order if m not in known_models()]
+        # A custom/<id> is the operator's own server (local models): no catalogue lists it.
+        unknown = [m for m in order if m not in known_models() and not is_custom_model(m)]
         if unknown:
             raise HTTPException(status_code=422, detail=f"fallback_models contains unknown model ids: {unknown}")
         unpriced = unpriced_models(order)
@@ -319,6 +326,30 @@ def _check_fallback_order(order: list[str], disabled: set[str], *, changed: bool
         raise HTTPException(
             status_code=422,
             detail=(f"a fallback model cannot be disabled: {', '.join(off)} — remove it from the fallback order first"),
+        )
+
+
+def _check_watcher_local_model(updates: dict[str, Any]) -> None:
+    """422 for a watcher local-first model that is not one of the operator's own server (local models).
+
+    "" turns local-first off. Anything else must be a ``custom/<id>`` the
+    enabled custom provider serves: local-first is for the local server, and
+    a cloud model there would quietly move the watcher's spend.
+    """
+    from embry0.agents.providers import is_custom_model
+
+    model = updates.get("watcher_local_model")
+    if model is None:
+        return
+    model = str(model).strip()
+    updates["watcher_local_model"] = model
+    if model and not is_custom_model(model):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"watcher_local_model must be a custom/<model> of the local model server, with the custom "
+                f"provider enabled (OPENAI_COMPATIBLE_PROVIDERS), or empty: {model!r} (docs/providers.md)"
+            ),
         )
 
 
@@ -396,6 +427,7 @@ async def update_provider(
             disabled,
             changed="fallback_models" in updates,
         )
+        _check_watcher_local_model(updates)
         result = await repo.update(**updates)
         db = getattr(request.app.state, "db", None)
         config = getattr(request.app.state, "config", None)

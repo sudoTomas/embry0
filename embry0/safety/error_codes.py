@@ -80,6 +80,8 @@ class ErrorCode(StrEnum):
     )
     PROVIDER_QUOTA_EXHAUSTED = "ERR_PROVIDER_QUOTA_EXHAUSTED"  # the account's usage window or quota is spent; CredentialHealth quarantines it longer
     PROVIDER_TOKEN_STALE = "ERR_PROVIDER_TOKEN_STALE"  # the provider could not validate the access token; the xAI token loop force-refreshes it, no quarantine
+    LOCAL_MODEL_BUSY = "ERR_LOCAL_MODEL_BUSY"  # the run had to use the operator's local model server and found every one of its slots taken for the whole wait (docs/providers.md, local models); nothing ran
+    CONTEXT_WINDOW_EXCEEDED = "ERR_CONTEXT_WINDOW_EXCEEDED"  # the conversation outgrew the model's context window, even with earlier tool output elided, or the server refused a request as too long
 
     # #284 — dispatch asked for over the API
     DISPATCH_FAILED = "ERR_DISPATCH_FAILED"  # API asked for a job and execute() raised before one existed (#284) — response-only, never a jobs.error_code
@@ -194,6 +196,9 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.PROVIDER_RATE_LIMITED: _C.CONFIG,
     ErrorCode.PROVIDER_QUOTA_EXHAUSTED: _C.CONFIG,
     ErrorCode.PROVIDER_TOKEN_STALE: _C.CONFIG,
+    # The local server's capacity is an operator setting, like an account's limits.
+    ErrorCode.LOCAL_MODEL_BUSY: _C.CONFIG,
+    ErrorCode.CONTEXT_WINDOW_EXCEEDED: _C.AGENT,
     ErrorCode.AGENT_KILLED: _C.INFRA,
     ErrorCode.AGENT_NO_RESULT: _C.AGENT,
     ErrorCode.SAFETY_HOOK_FAILED: _C.INFRA,
@@ -322,6 +327,7 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     ("embry0.execution.tls:CABundleError", ErrorCode.SANDBOX_INIT),
     ("embry0.execution.proxy.enrollment:RegistryFullError", ErrorCode.PROXY_ENROLLMENT),
     ("embry0.execution.auth_provider:AuthConfigError", ErrorCode.INVALID_CONFIG),
+    ("embry0.agents.context_fit:ContextWindowExceeded", ErrorCode.CONTEXT_WINDOW_EXCEEDED),
     ("embry0.execution.xai_credential:XaiCredentialError", ErrorCode.AUTH_REJECTED),
     ("embry0.execution.qa.presign:PresignAuthError", ErrorCode.QA_INFRA),
     ("embry0.agents.mcp_client:McpClientError", ErrorCode.MCP_SERVER_FAILED),
@@ -400,6 +406,12 @@ def _fold_case(message: str) -> str:
 # explicitly (AgentRunner's no-final-result return), because a traceback
 # that merely mentions a turn cap would otherwise be read as one.
 _TEXT_CODES: tuple[tuple[str, ErrorCode], ...] = (
+    # A server refusing a request over its model's window (vLLM and OpenAI say
+    # "maximum context length", llama.cpp "exceeds the available context size").
+    # First: the token counts in that message can contain "429".
+    ("maximum context length", ErrorCode.CONTEXT_WINDOW_EXCEEDED),
+    ("exceeds the available context size", ErrorCode.CONTEXT_WINDOW_EXCEEDED),
+    ("context_length_exceeded", ErrorCode.CONTEXT_WINDOW_EXCEEDED),
     # Most specific first: a spent usage window before "quota"; both before
     # "rate limit" and "429", which a spent window's message can also carry.
     *((phrase, ErrorCode.PROVIDER_QUOTA_EXHAUSTED) for phrase in USAGE_EXHAUSTED_PHRASES),

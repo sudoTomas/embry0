@@ -121,6 +121,14 @@ curl -X PUT http://localhost:8200/api/v1/config/context \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"system_context": "Use TypeScript strict mode."}'
 
+# Model providers (admin): the fallback order, and the local model server's
+# run cap and the watcher's local-first model (docs/providers.md#local-models)
+curl http://localhost:8200/api/v1/config/provider
+curl -X PUT http://localhost:8200/api/v1/config/provider \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"fallback_models": ["grok-4.7", "custom/my-model"], "local_max_runs": 1, "watcher_local_model": "custom/my-model"}'
+
 # Sandbox profiles
 curl http://localhost:8200/api/v1/sandbox-profiles
 curl -X POST http://localhost:8200/api/v1/sandbox-profiles \
@@ -135,6 +143,7 @@ curl -X POST http://localhost:8200/api/v1/config/providers/openrouter/catalog/re
 ```
 
 `GET /api/v1/config/models` lists every model a provider offers with its `enabled`, `tool_calling` and `pricing_usd_per_mtok`. OpenRouter's entry lists its [live model list](providers.md#openrouters-live-model-list), each model with its `name`, `vendor` and `context_length` too, and carries `catalog`: where the list comes from (`source`: `live` or `static`), when it was read, what it left out by reason, and the last failed read.
+`PUT /config/provider` takes any subset of its fields. `local_max_runs` is 1 to 64 (422 outside). `watcher_local_model` is `""` (off) or a `custom/<model>` with the custom provider enabled; anything else is 422.
 
 ## Skills
 
