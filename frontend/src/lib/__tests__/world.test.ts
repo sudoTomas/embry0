@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InboxQuest, Lead, Party, WorldCharacter } from "@/api/world";
-import { describeEvent, filterLeads, formatCost, formatSeconds, inboxOrder, levelBand, levelUps, narrate, NO_FILTERS, placeOf, xpDrops } from "../world";
+import { debugText, describeEvent, filterLeads, formatCost, formatSeconds, inboxOrder, levelBand, levelUps, narrate, NO_FILTERS, placeOf, xpDrops } from "../world";
 import type { LogEvent } from "@/lib/types";
 
 const party = (over: Partial<Party>): Party => ({
@@ -21,6 +21,8 @@ const party = (over: Partial<Party>): Party => ({
   delivery_state: null,
   stuck: false,
   failure: null,
+  error_code: null,
+  error_message: null,
   ...over,
 });
 
@@ -38,6 +40,36 @@ describe("narration (the chat box)", () => {
       "Oh dear, Smith was defeated on “Fix the sender”: it ran out of turns",
     );
     expect(narrate(before, [party({ stuck: true })], name)[0].text).toBe("Smith has gone quiet on “Fix the sender”.");
+  });
+
+  it("copies a line as a debug block: the failure's code, its exact message and the job's page", () => {
+    const now = new Date("2026-10-25T12:00:00Z");
+    const lost = party({
+      state: "defeated",
+      failure: "the LLM account it ran on refused it: weekly limit · resets Oct 27",
+      error_code: "ERR_PROVIDER_QUOTA_EXHAUSTED",
+      error_message: "triage output malformed; developer: weekly limit · resets Oct 27",
+    });
+    const [line] = narrate([party({ state: "working" })], [lost], name, now);
+    expect(debugText(line)).toBe(
+      [
+        "time: 2026-10-25T12:00:00.000Z",
+        "line: Oh dear, Smith was defeated on “Fix the sender”: the LLM account it ran on refused it: weekly limit · resets Oct 27",
+        "quest: Fix the sender",
+        "agent: developer",
+        "repo: acme/web",
+        "area: Billing",
+        "job: job-1",
+        "error_code: ERR_PROVIDER_QUOTA_EXHAUSTED",
+        "error: triage output malformed; developer: weekly limit · resets Oct 27",
+        "url: /jobs/job-1",
+      ].join("\n"),
+    );
+    const [out] = narrate([], [party({ state: "travelling" })], name, now);
+    expect(debugText(out)).not.toContain("error");
+    expect(debugText({ key: "k", text: "Congratulations", tone: "win", at: now.toISOString(), agent: "qa" })).toBe(
+      "time: 2026-10-25T12:00:00.000Z\nline: Congratulations\nagent: qa",
+    );
   });
 });
 

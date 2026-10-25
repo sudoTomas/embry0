@@ -1,16 +1,20 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { toastApiError } from "@/api/errorToast";
 import type { RunWith } from "@/api/runWith";
 import type { QuestScroll as Scroll, Rating } from "@/api/world";
 import { RunWithControl } from "@/components/runwith/RunWithControl";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
+import { Textarea } from "@/components/ui/Textarea";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useApproveMerge, useQuest, useRateQuest, useRejectQuest, useSendBack } from "@/hooks/useWorld";
-import { OUTCOME_WORDS, formatCost, formatSeconds, outcomeTone, placeOf } from "@/lib/world";
+import { OUTCOME_WORDS, formatCost, formatSeconds, outcomeBadgeTone, placeOf } from "@/lib/world";
 
 const RATINGS: { value: Rating; label: string }[] = [
-  { value: "good", label: "Good work" },
+  { value: "good", label: "Good" },
   { value: "needs_work", label: "Needs work" },
   { value: "bad", label: "Bad" },
 ];
@@ -23,18 +27,18 @@ interface QuestScrollProps {
 }
 
 /**
- * A quest that came back, as its scroll: what it did, the loot, the
- * experience, the cost and time, and why it failed if it did. Below, the
- * player's judgement: merge it, send it back with notes, reject it, and rate it.
+ * A finished job's report: what it did, the pull request, the XP, the cost
+ * and time, and why it failed if it did. Below, the review: merge it, send it
+ * back with notes, reject it, and rate it.
  */
 export function QuestScrollDialog({ jobId, skillName, canAct, onClose }: QuestScrollProps) {
   const quest = useQuest(jobId);
   return (
-    <Dialog onClose={onClose} label="Quest scroll" className="world max-w-2xl">
+    <Dialog onClose={onClose} title={quest.data?.title ?? "Job report"} className="max-w-2xl">
       {quest.isError ? (
-        <div className="world-scroll p-4">This quest's scroll did not load.</div>
+        <p className="p-5 text-sm text-fg-secondary">This report did not load.</p>
       ) : !quest.data ? (
-        <div className="world-scroll p-4">Unrolling the scroll…</div>
+        <p className="p-5 text-sm text-fg-muted">Loading…</p>
       ) : (
         <ScrollBody quest={quest.data} skillName={skillName} canAct={canAct} onClose={onClose} />
       )}
@@ -42,81 +46,86 @@ export function QuestScrollDialog({ jobId, skillName, canAct, onClose }: QuestSc
   );
 }
 
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-1.5">
+      <h3 className="text-sm font-semibold">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
 function ScrollBody({ quest, skillName, canAct, onClose }: { quest: Scroll; skillName: (s: string) => string; canAct: boolean; onClose: () => void }) {
   const lookup = useIdentityLookup();
-  const tone = outcomeTone(quest.outcome);
-  const headline = quest.status === "running" || quest.outcome === "out" ? "Quest in progress" : tone === "loss" ? "Quest failed" : "Quest complete!";
   const xpTotal = quest.xp.reduce((sum, g) => sum + g.xp, 0);
   return (
-    <div className="world-scroll hud max-h-[85vh] space-y-3 overflow-y-auto p-5" data-testid="quest-scroll" data-outcome={quest.outcome}>
-      <div className="text-center">
-        <h2 className="scroll-title title-pixel text-xl">
-          {headline}
-        </h2>
-        <p className="text-sm font-semibold">{quest.title}</p>
-        <p className="text-xs opacity-75">
-          {placeOf(quest.repo, quest.area)} · {OUTCOME_WORDS[quest.outcome]} · {formatCost(quest.cost_usd)} · {formatSeconds(quest.seconds)}
-        </p>
+    <div className="space-y-5 p-5" data-testid="quest-scroll" data-outcome={quest.outcome}>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted" data-testid="quest-meta">
+        <Badge tone={outcomeBadgeTone(quest.outcome)}>{OUTCOME_WORDS[quest.outcome]}</Badge>
+        <span className="font-mono">{placeOf(quest.repo, quest.area)}</span>
+        <span>· {formatCost(quest.cost_usd)}</span>
+        <span>· {formatSeconds(quest.seconds)}</span>
+        <Link className="ml-auto text-fg-muted underline hover:text-fg" to={`/jobs/${quest.job_id}`}>
+          Open the job
+        </Link>
       </div>
-      <hr className="scroll-rule" />
 
       {quest.failure && (
-        <p className="text-sm" data-testid="quest-failure">
-          <strong>What went wrong:</strong> {quest.failure}.
-        </p>
+        <div className="space-y-1 rounded-md border border-destructive/40 bg-red-dim p-3 text-sm" data-testid="quest-failure">
+          <p className="text-fg">
+            <span className="font-semibold">What went wrong:</span> {quest.failure}.
+          </p>
+          {quest.error_code && <p className="font-mono text-2xs text-fg-muted">{quest.error_code}</p>}
+        </div>
       )}
 
-      <section>
-        <h3 className="text-sm font-bold">What it did</h3>
+      <Section title="Report">
         {quest.report ? (
-          <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap text-xs" style={{ fontFamily: "inherit" }} data-testid="quest-report">
+          <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-canvas p-3 font-sans text-xs text-fg-secondary" data-testid="quest-report">
             {quest.report}
             {quest.report_truncated ? "\n…" : ""}
           </pre>
         ) : (
-          <p className="text-xs opacity-75">It brought back no report.</p>
+          <p className="text-xs text-fg-muted">No report.</p>
         )}
-      </section>
+      </Section>
 
-      <section>
-        <h3 className="text-sm font-bold">Loot</h3>
+      <Section title="Pull request">
         {quest.pr_url ? (
-          <p className="text-xs" data-testid="quest-loot">
-            <a className="underline" href={quest.pr_url} target="_blank" rel="noreferrer">
+          <p className="flex flex-wrap items-center gap-1.5 text-xs text-fg-secondary" data-testid="quest-loot">
+            <a className="text-fg underline hover:text-primary" href={quest.pr_url} target="_blank" rel="noreferrer">
               Pull request{quest.pr ? ` #${quest.pr.number}` : ""}
             </a>
             {quest.pr && (
               <>
                 {" "}
-                · {quest.pr.state} · {quest.pr.files ?? "?"} files · <span style={{ color: "#005a00" }}>+{quest.pr.additions ?? "?"}</span>{" "}
-                <span style={{ color: "#8b0000" }}>−{quest.pr.deletions ?? "?"}</span>
+                · {quest.pr.state} · {quest.pr.files ?? "?"} files · <span className="text-success">+{quest.pr.additions ?? "?"}</span>{" "}
+                <span className="text-destructive">−{quest.pr.deletions ?? "?"}</span>
               </>
             )}
             {quest.verification?.verdict && <> · checks: {quest.verification.verdict}</>}
             {quest.area && <> · {quest.area}</>}
           </p>
         ) : (
-          <p className="text-xs opacity-75">No pull request: the report above is the loot.</p>
+          <p className="text-xs text-fg-muted">No pull request; the report is the result.</p>
         )}
-      </section>
+      </Section>
 
       {quest.xp.length > 0 && (
-        <section>
-          <h3 className="text-sm font-bold">Experience gained ({xpTotal.toLocaleString("en-US")} xp)</h3>
-          <ul className="mt-1 grid grid-cols-1 gap-x-4 text-xs sm:grid-cols-2" data-testid="quest-xp">
+        <Section title={`XP earned (${xpTotal.toLocaleString("en-US")})`}>
+          <ul className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-xs text-fg-secondary sm:grid-cols-2" data-testid="quest-xp">
             {quest.xp.slice(0, 10).map((g) => (
               <li key={`${g.agent_type}-${g.stat}`}>
-                {lookup(g.agent_type).displayName}: {skillName(g.stat)} +{g.xp.toLocaleString("en-US")}
+                {lookup(g.agent_type).displayName}: {skillName(g.stat)} <span className="hud text-success">+{g.xp.toLocaleString("en-US")}</span>
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
 
       {quest.party.length > 0 && (
-        <section>
-          <h3 className="text-sm font-bold">The party</h3>
-          <ul className="mt-1 text-xs">
+        <Section title="Agents">
+          <ul className="space-y-0.5 text-xs text-fg-secondary">
             {quest.party.map((p) => (
               <li key={p.agent_type}>
                 {lookup(p.agent_type).displayName}: {p.runs} run{p.runs === 1 ? "" : "s"}, {formatSeconds(p.seconds)}, {formatCost(p.cost_usd)}
@@ -124,16 +133,15 @@ function ScrollBody({ quest, skillName, canAct, onClose }: { quest: Scroll; skil
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
 
-      <hr className="scroll-rule" />
       <Judgement quest={quest} canAct={canAct} onDone={onClose} />
     </div>
   );
 }
 
-/** The player's judgement of the work: merge, send back with notes, reject, and a rating. */
+/** The review of the work: merge, send back with notes, reject, and a rating. */
 function Judgement({ quest, canAct, onDone }: { quest: Scroll; canAct: boolean; onDone: () => void }) {
   const rate = useRateQuest();
   const sendBack = useSendBack();
@@ -153,7 +161,7 @@ function Judgement({ quest, canAct, onDone }: { quest: Scroll; canAct: boolean; 
     if (pendingApproval) {
       merge.mutate(pendingApproval.id, {
         onSuccess: () =>
-          rate.mutate({ jobId: quest.job_id, verdict: "merged" }, { onSuccess: () => toast.success("Merged. Loot banked."), onError: fail("Merged, but not recorded") }),
+          rate.mutate({ jobId: quest.job_id, verdict: "merged" }, { onSuccess: () => toast.success("Merged."), onError: fail("Merged, but not recorded") }),
         onError: fail("The merge was refused"),
       });
     } else {
@@ -161,25 +169,24 @@ function Judgement({ quest, canAct, onDone }: { quest: Scroll; canAct: boolean; 
     }
   };
 
-  if (!back) return <p className="text-xs opacity-75">Judge it when the party is back.</p>;
+  if (!back) return <p className="border-t border-border pt-4 text-xs text-fg-muted">Review it when it has finished.</p>;
   return (
-    <section className="space-y-2" data-testid="quest-judgement">
-      <h3 className="text-sm font-bold">Your judgement</h3>
+    <section className="space-y-3 border-t border-border pt-4" data-testid="quest-judgement">
+      <h3 className="text-sm font-semibold">Review</h3>
       {evaluation && (
-        <p className="text-xs" data-testid="quest-evaluation">
+        <p className="text-xs text-fg-secondary" data-testid="quest-evaluation">
           {evaluation.verdict ? `${evaluation.verdict.replace("_", " ")} · ` : ""}
           {evaluation.rating ? `rated ${evaluation.rating.replace("_", " ")}` : "not rated"}
           {evaluation.followup_job_id ? ` · follow-up ${evaluation.followup_job_id}` : ""}
           {evaluation.by ? ` · by ${evaluation.by}` : ""}
         </p>
       )}
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         {RATINGS.map((r) => (
-          <button
+          <Button
             key={r.value}
-            type="button"
-            className="world-button"
-            data-tone={r.value === "good" ? "win" : r.value === "bad" ? "loss" : undefined}
+            size="sm"
+            variant={evaluation?.rating === r.value ? "secondary" : "outline"}
             aria-pressed={evaluation?.rating === r.value}
             disabled={!canAct || rate.isPending}
             onClick={() =>
@@ -187,76 +194,93 @@ function Judgement({ quest, canAct, onDone }: { quest: Scroll; canAct: boolean; 
             }
           >
             {r.label}
-          </button>
+          </Button>
         ))}
       </div>
-      <textarea
+      <Textarea
         aria-label="A note on the work"
-        className="w-full rounded-sm border border-[#8a6a3a] bg-[#f4ead0] p-1.5 text-xs text-[#2b1d0e]"
+        className="min-h-[60px]"
         rows={2}
         placeholder={mode === "back" ? "What does the work still need?" : "A note on the work (optional)"}
         value={note}
         onChange={(e) => setNote(e.target.value)}
       />
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         {openPr && (
-          <button type="button" className="world-button" data-tone="win" disabled={!canAct || merge.isPending || rate.isPending} onClick={doMerge}>
+          <Button size="sm" disabled={!canAct || merge.isPending || rate.isPending} onClick={doMerge}>
             {pendingApproval ? "Merge" : "I merged it"}
-          </button>
+          </Button>
         )}
         {openPr && (
-          <button type="button" className="world-button" disabled={!canAct} onClick={() => setMode(mode === "back" ? "none" : "back")} aria-expanded={mode === "back"}>
+          <Button size="sm" variant="outline" disabled={!canAct} onClick={() => setMode(mode === "back" ? "none" : "back")} aria-expanded={mode === "back"}>
             Send back with notes
-          </button>
+          </Button>
         )}
-        <button type="button" className="world-button" data-tone="loss" disabled={!canAct} onClick={() => setMode(mode === "reject" ? "none" : "reject")} aria-expanded={mode === "reject"}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="text-destructive"
+          disabled={!canAct}
+          onClick={() => setMode(mode === "reject" ? "none" : "reject")}
+          aria-expanded={mode === "reject"}
+        >
           Reject
-        </button>
+        </Button>
       </div>
       {mode === "back" && (
-        <div className="space-y-1.5 rounded-sm border border-[#8a6a3a] p-2" data-testid="send-back">
-          <p className="text-xs">The same character picks the work up on its own branch, with your notes.</p>
+        <div className="space-y-2 rounded-md border border-border p-3" data-testid="send-back">
+          <p className="text-xs text-fg-secondary">The same agent picks the work up on its own branch, with your notes.</p>
           <RunWithControl value={runWith} onChange={setRunWith} repo={quest.repo} />
-          <button
-            type="button"
-            className="world-button"
+          <Button
+            size="sm"
             disabled={!note.trim() || sendBack.isPending}
             onClick={() =>
               sendBack.mutate(
                 { jobId: quest.job_id, notes: note.trim(), runWith },
-                { onSuccess: () => { toast.success("Sent back. The party sets off again."); onDone(); }, onError: fail("Not sent back") },
+                {
+                  onSuccess: () => {
+                    toast.success("Sent back.");
+                    onDone();
+                  },
+                  onError: fail("Not sent back"),
+                },
               )
             }
           >
             {sendBack.isPending ? "Sending…" : "Send it back"}
-          </button>
+          </Button>
         </div>
       )}
       {mode === "reject" && (
-        <div className="space-y-1.5 rounded-sm border border-[#8a6a3a] p-2" data-testid="reject">
+        <div className="space-y-2 rounded-md border border-destructive/40 p-3" data-testid="reject">
           {openPr && (
-            <label className="flex items-center gap-1.5 text-xs">
-              <input type="checkbox" checked={closePr} onChange={(e) => setClosePr(e.target.checked)} />
+            <label className="flex items-center gap-2 text-xs text-fg-secondary">
+              <input type="checkbox" className="accent-primary" checked={closePr} onChange={(e) => setClosePr(e.target.checked)} />
               Close the pull request, with the note as its last comment
             </label>
           )}
-          <button
-            type="button"
-            className="world-button"
-            data-tone="loss"
+          <Button
+            size="sm"
+            variant="destructive"
             disabled={reject.isPending}
             onClick={() =>
               reject.mutate(
                 { jobId: quest.job_id, note: note.trim(), closePr: openPr && closePr },
-                { onSuccess: () => { toast.success("Rejected."); onDone(); }, onError: fail("Not rejected") },
+                {
+                  onSuccess: () => {
+                    toast.success("Rejected.");
+                    onDone();
+                  },
+                  onError: fail("Not rejected"),
+                },
               )
             }
           >
             {reject.isPending ? "Rejecting…" : "Reject the work"}
-          </button>
+          </Button>
         </div>
       )}
-      {!canAct && <p className="text-xs opacity-75">Only an admin can judge a quest.</p>}
+      {!canAct && <p className="text-xs text-fg-muted">Only an admin can review a job.</p>}
     </section>
   );
 }

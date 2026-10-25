@@ -47,7 +47,7 @@ SELECT repo FROM repos WHERE active ORDER BY repo LIMIT $1
 # The parties out now, and those back within the last ``$1`` seconds.
 _JOBS_SQL = """
 SELECT job_id, repo, task, status, pipeline_template, job_kind, created_at, started_at, finished_at,
-       pr_url, delivery_state, area, issue_id, dispatched_by, current_stage, error_code
+       pr_url, delivery_state, area, issue_id, dispatched_by, current_stage, error_code, error_message
 FROM jobs
 WHERE status = ANY($2::text[])
    OR COALESCE(finished_at, updated_at) > NOW() - make_interval(secs => $1)
@@ -138,7 +138,7 @@ FROM traces WHERE job_id = $1 ORDER BY created_at
 # Finished quests a person sent (or that brought back a pull request) and nobody evaluated yet.
 _INBOX_SQL = """
 SELECT j.job_id, j.repo, j.area, j.task, j.status, j.delivery_state, j.pr_url, j.pipeline_template,
-       j.created_at, j.finished_at, j.error_code, j.total_cost_usd, j.dispatched_by,
+       j.created_at, j.finished_at, j.error_code, j.error_message, j.total_cost_usd, j.dispatched_by,
        -- drawn as the character that did the most of it: the costliest run but triage's
        (SELECT t.agent_type FROM traces t WHERE t.job_id = j.job_id AND t.agent_type <> 'triage'
         ORDER BY t.cost_usd DESC, t.created_at DESC LIMIT 1) AS agent_type

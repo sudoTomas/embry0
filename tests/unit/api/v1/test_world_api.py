@@ -178,6 +178,7 @@ async def test_the_guild_hall_shows_every_character_the_board_and_the_inbox(app:
         "finished_at": world["inbox"][0]["finished_at"],
         "cost_usd": 2.5,
         "failure": None,
+        "error_code": None,
     }
     assert world["regions"][0]["areas"][0]["name"] == "Billing" and world["frontier"] == ["acme/old"]
     assert world["loot"][0]["merged"] is False

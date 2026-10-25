@@ -60,6 +60,9 @@ export interface Party {
   delivery_state: string | null;
   stuck: boolean;
   failure: string | null;
+  /** A defeated party's job error code and its message as stored, for a debug copy; null otherwise. */
+  error_code: string | null;
+  error_message: string | null;
 }
 
 export interface Lead {
@@ -94,6 +97,7 @@ export interface InboxQuest {
   finished_at: string | null;
   cost_usd: number;
   failure: string | null;
+  error_code: string | null;
 }
 
 export interface Loot {
@@ -172,6 +176,7 @@ export interface QuestScroll {
   report_truncated: boolean;
   failure: string | null;
   error_code: string | null;
+  error_message: string | null;
   pr_url: string | null;
   pr: { number: number; state: string; files: number | null; additions: number | null; deletions: number | null; commits: number | null } | null;
   merge_approval: { id: string; status: string; pr_url: string } | null;

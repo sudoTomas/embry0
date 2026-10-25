@@ -5,7 +5,11 @@ import type { RunWith } from "@/api/runWith";
 import type { WorldCharacter } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { RunWithControl } from "@/components/runwith/RunWithControl";
+import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
+import { Label } from "@/components/ui/Label";
+import { Select } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useWriteQuest } from "@/hooks/useWorld";
 
@@ -17,7 +21,7 @@ interface WriteQuestDialogProps {
   onSent: (jobId: string) => void;
 }
 
-/** A quest the player writes: a task, for one character, on one repository, with Run with. */
+/** A task the operator writes for one agent on one repository, with Run with. */
 export function WriteQuestDialog({ characters, repos, initialAgent, onClose, onSent }: WriteQuestDialogProps) {
   const lookup = useIdentityLookup();
   const able = characters.filter((c) => c.can_quest);
@@ -33,60 +37,56 @@ export function WriteQuestDialog({ characters, repos, initialAgent, onClose, onS
       { repo, task: task.trim(), template: character?.quest_template ?? null, runWith },
       {
         onSuccess: (job) => {
-          toast.success(`${identity.displayName} sets off.`);
+          toast.success(`Started ${job.job_id}`);
           onSent(job.job_id);
         },
-        onError: (e) => toastApiError(e, "The quest was not given"),
+        onError: (e) => toastApiError(e, "Not started"),
       },
     );
   return (
-    <Dialog onClose={onClose} label="Write a quest" className="world max-w-lg">
-      <div className="world-panel space-y-3 p-4" data-testid="write-quest">
-        <h2 className="world-title text-base">Write a quest</h2>
-        <label className="block space-y-1 text-xs">
-          <span className="world-muted">Who goes</span>
+    <Dialog onClose={onClose} title="New task" className="max-w-lg">
+      <div className="space-y-4 p-5" data-testid="write-quest">
+        <div className="space-y-1.5">
+          <Label htmlFor="new-task-agent">Agent</Label>
           <div className="flex items-center gap-2">
             {agent && <AgentAvatar identity={identity} size={32} state="idle" />}
-            <select aria-label="Character" className="world-slot h-8 flex-1 px-1 world-text" value={agent} onChange={(e) => setAgent(e.target.value)}>
+            <Select id="new-task-agent" value={agent} onChange={(e) => setAgent(e.target.value)}>
               {able.map((c) => (
                 <option key={c.agent_type} value={c.agent_type}>
                   {lookup(c.agent_type).displayName} (level {c.level})
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
-        </label>
-        <label className="block space-y-1 text-xs">
-          <span className="world-muted">Where</span>
-          <select aria-label="Repository" className="world-slot h-8 w-full px-1 world-text" value={repo} onChange={(e) => setRepo(e.target.value)}>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="new-task-repo">Repository</Label>
+          <Select id="new-task-repo" value={repo} onChange={(e) => setRepo(e.target.value)}>
             {repos.map((r) => (
               <option key={r} value={r}>
                 {r}
               </option>
             ))}
-          </select>
-        </label>
-        <label className="block space-y-1 text-xs">
-          <span className="world-muted">The quest</span>
-          <textarea
-            aria-label="Task"
-            className="world-slot w-full p-2 text-sm world-text"
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="new-task-text">Task</Label>
+          <Textarea
+            id="new-task-text"
             rows={5}
             placeholder="What should it do, and how will you know it is done?"
             value={task}
             onChange={(e) => setTask(e.target.value)}
           />
-        </label>
-        <div className="world-text text-xs">
-          <RunWithControl value={runWith} onChange={setRunWith} repo={repo || null} />
         </div>
+        <RunWithControl value={runWith} onChange={setRunWith} repo={repo || null} />
         <div className="flex justify-end gap-2">
-          <button type="button" className="world-button" onClick={onClose}>
-            Not now
-          </button>
-          <button type="button" className="world-button" data-tone="win" disabled={!agent || !repo || !task.trim() || write.isPending} onClick={go}>
-            {write.isPending ? "Setting off…" : "Send"}
-          </button>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!agent || !repo || !task.trim() || write.isPending} onClick={go}>
+            {write.isPending ? "Starting…" : "Start"}
+          </Button>
         </div>
       </div>
     </Dialog>

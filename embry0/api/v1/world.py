@@ -35,6 +35,7 @@ from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services.run_with import apply_run_with
 from embry0.services.world import (
+    ERROR_MESSAGE_CHARS,
     INBOX_DAYS,
     LOOT_DAYS,
     PLAYER_ACTORS,
@@ -179,7 +180,8 @@ async def read_world(request: Request) -> dict[str, Any]:
                 "pr_url": r["pr_url"],
                 "finished_at": _iso(r["finished_at"]),
                 "cost_usd": round(float(r["total_cost_usd"] or 0), 4),
-                "failure": failure_words(r["error_code"]),
+                "failure": failure_words(r["error_code"], r.get("error_message")),
+                "error_code": r["error_code"],
             }
             for r in inbox
         ],
@@ -308,8 +310,9 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
         "lead_id": links.get(job_id),
         "report": report[:REPORT_CHARS],
         "report_truncated": len(report) > REPORT_CHARS,
-        "failure": failure_words(quest.get("error_code")),
+        "failure": failure_words(quest.get("error_code"), quest.get("error_message")),
         "error_code": quest.get("error_code"),
+        "error_message": str(quest.get("error_message") or "")[:ERROR_MESSAGE_CHARS] or None,
         "pr_url": quest.get("pr_url"),
         "pr": pr,
         "merge_approval": (

@@ -224,12 +224,44 @@ def _seconds_since(at: Any, now: datetime) -> float | None:
     return (now - (at if at.tzinfo else at.replace(tzinfo=UTC))).total_seconds()
 
 
-def failure_words(error_code: str | None) -> str | None:
-    """Why a quest failed, in plain words; None for one that did not."""
+#: The most of a job's error message the world sends, and of the provider's words a failure quotes.
+ERROR_MESSAGE_CHARS = 2_000
+_PROVIDER_WORDS_CHARS = 240
+
+
+def provider_words(error_message: str | None) -> str | None:
+    """The provider's own words at the end of a failed job's message, if it carries them.
+
+    An account failure's message ends with ``"; <agent>: <the provider's text>"``
+    (``_executor_outcomes``); a message with no such tail is the provider's text
+    itself, or a summary, and is returned whole.
+    """
+    text = (error_message or "").strip()
+    if not text:
+        return None
+    tail = text.rsplit("; ", 1)[-1]
+    agent, sep, words = tail.partition(": ")
+    if sep and agent and " " not in agent and words.strip():
+        tail = words
+    tail = " ".join(tail.split())
+    return tail[:_PROVIDER_WORDS_CHARS] + ("…" if len(tail) > _PROVIDER_WORDS_CHARS else "")
+
+
+def failure_words(error_code: str | None, error_message: str | None = None) -> str | None:
+    """Why a quest failed, in plain words; None for one that did not.
+
+    An account failure (a spent usage window, a rate limit, a refused token)
+    names the provider's own words when the job kept them ("weekly limit ·
+    resets ..."), not the generic list of what it might have been.
+    """
     if not error_code:
         return None
+    from embry0.safety.error_codes import ACCOUNT_FAILURE_CODES
     from embry0.services._executor_outcomes import _stopped_because
 
+    words = provider_words(error_message) if error_code in ACCOUNT_FAILURE_CODES else None
+    if words:
+        return f"the LLM account it ran on refused it: {words}"
     return _stopped_because(error_code)
 
 
@@ -263,7 +295,12 @@ def job_entry(
         "pr_url": job.get("pr_url"),
         "delivery_state": job.get("delivery_state"),
         "stuck": state in ("working", "travelling") and silent is not None and silent > STUCK_SECONDS,
-        "failure": failure_words(job.get("error_code")) if state == "defeated" else None,
+        "failure": failure_words(job.get("error_code"), job.get("error_message")) if state == "defeated" else None,
+        # For a debug copy of a failure: the code and the job's own message, as stored.
+        "error_code": job.get("error_code") if state == "defeated" else None,
+        "error_message": (str(job.get("error_message") or "")[:ERROR_MESSAGE_CHARS] or None)
+        if state == "defeated"
+        else None,
     }
 
 

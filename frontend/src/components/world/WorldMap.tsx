@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Lead, Party, Region, WorldCharacter } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { STATE_POSE, placeOf } from "@/lib/world";
 import { buildTileMap, hash, leadSpot, TERRAINS, type TileMap } from "@/lib/worldTiles";
@@ -113,22 +115,22 @@ export function WorldMap({ art, regions, quests, parties, characters, onPickLead
   const home = characters.filter((c) => c.state === "idle").slice(0, 10);
 
   return (
-    <section className="world-panel space-y-2 p-2" data-testid="world-map" aria-label="The world map">
+    <Card role="region" className="space-y-2 p-2" data-testid="world-map" aria-label="Map">
       <div className="flex items-center justify-between gap-2 px-1">
-        <span className="world-muted text-xs">
-          {map.regions.length} regions · drag to look around · click a creature to send a party
+        <span className="text-xs text-fg-muted">
+          {map.regions.length} repositories · drag to pan · click a lead to open it
         </span>
         <span className="flex gap-1">
           {[1, 2].map((z) => (
-            <button key={z} type="button" className="world-button" aria-pressed={zoom === z} onClick={() => setZoom(z)}>
+            <Button key={z} size="xs" variant={zoom === z ? "secondary" : "ghost"} aria-pressed={zoom === z} onClick={() => setZoom(z)}>
               {z}×
-            </button>
+            </Button>
           ))}
         </span>
       </div>
       <div
         ref={scroller}
-        className="relative h-[70vh] min-h-[320px] cursor-grab overflow-auto active:cursor-grabbing"
+        className="relative h-[70vh] min-h-[320px] cursor-grab overflow-auto rounded-md active:cursor-grabbing"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={() => (drag.current = null)}
@@ -143,8 +145,8 @@ export function WorldMap({ art, regions, quests, parties, characters, onPickLead
             {map.regions.map((r) => (
               <span
                 key={`label-${r.repo}`}
-                className="pointer-events-none absolute -translate-x-1/2 whitespace-nowrap rounded-sm px-1 text-[10px]"
-                style={{ left: r.label.x, top: r.label.y - 14, zIndex: 50_000, color: "#ffcf3f", background: "rgba(0,0,0,0.55)" }}
+                className="sprite-nameplate pointer-events-none absolute -translate-x-1/2 whitespace-nowrap rounded-sm bg-black/55 px-1 text-primary"
+                style={{ left: r.label.x, top: r.label.y - 14, zIndex: 50_000 }}
               >
                 {placeOf(r.repo)}
               </span>
@@ -153,8 +155,8 @@ export function WorldMap({ art, regions, quests, parties, characters, onPickLead
               r.towns.map((t) => (
                 <span
                   key={`town-${r.repo}-${t.name}`}
-                  className="pointer-events-none absolute -translate-x-1/2 whitespace-nowrap text-[8px]"
-                  style={{ left: t.x, top: t.y + 2, zIndex: 50_000, color: "#fff", textShadow: "1px 1px 0 #000" }}
+                  className="sprite-nameplate pointer-events-none absolute -translate-x-1/2 whitespace-nowrap text-white"
+                  style={{ left: t.x, top: t.y + 2, zIndex: 50_000, fontSize: 8, textShadow: "1px 1px 0 #000" }}
                 >
                   {t.name}
                 </span>
@@ -199,6 +201,6 @@ export function WorldMap({ art, regions, quests, parties, characters, onPickLead
           </div>
         </div>
       </div>
-    </section>
+    </Card>
   );
 }

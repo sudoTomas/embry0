@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
@@ -60,6 +61,9 @@ const ART = {
   vfx: {},
 };
 vi.mock("@/components/world/art/manifest", async (original) => ({ ...(await original<object>()), useArt: () => ART }));
+// An agent's panel watches a running job live; here the stream stays quiet.
+vi.mock("@/hooks/useJobEventStream", () => ({ useJobEventStream: () => ({ isConnected: false, isComplete: false }) }));
+vi.mock("@/api/inputs", () => ({ fetchJobInputs: async () => [], answerInput: vi.fn() }));
 vi.mock("@/hooks/useRunWith", () => ({ useRunWithKeys: () => ({ data: [] }) }));
 vi.mock("@/hooks/useModels", () => ({ useModels: () => ({ models: ["claude-sonnet-5"], providers: [], isLoading: false }) }));
 vi.mock("@/stores/authStore", () => ({
@@ -180,12 +184,18 @@ const SCROLL = {
   evaluation: null,
 } as unknown as QuestScroll;
 
-function renderAt(path = "/") {
-  return render(
-    <MemoryRouter initialEntries={[path]}>
-      <WorldPage />
-    </MemoryRouter>,
+function page(path = "/") {
+  return (
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter initialEntries={[path]}>
+        <WorldPage />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
+}
+
+function renderAt(path = "/") {
+  return render(page(path));
 }
 
 beforeEach(() => {
@@ -200,27 +210,28 @@ describe("WorldPage (the guild, spec 2026-10-25)", () => {
     const hall = screen.getByTestId("guild-hall");
     const cards = within(hall).getAllByTestId("world-character");
     expect(cards[0]).toHaveAttribute("data-state", "working");
-    expect(cards[0]).toHaveTextContent("On a quest: Fix the sender · web · Billing");
+    expect(cards[0]).toHaveTextContent("WorkingFix the sender · web · Billing");
     expect(within(cards[0]).getByTestId("stuck")).toBeInTheDocument();
     expect(screen.getByTestId("quest-inbox")).toHaveAttribute("data-count", "1");
-    expect(within(screen.getByTestId("quest-board")).getByTestId("quest")).toHaveTextContent("lvl 55");
+    expect(within(screen.getByTestId("quest-board")).getByTestId("quest")).toHaveTextContent("Lvl 55");
   });
 
-  it("sends a party at a quest as the signed-in player, with the model chosen", async () => {
+  it("starts a lead as the signed-in operator, with the model chosen", async () => {
     renderAt();
     await userEvent.click(within(screen.getByTestId("quest-board")).getByTestId("quest"));
     const dialog = screen.getByTestId("send-party");
     await userEvent.click(within(dialog).getByRole("button", { name: /Run with/ }));
     await userEvent.selectOptions(within(dialog).getByLabelText("Model"), "claude-sonnet-5");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Attack" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start" }));
     expect(send.mock.calls[0][0]).toEqual({ leadId: "case:9", by: "player@example.com", runWith: { model: "claude-sonnet-5" } });
   });
 
-  it("opens a quest's scroll from the inbox and judges it: merge through its approval, rate, send back, reject", async () => {
+  it("opens a finished job's report from the inbox and reviews it: merge through its approval, rate, send back, reject", async () => {
     renderAt();
     await userEvent.click(screen.getByTestId("inbox-quest"));
+    expect(screen.getByRole("dialog", { name: "Add the export" })).toBeInTheDocument();
     const scroll = screen.getByTestId("quest-scroll");
-    expect(scroll).toHaveTextContent("Quest complete!");
+    expect(within(scroll).getByTestId("quest-meta")).toHaveTextContent("PR open");
     expect(within(scroll).getByTestId("quest-loot")).toHaveTextContent("Pull request #7 · open · 3 files · +40 −2");
     expect(within(scroll).getByTestId("quest-xp")).toHaveTextContent("Coding +1,200");
 
@@ -228,7 +239,7 @@ describe("WorldPage (the guild, spec 2026-10-25)", () => {
     expect(merge.mock.calls[0][0]).toBe("ma-1");
 
     await userEvent.type(within(scroll).getByLabelText("A note on the work"), "Handle the empty list.");
-    await userEvent.click(within(scroll).getByRole("button", { name: "Good work" }));
+    await userEvent.click(within(scroll).getByRole("button", { name: "Good" }));
     expect(rate.mock.calls[0][0]).toEqual({ jobId: "job-1", rating: "good", note: "Handle the empty list." });
 
     await userEvent.click(within(scroll).getByRole("button", { name: "Send back with notes" }));
@@ -266,12 +277,94 @@ describe("WorldPage (the guild, spec 2026-10-25)", () => {
     expect(screen.getByTestId("send-party")).toBeInTheDocument();
   });
 
-  it("says why a failed quest failed", () => {
+  it("says why a failed job failed", () => {
     state.quest = { ...SCROLL, outcome: "failed", status: "failed", failure: "it ran out of turns", pr_url: null, pr: null, merge_approval: null } as QuestScroll;
     renderAt("/?quest=job-1");
     const scroll = screen.getByTestId("quest-scroll");
-    expect(scroll).toHaveTextContent("Quest failed");
+    expect(within(scroll).getByTestId("quest-meta")).toHaveTextContent("Failed");
     expect(within(scroll).getByTestId("quest-failure")).toHaveTextContent("What went wrong: it ran out of turns.");
     expect(within(scroll).queryByRole("button", { name: "Send back with notes" })).toBeNull();
+  });
+});
+
+describe("closing what opens over the guild", () => {
+  const openers: [string, () => HTMLElement][] = [
+    ["a job's report", () => screen.getByTestId("inbox-quest")],
+    ["an agent's panel", () => within(screen.getByTestId("guild-hall")).getAllByTestId("world-character")[0]],
+    ["a lead", () => within(screen.getByTestId("quest-board")).getByTestId("quest")],
+    ["a new task", () => screen.getByRole("button", { name: "New task" })],
+  ];
+  const closers: [string, () => Promise<unknown>][] = [
+    ["its Close button", () => userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }))],
+    ["Escape", () => userEvent.keyboard("{Escape}")],
+    ["a click outside it", () => userEvent.click(screen.getByRole("dialog").parentElement!)],
+  ];
+  for (const [what, opener] of openers) {
+    for (const [how, close] of closers) {
+      it(`closes ${what} with ${how}, and gives focus back to what opened it`, async () => {
+        renderAt();
+        const button = opener();
+        await userEvent.click(button);
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        await close();
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(button).toHaveFocus();
+      });
+    }
+  }
+});
+
+describe("the activity box", () => {
+  const LOST = {
+    ...WORLD.parties[0],
+    state: "defeated",
+    status: "failed",
+    stuck: false,
+    failure: "the LLM account it ran on refused it: weekly limit · resets Oct 27",
+    error_code: "ERR_PROVIDER_QUOTA_EXHAUSTED",
+    error_message: "triage output malformed; developer: weekly limit · resets Oct 27",
+  };
+  beforeEach(() => window.localStorage.clear());
+
+  it("copies a failure as a debug block, one line or all of them", async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient();
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/"]}>
+          <WorldPage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree());
+    state.world = { ...WORLD, parties: [LOST] } as unknown as World;
+    rerender(tree());
+    const line = screen.getByTestId("world-chat-line");
+    expect(line).toHaveTextContent("Oh dear, Developer was defeated on “Fix the sender”: the LLM account it ran on refused it: weekly limit · resets Oct 27");
+    await user.click(within(line).getByRole("button", { name: "Copy this line for debugging" }));
+    const copied = await navigator.clipboard.readText();
+    expect(copied).toMatch(/^time: \d{4}-\d\d-\d\dT/);
+    expect(copied).toContain("quest: Fix the sender\nagent: developer\nrepo: acme/web\narea: Billing\njob: job-live");
+    expect(copied).toContain("error_code: ERR_PROVIDER_QUOTA_EXHAUSTED\nerror: triage output malformed; developer: weekly limit · resets Oct 27");
+    expect(copied).toContain("url: /jobs/job-live");
+    await user.click(within(screen.getByTestId("world-chat")).getByRole("button", { name: "Copy all" }));
+    expect(await navigator.clipboard.readText()).toBe(copied);
+  });
+
+  it("folds to a tab and closes; the header opens it again, and the browser remembers", async () => {
+    const { unmount } = renderAt();
+    await userEvent.click(screen.getByRole("button", { name: "Collapse activity" }));
+    expect(screen.queryByTestId("world-chat")).toBeNull();
+    await userEvent.click(screen.getByTestId("world-chat-tab"));
+    await userEvent.click(within(screen.getByTestId("world-chat")).getByRole("button", { name: "Close activity" }));
+    expect(screen.queryByTestId("world-chat")).toBeNull();
+    expect(screen.queryByTestId("world-chat-tab")).toBeNull();
+    unmount();
+
+    renderAt();
+    expect(screen.queryByTestId("world-chat")).toBeNull();
+    await userEvent.click(screen.getByTestId("show-activity"));
+    expect(screen.getByTestId("world-chat")).toBeInTheDocument();
+    expect(window.localStorage.getItem("embry0.world.chat")).toBe("open");
   });
 });
