@@ -7,7 +7,7 @@ pre-split module.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import structlog
 
@@ -689,7 +689,7 @@ async def _model_policy_for_precheck(self: IssueExecutor) -> dict[str, Any] | No
 async def _job_account_failures(self: IssueExecutor, job_id: str) -> dict[str, Any]:
     """The job's own runs that ended on a spent or rate-limited account, by provider (provider fallback)."""
     traces = getattr(self, "_traces", None)
-    if traces is None:
+    if traces is None or not job_id:
         return {}
     try:
         rows, _total = await traces.list_all(job_id=job_id, limit=50)
@@ -760,6 +760,109 @@ async def _resolve_local_first(
     return provider if provider in resolved else None
 
 
+async def _wait_before_start(
+    self: IssueExecutor,
+    resolver: Any,
+    repo: str,
+    job_id: str,
+    *,
+    definitions: list[dict[str, Any]],
+    override: Any,
+    model_policy: dict[str, Any] | None,
+    providers: tuple[str, ...],
+    plan: dict[str, Any],
+    local_first_model: Any,
+) -> Any:
+    """The wait that keeps this job from starting, or None (spent account waits, spec 2026-10-25).
+
+    Asked of the job's main provider (the default model's, else the one most
+    agent definitions name) and of every provider a person chose for the job
+    (its agent models, a Run with key). A main provider the fallback plan
+    moves is not waited for; a chosen one never moves. A job that prefers its
+    local model while a slot is free does not wait for its main provider
+    while that model resolves.
+    """
+    from datetime import UTC, datetime
+
+    from embry0.agents.fallback import model_provider
+    from embry0.agents.providers import provider_for_model
+    from embry0.services.account_waits import main_provider, provider_pause, wait_for
+
+    if getattr(resolver, "pinned_pause", None) is None:
+        return None
+    checks: list[tuple[str, bool, str | None]] = []
+    local_ok = False
+    if isinstance(local_first_model, str) and local_first_model and provider_for_model(local_first_model) is not None:
+        try:
+            local_ok = await resolver.llm_pause(repo, model_provider(local_first_model)) is None
+        except Exception:  # noqa: BLE001 - the job then waits like any other
+            local_ok = False
+    # Run with's "*" names every agent's model, so the main provider is not the job's.
+    every_agent_chosen = isinstance(override, dict) and bool(override.get("*"))
+    if not local_ok and not every_agent_chosen:
+        default_model = (model_policy or {}).get("default_model")
+        main = main_provider(definitions, model_policy)
+        checks.append((main, False, default_model if isinstance(default_model, str) and default_model else None))
+    for model in (override or {}).values() if isinstance(override, dict) else ():
+        if isinstance(model, str) and model.strip():
+            checks.append((model_provider(model.strip()), True, model.strip()))
+    for provider in providers if job_id else ():
+        pinned, _ = await resolver.pinned_pause(job_id, provider)
+        if pinned:
+            checks.append((provider, True, None))
+    failures = await _job_account_failures(self, job_id)
+    now = datetime.now(UTC)
+    seen: set[tuple[str, bool]] = set()
+    for provider, chosen, model in checks:
+        if (provider, chosen) in seen or (not chosen and provider in plan):
+            continue
+        seen.add((provider, chosen))
+        pause, watch, pinned = await provider_pause(resolver, repo, provider, job_id=job_id, job_failures=failures)
+        wait = wait_for(pause, getattr(self, "_config", None), now, model=model, chosen=chosen or pinned, watch=watch)
+        if wait is not None:
+            logger.info(
+                "account_wait_before_start",
+                job_id=job_id,
+                provider=provider,
+                reason=wait.reason,
+                until=wait.until.isoformat(),
+                chosen=wait.chosen,
+            )
+            return wait
+    return None
+
+
+async def _account_wait_before_start(self: IssueExecutor, repo: str, pipeline_config: dict[str, Any] | None) -> Any:
+    """The wait a job with this repo and pipeline config would be parked in at its start, or None.
+
+    The account pre-check's question asked before a job exists (the
+    watcher's analyses): the main provider and the chosen models, with the
+    fallback plan, the local-first model and no job of its own.
+    """
+    resolver = getattr(self, "_credential_resolver", None)
+    if resolver is None:
+        return None
+    from embry0.services.credentials.providers import providers_for_job
+
+    override = (pipeline_config or {}).get("agent_models_override")
+    model_policy = await _model_policy_for_precheck(self)
+    definitions = await _agent_definitions_for_precheck(self)
+    providers = providers_for_job(definitions, override if isinstance(override, dict) else None, model_policy)
+    plan = await _plan_model_fallbacks(self, resolver, repo, providers, "", model_policy)
+    return await _wait_before_start(
+        self,
+        resolver,
+        repo,
+        "",
+        definitions=definitions,
+        override=override,
+        model_policy=model_policy,
+        providers=providers,
+        plan=plan,
+        local_first_model=(pipeline_config or {}).get("local_first_model"),
+    )
+
+
 async def _precheck_llm_accounts(
     self: IssueExecutor,
     job_id: str,
@@ -807,13 +910,32 @@ async def _precheck_llm_accounts(
 
     override = state.get("agent_models_override")
     model_policy = await _model_policy_for_precheck(self)
-    providers = providers_for_job(
-        await _agent_definitions_for_precheck(self),
-        override if isinstance(override, dict) else None,
-        model_policy,
-    )
+    definitions = await _agent_definitions_for_precheck(self)
+    providers = providers_for_job(definitions, override if isinstance(override, dict) else None, model_policy)
     repo = str(state.get("repo") or "")
     plan = await _plan_model_fallbacks(self, resolver, repo, providers, job_id, model_policy)
+    # Spent account waits (spec 2026-10-25): before any account is resolved,
+    # so a quarantined key a person chose waits instead of failing the resolve.
+    try:
+        wait = await _wait_before_start(
+            self,
+            resolver,
+            repo,
+            job_id,
+            definitions=definitions,
+            override=override,
+            model_policy=model_policy,
+            providers=providers,
+            plan=plan,
+            local_first_model=state.get("local_first_model"),
+        )
+    except Exception:  # noqa: BLE001 - a check that cannot be made never parks a job
+        logger.warning("account_wait_check_failed", job_id=job_id, exc_info=True)
+        wait = None
+    if wait is not None:
+        from embry0.services.account_waits import AccountWaitRequired
+
+        raise AccountWaitRequired(wait)
     if plan:
         required = tuple(sorted((set(providers) - set(plan)) | {fallback.provider for fallback in plan.values()}))
     else:
@@ -863,15 +985,87 @@ async def _execute_workflow_stream(
 
     workflow = self._select_workflow(pipeline)
 
+    from embry0.services.account_waits import AccountWaitInterrupt, AccountWaitRequired
+
+    resuming = input_value is None or isinstance(input_value, Command)
     # Resolve every declared LLM provider before graph config, and therefore
     # before any node can create a container. There is no ``_run_graph``;
     # this function is the only caller of ``_build_graph_config``.
-    input_value, llm_providers, llm_kinds, llm_ids, model_fallbacks = await _precheck_llm_accounts(
-        self, job_id, input_value
-    )
+    try:
+        input_value, llm_providers, llm_kinds, llm_ids, model_fallbacks = await _precheck_llm_accounts(
+            self, job_id, input_value
+        )
+    except AccountWaitRequired as exc:
+        # Spent account waits: nothing has run, so nothing is lost. A resume
+        # goes on from its checkpoint later, with the answer it was given; a
+        # fresh job starts again.
+        wait = exc.wait.with_mode("resume" if resuming else "relaunch")
+        if isinstance(input_value, Command):
+            wait = wait.with_resume(input_value.resume)
+        await _park_for_account(self, job_id, wait)
     graph_config = self._build_graph_config(
-        job_id, llm_providers=llm_providers, llm_credential_kinds=llm_kinds, model_fallbacks=model_fallbacks
+        job_id,
+        llm_providers=llm_providers,
+        llm_credential_kinds=llm_kinds,
+        model_fallbacks=model_fallbacks,
+        account_waits=pipeline not in NOT_RESUMABLE_PIPELINES,
     )
+
+    try:
+        return await _stream_workflow(
+            self, workflow, input_value, issue_id, job_id, pipeline, state_sink, graph_config, llm_ids, llm_kinds
+        )
+    except AccountWaitInterrupt as exc:
+        # A run inside the graph found its account spent with nothing to move
+        # to. LangGraph kept the last checkpoint; the node runs again then.
+        await _park_for_account(self, job_id, exc.wait.with_mode("resume"))
+
+
+async def _park_for_account(self: IssueExecutor, job_id: str, wait: Any) -> NoReturn:
+    """Park the job to wait for an account (spent account waits, spec 2026-10-25), then stop its runner.
+
+    ``status = paused`` and ``jobs.account_wait``; the account-wait loop goes
+    on with it. Raises :class:`JobParked`, which the runners' failure paths do
+    not see: a paused job keeps its sandbox, and its tracker hears nothing.
+    """
+    from embry0.execution import events
+    from embry0.services.account_waits import JobParked
+
+    await self._jobs.update(job_id, status="paused", account_wait=wait.record())
+    logger.info(
+        "job_parked_for_account",
+        job_id=job_id,
+        provider=wait.provider,
+        reason=wait.reason,
+        until=wait.until.isoformat(),
+        mode=wait.mode,
+        chosen=wait.chosen,
+    )
+    try:
+        await self._broadcast_event(
+            job_id,
+            events.interrupt(node=wait.agent or "account", reason="account_wait", summary=wait.record()),
+        )
+        await self._broadcast_event(job_id, events.system(message=wait.describe()))
+    except Exception:
+        logger.warning("account_wait_event_failed", job_id=job_id, exc_info=True)
+    raise JobParked(job_id, wait)
+
+
+async def _stream_workflow(
+    self: IssueExecutor,
+    workflow: Any,
+    input_value: Any,
+    issue_id: str | None,
+    job_id: str,
+    pipeline: str,
+    state_sink: dict[str, Any] | None,
+    graph_config: dict[str, Any],
+    llm_ids: dict[str, str],
+    llm_kinds: dict[str, str],
+) -> tuple[dict[str, Any] | None, bool, dict[str, Any] | None]:
+    """The checkpointed half of ``_execute_workflow_stream``: compile, re-enroll a resumed sandbox, stream."""
+    from langgraph.types import Command
 
     carried: dict[str, Any] = {}
     async with checkpointer_context(self._database_url) as saver:

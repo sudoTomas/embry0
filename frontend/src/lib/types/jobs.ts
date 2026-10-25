@@ -77,6 +77,21 @@ export interface JobResponse {
   cost_breakdown?: CostBreakdownEntry[];
   /** #281: the job's most recent errored agent runs (GET /jobs/{id} only). */
   agent_failures?: AgentFailure[];
+  /** What a paused job waits for: a spent LLM account and when it resets (GET /jobs/{id} only). Null when it is not waiting for one. */
+  account_wait?: AccountWait | null;
+}
+
+/** A job parked for an LLM account (spent account waits). `until` is UTC ISO; show it in the viewer's time. */
+export interface AccountWait {
+  provider: string;
+  /** quota_exhausted, rate_limited, local_busy, or the reason the account's quarantine names. */
+  reason: string;
+  until: string;
+  model?: string | null;
+  agent?: string | null;
+  /** A person chose this model or key for the job, so it does not move to another one. */
+  chosen?: boolean;
+  mode?: "resume" | "relaunch";
 }
 
 /** Why one agent run errored. `stderr_tail` is redacted and capped server-side. */

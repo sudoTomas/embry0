@@ -1,8 +1,9 @@
-import type { CharacterState, InboxQuest, Lead, Outcome, Party, WorldCharacter } from "@/api/world";
+import type { CharacterState, InboxQuest, Lead, Outcome, Party, WorldAccountWait, WorldCharacter } from "@/api/world";
 import type { SpriteState } from "@/components/roster/sprites";
 import type { BadgeTone } from "@/components/ui/Badge";
-import { statusTone } from "@/lib/status";
+import { providerLabel, statusTone } from "@/lib/status";
 import type { LogEvent } from "@/lib/types";
+import { formatDateTime } from "@/lib/utils";
 
 /** What an agent is doing, as its card and panel say it (the chat box keeps the game's words). */
 export const STATE_WORDS: Record<CharacterState, string> = {
@@ -103,6 +104,13 @@ export function bestSkills(character: Pick<WorldCharacter, "skills">, count = 3)
   return [...character.skills].sort((a, b) => b.level - a.level || b.xp - a.xp).slice(0, count);
 }
 
+/** A spent account a party waits for, in words, with the reset in the viewer's own time. */
+export function accountWaitWords(wait: WorldAccountWait): string {
+  const until = formatDateTime(wait.until);
+  if (wait.reason === "local_busy") return `every slot of the local model is taken; it tries again at ${until}`;
+  return `the ${providerLabel(wait.provider)} account is ${wait.reason.replace(/_/g, " ")} until ${until}`;
+}
+
 /** What a chat line knows about the party it is about, for a debug copy. */
 export type LineParty = Pick<Party, "job_id" | "title" | "leader" | "repo" | "area" | "state" | "failure" | "error_code" | "error_message">;
 
@@ -146,7 +154,9 @@ export function narrate(
     }
     if (was.state !== party.state) {
       if (party.state === "working") say("work", `${who} is at work on ${quest}.`, "info");
-      if (party.state === "waiting") say("wait", `${who} needs your answer on ${quest}.`, "alert");
+      if (party.state === "waiting" && party.account_wait)
+        say("wait", `${who} waits on ${quest}: ${accountWaitWords(party.account_wait)}.`, "info");
+      else if (party.state === "waiting") say("wait", `${who} needs your answer on ${quest}.`, "alert");
       if (party.state === "returning")
         say("back", party.pr_url ? `${who} is back from ${quest} with a pull request!` : `${who} is back from ${quest} with a report.`, "win");
       if (party.state === "defeated") say("lost", `Oh dear, ${who} was defeated on ${quest}${party.failure ? `: ${party.failure}` : "."}`, "loss");

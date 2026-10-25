@@ -5,13 +5,15 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
 from embry0.agents.fallback import (
+    ACCOUNT_PAUSE_REASONS,
     ModelFallback,
+    Pause,
     fallback_order,
     fallbacks_from_config,
     paused_by_outputs,
@@ -21,7 +23,7 @@ from embry0.agents.fallback import (
 from embry0.agents.fallback import describe as describe_fallback
 from embry0.agents.model_policy import build_model_policy, resolve_tier_models
 from embry0.agents.providers import price_usage
-from embry0.agents.resolver import resolve_agent_invocation
+from embry0.agents.resolver import _chosen_for_job, resolve_agent_invocation
 from embry0.agents.session import AgentSession
 from embry0.execution import events
 from embry0.execution.auth_provider import AuthConfigError
@@ -536,6 +538,152 @@ def _local_busy_updates(agent_type: str, model: str, wait_seconds: float, state:
     return updates
 
 
+# Spent account waits (spec 2026-10-25): how many times one run moves to
+# another provider after an attempt of it found its account spent. Each move
+# is to a provider not yet tried, so this only bounds a broken plan.
+_MAX_ACCOUNT_MOVES = 3
+
+
+async def _job_failures_for_run(configurable: dict[str, Any]) -> dict[str, Pause]:
+    """The job's providers whose latest run ended on a spent or rate-limited account, still inside its window.
+
+    Read from the job's trace rows, which every run writes as it ends; a node
+    run again after its job waited sees the attempt that stopped it.
+    """
+    from embry0.services.credentials.fallback import job_account_failures
+
+    traces_repo = configurable.get("traces_repo")
+    job_id = str(configurable.get("job_id") or "")
+    if traces_repo is None or not job_id:
+        return {}
+    try:
+        rows, _total = await traces_repo.list_all(job_id=job_id, limit=50)
+        return job_account_failures(rows, configurable.get("embry0_config"), datetime.now(UTC))
+    except Exception:  # noqa: BLE001 - no record of a failure is no pause
+        logger.warning("account_wait_traces_unread", job_id=job_id, exc_info=True)
+        return {}
+
+
+async def _spent_pause(state: dict[str, Any], configurable: dict[str, Any], provider: str) -> tuple[Any, bool, bool]:
+    """``(pause, watch, pinned)`` for the provider a run is about to use; nothing without a resolver that can tell."""
+    from embry0.services.account_waits import provider_pause
+
+    resolver = configurable.get("credential_resolver")
+    if resolver is None or getattr(resolver, "pinned_pause", None) is None:
+        return None, False, False
+    try:
+        return await provider_pause(
+            resolver,
+            str(state.get("repo") or ""),
+            provider,
+            job_id=str(configurable.get("job_id") or state.get("job_id") or ""),
+            job_failures=await _job_failures_for_run(configurable),
+        )
+    except Exception:  # noqa: BLE001 - a check that cannot be made never stops a run
+        logger.warning("account_wait_check_failed", provider=provider, exc_info=True)
+        return None, False, False
+
+
+async def _quarantine_now(configurable: dict[str, Any], provider: str, code: str, result: Any) -> None:
+    """Quarantine the account a run just found spent, now rather than when the job ends.
+
+    The next job's account pre-check then sees the pause and moves or waits,
+    instead of failing its first run the same way. The job's end reports it
+    again, which only rewrites the same quarantine.
+    """
+    health = configurable.get("credential_health")
+    job_id = str(configurable.get("job_id") or "")
+    if health is None or not job_id:
+        return
+    from embry0.services.credentials.health import xai_quarantine_reason
+
+    resets_at = getattr(result, "provider_resets_at", None)
+    try:
+        await health.report_job(
+            job_id,
+            code,
+            provider,
+            resets_at=resets_at if isinstance(resets_at, datetime) else None,
+            reason=xai_quarantine_reason(provider, code, str(getattr(result, "error_message", "") or "")),
+        )
+    except Exception:  # noqa: BLE001 - the job's end tries again
+        logger.warning("credential_quarantine_now_failed", job_id=job_id, provider=provider, exc_info=True)
+
+
+async def _after_spent_account(
+    result: Any,
+    output_entry: AgentOutputEntry,
+    code: str,
+    *,
+    state: dict[str, Any],
+    configurable: dict[str, Any],
+    new_total: float,
+    moves_left: bool,
+    order: list[str],
+    chosen_model: bool,
+    model_fallbacks: dict[str, ModelFallback],
+    resolve: Any,
+    account_waits: bool,
+    agent_type: str,
+    model: str,
+) -> dict[str, Any] | None:
+    """What a run that found its account spent does next (spent account waits, spec 2026-10-25).
+
+    Quarantines the account now. Returns the state the run runs again with
+    when the order has a ready model whose key the sandbox holds and the
+    model is not one a person chose; raises :class:`AccountWaitInterrupt`
+    when there is none and the job may wait; else None, and the run's
+    failure stands as before.
+    """
+    from embry0.services.account_waits import AccountWaitInterrupt, wait_for
+
+    provider = str(output_entry.get("provider") or "anthropic")
+    await _quarantine_now(configurable, provider, code, result)
+    resets_at = getattr(result, "provider_resets_at", None)
+    pause = Pause(provider, ACCOUNT_PAUSE_REASONS[code], resets_at if isinstance(resets_at, datetime) else None)
+    job_id = str(configurable.get("job_id") or state.get("job_id") or "")
+    resolver = configurable.get("credential_resolver")
+    pinned = False
+    if resolver is not None and job_id:
+        try:
+            pinned = bool(await resolver.job_pinned(job_id, provider))
+        except Exception:  # noqa: BLE001 - an unreadable pin keeps the person's key: no move
+            pinned = True
+    retry_state = {
+        **state,
+        "agent_outputs": [*(state.get("agent_outputs") or []), output_entry],
+        "total_cost_usd": new_total,
+    }
+    if order and moves_left and not pinned and not chosen_model:
+        plan = replan(model_fallbacks, {provider: pause}, order, _sandbox_llm_providers(retry_state, configurable))
+        try:
+            moves = (resolve(plan).provider or "anthropic") != provider
+        except AuthConfigError:
+            moves = False
+        if moves:
+            return retry_state
+    if not account_waits:
+        return None
+    watch = pinned
+    if not watch and resolver is not None and getattr(resolver, "job_uses_registry", None) is not None and job_id:
+        try:
+            watch = bool(await resolver.job_uses_registry(job_id, provider))
+        except Exception:  # noqa: BLE001 - the wait then ends at its time
+            watch = False
+    wait = wait_for(
+        pause,
+        configurable.get("embry0_config"),
+        datetime.now(UTC),
+        model=model,
+        agent=agent_type,
+        chosen=pinned or chosen_model,
+        watch=watch,
+    )
+    if wait is not None:
+        raise AccountWaitInterrupt(wait)
+    return None
+
+
 async def run_agent_node(
     state: dict[str, Any],
     agent_runner: Any,
@@ -554,6 +702,7 @@ async def run_agent_node(
     config: Any | None = None,
     resume_session: AgentSession | None = None,
     node: str | None = None,
+    _account_moves: int = 0,
 ) -> dict[str, Any]:
     """Resolve an AgentInvocation and run it via the sandbox executor.
 
@@ -629,9 +778,15 @@ async def run_agent_node(
     # with its tier fallbacks, best-effort — None means no policy.
     model_policy = await load_model_policy(config)
     model_fallbacks = await _model_fallbacks_for_run(state, config, model_policy)
-    local_first = _local_first_for_run(state, _graph_configurable(config), model_fallbacks)
+    configurable = _graph_configurable(config)
+    local_first = _local_first_for_run(state, configurable, model_fallbacks)
+    # Spent account waits (spec 2026-10-25): whether this run may park its job
+    # when its account is spent with nothing ready to move to. Only pipelines
+    # whose graph resumes from a checkpoint; the others fail as before.
+    account_waits = bool(configurable.get("account_waits"))
+    app_config = configurable.get("embry0_config")
 
-    def _resolve(local_first_model: str | None) -> Any:
+    def _resolve(local_first_model: str | None, fallbacks: dict[str, ModelFallback] | None = None) -> Any:
         return resolve_agent_invocation(
             agent_type=agent_type,
             prompt=prompt,
@@ -650,12 +805,54 @@ async def run_agent_node(
             credentials=_credentials_for_resolve(credentials, config),
             model_policy=model_policy,
             job_agent_models=job_agent_models,
-            model_fallbacks=model_fallbacks,
+            model_fallbacks=model_fallbacks if fallbacks is None else fallbacks,
             local_first_model=local_first_model,
         )
 
+    order = runnable_fallback_models(fallback_order(model_policy), (model_policy or {}).get("disabled_models") or ())
+    chosen_model = _chosen_for_job(agent_type, job_agent_models)
+
+    async def _resolve_ready(local_first_model: str | None) -> Any:
+        """Resolve, then make sure the run does not start on a spent account.
+
+        A provider found paused since the plan was made (another job's run
+        quarantined it, a person's chosen key is quarantined) moves the run to
+        the next ready model of the order, like the plan would have. With
+        nowhere to move, a spent account with a known end parks the job.
+        """
+        nonlocal model_fallbacks
+        resolved = _resolve(local_first_model)
+        for _ in range(_MAX_ACCOUNT_MOVES):
+            provider = resolved.provider or "anthropic"
+            if resolved.local_first is not None:
+                return resolved
+            pause, watch, pinned = await _spent_pause(state, configurable, provider)
+            if pause is None:
+                return resolved
+            if order and not pinned and not chosen_model:
+                moved = replan(model_fallbacks, {provider: pause}, order, _sandbox_llm_providers(state, configurable))
+                if moved != model_fallbacks:
+                    model_fallbacks = moved
+                    resolved = _resolve(local_first_model)
+                    continue
+            from embry0.services.account_waits import AccountWaitInterrupt, wait_for
+
+            wait = wait_for(
+                pause,
+                app_config,
+                datetime.now(UTC),
+                model=resolved.model,
+                agent=agent_type,
+                chosen=pinned or chosen_model,
+                watch=watch,
+            )
+            if wait is not None and account_waits:
+                raise AccountWaitInterrupt(wait)
+            return resolved
+        return resolved
+
     try:
-        invocation = _resolve(local_first)
+        invocation = await _resolve_ready(local_first)
     except AuthConfigError as exc:
         return _stamp_loaded_preferences(_auth_error_updates(agent_type, exc, state), state, loaded_prefs)
 
@@ -664,24 +861,23 @@ async def run_agent_node(
     # free now, else it runs on its own model; any other run waits for one.
     local_slots: Any = None
     lease_id: str | None = None
-    job_ref = str(_graph_configurable(config).get("job_id") or state.get("job_id") or "")
+    job_ref = str(configurable.get("job_id") or state.get("job_id") or "")
     if invocation.provider == "custom":
         slots_and_cap = await _local_slots(config)
         if slots_and_cap is not None:
             local_slots, cap = slots_and_cap
-            slot_args = {
-                "cap": cap,
-                "job_id": job_ref,
-                "agent_type": agent_type,
-                "model": invocation.model,
-                "run_seconds": invocation.timeout_seconds,
-            }
             if invocation.local_first is not None:
-                lease_id = await local_slots.try_acquire(**slot_args)
+                lease_id = await local_slots.try_acquire(
+                    cap=cap,
+                    job_id=job_ref,
+                    agent_type=agent_type,
+                    model=invocation.model,
+                    run_seconds=invocation.timeout_seconds,
+                )
                 if lease_id is None:
                     local_model = invocation.model
                     try:
-                        invocation = _resolve(None)
+                        invocation = await _resolve_ready(None)
                     except AuthConfigError as exc:
                         return _stamp_loaded_preferences(
                             _auth_error_updates(agent_type, exc, state), state, loaded_prefs
@@ -696,7 +892,9 @@ async def run_agent_node(
                                 node=node or agent_type,
                             )
                         )
-            else:
+            # A run that has to use the local model: one whose own model is
+            # on it, or that moved to it (a fallback, a model a person named).
+            if invocation.provider == "custom" and lease_id is None and invocation.local_first is None:
                 wait_seconds = _slot_wait_seconds(config)
 
                 def _waiting() -> None:
@@ -708,8 +906,20 @@ async def run_agent_node(
                             )
                         )
 
-                lease_id = await local_slots.acquire(**slot_args, wait_seconds=wait_seconds, on_wait=_waiting)
+                lease_id = await local_slots.acquire(
+                    cap=cap,
+                    job_id=job_ref,
+                    agent_type=agent_type,
+                    model=invocation.model,
+                    run_seconds=invocation.timeout_seconds,
+                    wait_seconds=wait_seconds,
+                    on_wait=_waiting,
+                )
                 if lease_id is None:
+                    if account_waits:
+                        from embry0.services.account_waits import AccountWaitInterrupt, local_busy_wait
+
+                        raise AccountWaitInterrupt(local_busy_wait(invocation.model, agent_type, datetime.now(UTC)))
                     return _stamp_loaded_preferences(
                         _local_busy_updates(agent_type, invocation.model, wait_seconds, state), state, loaded_prefs
                     )
@@ -937,6 +1147,63 @@ async def run_agent_node(
     }
     if result.is_error:
         updates["errors"] = [f"{agent_type}: {result.error_message}"]
+
+    # Spent account waits (spec 2026-10-25): a run that found its account
+    # spent or rate-limited moves at once to the next ready model and runs
+    # again; with nowhere to move it parks the job until the account resets.
+    failed_code = str(getattr(result, "error_code", None) or "") if result.is_error else ""
+    if failed_code in ACCOUNT_PAUSE_REASONS:
+        moved = await _after_spent_account(
+            result,
+            output_entry,
+            failed_code,
+            state=state,
+            configurable=configurable,
+            new_total=new_total,
+            moves_left=_account_moves < _MAX_ACCOUNT_MOVES,
+            order=order,
+            chosen_model=chosen_model,
+            model_fallbacks=model_fallbacks,
+            resolve=lambda plan: _resolve(local_first, plan),
+            account_waits=account_waits,
+            agent_type=agent_type,
+            model=invocation.model,
+        )
+        if moved is not None:
+            if on_event is not None:
+                on_event(
+                    events.progress(
+                        message=(
+                            f"{agent_type} found the {output_entry['provider']} account spent on {invocation.model}; "
+                            "it runs again on the next ready model."
+                        ),
+                        node=node or agent_type,
+                    )
+                )
+            again = await run_agent_node(
+                moved,
+                agent_runner,
+                agent_type,
+                prompt,
+                model=model,
+                tools=tools,
+                max_turns=max_turns,
+                timeout_seconds=timeout_seconds,
+                network=network,
+                on_event=on_event,
+                agent_definition=agent_definition,
+                template_config=template_config,
+                credentials=credentials,
+                global_defaults=global_defaults,
+                config=config,
+                resume_session=resume_session,
+                node=node,
+                _account_moves=_account_moves + 1,
+            )
+            # Both attempts, the one that ran last last (as triage's decide-now
+            # retry). The spent attempt's error is not the node's: its trace keeps it.
+            again["agent_outputs"] = [output_entry, *(again.get("agent_outputs") or [])]
+            return again
 
     # Per-job cap (layer 1). Every agent turn in every workflow lands here, so
     # this is the finest granularity the orchestrator has: `hard` aborts the

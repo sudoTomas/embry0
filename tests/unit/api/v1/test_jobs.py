@@ -353,6 +353,43 @@ async def test_resume_job_without_issue(app):
 
 
 @pytest.mark.asyncio
+async def test_try_now_on_a_job_waiting_for_its_account_goes_on_at_once(app):
+    """Spent account waits (spec 2026-10-25): a parked job is claimed and goes on, whatever the choice."""
+    waiting = {
+        "job_id": "job-waits1234",
+        "status": "paused",
+        "repo": "owner/repo",
+        "task": "Fix bug",
+        "issue_id": "iss-1",
+        "total_cost_usd": 0.0,
+        "budget_overrun_usd": 0.0,
+        "account_wait": {"provider": "anthropic", "reason": "quota_exhausted", "until": "2030-01-01T00:00:00+00:00"},
+    }
+    app.state.jobs_repo.get = AsyncMock(return_value=waiting)
+    app.state.jobs_repo.claim_account_wait = AsyncMock(side_effect=[True, False])
+    app.state.issue_executor.draining = False
+    app.state.issue_executor.go_on_after_account_wait = MagicMock()
+    app.state.issue_executor.schedule_resume = MagicMock()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.post(
+            "/api/v1/jobs/job-waits1234/resume",
+            json={"choice": "continue_retrying"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        second = await client.post(
+            "/api/v1/jobs/job-waits1234/resume",
+            json={"choice": "continue_retrying"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert first.status_code == 200 and first.json()["choice"] == "account_ready"
+    app.state.issue_executor.go_on_after_account_wait.assert_called_once()
+    app.state.issue_executor.schedule_resume.assert_not_called()
+    assert second.status_code == 409, "someone else already took it back"
+
+
+@pytest.mark.asyncio
 async def test_resume_job_rejects_extra_fields(client_with_paused_job):
     """extra='forbid' should reject unexpected fields."""
     client, job_id = client_with_paused_job

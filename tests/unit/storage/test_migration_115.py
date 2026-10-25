@@ -17,12 +17,6 @@ def test_migration_115_present() -> None:
     assert "local_max_runs" in sql and "watcher_local_model" in sql and "local_model_leases" in sql
 
 
-def test_migration_115_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_114.py)."""
-    assert MIGRATIONS[-1][0] == 115, "migration 115 must add the local model settings and leases"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_one_run_at_a_time_and_no_local_first_by_default(db_with_migrations: DatabasePool) -> None:

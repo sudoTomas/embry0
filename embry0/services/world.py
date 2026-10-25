@@ -265,6 +265,15 @@ def failure_words(error_code: str | None, error_message: str | None = None) -> s
     return _stopped_because(error_code)
 
 
+def account_wait_view(job: Mapping[str, Any]) -> dict[str, Any] | None:
+    """What a paused job waits for (spent account waits): provider, reason, until (UTC ISO), model, agent, chosen."""
+    raw = job.get("account_wait")
+    if job.get("status") != "paused" or not isinstance(raw, Mapping) or not raw.get("until"):
+        return None
+    keys = ("provider", "reason", "until", "model", "agent", "chosen")
+    return {key: raw.get(key) for key in keys}
+
+
 def job_entry(
     job: Mapping[str, Any],
     runs: list[tuple[str, str]],
@@ -295,6 +304,8 @@ def job_entry(
         "pr_url": job.get("pr_url"),
         "delivery_state": job.get("delivery_state"),
         "stuck": state in ("working", "travelling") and silent is not None and silent > STUCK_SECONDS,
+        # A waiting party held by a spent account, and until when.
+        "account_wait": account_wait_view(job),
         "failure": failure_words(job.get("error_code"), job.get("error_message")) if state == "defeated" else None,
         # For a debug copy of a failure: the code and the job's own message, as stored.
         "error_code": job.get("error_code") if state == "defeated" else None,

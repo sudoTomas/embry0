@@ -2384,6 +2384,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # and the volume manager exist. Each runs as an ordinary job task.
     _start_recovered_jobs(app.state.issue_executor, recovering)
 
+    # Spent account waits (spec 2026-10-25): goes on with the jobs parked for
+    # an LLM account once it is ready again. After recovery, which never takes
+    # a parked job: it reads paused.
+    from embry0.services.account_waits import AccountWaitLoop
+
+    app.state.account_waits = AccountWaitLoop(
+        jobs=app.state.jobs_repo,
+        executor=app.state.issue_executor,
+        resolver=getattr(app.state, "credential_resolver", None),
+    )
+    account_wait_task = asyncio.create_task(app.state.account_waits.start())
+    app.state.background_tasks.add(account_wait_task)
+    account_wait_task.add_done_callback(app.state.background_tasks.discard)
+
     logger.info("embry0_started")
     yield
 

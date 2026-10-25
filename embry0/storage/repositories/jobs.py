@@ -130,6 +130,8 @@ _UPDATABLE_FIELDS = frozenset(
         "job_kind",
         "result_summary",
         "area",
+        # Spent account waits (migration 116): what a parked job waits for.
+        "account_wait",
     }
 )
 
@@ -634,6 +636,33 @@ class JobsRepository:
             list(job_ids),
         )
         return [r["job_id"] for r in rows]
+
+    async def account_waiting(self) -> list[dict[str, Any]]:
+        """The jobs parked to wait for an LLM account (migration 116), oldest first."""
+        rows = await self._db.fetch(
+            """
+            SELECT job_id, issue_id, repo, status, pipeline_template, launch, account_wait
+            FROM jobs
+            WHERE status = 'paused' AND account_wait IS NOT NULL
+            ORDER BY created_at
+            """
+        )
+        return [dict(r) for r in rows]
+
+    async def claim_account_wait(self, job_id: str) -> bool:
+        """Take a parked job back for its account wait to end: ``paused`` to
+        ``running`` and the wait cleared, in one statement, so two takers
+        cannot both go on with it. A restart after this finds it ``running``
+        and recovers it like any other (#307)."""
+        row = await self._db.fetchrow(
+            """
+            UPDATE jobs SET status = 'running', account_wait = NULL
+            WHERE job_id = $1 AND status = 'paused' AND account_wait IS NOT NULL
+            RETURNING job_id
+            """,
+            job_id,
+        )
+        return row is not None
 
     async def record_launch(self, job_id: str, launch: dict[str, Any]) -> None:
         """Store what starting this job again takes (#307): the runner kind

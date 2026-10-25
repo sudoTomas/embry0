@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { InboxQuest, Lead, Party, WorldCharacter } from "@/api/world";
 import { debugText, describeEvent, filterLeads, formatCost, formatSeconds, inboxOrder, levelBand, levelUps, narrate, NO_FILTERS, placeOf, xpDrops } from "../world";
 import type { LogEvent } from "@/lib/types";
+import { formatDateTime } from "@/lib/utils";
 
 const party = (over: Partial<Party>): Party => ({
   job_id: "job-1",
@@ -35,6 +36,12 @@ describe("narration (the chat box)", () => {
     const before = [party({ state: "working" })];
     expect(narrate(before, [party({ state: "working" })], name)).toEqual([]);
     expect(narrate(before, [party({ state: "waiting" })], name)[0]).toMatchObject({ tone: "alert", text: "Smith needs your answer on “Fix the sender”." });
+    const until = "2026-10-26T00:00:00+00:00";
+    const spent = party({ state: "waiting", account_wait: { provider: "anthropic", reason: "quota_exhausted", until } });
+    expect(narrate(before, [spent], name)[0]).toMatchObject({
+      tone: "info",
+      text: `Smith waits on “Fix the sender”: the Anthropic account is quota exhausted until ${formatDateTime(until)}.`,
+    });
     expect(narrate(before, [party({ state: "returning", pr_url: "https://x/pull/1" })], name)[0]).toMatchObject({ tone: "win" });
     expect(narrate(before, [party({ state: "defeated", failure: "it ran out of turns" })], name)[0].text).toBe(
       "Oh dear, Smith was defeated on “Fix the sender”: it ran out of turns",

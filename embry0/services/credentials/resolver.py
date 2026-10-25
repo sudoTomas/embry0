@@ -429,6 +429,36 @@ class CredentialResolver:
         reason = str(first.get("status_reason") or first.get("status") or "paused")
         return Pause(provider, reason, first["quarantined_until"] if timed else None)
 
+    async def pinned_pause(self, job_id: str, provider: str) -> tuple[bool, Pause | None]:
+        """``(pinned, pause)``: whether a person chose the key for ``provider``, and why it cannot serve now.
+
+        Spent account waits (spec 2026-10-25): a chosen key never moves, so a
+        quarantined one makes the job wait for it. A pin or a row that cannot
+        be read is pinned and not paused: resolving it then fails the job as
+        before.
+        """
+        try:
+            credential_id = await self._job_pin(job_id, provider)
+        except CredentialUnavailableError:
+            return True, None
+        if not credential_id:
+            return False, None
+        try:
+            row = await self._repo.get(credential_id)
+        except Exception as exc:  # noqa: BLE001 — the resolve that follows says what is wrong
+            logger.warning("credential_registry_error", op="pinned_pause", provider=provider, error=str(exc)[:200])
+            return True, None
+        if not row or row.get("status") != "quarantined":
+            return True, None
+        until = row.get("quarantined_until")
+        if not isinstance(until, datetime) or until <= datetime.now(UTC):
+            return True, None
+        return True, Pause(provider, str(row.get("status_reason") or "quarantined"), until)
+
+    async def job_uses_registry(self, job_id: str, provider: str) -> bool:
+        """Whether a registry account served ``provider`` for this job (the use ledger), not the environment."""
+        return any(use.get("role") == "llm" and use.get("provider") == provider for use in await self._uses(job_id))
+
     async def _is_secret_of(self, secret: str, rows: Iterable[Mapping[str, Any]]) -> bool:
         """Whether ``secret`` is the stored secret of one of ``rows``."""
         for row in rows:

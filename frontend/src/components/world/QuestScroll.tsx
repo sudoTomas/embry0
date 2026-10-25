@@ -81,6 +81,21 @@ function ScrollBody({ quest, skillName, canAct, onClose }: { quest: Scroll; skil
         </div>
       )}
 
+      {quest.account_wait && (
+        <div className="space-y-1 rounded-md border border-border bg-canvas p-3 text-sm" data-testid="quest-account-wait">
+          <p className="text-fg">
+            <span className="font-semibold">Waiting:</span>{" "}
+            {quest.account_wait.reason === "local_busy"
+              ? "every slot of the local model is taken"
+              : `the ${providerLabel(quest.account_wait.provider)} account is ${quest.account_wait.reason.replace(/_/g, " ")}`}
+            . It goes on at {formatDateTime(quest.account_wait.until)}, or sooner once the account is ready again.
+          </p>
+          {quest.account_wait.chosen && (
+            <p className="text-xs text-fg-muted">A person chose this model or key for the quest, so it does not move to another one.</p>
+          )}
+        </div>
+      )}
+
       <Section title="Report">
         {quest.report ? (
           <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-canvas p-3 font-sans text-xs text-fg-secondary" data-testid="quest-report">

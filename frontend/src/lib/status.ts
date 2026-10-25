@@ -48,6 +48,7 @@ const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
   skipped_analysis_cap: { label: "Analysis budget spent", tone: "warning" },
   no_change: { label: "Nothing new", tone: "neutral" },
   skipped_known: { label: "Already checked", tone: "neutral" },
+  skipped_account_paused: { label: "Waiting for an account", tone: "warning" },
   error: { label: "Error", tone: "error" },
 
   // Organizations and their needs

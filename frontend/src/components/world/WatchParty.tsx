@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/Textarea";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useJobEventStream } from "@/hooks/useJobEventStream";
 import { useRecall } from "@/hooks/useWorld";
-import { describeEvent, formatSeconds } from "@/lib/world";
+import { accountWaitWords, describeEvent, formatSeconds } from "@/lib/world";
 
 /** How many lines of what the party does the watch keeps. */
 export const WATCH_LINES = 14;
@@ -39,7 +39,7 @@ export function WatchParty({ party, canAct }: { party: Party; canAct: boolean })
   const inputs = useQuery({
     queryKey: ["world", "inputs", party.job_id],
     queryFn: () => fetchJobInputs(party.job_id),
-    enabled: party.state === "waiting",
+    enabled: party.state === "waiting" && !party.account_wait,
     refetchInterval: 10_000,
   });
   const question = inputs.data?.find((i) => i.status === "pending");
@@ -68,7 +68,13 @@ export function WatchParty({ party, canAct }: { party: Party; canAct: boolean })
     <section className="space-y-3 rounded-md border border-border bg-canvas p-3" aria-label="Live" data-testid="watch-party">
       <div className="flex items-baseline justify-between gap-2 text-xs">
         <span className="font-semibold text-fg">
-          {party.working ? `${lookup(party.working).displayName} is working` : party.state === "waiting" ? "Waiting for your answer" : "Between steps"}
+          {party.working
+            ? `${lookup(party.working).displayName} is working`
+            : party.state === "waiting" && party.account_wait
+              ? `Waiting: ${accountWaitWords(party.account_wait)}`
+              : party.state === "waiting"
+                ? "Waiting for your answer"
+                : "Between steps"}
         </span>
         <span className="text-fg-muted">
           running {formatSeconds(since)} · {isComplete ? "finished" : isConnected ? "live" : "connecting"}

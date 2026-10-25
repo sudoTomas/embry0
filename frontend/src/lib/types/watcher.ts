@@ -16,6 +16,8 @@ export type WatcherAction =
   | "no_change"
   /** Everything notable was found clean by an analysis within the stack's skip_known_hours: no analysis paid. */
   | "skipped_known"
+  /** The analysis would only have waited for a spent LLM account, so none was started; the window stays. */
+  | "skipped_account_paused"
   | "error";
 
 export interface WatcherRun {

@@ -3225,6 +3225,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_local_model_leases_expires ON local_model_leases (expires_at);
         """,
     ),
+    (
+        116,
+        "spent account waits: what a parked job waits for, and until when (spec 2026-10-25, spent account waits)",
+        # A spent account with nothing ready to move to parks the job
+        # (status paused) instead of failing it; the account-wait loop goes
+        # on with it when the account is ready again. NULL: not waiting.
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS account_wait JSONB;
+        COMMENT ON COLUMN jobs.account_wait IS
+            'a parked job''s wait for an LLM account: {provider, reason, until (UTC ISO), model, agent, chosen, watch, mode resume|relaunch}; NULL when not waiting.';
+        CREATE INDEX IF NOT EXISTS idx_jobs_account_wait ON jobs (job_id) WHERE account_wait IS NOT NULL;
+        """,
+    ),
 ]
 
 
