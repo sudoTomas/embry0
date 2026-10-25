@@ -94,6 +94,12 @@ the default model; an agent definition or a job's `agent_models` can name it.
 
 ### Adding a key
 
+On the dashboard, an admin adds or replaces a provider's key on its card on the
+LLM Providers page (**Add key** / **Replace key**): the key is stored in the
+credential registry and becomes the provider's global binding, in place of the
+global key it had, so every repository without a binding of its own uses it.
+The steps below are the same by hand.
+
 1. Name the provider in `OPENAI_COMPATIBLE_PROVIDERS` and restart the
    orchestrator.
 2. Store the key in the [credential registry](credentials.md) and bind it,
@@ -413,3 +419,18 @@ release breaking on xAI's compat endpoint.
 
 With the proxy down, grok agents fall back to the EMB-36 CLI +
 `XAI_API_KEY` path above.
+
+### What a key has spent
+
+`GET /api/v1/config/providers/openrouter/usage` (read) answers what OpenRouter
+says the key a job with no repository binding runs with has spent:
+`{"provider", "status", "checked_at", "key": {"spend_today_usd",
+"spend_week_usd", "spend_month_usd", "spend_total_usd", "limit_usd",
+"limit_remaining_usd", "limit_reset", "limit_resets_at", "expires_at"},
+"account": {"credits_usd", "used_usd", "remaining_usd"}}`, read from its `/key`
+and `/credits` and kept five minutes (`?fresh=true` asks again). `account` is
+`null` when the key may not read the account's credit; `status` is
+`not_configured`, `unauthorized`, `unreachable` or `error` when there is no
+reading. The OpenRouter card shows it. These are the provider's own figures,
+unlike the list prices above; no other provider answers this with an ordinary
+key, so the route is 404 for them.

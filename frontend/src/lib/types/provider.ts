@@ -76,3 +76,24 @@ export interface ProviderProbeResult {
   status: string;
   checks: ProviderProbeCheck[];
 }
+
+/** GET /config/providers/{name}/usage: what the provider says its key has spent (OpenRouter only). */
+export interface ProviderUsage {
+  provider: string;
+  status: "ok" | "not_configured" | "unauthorized" | "unreachable" | "error";
+  detail?: string;
+  checked_at: string;
+  key?: {
+    spend_today_usd: number | null;
+    spend_week_usd: number | null;
+    spend_month_usd: number | null;
+    spend_total_usd: number | null;
+    limit_usd: number | null;
+    limit_remaining_usd: number | null;
+    limit_reset: string | null;
+    limit_resets_at: string | null;
+    expires_at: string | null;
+  };
+  /** The account's credit; null when the key may not read it. */
+  account?: { credits_usd: number | null; used_usd: number | null; remaining_usd: number | null } | null;
+}

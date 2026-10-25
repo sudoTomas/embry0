@@ -17,6 +17,9 @@ import {
 } from "@/hooks/useProvider";
 import type { CatalogProvider, ProviderProbeResult } from "@/lib/types/provider";
 import { toastApiError } from "@/api/errorToast";
+import { ProviderKeyDialog } from "@/components/providers/ProviderKeyDialog";
+import { ProviderSpend } from "@/components/providers/ProviderSpend";
+import { isLlmProvider } from "@/lib/llmProviders";
 
 // RAV-1297: LLM Providers — the complete catalog (Anthropic first-class),
 // live connection tests, per-model enablement, and tier assignment. This
@@ -80,6 +83,9 @@ function ProviderCard({
 }) {
   const testProvider = useTestCatalogProvider();
   const [probe, setProbe] = useState<ProviderProbeResult | null>(null);
+  const [keyDialog, setKeyDialog] = useState(false);
+  // A key entered here: every LLM provider but xAI's OAuth, which logs in on the Credentials page.
+  const takesKey = isAdmin && isLlmProvider(provider.name);
 
   const handleTest = () => {
     testProvider.mutate(provider.name, {
@@ -105,10 +111,24 @@ function ProviderCard({
               <Badge tone="error">Unavailable</Badge>
             )}
           </div>
-          <Button variant="outline" size="sm" onClick={handleTest} disabled={testProvider.isPending}>
-            {testProvider.isPending ? "Testing..." : "Test connection"}
-          </Button>
+          <div className="flex gap-2">
+            {takesKey && (
+              <Button variant="outline" size="sm" onClick={() => setKeyDialog(true)}>
+                {provider.credential_source ? "Replace key" : "Add key"}
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={handleTest} disabled={testProvider.isPending}>
+              {testProvider.isPending ? "Testing..." : "Test connection"}
+            </Button>
+          </div>
         </div>
+        {keyDialog && isLlmProvider(provider.name) && (
+          <ProviderKeyDialog
+            provider={provider.name}
+            replacing={Boolean(provider.credential_source)}
+            onClose={() => setKeyDialog(false)}
+          />
+        )}
         {/* A URL has no spaces to wrap at; a long one ran past a phone screen. */}
         <p className="text-xs text-muted-foreground font-mono [overflow-wrap:anywhere]">{provider.base_url}</p>
         <p className="text-xs text-muted-foreground">
@@ -121,6 +141,7 @@ function ProviderCard({
             "none configured"
           )}
         </p>
+        <ProviderSpend provider={provider.name} />
         {provider.last_probe !== undefined && (
           <p className="text-xs text-muted-foreground" data-testid="provider-last-probe">
             Last test:{" "}

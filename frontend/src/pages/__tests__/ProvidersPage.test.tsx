@@ -8,6 +8,8 @@ const mockFetchModelsCatalog = vi.fn();
 const mockFetchProviderConfig = vi.fn();
 const mockUpdateProviderConfig = vi.fn();
 const mockTestCatalogProvider = vi.fn();
+const mockFetchProviderUsage = vi.fn();
+const mockAddProviderKey = vi.fn();
 
 vi.mock("@/api/provider", () => ({
   fetchModelsCatalog: () => mockFetchModelsCatalog(),
@@ -15,6 +17,11 @@ vi.mock("@/api/provider", () => ({
   updateProviderConfig: (c: unknown) => mockUpdateProviderConfig(c),
   testProviderConnection: vi.fn(),
   testCatalogProvider: (name: string) => mockTestCatalogProvider(name),
+  fetchProviderUsage: (name: string) => mockFetchProviderUsage(name),
+}));
+
+vi.mock("@/api/credentials", () => ({
+  addProviderKey: (provider: string, body: unknown) => mockAddProviderKey(provider, body),
 }));
 
 // An admin session: the page reads only useIsAdmin (#101).
@@ -293,5 +300,67 @@ describe("ProvidersPage", () => {
   it("titles the page in sentence case, the name the sidebar and Settings use", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { level: 1, name: "LLM providers" })).toBeInTheDocument();
+  });
+});
+
+describe("ProvidersPage keys and spend", () => {
+  const OPENROUTER = {
+    name: "openrouter",
+    base_url: "https://openrouter.ai/api/v1",
+    available: false,
+    credential_source: null,
+    default: false,
+    models: [{ model: "openrouter/openai/gpt-6.1-sol", enabled: true, pricing_usd_per_mtok: { input: 2, output: 10 } }],
+  };
+
+  it("offers Add key on a card without one and Replace key on a card with one", async () => {
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    expect(within(anthropic).getByRole("button", { name: "Replace key" })).toBeInTheDocument();
+    expect(within(screen.getByTestId("provider-card-xai")).getByRole("button", { name: "Add key" })).toBeInTheDocument();
+  });
+
+  it("saves a key from the card and makes it the provider's global key", async () => {
+    mockFetchModelsCatalog.mockResolvedValue({ ...CATALOG, providers: [...CATALOG.providers, OPENROUTER] });
+    mockAddProviderKey.mockResolvedValue({ id: "cred-1" });
+    renderPage();
+    const card = await screen.findByTestId("provider-card-openrouter");
+    await userEvent.click(within(card).getByRole("button", { name: "Add key" }));
+    await userEvent.type(screen.getByLabelText("API key"), "sk-or-test");
+    await userEvent.click(screen.getByRole("button", { name: "Save key" }));
+    await waitFor(() => expect(mockAddProviderKey).toHaveBeenCalled());
+    expect(mockAddProviderKey).toHaveBeenCalledWith("openrouter", { secret: "sk-or-test", label: "api-key" });
+  });
+
+  it("shows what OpenRouter says the key has spent, its limit and the account's credit", async () => {
+    mockFetchModelsCatalog.mockResolvedValue({
+      ...CATALOG,
+      providers: [...CATALOG.providers, { ...OPENROUTER, available: true, credential_source: "registry" }],
+    });
+    mockFetchProviderUsage.mockResolvedValue({
+      provider: "openrouter",
+      status: "ok",
+      checked_at: "2026-10-25T00:00:00+00:00",
+      key: {
+        spend_today_usd: 0.25,
+        spend_week_usd: 3,
+        spend_month_usd: 9.75,
+        spend_total_usd: 12.5,
+        limit_usd: 50,
+        limit_remaining_usd: 47,
+        limit_reset: "weekly",
+        limit_resets_at: "2026-10-26T00:00:00.000Z",
+        expires_at: null,
+      },
+      account: { credits_usd: 275, used_usd: 134.86, remaining_usd: 140.14 },
+    });
+    renderPage();
+    const card = await screen.findByTestId("provider-card-openrouter");
+    const spend = await within(card).findByTestId("provider-spend");
+    expect(spend).toHaveTextContent("Spent $0.25 today · $3.00 this week · $9.75 this month · $12.50 in all");
+    expect(spend).toHaveTextContent("Key limit $50.00 weekly, $47.00 left");
+    expect(spend).toHaveTextContent("Account credit $140.14 left of $275.00");
+    expect(mockFetchProviderUsage).toHaveBeenCalledWith("openrouter");
+    expect(within(screen.getByTestId("provider-card-anthropic")).queryByTestId("provider-spend")).toBeNull();
   });
 });

@@ -398,6 +398,47 @@ async def test_catalog_provider(
     return {"provider": provider_name, "status": status, "checks": serialize_checks(checks)}
 
 
+@router.get("/config/providers/{provider_name}/usage")
+async def catalog_provider_usage(provider_name: str, request: Request, fresh: bool = False) -> dict[str, Any]:
+    """What the provider says its key has spent: today, this week, this month, its limit, the account's credit.
+
+    Read with the key a job with no repository binding would run with (the
+    one the connection test probes) and kept five minutes; ``fresh`` asks
+    again now. Only OpenRouter answers this with an ordinary key; another
+    provider is 404. Never returns the key.
+    """
+    from embry0.agents.providers import catalog_providers
+    from embry0.services.provider_usage import SUPPORTED, ProviderUsage
+
+    provider = next((p for p in catalog_providers() if p.name == provider_name), None)
+    if provider is None or provider_name not in SUPPORTED:
+        raise HTTPException(status_code=404, detail=f"no spend to read for provider {provider_name!r}")
+    usage = getattr(request.app.state, "provider_usage", None)
+    if usage is None:
+        usage = request.app.state.provider_usage = ProviderUsage(_job_key_resolver(request))
+    return await usage.read(provider_name, fresh=fresh)
+
+
+def _job_key_resolver(request: Request) -> Any:
+    """The key a job with no repository binding gets for a provider: the global pool, then the env; None without one."""
+    from embry0.agents.providers import provider_named
+    from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
+
+    async def resolve(name: str) -> str | None:
+        resolver = getattr(request.app.state, "credential_resolver", None)
+        if resolver is not None:
+            try:
+                return str((await resolver.resolve_llm("", name)).secret)
+            except (CredentialMissingError, CredentialUnavailableError):
+                return None
+        provider = provider_named(name)
+        if provider is None:
+            return None
+        return os.environ.get(provider.api_key_env, "").strip() or None
+
+    return resolve
+
+
 # --- Context: list and delete repos ---
 
 

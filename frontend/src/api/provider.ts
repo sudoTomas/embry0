@@ -1,4 +1,5 @@
 import type {
+  ProviderUsage,
   ProviderConfig,
   ProviderConfigUpdate,
   ConnectionTestResult,
@@ -33,5 +34,13 @@ export async function testCatalogProvider(name: string): Promise<ProviderProbeRe
   const { data } = await api.post<ProviderProbeResult>(
     `/config/providers/${encodeURIComponent(name)}/test`,
   );
+  return data;
+}
+
+/** What the provider says its key has spent; only OpenRouter answers (404 for the rest). */
+export async function fetchProviderUsage(name: string, fresh = false): Promise<ProviderUsage> {
+  const { data } = await api.get<ProviderUsage>(`/config/providers/${encodeURIComponent(name)}/usage`, {
+    params: fresh ? { fresh: true } : {},
+  });
   return data;
 }
