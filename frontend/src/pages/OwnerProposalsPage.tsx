@@ -11,6 +11,8 @@ import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useAnswerOwnerProposal, useOwnerProposals } from "@/hooks/useOwnerProposals";
 import { useAuthStore, useIsAdmin } from "@/stores/authStore";
 import { formatDateTime } from "@/lib/utils";
+import { type RunWith, runWithBody } from "@/api/runWith";
+import { RunWithControl } from "@/components/runwith/RunWithControl";
 
 const KIND_LABEL: Record<OwnerProposalKind, string> = {
   case: "Watcher problem",
@@ -21,12 +23,23 @@ const KIND_LABEL: Record<OwnerProposalKind, string> = {
 /** How long "Later" waits before asking again. */
 const LATER_DAYS = 7;
 
-function ProposalCard({ proposal, canAnswer, by }: { proposal: OwnerProposal; canAnswer: boolean; by: string }) {
+function ProposalCard({
+  proposal,
+  canAnswer,
+  by,
+  runWith,
+}: {
+  proposal: OwnerProposal;
+  canAnswer: boolean;
+  by: string;
+  runWith: RunWith;
+}) {
   const answer = useAnswerOwnerProposal();
   const [open, setOpen] = useState(false);
   const send = (decision: "accept" | "decline" | "snooze", body: { reason?: string; until?: string } = {}) =>
     answer.mutate(
-      { id: proposal.id, decision, body: { by, ...body } },
+      // What a yes starts runs with the model and key chosen above the list.
+      { id: proposal.id, decision, body: { by, ...body, ...(decision === "accept" ? runWithBody(runWith) : {}) } },
       {
         onSuccess: (done) =>
           toast.success(decision === "accept" ? `Started${done.job_id ? ` ${done.job_id}` : ""}` : decision === "decline" ? "Declined" : "Snoozed"),
@@ -103,6 +116,9 @@ export function OwnerProposalsPage() {
   const proposals = useOwnerProposals({ ...(owner ? { owner } : {}), ...(kind ? { kind } : {}) });
   const isAdmin = useIsAdmin();
   const by = useAuthStore((s) => s.user?.email) ?? "dashboard";
+  const [runWith, setRunWith] = useState<RunWith>({});
+  // The keys offered are the ones the listed repository may use; across several, only those every one may.
+  const repos = [...new Set((proposals.data ?? []).map((p) => p.repo))];
   const setParam = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
@@ -132,6 +148,7 @@ export function OwnerProposalsPage() {
           </Button>
         ))}
       </div>
+      {isAdmin && <RunWithControl value={runWith} onChange={setRunWith} repo={repos.length === 1 ? repos[0] : null} />}
       {proposals.isError ? (
         <PageError message="Proposals did not load" onRetry={() => void proposals.refetch()} />
       ) : !proposals.data ? (
@@ -141,7 +158,7 @@ export function OwnerProposalsPage() {
       ) : (
         <div className="space-y-2">
           {proposals.data.map((p) => (
-            <ProposalCard key={p.id} proposal={p} canAnswer={isAdmin} by={by} />
+            <ProposalCard key={p.id} proposal={p} canAnswer={isAdmin} by={by} runWith={runWith} />
           ))}
         </div>
       )}

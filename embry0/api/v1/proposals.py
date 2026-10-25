@@ -20,6 +20,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import get_healing_cases_repo, get_issue_executor, get_issues_repo, request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.schemas import RunWithRequest
+from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.services.proposals import (
     ACTOR,
@@ -35,6 +37,7 @@ from embry0.services.proposals import (
     still_open,
     with_owners,
 )
+from embry0.services.run_with import RunWith
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -51,6 +54,11 @@ class AnswerBody(BaseModel):
     #: The GitHub login of the person who answered.
     by: str = Field(min_length=1, max_length=100)
     reason: str = Field(default="", max_length=2000)
+
+
+class AcceptBody(AnswerBody):
+    #: The model and key the job runs with (spec 2026-10-25); none is the usual run.
+    run_with: RunWithRequest | None = None
 
 
 class SnoozeBody(AnswerBody):
@@ -177,7 +185,7 @@ async def get_proposal(proposal_id: str, request: Request) -> dict[str, Any]:
     return (await _open(request, proposal_id)).to_dict()
 
 
-async def _start_fix(request: Request, proposal: Proposal) -> str:
+async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | None = None) -> str:
     """A context-audit job narrowed to the finding's file, opening a pull request: the owner asked for this one."""
     from embry0.api.v1.organizations import org_forge_client
     from embry0.services.context_audit import RepoContext, job_budget_usd, read_head, start_context_audit_job
@@ -206,6 +214,7 @@ async def _start_fix(request: Request, proposal: Proposal) -> str:
             audit_log_path=getattr(config, "audit_log_path", None),
             task=finding_task(proposal.repo, head[0], proposal),
             dispatched_by=ACTOR,
+            run_with=run_with,
         )
     except (LookupError, RuntimeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -256,23 +265,37 @@ async def _answer(
 
 
 @router.post("/proposals/{proposal_id}/accept", status_code=202)
-async def accept_proposal(proposal_id: str, body: AnswerBody, request: Request) -> dict[str, Any]:
+async def accept_proposal(proposal_id: str, body: AcceptBody, request: Request) -> dict[str, Any]:
     """Start it, through the path its kind already has; the answer is recorded only once the start worked."""
     proposal = await _open(request, proposal_id)
     await enforce_repo_allowlist(request, proposal.repo, action="accept a proposal")
+    # Checked before anything starts; the case and issue paths check it again as their routes do.
+    run_with = await checked_run_with(request, body.run_with, proposal.repo)
     native = proposal.id.split(":", 1)[1]
     if proposal.kind == "case":
-        from embry0.api.v1.cases import AcceptBody, accept_case
+        from embry0.api.v1.cases import AcceptBody as CaseAcceptBody
+        from embry0.api.v1.cases import accept_case
 
-        result = await accept_case(native, AcceptBody(accepted_by=body.by), request, get_healing_cases_repo(request))
+        result = await accept_case(
+            native,
+            CaseAcceptBody(accepted_by=body.by, run_with=body.run_with),
+            request,
+            get_healing_cases_repo(request),
+        )
         job_id = result.get("job_id")
     elif proposal.kind == "issue":
-        from embry0.api.v1.issues import triage_issue
+        from embry0.api.v1.issues import TriageBody, triage_issue
 
-        dispatched = await triage_issue(native, request, get_issues_repo(request), get_issue_executor(request))
+        dispatched = await triage_issue(
+            native,
+            request,
+            get_issues_repo(request),
+            get_issue_executor(request),
+            TriageBody(run_with=body.run_with),
+        )
         job_id = dispatched.job_id
     else:
-        job_id = await _start_fix(request, proposal)
+        job_id = await _start_fix(request, proposal, run_with)
     return await _answer(request, proposal, "accept", body, job_id=job_id)
 
 

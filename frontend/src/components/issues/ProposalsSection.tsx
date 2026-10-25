@@ -1,4 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
+import { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { Link } from "react-router";
 import { toast } from "sonner";
@@ -9,6 +10,8 @@ import { useAcceptProposal, useProposals, useRejectProposal } from "@/hooks/useP
 import type { HealingCase } from "@/lib/types";
 import { toastApiError } from "@/api/errorToast";
 import { useIsAdmin } from "@/stores/authStore";
+import type { RunWith } from "@/api/runWith";
+import { RunWithControl } from "@/components/runwith/RunWithControl";
 
 /**
  * Trackers whose drafts the API accepts (POST /cases/{id}/accept). The others —
@@ -62,6 +65,7 @@ export function ProposalsSection() {
   const isAdmin = useIsAdmin();
   const proposals = useProposals();
   const accept = useAcceptProposal();
+  const [runWith, setRunWith] = useState<RunWith>({});
   const reject = useRejectProposal();
 
   if (proposals.isError) {
@@ -76,6 +80,9 @@ export function ProposalsSection() {
   }
   const rows = proposals.data?.cases ?? [];
   if (rows.length === 0) return null;
+  // The keys offered are the ones the drafts' repository may use; across several, only those every one may.
+  const repos = [...new Set(rows.map((row) => row.repo).filter(Boolean))];
+  const oneRepo = repos.length === 1 ? repos[0] : null;
 
   const handleAccept = (proposal: HealingCase) => {
     const tracker = proposal.tracker;
@@ -84,7 +91,7 @@ export function ProposalsSection() {
         ? `This adds the trigger label to ${tracker.key} in ${trackerName(tracker.kind)} and starts the fix pipeline on ${proposal.repo}.`
         : `This starts the fix pipeline on ${proposal.repo}.`;
     if (!confirm(`Accept "${proposal.title}"? ${effect}`)) return;
-    accept.mutate(proposal.id, {
+    accept.mutate({ caseId: proposal.id, runWith }, {
       onSuccess: (result) => toast.success(`Accepted — job ${result.job_id.slice(0, 12)} started`),
       onError: (e) => toastApiError(e),
     });
@@ -130,6 +137,7 @@ export function ProposalsSection() {
           Draft tickets the watcher filed, and what organizations still need. Nothing runs until one is accepted.
         </p>
       </div>
+      <RunWithControl value={runWith} onChange={setRunWith} repo={oneRepo} />
 
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="data-table">

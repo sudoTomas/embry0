@@ -124,9 +124,9 @@ describe("useStartAudit", () => {
     mockStartAudit.mockResolvedValue({ job_id: "job-new" });
     const { invalidate, wrapper } = setup();
     const { result } = renderHook(() => useStartAudit("acme", "design"), { wrapper });
-    act(() => result.current.mutate("acme/widgets"));
+    act(() => result.current.mutate({ repo: "acme/widgets" }));
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: UNFINISHED_JOBS_KEY }));
-    expect(mockStartAudit).toHaveBeenCalledWith("acme", "design", "acme/widgets");
+    expect(mockStartAudit).toHaveBeenCalledWith("acme", "design", "acme/widgets", undefined);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["standards", "acme"] });
   });
 });

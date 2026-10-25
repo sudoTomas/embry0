@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { type RunWith, runWithBody } from "./runWith";
 import type {
   CreateIssueRequest,
   IssueDispatchResponse,
@@ -45,8 +46,9 @@ export async function deleteIssue(issueId: string): Promise<void> {
   await api.delete(`/issues/${issueId}`);
 }
 
-export async function triageIssue(issueId: string): Promise<IssueDispatchResponse> {
-  const { data } = await api.post(`/issues/${issueId}/triage`);
+export async function triageIssue(issueId: string, runWith?: RunWith): Promise<IssueDispatchResponse> {
+  const body = runWithBody(runWith);
+  const { data } = await api.post(`/issues/${issueId}/triage`, Object.keys(body).length ? body : undefined);
   return data;
 }
 

@@ -4,6 +4,7 @@ import {
   createIssue, updateIssue, deleteIssue, triageIssue, syncIssue,
 } from "@/api/issues";
 import type { CreateIssueRequest, IssueFilters, IssueResponse, IssueStatus, UpdateIssueRequest } from "@/lib/types";
+import type { RunWith } from "@/api/runWith";
 
 export function useIssues(filters: IssueFilters = {}) {
   return useQuery({
@@ -93,7 +94,9 @@ export function useDeleteIssue() {
 export function useTriageIssue() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (issueId: string) => triageIssue(issueId),
+    // A bare id is the usual run; with runWith, the model and key the job runs with.
+    mutationFn: (vars: string | { issueId: string; runWith?: RunWith }) =>
+      typeof vars === "string" ? triageIssue(vars) : triageIssue(vars.issueId, vars.runWith),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["issues"] }),
   });
 }

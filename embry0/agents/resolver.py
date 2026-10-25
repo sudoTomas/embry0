@@ -109,7 +109,8 @@ def resolve_agent_config(
        default is set**: a default is an operator instruction, and triage is
        an LLM that must not outvote it
     5. ``job_agent_models`` — the job's explicit models (job create, a model
-       label on the ticket)
+       label on the ticket), then its ``"*"`` entry: the model chosen for
+       every agent of the job (run with)
     """
     model = agent_definition.get("model", "")
     tools = _ensure_list(agent_definition.get("tools", []))
@@ -148,9 +149,13 @@ def resolve_agent_config(
         ((pipeline_config or {}).get("agent_skills") or {}).get(agent_type),
     )
 
-    # Explicit job-level models — the most specific instruction there is.
+    # Explicit job-level models — the most specific instruction there is. "*"
+    # is the model a person chose for every agent of the job (run with,
+    # embry0/services/run_with.py); an agent the job names keeps its own.
     if job_agent_models and agent_type in job_agent_models:
         model = job_agent_models[agent_type]
+    elif job_agent_models and job_agent_models.get("*"):
+        model = job_agent_models["*"]
 
     return ResolvedAgentConfig(
         model=model,

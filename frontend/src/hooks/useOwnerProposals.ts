@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { answerOwnerProposal, fetchOwnerProposals, type OwnerProposalAnswer, type OwnerProposalKind } from "@/api/ownerProposals";
+import type { RunWith } from "@/api/runWith";
 
 const KEY = ["owner-proposals"];
 
@@ -21,7 +22,7 @@ export function useAnswerOwnerProposal() {
     }: {
       id: string;
       decision: OwnerProposalAnswer["decision"];
-      body: { by: string; reason?: string; until?: string };
+      body: { by: string; reason?: string; until?: string; run_with?: RunWith };
     }) => answerOwnerProposal(id, decision, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEY });

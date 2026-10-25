@@ -23,8 +23,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.schemas import RunWithRequest
 from embry0.api.v1 import jobs as jobs_api
 from embry0.api.v1.organizations import _facts_repo, _repo, _token_for, start_discovery
+from embry0.api.v1.run_with import checked_run_with
 from embry0.api.v1.watcher_stacks import save_stack
 from embry0.audit.helpers import emit_audit
 from embry0.services import org_actions
@@ -44,20 +46,26 @@ class ActionBody(BaseModel):
         default=False,
         description="onboard only: start another onboard job even when the last one completed without a QA config",
     )
+    run_with: RunWithRequest | None = Field(
+        default=None, description="onboard only: the model and key the onboard jobs run with"
+    )
 
 
 class _JobStarter:
     """Onboard jobs through ``POST /jobs``'s own function, as the calling principal."""
 
-    def __init__(self, request: Request) -> None:
+    def __init__(self, request: Request, run_with: RunWithRequest | None = None) -> None:
         self._request = request
+        self._run_with = run_with
 
     def refusal(self, repo: str) -> str | None:
         return jobs_api.onboard_refusal(self._request, repo)
 
     async def start_onboard_job(self, repo: str, branch: str) -> str:
         try:
-            return await jobs_api.start_onboard_job(self._request, repo=repo, branch=branch)
+            # Checked per repository: the key must be one each of them may use.
+            run_with = await checked_run_with(self._request, self._run_with, repo)
+            return await jobs_api.start_onboard_job(self._request, repo=repo, branch=branch, run_with=run_with)
         except HTTPException as exc:
             raise org_actions.Refused(str(exc.detail)) from None
 
@@ -137,7 +145,7 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
         qa_configs=getattr(st, "qa_configs_repo", None),
         stacks=_Stacks(request, stacks_repo) if stacks_repo is not None else None,
         jobs=getattr(st, "jobs_repo", None),
-        job_starter=_JobStarter(request),
+        job_starter=_JobStarter(request, body.run_with),
         forge_client=forge_client,
         hooks_allowed=hooks_allowed,
         webhook_url=webhook_url,

@@ -53,8 +53,10 @@ One binding per scope, role and provider. `acme/widgets` bound to the credential
 An LLM account is `llm_oauth` or `llm_api_key` on `anthropic` or `xai`, or `llm_api_key` on an OpenAI-compatible provider the deployment enables (`docs/providers.md`). The resolver picks one per provider before the sandbox exists, records it on `credential_uses`, and reuses that row for the rest of the job. Precedence, for one provider:
 
 ```
-repo > owner > global pool > env
+the job's chosen key > repo > owner > global pool > env
 ```
+
+The job's chosen key is the one a person picked when starting the work from the dashboard ("Run with", [the design](superpowers/specs/2026-10-25-run-with-design.md)): it serves its provider for that job, whatever the bindings say. If it is disabled, quarantined, gone or cannot be decrypted, the job fails with `ERR_CREDENTIAL_UNAVAILABLE`, as a pinned binding does; no other key runs in its place.
 
 Owner is tried as `github:<owner>` and then `gitlab:<owner>`. There is no host step. The global pool is every `ok` credential of that provider bound at global scope, role `llm`, ordered by `priority` ascending and then `last_used_at` ascending with nulls first. A disabled row is skipped. A quarantined row is skipped while `quarantined_until` is null or still in the future; a past `quarantined_until` is usable again without a rewrite.
 

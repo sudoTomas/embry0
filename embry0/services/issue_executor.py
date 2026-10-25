@@ -30,6 +30,7 @@ from embry0.services._cost import resolve_job_total_cost
 from embry0.services._executor_outcomes import _fold_auto_answers_into_context
 from embry0.services.areas import AREAS
 from embry0.services.healing.recorder import record_case_event
+from embry0.services.run_with import RunWith, apply_run_with, models_with
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.issues import IssuesRepository
 from embry0.storage.repositories.jobs import JobsRepository, StatusTransitionConflict
@@ -408,6 +409,7 @@ class IssueExecutor:
         additional_context: str = "",
         agent_models: dict[str, str] | None = None,
         dispatched_by: str | None = None,
+        run_with: RunWith | None = None,
     ) -> str:
         """Create a job for the issue and execute the workflow in the background.
 
@@ -421,6 +423,8 @@ class IssueExecutor:
         principal); it lands on the job row and is what the dispatch rate
         limit buckets on. None for orchestrator-initiated runs such as
         triage's sub-issues, which are then exempt from that limit (#246).
+        ``run_with`` is the model and key a person chose for the job
+        (embry0/services/run_with.py).
         """
         import uuid
 
@@ -458,7 +462,9 @@ class IssueExecutor:
             issue_number=github_number_of(issue),
             issue_id=issue_id,
             trace_id=trace_id,
-            pipeline_config={"agent_models_override": dict(agent_models)} if agent_models else None,
+            pipeline_config=apply_run_with(
+                {"agent_models_override": dict(agent_models)} if agent_models else None, run_with
+            ),
             dispatched_by=dispatched_by,
         )
 
@@ -600,6 +606,7 @@ class IssueExecutor:
         qa_overrides: dict[str, Any] | None = None,
         agent_models: dict[str, str] | None = None,
         dispatched_by: str | None = None,
+        run_with: RunWith | None = None,
     ) -> str:
         """Issue-less job entry point — used by ``POST /api/v1/jobs`` for
         standalone pipelines (currently ``pipeline='qa'``).
@@ -615,6 +622,7 @@ class IssueExecutor:
             raise ValueError(f"start_job does not support pipeline={pipeline!r}")
 
         qa_overrides = qa_overrides or {}
+        agent_models = models_with(agent_models, run_with)
         trace_id = f"trc-{uuid.uuid4().hex[:12]}"
 
         # Persist a thin job row. The full QA config lives in pipeline_config
@@ -639,7 +647,7 @@ class IssueExecutor:
             repo=repo,
             task=task_text,
             pipeline_template="qa",
-            pipeline_config=pipeline_config,
+            pipeline_config=apply_run_with(pipeline_config, run_with),
             sandbox_profile=sandbox_profile,
             trace_id=trace_id,
             dispatched_by=dispatched_by,
@@ -685,6 +693,7 @@ class IssueExecutor:
         agent_models: dict[str, str] | None = None,
         dispatched_by: str | None = None,
         proposal_id: str | None = None,
+        run_with: RunWith | None = None,
     ) -> str:
         """EMB-50: issue-less onboard job — analyze ``repo`` and generate its
         qa.yaml v2 into the external config store. Returns the new job id.
@@ -697,6 +706,7 @@ class IssueExecutor:
 
         if not branch:
             branch = await _executor_outcomes._repo_base_branch(self, repo, caller="onboard")
+        agent_models = models_with(agent_models, run_with)
 
         trace_id = f"trc-{uuid.uuid4().hex[:12]}"
         pipeline_config: dict[str, Any] = {
@@ -717,7 +727,7 @@ class IssueExecutor:
                 else f"Onboard {repo}@{branch} — generate qa.yaml into the config store"
             ),
             pipeline_template="onboard",
-            pipeline_config=pipeline_config,
+            pipeline_config=apply_run_with(pipeline_config, run_with),
             sandbox_profile="slim",
             trace_id=trace_id,
             dispatched_by=dispatched_by,

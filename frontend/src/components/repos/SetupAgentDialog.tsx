@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/Button";
 import { Overlay } from "@/components/ui/Overlay";
 import { createFocusTrap } from "@/lib/focus-trap";
 import { formatCost } from "@/lib/utils";
+import type { RunWith } from "@/api/runWith";
+import { RunWithControl } from "@/components/runwith/RunWithControl";
 
 const TITLE = "Let embry0 set up testing";
 
@@ -48,6 +50,7 @@ export function SetupAgentDialog({
   const cost = useSetupCost(repo);
   const start = useStartSetup(repo);
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [runWith, setRunWith] = useState<RunWith>({});
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -70,7 +73,7 @@ export function SetupAgentDialog({
   function onStart() {
     if (start.isPending) return;
     setRefusal(null);
-    start.mutate(undefined, {
+    start.mutate(runWith, {
       onSuccess: () => {
         toast.success("embry0 is setting up testing. You can leave this page.");
         onStarted?.();
@@ -132,6 +135,7 @@ export function SetupAgentDialog({
               <div className="h-10 w-full motion-safe:animate-pulse rounded bg-muted/60" />
             )}
           </div>
+          <RunWithControl value={runWith} onChange={setRunWith} repo={repo} />
           {refusal && (
             <p role="alert" className="text-destructive">
               {refusal}

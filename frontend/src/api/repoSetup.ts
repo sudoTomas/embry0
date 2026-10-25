@@ -1,5 +1,6 @@
 import { api } from "./client";
 import { isNotFound } from "./errorDetail";
+import { type RunWith, runWithBody } from "./runWith";
 
 /** Where a repository stands overall (GET /repos/{repo}/readiness). */
 export type ReadinessStatus = "ready" | "steps_left" | "needs_admin" | "setup_to_review";
@@ -199,10 +200,10 @@ export async function fetchSetupCost(fullRepo: string): Promise<SetupCost> {
  * Start the onboarding agent in propose mode. Only the consent dialog's
  * Start sends this; it shows any refusal itself (409 while a run is live).
  */
-export async function startSetup(fullRepo: string): Promise<StartSetupResult> {
+export async function startSetup(fullRepo: string, runWith?: RunWith): Promise<StartSetupResult> {
   const { data } = await api.post<StartSetupResult>(
     `/repos/${fullRepo}/setup/propose`,
-    { confirm_spend: true },
+    { confirm_spend: true, ...runWithBody(runWith) },
     { suppressValidationToast: true, suppressErrorToast: true },
   );
   return data;

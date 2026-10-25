@@ -17,10 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import REPO_PATH_ERROR, REPO_PATH_PATTERN
+from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services import standards as standards_service
+from embry0.services.run_with import apply_run_with
 from embry0.services.standards import (
     AUDIT_TEMPLATES,
     KINDS,
@@ -267,8 +270,18 @@ def _busy_409(repo: str, status: str, job_id: str | None) -> HTTPException:
     return HTTPException(status_code=409, detail=f"an audit of {repo} is already {status}: job {job_id}")
 
 
+class AuditStartBody(BaseModel):
+    """Optional: the model and key the audit runs with (spec 2026-10-25)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_with: RunWithRequest | None = None
+
+
 @router.post("/standards/{owner}/{kind}/audit/{repo:path}", status_code=202)
-async def start_standard_audit(owner: str, kind: str, repo: str, request: Request) -> dict[str, Any]:
+async def start_standard_audit(
+    owner: str, kind: str, repo: str, request: Request, body: AuditStartBody | None = None
+) -> dict[str, Any]:
     """Start a read-only audit job of the repository against the active standard.
 
     The job runs on the kind's pipeline template (``design-audit`` for a design
@@ -282,6 +295,7 @@ async def start_standard_audit(owner: str, kind: str, repo: str, request: Reques
     owner, kind = _owner(owner), _kind(kind)
     registered = await _registered_repo_under(request, owner, repo)
     await enforce_repo_allowlist(request, registered, action="start an audit")
+    run_with = await checked_run_with(request, body.run_with if body else None, registered)
     state = await _state_or_default(request, registered, kind)
     if state.mode == "off":
         raise HTTPException(
@@ -308,6 +322,7 @@ async def start_standard_audit(owner: str, kind: str, repo: str, request: Reques
         task=task,
         context={"type": "git", "repo": registered},
         pipeline_template=template,
+        pipeline_config=apply_run_with(None, run_with),
         dispatched_by=actor,
     )
     # Named on the state before the job runs, so its completion finds it. The

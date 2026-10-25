@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type { WatcherRun, WatcherStackList, WatcherStackSaved, WatcherStackWrite, WatcherTickResult } from "@/lib/types";
+import { type RunWith, runWithBody } from "./runWith";
 
 export async function fetchWatcherRuns(limit = 10): Promise<WatcherRun[]> {
   const { data } = await api.get<WatcherRun[]>("/watcher/runs", { params: { limit } });
@@ -11,8 +12,9 @@ export async function fetchWatcherRuns(limit = 10): Promise<WatcherRun[]> {
  * analysis job inline, so this can take minutes — hence the long timeout
  * (the client default is 30 s).
  */
-export async function triggerWatcherRun(): Promise<WatcherTickResult> {
-  const { data } = await api.post<WatcherTickResult>("/watcher/run", undefined, {
+export async function triggerWatcherRun(runWith?: RunWith): Promise<WatcherTickResult> {
+  const body = runWithBody(runWith);
+  const { data } = await api.post<WatcherTickResult>("/watcher/run", Object.keys(body).length ? body : undefined, {
     timeout: 300_000,
   });
   return data;

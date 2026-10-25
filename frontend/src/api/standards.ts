@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { type RunWith, runWithBody } from "./runWith";
 
 /**
  * Standards (ADR 0014): what an owner holds every repository under it to,
@@ -123,10 +124,16 @@ export async function setRepoStandardMode(
 }
 
 /** Start a read-only audit job (operator). A 409 says why in its detail. */
-export async function startStandardAudit(owner: string, kind: string, repo: string): Promise<AuditStarted> {
+export async function startStandardAudit(
+  owner: string,
+  kind: string,
+  repo: string,
+  runWith?: RunWith,
+): Promise<AuditStarted> {
+  const body = runWithBody(runWith);
   const { data } = await api.post<AuditStarted>(
     `/standards/${enc(owner)}/${enc(kind)}/audit/${repoPathParam(repo)}`,
-    undefined,
+    Object.keys(body).length ? body : undefined,
     { suppressValidationToast: true },
   );
   return data;

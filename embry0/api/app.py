@@ -641,11 +641,17 @@ async def _bring_up_qa_minio(
 def _build_credential_registry(app: FastAPI, db: DatabasePool) -> None:
     """Put the credential repository and resolver on app.state. Stores references only: no DB call."""
     from embry0.services.credentials.resolver import CredentialResolver
+    from embry0.services.run_with import job_pins_reader
     from embry0.storage.repositories.credentials import CredentialsRepository
+    from embry0.storage.repositories.jobs import JobsRepository
 
     app.state.credentials_repo = CredentialsRepository(db)
     app.state.credential_resolver = CredentialResolver(
-        app.state.credentials_repo, getattr(app.state, "secrets_provider", None), app.state.config
+        app.state.credentials_repo,
+        getattr(app.state, "secrets_provider", None),
+        app.state.config,
+        # The key a person chose for a job serves it (spec 2026-10-25, run with).
+        job_pins=job_pins_reader(JobsRepository(db)),
     )
 
 
@@ -2061,7 +2067,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             executor = getattr(app.state, "issue_executor", None)
             return None if executor is None else await executor.dispatch_refusal(actor=_CONTEXT_AUDIT_ACTOR)
 
-        async def _start_context_audit(context: _RepoContext, budget_usd: float, open_pr: bool) -> str:
+        async def _start_context_audit(
+            context: _RepoContext, budget_usd: float, open_pr: bool, run_with: Any = None
+        ) -> str:
             return await start_context_audit_job(
                 context,
                 jobs=app.state.jobs_repo,
@@ -2071,6 +2079,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 open_pr=open_pr,
                 db=db,
                 audit_log_path=config.audit_log_path,
+                run_with=run_with,
             )
 
         app.state.context_audit = ContextAuditLoop(
@@ -2413,6 +2422,7 @@ def _register_routers(app: FastAPI) -> None:
         repo_setup,
         repos,
         retention,
+        run_with,
         sandbox_profiles,
         sandboxes,
         skills,
@@ -2478,6 +2488,8 @@ def _register_routers(app: FastAPI) -> None:
     # #278: healing-case lifecycle ledger (read-only).
     app.include_router(cases.router, prefix="/api/v1", tags=["cases"], dependencies=auth_deps)
     app.include_router(proposals.router, prefix="/api/v1", tags=["proposals"], dependencies=auth_deps)
+    # Run with (spec 2026-10-25): the keys a dashboard action may run a job with.
+    app.include_router(run_with.router, prefix="/api/v1", tags=["run-with"], dependencies=auth_deps)
     # #319 phase 2: the chat merge-approval loop.
     app.include_router(merge_approvals.router, prefix="/api/v1", tags=["merge-approvals"], dependencies=auth_deps)
     # RAV-657: watcher audit trail + manual tick trigger.

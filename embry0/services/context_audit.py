@@ -58,6 +58,7 @@ from embry0.services.organizations import (
     context_audit_max_jobs_per_tick,
     context_audit_open_prs,
 )
+from embry0.services.run_with import apply_run_with
 
 logger = structlog.get_logger(__name__)
 
@@ -775,7 +776,9 @@ class ContextAuditLoop:
                 )
         return started
 
-    async def _start(self, context: RepoContext, *, budget_usd: float, open_pr: bool, now: datetime) -> str | None:
+    async def _start(
+        self, context: RepoContext, *, budget_usd: float, open_pr: bool, now: datetime, run_with: Any = None
+    ) -> str | None:
         """Start ``context``'s job and return its id, or None when a context-audit job of it is live.
 
         The survey read the jobs a moment earlier, and the tick and a start by
@@ -797,7 +800,9 @@ class ContextAuditLoop:
             if refusal is not None:
                 raise GateRefused(refusal.limit, refusal.message)
             try:
-                job_id = await self._start_job(context, budget_usd, open_pr)
+                # A run by hand may name the model and key (spec 2026-10-25, run with).
+                extra = {"run_with": run_with} if run_with is not None else {}
+                job_id = await self._start_job(context, budget_usd, open_pr, **extra)
             except Exception:
                 self._refused[repo] = Attempt(
                     started_at=now, fingerprint=context.fingerprint, head_sha=context.head_sha
@@ -807,7 +812,13 @@ class ContextAuditLoop:
             return job_id
 
     async def run(
-        self, org: Organization, *, repo: str | None = None, force: bool = False, limit: int | None = None
+        self,
+        org: Organization,
+        *,
+        repo: str | None = None,
+        force: bool = False,
+        limit: int | None = None,
+        run_with: Any = None,
     ) -> RunResult:
         """Start the due context audits of ``org`` now, whatever its schedule says, and say what started and what not.
 
@@ -821,7 +832,8 @@ class ContextAuditLoop:
         anchors on, and a refused start is remembered as the tick remembers
         its own. A start the budget gate refuses is :data:`GATED`, and so is
         every repository the run would have started after it; none of them
-        counts as an attempt. Each job gets the owner's :meth:`budget_usd`.
+        counts as an attempt. Each job gets the owner's :meth:`budget_usd`,
+        and ``run_with``, the model and key the person chose, when given.
 
         Raises :class:`UnsupportedForge` as :meth:`survey` does, what
         ``client_for`` raises, :class:`UnknownRepository` for a ``repo`` that
@@ -855,7 +867,9 @@ class ContextAuditLoop:
                 skipped.append(Skipped(name, GATED, str(gated)))
                 continue
             try:
-                job_id = await self._start(state.context, budget_usd=budget, open_pr=open_pr, now=now)
+                job_id = await self._start(
+                    state.context, budget_usd=budget, open_pr=open_pr, now=now, run_with=run_with
+                )
             except GateRefused as exc:
                 gated = exc
                 logger.info(
@@ -974,6 +988,7 @@ async def start_context_audit_job(
     audit_log_path: Any = None,
     task: str | None = None,
     dispatched_by: str = ACTOR,
+    run_with: Any = None,
 ) -> str:
     """Start one context-audit job the way ``POST /jobs`` starts a job, and return its id.
 
@@ -987,6 +1002,7 @@ async def start_context_audit_job(
     ``task`` replaces the audit's own (a fix an owner asked for names its one
     claim), and ``dispatched_by`` the schedule's actor: a job dispatched by
     another never anchors the schedule's due rule, which reads only its own.
+    ``run_with`` is the model and key a person chose (embry0/services/run_with.py).
     """
     rows = await templates.list_all() if templates is not None else []
     if not any(row.get("name") == TEMPLATE for row in rows):
@@ -1010,7 +1026,8 @@ async def start_context_audit_job(
             "actor": dispatched_by,
             # Read by the executor into the job's state; the output step reads it there.
             "open_pr": open_pr,
-        },
+        }
+        | (apply_run_with(None, run_with) or {}),
         trace_id=f"trc-{uuid.uuid4().hex[:12]}",
         dispatched_by=dispatched_by,
     )

@@ -141,6 +141,17 @@ _PR_REVIEW_REFUSED_FIELDS = (
 )
 
 
+class RunWithRequest(BaseModel):
+    """Run with (spec 2026-10-25): the model and the key a person chose for a job; both empty is the usual run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str | None = Field(default=None, max_length=200, description="Every agent of the job runs this model.")
+    credential_id: str | None = Field(
+        default=None, max_length=100, description="This stored LLM key serves its provider for the job."
+    )
+
+
 class JobCreateRequest(BaseModel):
     repo: str | None = Field(default=None, max_length=200)
     # ``task`` is required for the legacy issue-to-pr flow but optional for
@@ -165,6 +176,8 @@ class JobCreateRequest(BaseModel):
             "decides and the deployment's default model."
         ),
     )
+    # Run with (spec 2026-10-25): a model for every agent and a stored key for its provider.
+    run_with: RunWithRequest | None = None
     execution_mode_override: str | None = None
     auth_mode_override: str | None = None
     # EMB-50, onboard pipeline only: skip the boot/ready-check smoke phase

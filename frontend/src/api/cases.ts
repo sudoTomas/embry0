@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type { CaseAcceptResponse, CaseListResponse } from "@/lib/types";
+import { type RunWith, runWithBody } from "./runWith";
 
 /**
  * What waits for a person: watcher drafts nobody has accepted or rejected, and
@@ -15,8 +16,8 @@ export async function fetchProposals(): Promise<CaseListResponse> {
 }
 
 /** Dispatch the fix pipeline on a draft. The server refuses (409) a draft whose tracker has its own label path. */
-export async function acceptCase(caseId: string): Promise<CaseAcceptResponse> {
-  const { data } = await api.post<CaseAcceptResponse>(`/cases/${caseId}/accept`, {});
+export async function acceptCase(caseId: string, runWith?: RunWith): Promise<CaseAcceptResponse> {
+  const { data } = await api.post<CaseAcceptResponse>(`/cases/${caseId}/accept`, runWithBody(runWith));
   return data;
 }
 

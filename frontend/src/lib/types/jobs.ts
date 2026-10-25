@@ -1,3 +1,4 @@
+import type { RunWith } from "@/api/runWith";
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "partial" | "cancelled" | "awaiting_input" | "pr_merged" | "pr_closed" | "paused" | "expired" | "skipped";
 export type TraceResult = "success" | "error" | "running";
 
@@ -140,6 +141,8 @@ export interface JobCreateRequest {
   additional_context?: string | null;
   /** Per-agent model override: agent type → model id. Outranks triage. */
   agent_models?: Record<string, string> | null;
+  /** Run with (spec 2026-10-25): a model for every agent and a stored key for its provider. */
+  run_with?: RunWith | null;
 }
 
 export interface JobFilters {

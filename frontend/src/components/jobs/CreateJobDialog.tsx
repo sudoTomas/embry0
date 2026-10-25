@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { type RunWith, runWithBody } from "@/api/runWith";
+import { RunWithControl } from "@/components/runwith/RunWithControl";
 import { useCreateJob } from "@/hooks/useJobs";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -38,6 +40,7 @@ export function CreateJobDialog({ onClose }: CreateJobDialogProps) {
   const [issueNumber, setIssueNumber] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [advanced, setAdvanced] = useState<JobAdvancedState>(EMPTY_ADVANCED);
+  const [runWith, setRunWith] = useState<RunWith>({});
   const createJob = useCreateJob();
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -66,6 +69,7 @@ export function CreateJobDialog({ onClose }: CreateJobDialogProps) {
       },
       ...(contextType === "git" && issueNumber ? { issue_number: Number(issueNumber) } : {}),
       ...advancedToRequest(advanced),
+      ...runWithBody(runWith),
     };
 
     createJob.mutate(req, {
@@ -173,6 +177,8 @@ export function CreateJobDialog({ onClose }: CreateJobDialogProps) {
               required
             />
           </div>
+
+          <RunWithControl value={runWith} onChange={setRunWith} repo={contextType === "git" ? repo || null : null} />
 
           <div className="flex items-center gap-3">
             <Switch id="show-advanced" checked={showAdvanced} onCheckedChange={setShowAdvanced} />

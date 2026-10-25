@@ -52,6 +52,9 @@ class TriggerContext:
     event_type: str = ""
     action: str = ""
     actor: str = ""
+    #: The model and key a person chose when accepting a draft
+    #: (``embry0.services.run_with.RunWith``); None for a webhook delivery.
+    run_with: Any = None
 
 
 @runtime_checkable

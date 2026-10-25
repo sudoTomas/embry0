@@ -46,6 +46,13 @@ import { TranscriptDrawer } from "@/components/logs/TranscriptDrawer";
 import { QATab } from "@/components/qa/QATab";
 import { resumeJob, discardJob } from "@/api/jobs";
 
+/** What a person chose the job to run with (spec 2026-10-25), as "model · key", or null. */
+function ranWith(config: Record<string, unknown> | null | undefined): string | null {
+  const chosen = config?.run_with as { model?: string; credential_label?: string } | undefined;
+  if (!chosen || (!chosen.model && !chosen.credential_label)) return null;
+  return [chosen.model, chosen.credential_label].filter(Boolean).join(" · ");
+}
+
 const TRACES_PAGE_SIZE = 25;
 
 /** The map's box and the box that holds its place: one height, so the record
@@ -214,6 +221,11 @@ export function JobDetailPage() {
             <JobStatusBadge status={job.status} />
           </div>
           <div className="text-[10px] text-muted-foreground font-mono">{job.job_id}</div>
+          {ranWith(job.pipeline_config) && (
+            <div className="text-[10px] text-muted-foreground" data-testid="job-ran-with">
+              Ran with {ranWith(job.pipeline_config)}
+            </div>
+          )}
         </div>
         {/* The job's issue row, which links on to its tracker (GitHub, GitLab
             or Linear): a link built here assumed github.com for every forge.

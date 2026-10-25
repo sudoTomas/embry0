@@ -43,6 +43,7 @@ from embry0.services.pr_review.triggers import (
     ready_trigger_from_github,
     ready_trigger_from_gitlab,
 )
+from embry0.services.run_with import RunWith, apply_run_with
 from embry0.trackers.author_association import DEFAULT_AUTHOR_ROLES, check_comment_author, parse_author_roles
 
 logger = structlog.get_logger(__name__)
@@ -135,8 +136,14 @@ class PrReviewDispatcher:
         command = command_from_gitlab(payload)
         return None if command is None else await self._dispatch_command(command)
 
-    async def dispatch_manual(self, *, repo: str, number: int, actor: str) -> DispatchResult:
-        """``embry0 review`` / ``POST /jobs {pipeline: pr-review}``: skips the enabled setting only."""
+    async def dispatch_manual(
+        self, *, repo: str, number: int, actor: str, run_with: RunWith | None = None
+    ) -> DispatchResult:
+        """``embry0 review`` / ``POST /jobs {pipeline: pr-review}``: skips the enabled setting only.
+
+        ``run_with`` is the model and key a person chose (embry0/services/run_with.py):
+        the model replaces the repository's review model for this review.
+        """
         registered = await self._repos.registered_as(repo)
         if registered is None:
             return self._refuse("repo_not_registered", repo=repo, number=number)
@@ -153,7 +160,7 @@ class PrReviewDispatcher:
             actor=actor,
         )
         settings = review_settings(await self._prefs.get(registered))
-        return await self._admit(trigger, registered, settings, command=None)
+        return await self._admit(trigger, registered, settings, command=None, run_with=run_with)
 
     # ---- gates -------------------------------------------------------------
 
@@ -196,7 +203,13 @@ class PrReviewDispatcher:
         return registered, settings
 
     async def _admit(
-        self, trigger: ReviewTrigger, repo: str, settings: ReviewSettings, *, command: ReviewCommand | None
+        self,
+        trigger: ReviewTrigger,
+        repo: str,
+        settings: ReviewSettings,
+        *,
+        command: ReviewCommand | None,
+        run_with: RunWith | None = None,
     ) -> DispatchResult:
         pr = trigger.pr
         ids = {"repo": repo, "number": pr.number, "trigger": trigger.trigger}
@@ -228,6 +241,11 @@ class PrReviewDispatcher:
         if review_id is None:
             return self._refuse("duplicate", **ids)
         review = build_review_config(trigger, repo=repo, settings=settings, review_id=review_id)
+        if run_with is not None and not run_with.is_default():
+            review = {
+                **(apply_run_with(review, run_with) or review),
+                **({"model": run_with.model} if run_with.model else {}),
+            }
         try:
             job_id = await self._executor.start_pr_review_job(repo=repo, review=review, dispatched_by=actor)
         except Exception:

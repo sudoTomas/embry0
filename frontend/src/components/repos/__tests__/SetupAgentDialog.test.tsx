@@ -113,7 +113,7 @@ describe("SetupAgentDialog", () => {
 
     await user.click(startButton());
     await waitFor(() => expect(mockStartSetup).toHaveBeenCalledTimes(1));
-    expect(mockStartSetup).toHaveBeenCalledWith("acme/widgets");
+    expect(mockStartSetup).toHaveBeenCalledWith("acme/widgets", {});
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(toast.success).toHaveBeenCalledWith("embry0 is setting up testing. You can leave this page.");
     for (const queryKey of [

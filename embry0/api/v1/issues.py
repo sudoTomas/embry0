@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict
 
 from embry0.api.deps import (
     get_github_sync,
@@ -14,6 +15,7 @@ from embry0.api.deps import (
     request_actor,
 )
 from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.inputs import AnswerInputRequest, InputResponse
 from embry0.api.schemas.issues import (
     CreateIssueRequest,
@@ -23,10 +25,12 @@ from embry0.api.schemas.issues import (
     IssueResponse,
     UpdateIssueRequest,
 )
+from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.safety.error_codes import ErrorCode
 from embry0.services.answer_recorder import record_answer
 from embry0.services.issue_executor import IssueExecutor
+from embry0.services.run_with import RunWith
 from embry0.storage.repositories.issue_inputs import IssueInputsRepository
 from embry0.storage.repositories.issues import IssuesRepository
 from embry0.storage.repositories.jobs import JobsRepository
@@ -44,6 +48,7 @@ async def _dispatch(
     request: Request,
     *,
     failure_event: str,
+    run_with: RunWith | None = None,
 ) -> dict[str, str | None]:
     """Start a job for an issue already moved to ``triaging``; report, never raise.
 
@@ -54,7 +59,8 @@ async def _dispatch(
     hostnames, so it is logged here and nowhere else (#284).
     """
     try:
-        job_id = await executor.execute(issue_id, dispatched_by=request_actor(request))
+        chosen: dict[str, Any] = {"run_with": run_with} if run_with is not None else {}
+        job_id = await executor.execute(issue_id, dispatched_by=request_actor(request), **chosen)
     except UnregisteredRepoError as exc:
         # #360: the refusal names only the repo and what to do, so it is safe
         # to hand the client as it is.
@@ -333,18 +339,28 @@ async def delete_issue(
 # ---------------------------------------------------------------------------
 
 
+class TriageBody(BaseModel):
+    """Optional: the model and key the issue's job runs with (spec 2026-10-25)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_with: RunWithRequest | None = None
+
+
 @router.post("/issues/{issue_id}/triage")
 async def triage_issue(
     issue_id: str,
     request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
     executor: IssueExecutor = Depends(get_issue_executor),
+    body: TriageBody | None = None,
 ) -> IssueDispatchResponse:
     existing = await issues.get(issue_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Issue not found")
 
     await enforce_repo_allowlist(request, existing.get("repo"), action="triage an issue")
+    run_with = await checked_run_with(request, body.run_with if body else None, existing.get("repo"))
     current_status = existing["status"]
     if current_status in ("triaging", "closed", "cancelled"):
         raise HTTPException(
@@ -371,7 +387,9 @@ async def triage_issue(
     )
 
     # Same contract as POST /issues: a 200 whose dispatch failed says so.
-    dispatch = await _dispatch(executor, issues, issue_id, request, failure_event="triage_execution_failed")
+    dispatch = await _dispatch(
+        executor, issues, issue_id, request, failure_event="triage_execution_failed", run_with=run_with
+    )
     if dispatch["job_id"]:
         logger.info("triage_started", issue_id=issue_id, job_id=dispatch["job_id"])
 
