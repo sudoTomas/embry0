@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from embry0.services.areas import Area
 from embry0.services.proposals import (
     Decision,
     case_proposal,
@@ -104,6 +105,39 @@ def test_owners_are_stamped_and_filter_the_feed() -> None:
     assert stamped[0].owners == ("Octo",)
     assert for_owner(stamped, "@octo") == stamped and for_owner(stamped, "someone") == []
     assert for_owner(stamped, None) == stamped
+
+
+def test_a_proposal_is_in_its_area_and_asks_the_area_s_owners_first() -> None:
+    areas = {
+        "acme/app": [
+            Area("Billing", ("services/billing/**", "AGENTS.md"), ("billing-api",), ("mona",)),
+            Area("Docs", ("docs/**",)),
+        ]
+    }
+    finding, docs_finding = finding_proposals("acme/app", "job-9", T0, REPORT)
+    case = case_proposal(
+        {
+            "id": "hc-2",
+            "repo": "acme/app",
+            "title": "NullPointer in the invoice sender",
+            "signature": '{container="shop-billing-api-7f9c"} |= "ERROR"',
+            "created_at": T0,
+        }
+    )
+    labelled = issue_proposal(
+        {"id": "i-2", "repo": "acme/app", "title": "x", "labels": ["bug", "area:billing"], "created_at": T0}
+    )
+    plain = issue_proposal({"id": "i-3", "repo": "acme/app", "title": "y", "created_at": T0})
+    stamped = with_owners([finding, docs_finding, case, labelled, plain], {"acme/app": ["octo"]}, areas)
+    assert [(p.area, p.owners) for p in stamped] == [
+        ("Billing", ("mona",)),
+        ("Docs", ("octo",)),
+        ("Billing", ("mona",)),
+        ("Billing", ("mona",)),
+        (None, ("octo",)),
+    ], "an area without owners, or no area, asks the repository's owners"
+    assert stamped[0].to_dict()["area"] == "Billing" and stamped[4].to_dict()["area"] is None
+    assert for_owner(stamped, "octo") == [stamped[1], stamped[4]]
 
 
 # ---- the kinds and the answers ----

@@ -70,6 +70,8 @@ export interface JobResponse {
   trace_id?: string | null;
   job_kind?: string | null;
   result_summary?: string | null;
+  /** The part of a monorepo the job's pull request changes (the repository's `.embry0/areas.yml`). */
+  area?: string | null;
   /** Per-(agent, model) rollup from traces (GET /jobs/{id} only). EMB-35 adds token sums. */
   cost_breakdown?: CostBreakdownEntry[];
   /** #281: the job's most recent errored agent runs (GET /jobs/{id} only). */

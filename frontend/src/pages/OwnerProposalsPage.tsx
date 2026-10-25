@@ -39,6 +39,7 @@ function ProposalCard({ proposal, canAnswer, by }: { proposal: OwnerProposal; ca
         <div className="flex min-w-0 items-baseline gap-2">
           <Badge tone="neutral">{KIND_LABEL[proposal.kind]}</Badge>
           <span className="truncate font-mono text-xs text-white/60">{proposal.repo}</span>
+          {proposal.area && <Badge tone="purple" title="The part of the repository it is about">{proposal.area}</Badge>}
         </div>
         <span className="text-xs text-muted-foreground">
           {proposal.owners.length ? `Owners: ${proposal.owners.join(", ")}` : "No owners set"} · {formatDateTime(proposal.created_at)}

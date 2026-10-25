@@ -28,6 +28,7 @@ from embry0.orchestration.run_slots import RunSlot, RunSlots
 from embry0.safety.error_codes import ErrorCode
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services._executor_outcomes import _fold_auto_answers_into_context
+from embry0.services.areas import AREAS
 from embry0.services.healing.recorder import record_case_event
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.issues import IssuesRepository
@@ -126,6 +127,8 @@ class IssueExecutor:
         self._metrics = metrics
         self._case_recorder = case_recorder
         self._credential_resolver = credential_resolver
+        # Where the PRs it opens read a monorepo's areas (spec 2026-10-25).
+        self._area_reader = AREAS
         self._credentials_repo = credentials_repo
         self._credential_health = credential_health
         self._tracker_channels = tracker_channels or {}

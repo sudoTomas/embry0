@@ -282,6 +282,9 @@ class JobResponse(BaseModel):
     # (finalize_output's interim deliverable until RAV-603).
     job_kind: str | None = None
     result_summary: str | None = None
+    # The area of a monorepo the job's pull request changes (migration 109,
+    # embry0/services/areas.py); NULL when the repository names none.
+    area: str | None = None
     cost_breakdown: list[dict[str, Any]] = Field(default_factory=list)
     # #307: when an orchestrator shutdown last stopped this job (cleared once
     # boot resumed it), and how many times boot recovered it after a crash.

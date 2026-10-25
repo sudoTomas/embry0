@@ -23,7 +23,7 @@ ORDER BY c.created_at DESC
 """
 
 _ISSUES_SQL = """
-SELECT i.id, i.repo, i.title, i.body, i.tracker_url, i.created_at
+SELECT i.id, i.repo, i.title, i.body, i.labels, i.tracker_url, i.created_at
 FROM issues i
 WHERE i.status = 'open' AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.issue_id = i.id)
 ORDER BY i.created_at DESC

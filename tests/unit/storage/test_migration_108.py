@@ -15,12 +15,6 @@ def test_migration_108_present_and_gapless() -> None:
     assert "proposals" in next(d for v, d, _ in MIGRATIONS if v == 108)
 
 
-def test_migration_108_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_107.py)."""
-    assert MIGRATIONS[-1][0] == 108, "migration 108 must add owner proposals"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_answers_and_the_propose_scope_are_stored(db_with_migrations: DatabasePool) -> None:

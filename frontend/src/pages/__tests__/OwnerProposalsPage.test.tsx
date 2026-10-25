@@ -48,6 +48,14 @@ beforeEach(() => {
 });
 
 describe("OwnerProposalsPage (owner proposals, spec 2026-10-24)", () => {
+  it("names the area of a monorepo a proposal is about, next to its repository", () => {
+    mockUseOwnerProposals.mockReturnValue({ data: [{ ...FINDING, area: "Billing" }, { ...FINDING, id: "finding:def" }] });
+    renderPage();
+    const [inArea, plain] = screen.getAllByTestId("owner-proposal");
+    expect(within(inArea).getByText("Billing")).toHaveAttribute("title", "The part of the repository it is about");
+    expect(within(plain).queryByText("Billing")).toBeNull();
+  });
+
   it("shows each proposal's question, owners and what yes does, details on demand", async () => {
     renderPage();
     const card = screen.getByTestId("owner-proposal");

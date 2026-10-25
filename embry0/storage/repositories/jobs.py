@@ -129,6 +129,7 @@ _UPDATABLE_FIELDS = frozenset(
         "current_stage",
         "job_kind",
         "result_summary",
+        "area",
     }
 )
 
