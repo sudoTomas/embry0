@@ -50,6 +50,20 @@ def test_epics_questions_and_one_liners_do_not(title, body, labels, estimate):
     assert score < 40
 
 
+@pytest.mark.parametrize(
+    "title", ["Epic: deploys like the big platforms", "[EPIC] Billing rework", "epic(roost): plan"]
+)
+def test_an_epic_by_its_title_alone_does_not_read_as_ready(title):
+    """A planning ticket names itself an epic in its title as often as by a label."""
+    score, why = readiness(title, READY_BODY, ["bug"])
+    assert "an epic by its title" in why
+    assert score < readiness("Export fails on an empty start date", READY_BODY, ["bug"])[0] - 25
+
+
+def test_a_title_that_only_mentions_epic_is_judged_as_usual():
+    assert "an epic by its title" not in readiness("fix(leads): epic filter drops contacts", READY_BODY, ["bug"])[1]
+
+
 def test_paths_effort_and_severity():
     assert paths_in("see `services/export/report.py:12` and app.ts, not v1.2") == (
         "services/export/report.py",

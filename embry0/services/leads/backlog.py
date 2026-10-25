@@ -77,6 +77,8 @@ _NOT_READY_LABELS = frozenset(
         "blocked",
     }
 )
+#: A title that says the ticket is an epic ("Epic: ...", "[Epic] ...", "epic(scope): ..."), labelled or not.
+_EPIC_TITLE = re.compile(r"^\s*(?:\[\s*epic\s*\]|epic\s*(?:\([^)]*\))?\s*[:\-\u2014\u2013])", re.IGNORECASE)
 _URGENT_LABELS = frozenset({"critical", "urgent", "p0", "sev1", "security"})
 _HIGH_LABELS = frozenset({"high", "p1", "sev2", "regression"})
 
@@ -118,6 +120,8 @@ def readiness(title: str, body: str, labels: Iterable[str], estimate: float | No
         score, why = score - 10, [*why, "large"]
     if names & _NOT_READY_LABELS:
         score, why = score - 30, [*why, f"labelled {sorted(names & _NOT_READY_LABELS)[0]}"]
+    elif _EPIC_TITLE.match(title or ""):
+        score, why = score - 30, [*why, "an epic by its title"]
     if len(title.split()) <= 3:
         score, why = score - 10, [*why, "a short title"]
     return max(0, min(100, score)), why
