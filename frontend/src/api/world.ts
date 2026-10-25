@@ -255,6 +255,21 @@ export async function rejectQuest(jobId: string, note: string, closePr: boolean)
   return data;
 }
 
+/** Start the quest again as a new job, from what started it; the evaluation records the new job. */
+export async function runQuestAgain(jobId: string, runWith?: RunWith): Promise<Evaluation & { followup_job_id: string }> {
+  const { data } = await api.post<Evaluation & { followup_job_id: string }>(
+    `/world/quests/${encodeURIComponent(jobId)}/run-again`,
+    runWithBody(runWith),
+  );
+  return data;
+}
+
+/** Seen, nothing to do: the quest leaves the inbox without a rating. */
+export async function dismissQuest(jobId: string): Promise<Evaluation> {
+  const { data } = await api.post<Evaluation>(`/world/quests/${encodeURIComponent(jobId)}/dismiss`);
+  return data;
+}
+
 /** Send a party at a quest on the board: the owner proposal's yes, as the signed-in player. */
 export async function acceptLead(leadId: string, by: string, runWith?: RunWith): Promise<{ job_id: string | null }> {
   const { data } = await api.post<{ job_id: string | null }>(`/proposals/${encodeURIComponent(leadId)}/accept`, {

@@ -19,6 +19,7 @@ or a job (``POST /jobs``) with Run with: the world adds no way to start work.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -33,7 +34,7 @@ from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
-from embry0.services.run_with import apply_run_with
+from embry0.services.run_with import apply_run_with, models_with
 from embry0.services.world import (
     ERROR_MESSAGE_CHARS,
     INBOX_DAYS,
@@ -436,6 +437,81 @@ async def send_back(job_id: str, body: SendBackBody, request: Request) -> dict[s
     )
     _cache(request).drop("stats")
     return {**evaluation, "followup_job_id": result["job_id"]}
+
+
+_STILL_OUT = ("pending", "running", "awaiting_input", "paused")
+
+
+def _json_field(value: Any) -> Any:
+    """A JSONB column as the row gave it: decoded already, or text to decode."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return None
+    return value
+
+
+class RunAgainBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_with: RunWithRequest | None = None
+
+
+@router.post("/world/quests/{job_id}/run-again", status_code=202)
+async def run_again(job_id: str, request: Request, body: RunAgainBody | None = None) -> dict[str, Any]:
+    """Start the quest again as a new job, from what started it (its launch record).
+
+    The new job copies the repo, task, pipeline and its settings; a model or
+    key chosen with Run with replaces the old choice. The quest's evaluation
+    records the new job as its follow-up, so it leaves the inbox.
+    """
+    quest = await _quest_or_404(request, job_id)
+    if quest.get("status") in _STILL_OUT:
+        raise HTTPException(status_code=409, detail="the quest is still out: run it again when it is back")
+    jobs = _state(request, "jobs_repo")
+    job = await jobs.get(job_id)
+    launch = _json_field((job or {}).get("launch"))
+    if not job or not isinstance(launch, dict) or not launch.get("runner"):
+        raise HTTPException(
+            status_code=409,
+            detail="this quest has no launch record to start it again from; start it from its lead or ticket",
+        )
+    repo = str(job.get("repo") or "")
+    run_with = await checked_run_with(request, body.run_with if body else None, repo) if repo else None
+    pipeline_config = apply_run_with(_json_field(job.get("pipeline_config")), run_with)
+    if run_with is not None and run_with.model and launch.get("runner") in ("qa", "onboard"):
+        launch = {**launch, "agent_models": models_with(launch.get("agent_models"), run_with)}
+    actor = request_actor(request)
+    new_id = await jobs.create(
+        repo=job.get("repo"),
+        task=job.get("task"),
+        issue_number=job.get("issue_number"),
+        issue_id=job.get("issue_id"),
+        pipeline_template=job.get("pipeline_template"),
+        pipeline_config=pipeline_config,
+        sandbox_profile=job.get("sandbox_profile"),
+        context=_json_field(job.get("context")),
+        dispatched_by=actor,
+    )
+    carried = {k: job[k] for k in ("job_kind", "area") if job.get(k)}
+    if carried:
+        await jobs.update(new_id, **carried)
+    _state(request, "issue_executor").run_again(
+        new_id, launch, issue_id=job.get("issue_id"), message=f"Started again from {job_id} by {actor}."
+    )
+    evaluation = await _audit(request, "quest.restarted", job_id, followup_job_id=new_id)
+    _cache(request).drop("stats")
+    return {**evaluation, "followup_job_id": new_id}
+
+
+@router.post("/world/quests/{job_id}/dismiss")
+async def dismiss(job_id: str, request: Request) -> dict[str, Any]:
+    """Seen, nothing to do: the quest leaves the inbox without a rating or a verdict."""
+    quest = await _quest_or_404(request, job_id)
+    if quest.get("status") in _STILL_OUT:
+        raise HTTPException(status_code=409, detail="the quest is still out: dismiss it when it is back")
+    return await _audit(request, "quest.dismissed", job_id)
 
 
 class RejectBody(BaseModel):

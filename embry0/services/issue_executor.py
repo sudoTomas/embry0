@@ -1362,6 +1362,24 @@ class IssueExecutor:
             issue_id=job.get("issue_id"),
         )
 
+    def run_again(
+        self, job_id: str, launch: Mapping[str, Any], *, issue_id: str | None, message: str
+    ) -> asyncio.Task[Any]:
+        """Start ``job_id``, a new job, from another job's launch record (the world's Run again).
+
+        The new row already carries the old one's repo, task and pipeline; the
+        launch record says which runner starts it and with what, exactly as a
+        relaunch after a restart does. It takes a run slot like any job.
+        """
+        launch = dict(launch)
+        return self._track_task(
+            self._relaunch(job_id, launch, message=message),
+            kind="run_again",
+            job_id=job_id,
+            issue_id=issue_id,
+            launch=launch,
+        )
+
     async def _relaunch(self, job_id: str, launch: dict[str, Any], *, message: str | None = None) -> None:
         await self._announce_recovery(
             job_id, message or "Restarted: embry0 restarted before this job got going; it starts now."
