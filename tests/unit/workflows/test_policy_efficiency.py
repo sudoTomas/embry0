@@ -65,6 +65,8 @@ def test_default_map_covers_pipeline_roles():
     assert set(DEFAULT_AGENT_MAX_TURNS) == {
         "triage",
         "developer",
+        # The slop cleanup runs on the developer node with its budget.
+        "slopmaster",
         "review",
         "qa",
         "research",

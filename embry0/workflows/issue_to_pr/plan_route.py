@@ -23,11 +23,13 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from embry0.execution import events
+from embry0.services.slop import SLOP_TEMPLATE, is_slop, parse_work_nature
 from embry0.workflows._validation import validate_graph_definition
 from embry0.workflows.issue_to_pr.route_plan import (
     GENERIC_AGENT_TYPES,
     LEGACY_ROUTE_PLAN,
     build_route_plan,
+    coding_agent_of,
     specialist_job_kind,
     triage_template_config,
 )
@@ -132,6 +134,7 @@ class TemplateInvalidError(RuntimeError):
 _PHYSICAL_NODE: dict[str, str] = {
     "triage": "triage",
     "developer": "developer",
+    "slopmaster": "developer",
     "reviewer": "review",
     "review": "review",
     "qa": "qa",
@@ -332,6 +335,20 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
         requested, job_kind = "", "code"
     explicit = requested not in _LEGACY_TEMPLATE_VALUES
 
+    # Slop dungeon (spec 2026-10-25): a code job triage judged slop, not a
+    # bug, runs the Slopmaster's cleanup. It keeps review and QA, so a
+    # watcher-origin job may take it too; a template a person named wins
+    # below. A missing slop-cleanup template falls to the kind default.
+    work_nature = parse_work_nature(decision.get("work_nature"))
+    if is_slop(work_nature) and job_kind == "code":
+        logger.info(
+            "plan_route_slop_cleanup",
+            job_id=state.get("job_id"),
+            triage_template=requested or None,
+            slop_score=(work_nature or {}).get("slop_score"),
+        )
+        requested, explicit = SLOP_TEMPLATE, True
+
     # RAV-1058: a template named on JobCreateRequest.pipeline_template is an
     # operator instruction — it outranks triage's pick. Surfaced on state by
     # IssueExecutor._run_workflow (the job-row column itself is overwritten
@@ -416,6 +433,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
                 state.get("job_id", ""),
                 job_kind=effective_kind,
                 **({"pipeline_template": resolved_name} if resolved_name else {}),
+                **({"work_nature": work_nature} if work_nature is not None else {}),
             )
         except Exception:
             logger.warning("plan_route_job_row_update_failed", job_id=state.get("job_id"), exc_info=True)
@@ -456,6 +474,8 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
         "route_plan": plan,
         "route_cursor": 0,
         "route_template_name": resolved_name,
+        "work_nature": work_nature,
+        "coding_agent": coding_agent_of(plan),
     }
 
 

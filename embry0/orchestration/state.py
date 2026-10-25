@@ -101,6 +101,7 @@ class TriageDecision(TypedDict, total=False):
     sub_tasks: list[dict[str, Any]]
     reasoning: str
     duplicate_of_pr: dict[str, Any] | None  # RAV-1079: {pr_number, reason} when the task duplicates an open PR
+    work_nature: dict[str, Any] | None  # slop dungeon: the slopometer's verdict (embry0.services.slop)
 
 
 class AgentOutputEntry(TypedDict, total=False):
@@ -213,6 +214,10 @@ class TriageDecisionModel(BaseModel):
     # state.py free of agent-layer imports and to allow extra="forbid" on the
     # outer model without rejecting the new key.
     qa_failure_action: dict[str, Any] | None = None
+    # Slop dungeon (spec 2026-10-25): the slopometer's verdict, loose here and
+    # parsed leniently by plan_route (embry0.services.slop.parse_work_nature):
+    # a malformed verdict is dropped, never job-terminal.
+    work_nature: Any = None
     # RAV-1079: optional duplicate-PR flag. Only meaningful when the user
     # turn carried an "Existing OPEN pull requests" list; triage_node
     # validates pr_number against that list (state["open_prs"]) and ends the
@@ -454,6 +459,13 @@ class JobState(TypedDict, total=False):
     # crashing; single-dispatch Command routing (RAV-1152) means sequential
     # semantics are plain assignment, which is what the routing code assumes.
     job_kind: Annotated[str, FoldingLastValue]
+    # Slop dungeon (spec 2026-10-25): triage's slopometer verdict
+    # (embry0.services.slop.parse_work_nature), the agent the route's coding
+    # step runs as ("developer" or "slopmaster"), and a cleanup's diff counts.
+    # Set by plan_route and the developer node. MUST stay declared here —
+    # LangGraph's merge reducer silently drops undeclared keys.
+    work_nature: Annotated[dict[str, Any] | None, FoldingLastValue]
+    coding_agent: Annotated[str | None, FoldingLastValue]
     route_plan: Annotated[list[dict[str, Any]], FoldingLastValue]
     route_cursor: Annotated[int, last_value]
     route_template_name: Annotated[str | None, FoldingLastValue]

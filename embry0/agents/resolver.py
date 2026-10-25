@@ -24,7 +24,7 @@ logger = structlog.get_logger(__name__)
 # was saved, the run falls back to a tier default instead of failing —
 # heavy for the developer (mirrors the deployed matrix), medium otherwise.
 # Tier models themselves can never be disabled (API interlock).
-_FALLBACK_TIER_FOR_AGENT = {"developer": "model_heavy"}
+_FALLBACK_TIER_FOR_AGENT = {"developer": "model_heavy", "slopmaster": "model_heavy"}
 
 
 # The model a run uses when nothing names one: no agent model, no default

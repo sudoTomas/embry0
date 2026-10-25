@@ -206,6 +206,36 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
         "sandbox_profile": "slim",
         "default_for_kind": "ops",
     },
+    # Slop dungeon (spec 2026-10-25): the route of a code job triage judged
+    # slop, not a bug. The Slopmaster runs on the developer node (its step
+    # maps there like reviewer maps to review), then review and QA as in the
+    # full pipeline. No default_for_kind: plan_route picks it from triage's
+    # verdict, and the job stays a code job.
+    "slop-cleanup": {
+        "description": (
+            "Cleanup of slop, not a bug fix: triage → slopmaster → reviewer → qa → output. The Slopmaster "
+            "keeps behavior and deletes or merges code; the reviewer checks behavior is unchanged and the "
+            "diff shrinks the code. Picked when triage judges a code job slop."
+        ),
+        "graph_definition": _graph(
+            name="slop-cleanup",
+            description="Triage → slopmaster → reviewer → qa → output.",
+            nodes=[
+                _node("triage", "triage", 0, 0),
+                _node("slopmaster", "slopmaster", 240, 0),
+                _node("reviewer", "reviewer", 480, 0),
+                _node("qa", "qa", 720, 0),
+                _node("output", "output", 960, 0),
+            ],
+            edges=[
+                _edge("e1", "triage", "slopmaster"),
+                _edge("e2", "slopmaster", "reviewer"),
+                _edge("e3", "reviewer", "qa"),
+                _edge("e4", "qa", "output"),
+            ],
+        ),
+        "sandbox_profile": "slim",
+    },
     "pr-followup": {
         "description": (
             "PR follow-up route: triage → developer → reviewer → output. "

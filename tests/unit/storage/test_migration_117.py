@@ -15,12 +15,6 @@ def test_migration_117_present() -> None:
     assert "proposal_briefs" in sql and "input_hash" in sql
 
 
-def test_migration_117_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_116.py)."""
-    assert MIGRATIONS[-1][0] == 117, "migration 117 must add proposal_briefs"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_a_brief_is_stored_replaced_and_pruned(db_with_migrations: DatabasePool) -> None:

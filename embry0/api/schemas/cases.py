@@ -85,6 +85,9 @@ class CaseResponse(BaseModel):
     # How the watcher chose signature_id (#657): "evidence" (a line the
     # proposal quotes), "fallback" (the window's loudest line), or None.
     signature_source: str | None = None
+    # Slop dungeon (migration 118): the watcher's slopometer verdict on its
+    # finding ({nature, slop_score, kinds, evidence}), None when it gave none.
+    work_nature: dict[str, Any] | None = None
     fingerprint: str | None = None
     watcher_run_id: str | None = None
     tracker: CaseTracker | None = None
@@ -132,6 +135,7 @@ class CaseResponse(BaseModel):
             },
             # .get: a row built by hand (tests, older fixtures) may not carry it.
             "signature_source": row.get("signature_source"),
+            "work_nature": row.get("work_nature"),
             "tracker": (
                 CaseTracker(kind=row["tracker"], key=row["tracker_key"], url=row["tracker_url"])
                 if row["tracker"]

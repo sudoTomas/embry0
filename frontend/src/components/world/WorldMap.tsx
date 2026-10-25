@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import type { Lead, Party, Region, WorldCharacter } from "@/api/world";
+import type { Dungeon, Lead, Party, Region, WorldCharacter } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -19,8 +19,18 @@ interface WorldMapProps {
   quests: readonly Lead[];
   parties: readonly Party[];
   characters: readonly WorldCharacter[];
+  /** Slop Dungeons (spec 2026-10-25): each repository's or area's open slop and its score. */
+  dungeons?: readonly Dungeon[];
   onPickLead: (lead: Lead) => void;
   onPickCharacter: (agentType: string) => void;
+}
+
+/** Where a Slop Dungeon stands: beside its area's town, else beside its region's name. */
+function dungeonSpot(map: TileMap, dungeon: Dungeon): { x: number; y: number } | null {
+  const region = map.regions.find((r) => r.repo === dungeon.repo);
+  if (!region) return null;
+  const town = dungeon.area ? region.towns.find((t) => t.name === dungeon.area) : undefined;
+  return town ? { x: town.x + 26, y: town.y - 4 } : { x: region.label.x + 44, y: region.label.y + 8 };
 }
 
 /** How long a party walks between the hall and its quest. */
@@ -81,7 +91,7 @@ function PartyOnMap({ map, art, party, onPick }: { map: TileMap; art: ArtManifes
  * region, and every party at its quest or walking there. Drag to look around;
  * everything on it is a button.
  */
-export function WorldMap({ art, regions, quests, parties, characters, onPickLead, onPickCharacter }: WorldMapProps) {
+export function WorldMap({ art, regions, quests, parties, characters, dungeons = [], onPickLead, onPickCharacter }: WorldMapProps) {
   const lookup = useIdentityLookup();
   const map = useMemo(() => buildTileMap(regions, art.tileSize), [regions, art.tileSize]);
   const layers = useMemo(() => TERRAINS.map((t) => ({ terrain: t, mask: map.masks[t] })), [map]);
@@ -180,6 +190,37 @@ export function WorldMap({ art, regions, quests, parties, characters, onPickLead
                   {fought.has(q.id) && (
                     <EffectAt art={art} name="hitsplat" x={c.anchor.x} y={c.anchor.y - 8} label={String(1 + (hash(q.id) % 9))} className="world-hitsplat" />
                   )}
+                </button>
+              );
+            })}
+            {dungeons.map((d) => {
+              const spot = dungeonSpot(map, d);
+              if (!spot) return null;
+              // The worst open slop in it: what entering the dungeon opens.
+              const worst = quests
+                .filter((q) => q.kind === "slop" && q.repo === d.repo && (q.area ?? null) === d.area)
+                .sort((a, b) => (b.slop_score ?? 0) - (a.slop_score ?? 0))[0];
+              const where = d.area ?? placeOf(d.repo);
+              const title = `Slop Dungeon · ${where} · slop score ${d.score} · ${d.open} open, ${d.cleaned} cleaned lately`;
+              return (
+                <button
+                  key={`dungeon-${d.repo}-${d.area ?? ""}`}
+                  type="button"
+                  title={title}
+                  aria-label={title}
+                  data-testid="map-dungeon"
+                  data-score={d.score}
+                  disabled={!worst}
+                  onClick={() => worst && onPickLead(worst)}
+                  style={{ ...anchored(spot.x, spot.y, { x: 12, y: 24 }), width: 24, height: 24 }}
+                >
+                  <CreatureIcon kind="dungeon" creature="slop_dungeon" size={24} label={title} />
+                  <span
+                    className="sprite-nameplate pointer-events-none absolute left-1/2 top-full -translate-x-1/2 whitespace-nowrap text-white"
+                    style={{ fontSize: 8, textShadow: "1px 1px 0 #000" }}
+                  >
+                    Slop {d.score}
+                  </span>
                 </button>
               );
             })}

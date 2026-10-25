@@ -132,6 +132,8 @@ _UPDATABLE_FIELDS = frozenset(
         "area",
         # Spent account waits (migration 116): what a parked job waits for.
         "account_wait",
+        # Slop dungeon (migration 118): the slopometer's verdict on the job.
+        "work_nature",
     }
 )
 

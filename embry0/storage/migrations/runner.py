@@ -3259,6 +3259,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'an owner proposal in plain words (title, problem, fix, size), written by a model from the proposal as input_hash says.';
         """,
     ),
+    (
+        118,
+        "slop is not a bug: the slopometer's verdict on a code job and on a watcher finding (spec 2026-10-25, slop dungeon)",
+        # Triage and the watcher classify a job or a finding as a bug, slop or
+        # noise. A slop job runs the Slopmaster's cleanup, whose diff counts
+        # land in jobs.work_nature.cleanup. NULL: not classified.
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS work_nature JSONB;
+        COMMENT ON COLUMN jobs.work_nature IS
+            'the slopometer''s verdict on a code job: {nature bug|slop|noise, slop_score 0-100, kinds, evidence [{path, why}], cleanup {added, removed}}; NULL when not classified.';
+        ALTER TABLE healing_cases ADD COLUMN IF NOT EXISTS work_nature JSONB;
+        COMMENT ON COLUMN healing_cases.work_nature IS
+            'the watcher''s slopometer verdict on its finding, in the shape of jobs.work_nature; NULL when not classified.';
+        """,
+    ),
 ]
 
 

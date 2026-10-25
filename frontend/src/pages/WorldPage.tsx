@@ -184,6 +184,7 @@ export function WorldPage() {
             quests={data.quests}
             parties={data.parties}
             characters={data.characters}
+            dungeons={data.dungeons ?? []}
             onPickLead={(lead) => set("lead", lead.id)}
             onPickCharacter={(agent) => set("character", agent)}
           />

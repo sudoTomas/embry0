@@ -21,22 +21,31 @@ from embry0.orchestration import dispatch_actors
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.gate_refusal import gate_refusal_sql
 
+# The character a job's code is credited to: the Slopmaster for a slop cleanup
+# (spec 2026-10-25, slop dungeon), the developer otherwise.
+_CODER = "CASE WHEN {job}.pipeline_template = 'slop-cleanup' THEN 'slopmaster' ELSE 'developer' END"
+
 _EVENTS_SQL = f"""
 -- an agent run that ended without an error, with the tool calls it made
 SELECT 'run' AS source, t.agent_type, t.created_at AS at, NULL::text AS report, t.tools_called, t.skill_actions
 FROM traces t
 WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL
 UNION ALL
--- the developer: a pull request a job opened was merged
-SELECT 'merged', 'developer', COALESCE(j.delivery_state_at, j.finished_at, j.updated_at), NULL, NULL, NULL
+-- the developer (the Slopmaster, for a slop cleanup): a pull request a job opened was merged
+SELECT 'merged', {_CODER.format(job="j")}, COALESCE(j.delivery_state_at, j.finished_at, j.updated_at), NULL, NULL, NULL
 FROM jobs j WHERE j.status = 'pr_merged'
 UNION ALL
--- the developer: a job that opened a pull request
-SELECT 'opened', 'developer', COALESCE(j.finished_at, j.updated_at), NULL, NULL, NULL
+-- the developer (or the Slopmaster): a job that opened a pull request
+SELECT 'opened', {_CODER.format(job="j")}, COALESCE(j.finished_at, j.updated_at), NULL, NULL, NULL
 FROM jobs j WHERE j.pr_url IS NOT NULL
 UNION ALL
--- the developer: a merge on an issue whose earlier job had failed
-SELECT 'comeback', 'developer', COALESCE(m.delivery_state_at, m.finished_at, m.updated_at), NULL, NULL, NULL
+-- the Slopmaster: a merged slop cleanup, with the lines it added and removed as its report
+SELECT 'cleaned', 'slopmaster', COALESCE(j.delivery_state_at, j.finished_at, j.updated_at),
+       (j.work_nature -> 'cleanup')::text, NULL, NULL
+FROM jobs j WHERE j.status = 'pr_merged' AND j.pipeline_template = 'slop-cleanup'
+UNION ALL
+-- the developer (or the Slopmaster): a merge on an issue whose earlier job had failed
+SELECT 'comeback', {_CODER.format(job="m")}, COALESCE(m.delivery_state_at, m.finished_at, m.updated_at), NULL, NULL, NULL
 FROM jobs m
 WHERE m.status = 'pr_merged' AND m.issue_id IS NOT NULL
   AND EXISTS (

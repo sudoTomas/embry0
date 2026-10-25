@@ -15,8 +15,9 @@ _DEFERRED_TOOLS = frozenset({"CreateIssue", "RequestInput", "UpdateStatus"})
 # The node-backed template vocabulary: each of these is executed by its own
 # LangGraph node (triage, developer, review, qa, finalize_output). Every other
 # agent_type must name an agent_definitions row and runs on generic_agent
-# (spec 3.5). "reviewer" is the historical template spelling of "review".
-FIXED_NODE_TYPES = frozenset({"triage", "developer", "reviewer", "review", "qa", "output"})
+# (spec 3.5). "reviewer" is the historical template spelling of "review";
+# "slopmaster" runs on the developer node (spec 2026-10-25, slop dungeon).
+FIXED_NODE_TYPES = frozenset({"triage", "developer", "slopmaster", "reviewer", "review", "qa", "output"})
 
 
 def _default_agent_types() -> frozenset[str]:

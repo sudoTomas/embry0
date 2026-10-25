@@ -79,6 +79,13 @@ from embry0.services.signature_delta import (
     WindowDelta,
     classify_window,
 )
+from embry0.services.slop import (
+    CLASSIFIER_GUIDE,
+    WATCHER_CONTRACT_LINES,
+    is_slop,
+    parse_contract_lines,
+    ticket_section,
+)
 from embry0.services.watcher_budget import resolve_watcher_job_budget
 from embry0.services.watcher_recursion import drop_own_lines
 from embry0.storage.repositories.watcher_runs import ANALYSED_ACTIONS, UNPARSEABLE_DETAIL_PREFIX
@@ -118,6 +125,13 @@ ticket for its engineering team. Prefer recurring or high-impact problems \
 over one-off noise; benign errors (handled 404s, client disconnects, retries that \
 succeeded) are NOT ticket-worthy.
 
+Bug or slop: a proposal must say which it is, because a developer handed slop \
+as a bug patches the symptom and adds more slop. Read the code the logs point \
+at before you decide.
+{slop_guide}
+Noise is NO_ISSUE. A slop proposal's TITLE reads as a cleanup ("Clean up ..."), \
+not a fix.
+
 Already-reported issues (filed by this watcher recently, likely still open):
 {known_issues}
 Open tickets in the tracker (do not re-propose any of these, even reworded):
@@ -151,6 +165,7 @@ SEVERITY: <low|medium|high>
 FINGERPRINT: <stable slug of the dominant error signature, e.g. \
 "circuitbreaker msgraphproxy open" — same underlying issue must yield the \
 same fingerprint across runs; never include counts, durations, or timestamps>
+{slop_lines}
 BODY:
 <markdown, everything until the end of the message: ## Evidence (quoted log \
 lines + container + count), ## Impact, ## Suspected cause, ## Suggested next step>
@@ -256,6 +271,8 @@ def _parse_line_format(text: str) -> dict[str, Any] | None:
         "body": body[:20000],
         "severity": severity if severity in _SEVERITIES else "medium",
         "fingerprint_hint": (fp_m.group(1).strip()[:200] if fp_m else None),
+        # Slop dungeon: the NATURE:/SLOP_* lines before BODY:, None without them.
+        "work_nature": parse_contract_lines(text),
     }
 
 
@@ -357,6 +374,9 @@ def parse_verdict(text: str) -> dict[str, Any]:
     else:
         kind = "unparseable"
         reason = _unparseable_reason(text)
+    # Slop dungeon: a proposal its own verdict calls noise has nothing to do in it.
+    if proposal is not None and (proposal.get("work_nature") or {}).get("nature") == "noise":
+        kind, proposal = "no_issue", None
     rationale = None
     if text:
         rat_m = re.search(r"^RATIONALE:[ \t]*(.+)$", text, re.MULTILINE)
@@ -379,6 +399,15 @@ def parse_verdict(text: str) -> dict[str, Any]:
             "title": redact_log_text(proposal["title"]),
             "body": redact_log_text(proposal["body"]),
         }
+        verdict = proposal.get("work_nature")
+        if isinstance(verdict, dict):
+            proposal["work_nature"] = {
+                **verdict,
+                "evidence": [
+                    {"path": redact_log_text(e["path"]), "why": redact_log_text(e["why"])}
+                    for e in verdict.get("evidence") or []
+                ],
+            }
     if rationale is not None:
         rationale = redact_log_text(rationale)
     memory = [(slug, redact_log_text(summary)) for slug, summary in memory]
@@ -1345,8 +1374,11 @@ class WatcherService:
         self, proposal: dict[str, Any], job_id: str | None, window_start: datetime, window_end: datetime
     ) -> dict[str, Any] | None:
         """Create the DRAFT tracker ticket for a proposal (never labelled)."""
+        # Slop dungeon: a slop finding's ticket opens by saying so, so whoever
+        # works it (triage first) is not handed it as a bug.
+        opening = ticket_section(proposal["work_nature"]) if is_slop(proposal.get("work_nature")) else ""
         description = (
-            f"{proposal['body']}\n\n---\n"
+            f"{opening}{proposal['body']}\n\n---\n"
             f"*Filed by the embry0 watcher (severity: {proposal['severity']}; "
             f"analysis job `{job_id}`; window {window_start.isoformat()} → {window_end.isoformat()}).*\n"
             f"*Add the `embry0` label to accept and auto-dispatch the pipeline; "
@@ -1847,6 +1879,8 @@ class WatcherService:
                     known_issues=known_issues,
                     excerpts=excerpt_block,
                     drilldown=self._drilldown_section(),
+                    slop_guide=CLASSIFIER_GUIDE,
+                    slop_lines=WATCHER_CONTRACT_LINES,
                     **sections,
                 )
                 # Spent account waits: an analysis that would only wait for an
@@ -1988,6 +2022,7 @@ class WatcherService:
                         parent_case_id=parent_case_id,
                         severity=proposal.get("severity"),
                         tracker=None,
+                        work_nature=proposal.get("work_nature"),
                     )
                     return result
 
@@ -2023,6 +2058,7 @@ class WatcherService:
                         parent_case_id=parent_case_id,
                         severity=proposal.get("severity"),
                         tracker=TrackerRef(self._tracker, issue["identifier"], issue.get("url")),
+                        work_nature=proposal.get("work_nature"),
                     )
                 await self._announce(issue, proposal, job_id, case_id=case_id)
                 return result

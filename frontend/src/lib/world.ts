@@ -335,6 +335,7 @@ export const KIND_WORDS: Record<string, string> = {
   alert: "Security alerts",
   flaky: "Flaky tests",
   review: "Unanswered reviews",
+  slop: "Slop",
 };
 
 /** One quest of each kind, as its badge says it. */
@@ -347,6 +348,7 @@ export const KIND_WORD: Record<string, string> = {
   alert: "Security alert",
   flaky: "Flaky test",
   review: "Unanswered review",
+  slop: "Slop, not a bug",
 };
 
 /** The level's colour band, as a monster's level reads against yours: green below, yellow near, red above. */

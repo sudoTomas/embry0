@@ -152,6 +152,7 @@ async def test_a_filed_proposal_opens_one_tracked_case_for_its_run():
         parent_case_id=None,
         severity="high",
         tracker=TrackerRef("linear", "ENG-7", "https://linear.app/x/ENG-7"),
+        work_nature=None,
     )
 
 

@@ -22,6 +22,7 @@ from embry0.orchestration.nodes.agent import (
     DEFAULT_ASK_USER_CAP,
     agent_attempt,
 )
+from embry0.services.slop import SLOPMASTER
 from embry0.workflows.issue_to_pr.nodes._common import (
     _extract_ask_user_events,
     _format_user_answers_block,
@@ -803,6 +804,55 @@ def _branch_missing_explanation(branch: str, diagnostics: dict[str, Any]) -> str
     )
 
 
+def _coding_agent(state: dict[str, Any]) -> str:
+    """The agent this node runs as (spec 2026-10-25, slop dungeon): the Slopmaster on a
+    slop-cleanup route, else the developer. A job planned before then has none."""
+    from embry0.workflows.issue_to_pr.route_plan import CODING_AGENT_TYPES
+
+    agent = str(state.get("coding_agent") or "developer")
+    return agent if agent in CODING_AGENT_TYPES else "developer"
+
+
+def _fallback_system_prompt(coding_agent: str) -> str:
+    """The system prompt when the agent has no row: the Slopmaster's own, the developer's none."""
+    if coding_agent != SLOPMASTER:
+        return ""
+    from embry0.services.slop import SLOPMASTER_SYSTEM_PROMPT
+
+    return SLOPMASTER_SYSTEM_PROMPT
+
+
+async def _record_cleanup_diff(state: dict[str, Any], configurable: dict[str, Any]) -> dict[str, Any] | None:
+    """A Slopmaster run's diff in lines, on state and on the job's verdict; None when it cannot be read.
+
+    The Slopmaster's worth is the code it removed (its experience counts net
+    lines removed), and the reviewer reads the same numbers.
+    """
+    docker = configurable.get("docker")
+    container = state.get("sandbox_container_id")
+    if docker is None or not container:
+        return None
+    from embry0.execution.workspace_diff import diff_line_counts, resolve_base_branch
+
+    try:
+        base = await resolve_base_branch(docker=docker, container_id=container, configured=state.get("base_branch"))
+    except Exception:  # noqa: BLE001 - the count is a bonus, never a failure
+        logger.warning("cleanup_diff_base_unresolved", job_id=state.get("job_id"), exc_info=True)
+        return None
+    counts = await diff_line_counts(docker=docker, container_id=container, base_branch=base)
+    if counts is None:
+        return None
+    verdict = {**(state.get("work_nature") or {}), "cleanup": counts}
+    jobs_repo = configurable.get("jobs_repo")
+    if jobs_repo is not None:
+        try:
+            await jobs_repo.update(str(state.get("job_id") or ""), work_nature=verdict)
+        except Exception:  # noqa: BLE001 - the row is a mirror; state carries it on
+            logger.warning("cleanup_diff_persist_failed", job_id=state.get("job_id"), exc_info=True)
+    logger.info("cleanup_diff_recorded", job_id=state.get("job_id"), **counts)
+    return verdict
+
+
 async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
     """Run developer agent — write code, create branch, commit, push, open PR.
 
@@ -811,8 +861,11 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     based on the executor output, pending agent questions, and budget state.
     """
     writer = _nodes.get_stream_writer()
-    attempt = agent_attempt(state, "developer")
-    writer(events.node_started(node="developer", agent="developer", attempt=attempt))
+    # Slop dungeon (spec 2026-10-25): on a slop-cleanup route this node runs
+    # the Slopmaster, under its own agent type and definition.
+    coding_agent = _coding_agent(state)
+    attempt = agent_attempt(state, coding_agent)
+    writer(events.node_started(node="developer", agent=coding_agent, attempt=attempt))
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
@@ -843,7 +896,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         try:
             prior = await agent_sessions_repo.get(
                 job_id=state.get("job_id", ""),
-                agent_type="developer",
+                agent_type=coding_agent,
             )
             # RAV-1092: no own session yet + the job carries a donor job id
             # (PR-comment follow-up) → adopt the session of the developer
@@ -891,6 +944,12 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         prompt = _build_developer_full_prompt(
             state, branch_name, configurable.get("embry0_config"), taken_branch=taken_branch
         )
+    if coding_agent == SLOPMASTER:
+        from embry0.services.slop import slop_brief
+
+        brief = slop_brief(state.get("work_nature"))
+        if brief:
+            prompt = f"{prompt}\n\n{brief}"
 
     # RAV-602: definition (model/tools/skills) from the DB row, per-step
     # template overrides from the current route step; triage's
@@ -900,12 +959,12 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
 
     developer_definition = await load_agent_definition(
         config,
-        "developer",
+        coding_agent,
         {
             "model": "claude-sonnet-5",
             "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
             "skills": [],
-            "system_prompt": "",
+            "system_prompt": _fallback_system_prompt(coding_agent),
             "mcp_servers": {},
             "execution_mode": None,
             "auth_mode": None,
@@ -921,11 +980,11 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         logger.info(
             "developer_log_tool_granted", job_id=state.get("job_id"), containers=state.get("case_log_containers")
         )
-    developer_template_config = step_template_config(state, "developer")
+    developer_template_config = step_template_config(state, coding_agent)
     result = await _nodes.run_agent_node(
         state=state,
         agent_runner=agent_runner,
-        agent_type="developer",
+        agent_type=coding_agent,
         prompt=prompt,
         agent_definition=developer_definition,
         template_config=developer_template_config,
@@ -953,7 +1012,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 try:
                     await agent_sessions_repo.upsert(
                         job_id=state.get("job_id", ""),
-                        agent_type="developer",
+                        agent_type=coding_agent,
                         mode=mode,
                         messages=new_messages,
                         session_id=new_session_id,
@@ -1025,7 +1084,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     if pr_url:
         writer(events.pr_created(pr_url=pr_url, branch=branch))
 
-    writer(events.node_completed(node="developer", agent="developer", attempt=attempt))
+    writer(events.node_completed(node="developer", agent=coding_agent, attempt=attempt))
 
     updates: dict[str, Any] = {
         **result,
@@ -1052,8 +1111,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         # carry brainstorming (the row, then the template node's delta, then
         # triage's, as the resolver applies them); everything else stays at the
         # default of 5.
-        template_skills = ((developer_template_config or {}).get("agent_skills") or {}).get("developer")
-        triage_skills = ((state.get("pipeline_config", {}) or {}).get("agent_skills") or {}).get("developer")
+        template_skills = ((developer_template_config or {}).get("agent_skills") or {}).get(coding_agent)
+        triage_skills = ((state.get("pipeline_config", {}) or {}).get("agent_skills") or {}).get(coding_agent)
         skills_for_dev = effective_skills(developer_definition.get("skills") or [], template_skills, triage_skills)
         ask_cap = BRAINSTORMING_ASK_USER_CAP if "superpowers:brainstorming" in skills_for_dev else DEFAULT_ASK_USER_CAP
 
@@ -1199,11 +1258,20 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
             updates["current_stage"] = "dev_branch_missing"
             goto = "max_retries"
         else:
+            if coding_agent == SLOPMASTER:
+                cleaned = await _record_cleanup_diff(state, configurable)
+                if cleaned is not None:
+                    updates["work_nature"] = cleaned
             # RAV-601: forward progression follows the route plan. Jobs
             # without one (pre-RAV-601 checkpoints resumed mid-flight) keep
             # the legacy fixed hop to review.
             if state.get("route_plan"):
-                from embry0.workflows.issue_to_pr.route_plan import ROUTE_TARGETS, advance, next_route
+                from embry0.workflows.issue_to_pr.route_plan import (
+                    CODING_AGENT_TYPES,
+                    ROUTE_TARGETS,
+                    advance,
+                    next_route,
+                )
 
                 # RAV-1271: advance only when the cursor is ON a developer
                 # step (fresh forward progression). Re-entry paths — the
@@ -1213,7 +1281,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 # developer → QA with no re-review).
                 plan = state.get("route_plan") or []
                 cursor = int(state.get("route_cursor", 0) or 0)
-                if 0 <= cursor < len(plan) and plan[cursor].get("agent_type") == "developer":
+                if 0 <= cursor < len(plan) and plan[cursor].get("agent_type") in CODING_AGENT_TYPES:
                     updates.update(advance(state))
                 target = next_route({**state, **updates})
                 goto = END if target == "end" else ROUTE_TARGETS[target]

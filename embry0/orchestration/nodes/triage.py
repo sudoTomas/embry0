@@ -15,6 +15,7 @@ import structlog
 
 from embry0.agents.model_policy import TIER_KEYS
 from embry0.orchestration.state import TriageDecision
+from embry0.services.slop import CLASSIFIER_GUIDE
 
 logger = structlog.get_logger(__name__)
 
@@ -51,6 +52,9 @@ Respond with a JSON object containing:
   - suggested_answer: your best-guess answer (only when importance=auto_answerable)
 - sub_tasks: list of {task, description} objects (when action=split)
 - reasoning: explanation of your decision
+- work_nature: the slopometer's verdict (when job_kind="code"; see "Bug or
+  slop" below): {"nature": "bug"|"slop"|"noise", "slop_score": 0-100,
+  "kinds": [...], "evidence": [{"path": "...", "why": "..."}]}
 
 Guidelines:
 - Pick a lighter template (e.g. quick-fix) for simple, well-defined changes
@@ -58,6 +62,18 @@ Guidelines:
 - Set confidence < 0.5 and action="needs_info" when the task is ambiguous
 - Set action="split" when the task involves multiple independent changes
 - Always include reasoning
+
+## Bug or slop
+
+Before you route a code job, read the code the task points at and judge its
+nature. A developer handed slop as a bug patches the symptom and adds more
+slop, so this verdict decides who works the job and how they are briefed.
+<<SLOP_GUIDE>>
+Fill `work_nature` for every code job, with at most 8 evidence entries naming
+files you read. When the task carries a watcher "Slop, not a bug" section,
+weigh it, then make your own call. A slop verdict routes the job to the
+Slopmaster's cleanup (keep behavior, remove or merge code) whatever template
+you name; leave pipeline_template empty for it.
 
 <<MODEL_GUIDANCE>>
 
@@ -214,7 +230,7 @@ action ends the job with ERR_TRIAGE_QA_ACTION_INVALID.
 Omit `qa_failure_action` entirely on the initial invocation (when QA
 hasn't run yet).
 
-Respond ONLY with the JSON object, no markdown fences or extra text."""
+Respond ONLY with the JSON object, no markdown fences or extra text.""".replace("<<SLOP_GUIDE>>", CLASSIFIER_GUIDE)
 
 _SUB_AGENT_MODELS_NOTE = """\
 - The developer agent itself can dispatch sub-agents (via the Agent tool) for

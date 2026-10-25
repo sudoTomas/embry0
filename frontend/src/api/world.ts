@@ -96,6 +96,29 @@ export interface Lead {
   severity?: string;
   occurrences?: number;
   path?: string;
+  /** The slopometer's verdict on a watcher finding: a "slop" lead is cleaned, not fought. Absent when unclassified. */
+  nature?: WorkNature["nature"];
+  slop_score?: number;
+  slop_kinds?: string[];
+}
+
+/** The slopometer's verdict (spec 2026-10-25, slop dungeon): a bug, slop or noise, and why. */
+export interface WorkNature {
+  nature: "bug" | "slop" | "noise";
+  slop_score: number;
+  kinds: string[];
+  evidence: { path: string; why: string }[];
+  /** A Slopmaster cleanup's diff against its base, once it ran. */
+  cleanup?: { added: number; removed: number };
+}
+
+/** A Slop Dungeon: a repository's (or area's) open slop, its score (0-100, falls as it is cleaned), and recent cleanups. */
+export interface Dungeon {
+  repo: string;
+  area: string | null;
+  score: number;
+  open: number;
+  cleaned: number;
 }
 
 export interface InboxQuest {
@@ -143,6 +166,8 @@ export interface World {
   recent: RecentEvent[];
   regions: Region[];
   frontier: string[];
+  /** Absent on an older backend. */
+  dungeons?: Dungeon[];
 }
 
 export interface QuestLogEntry {
@@ -208,6 +233,8 @@ export interface QuestScroll {
   fallbacks?: QuestFallback[];
   /** What a paused quest waits for: a spent LLM account, until when. Absent on an older backend. */
   account_wait?: WorldAccountWait | null;
+  /** The slopometer's verdict on the job, and a cleanup's diff counts. Absent on an older backend. */
+  work_nature?: WorkNature | null;
   xp: { agent_type: string; stat: string; xp: number }[];
   cost_usd: number;
   seconds: number | null;

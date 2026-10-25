@@ -6,6 +6,7 @@ from typing import Any
 import structlog
 
 from embry0.agents.identity import BUILTIN_IDENTITY, DEFAULT_AVATAR, DEFAULT_COLOR
+from embry0.services.slop import SLOPMASTER_SYSTEM_PROMPT as _SLOPMASTER_SYSTEM_PROMPT
 from embry0.storage.database import DatabasePool
 from embry0.workflows.issue_to_pr.noncode_agents import (
     ANALYSIS_SYSTEM_PROMPT as _ANALYSIS_SYSTEM_PROMPT,
@@ -60,6 +61,29 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
             "superpowers:receiving-code-review",
         ],
         "system_prompt": "",
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    # Slop dungeon (spec 2026-10-25): a code job triage judged slop runs the
+    # slop-cleanup template, whose slopmaster step runs on the developer node
+    # (route_plan.CODING_AGENT_TYPES) with this definition. Behavior is the
+    # system prompt; branch, push and PR mechanics are the developer node's.
+    "slopmaster": {
+        "description": (
+            "Cleans up slop: code that works, or fails noisily, because of its shape. Keeps behavior, "
+            "deletes and merges instead of adding guards or retries, and opens a pull request whose "
+            "tests show nothing changed. Runs on the developer node for slop-cleanup jobs."
+        ),
+        "model": "claude-opus-5",
+        "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+        "skills": [
+            "superpowers:verification-before-completion",
+            # Characterization tests first: they prove the cleanup kept behavior.
+            "superpowers:test-driven-development",
+            "superpowers:receiving-code-review",
+        ],
+        "system_prompt": _SLOPMASTER_SYSTEM_PROMPT,
         "execution_mode": None,
         "auth_mode": None,
         "mcp_servers": {},

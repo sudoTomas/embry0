@@ -253,6 +253,7 @@ class HealingCaseService:
         parent_case_id: str | None = None,
         note: str | None = None,
         at: datetime | None = None,
+        work_nature: dict[str, Any] | None = None,
     ) -> CaseResult:
         """Open a case, or return the one that already owns this watcher run
         or is OPEN for this tracker ticket. A case opened with a tracker
@@ -306,6 +307,10 @@ class HealingCaseService:
             "detected_at": when,
             "tracked_at": when if tracker else None,
         }
+        # Slop dungeon (migration 118): the watcher's slopometer verdict. Left
+        # out when absent, so a repository without the column still opens cases.
+        if work_nature is not None:
+            columns["work_nature"] = work_nature
         try:
             created = await self._repo.create_with_history(columns)
         except asyncpg.ForeignKeyViolationError as exc:

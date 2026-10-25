@@ -69,6 +69,13 @@ BUILTIN_IDENTITY: Final[dict[str, dict[str, str]]] = {
     },
     "developer": {"display_name": "Developer", "avatar": "smith", "color": "amber", "tagline": "Forges the change."},
     "review": {"display_name": "Reviewer", "avatar": "warden", "color": "rose", "tagline": "Guards the gate."},
+    # Slop dungeon (spec 2026-10-25): the cleanup agent on the developer node.
+    "slopmaster": {
+        "display_name": "Slopmaster",
+        "avatar": "steel-warrior",
+        "color": "emerald",
+        "tagline": "Clears the slop, keeps the behavior.",
+    },
     "qa": {"display_name": "QA", "avatar": "alchemist", "color": "emerald", "tagline": "Proves it in the vessel."},
     "onboarding": {
         "display_name": "Onboarding",

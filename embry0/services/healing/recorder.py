@@ -104,6 +104,7 @@ class CaseRecorder:
         signature: str | None = None,
         signature_source: str | None = None,
         parent_case_id: str | None = None,
+        work_nature: dict[str, Any] | None = None,
     ) -> str | None:
         """The watcher analysed a window to a proposal. With ``tracker`` the
         draft ticket was filed (the case starts ``tracked``); without, the cap
@@ -114,13 +115,15 @@ class CaseRecorder:
         word the title. ``signature_source`` says whether that line is one
         the proposal's evidence quotes or only the window's loudest (#657).
         ``parent_case_id`` links a regression back to the closed case that
-        carried the same signature.
+        carried the same signature. ``work_nature`` is the watcher's slopometer
+        verdict (spec 2026-10-25, slop dungeon), None when it gave none.
         """
 
         async def write() -> CaseResult:
             return await self._cases.open_case(
                 repo=repo,
                 origin=Origin.WATCHER,
+                work_nature=work_nature,
                 title=title,
                 fingerprint=fingerprint,
                 signature_id=signature_id,

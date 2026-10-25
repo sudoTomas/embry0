@@ -77,6 +77,9 @@ class FakeRepo:
     async def loot(self, *, days: int, limit: int = 30) -> list[dict[str, Any]]:
         return [{**self.quest_row, "delivery_state_at": NOW}]  # type: ignore[dict-item]
 
+    async def cleaned(self, *, days: int) -> dict[tuple[str, str | None], int]:
+        return {("acme/web", "Billing"): 1}
+
     async def quest_log(self, agent: str, *, limit: int = 50) -> list[dict[str, Any]]:
         return [{**self.quest_row, "cost_usd": 1.2, "duration_ms": 90_000}]  # type: ignore[dict-item]
 
@@ -373,3 +376,52 @@ async def test_dismissing_a_quest_takes_it_out_of_the_inbox_with_no_rating(app: 
         "job_id": "job-1",
         "rated_by": app.state.world_repo.ratings[-1]["rated_by"],
     }
+
+
+async def test_slop_is_cleaned_in_its_dungeon_by_the_slopmaster(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Slop dungeon (spec 2026-10-25): a slop finding is a slop lead, and its area has a dungeon with a score."""
+
+    async def slop_leads(request: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "case:9",
+                "kind": "case",
+                "repo": "acme/web",
+                "area": "Billing",
+                "severity": "medium",
+                "occurrences": 4,
+                "title": "Clean up the outbox retry wrappers",
+                "nature": "slop",
+                "slop_score": 70,
+            }
+        ]
+
+    monkeypatch.setattr(world_api, "_leads", slop_leads)
+    async with await _client(app) as client:
+        world = (await client.get("/api/v1/world")).json()
+    [lead] = world["quests"]
+    assert lead["kind"] == "slop" and lead["verb"] == "Clean up" and lead["leader"] == "slopmaster"
+    assert lead["creature"] == "slop_ooze" and lead["level"] > 1
+    assert world["dungeons"] == [{"repo": "acme/web", "area": "Billing", "score": 70, "open": 1, "cleaned": 1}]
+
+
+async def test_a_merged_cleanup_is_the_slopmasters_and_earns_its_removed_lines(app: Any) -> None:
+    row = app.state.world_repo.quest_row
+    row.update(
+        status="pr_merged",
+        delivery_state="merged",
+        pipeline_template="slop-cleanup",
+        work_nature={
+            "nature": "slop",
+            "slop_score": 80,
+            "kinds": [],
+            "evidence": [],
+            "cleanup": {"added": 10, "removed": 110},
+        },
+    )
+    async with await _client(app) as client:
+        scroll = (await client.get("/api/v1/world/quests/job-1")).json()
+    earned = {(x["agent_type"], x["stat"]): x["xp"] for x in scroll["xp"]}
+    assert earned[("developer", "coding")] == 2 * 1_400, "the developer keeps only its own runs' edits"
+    assert earned[("slopmaster", "coding")] == 60_000 + 20_000 + 300 * 100
+    assert scroll["work_nature"]["cleanup"] == {"added": 10, "removed": 110}

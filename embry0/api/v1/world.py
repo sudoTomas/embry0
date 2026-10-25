@@ -35,7 +35,9 @@ from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services.run_with import apply_run_with, models_with
+from embry0.services.slop import dungeons
 from embry0.services.world import (
+    CLEANED_DAYS,
     ERROR_MESSAGE_CHARS,
     INBOX_DAYS,
     LOOT_DAYS,
@@ -144,7 +146,7 @@ async def read_world(request: Request) -> dict[str, Any]:
     now = datetime.now(UTC)
     jobs = await repo.jobs(returning_seconds=RETURN_SECONDS)
     ids = [str(j["job_id"]) for j in jobs]
-    runs, links, last_events, leads, places, stats, inbox, loot = await asyncio.gather(
+    runs, links, last_events, leads, places, stats, inbox, loot, cleaned = await asyncio.gather(
         repo.agent_runs(ids),
         repo.lead_links(ids),
         repo.last_event_at(ids),
@@ -153,7 +155,9 @@ async def read_world(request: Request) -> dict[str, Any]:
         cache.get("stats", repo.stats),
         repo.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS)),
         repo.loot(days=LOOT_DAYS),
+        cache.get("cleaned", lambda: repo.cleaned(days=CLEANED_DAYS)),
     )
+    quests = [lead_entry(lead) for lead in leads]
     parties = [
         job_entry(
             j,
@@ -171,7 +175,10 @@ async def read_world(request: Request) -> dict[str, Any]:
         "skills": snapshot["skills"],
         "characters": character_entries(snapshot["characters"], parties, stats, now),
         "parties": parties,
-        "quests": [lead_entry(lead) for lead in leads],
+        "quests": quests,
+        # Slop dungeon (spec 2026-10-25): each repository's and area's open
+        # slop, its score, and the cleanups merged lately.
+        "dungeons": dungeons(quests, cleaned),
         "inbox": [
             {
                 "job_id": r["job_id"],
@@ -331,6 +338,8 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
         "fallbacks": quest_fallbacks(runs),
         # What a paused quest waits for: a spent account, until when.
         "account_wait": account_wait_view(quest),
+        # Slop dungeon: the slopometer's verdict, and a cleanup's diff counts.
+        "work_nature": quest.get("work_nature"),
         "xp": quest_xp(quest, runs),
         "cost_usd": round(float(quest.get("total_cost_usd") or 0), 4),
         "seconds": (finished - started).total_seconds()
