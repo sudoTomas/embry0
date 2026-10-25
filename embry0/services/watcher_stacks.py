@@ -42,6 +42,12 @@ OVERRIDABLE: dict[str, str] = {
     "context_proxy_container_allowlist": "context_proxy_container_allowlist",
     "log_clustering_mode": "log_clustering_mode",
     "skip_unchanged_mode": "watcher_skip_unchanged_mode",
+    "skip_known_hours": "watcher_skip_known_hours",
+    "auto_accept": "watcher_auto_accept",
+    "auto_accept_after_hours": "watcher_auto_accept_after_hours",
+    "auto_accept_min_severity": "watcher_auto_accept_min_severity",
+    "auto_accept_min_occurrences": "watcher_auto_accept_min_occurrences",
+    "auto_accept_max_per_day": "watcher_auto_accept_max_per_day",
 }
 
 #: Row fields that are the stack's own, never inherited.

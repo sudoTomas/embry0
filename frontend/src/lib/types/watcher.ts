@@ -12,6 +12,10 @@ export type WatcherAction =
   | "deferred"
   /** The draft cap was full and the day's budget for full-cap analyses was spent (#283). */
   | "skipped_analysis_cap"
+  /** Nothing in the window was new, spiking or regressed, or all of it has an open case (#291): no analysis paid. */
+  | "no_change"
+  /** Everything notable was found clean by an analysis within the stack's skip_known_hours: no analysis paid. */
+  | "skipped_known"
   | "error";
 
 export interface WatcherRun {

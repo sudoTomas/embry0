@@ -46,6 +46,8 @@ const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
   skipped_duplicate: { label: "Already filed", tone: "neutral" },
   skipped_unparseable: { label: "Analysis withheld", tone: "warning" },
   skipped_analysis_cap: { label: "Analysis budget spent", tone: "warning" },
+  no_change: { label: "Nothing new", tone: "neutral" },
+  skipped_known: { label: "Already checked", tone: "neutral" },
   error: { label: "Error", tone: "error" },
 
   // Organizations and their needs

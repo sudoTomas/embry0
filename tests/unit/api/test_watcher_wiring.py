@@ -37,6 +37,8 @@ REQUIRED_IN_PRODUCTION = (
     "signatures_repo",
     # #378 — without this the tick records an error instead of filing.
     "filer",
+    # Spec 2026-10-25 — without this a stack's auto_accept setting does nothing.
+    "auto_acceptor",
 )
 
 
@@ -136,3 +138,59 @@ def test_the_stack_table_is_wired_and_seeded_at_startup() -> None:
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "seed_stacks"
     ]
     assert seeded, "app.py never seeds the env stack (services/watcher_stacks.seed_stacks)"
+
+
+# ---- spec 2026-10-25: auto-accept ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_auto_acceptor_accepts_through_the_case_route_as_its_own_actor(monkeypatch) -> None:
+    """The draft is accepted by the path POST /cases/{id}/accept takes, under
+    embry0:auto-accept, with an audit row of its own; the day's count is that
+    actor's dispatches."""
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from embry0.api.v1 import cases as cases_api
+    from embry0.orchestration.dispatch_actors import AUTO_ACCEPT
+    from embry0.services.watcher_auto_accept import AutoAcceptBar
+
+    now = datetime.now(UTC)
+    draft = {
+        "id": "hc-1",
+        "origin": "watcher",
+        "stage": "tracked",
+        "severity": "high",
+        "occurrence_count": 50,
+        "issue_id": None,
+        "tracked_at": now - timedelta(days=2),
+    }
+    accepted: list[tuple[str, str]] = []
+
+    async def accept_case(case_id, body, request, cases):
+        accepted.append((case_id, body.accepted_by))
+        return {"job_id": "job-9"}
+
+    audits: list[tuple[str, str]] = []
+
+    async def emit_audit(db, action, *, actor, **kw):
+        audits.append((action, actor))
+
+    monkeypatch.setattr(cases_api, "accept_case", accept_case)
+    monkeypatch.setattr("embry0.audit.helpers.emit_audit", emit_audit)
+    db = SimpleNamespace(fetchval=AsyncMock(return_value=0))
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            db=db,
+            config=SimpleNamespace(audit_log_path=None),
+            healing_cases_repo=SimpleNamespace(tracked_watcher_drafts=AsyncMock(return_value=[draft])),
+            proposals_repo=SimpleNamespace(decisions=AsyncMock(return_value={})),
+        )
+    )
+
+    done = await app_module._watcher_auto_acceptor(app)("owner/repo", AutoAcceptBar())
+    assert done == [{"case_id": "hc-1", "job_id": "job-9"}]
+    assert accepted == [("hc-1", AUTO_ACCEPT)]
+    assert audits == [("case_auto_accepted", AUTO_ACCEPT)]
+    assert db.fetchval.await_args.args[1] == AUTO_ACCEPT, "the day's cap counts the auto-accept actor's jobs"

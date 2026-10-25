@@ -16,7 +16,7 @@ computes it on read.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -160,6 +160,49 @@ class LogSignaturesRepository:
             )
             written += 1
         return written
+
+    async def mark_analysed(
+        self, counts: Mapping[str, int], *, repo: str | None = None, verdict: str, at: datetime
+    ) -> None:
+        """Remember that an analysis read these signatures, what it found, and at what volume.
+
+        ``counts`` maps each signature id in the analysed window to its count
+        there. The watcher's novelty gate reads this back (:meth:`clean_since`)
+        to not pay again for a signature an analysis found nothing in a moment ago.
+        """
+        if not counts:
+            return
+        await self._db.execute(
+            """
+            UPDATE log_signatures AS s
+               SET analysed_at = $3, analysed_verdict = $4, analysed_count = c.count
+              FROM unnest($2::text[], $5::int[]) AS c(signature_id, count)
+             WHERE s.repo = $1 AND s.signature_id = c.signature_id
+            """,
+            repo or "",
+            list(counts),
+            at,
+            verdict,
+            [int(v) for v in counts.values()],
+        )
+
+    async def clean_since(
+        self, signature_ids: Sequence[str], *, repo: str | None = None, since: datetime
+    ) -> dict[str, int]:
+        """The signatures among these whose last analysis, at or after ``since``, found no issue: id to the count it read."""
+        if not signature_ids:
+            return {}
+        rows = await self._db.fetch(
+            """
+            SELECT signature_id, analysed_count FROM log_signatures
+             WHERE repo = $1 AND signature_id = ANY($2::text[])
+               AND analysed_verdict = 'no_issue' AND analysed_at >= $3
+            """,
+            repo or "",
+            list(signature_ids),
+            since,
+        )
+        return {r["signature_id"]: int(r["analysed_count"] or 0) for r in rows}
 
     async def get(self, signature_id: str, *, repo: str | None = None) -> SignatureRow | None:
         row = await self._db.fetchrow(

@@ -638,6 +638,64 @@ async def _bring_up_qa_minio(
     logger.info("qa_minio_ready", retention_days=expire_days)
 
 
+def _watcher_auto_acceptor(app: FastAPI) -> Any:
+    """``(repo, bar) -> accepted``: accepts a stack's tracked drafts that clear its bar (spec 2026-10-25).
+
+    Each through the path ``POST /cases/{id}/accept`` takes, as
+    ``embry0:auto-accept``, with its own audit row; a draft an owner already
+    answered as a proposal is left alone, and the day's count is the jobs that
+    actor dispatched in the last 24 hours.
+    """
+
+    async def run(repo: str, bar: Any) -> list[dict[str, str]]:
+        import dataclasses
+        from datetime import UTC, datetime, timedelta
+
+        from embry0.api.v1.cases import AcceptBody, accept_case
+        from embry0.api.v1.organizations import app_request
+        from embry0.audit.helpers import emit_audit
+        from embry0.orchestration.dispatch_actors import AUTO_ACCEPT
+        from embry0.services.proposals import still_open
+        from embry0.services.watcher_auto_accept import auto_accept
+        from embry0.storage.repositories.budget_spend import BudgetSpendRepository
+
+        state = app.state
+        now = datetime.now(UTC)
+        cases = state.healing_cases_repo
+        candidates = await cases.tracked_watcher_drafts(repo=repo)
+        if not candidates:
+            return []
+        accepted_today = await BudgetSpendRepository(state.db).dispatch_count_since(
+            AUTO_ACCEPT, now - timedelta(days=1)
+        )
+        proposals = getattr(state, "proposals_repo", None)
+        decisions = await proposals.decisions() if proposals is not None else {}
+        request = app_request(app)
+
+        async def accept(case_id: str) -> str:
+            result = await accept_case(case_id, AcceptBody(accepted_by=AUTO_ACCEPT), request, cases)
+            job_id = str(result.get("job_id") or "")
+            await emit_audit(
+                state.db,
+                "case_auto_accepted",
+                actor=AUTO_ACCEPT,
+                details={"case_id": case_id, "repo": repo, "job_id": job_id, "bar": dataclasses.asdict(bar)},
+                audit_log_path=getattr(state.config, "audit_log_path", None),
+            )
+            return job_id
+
+        return await auto_accept(
+            candidates=candidates,
+            bar=bar,
+            accepted_today=accepted_today,
+            answered=lambda proposal_id: not still_open(proposal_id, decisions, now),
+            accept=accept,
+            now=now,
+        )
+
+    return run
+
+
 def _build_credential_registry(app: FastAPI, db: DatabasePool) -> None:
     """Put the credential repository and resolver on app.state. Stores references only: no DB call."""
     from embry0.services.credentials.resolver import CredentialResolver
@@ -1898,8 +1956,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.services.draft_filers import build_filer
     from embry0.services.watcher_stacks import StackConfig, WatcherStack
 
+    auto_acceptor = _watcher_auto_acceptor(app)
+
     def _watcher_for(stack: WatcherStack) -> WatcherService:
         return WatcherService(
+            auto_acceptor=auto_acceptor,
             cases_repo=app.state.healing_cases_repo,
             case_recorder=app.state.case_recorder,
             # #278: a deploy marker is reported on a case only after the forge

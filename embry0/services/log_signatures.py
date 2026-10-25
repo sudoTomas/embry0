@@ -52,6 +52,26 @@ def _is_opaque_token(token: str) -> bool:
     return any(c.isdigit() for c in token) and any(c.islower() for c in token) and any(c.isupper() for c in token)
 
 
+#: An upper-case record id: letters and digits, at least 8 long, at least 5 of them digits.
+_MIN_RECORD_ID_LEN = 8
+_MIN_RECORD_ID_DIGITS = 5
+
+
+def _record_id(match: re.Match[str]) -> str:
+    """``<id>`` for a generated record id such as an order or shipment number, the token otherwise.
+
+    The opaque-token rule needs lower case too, so ``NF42610190220`` and
+    ``N1D26102002095`` passed through it, and every order number in one
+    recurring warning became a signature of its own: on one stack 175 of the
+    218 signatures first seen in three days were that one warning. Codes stay
+    as they are (``E11000``, ``SHA256``, ``PGRST002``, ``HTTP2``): too short or
+    too few digits.
+    """
+    token = match.group(0)
+    digits = sum(c.isdigit() for c in token)
+    return "<id>" if len(token) >= _MIN_RECORD_ID_LEN and digits >= _MIN_RECORD_ID_DIGITS else token
+
+
 # Ordered deliberately — see the module docstring. Each entry is (pattern,
 # replacement); they are applied in sequence to one line. A replacement may be
 # a callable for rules that need to inspect the match before deciding.
@@ -91,6 +111,9 @@ _RULES: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]], ...]
     # intact, which carry real diagnostic meaning. Must precede the number
     # rule, which would otherwise shred the token into fragments.
     (re.compile(r"[A-Za-z0-9_+/=-]{20,}"), lambda m: "<id>" if _is_opaque_token(m.group(0)) else m.group(0)),
+    # Upper-case record ids the rule above cannot see (no lower case), e.g. an
+    # order number "N1D26102002095". Before the number rule for the same reason.
+    (re.compile(r"\b[A-Z][A-Z0-9]*\d[A-Z0-9]*\b"), _record_id),
     # Durations, sizes and other number-with-unit forms.
     (re.compile(r"\b\d+(?:\.\d+)?(ms|s|m|h|ns|us|µs|KB|MB|GB|kB|B)\b"), r"<n>\1"),
     # Any remaining number, including decimals and negatives.

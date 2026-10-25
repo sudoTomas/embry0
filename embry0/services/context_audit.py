@@ -26,8 +26,9 @@ not on every tick. The refusals live in the process, so a restart tries such
 a repository once more.
 
 The budget gate is asked before each start, as a label trigger asks it
-(#284). While it refuses (the actor's hourly rate limit, a daily or monthly
-budget), no job row is written and nothing counts as an attempt: a tick ends
+(#284). The schedule's actor skips the per-author hourly limit
+(``dispatch_actors``); while the gate refuses (a daily or monthly budget),
+no job row is written and nothing counts as an attempt: a tick ends
 there and the repositories it did not reach are due again on the next. A job
 the gate refused anyway, between the ask and the run, did no work and is no
 anchor either: the jobs table's newest-job read leaves it out.
@@ -536,7 +537,7 @@ class ContextAuditLoop:
         self._jobs = jobs
         self._client_for = client_for
         self._start_job = start_job
-        # Required, not optional: without it every start past the rate limit
+        # Required, not optional: without it every start past a spend cap
         # becomes a failed job that anchors its repository for an interval.
         self._ask_gate = ask_gate
         # The deployment's caps, for an owner whose settings name none.

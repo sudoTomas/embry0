@@ -237,6 +237,23 @@ class Embry0Config(BaseSettings):
     # so: this switch decides NOT to look, and the cost of being wrong is a
     # missed fault rather than a differently-grouped prompt.
     watcher_skip_unchanged_mode: str = "shadow"
+    # The novelty gate's memory, read under the same mode: a notable signature
+    # an analysis found no issue in within these hours is held, unless its
+    # volume grew past WATCHER_SPIKE_FACTOR times what that analysis read. The
+    # tick is then `skipped_known`. 0 turns this part off.
+    watcher_skip_known_hours: int = 24
+    # Auto-accept of watcher drafts (spec 2026-10-25). Off by default: it
+    # starts paid fix jobs with no person's yes. With it on, a tracked draft is
+    # accepted, through the path POST /cases/{id}/accept takes, once it has
+    # waited WATCHER_AUTO_ACCEPT_AFTER_HOURS (a person can cancel it first),
+    # its severity is at least WATCHER_AUTO_ACCEPT_MIN_SEVERITY, its signature
+    # was seen at least WATCHER_AUTO_ACCEPT_MIN_OCCURRENCES times, and fewer
+    # than WATCHER_AUTO_ACCEPT_MAX_PER_DAY were auto-accepted in the last 24 h.
+    watcher_auto_accept: bool = False
+    watcher_auto_accept_after_hours: float = 24.0
+    watcher_auto_accept_min_severity: str = "high"
+    watcher_auto_accept_min_occurrences: int = 10
+    watcher_auto_accept_max_per_day: int = 2
     # Thresholds for "is this signature interesting?", read by
     # embry0/services/signature_delta.py. Per-deployment today; #297 moves the
     # watcher's config into the DB per repo and these go with it.

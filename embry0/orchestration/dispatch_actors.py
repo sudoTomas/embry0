@@ -29,9 +29,16 @@ one layer — the daily and monthly spend caps still apply to every job:
   question was answered on a channel that names nobody (Telegram, tracker
   comment). Same reasoning; answers given through the API carry the person
   instead.
+* ``embry0:context-audit`` — the context-audit schedule (ADR 0020). It has
+  brakes of its own: at most a few jobs per tick, one live job per
+  repository, a hard per-job budget per organization (ADR 0021). The hourly
+  limit counted its own burst of starts against it and refused the jobs the
+  schedule had just been told it could start, so every repository it reached
+  past the limit waited a full interval for nothing.
 
-Anything that acts WITHOUT a person and is not a continuation (the Linear
-reconciler today) is deliberately NOT exempt: the limit is one of its brakes.
+Anything else that acts WITHOUT a person and is not a continuation (the
+Linear reconciler today) is deliberately NOT exempt: the limit is one of its
+brakes.
 """
 
 from __future__ import annotations
@@ -47,9 +54,13 @@ PR_COMMENT = f"{RESERVED_PREFIX}pr-comment"
 # A pull request review whose trigger named nobody (#30). Rate-limited like
 # any other non-continuation actor.
 PR_REVIEW = f"{RESERVED_PREFIX}pr-review"
-# The context audit schedule (ADR 0020): it acts without a person and is not
-# a continuation, so the per-author limit stays one of its brakes.
+# The context audit schedule (ADR 0020): exempt from the per-author limit, see
+# the module docstring; its per-tick cap and per-job budget are its brakes.
 CONTEXT_AUDIT = f"{RESERVED_PREFIX}context-audit"
+# A watcher draft accepted by the stack's auto-accept bar rather than a person
+# (spec 2026-10-25). Rate-limited: it acts without a person and is not a
+# continuation, and its own daily cap is not the only brake it should have.
+AUTO_ACCEPT = f"{RESERVED_PREFIX}auto-accept"
 # The API's master key (``API_KEY``) names no person, and behind the dashboard
 # proxy all its requests share the proxy's address, so the key is the actor.
 # Rate-limited: it is a person at a keyboard or a script acting for one.
@@ -57,7 +68,7 @@ MASTER_KEY = f"{RESERVED_PREFIX}master-key"
 # A request with no identity at all: only AUTH_DEV_MODE lets one through.
 ANONYMOUS = f"{RESERVED_PREFIX}anonymous"
 
-RATE_LIMIT_EXEMPT: frozenset[str] = frozenset({WATCHER, AUTO_RETRIAGE, ANSWER_RESUME})
+RATE_LIMIT_EXEMPT: frozenset[str] = frozenset({WATCHER, AUTO_RETRIAGE, ANSWER_RESUME, CONTEXT_AUDIT})
 
 
 def is_rate_limit_exempt(actor: str | None) -> bool:

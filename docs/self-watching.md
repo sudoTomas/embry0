@@ -211,6 +211,25 @@ hand. The line format is pinned to the parser by
 for embry0, so every self case stopped at `merged` — the fix was live and
 the ledger could not know.
 
+## Accepting a finding without a person
+
+A stack whose `auto_accept` setting is on accepts its own drafts once they
+clear its bar, so a finding does not wait days for someone to say yes (spec
+2026-10-25). Each tick, after it reconciles drafts a person cancelled, it
+takes the stack's tracked drafts oldest first and accepts each that has
+waited `auto_accept_after_hours` (24), is at least `auto_accept_min_severity`
+(`high`) and whose signature was seen at least `auto_accept_min_occurrences`
+(10) times, until `auto_accept_max_per_day` (2) were accepted in the last 24
+hours. A retry after a `not_healed` verdict, and a draft an owner declined or
+snoozed as a proposal, are left for a person. The acceptance is the one below,
+recorded as `embry0:auto-accept` with a `case_auto_accepted` audit row; the
+actor is rate-limited and the spend caps apply. Off by default, per stack:
+
+```
+PUT /api/v1/watcher/stacks/{owner}/{name}
+{"logql": "...", "settings": {"auto_accept": true, "auto_accept_min_severity": "medium"}}
+```
+
 ## Accepting a finding without the label
 
 A draft embry0 files on its own repository is a GitHub issue, and GitHub's

@@ -15,12 +15,6 @@ def test_migration_110_present_and_gapless() -> None:
     assert "leads" in next(d for v, d, _ in MIGRATIONS if v == 110)
 
 
-def test_migration_110_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_109.py)."""
-    assert MIGRATIONS[-1][0] == 110, "migration 110 must add leads"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_leads_are_stored_and_answered_like_every_proposal(db_with_migrations: DatabasePool) -> None:
