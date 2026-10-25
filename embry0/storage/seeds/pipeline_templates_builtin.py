@@ -291,6 +291,12 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
         "against the code and its history and delivers the stale lines with their evidence and a "
         "diff that corrects the certain ones.",
     ),
+    "map-areas": _specialist_route(
+        "map-areas",
+        "area-mapper",
+        "Read-only: triage → area-mapper → output. Maps a monorepo's parts (paths, the names their "
+        "logs run under, owners) into .embry0/areas.yml; the output step opens the pull request.",
+    ),
 }
 
 

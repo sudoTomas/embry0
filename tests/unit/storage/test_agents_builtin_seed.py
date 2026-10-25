@@ -99,6 +99,7 @@ _SPECIALIST_TYPES = (
     "comment-sicko",
     "design-auditor",
     "context-auditor",
+    "area-mapper",
 )
 
 

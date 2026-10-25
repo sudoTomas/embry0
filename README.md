@@ -67,7 +67,7 @@ graph TB
 
 - **Issue-to-PR pipeline** — triage scores confidence, splits oversized issues, and configures model tiers, validator modes, and sandbox profiles per job; the developer agent owns code, git, and PR creation; the reviewer loops it until approved.
 - **Browser-verified QA gate** — boots your app's compose stack inside DinD and drives headless Chromium via Playwright against your acceptance criteria, with screenshots, console, network, and container logs as evidence.
-- **Specialist agents** — nine read-only built-ins that each return one report on a repository: a ledger of its cracks (kintsugi), one provable weed (gardener), a four-angle review (interrogator), why and how answers, a proven blast radius, a comment pass, a design audit and an audit of the instruction files that steer coding agents (context-auditor). See [docs/specialist-agents.md](docs/specialist-agents.md).
+- **Specialist agents** — ten read-only built-ins that each return one report on a repository: a ledger of its cracks (kintsugi), one provable weed (gardener), a four-angle review (interrogator), why and how answers, a proven blast radius, a comment pass, a design audit, an audit of the instruction files that steer coding agents (context-auditor) and a map of a monorepo's areas (area-mapper). See [docs/specialist-agents.md](docs/specialist-agents.md).
 - **Human-in-the-loop** — agents pause to ask questions, dispatched to the dashboard, Telegram, or a GitHub comment; the pipeline resumes when answered from any channel.
 - **Issue tracker with GitHub two-way sync** — board and list views, webhook-triggered or manual dispatch.
 - **Live dashboard** — React SPA streaming agent thinking, tool calls, costs, and QA evidence over WebSocket.

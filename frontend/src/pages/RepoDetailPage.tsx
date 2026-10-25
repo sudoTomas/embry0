@@ -13,6 +13,7 @@ import { repoPreferencesQuery } from "@/hooks/useRepoPreferences";
 import { useQaRunsForRepo } from "@/hooks/useQaDashboard";
 import { QaConfigEditor } from "@/components/qa/QaConfigEditor";
 import { RepoAccountsSection } from "@/components/repos/RepoAccountsSection";
+import { RepoAreasSection } from "@/components/repos/RepoAreasSection";
 import { RepoStandardsRow } from "@/components/standards/RepoStandardsRow";
 import { RepoDockerAccessSection } from "@/components/repos/RepoDockerAccessSection";
 import { ReadinessChip, SetupChecklist } from "@/components/repos/SetupChecklist";
@@ -215,6 +216,10 @@ export function RepoDetailPage() {
 
         <AdvancedSection setting="accounts">
           <RepoAccountsSection repo={repo.repo} forge={repo.forge} />
+        </AdvancedSection>
+
+        <AdvancedSection setting="areas">
+          <RepoAreasSection repo={full} />
         </AdvancedSection>
 
         {/* Only a repository that holds the grant, or whose stored setup asks for it, has anything to see here. */}

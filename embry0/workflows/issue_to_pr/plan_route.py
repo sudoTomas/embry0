@@ -577,9 +577,15 @@ async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) ->
 
     delivered: dict[str, Any] = {}
     if state.get("open_pr") and report:
+        from embry0.workflows.issue_to_pr import areas_delivery
         from embry0.workflows.issue_to_pr.audit_delivery import deliver_audit_patch
 
-        delivered = await deliver_audit_patch(state, config, report)
+        # A map-areas job delivers the areas file it wrote; every other one the patch its report carries.
+        template = state.get("pipeline_template") or state.get("pipeline_template_request")
+        if template == areas_delivery.TEMPLATE:
+            delivered = await areas_delivery.deliver_areas_file(state, config, report)
+        else:
+            delivered = await deliver_audit_patch(state, config, report)
 
     writer(events.node_completed(node="finalize_output", deliverables=len(deliverables)))
     return {

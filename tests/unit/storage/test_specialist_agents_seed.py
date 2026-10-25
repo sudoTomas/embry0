@@ -26,6 +26,7 @@ SPECIALISTS = {
     "comment-sicko": "comment-pass",
     "design-auditor": "design-audit",
     "context-auditor": "context-audit",
+    "area-mapper": "map-areas",
 }
 _FIELDS = ("description", "model", "tools", "skills", "system_prompt", "execution_mode", "auth_mode", "mcp_servers")
 

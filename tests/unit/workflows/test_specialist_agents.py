@@ -50,6 +50,7 @@ SPECIALISTS = {
     "comment-sicko": "comment-pass",
     "design-auditor": "design-audit",
     "context-auditor": "context-audit",
+    "area-mapper": "map-areas",
 }
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"]
 
@@ -128,6 +129,7 @@ def test_each_prompt_carries_its_methods_output_contract():
         "comment-sicko": ["MUST KILL", "Encode instead", "never touch the code"],
         "design-auditor": ["deterministic", "font sizes", "**Conformance**", "**Hygiene**"],
         "context-auditor": ["git ls-files", "`Stale: N`", "`misleads`", "`## Unverifiable`", "git apply --check"],
+        "area-mapper": ["`Areas: N`", "## Areas file", "Never guess a login", "git ls-files -- ':(glob)"],
     }
     for agent_type, phrases in expected.items():
         prompt = BUILTIN_SEED[agent_type]["system_prompt"]

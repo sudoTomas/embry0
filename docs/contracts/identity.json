@@ -40,6 +40,12 @@
       "display_name": "Analysis",
       "tagline": "Finds the pattern."
     },
+    "area-mapper": {
+      "avatar": "miner",
+      "color": "emerald",
+      "display_name": "Cartographer",
+      "tagline": "Maps the parts of a monorepo."
+    },
     "blast-radius": {
       "avatar": "scout",
       "color": "amber",

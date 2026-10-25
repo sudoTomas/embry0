@@ -182,11 +182,12 @@ class AreaReader:
         self._clock = clock
         self._cache: dict[str, tuple[float, list[Area]]] = {}
 
-    async def areas(self, repo: str, read: ReadFile) -> list[Area]:
+    async def areas(self, repo: str, read: ReadFile, *, fresh: bool = False) -> list[Area]:
+        """``repo``'s areas, read again when ``fresh`` (a person looking at them now)."""
         key = repo.lower()
         now = self._clock()
         cached = self._cache.get(key)
-        if cached and now - cached[0] < CACHE_SECONDS:
+        if cached and not fresh and now - cached[0] < CACHE_SECONDS:
             return cached[1]
         try:
             areas = parse_areas(await read(repo, AREAS_PATH))
