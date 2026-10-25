@@ -84,6 +84,8 @@ curl http://localhost:8200/api/v1/jobs/{job_id}/agents/developer/session
 
 A job's `area` (on the list and on `GET /jobs/{job_id}`) is the part of a monorepo the pull request embry0 opened for it changes, from the repository's `.embry0/areas.yml` ([areas](areas.md)); `null` when the repository names none or the change falls in none. `GET /repos/{repo}/areas` reads that file, and `POST /repos/{repo}/areas/map` starts the agent that writes it as a pull request ([map areas](areas.md#map-areas)).
 
+`POST /jobs/{job_id}/resume` takes `{"choice": "continue_retrying"|"merge_as_is"|"abandon", "guidance", "extra_budget_usd"}`. On a job over its budget, `continue_retrying` lets it spend one more cap past what it has spent, or `extra_budget_usd` (at most 1,000) when given; the pause's `interrupt.summary.budget` says `{spent, cap, continue_adds}` ([per-job cap](architecture.md)).
+
 A paused job that waits for an LLM account carries `account_wait` on `GET /jobs/{job_id}` (lists say only `paused`): `{"provider", "reason", "until", "model", "agent", "chosen", "watch", "mode"}`, with `until` in UTC ISO; `null` for every other job ([spent account waits](providers.md#spent-account-waits)). `POST /jobs/{job_id}/resume` on such a job goes on now whatever the `choice` ("Try now", answering `{"status": "resuming", "choice": "account_ready"}`), except `abandon`, which cancels it. It answers 409 when the job no longer waits, and 503 while embry0 shuts down. A job whose account is still spent is parked again. `mode` says how a job goes on: `resume` from its last checkpoint, or `relaunch` from its beginning, which is how qa, onboard and pr-review jobs and any job held before it started go on.
 
 ## The world

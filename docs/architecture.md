@@ -1490,6 +1490,8 @@ is where every agent turn ends, so the cap is evaluated there after each turn
 (`evaluate_job_cap`). The spend it compares is the sum of the job's trace rows
 (`resolve_job_total_cost`), with the parent state's `total_cost_usd` as a floor.
 
+**Continuing past the cap.** A job that crossed its cap in `soft` mode pauses (`max_retries`), and the pause's summary carries `budget`: `{spent, cap, continue_adds}`. Answering it with `continue_retrying` is a person deciding to spend more. The job then gets `budget_allowance_usd`, so it may spend what it has spent plus one more cap, or plus `extra_budget_usd` from the resume body. `resolve_job_cap` adds the allowance on top of the fleet ceiling, because the ceiling bounds what triage or a job-create field picks, not a person's continue. An allowance is never lowered, and a continue within budget grants none.
+
 **What layer 1 covers:** every agent turn of the job, the QA fan-out included.
 QA sub-task agents run in sub-graphs whose cost never reaches the parent
 state, but each of their turns writes a trace under the parent `job_id`, so

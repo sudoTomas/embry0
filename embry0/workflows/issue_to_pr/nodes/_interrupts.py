@@ -16,9 +16,12 @@ from langgraph.types import Command
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
+from embry0.orchestration.budget import allowance_to_continue, resolve_job_cap
 from embry0.orchestration.nodes.agent import (
     USER_RETRY_ROUNDS_CAP,
+    load_budget_policy,
 )
+from embry0.orchestration.routing.conditions import check_budget
 
 logger = structlog.get_logger(__name__)
 
@@ -165,6 +168,17 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         "retry_count": retry_count,
         "options": options,
     }
+    # A job over its cap: continuing it lets it spend one more cap, so the
+    # pause says how much (the person deciding is the one paying).
+    over_budget = check_budget(state) == "over_budget"
+    ceiling = 0.0
+    if over_budget:
+        ceiling, _mode = await load_budget_policy(config)
+        summary["budget"] = {
+            "spent": round(float(state.get("total_cost_usd") or 0.0), 2),
+            "cap": round(resolve_job_cap(state, ceiling=ceiling), 2),
+            "continue_adds": round(resolve_job_cap({**state, "budget_allowance_usd": 0.0}, ceiling=ceiling), 2),
+        }
 
     outputs = state.get("agent_outputs", [])
     review_outputs = [o for o in outputs if o.get("agent_type") == "review"]
@@ -182,12 +196,16 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
 
     user_choice = _nodes.interrupt(summary)
 
+    extra_budget: float | None = None
     if isinstance(user_choice, str):
         choice = user_choice
         guidance = ""
     elif isinstance(user_choice, dict):
         choice = user_choice.get("choice", "abandon")
         guidance = user_choice.get("guidance", "")
+        raw_extra = user_choice.get("extra_budget_usd")
+        if isinstance(raw_extra, int | float) and raw_extra > 0:
+            extra_budget = float(raw_extra)
     else:
         choice = "abandon"
         guidance = ""
@@ -222,6 +240,20 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             "current_stage": "developer_retry",
             "user_retry_rounds": user_rounds + 1,
         }
+        if over_budget or extra_budget:
+            # Continuing past the cap is the person's call: the job may spend
+            # what it has spent plus one more cap (or what they named).
+            if not over_budget:
+                ceiling, _mode = await load_budget_policy(config)
+            allowance = allowance_to_continue(state, ceiling=ceiling, extra=extra_budget)
+            updates["budget_allowance_usd"] = allowance
+            logger.info(
+                "budget_raised_on_continue",
+                job_id=state.get("job_id"),
+                spent=state.get("total_cost_usd"),
+                allowance=allowance,
+                cap=resolve_job_cap({**state, "budget_allowance_usd": allowance}, ceiling=ceiling),
+            )
         if guidance:
             existing = state.get("additional_context", "") or ""
             updates["additional_context"] = existing + f"\n\nUser guidance:\n{guidance}"

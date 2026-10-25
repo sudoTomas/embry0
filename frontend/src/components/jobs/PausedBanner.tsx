@@ -1,12 +1,15 @@
 import { useState, useEffect } from "react";
 import { Pause, Play, MessageSquare, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import type { PauseBudget } from "@/lib/types";
 
 interface PausedBannerProps {
   jobId: string;
   reason: string;
   retryCount?: number;
   latestReview?: string;
+  /** A job over its budget: a continue lets it spend `continue_adds` more. */
+  budget?: PauseBudget;
   prUrl?: string;
   pausedAt?: string;
   ttlHours?: number;
@@ -18,6 +21,7 @@ export function PausedBanner({
   reason,
   retryCount,
   latestReview,
+  budget,
   pausedAt,
   ttlHours = 48,
   onResume,
@@ -71,6 +75,13 @@ export function PausedBanner({
           )}
         </div>
       </div>
+
+      {budget && (
+        <div className="px-4 pb-3 text-xs text-amber-200/80" data-testid="paused-budget">
+          Over budget: ${budget.spent.toFixed(2)} spent of ${budget.cap.toFixed(2)}. Continue lets it spend $
+          {budget.continue_adds.toFixed(2)} more.
+        </div>
+      )}
 
       {/* Review feedback if available */}
       {latestReview && (

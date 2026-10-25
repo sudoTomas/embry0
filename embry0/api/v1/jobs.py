@@ -572,7 +572,11 @@ async def resume_job(
     executor.schedule_resume(
         issue_id,
         job_id,
-        {"choice": req.choice, "guidance": req.guidance},
+        {
+            "choice": req.choice,
+            "guidance": req.guidance,
+            **({"extra_budget_usd": req.extra_budget_usd} if req.extra_budget_usd else {}),
+        },
         kind="resume_via_api",
     )
 

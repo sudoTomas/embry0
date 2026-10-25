@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { LogEvent, PipelineGraph } from "@/lib/types";
+import type { LogEvent, PauseBudget, PipelineGraph } from "@/lib/types";
 import { eventNode } from "@/lib/wire";
 import { isSuccessfulTerminal, isTerminalStatus } from "@/lib/jobStatus";
 import { deriveNodeStates, nodeCompletedFailed, physicalOf } from "@/lib/pipeline-live";
@@ -24,6 +24,7 @@ export interface InterruptData {
   reason?: string;
   retry_count?: number;
   latest_review?: string;
+  budget?: PauseBudget;
 }
 
 /** One agent run (`run_id`); a retried node is a second state, not a replacement. */
@@ -122,6 +123,7 @@ export function useAgentStates(
           reason: event.reason ?? event.summary?.reason,
           retry_count: event.summary?.retry_count,
           latest_review: event.summary?.latest_review ?? (reviewError ? `Review error: ${reviewError}` : undefined),
+          budget: event.summary?.budget,
         };
         return;
       }

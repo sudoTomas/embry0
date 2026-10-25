@@ -82,4 +82,28 @@ def resolve_job_cap(state: dict[str, Any], *, ceiling: float = 0.0) -> float:
         cap = float(state["max_budget_usd"])
     else:
         cap = DEFAULT_JOB_BUDGET_USD
-    return min(cap, ceiling) if ceiling > 0 else cap
+    bounded = min(cap, ceiling) if ceiling > 0 else cap
+    # A person who continued the job past its cap let it spend more: an
+    # operator's choice, so it goes on top of the ceiling, not under it.
+    return bounded + budget_allowance(state)
+
+
+def budget_allowance(state: dict[str, Any]) -> float:
+    """How much past its cap a person let this job spend (``continue_retrying`` on a budget pause)."""
+    try:
+        allowance = float(state.get("budget_allowance_usd") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return allowance if allowance > 0 else 0.0
+
+
+def allowance_to_continue(state: dict[str, Any], *, ceiling: float = 0.0, extra: float | None = None) -> float:
+    """The allowance that lets a job over its cap spend ``extra`` more than it has.
+
+    ``extra`` defaults to one more cap. The job may then spend up to what it
+    has spent plus ``extra``; an allowance it already holds is never lowered.
+    """
+    base = resolve_job_cap({**state, "budget_allowance_usd": 0.0}, ceiling=ceiling)
+    more = float(extra) if extra and extra > 0 else base
+    spent = float(state.get("total_cost_usd") or 0.0)
+    return max(budget_allowance(state), round(spent - base + more, 2))

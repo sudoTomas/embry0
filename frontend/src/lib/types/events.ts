@@ -66,6 +66,7 @@ export interface NodeCompletedContract extends ContractBase {
 }
 export interface PipelineGraphContract extends ContractBase { type: "pipeline_graph"; graph: PipelineGraph }
 export interface ProgressContract extends ContractBase { type: "progress"; message: string; app?: string }
+export interface PauseBudget { spent: number; cap: number; continue_adds: number }
 /** What the issue-to-pr interrupts put in `interrupt.summary` (embry0/workflows/issue_to_pr/nodes/_interrupts.py). */
 export interface InterruptSummary {
   message?: string;
@@ -75,6 +76,8 @@ export interface InterruptSummary {
   options?: string[];
   latest_review?: string;
   review_error?: string;
+  /** A job over its budget: what it spent, its cap, and how much more a continue lets it spend. */
+  budget?: PauseBudget;
   [key: string]: unknown;
 }
 export interface InterruptContract extends ContractBase { type: "interrupt"; reason?: string; questions?: Record<string, unknown>[]; summary?: InterruptSummary }
