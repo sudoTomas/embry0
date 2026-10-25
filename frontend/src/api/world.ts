@@ -162,6 +162,16 @@ export interface Evaluation {
   at: string | null;
 }
 
+export interface QuestFallback {
+  agent_type: string;
+  model: string;
+  instead_of: string;
+  provider: string | null;
+  reason: string | null;
+  until: string | null;
+  runs: number;
+}
+
 export interface QuestScroll {
   job_id: string;
   repo: string | null;
@@ -182,6 +192,8 @@ export interface QuestScroll {
   merge_approval: { id: string; status: string; pr_url: string } | null;
   verification: { verdict: string | null; summary: string | null } | null;
   party: { agent_type: string; runs: number; cost_usd: number; seconds: number; failed: number }[];
+  /** Runs on a fallback model because their own model's account was paused. Absent on an older backend. */
+  fallbacks?: QuestFallback[];
   xp: { agent_type: string; stat: string; xp: number }[];
   cost_usd: number;
   seconds: number | null;

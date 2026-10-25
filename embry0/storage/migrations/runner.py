@@ -3162,6 +3162,22 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         """,
     ),
+    (
+        113,
+        "provider fallback: the deployment's fallback order and the substitution on each run (docs/superpowers/specs/2026-10-25-provider-fallback-design.md)",
+        # The order rides the single provider_config row like disabled_models;
+        # [] is off. A run that ran on a fallback model records what it stood
+        # in for on its trace; NULL for every other run.
+        """
+        ALTER TABLE provider_config
+            ADD COLUMN IF NOT EXISTS fallback_models JSONB NOT NULL DEFAULT '[]'::jsonb;
+        COMMENT ON COLUMN provider_config.fallback_models IS
+            'catalogue model ids, in order, an agent runs on when its own model''s provider has no usable account. [] = off.';
+        ALTER TABLE traces ADD COLUMN IF NOT EXISTS fallback JSONB;
+        COMMENT ON COLUMN traces.fallback IS
+            '{"instead_of", "provider", "reason", "until"} when the run ran on a fallback model; NULL otherwise.';
+        """,
+    ),
 ]
 
 

@@ -155,3 +155,14 @@ async def test_db_row_overrides_env(provider_repo: ProviderConfigRepository, mon
     config = await provider_repo.get()
     # DB wins
     assert config["model_heavy"] == "claude-opus-5"
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_order_is_off_until_saved_and_keeps_its_order(provider_repo: ProviderConfigRepository):
+    """Provider fallback (spec 2026-10-25): no row and a fresh row are both off."""
+    assert (await provider_repo.get())["fallback_models"] == []
+    await provider_repo.update(model_heavy="claude-opus-5")
+    assert (await provider_repo.get())["fallback_models"] == []
+    saved = await provider_repo.update(fallback_models=["grok-4.7", "claude-haiku-4-5"])
+    assert saved["fallback_models"] == ["grok-4.7", "claude-haiku-4-5"]
+    assert (await provider_repo.update(fallback_models=[]))["fallback_models"] == []

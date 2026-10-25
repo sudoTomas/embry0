@@ -592,6 +592,11 @@ class ProviderConfigUpdate(BaseModel):
     # layer enforces the interlock: only known catalog models, and never a
     # model currently assigned to a tier.
     disabled_models: list[str] | None = None
+    # Provider fallback (spec 2026-10-25): catalogue models, in order, an
+    # agent runs on when its own model's provider has no usable account; []
+    # turns it off. The API layer refuses an unknown, unpriced, chat-only,
+    # disabled or repeated id.
+    fallback_models: list[str] | None = None
 
 
 # --- QA Presign ---

@@ -263,9 +263,11 @@ Rules on the setting itself:
 
 Limits, stated rather than fixed:
 
-- **No provider fallback.** If the default model's provider is down or
-  rate-limited, the job fails with that provider's error; embry0 does not
-  retry it on another provider.
+- **Fallback only on a paused account.** If the default model's provider has
+  no usable account (spent, rate-limited, missing), its agents run on the
+  [fallback order](#provider-fallback) when one is set. A provider that is
+  down or answers errors with a usable account is not a paused one: the job
+  fails with that provider's error.
 - **Anthropic stays required.** The account pre-check resolves an Anthropic
   account for every job, default model or not.
 - **Flat-rate cost.** The direct xAI executor prices a run at the flat
@@ -274,6 +276,63 @@ Limits, stated rather than fixed:
   long-context run is under-reported and a cache-heavy run over-reported.
 - **Not verified on grok-4.7.** The verification run below was done for
   `grok-4.5` only.
+
+## Provider fallback
+
+`fallback_models` in the provider settings (Settings → LLM Providers →
+"Fallback order", or `PUT /api/v1/config/provider`) is a list of catalogue
+models, in order. Empty, the default, is off: nothing below happens. Set, an
+agent whose model's provider has no usable account runs on the first model
+of the list whose provider has one
+([the design](superpowers/specs/2026-10-25-provider-fallback-design.md)).
+
+A provider counts as paused for a job when, at the account pre-check (before
+its sandbox exists, on every run and every resume):
+
+- every registry account bound for the job (repository, owner, global) is
+  quarantined or disabled, and the environment holds no account for it or
+  holds the same secret as one of those accounts (an account imported into
+  the registry keeps its environment copy, which would serve the spent token
+  again); or it has no account at all;
+- or an earlier run of the same job on it ended with
+  `ERR_PROVIDER_QUOTA_EXHAUSTED` or `ERR_PROVIDER_RATE_LIMITED`, within the
+  quarantine window for that code
+  (`CREDENTIAL_QUOTA_QUARANTINE_SECONDS`,
+  `CREDENTIAL_RATE_LIMIT_QUARANTINE_SECONDS`). The account itself is
+  quarantined when the job finishes; this moves a resume, a relaunch or a
+  retry before that.
+
+For each paused provider the pre-check picks the first model of the list
+that is of another provider, still a catalogue model, priced, with tool
+calling and enabled, and whose provider is not paused. That provider's key
+is resolved with the job's others, so it is in the sandbox. The paused
+provider stays in the sandbox while it still resolves. Within a run, an
+agent run that ends on a spent or rate-limited account moves the job's next
+agents on that provider to the first model of the list whose provider's key
+the sandbox already holds. No retry is added: only the runs the job makes
+anyway move. A stand-in is always a provider whose key the run's sandbox
+holds: a resume into a sandbox created before the pause keeps the keys it
+was created with, so it moves to the next model whose key is there, or not
+at all.
+
+What never moves:
+
+- a model the job names itself: `agent_models` on `POST /jobs`, a model
+  label on the ticket, the model chosen with Run with (the pr-reviewer's
+  per-job model is the executor's, and moves);
+- a provider whose key was chosen with Run with: that key runs, or the job
+  fails with `ERR_CREDENTIAL_UNAVAILABLE`.
+
+A substituted run counts against the job's budget like any run. Each one is
+recorded: the trace's `model` is the model that ran and its `fallback`
+(`GET /api/v1/traces`) is `{"instead_of", "provider", "reason", "until"}`;
+a `progress` event on the agent's node says "developer runs on grok-4.7
+instead of claude-opus-5: the anthropic account is paused (quota_exhausted)
+until ..."; the job report in the guild lists it under *Fallback models*; the
+log says `agent_model_provider_fallback`.
+
+`PUT /config/provider` answers 422 to a list with an unknown, unpriced,
+chat-only, disabled or repeated id, and to disabling a model the list names.
 
 ## Provider readiness
 

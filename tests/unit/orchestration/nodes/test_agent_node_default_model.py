@@ -128,4 +128,9 @@ async def test_load_model_policy_is_none_when_the_row_sets_nothing() -> None:
 async def test_load_model_policy_still_carries_disabled_models() -> None:
     policy = await load_model_policy(_config("", disabled=["grok-4.5"]))
 
-    assert policy == {"default_model": "", "disabled_models": ["grok-4.5"], "tier_models": _TIERS}
+    assert policy == {
+        "default_model": "",
+        "disabled_models": ["grok-4.5"],
+        "tier_models": _TIERS,
+        "fallback_models": [],
+    }

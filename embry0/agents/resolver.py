@@ -10,6 +10,7 @@ from typing import Any
 
 import structlog
 
+from embry0.agents.fallback import ModelFallback, substitute
 from embry0.agents.invocation import AgentInvocation
 from embry0.agents.skills import effective_skills
 from embry0.execution.auth_provider import AuthConfigError
@@ -254,6 +255,7 @@ def resolve_agent_invocation(
     template_config: dict[str, Any] | None = None,
     model_policy: dict[str, Any] | None = None,
     job_agent_models: Mapping[str, str] | None = None,
+    model_fallbacks: Mapping[str, ModelFallback] | None = None,
 ) -> AgentInvocation:
     """Resolve a fully-validated AgentInvocation from the five-level chain.
 
@@ -270,6 +272,11 @@ def resolve_agent_invocation(
     the enablement set; ``job_agent_models`` is the job's explicit per-agent
     models, kept apart from ``pipeline_config`` so they can be told from the
     ones triage chose.
+
+    ``model_fallbacks`` is provider fallback's plan for the job, ``{paused
+    provider: ModelFallback}`` (``embry0.agents.fallback``): a resolved model
+    whose provider it names runs on the plan's model, and every check below
+    applies to that one. A model the job names itself is never replaced.
 
     Validation raises AuthConfigError with the appropriate error_code.
     """
@@ -343,6 +350,25 @@ def resolve_agent_invocation(
             disabled_model=final.disabled_model,
         )
     final_model = final.model
+
+    # Provider fallback (spec 2026-10-25): the resolved model's provider has
+    # no usable account, so the run moves to the plan's model. Before the
+    # checks below, so the price, tool calling, budget scaling and account
+    # check are those of the model that runs.
+    fallback = None if _chosen_for_job(agent_type, job_agent_models) else substitute(final_model, model_fallbacks)
+    fallback_record: dict[str, Any] | None = None
+    if fallback is not None:
+        fallback_record = fallback.trace_record(final_model)
+        logger.warning(
+            "agent_model_provider_fallback",
+            agent_type=agent_type,
+            paused_model=final_model,
+            paused_provider=fallback.paused_provider,
+            reason=fallback.reason,
+            until=fallback.until,
+            fallback_model=fallback.model,
+        )
+        final_model = fallback.model
 
     # #219: a provider-routed model with no price entry would run unmetered —
     # the provider reports no cost, so the price table is the only accounting.
@@ -431,4 +457,18 @@ def resolve_agent_invocation(
         safety_policy=default_policy_for_agent(agent_type),
         channel_config=None,  # Phase 3
         provider=provider.name if provider else None,
+        fallback=fallback_record,
     )
+
+
+def _chosen_for_job(agent_type: str, job_agent_models: Mapping[str, str] | None) -> bool:
+    """Whether a person named this agent's model for the job: its own entry, else Run with's ``"*"``.
+
+    Provider fallback never replaces such a model. The pr-reviewer's entry is
+    the executor's (``PER_JOB_TIER_FOR_AGENT``), not a person's, so it moves.
+    """
+    if not job_agent_models:
+        return False
+    if agent_type in job_agent_models:
+        return agent_type not in PER_JOB_TIER_FOR_AGENT
+    return bool(job_agent_models.get("*"))

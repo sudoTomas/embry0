@@ -235,6 +235,7 @@ def test_model_policy_carries_the_default_model() -> None:
         "default_model": "grok-4.7",
         "disabled_models": ["claude-haiku-4-5"],
         "tier_models": _TIERS,
+        "fallback_models": [],
     }
 
 
@@ -258,4 +259,5 @@ def test_model_policy_has_no_default_for_a_bare_row() -> None:
         "default_model": "",
         "disabled_models": [],
         "tier_models": {"model_heavy": "", "model_medium": "", "model_light": ""},
+        "fallback_models": [],
     }

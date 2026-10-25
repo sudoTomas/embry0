@@ -363,4 +363,45 @@ describe("ProvidersPage keys and spend", () => {
     expect(mockFetchProviderUsage).toHaveBeenCalledWith("openrouter");
     expect(within(screen.getByTestId("provider-card-anthropic")).queryByTestId("provider-spend")).toBeNull();
   });
+
+  describe("fallback order", () => {
+    it("is off until a model is added, and saves the order it shows", async () => {
+      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, fallback_models: [] });
+      renderPage();
+      const card = await screen.findByTestId("fallback-order");
+      expect(card).toHaveTextContent("No fallback: off.");
+      const save = within(card).getByRole("button", { name: "Save order" });
+      expect(save).toBeDisabled();
+
+      await userEvent.selectOptions(within(card).getByLabelText("Add a model"), "grok-4.7");
+      await userEvent.click(within(card).getByRole("button", { name: "Add" }));
+      await userEvent.selectOptions(within(card).getByLabelText("Add a model"), "claude-haiku-4-5");
+      await userEvent.click(within(card).getByRole("button", { name: "Add" }));
+      await userEvent.click(within(card).getByRole("button", { name: "Move claude-haiku-4-5 up" }));
+      await userEvent.click(save);
+
+      await waitFor(() =>
+        expect(mockUpdateProviderConfig).toHaveBeenCalledWith({ fallback_models: ["claude-haiku-4-5", "grok-4.7"] }),
+      );
+    });
+
+    it("locks a fallback model's enablement and can turn the order off", async () => {
+      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, fallback_models: ["grok-4.7"] });
+      renderPage();
+      const card = await screen.findByTestId("fallback-order");
+      const xai = screen.getByTestId("provider-card-xai");
+      expect(within(xai).getByLabelText("Enable grok-4.7")).toBeDisabled();
+      expect(within(xai).getByLabelText("Enable grok-4.5")).toBeEnabled();
+
+      await userEvent.click(within(card).getByRole("button", { name: "Remove grok-4.7" }));
+      await userEvent.click(within(card).getByRole("button", { name: "Save order" }));
+      await waitFor(() => expect(mockUpdateProviderConfig).toHaveBeenCalledWith({ fallback_models: [] }));
+    });
+
+    it("is hidden against a backend without the setting", async () => {
+      renderPage();
+      await screen.findByTestId("provider-card-anthropic");
+      expect(screen.queryByTestId("fallback-order")).toBeNull();
+    });
+  });
 });

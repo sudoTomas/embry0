@@ -72,3 +72,8 @@ class AgentInvocation:
     # this job's sandbox. build_sdk_options turns each into a local plugin;
     # `skills` is the allowlist over them (and over the repository's own).
     skill_mounts: tuple[SkillMountSpec, ...] = ()
+    # Provider fallback (spec 2026-10-25): set when ``model`` stands in for the
+    # resolved one because its provider's account is paused, as
+    # ``{"instead_of", "provider", "reason", "until"}``. Orchestrator-side
+    # only: the sandbox is never sent it.
+    fallback: dict[str, Any] | None = None

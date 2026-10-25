@@ -248,6 +248,42 @@ async def get_provider(
     return await repo.get()
 
 
+def _check_fallback_order(order: list[str], disabled: set[str], *, changed: bool) -> None:
+    """422 for a provider fallback order an agent could not run on (spec 2026-10-25).
+
+    ``changed`` says the request sets the order: its ids are checked. The
+    disabled interlock is checked either way, so a model the order names can
+    no more be disabled than a tier model can.
+    """
+    from embry0.agents.providers import chat_only_models, known_models, unpriced_models, unpriced_models_message
+
+    if changed:
+        repeated = sorted({m for m in order if order.count(m) > 1})
+        if repeated:
+            raise HTTPException(status_code=422, detail=f"fallback_models names a model more than once: {repeated}")
+        unknown = [m for m in order if m not in known_models()]
+        if unknown:
+            raise HTTPException(status_code=422, detail=f"fallback_models contains unknown model ids: {unknown}")
+        unpriced = unpriced_models(order)
+        if unpriced:
+            raise HTTPException(status_code=422, detail=unpriced_models_message(unpriced))
+        chat_only = chat_only_models(order)
+        if chat_only:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"chat-only model(s) cannot be a fallback model: {', '.join(chat_only)} — a fallback replaces "
+                    "the model of agents that use tools (docs/providers.md)"
+                ),
+            )
+    off = [m for m in order if m in disabled]
+    if off:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"a fallback model cannot be disabled: {', '.join(off)} — remove it from the fallback order first"),
+        )
+
+
 # RAV-1056 Phase C: admin-gated like /config/integrations — provider config
 # carries credentials-adjacent settings; operator tier was an inconsistency.
 @router.put("/config/provider", dependencies=[require_admin])
@@ -317,6 +353,11 @@ async def update_provider(
                 status_code=422,
                 detail=f"the default model cannot be disabled: default_model={default_model}",
             )
+        _check_fallback_order(
+            updates["fallback_models"] if "fallback_models" in updates else current.get("fallback_models") or [],
+            disabled,
+            changed="fallback_models" in updates,
+        )
         result = await repo.update(**updates)
         db = getattr(request.app.state, "db", None)
         config = getattr(request.app.state, "config", None)
