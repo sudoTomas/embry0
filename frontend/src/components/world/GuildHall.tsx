@@ -1,8 +1,10 @@
 import type { Loot, Party, WorldCharacter } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import { Badge } from "@/components/ui/Badge";
+import { Card } from "@/components/ui/Card";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { TIER_COLOR, TIER_NAME } from "@/lib/tiers";
-import { STATE_POSE, STATE_WORDS, bestSkills, formatPercent, placeOf } from "@/lib/world";
+import { STATE_POSE, STATE_WORDS, bestSkills, formatPercent, placeOf, stateTone } from "@/lib/world";
 import { cn } from "@/lib/utils";
 import type { Tier } from "@/api/progression";
 import type { ArtManifest } from "./art/manifest";
@@ -17,12 +19,13 @@ interface CharacterCardProps {
   onSelect: () => void;
 }
 
-/** One character at its station: what it wears, its level and best skills, where it is now, and how its quests went. */
+/** One agent: its sprite, level and best skills, what it is doing now, and its record. */
 export function CharacterCard({ character, party, skillName, xpDrop, selected, onSelect }: CharacterCardProps) {
   const lookup = useIdentityLookup();
   const identity = lookup(character.agent_type);
   const tier = character.tier as Tier;
-  const where = party ? `${party.title} · ${placeOf(party.repo, party.area)}` : null;
+  const ratings = character.stats.ratings;
+  const rated = ratings.good + ratings.needs_work + ratings.bad;
   return (
     <button
       type="button"
@@ -30,56 +33,54 @@ export function CharacterCard({ character, party, skillName, xpDrop, selected, o
       data-testid="world-character"
       data-state={character.state}
       data-selected={selected}
-      className="world-slot relative flex w-full items-start gap-3 rounded-sm p-2.5 text-left"
+      className={cn(
+        "relative flex w-full items-start gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-border-strong hover:bg-overlay/60",
+        selected && "border-border-strong bg-overlay",
+      )}
     >
       <span className="relative shrink-0">
         <AgentAvatar identity={identity} size={48} state={STATE_POSE[character.state]} />
-        {character.state === "waiting" && <span className="world-bubble absolute -top-3 left-8 whitespace-nowrap">?</span>}
+        {character.state === "waiting" && <span className="world-bubble absolute -top-3 left-8">?</span>}
         {xpDrop ? (
-          <span key={xpDrop} className="world-xp-drop" data-testid="xp-drop">
+          <span key={xpDrop} className="world-xp-drop hud text-success" data-testid="xp-drop">
             +{xpDrop.toLocaleString("en-US")} xp
           </span>
         ) : null}
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0 flex-1 space-y-1">
         <span className="flex items-baseline justify-between gap-2">
-          <span className="world-title truncate text-sm">{identity.displayName}</span>
-          <span className="world-subtitle shrink-0 text-xs" title={`Level ${character.level} · total ${character.total_level}`}>
+          <span className="truncate text-sm font-semibold text-fg">{identity.displayName}</span>
+          <span className="hud shrink-0 text-xs text-fg-secondary" title={`Level ${character.level} · total ${character.total_level}`}>
             Lvl {character.level}
           </span>
         </span>
-        <span className="flex items-center gap-1.5 text-[11px]">
-          <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-[1px]" style={{ backgroundColor: TIER_COLOR[tier] }} />
-          <span className="world-muted shrink-0">{TIER_NAME[tier] ?? character.tier} gear</span>
-        </span>
-        <span className="world-muted block truncate text-[11px]">
-          {bestSkills(character)
-            .map((s) => `${skillName(s.stat)} ${s.level}`)
-            .join(" · ")}
-        </span>
-        <span className={cn("mt-1 block truncate text-xs", character.state === "idle" ? "world-muted" : "world-text")}>
-          {STATE_WORDS[character.state]}
-          {where ? `: ${where}` : ""}
-          {character.quests_out > 1 ? ` (+${character.quests_out - 1} more)` : ""}
-        </span>
-        <span className="mt-1 flex flex-wrap gap-x-2 text-[11px] world-muted">
-          <span>
-            {character.stats.quests} quests · {formatPercent(character.stats.success_rate)} won
+        <span className="flex items-center gap-1.5 text-2xs text-fg-muted">
+          <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-[2px]" style={{ backgroundColor: TIER_COLOR[tier] }} />
+          <span className="shrink-0">{TIER_NAME[tier] ?? character.tier}</span>
+          <span className="truncate">
+            ·{" "}
+            {bestSkills(character)
+              .map((s) => `${skillName(s.stat)} ${s.level}`)
+              .join(" · ")}
           </span>
-          {character.stats.ratings.good + character.stats.ratings.needs_work + character.stats.ratings.bad > 0 && (
-            <span>
-              rated {character.stats.ratings.good} good · {character.stats.ratings.needs_work} so-so · {character.stats.ratings.bad} bad
-            </span>
-          )}
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Badge tone={stateTone(character.state)}>{STATE_WORDS[character.state]}</Badge>
+          {party && <span className="truncate text-xs text-fg-secondary">{`${party.title} · ${placeOf(party.repo, party.area)}`}</span>}
+          {character.quests_out > 1 && <span className="shrink-0 text-2xs text-fg-muted">+{character.quests_out - 1} more</span>}
+        </span>
+        <span className="block text-2xs text-fg-muted">
+          {character.stats.quests} jobs · {formatPercent(character.stats.success_rate)} succeeded
+          {rated > 0 && ` · rated ${ratings.good} good, ${ratings.needs_work} needs work, ${ratings.bad} bad`}
         </span>
         {party?.stuck && (
-          <span className="mt-1 block text-[11px]" style={{ color: "var(--loss)" }} data-testid="stuck">
-            Gone quiet for a while: check on it
+          <span className="block" data-testid="stuck">
+            <Badge tone="warning">No activity for 20 minutes</Badge>
           </span>
         )}
         {character.idle_too_long && character.state === "idle" && (
-          <span className="mt-1 block text-[11px] world-muted" data-testid="idle-too-long">
-            Has not been out in weeks
+          <span className="block text-2xs text-fg-muted" data-testid="idle-too-long">
+            Idle for two weeks or more
           </span>
         )}
       </span>
@@ -104,9 +105,10 @@ interface GuildHallProps {
 const ORDER: Record<string, number> = { waiting: 0, working: 1, travelling: 2, returning: 3, defeated: 4, following: 5, recalled: 6, idle: 7 };
 
 /**
- * The hall: its inside drawn with every character at its station, then every
- * character's card, the ones that need you first, then the ones out, then the
- * idle by level. With no art the scene stays out and the cards are the hall.
+ * The agents: the hall's inside drawn as a picture in a plain card, every
+ * agent at its station; then every agent's card, the ones that need you
+ * first, then the busy, then the idle by level. With no art the cards stand
+ * alone.
  */
 export function GuildHall({ art, characters, parties, loot, skillName, xpDrops, levelUps, selected, onSelect, onBoard, onLoot }: GuildHallProps) {
   const byJob = new Map(parties.map((p) => [p.job_id, p]));
@@ -115,26 +117,28 @@ export function GuildHall({ art, characters, parties, loot, skillName, xpDrops, 
   );
   const out = characters.filter((c) => c.state !== "idle").length;
   return (
-    <section className="world-panel space-y-2 p-3" aria-labelledby="guild-hall-title" data-testid="guild-hall">
+    <section className="space-y-3" aria-labelledby="guild-hall-title" data-testid="guild-hall">
       <div className="flex items-baseline justify-between gap-2">
-        <h2 id="guild-hall-title" className="world-title text-lg">
-          Guild hall
+        <h2 id="guild-hall-title" className="text-section font-semibold">
+          Agents
         </h2>
-        <span className="world-muted text-xs">
-          {out} out · {characters.length - out} in the hall
+        <span className="text-xs text-fg-muted">
+          {out} busy · {characters.length - out} idle
         </span>
       </div>
       {Object.keys(art.tilesets).length > 0 && (
-        <HallScene
-          art={art}
-          characters={characters}
-          loot={loot}
-          xpDrops={xpDrops}
-          levelUps={levelUps}
-          onSelect={onSelect}
-          onBoard={onBoard}
-          onLoot={onLoot}
-        />
+        <Card className="overflow-hidden p-1.5">
+          <HallScene
+            art={art}
+            characters={characters}
+            loot={loot}
+            xpDrops={xpDrops}
+            levelUps={levelUps}
+            onSelect={onSelect}
+            onBoard={onBoard}
+            onLoot={onLoot}
+          />
+        </Card>
       )}
       <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {sorted.map((c) => (

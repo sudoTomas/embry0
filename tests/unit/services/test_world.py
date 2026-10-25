@@ -9,12 +9,14 @@ from embry0.services.world import (
     QUEST_TEMPLATE_BY_AGENT,
     STUCK_SECONDS,
     character_entries,
+    failure_words,
     job_entry,
     job_state,
     lead_entry,
     lead_level,
     leader_of,
     party_of,
+    provider_words,
     quest_title,
     quest_xp,
 )
@@ -110,6 +112,27 @@ def test_a_party_that_went_silent_is_stuck_and_a_defeat_says_why():
         _job(status="failed", error_code="ERR_AGENT_MAX_TURNS"), [], lead_id=None, last_event_at=None, now=NOW
     )
     assert lost["state"] == "defeated" and lost["failure"]
+    assert lost["error_code"] == "ERR_AGENT_MAX_TURNS" and busy["error_code"] is None and busy["error_message"] is None
+
+
+def test_an_account_failure_quotes_the_providers_words():
+    message = "triage output malformed; developer: You've hit your weekly limit · resets Oct 27, 9am (UTC)"
+    assert provider_words(message) == "You've hit your weekly limit · resets Oct 27, 9am (UTC)"
+    assert provider_words("Rate limit reached") == "Rate limit reached"
+    assert provider_words(None) is None
+    spent = failure_words("ERR_PROVIDER_QUOTA_EXHAUSTED", message)
+    assert spent == "the LLM account it ran on refused it: You've hit your weekly limit · resets Oct 27, 9am (UTC)"
+    # Without the provider's words, the plain reason; a run's own failure never quotes the message.
+    assert "out of usage" in (failure_words("ERR_PROVIDER_QUOTA_EXHAUSTED") or "")
+    assert "weekly" not in (failure_words("ERR_AGENT_MAX_TURNS", message) or "")
+    lost = job_entry(
+        _job(status="failed", error_code="ERR_PROVIDER_QUOTA_EXHAUSTED", error_message=message),
+        [],
+        lead_id=None,
+        last_event_at=None,
+        now=NOW,
+    )
+    assert lost["failure"] == spent and lost["error_message"] == message
 
 
 def _character(agent):

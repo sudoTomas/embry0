@@ -1,17 +1,19 @@
 import type { CharacterState, InboxQuest, Lead, Outcome, Party, WorldCharacter } from "@/api/world";
 import type { SpriteState } from "@/components/roster/sprites";
+import type { BadgeTone } from "@/components/ui/Badge";
+import { statusTone } from "@/lib/status";
 import type { LogEvent } from "@/lib/types";
 
-/** How a character's place reads on its card. */
+/** What an agent is doing, as its card and panel say it (the chat box keeps the game's words). */
 export const STATE_WORDS: Record<CharacterState, string> = {
-  idle: "In the hall",
-  following: "Out with a party",
-  travelling: "Setting out",
-  working: "On a quest",
-  waiting: "Waiting for you",
-  returning: "Back with loot",
-  defeated: "Defeated",
-  recalled: "Recalled",
+  idle: "Idle",
+  following: "Assisting",
+  travelling: "Starting",
+  working: "Working",
+  waiting: "Needs your answer",
+  returning: "Finished",
+  defeated: "Failed",
+  recalled: "Cancelled",
 };
 
 /** The sprite pose for each place: out working swings its tool, waiting thinks, back cheers, defeated slumps. */
@@ -28,13 +30,43 @@ export const STATE_POSE: Record<CharacterState, SpriteState> = {
 
 export const OUTCOME_WORDS: Record<Outcome, string> = {
   merged: "Merged",
-  pr_open: "Pull request open",
-  closed: "Pull request closed",
+  pr_open: "PR open",
+  closed: "PR closed",
   done: "Report delivered",
   failed: "Failed",
-  recalled: "Recalled",
-  out: "Still out",
+  recalled: "Cancelled",
+  out: "Running",
 };
+
+/** The job status each place and ending reads as, so its badge takes that status's colour (lib/status). */
+const STATE_STATUS: Record<CharacterState, string> = {
+  idle: "pending",
+  following: "running",
+  travelling: "running",
+  working: "running",
+  waiting: "awaiting_input",
+  returning: "completed",
+  defeated: "failed",
+  recalled: "cancelled",
+};
+
+const OUTCOME_STATUS: Record<Outcome, string> = {
+  merged: "pr_merged",
+  pr_open: "open",
+  closed: "pr_closed",
+  done: "completed",
+  failed: "failed",
+  recalled: "cancelled",
+  out: "running",
+};
+
+export function stateTone(state: CharacterState): BadgeTone {
+  return statusTone(STATE_STATUS[state]);
+}
+
+export function outcomeBadgeTone(outcome: Outcome): BadgeTone {
+  return statusTone(OUTCOME_STATUS[outcome]);
+}
 
 /** Whether a quest's ending is a win, a loss or neither. */
 export function outcomeTone(outcome: Outcome): "win" | "loss" | "neutral" {
@@ -71,10 +103,18 @@ export function bestSkills(character: Pick<WorldCharacter, "skills">, count = 3)
   return [...character.skills].sort((a, b) => b.level - a.level || b.xp - a.xp).slice(0, count);
 }
 
+/** What a chat line knows about the party it is about, for a debug copy. */
+export type LineParty = Pick<Party, "job_id" | "title" | "leader" | "repo" | "area" | "state" | "failure" | "error_code" | "error_message">;
+
 export interface NarrationLine {
   key: string;
   text: string;
   tone: "info" | "win" | "loss" | "alert";
+  /** When the change was seen, UTC ISO. */
+  at: string;
+  /** The party the line is about; a level-up names only its character. */
+  party?: LineParty;
+  agent?: string;
 }
 
 /**
@@ -82,8 +122,14 @@ export interface NarrationLine {
  * change first: a party setting out, starting work, waiting for an answer,
  * going quiet, coming back with loot, or falling.
  */
-export function narrate(before: readonly Party[] | null, after: readonly Party[], nameOf: (agent: string) => string): NarrationLine[] {
+export function narrate(
+  before: readonly Party[] | null,
+  after: readonly Party[],
+  nameOf: (agent: string) => string,
+  now: Date = new Date(),
+): NarrationLine[] {
   if (before === null) return [];
+  const at = now.toISOString();
   const previous = new Map(before.map((p) => [p.job_id, p]));
   const lines: NarrationLine[] = [];
   for (const party of after) {
@@ -91,26 +137,48 @@ export function narrate(before: readonly Party[] | null, after: readonly Party[]
     const who = nameOf(party.leader);
     const where = placeOf(party.repo, party.area);
     const quest = `“${party.title}”`;
+    const { job_id, title, leader, repo, area, state, failure, error_code, error_message } = party;
+    const about = { at, agent: leader, party: { job_id, title, leader, repo, area, state, failure, error_code, error_message } };
+    const say = (key: string, text: string, tone: NarrationLine["tone"]) => lines.push({ key: `${party.job_id}:${key}`, text, tone, ...about });
     if (!was) {
-      lines.push({ key: `${party.job_id}:out`, text: `${who} sets off for ${quest} in ${where}.`, tone: "info" });
+      say("out", `${who} sets off for ${quest} in ${where}.`, "info");
       continue;
     }
     if (was.state !== party.state) {
-      if (party.state === "working") lines.push({ key: `${party.job_id}:work`, text: `${who} is at work on ${quest}.`, tone: "info" });
-      if (party.state === "waiting") lines.push({ key: `${party.job_id}:wait`, text: `${who} needs your answer on ${quest}.`, tone: "alert" });
+      if (party.state === "working") say("work", `${who} is at work on ${quest}.`, "info");
+      if (party.state === "waiting") say("wait", `${who} needs your answer on ${quest}.`, "alert");
       if (party.state === "returning")
-        lines.push({
-          key: `${party.job_id}:back`,
-          text: party.pr_url ? `${who} is back from ${quest} with a pull request!` : `${who} is back from ${quest} with a report.`,
-          tone: "win",
-        });
-      if (party.state === "defeated")
-        lines.push({ key: `${party.job_id}:lost`, text: `Oh dear, ${who} was defeated on ${quest}${party.failure ? `: ${party.failure}` : "."}`, tone: "loss" });
-      if (party.state === "recalled") lines.push({ key: `${party.job_id}:recall`, text: `${who} was recalled from ${quest}.`, tone: "info" });
+        say("back", party.pr_url ? `${who} is back from ${quest} with a pull request!` : `${who} is back from ${quest} with a report.`, "win");
+      if (party.state === "defeated") say("lost", `Oh dear, ${who} was defeated on ${quest}${party.failure ? `: ${party.failure}` : "."}`, "loss");
+      if (party.state === "recalled") say("recall", `${who} was recalled from ${quest}.`, "info");
     }
-    if (party.stuck && !was.stuck) lines.push({ key: `${party.job_id}:stuck`, text: `${who} has gone quiet on ${quest}.`, tone: "alert" });
+    if (party.stuck && !was.stuck) say("stuck", `${who} has gone quiet on ${quest}.`, "alert");
   }
   return lines;
+}
+
+/**
+ * A chat line as plain text to paste into a bug report: when, the line,
+ * the quest, the agent, where, the job and its page; for a failure, the
+ * job's error code and its exact message.
+ */
+export function debugText(line: NarrationLine): string {
+  const p = line.party;
+  const rows: [string, string | null | undefined][] = [
+    ["time", line.at],
+    ["line", line.text],
+    ["quest", p?.title],
+    ["agent", p?.leader ?? line.agent],
+    ["repo", p?.repo],
+    ["area", p?.area],
+    ["job", p?.job_id],
+  ];
+  if (p?.state === "defeated") rows.push(["error_code", p.error_code], ["error", p.error_message]);
+  if (p) rows.push(["url", `/jobs/${p.job_id}`]);
+  return rows
+    .filter((row): row is [string, string] => !!row[1])
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
 }
 
 /** The experience each character gained between two reads: what floats up over its head. */
@@ -170,12 +238,27 @@ export const KIND_WORDS: Record<string, string> = {
   review: "Unanswered reviews",
 };
 
+/** One quest of each kind, as its badge says it. */
+export const KIND_WORD: Record<string, string> = {
+  case: "Production error",
+  issue: "Open issue",
+  finding: "Outdated instruction",
+  ticket: "Backlog ticket",
+  ci: "Broken build",
+  alert: "Security alert",
+  flaky: "Flaky test",
+  review: "Unanswered review",
+};
+
 /** The level's colour band, as a monster's level reads against yours: green below, yellow near, red above. */
 export function levelBand(lead: number, character: number): "low" | "even" | "high" {
   if (lead < character - 10) return "low";
   if (lead > character + 10) return "high";
   return "even";
 }
+
+/** The badge colour of each band. */
+export const BAND_TONE: Record<ReturnType<typeof levelBand>, BadgeTone> = { low: "success", even: "warning", high: "error" };
 
 /** The inbox's order: losses and open pull requests first (they want a decision), newest first within. */
 export function inboxOrder(quests: readonly InboxQuest[]): InboxQuest[] {

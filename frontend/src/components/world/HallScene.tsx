@@ -104,8 +104,8 @@ export function HallScene({ art, characters, loot, xpDrops, levelUps, onSelect, 
                   )}
                   {c.state === "waiting" && <span className="world-bubble absolute -top-3 left-1/2 -translate-x-1/2">?</span>}
                   <span
-                    className="absolute left-1/2 top-[31px] max-w-[66px] -translate-x-1/2 truncate whitespace-nowrap rounded-[2px] px-0.5 text-[8px] leading-[10px]"
-                    style={{ color: home ? "#ffcf3f" : "#b9ab8c", background: "rgba(0,0,0,0.6)" }}
+                    className="sprite-nameplate absolute left-1/2 top-[31px] max-w-[66px] -translate-x-1/2 truncate whitespace-nowrap rounded-[2px] bg-black/60 px-0.5"
+                    style={{ color: home ? identity.hex : "var(--color-fg-muted)", fontSize: 8, lineHeight: "10px" }}
                   >
                     {identity.displayName}
                   </span>
