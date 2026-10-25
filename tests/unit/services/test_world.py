@@ -135,6 +135,24 @@ def test_an_account_failure_quotes_the_providers_words():
     assert lost["failure"] == spent and lost["error_message"] == message
 
 
+def test_a_party_held_by_a_spent_account_waits_and_says_until_when():
+    wait = {
+        "provider": "anthropic",
+        "reason": "quota_exhausted",
+        "until": "2026-10-26T00:00:00+00:00",
+        "model": "claude-sonnet-5",
+        "agent": "triage",
+        "chosen": False,
+        "watch": True,
+        "mode": "resume",
+    }
+    held = job_entry(_job(status="paused", account_wait=wait), [], lead_id=None, last_event_at=None, now=NOW)
+    assert held["state"] == "waiting" and held["failure"] is None
+    assert held["account_wait"] == {k: wait[k] for k in ("provider", "reason", "until", "model", "agent", "chosen")}
+    back = job_entry(_job(status="completed", account_wait=wait), [], lead_id=None, last_event_at=None, now=NOW)
+    assert back["account_wait"] is None, "only a paused job waits"
+
+
 def _character(agent):
     return {"agent_type": agent, "level": 40, "tier": "steel"}
 

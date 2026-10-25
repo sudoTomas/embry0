@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import type { QuestScroll } from "@/api/world";
 import { identityOf } from "@/lib/agentIdentity";
+import { formatDateTime } from "@/lib/utils";
 
 const state: { quest: QuestScroll | undefined } = { quest: undefined };
 const mutation = () => ({ mutate: vi.fn(), isPending: false });
@@ -88,5 +89,25 @@ describe("QuestScroll fallback models", () => {
     expect(screen.queryByTestId("quest-fallbacks")).toBeNull();
     renderScroll(SCROLL);
     expect(screen.queryByTestId("quest-fallbacks")).toBeNull();
+  });
+});
+
+describe("QuestScroll account wait", () => {
+  it("says what a paused quest waits for and when it goes on, in the viewer's time", () => {
+    const until = "2026-10-26T00:00:00+00:00";
+    renderScroll({
+      ...SCROLL,
+      status: "paused",
+      account_wait: { provider: "anthropic", reason: "quota_exhausted", until, chosen: true },
+    });
+    const box = screen.getByTestId("quest-account-wait");
+    expect(box).toHaveTextContent("the Anthropic account is quota exhausted");
+    expect(box).toHaveTextContent(`It goes on at ${formatDateTime(until)}`);
+    expect(box).toHaveTextContent("A person chose this model or key");
+  });
+
+  it("shows nothing for a quest that waits for nothing", () => {
+    renderScroll({ ...SCROLL, account_wait: null });
+    expect(screen.queryByTestId("quest-account-wait")).toBeNull();
   });
 });

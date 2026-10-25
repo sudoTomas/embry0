@@ -427,6 +427,16 @@ def _truthy(value: Any) -> bool:
     return value is True
 
 
+def _account_wait_detail(wait: Any) -> str:
+    """A watcher row's words for an analysis held by a spent account. No time: the row's own times say when."""
+    wait = wait if isinstance(wait, dict) else {}
+    why = str(wait.get("reason") or "paused").replace("_", " ")
+    return (
+        f"the {wait.get('provider') or 'LLM'} account is {why} and no other model is ready, "
+        "so no analysis was started; a later tick reads this window"
+    )
+
+
 async def _no_refusal(_repo: str) -> None:
     return None
 
@@ -1474,9 +1484,49 @@ class WatcherService:
             job = cast("dict[str, Any] | None", await self._jobs.get(job_id))
             if job and job.get("status") in _TERMINAL_STATUSES:
                 return job
+            if job and job.get("status") == "paused" and isinstance(job.get("account_wait"), dict):
+                # Spent account waits: an analysis that would wait hours for an
+                # account is not worth keeping; the next tick reads the window.
+                return job
             await asyncio.sleep(_POLL_SECONDS)
         logger.warning("watcher_analysis_timeout", job_id=job_id)
         return cast("dict[str, Any] | None", await self._jobs.get(job_id))
+
+    async def _cancel_parked(self, job_id: str) -> None:
+        """Cancel an analysis parked to wait for an account. Best-effort: a parked job harms nothing."""
+        cancel = getattr(self._executor, "cancel_job", None)
+        if cancel is None:
+            return
+        try:
+            await cancel(job_id, actor=dispatch_actors.WATCHER)
+        except Exception:  # noqa: BLE001
+            logger.warning("watcher_parked_analysis_cancel_failed", job_id=job_id, exc_info=True)
+
+    async def _analysis_wait(self) -> dict[str, Any] | None:
+        """The wait an analysis job would start in (spent account waits), as its record; None to go ahead.
+
+        The same question the account pre-check asks of the job, asked before
+        one is created. A failed check is no wait: the job's own pre-check
+        still parks it, and the tick then cancels it.
+        """
+        ask = getattr(self._executor, "account_wait_before_start", None)
+        if ask is None:
+            return None
+        pipeline_config = apply_run_with(resolve_watcher_job_budget(self._config).as_pipeline_config(), self._run_with)
+        local_model = await self._local_first()
+        if local_model and not ((pipeline_config or {}).get("agent_models_override") or {}):
+            pipeline_config = {**(pipeline_config or {}), "local_first_model": local_model}
+        try:
+            wait = ask(self._repo or "", pipeline_config or {})
+            if inspect.isawaitable(wait):
+                wait = await wait
+        except Exception:  # noqa: BLE001
+            logger.warning("watcher_account_wait_check_failed", stack=self._repo, exc_info=True)
+            return None
+        from embry0.services.account_waits import AccountWait
+
+        # isinstance, not truthiness: test doubles answer any attribute.
+        return wait.record() if isinstance(wait, AccountWait) else None
 
     async def _analyse(self, task: str) -> dict[str, Any]:
         """Run the analysis to a parsed verdict, re-running it ONCE on garbage.
@@ -1497,6 +1547,14 @@ class WatcherService:
             job = await self._run_analysis_job(task if attempt == 0 else _RETRY_NOTE.format(reason=failure) + task)
             job_ids.append((job or {}).get("job_id"))
             cost += float((job or {}).get("total_cost_usd") or 0.0)
+            if job and job.get("status") == "paused" and isinstance(job.get("account_wait"), dict):
+                await self._cancel_parked(str(job["job_id"]))
+                return {
+                    "verdict": None,
+                    "failure": None,
+                    "account_wait": job["account_wait"],
+                    "run_fields": {"job_id": job_ids[-1], "retried_job_id": None, "analysis_cost_usd": cost},
+                }
             if not job or job.get("status") != "completed":
                 verdict = None
                 # #275: carry the job's error code so a budget stop reads
@@ -1791,8 +1849,21 @@ class WatcherService:
                     drilldown=self._drilldown_section(),
                     **sections,
                 )
+                # Spent account waits: an analysis that would only wait for an
+                # account is not started. The window stays for the next tick.
+                waiting = await self._analysis_wait()
+                if waiting is not None:
+                    return await record(
+                        "skipped_account_paused", log_lines=len(lines), detail=_account_wait_detail(waiting)
+                    )
                 analysis = await self._analyse(task)
                 tick_fields.update(analysis["run_fields"])
+                if analysis.get("account_wait"):
+                    return await record(
+                        "skipped_account_paused",
+                        log_lines=len(lines),
+                        detail=_account_wait_detail(analysis["account_wait"]),
+                    )
                 job_id = tick_fields["job_id"]
                 verdict = analysis["verdict"]
                 if verdict is None:

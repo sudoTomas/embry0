@@ -343,30 +343,33 @@ its sandbox exists, on every run and every resume):
   `ERR_PROVIDER_QUOTA_EXHAUSTED` or `ERR_PROVIDER_RATE_LIMITED`, within the
   quarantine window for that code
   (`CREDENTIAL_QUOTA_QUARANTINE_SECONDS`,
-  `CREDENTIAL_RATE_LIMIT_QUARANTINE_SECONDS`). The account itself is
-  quarantined when the job finishes; this moves a resume, a relaunch or a
-  retry before that.
+  `CREDENTIAL_RATE_LIMIT_QUARANTINE_SECONDS`). The run that finds a
+  registry account spent quarantines it at once
+  ([Spent account waits](#spent-account-waits)); this covers an account the
+  environment serves, which has no registry row to quarantine.
 
 For each paused provider the pre-check picks the first model of the list
 that is of another provider, still a catalogue model, priced, with tool
 calling and enabled, and whose provider is not paused. That provider's key
 is resolved with the job's others, so it is in the sandbox. The paused
 provider stays in the sandbox while it still resolves. Within a run, an
-agent run that ends on a spent or rate-limited account moves the job's next
-agents on that provider to the first model of the list whose provider's key
-the sandbox already holds. No retry is added: only the runs the job makes
-anyway move. A stand-in is always a provider whose key the run's sandbox
-holds: a resume into a sandbox created before the pause keeps the keys it
-was created with, so it moves to the next model whose key is there, or not
-at all.
+agent run that ends on a spent or rate-limited account runs again at once on
+the first model of the list whose provider's key the sandbox already holds,
+and the job's next agents on that provider move there too. A stand-in is
+always a provider whose key the run's sandbox holds: a resume into a sandbox
+created before the pause keeps the keys it was created with, so it moves to
+the next model whose key is there, or not at all. With nowhere to move, the
+job waits for the account instead of failing
+([Spent account waits](#spent-account-waits)).
 
 What never moves:
 
 - a model the job names itself: `agent_models` on `POST /jobs`, a model
   label on the ticket, the model chosen with Run with (the pr-reviewer's
   per-job model is the executor's, and moves);
-- a provider whose key was chosen with Run with: that key runs, or the job
-  fails with `ERR_CREDENTIAL_UNAVAILABLE`.
+- a provider whose key was chosen with Run with: that key runs. A key that
+  is quarantined until a time makes the job wait for it; one that cannot
+  run at all fails the job with `ERR_CREDENTIAL_UNAVAILABLE`.
 
 A substituted run counts against the job's budget like any run. Each one is
 recorded: the trace's `model` is the model that ran and its `fallback`
@@ -382,6 +385,69 @@ A `custom/<model>` of the operator's own server is accepted while the custom
 provider is enabled: no catalogue lists its models, and it is priced at $0
 ([Local models](#local-models)). Put it last, so the local server only takes
 the work no other provider can.
+
+## Spent account waits
+
+A spent or rate-limited account never fails a job. The job moves to a ready
+model of the fallback order, or it waits for the account's reset
+([the design](superpowers/specs/2026-10-25-spent-account-waits-design.md)).
+
+**What counts.** A pause with a known end:
+
+- a registry account quarantined until a time;
+- a run of the job that ended with `ERR_PROVIDER_QUOTA_EXHAUSTED` or
+  `ERR_PROVIDER_RATE_LIMITED`: until the reset the provider named, capped at
+  eight days, else the quarantine window for the code;
+- the local model with every slot taken (`local_busy`): five minutes.
+
+No key at all, a disabled key, a refused token and a provider this
+deployment does not enable still fail the job, because waiting would not end
+them.
+
+**At once.** The run that finds its account spent quarantines it then, not
+when the job ends, so the next job's pre-check already sees the pause. If
+the fallback order has a model whose provider is ready and whose key the
+sandbox holds, the same run runs again on it. A model or key a person chose
+never moves. The node sees both attempts, the stand-in's last, and the spent
+attempt's trace keeps its error.
+
+**Waiting.** Where nothing ready can take the work, the job is parked:
+`status` `paused`, `account_wait` on the job (migration 116) =
+`{provider, reason, until, model, agent, chosen, watch, mode}`, `until` in
+UTC.
+
+- **Before it starts.** The account pre-check checks the job's main
+  provider (the default model's, else the one most agent definitions name)
+  and every provider a person chose for it. A spent one with no stand-in
+  parks the job before any sandbox exists (`mode: relaunch`). A job that
+  prefers its local model while a slot is free is not parked for its main
+  provider, and neither is a job whose Run with names every agent's model.
+- **Inside the job.** In a pipeline whose graph resumes from a checkpoint
+  (every pipeline but qa, onboard and pr-review), a run whose provider is
+  spent with no stand-in stops the graph inside that node, found either
+  before it runs or after it failed. The job is parked with
+  `mode: resume`, and its sandbox stays. For qa, onboard and pr-review the
+  pre-check and the move above apply, and a run that finds its account spent
+  with nowhere to move still fails.
+
+Every minute the account-wait loop goes on with a parked job whose `until`
+has passed. A wait read from the registry (`watch`) goes on earlier, as soon
+as the registry says the account is usable again: a person cleared the
+quarantine or added an account. A `resume` wait continues from the last
+checkpoint, so the stopped node runs again; a `relaunch` wait starts the job
+from its launch record. The pre-check runs first either way, so a job whose
+account is still spent is parked again.
+
+**What people see.** An `interrupt` event with reason `account_wait` and a
+`system` event in words. The job page shows what the job waits for and when
+it goes on, in the viewer's own time, with **Try now** and **Cancel**. In the
+world the party is waiting, and the quest scroll says what for.
+
+**The watcher.** Before a tick pays for an analysis, it asks the same
+question about the analysis job it would start. If the job would wait, the
+tick records `skipped_account_paused`, starts no job and leaves the window
+for the next tick. An analysis parked mid-run is cancelled, and the tick
+records the same action.
 
 ## Local models
 
@@ -418,10 +484,12 @@ before it starts until it ends, however it ends. A lease expires by itself
 five minutes after the run's own time limit, so one left by a process that
 died frees its slot. A run that has to use the local model (it is the
 fallback, or the job named it) waits for a slot up to
-`LOCAL_LLM_SLOT_WAIT_SECONDS` (900), saying so in a `progress` event, then
-fails with `ERR_LOCAL_MODEL_BUSY` without having run; the job's next agents
-on the custom provider then move, as for a spent account
-([Provider fallback](#provider-fallback)).
+`LOCAL_LLM_SLOT_WAIT_SECONDS` (900), saying so in a `progress` event. Then
+the job is parked for five minutes and tries again
+([Spent account waits](#spent-account-waits)); in a pipeline that cannot be
+parked (qa, onboard, pr-review) the run fails with `ERR_LOCAL_MODEL_BUSY`
+without having run, and the job's next agents on the custom provider move,
+as for a spent account ([Provider fallback](#provider-fallback)).
 
 **Local-first for the watcher.** `watcher_local_model` in the provider
 settings (`""`, the default, is off) is a `custom/<model>` the watcher's log

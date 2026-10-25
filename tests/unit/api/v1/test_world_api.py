@@ -225,6 +225,7 @@ async def test_a_quest_scroll_says_what_it_did_and_what_it_earned(app: Any) -> N
             "runs": 1,
         }
     ], "the scroll names the run that ran on a stand-in, and why"
+    assert scroll["account_wait"] is None, "a finished quest waits for nothing"
 
 
 async def test_the_player_rates_a_quest_once_it_is_back(app: Any) -> None:

@@ -41,6 +41,7 @@ from embry0.services.world import (
     PLAYER_ACTORS,
     RETURN_SECONDS,
     WorldCache,
+    account_wait_view,
     character_entries,
     failure_words,
     job_entry,
@@ -327,6 +328,8 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
         "party": list(party.values()),
         # Runs that ran on a fallback model because their own model's account was paused.
         "fallbacks": quest_fallbacks(runs),
+        # What a paused quest waits for: a spent account, until when.
+        "account_wait": account_wait_view(quest),
         "xp": quest_xp(quest, runs),
         "cost_usd": round(float(quest.get("total_cost_usd") or 0), 4),
         "seconds": (finished - started).total_seconds()

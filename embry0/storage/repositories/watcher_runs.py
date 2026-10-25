@@ -42,6 +42,11 @@ WATCHER_ACTIONS = frozenset(
         # has an open case), and none outgrew what that analysis read. No model
         # was paid. Distinct from no_change, where nothing was notable at all.
         "skipped_known",
+        # Spent account waits (spec 2026-10-25): the analysis would have had to
+        # wait for an LLM account (spent or rate-limited, nothing ready to move
+        # to), so no job was started; detail names the provider and reset. Not
+        # analysed: the window stays, and the next tick reads those logs again.
+        "skipped_account_paused",
         "error",
     }
 )

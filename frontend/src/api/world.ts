@@ -63,6 +63,18 @@ export interface Party {
   /** A defeated party's job error code and its message as stored, for a debug copy; null otherwise. */
   error_code: string | null;
   error_message: string | null;
+  /** A waiting party held by a spent LLM account, and until when (UTC ISO). Absent on an older backend. */
+  account_wait?: WorldAccountWait | null;
+}
+
+/** What a paused quest waits for: a spent LLM account (spent account waits). */
+export interface WorldAccountWait {
+  provider: string;
+  reason: string;
+  until: string;
+  model?: string | null;
+  agent?: string | null;
+  chosen?: boolean;
 }
 
 export interface Lead {
@@ -194,6 +206,8 @@ export interface QuestScroll {
   party: { agent_type: string; runs: number; cost_usd: number; seconds: number; failed: number }[];
   /** Runs on a fallback model because their own model's account was paused. Absent on an older backend. */
   fallbacks?: QuestFallback[];
+  /** What a paused quest waits for: a spent LLM account, until when. Absent on an older backend. */
+  account_wait?: WorldAccountWait | null;
   xp: { agent_type: string; stat: string; xp: number }[];
   cost_usd: number;
   seconds: number | null;

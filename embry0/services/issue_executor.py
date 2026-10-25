@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -28,6 +30,7 @@ from embry0.orchestration.run_slots import RunSlot, RunSlots
 from embry0.safety.error_codes import ErrorCode
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services._executor_outcomes import _fold_auto_answers_into_context
+from embry0.services.account_waits import LOCAL_BUSY, REENROLL_RETRY, AccountWait, JobParked
 from embry0.services.areas import AREAS
 from embry0.services.healing.recorder import record_case_event
 from embry0.services.run_with import RunWith, apply_run_with, models_with
@@ -251,8 +254,15 @@ class IssueExecutor:
         llm_providers: tuple[str, ...] = (),
         llm_credential_kinds: dict[str, str] | None = None,
         model_fallbacks: dict[str, dict[str, Any]] | None = None,
+        account_waits: bool = False,
     ) -> dict[str, Any]:
-        """Build the graph config dict for LangGraph execution."""
+        """Build the graph config dict for LangGraph execution.
+
+        ``account_waits``: an agent run may park the job to wait for a spent
+        account (spec 2026-10-25), because the pipeline's graph resumes from
+        its checkpoint. False for the pipelines that cannot (qa, onboard,
+        pr-review): their runs fail as before when nothing is ready.
+        """
         # Read OAuth token so the resolver can validate credentials before
         # dispatching to the sandbox. The sandbox also injects it independently
         # via SandboxManager.create(), but the resolver checks it up-front.
@@ -343,6 +353,11 @@ class IssueExecutor:
                 # provider's agents run on instead, planned by the pre-check
                 # of this run. Empty: every agent runs its own model.
                 "model_fallbacks": dict(model_fallbacks or {}),
+                # Spent account waits (spec 2026-10-25): whether a run may park
+                # the job, and the account health that quarantines a spent
+                # account the moment a run finds it.
+                "account_waits": account_waits,
+                "credential_health": getattr(self, "_credential_health", None),
                 # Workspace-init strategies read allowlist/bounds off the app
                 # config (RAV-600).
                 "embry0_config": self._config,
@@ -859,6 +874,10 @@ class IssueExecutor:
                 # #307: stopped at a node boundary by a drain, not failed.
                 logger.info("job_stopped_for_shutdown", kind=kind, job_id=job_id)
                 return
+            if isinstance(exc, JobParked):
+                # Spent account waits: parked until its account is ready, not failed.
+                logger.info("job_stopped_for_account_wait", kind=kind, job_id=job_id, provider=exc.wait.provider)
+                return
             logger.error(
                 "background_task_failed",
                 kind=kind,
@@ -1123,7 +1142,15 @@ class IssueExecutor:
 
         logger.info("job_cancelled", job_id=job_id, actor=actor)
 
-    async def resume(self, issue_id: str | None, job_id: str, answers: Any, *, after_restart: bool = False) -> None:
+    async def resume(
+        self,
+        issue_id: str | None,
+        job_id: str,
+        answers: Any,
+        *,
+        after_restart: bool = False,
+        account_wait: AccountWait | None = None,
+    ) -> None:
         """Resume a paused pipeline with user answers using Command(resume=).
 
         ``issue_id`` is None for issue-less API-submitted jobs; issue-status
@@ -1133,6 +1160,12 @@ class IssueExecutor:
         ``running`` from its last checkpoint instead: there is no answer, the
         job and its issue already read as running, and a sandbox the proxies
         will not take back fails the job rather than pausing it.
+
+        ``account_wait`` (spent account waits, spec 2026-10-25) goes on with a
+        job the account-wait loop took back (it reads ``running``): from its
+        last checkpoint, or with the answer the parked resume was given. A
+        sandbox the proxies will not take back parks it again for a few
+        minutes.
 
         RAV-1406: like ``_run_workflow``, the terminal Linear outcome comment
         posts in the ``finally`` — resumed jobs used to finish silently
@@ -1151,8 +1184,9 @@ class IssueExecutor:
         prior_job_status: str | None = None
         prior_issue_status: str | None = None
         slot: RunSlot | None = None
+        from_checkpoint = after_restart or (account_wait is not None and answers is None)
         try:
-            if not after_restart:
+            if not after_restart and account_wait is None:
                 # Read before anything changes: a resume whose sandbox the proxies will
                 # not take back puts the job and issue back exactly as they were (#476).
                 # Best-effort: only that rare path uses it, so it must not change any other.
@@ -1183,7 +1217,7 @@ class IssueExecutor:
                 started.add(job_id)
 
             final_state, interrupted, interrupt_value = await self._execute_workflow_stream(
-                None if after_restart else Command(resume=answers),
+                None if from_checkpoint else Command(resume=answers),
                 issue_id,
                 job_id,
                 state_sink=streamed_state,
@@ -1204,6 +1238,12 @@ class IssueExecutor:
                 await self._cleanup_sandbox(final_state, job_id)
 
         except SandboxReenrollError as exc:
+            if account_wait is not None:
+                # Nothing ran; the checkpoint still holds the stopped node.
+                logger.warning("account_wait_reenroll_failed_parked_again", job_id=job_id, error=str(exc))
+                retry = replace(account_wait, until=datetime.now(UTC) + REENROLL_RETRY, watch=False)
+                await self._jobs.update(job_id, status="paused", account_wait=retry.record())
+                return
             if after_restart:
                 # #307: there is no pause to go back to; fail like any other error.
                 await self._fail_resume(issue_id, job_id, exc, final_state, streamed_state)
@@ -1277,6 +1317,39 @@ class IssueExecutor:
 
         return self._track_task(run(), kind="restart_resume", job_id=job_id, issue_id=issue_id, run_slot=False)
 
+    def go_on_after_account_wait(self, job: Mapping[str, Any]) -> asyncio.Task[Any]:
+        """Go on with a job its account wait held (spent account waits, spec 2026-10-25).
+
+        ``job`` is a row the account-wait loop claimed (it reads ``running``),
+        with the wait it held. A ``resume`` wait continues from the last
+        checkpoint, where the node that stopped runs again; a ``relaunch`` wait
+        (the job was parked before it started) starts it from its launch
+        record. The account pre-check runs first either way, so a job whose
+        account is still spent is parked again.
+        """
+        job_id = str(job["job_id"])
+        issue_id = job.get("issue_id")
+        wait = AccountWait.from_record(job.get("account_wait"))
+        if wait is not None and wait.reason == LOCAL_BUSY:
+            message = "Going on: trying the local model again."
+        elif wait is not None:
+            message = f"Going on: the {wait.provider} account is ready again."
+        else:
+            message = "Going on: the account it waited for is ready again."
+        if wait is None or wait.mode == "relaunch":
+            return self._track_task(
+                self._relaunch(job_id, dict(job.get("launch") or {}), message=message),
+                kind="account_wait_relaunch",
+                job_id=job_id,
+                issue_id=issue_id,
+            )
+
+        async def run() -> None:
+            await self._announce_recovery(job_id, message)
+            await self.resume(issue_id, job_id, wait.resume_with, account_wait=wait)
+
+        return self._track_task(run(), kind="account_wait_resume", job_id=job_id, issue_id=issue_id, run_slot=False)
+
     def relaunch(self, job: Mapping[str, Any]) -> asyncio.Task[Any]:
         """Start again, from the beginning, a job the previous orchestrator left
         ``pending`` or ``running`` before its graph began (#307), from the
@@ -1289,8 +1362,10 @@ class IssueExecutor:
             issue_id=job.get("issue_id"),
         )
 
-    async def _relaunch(self, job_id: str, launch: dict[str, Any]) -> None:
-        await self._announce_recovery(job_id, "Restarted: embry0 restarted before this job got going; it starts now.")
+    async def _relaunch(self, job_id: str, launch: dict[str, Any], *, message: str | None = None) -> None:
+        await self._announce_recovery(
+            job_id, message or "Restarted: embry0 restarted before this job got going; it starts now."
+        )
         runner = launch.get("runner")
         if runner == "qa":
             await self._run_qa_workflow(
@@ -1390,6 +1465,7 @@ class IssueExecutor:
     _cleanup_job_volumes = _executor_run._cleanup_job_volumes
     _load_merged_env_vars = _executor_run._load_merged_env_vars
     _execute_workflow_stream = _executor_run._execute_workflow_stream
+    account_wait_before_start = _executor_run._account_wait_before_start
     _forge_for = _executor_outcomes._forge_for
     _handle_interrupt = _executor_run._handle_interrupt
     _run_workflow = _executor_run._run_workflow

@@ -29,6 +29,7 @@ import { Badge } from "@/components/ui/Badge";
 import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
 import { AutoAnswerCard } from "@/components/jobs/AutoAnswerCard";
 import { AgentCard } from "@/components/jobs/AgentCard";
+import { AccountWaitBanner } from "@/components/jobs/AccountWaitBanner";
 import { PausedBanner } from "@/components/jobs/PausedBanner";
 import { PartyStrip } from "@/components/jobs/PartyStrip";
 import { JobHud } from "@/components/jobs/JobHud";
@@ -281,7 +282,10 @@ export function JobDetailPage() {
       <OnboardOutcomeCard job={job} />
       <AgentFailuresCard failures={job.agent_failures} />
       {job.status === "expired" && <div className="px-4 py-3 rounded-lg border border-border bg-card text-sm text-muted-foreground">Job expired — sandbox discarded</div>}
-      {job.status === "paused" && (
+      {job.status === "paused" && job.account_wait && (
+        <AccountWaitBanner wait={job.account_wait} onTryNow={() => handleResume("continue_retrying")} onCancel={handleDiscard} />
+      )}
+      {job.status === "paused" && !job.account_wait && (
         <PausedBanner jobId={job.job_id} reason={interruptData?.reason || job.current_stage || "paused"} retryCount={interruptData?.retry_count} latestReview={interruptData?.latest_review} prUrl={displayPrUrl || undefined} pausedAt={job.finished_at || job.started_at || undefined} onResume={handleResume} onDiscard={handleDiscard} />
       )}
       {job.status === "awaiting_input" && <AwaitingInputCard jobInputs={jobInputs ?? []} jobId={job.job_id} />}

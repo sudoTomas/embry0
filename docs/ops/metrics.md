@@ -119,7 +119,8 @@ window (`no_issue` / `proposed` / `deferred` / `skipped_duplicate` /
 `no_change`). `last_verdict_tick_timestamp_seconds` — the dead-man's gauge —
 moves on those and on `skipped_quiet`, which found too little to judge and
 is the loop finding nothing; `skipped_backlog`, `skipped_analysis_cap`,
-`skipped_unparseable` and `error` move neither. Both are seeded from
+`skipped_unparseable`, `skipped_account_paused` (the analysis would only have
+waited for a spent LLM account) and `error` move neither. Both are seeded from
 `watcher_runs` at startup with the same sets.
 
 ## Healing cases (the ledger)

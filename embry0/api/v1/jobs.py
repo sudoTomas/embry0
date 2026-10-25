@@ -292,6 +292,9 @@ async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(
     job = await jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("account_wait") and job.get("status") != "paused":
+        # Spent account waits: only a paused job waits; a cancelled one keeps the stale record.
+        job["account_wait"] = None
     # Per-agent cost breakdown (E7 lean variant — aggregates existing traces rows).
     traces_repo = getattr(request.app.state, "traces_repo", None)
     if traces_repo is not None:
@@ -544,6 +547,20 @@ async def resume_job(
         raise HTTPException(status_code=409, detail=f"Job is {job['status']}, not paused")
 
     executor = request.app.state.issue_executor
+    if job.get("account_wait"):
+        # Spent account waits (spec 2026-10-25): a job parked for its account
+        # stops waiting on "abandon" and otherwise goes on now ("Try now").
+        # One whose account is still spent is parked again by the pre-check.
+        if req.choice == "abandon":
+            await executor.cancel_job(job_id, actor=request_actor(request))
+            return {"job_id": job_id, "status": "cancelled", "choice": "abandon"}
+        if executor.draining:
+            raise HTTPException(status_code=503, detail="embry0 is shutting down; try again once it is back")
+        if not await jobs.claim_account_wait(job_id):
+            raise HTTPException(status_code=409, detail="Job is no longer waiting for an account")
+        executor.go_on_after_account_wait(job)
+        return {"job_id": job_id, "status": "resuming", "choice": "account_ready"}
+
     # issue_id is None for issue-less, API-submitted jobs (POST /jobs with a
     # task string). The workflow tolerates that on first run (submit_job
     # dispatches with a null issue_id from create_job) and
