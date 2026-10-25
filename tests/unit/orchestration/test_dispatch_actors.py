@@ -34,7 +34,7 @@ async def test_exempt_actors_still_hit_the_spend_caps():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "actor",
-    ["linear-reconciler", dispatch_actors.PR_COMMENT, dispatch_actors.CONTEXT_AUDIT, "embry0:something-new", "alex"],
+    ["linear-reconciler", dispatch_actors.PR_COMMENT, dispatch_actors.AUTO_ACCEPT, "embry0:something-new", "alex"],
 )
 async def test_everything_else_is_rate_limited(actor):
     """Exemption is an exact closed set: an autonomous actor (the reconciler)
@@ -45,6 +45,14 @@ async def test_everything_else_is_rate_limited(actor):
     )
     assert decision.allowed is False
     assert decision.limit == "rate_limit"
+
+
+def test_the_context_audit_schedule_skips_the_hourly_limit_and_keeps_the_spend_caps():
+    """Its per-tick cap and per-job budget brake it; the hourly limit refused jobs the schedule had just started."""
+    assert dispatch_actors.is_rate_limit_exempt(dispatch_actors.CONTEXT_AUDIT)
+    from embry0.services.context_audit import ACTOR
+
+    assert ACTOR == dispatch_actors.CONTEXT_AUDIT
 
 
 def test_the_reconciler_actor_is_the_one_documented_here():

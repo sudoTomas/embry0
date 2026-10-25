@@ -76,6 +76,16 @@ def test_screaming_snake_constants_are_not_masked():
     assert "MAX_CONNECTIONS_EXCEEDED_HARD_LIMIT" in out
 
 
+def test_upper_case_record_ids_are_masked_and_codes_kept():
+    """One recurring warning named a different order number each time and split
+    into a signature per order: 175 of 218 new signatures in three days."""
+    a = normalize_line("WARN lookup fallback: invalid order id format: NF42610190220.2")
+    b = normalize_line("WARN lookup fallback: invalid order id format: N1D26102002095.1")
+    assert a == b == "WARN lookup fallback: invalid order id format: <id>.<n>"
+    for code in ("E11000 duplicate key", "SHA256 mismatch", "PGRST002 schema cache", "HTTP2 stream reset"):
+        assert normalize_line(code) == code, code
+
+
 def test_email_addresses_are_masked():
     """Clustering: one fault per mailbox is one fault. Exposure: the ranked
     table a model reads must carry no addresses (#294)."""

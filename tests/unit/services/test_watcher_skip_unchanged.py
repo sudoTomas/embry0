@@ -281,3 +281,98 @@ def test_service_reads_the_mode_from_a_plain_namespace() -> None:
     assert svc._skip_unchanged_mode() == "on"
     svc._config = SimpleNamespace()
     assert svc._skip_unchanged_mode() == "shadow"
+
+
+# ---- signatures an analysis found clean a moment ago (spec 2026-10-25) -----
+
+
+def _regressed(svc_sig: str) -> dict[str, SignatureRow]:
+    """A known signature back after more than the regression silence: notable on its own."""
+    return {svc_sig: _row(svc_sig, last_window_count=30, last_seen_at=datetime.now(UTC) - timedelta(hours=8))}
+
+
+async def _window_signature(svc) -> str:
+    from embry0.services.log_signatures import cluster_entries
+
+    entries = await svc._fetch_log_entries(WINDOW_START, WINDOW_START + timedelta(hours=1))
+    return cluster_entries(entries)[0].signature_id
+
+
+def test_skipped_known_is_recordable_and_consumes_its_window() -> None:
+    assert "skipped_known" in WATCHER_ACTIONS and "skipped_known" in ANALYSED_ACTIONS
+
+
+@pytest.mark.asyncio
+async def test_a_returning_signature_found_clean_lately_is_not_paid_for_again() -> None:
+    """A known warning that comes and goes reads as regressed on each return; an
+    analysis that found nothing in it within the hours holds it."""
+    svc = _svc("on")
+    sig = await _window_signature(svc)
+    svc._signatures.rows_for = AsyncMock(return_value=_regressed(sig))
+    svc._signatures.clean_since = AsyncMock(return_value={sig: 30})
+
+    out = await svc.run_once()
+    assert out["action"] == "skipped_known", out
+    svc._jobs.create.assert_not_awaited()
+    since = svc._signatures.clean_since.await_args.kwargs["since"]
+    assert timedelta(hours=23) < datetime.now(UTC) - since < timedelta(hours=25), "24 h is the default"
+
+
+@pytest.mark.asyncio
+async def test_a_clean_signature_that_grew_past_the_spike_factor_is_analysed() -> None:
+    """The analysis read it at 5 lines; 30 now is more than 3x that: look again."""
+    svc = _svc("on")
+    sig = await _window_signature(svc)
+    svc._signatures.rows_for = AsyncMock(return_value=_regressed(sig))
+    svc._signatures.clean_since = AsyncMock(return_value={sig: 5})
+    svc._signatures.mark_analysed = AsyncMock()
+
+    out = await svc.run_once()
+    assert out["action"] == "no_issue"
+    svc._jobs.create.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_analysis_memory_analyses_and_zero_hours_turns_it_off() -> None:
+    for svc_cfg, clean in (
+        ({}, AsyncMock(side_effect=RuntimeError("db gone"))),
+        ({"watcher_skip_known_hours": 0}, None),
+    ):
+        svc = _svc("on", **svc_cfg)
+        sig = await _window_signature(svc)
+        svc._signatures.rows_for = AsyncMock(return_value=_regressed(sig))
+        svc._signatures.clean_since = clean or AsyncMock(return_value={sig: 30})
+        svc._signatures.mark_analysed = AsyncMock()
+
+        out = await svc.run_once()
+        assert out["action"] == "no_issue", svc_cfg
+        if clean is None:
+            svc._signatures.clean_since.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_analysis_remembers_what_it_found_in_each_signature() -> None:
+    svc = _svc("on")
+    sig = await _window_signature(svc)
+    svc._signatures.rows_for = AsyncMock(return_value=_regressed(sig))
+    svc._signatures.clean_since = AsyncMock(return_value={})
+    svc._signatures.mark_analysed = AsyncMock()
+
+    out = await svc.run_once()
+    assert out["action"] == "no_issue"
+    call = svc._signatures.mark_analysed.await_args
+    assert call.args[0] == {sig: len(_LINES)}
+    assert call.kwargs["verdict"] == "no_issue" and call.kwargs["repo"] == "owner/repo"
+
+
+@pytest.mark.asyncio
+async def test_in_shadow_a_known_window_is_logged_and_still_analysed() -> None:
+    svc = _svc("shadow")
+    sig = await _window_signature(svc)
+    svc._signatures.rows_for = AsyncMock(return_value=_regressed(sig))
+    svc._signatures.clean_since = AsyncMock(return_value={sig: 30})
+    svc._signatures.mark_analysed = AsyncMock()
+
+    out = await svc.run_once()
+    assert out["action"] == "no_issue"
+    svc._jobs.create.assert_awaited()

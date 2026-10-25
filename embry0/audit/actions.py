@@ -107,6 +107,8 @@ AuditAction = Literal[
     "watcher_stack_updated",
     "watcher_stack_deleted",
     "case_accepted",
+    # A watcher draft the stack's auto-accept bar accepted (spec 2026-10-25).
+    "case_auto_accepted",
     "case_closed",
     "merge.decided",
     # Owner proposals (spec 2026-10-24)
@@ -194,6 +196,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "watcher_stack_updated": "Watcher stack updated",
     "watcher_stack_deleted": "Watcher stack deleted",
     "case_accepted": "Case accepted",
+    "case_auto_accepted": "Case auto-accepted",
     "case_closed": "Case closed",
     "merge.decided": "Merge decided",
     "proposal.answered": "Proposal answered",

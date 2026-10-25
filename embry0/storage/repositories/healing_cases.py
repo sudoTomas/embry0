@@ -707,6 +707,20 @@ class HealingCasesRepository:
             "closed": {r["resolution_path"]: int(r["count"]) for r in closed},
         }
 
+    async def tracked_watcher_drafts(self, *, repo: str | None = None) -> list[dict[str, Any]]:
+        """Watcher drafts waiting at stage ``tracked``, oldest first: what auto-accept weighs (spec 2026-10-25)."""
+        rows = await self._db.fetch(
+            """
+            SELECT id, repo, title, origin, stage, severity, occurrence_count, tracker, tracker_key,
+                   issue_id, detected_at, tracked_at
+              FROM healing_cases
+             WHERE origin = 'watcher' AND stage = 'tracked' AND ($1::text IS NULL OR repo = $1)
+             ORDER BY COALESCE(tracked_at, detected_at)
+            """,
+            repo,
+        )
+        return [dict(r) for r in rows]
+
     async def open_unaccepted_watcher_tracker_keys(self, *, days: int | None, repo: str | None = None) -> list[str]:
         """Tracker keys of open watcher drafts.
 

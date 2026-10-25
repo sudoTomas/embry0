@@ -217,3 +217,19 @@ async def test_samples_are_stored_as_a_json_array(db_with_migrations) -> None:
         "SELECT sample_lines->>0 FROM log_signatures WHERE signature_id = $1", clusters[0].signature_id
     )
     assert first == "ERROR boom 0"
+
+
+async def test_an_analysis_verdict_is_remembered_per_signature(db_with_migrations) -> None:
+    """Spec 2026-10-25: the watcher's novelty gate reads back what the last analysis found, and when."""
+    repo = LogSignaturesRepository(db_with_migrations)
+    clean = cluster_entries(_entries("ERROR quiet", [0, 30, 60]))[0]
+    noisy = cluster_entries(_entries("ERROR loud", [0]))[0]
+    await repo.record_window([clean, noisy], repo="o/r")
+
+    await repo.mark_analysed({clean.signature_id: 3, noisy.signature_id: 1}, repo="o/r", verdict="no_issue", at=_T0)
+    await repo.mark_analysed({noisy.signature_id: 1}, repo="o/r", verdict="proposed", at=_T0 + timedelta(minutes=5))
+
+    found = await repo.clean_since([clean.signature_id, noisy.signature_id], repo="o/r", since=_T0 - timedelta(hours=1))
+    assert found == {clean.signature_id: 3}, "a signature whose last analysis proposed is not clean"
+    assert await repo.clean_since([clean.signature_id], repo="o/r", since=_T0 + timedelta(minutes=1)) == {}
+    assert await repo.clean_since([clean.signature_id], repo="other/r", since=_T0 - timedelta(hours=1)) == {}

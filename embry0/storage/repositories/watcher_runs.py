@@ -37,6 +37,11 @@ WATCHER_ACTIONS = frozenset(
         # skipped_quiet (too few lines to judge) and from no_issue (a model did
         # read it and found nothing).
         "no_change",
+        # Spec 2026-10-25: every notable signature in the window was read by an
+        # analysis within the stack's skip_known_hours that found no issue (or
+        # has an open case), and none outgrew what that analysis read. No model
+        # was paid. Distinct from no_change, where nothing was notable at all.
+        "skipped_known",
         "error",
     }
 )
@@ -63,7 +68,8 @@ WATCHER_ACTIONS = frozenset(
 # The risk this creates — a bug that turned every tick into no_change would
 # keep the dead-man quiet — is covered by Embry0WatcherNeverAnalyses24h in
 # ~/containers/monitoring, which watches for no PAID analysis at all.
-ANALYSED_ACTIONS = frozenset({"no_issue", "proposed", "deferred", "skipped_duplicate", "no_change"})
+# skipped_known consumes its window for the same reasons as no_change.
+ANALYSED_ACTIONS = frozenset({"no_issue", "proposed", "deferred", "skipped_duplicate", "no_change", "skipped_known"})
 # Ticks on which the loop REACHED A VERDICT about its stack — the set the
 # dead-man gauge (embry0_watcher_last_verdict_tick_timestamp_seconds, hence
 # Embry0WatcherNoVerdict3h) and its startup seed advance on. A superset of

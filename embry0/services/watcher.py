@@ -75,6 +75,7 @@ from embry0.services.signature_delta import (
     DEFAULT_REGRESSION_SILENCE_SECONDS,
     DEFAULT_SPIKE_FACTOR,
     DEFAULT_SPIKE_MIN_COUNT,
+    SignatureChange,
     WindowDelta,
     classify_window,
 )
@@ -419,6 +420,13 @@ def _fresh_entries(entries: Sequence[LogEntry], prior: dict[str, Any]) -> list[L
     return fresh
 
 
+def _truthy(value: Any) -> bool:
+    """A boolean setting as a stack row or the environment may hold it."""
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return value is True
+
+
 async def _no_refusal(_repo: str) -> None:
     return None
 
@@ -456,8 +464,13 @@ class WatcherService:
         # Spec 2026-09-29 §3.1: the forge reads resolve through the registry;
         # None keeps the pre-registry env lookup.
         credential_resolver: Any = None,
+        # Spec 2026-10-25: accepts this stack's tracked drafts that clear its
+        # auto-accept bar, ``(repo, bar) -> accepted``. None: nothing is
+        # accepted without a person, whatever the setting says.
+        auto_acceptor: Any = None,
     ) -> None:
         self._config = config
+        self._auto_acceptor = auto_acceptor
         self._credential_resolver = credential_resolver
         self._metrics = metrics or NULL_METRICS
         self._jobs = jobs_repo
@@ -658,10 +671,10 @@ class WatcherService:
         mode = str(getattr(self._config, "watcher_skip_unchanged_mode", "shadow") or "shadow").strip().lower()
         return mode if mode in {"off", "shadow", "on"} else "off"
 
-    async def _unchanged_window(self, delta: WindowDelta | None) -> str | None:
-        """Why this window need not be analysed, or ``None`` if it must be.
+    async def _unchanged_window(self, delta: WindowDelta | None) -> tuple[str, str] | None:
+        """The action and why this window need not be analysed, or ``None`` if it must be.
 
-        Two ways a window earns a skip:
+        Three ways a window earns a skip:
 
         * **Nothing is notable.** Every signature is one this repo has seen at
           about this volume recently.
@@ -670,6 +683,12 @@ class WatcherService:
           instance the tick right after a fault was filed. Paying a model to
           re-describe a finding already in the ledger buys nothing; #290's
           dedupe would discard the proposal afterwards anyway, having paid.
+        * **Everything notable was read a moment ago** (spec 2026-10-25). A
+          signature an analysis found no issue in within the stack's
+          ``skip_known_hours``, whose volume has not outgrown what that
+          analysis read by the spike factor. A known warning that comes and
+          goes reads as ``regressed`` on every return, and was paid for each
+          time. That skip is ``skipped_known``; the other two ``no_change``.
 
         Returns a human-readable reason so the run row says *why* it skipped;
         a bare `no_change` with no detail is the sort of row that becomes
@@ -683,31 +702,90 @@ class WatcherService:
             return None
 
         counts = delta.counts()
+        action = "no_change"
         if not delta.has_notable:
             reason = f"no new, spiking or regressed signature in {len(delta.changes)} cluster(s)"
         else:
             notable = delta.notable_changes
-            if not self._ledger_on():
-                return None
-            try:
-                open_ids = await self._cases.open_signature_ids(repo=self._repo or None)
-            except Exception:
-                # A ledger that cannot be read is not evidence that nothing
-                # changed. Analyse — the expensive direction is the safe one.
-                logger.warning("watcher_open_signatures_unreadable", exc_info=True)
-                return None
+            open_ids: set[str] = set()
+            if self._ledger_on():
+                try:
+                    open_ids = await self._cases.open_signature_ids(repo=self._repo or None)
+                except Exception:
+                    # A ledger that cannot be read is not evidence that nothing
+                    # changed. Analyse — the expensive direction is the safe one.
+                    logger.warning("watcher_open_signatures_unreadable", exc_info=True)
+                    return None
             unheld = [c for c in notable if c.signature_id not in open_ids]
-            if unheld:
+            known = await self._recently_clean(unheld)
+            if any(c.signature_id not in known for c in unheld):
                 return None
-            reason = f"all {len(notable)} notable signature(s) already have an open case"
+            if known:
+                action = "skipped_known"
+                hours = int(getattr(self._config, "watcher_skip_known_hours", 24) or 0)
+                reason = f"{len(known)} notable signature(s) found clean by an analysis in the last {hours} h"
+                if len(notable) > len(known):
+                    reason += f", {len(notable) - len(known)} with an open case"
+            else:
+                reason = f"all {len(notable)} notable signature(s) already have an open case"
 
         logger.info(
             "watcher_skip_shadow" if self._skip_unchanged_mode() == "shadow" else "watcher_skip_unchanged",
             mode=self._skip_unchanged_mode(),
+            action=action,
             reason=reason,
             **counts,
         )
-        return reason
+        return action, reason
+
+    async def _recently_clean(self, changes: Sequence[SignatureChange]) -> set[str]:
+        """The signatures among ``changes`` an analysis found no issue in lately, at no more than spike volume since.
+
+        Lately is the stack's ``skip_known_hours`` (0: never). A memory that
+        cannot be read holds nothing, so the window is analysed: the
+        expensive direction is the safe one.
+        """
+        hours = int(getattr(self._config, "watcher_skip_known_hours", 24) or 0)
+        if hours <= 0 or self._signatures is None or not changes:
+            return set()
+        try:
+            clean = await self._signatures.clean_since(
+                [c.signature_id for c in changes], repo=self._repo or None, since=self._now() - timedelta(hours=hours)
+            )
+        except Exception:
+            logger.warning("watcher_analysed_signatures_unreadable", exc_info=True)
+            return set()
+        factor = float(getattr(self._config, "watcher_spike_factor", DEFAULT_SPIKE_FACTOR))
+        return {
+            c.signature_id
+            for c in changes
+            if c.signature_id in clean and c.count <= max(clean[c.signature_id], 1) * factor
+        }
+
+    async def _remember_analysed(self, clusters: Sequence[LogCluster], verdict: str) -> None:
+        """Record what this window's analysis found in each of its signatures, for the gate above. Best effort."""
+        if self._signatures is None or not clusters:
+            return
+        try:
+            await self._signatures.mark_analysed(
+                {c.signature_id: c.count for c in clusters}, repo=self._repo or None, verdict=verdict, at=self._now()
+            )
+        except Exception:
+            logger.warning("watcher_analysed_mark_failed", exc_info=True)
+
+    async def _auto_accept_drafts(self) -> None:
+        """Accept the stack's tracked drafts that clear its auto-accept bar (spec 2026-10-25). Never costs the tick."""
+        if self._auto_acceptor is None or not _truthy(getattr(self._config, "watcher_auto_accept", False)):
+            return
+        from embry0.services.watcher_auto_accept import AutoAcceptBar
+
+        try:
+            accepted = await self._auto_acceptor(self._repo, AutoAcceptBar.from_config(self._config))
+        except Exception:
+            logger.warning("watcher_auto_accept_failed", stack=self._repo, exc_info=True)
+            return
+        if accepted:
+            logger.info("watcher_auto_accepted", stack=self._repo, accepted=accepted)
 
     async def _record_log_signatures(
         self,
@@ -1563,6 +1641,9 @@ class WatcherService:
                 # check, so a human cancelling a draft frees its slot on the
                 # very next tick instead of after the 7-day age-out.
                 await self._reconcile_drafts(window_days)
+                # After the reconcile, so a draft a person cancelled since the
+                # last tick is closed before the bar is asked about it.
+                await self._auto_accept_drafts()
 
                 await self._sync_deploys(window_end)
 
@@ -1663,7 +1744,8 @@ class WatcherService:
                 # model to read the window again.
                 skip = await self._unchanged_window(delta)
                 if skip is not None and self._skip_unchanged_mode() == "on":
-                    return await record("no_change", log_lines=len(lines), detail=skip)
+                    action, reason = skip
+                    return await record(action, log_lines=len(lines), detail=reason)
 
                 # RAV-1067: syntactic fingerprints can't catch a reworded
                 # re-detection of a still-live issue — tell the analysis
@@ -1706,6 +1788,9 @@ class WatcherService:
                             logger.warning("watcher_pattern_upsert_failed", fingerprint=slug, exc_info=True)
 
                 proposal = verdict["proposal"]
+                # What the gate reads next tick: a clean window's signatures are
+                # held for a while; a proposing one's are not.
+                await self._remember_analysed(clusters, "no_issue" if proposal is None else "proposed")
                 if proposal is None:
                     return await record("no_issue", log_lines=len(lines), rationale=verdict["rationale"])
 

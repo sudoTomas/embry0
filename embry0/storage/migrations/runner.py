@@ -3131,6 +3131,18 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             CHECK (kind IN ('case', 'issue', 'finding', 'ticket', 'ci', 'alert', 'flaky', 'review'));
         """,
     ),
+    (
+        111,
+        "log_signatures.analysed_at/analysed_verdict/analysed_count: what the last analysis found in a signature (docs/superpowers/specs/2026-10-25-watcher-efficiency-design.md)",
+        # The watcher's novelty gate: a signature an analysis read and found
+        # nothing in is not paid for again until the per-stack hours pass, or
+        # its volume outgrows what that analysis read.
+        """
+        ALTER TABLE log_signatures ADD COLUMN IF NOT EXISTS analysed_at TIMESTAMPTZ;
+        ALTER TABLE log_signatures ADD COLUMN IF NOT EXISTS analysed_verdict TEXT;
+        ALTER TABLE log_signatures ADD COLUMN IF NOT EXISTS analysed_count INTEGER;
+        """,
+    ),
 ]
 
 
