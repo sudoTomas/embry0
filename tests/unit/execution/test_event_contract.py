@@ -12,8 +12,13 @@ REPO = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = REPO / "docs" / "contracts" / "events.json"
 CONTRACT_MODULE = REPO / "embry0" / "execution" / "events.py"
 EVENT_VALUES = {member.value for member in EventType}
-# MCP content blocks ({"type": "text", ...}) are the MCP wire shape, not events.
-SCAN_EXEMPT = {"embry0/agents/mcp_client.py", "embry0/sandbox/context_mcp.py"}
+# MCP content blocks ({"type": "text", ...}) are the MCP wire shape, not events, and so
+# is the Anthropic API error body a model proxy answers with ({"type": "error", ...}).
+SCAN_EXEMPT = {
+    "embry0/agents/mcp_client.py",
+    "embry0/sandbox/context_mcp.py",
+    "embry0/execution/proxy/model_request.py",
+}
 
 
 def test_contract_file_matches_the_code() -> None:

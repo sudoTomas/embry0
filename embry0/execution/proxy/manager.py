@@ -251,6 +251,7 @@ class ProxyManager:
         local_llm_upstream: str = "",
         local_llm_api_key: str = "",
         local_llm_max_request_bytes: int = 0,
+        model_proxy_max_request_bytes: int = 0,
     ) -> None:
         """Start the credential proxies as DinD containers.
 
@@ -266,6 +267,9 @@ class ProxyManager:
         ``local_llm_upstream`` launches the local-llm-proxy, which forwards a
         sandbox's model calls to that one API root (the operator's model
         server); ``local_llm_api_key`` is the key that server checks, if any.
+
+        ``model_proxy_max_request_bytes`` caps a request body at the auth- and
+        xai-proxy (``model_request``); 0 keeps their default.
         """
         if self._http is None:
             self._http = aiohttp.ClientSession()
@@ -382,6 +386,10 @@ class ProxyManager:
         self.presign_proxy_url = "http://presign-proxy:9104"
         logger.info("presign_proxy_started", upstream=_resolve_backend_url("orchestrator", 8000))
 
+        # The model proxies' request cap: a long agent conversation is megabytes.
+        model_cap = (
+            {"MAX_REQUEST_BYTES": str(model_proxy_max_request_bytes)} if model_proxy_max_request_bytes > 0 else {}
+        )
         if anthropic_api_key and enable_auth_proxy:
             await self._launch(
                 name="auth-proxy",
@@ -390,6 +398,7 @@ class ProxyManager:
                     "ANTHROPIC_API_KEY": anthropic_api_key,
                     "LISTEN_PORT": "9100",
                     "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
+                    **model_cap,
                 },
                 attach_internet=True,
             )
@@ -408,6 +417,7 @@ class ProxyManager:
                     "PROXY_TYPE": "xai",
                     "LISTEN_PORT": "9106",
                     "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
+                    **model_cap,
                 },
                 attach_internet=True,
             )

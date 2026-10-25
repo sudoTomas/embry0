@@ -3,10 +3,12 @@
 Dispatches to one of the stateless proxy apps based on PROXY_TYPE env:
 - git     -> git_proxy.create_git_proxy_app(GITHUB_TOKEN, PROXY_ADMIN_TOKEN, ca_pem=GITLAB_CA_PEM)
 - github  -> github_proxy.create_github_proxy_app(GITHUB_TOKEN, PROXY_ADMIN_TOKEN)
-- auth    -> auth_proxy.create_auth_proxy_app(ANTHROPIC_API_KEY, PROXY_ADMIN_TOKEN)
+- auth    -> auth_proxy.create_auth_proxy_app(ANTHROPIC_API_KEY, PROXY_ADMIN_TOKEN,
+             max_request_bytes=MAX_REQUEST_BYTES)
 - gitlab  -> gitlab_proxy.create_gitlab_proxy_app(GITLAB_TOKEN, PROXY_ADMIN_TOKEN,
              api_base=GITLAB_API_BASE, ca_pem=GITLAB_CA_PEM)  # spec 1A 3.2
-- xai     -> xai_proxy.create_xai_proxy_app(PROXY_ADMIN_TOKEN)  # access token pushed at runtime
+- xai     -> xai_proxy.create_xai_proxy_app(PROXY_ADMIN_TOKEN,
+             max_request_bytes=MAX_REQUEST_BYTES)  # access token pushed at runtime
 - minio   -> minio_proxy.create_minio_proxy_app(UPSTREAM_URL)
 - presign -> presign_proxy.create_presign_proxy_app(UPSTREAM_URL)
 - local_llm -> local_llm_proxy.create_local_llm_proxy_app(UPSTREAM_URL, PROXY_ADMIN_TOKEN,
@@ -35,6 +37,7 @@ from embry0.execution.proxy.git_proxy import create_git_proxy_app
 from embry0.execution.proxy.github_proxy import create_github_proxy_app
 from embry0.execution.proxy.local_llm_proxy import DEFAULT_MAX_REQUEST_BYTES, create_local_llm_proxy_app
 from embry0.execution.proxy.minio_proxy import create_minio_proxy_app
+from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES as MODEL_MAX_REQUEST_BYTES
 from embry0.execution.proxy.presign_proxy import create_presign_proxy_app
 from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
 from embry0.execution.tls import build_ssl_context
@@ -143,11 +146,17 @@ def build_app_from_env() -> web.Application:
             ca_pem=_gitlab_ca_pem(),
         )
     if proxy_type == "auth":
-        return create_auth_proxy_app(_require_env("ANTHROPIC_API_KEY"), admin_token)
+        return create_auth_proxy_app(
+            _require_env("ANTHROPIC_API_KEY"),
+            admin_token,
+            max_request_bytes=int(os.environ.get("MAX_REQUEST_BYTES") or MODEL_MAX_REQUEST_BYTES),
+        )
     if proxy_type == "xai":
         # No static credential: the SuperGrok access token is pushed at runtime via
         # /admin/token by the orchestrator's refresher.
-        return create_xai_proxy_app(admin_token)
+        return create_xai_proxy_app(
+            admin_token, max_request_bytes=int(os.environ.get("MAX_REQUEST_BYTES") or MODEL_MAX_REQUEST_BYTES)
+        )
     if proxy_type == "local_llm":
         # The operator's own model server: one upstream, its key held here.
         return create_local_llm_proxy_app(

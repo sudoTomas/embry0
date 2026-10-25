@@ -1481,6 +1481,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         local_llm_upstream=config.local_llm_upstream,
         local_llm_api_key=config.local_llm_api_key,
         local_llm_max_request_bytes=config.local_llm_max_request_bytes,
+        model_proxy_max_request_bytes=config.model_proxy_max_request_bytes,
     )
 
     # #554, #568: a sandbox may reach the proxies just launched and no other

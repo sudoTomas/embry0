@@ -646,6 +646,10 @@ class Embry0Config(BaseSettings):
     local_llm_max_request_bytes: Annotated[int, NOT_SECRET] = 8 * 1024 * 1024
     local_llm_context_tokens: Annotated[int, NOT_SECRET] = 0
     local_llm_slot_wait_seconds: Annotated[int, NOT_SECRET] = 900
+    # The largest model request the xai- and auth-proxy forward. Every agent
+    # turn resends the whole conversation, and a 300k-token prompt is more
+    # than a megabyte of JSON. Over it, the run ends as ERR_CONTEXT_WINDOW_EXCEEDED.
+    model_proxy_max_request_bytes: Annotated[int, NOT_SECRET] = 32 * 1024 * 1024
 
     xai_proxy_enabled: bool = False
     xai_credential_path: Annotated[str, NOT_SECRET] = "/data/embry0/xai_credential.enc"
