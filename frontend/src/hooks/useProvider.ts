@@ -5,7 +5,10 @@ import {
   testProviderConnection,
   fetchModelsCatalog,
   testCatalogProvider,
+  fetchProviderUsage,
 } from "@/api/provider";
+import { addProviderKey } from "@/api/credentials";
+import type { LlmProviderName } from "@/lib/llmProviders";
 import type { ProviderConfigUpdate } from "@/lib/types/provider";
 
 export function useProviderConfig() {
@@ -47,5 +50,30 @@ export function useTestCatalogProvider() {
     mutationFn: (name: string) => testCatalogProvider(name),
     // The test is audited and GET /config/models reports it back as last_probe.
     onSuccess: () => qc.invalidateQueries({ queryKey: ["config", "models"] }),
+  });
+}
+
+/** What a provider says its key has spent (OpenRouter); read every five minutes, as the server keeps it. */
+export function useProviderUsage(name: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["config", "providers", name, "usage"],
+    queryFn: () => fetchProviderUsage(name),
+    enabled,
+    staleTime: 300_000,
+    refetchInterval: 300_000,
+  });
+}
+
+/** Store a key from a provider's card and make it the provider's global binding. */
+export function useAddProviderKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ provider, ...body }: { provider: LlmProviderName; secret: string; label: string; baseUrl?: string }) =>
+      addProviderKey(provider, body),
+    onSuccess: (_created, { provider }) => {
+      qc.invalidateQueries({ queryKey: ["config", "models"] });
+      qc.invalidateQueries({ queryKey: ["config", "providers", provider, "usage"] });
+      qc.invalidateQueries({ queryKey: ["credentials"] });
+    },
   });
 }

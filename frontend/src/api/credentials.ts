@@ -13,6 +13,7 @@ import type {
   XaiDeviceLoginPoll,
   XaiDeviceLoginStarted,
 } from "@/lib/types/credentials";
+import type { LlmProviderName } from "@/lib/llmProviders";
 
 export async function fetchCredentials(): Promise<Credential[]> {
   const { data } = await api.get<Credential[]>("/credentials");
@@ -117,4 +118,28 @@ export async function pollXaiDeviceLogin(loginId: string): Promise<XaiDeviceLogi
 export async function importEnvCredentials(replace: boolean): Promise<ImportEnvReport> {
   const { data } = await api.post<ImportEnvReport>("/credentials/import-env", { replace });
   return data;
+}
+
+/**
+ * A provider's key from its LLM Providers card: stored, then made the provider's global
+ * binding (in place of the global binding it had), so every job without a repository
+ * binding runs on it. Two calls the Credentials page also makes, in one step.
+ */
+export async function addProviderKey(
+  provider: LlmProviderName,
+  body: { secret: string; label: string; baseUrl?: string },
+): Promise<Credential> {
+  const created = await createCredential({
+    kind: "llm_api_key",
+    provider,
+    label: body.label,
+    secret: body.secret,
+    ...(body.baseUrl ? { metadata: { base_url: body.baseUrl } } : {}),
+  });
+  const current = await fetchScopedBindings("global", "");
+  const kept = current
+    .filter((b) => !(b.role === "llm" && b.provider === provider))
+    .map((b) => ({ credential_id: b.credential_id, role: b.role, pinned: b.pinned, priority: b.priority }));
+  await setScopedBindings("global", "", [...kept, { credential_id: created.id, role: "llm" }]);
+  return created;
 }
