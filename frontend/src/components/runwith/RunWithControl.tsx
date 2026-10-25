@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import type { RunWith, RunWithKey } from "@/api/runWith";
+import { ModelSelect } from "@/components/models/ModelSelect";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { useModels } from "@/hooks/useModels";
@@ -80,14 +81,15 @@ function RunWithFields({
     <div id={`${id}-fields`} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <div className="space-y-1">
         <Label htmlFor={`${id}-model`}>Model</Label>
-        <Select id={`${id}-model`} value={value.model ?? ""} onChange={(e) => setModel(e.target.value)}>
-          <option value="">Each agent's own model</option>
-          {models.map((model) => (
-            <option key={model} value={model}>
-              {model} ({providerLabel(providerOf(model))})
-            </option>
-          ))}
-        </Select>
+        <ModelSelect
+          id={`${id}-model`}
+          value={value.model ?? ""}
+          onChange={(e) => setModel(e.target.value)}
+          models={models}
+          providers={providers}
+          leading={<option value="">Each agent's own model</option>}
+          labelOf={(model) => `${model} (${providerLabel(providerOf(model))})`}
+        />
       </div>
       <div className="space-y-1">
         <Label htmlFor={`${id}-key`}>Key</Label>

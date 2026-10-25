@@ -324,6 +324,7 @@ async def run_tool_loop(
                             output_tokens=usage.output_tokens,
                             cache_read_tokens=usage.cache_read_tokens,
                             cache_creation_tokens=usage.cache_creation_tokens,
+                            rates=invocation.pricing_usd_per_mtok,
                         ),
                         model=invocation.model,
                         **ids,
@@ -441,12 +442,24 @@ async def run_tool_loop(
     # None when the model has no price entry (#219): the price table is the only
     # accounting these APIs leave, so an unpriced model is an error to record,
     # never a silent $0.
-    priced = compute_cost(
-        invocation.model,
-        totals["in"],
-        totals["out"],
-        totals["cache_read"],
-        totals["cache_creation"],
+    # A model of OpenRouter's live catalog carries its rates on the invocation.
+    priced = (
+        price_usage(
+            invocation.model,
+            input_tokens=totals["in"],
+            output_tokens=totals["out"],
+            cache_read_tokens=totals["cache_read"],
+            cache_creation_tokens=totals["cache_creation"],
+            rates=invocation.pricing_usd_per_mtok,
+        )
+        if invocation.pricing_usd_per_mtok is not None
+        else compute_cost(
+            invocation.model,
+            totals["in"],
+            totals["out"],
+            totals["cache_read"],
+            totals["cache_creation"],
+        )
     )
     cost = priced if priced is not None else 0.0
     if priced is None:

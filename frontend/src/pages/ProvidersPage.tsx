@@ -4,7 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Label } from "@/components/ui/Label";
-import { Select } from "@/components/ui/Select";
+import { Input } from "@/components/ui/Input";
+import { LONG_MODEL_LIST, ModelSelect } from "@/components/models/ModelSelect";
 import { PageError } from "@/components/PageError";
 import { formatDate } from "@/lib/utils";
 import { providerLabel, sentenceCase } from "@/lib/status";
@@ -12,10 +13,11 @@ import { useIsAdmin } from "@/stores/authStore";
 import {
   useModelsCatalog,
   useProviderConfig,
+  useRefreshOpenRouterCatalog,
   useTestCatalogProvider,
   useUpdateProviderConfig,
 } from "@/hooks/useProvider";
-import type { CatalogProvider, ProviderProbeResult } from "@/lib/types/provider";
+import type { CatalogProvider, ProviderCatalogStatus, ProviderProbeResult } from "@/lib/types/provider";
 import { toastApiError } from "@/api/errorToast";
 import { ProviderKeyDialog } from "@/components/providers/ProviderKeyDialog";
 import { ProviderSpend } from "@/components/providers/ProviderSpend";
@@ -64,6 +66,77 @@ function tierValue(catalog: { heavy: string; medium: string; light: string }, ke
   return catalog.light;
 }
 
+/** How many rows of a long model list show before "Show all". */
+const MODEL_ROWS_SHOWN = 25;
+
+const SKIP_REASON_LABELS: Record<string, string> = {
+  no_tools: "no tool calling",
+  batch: "batch",
+  free: "free (rate-limited)",
+  online: "web search",
+  variable_price: "price set per request",
+  unpriced: "no price",
+  malformed: "unreadable",
+};
+
+/** Where OpenRouter's model list comes from, when it was read, and a button to read it now. */
+function CatalogStatus({ status, isAdmin }: { status: ProviderCatalogStatus; isAdmin: boolean }) {
+  const refresh = useRefreshOpenRouterCatalog();
+  const skipped = Object.entries(status.skipped ?? {})
+    .filter(([, n]) => n > 0)
+    .map(([reason, n]) => `${n} ${SKIP_REASON_LABELS[reason] ?? reason}`)
+    .join(", ");
+  return (
+    <div className="space-y-1" data-testid="provider-catalog">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span>
+          Models:{" "}
+          {status.source === "live" ? (
+            <>
+              OpenRouter&apos;s live list, {status.models ?? 0} with tool calling, read{" "}
+              {status.fetched_at ? <time dateTime={status.fetched_at}>{formatDate(status.fetched_at)}</time> : "—"}
+              {status.refresh_hours ? `, every ${status.refresh_hours} h` : ""}.
+            </>
+          ) : (
+            "the built-in entry, until OpenRouter's list is read."
+          )}
+        </span>
+        {isAdmin && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={refresh.isPending}
+            onClick={() =>
+              refresh.mutate(undefined, {
+                onSuccess: (next) =>
+                  next.last_error
+                    ? toast.error(`OpenRouter's list was not read: ${next.last_error}`)
+                    : toast.success(`OpenRouter's list read: ${next.models ?? 0} models`),
+                onError: (e) => toastApiError(e, "Failed to read OpenRouter's list"),
+              })
+            }
+          >
+            {refresh.isPending ? "Reading..." : "Read the list now"}
+          </Button>
+        )}
+      </div>
+      {skipped && <p className="text-xs text-muted-foreground">Left out: {skipped}.</p>}
+      {status.last_error && (
+        <p className="text-xs text-warning" data-testid="provider-catalog-error">
+          The last read failed
+          {status.last_error_at ? (
+            <>
+              {" "}
+              (<time dateTime={status.last_error_at}>{formatDate(status.last_error_at)}</time>)
+            </>
+          ) : null}
+          : {status.last_error}. The list in force stays.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ProviderCard({
   provider,
   disabledModels,
@@ -85,6 +158,14 @@ function ProviderCard({
 }) {
   const testProvider = useTestCatalogProvider();
   const [probe, setProbe] = useState<ProviderProbeResult | null>(null);
+  const [modelFilter, setModelFilter] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const longList = provider.models.length > LONG_MODEL_LIST;
+  const needle = modelFilter.trim().toLowerCase();
+  const matching = needle
+    ? provider.models.filter((m) => m.model.toLowerCase().includes(needle) || (m.name ?? "").toLowerCase().includes(needle))
+    : provider.models;
+  const rows = longList && !needle && !showAll ? matching.slice(0, MODEL_ROWS_SHOWN) : matching;
   const [keyDialog, setKeyDialog] = useState(false);
   // A key entered here: every LLM provider but xAI's OAuth, which logs in on the Credentials page.
   const takesKey = isAdmin && isLlmProvider(provider.name);
@@ -144,6 +225,7 @@ function ProviderCard({
           )}
         </p>
         <ProviderSpend provider={provider.name} />
+        {provider.catalog && <CatalogStatus status={provider.catalog} isAdmin={isAdmin} />}
         {provider.last_probe !== undefined && (
           <p className="text-xs text-muted-foreground" data-testid="provider-last-probe">
             Last test:{" "}
@@ -176,6 +258,16 @@ function ProviderCard({
           </div>
         )}
 
+        {longList && (
+          <Input
+            type="search"
+            value={modelFilter}
+            onChange={(e) => setModelFilter(e.target.value)}
+            placeholder={`Filter ${provider.models.length} models`}
+            aria-label={`Filter ${providerLabel(provider.name)} models`}
+            className="mb-3 h-8 max-w-xs text-xs"
+          />
+        )}
         <div className="overflow-x-auto">
           <table className="data-table">
             <thead>
@@ -187,7 +279,7 @@ function ProviderCard({
               </tr>
             </thead>
             <tbody>
-              {provider.models.map((m) => {
+              {rows.map((m) => {
                 const isTier = tierModels.includes(m.model);
                 const isDefault = defaultModel !== "" && m.model === defaultModel;
                 const isFallback = fallbackModels.includes(m.model);
@@ -197,7 +289,7 @@ function ProviderCard({
                 const locked = (isTier || isDefault || isFallback) && enabled;
                 return (
                   <tr key={m.model}>
-                    <td className="font-mono">
+                    <td className="font-mono" title={m.name}>
                       {m.model}
                       {isTier && (
                         <span className="ml-2 text-xs text-muted-foreground">(tier-assigned)</span>
@@ -244,6 +336,14 @@ function ProviderCard({
             </tbody>
           </table>
         </div>
+        {longList && rows.length < matching.length && (
+          <Button variant="outline" size="sm" className="mt-3" onClick={() => setShowAll(true)}>
+            Show all {matching.length} models
+          </Button>
+        )}
+        {longList && needle && matching.length === 0 && (
+          <p className="mt-3 text-xs text-muted-foreground">No model matches “{modelFilter.trim()}”.</p>
+        )}
       </CardContent>
     </Card>
   );
@@ -257,12 +357,14 @@ function ProviderCard({
 function FallbackOrderCard({
   saved,
   options,
+  providers,
   isAdmin,
   pending,
   onSave,
 }: {
   saved: string[];
   options: string[];
+  providers: CatalogProvider[];
   isAdmin: boolean;
   pending: boolean;
   onSave: (order: string[], done: () => void) => void;
@@ -347,14 +449,16 @@ function FallbackOrderCard({
           <div className="mt-3 flex flex-wrap items-end gap-2">
             <div>
               <Label htmlFor="fallback_add">Add a model</Label>
-              <Select id="fallback_add" className="max-w-xs" value={adding} onChange={(e) => setAdding(e.target.value)}>
-                <option value="">(choose)</option>
-                {addable.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </Select>
+              <ModelSelect
+                id="fallback_add"
+                className="max-w-xs"
+                value={adding}
+                onChange={(e) => setAdding(e.target.value)}
+                models={addable}
+                providers={providers}
+                filterLabel="Filter fallback models"
+                leading={<option value="">(choose)</option>}
+              />
             </div>
             <Button
               variant="outline"
@@ -507,38 +611,32 @@ export function ProvidersPage() {
             {TIER_FIELDS.map((t) => (
               <div key={t.key}>
                 <Label htmlFor={t.key}>{t.label}</Label>
-                <Select
+                <ModelSelect
                   id={t.key}
                   value={currentTier(t.key)}
                   disabled={!isAdmin}
                   onChange={(e) => setTierDraft((prev) => ({ ...prev, [t.key]: e.target.value }))}
-                >
-                  {tierOptions.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </Select>
+                  models={tierOptions}
+                  providers={catalog.providers}
+                  filterLabel={`Filter ${t.label.toLowerCase()} tier models`}
+                />
               </div>
             ))}
           </div>
           <div className="mt-4 max-w-xl">
             <Label htmlFor="default_model">Default model</Label>
-            <Select
+            <ModelSelect
               id="default_model"
               className="max-w-xs"
               value={currentDefaultModel}
               disabled={!isAdmin}
               aria-describedby="default_model_help"
               onChange={(e) => setDefaultModelDraft(e.target.value)}
-            >
-              <option value="">(none)</option>
-              {defaultModelOptions.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </Select>
+              models={defaultModelOptions}
+              providers={catalog.providers}
+              filterLabel="Filter default models"
+              leading={<option value="">(none)</option>}
+            />
             <p id="default_model_help" className="mt-1 text-xs text-muted-foreground">
               When set, every agent — triage, developer, review, QA and the
               rest — runs on this model, whatever its own definition says,
@@ -554,6 +652,7 @@ export function ProvidersPage() {
         <FallbackOrderCard
           saved={fallbackModels}
           options={fallbackOptions}
+          providers={catalog.providers}
           isAdmin={isAdmin}
           pending={updateProvider.isPending}
           onSave={(order, done) =>

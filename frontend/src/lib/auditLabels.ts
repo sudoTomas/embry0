@@ -53,6 +53,7 @@ export const ACTION_ICONS: Record<string, LucideIcon> = {
   context_config_updated: Settings,
   context_config_deleted: X,
   provider_config_tested: Settings,
+  provider_catalog_refreshed: Settings,
   watcher_stack_updated: Settings,
   watcher_stack_deleted: X,
 };
@@ -86,6 +87,7 @@ export const ACTION_LABELS: Record<string, string> = {
   context_config_updated: "Context updated",
   context_config_deleted: "Context deleted",
   provider_config_tested: "Provider tested",
+  provider_catalog_refreshed: "Provider model list read",
   watcher_stack_updated: "Watcher stack updated",
   watcher_stack_deleted: "Watcher stack deleted",
 };

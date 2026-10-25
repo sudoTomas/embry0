@@ -127,7 +127,14 @@ curl -X POST http://localhost:8200/api/v1/sandbox-profiles \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"name": "java-17", "base_image": "embry0-sandbox-java:17", "memory": "12g"}'
+
+# OpenRouter's live model list: read it now (admin); it is read daily by itself
+curl -X POST http://localhost:8200/api/v1/config/providers/openrouter/catalog/refresh \
+  -H "X-Requested-With: XMLHttpRequest"
+# -> {"source": "live", "models": 380, "fetched_at": "...", "skipped": {"batch": 74, ...}, "last_error": null, ...}
 ```
+
+`GET /api/v1/config/models` lists every model a provider offers with its `enabled`, `tool_calling` and `pricing_usd_per_mtok`. OpenRouter's entry lists its [live model list](providers.md#openrouters-live-model-list), each model with its `name`, `vendor` and `context_length` too, and carries `catalog`: where the list comes from (`source`: `live` or `static`), when it was read, what it left out by reason, and the last failed read.
 
 ## Skills
 

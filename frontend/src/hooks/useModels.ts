@@ -8,6 +8,9 @@ interface ProviderModel {
   // selector. Optional so a pre-1297 backend (no flag) means enabled.
   enabled?: boolean;
   pricing_usd_per_mtok: { input: number | null; output: number | null };
+  /** OpenRouter's live catalog: display name and maker. */
+  name?: string;
+  vendor?: string;
 }
 
 export interface ProviderCatalog {

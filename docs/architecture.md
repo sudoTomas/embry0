@@ -1359,6 +1359,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 111 | what the last analysis found in each log signature, for the watcher's novelty gate (spec 2026-10-25) | `log_signatures.analysed_at`, `analysed_verdict`, `analysed_count` |
 | 112 | the player's evaluation of a finished quest: a rating, what they did with the work and the follow-up a send-back started (the world, spec 2026-10-25) | `job_ratings` |
 | 113 | provider fallback: the models, in order, an agent runs on when its own model's provider has no usable account (`[]` is off), and on each run's trace what a fallback model stood in for (spec 2026-10-25) | `provider_config.fallback_models`, `traces.fallback` |
+| 114 | provider_catalogs: OpenRouter's live model list, every model with tool calling at its own price; a failed refresh keeps the last good list (docs/providers.md) | `provider_catalogs` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

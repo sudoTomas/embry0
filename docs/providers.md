@@ -67,7 +67,7 @@ request; the sandbox does not need it.
 | Provider | Model ids | API root | Key (env fallback) | Listed models, $/Mtok in / out | Tool calling |
 |---|---|---|---|---|---|
 | `openai` | `gpt-…` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | `gpt-6-luna` 0.10 / 0.50, `gpt-6.1-sol` 2.00 / 10.00 | `gpt-6-luna` yes (embry0 sends `reasoning_effort: none`, which OpenAI requires for tools on chat completions); `gpt-6.1-sol` **chat-only** |
-| `openrouter` | `openrouter/<vendor>/<model>` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `openrouter/openai/gpt-6.1-sol` 2.00 / 10.00 | per model: OpenRouter lists the ones that take tools at `openrouter.ai/models?supported_parameters=tools` |
+| `openrouter` | `openrouter/<vendor>/<model>` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | every model of [OpenRouter's live list](#openrouters-live-model-list) at OpenRouter's price; `openrouter/openai/gpt-6.1-sol` 2.00 / 10.00 until the list is first read | yes: the list keeps only models that take tools |
 | `google` | `gemini-…` | `https://generativelanguage.googleapis.com/v1beta/openai` | `GEMINI_API_KEY` | `gemini-3.8-flash` 0.75 / 3.75, `gemini-4-argon` 2.00 / 10.00 | yes: Gemini's OpenAI-compatible endpoint takes `tools` |
 | `groq` | `groq/<model>` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` | `groq/openai/gpt-oss-120b` 0.15 / 0.60, `groq/openai/gpt-oss-20b` 0.075 / 0.30 | yes: Groq states every hosted model supports tool use |
 | `deepseek` | `deepseek-…` | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `deepseek-flash` 0.30 / 1.20, `deepseek-v4-pro` 1.32 / 3.96 | yes |
@@ -87,10 +87,53 @@ its peak hours and the table carries the peak rate; OpenRouter passes the
 upstream price through and charges a fee on credit purchases, which is not
 modelled. A model of these providers runs only when it is listed with a price,
 as for grok (#219); to bring another into service, add it to `models` and
-`pricing_usd_per_mtok` together. A custom server bills nothing per token, so
+`pricing_usd_per_mtok` together. OpenRouter's models and prices come from its
+live list instead (below). A custom server bills nothing per token, so
 any `custom/` model is priced at $0 instead of refused, and a job's
 `budget_usd` does not bound it. A `custom/` id is not listed, so it cannot be
 the default model; an agent definition or a job's `agent_models` can name it.
+
+### OpenRouter's live model list
+
+OpenRouter serves several hundred models, and its own list says which take
+tools and at what price. embry0 reads `GET https://openrouter.ai/api/v1/models`
+(with the key a job with no repository binding runs with, when there is one; the
+list answers without), keeps what an agent can run, stores it in
+`provider_catalogs` (migration 114) and puts it in force in place of the static
+entry: the model selectors, the LLM Providers card, `GET /config/models`, the
+prices a run is metered at, and every check that a model is known, priced and
+calls tools all read it. A model OpenRouter stops listing stops being offered,
+and a job, tier or fallback order that still names it is refused as unpriced.
+
+What is kept: models whose `supported_parameters` include `tools`, at a price.
+`pricing.prompt` and `pricing.completion` are USD per token and are kept per
+million tokens; where an entry names more than one rate (`overrides` for long
+prompts or hours of the day, a separate `internal_reasoning` rate), the highest
+counts, so a job's budget never under-counts a run. What is left out, counted
+by reason on the card: models without tool calling; `:batch` variants
+(asynchronous); `:free` variants (rate-limited to a few requests a minute,
+which a tool loop exceeds within one run); `:online` variants (a per-request
+search fee the token price does not show); a negative price (OpenRouter's
+routers, priced per request); a zero or missing price on a model that is not
+free.
+
+When it is read: at start when the stored list is older than
+`OPENROUTER_CATALOG_REFRESH_HOURS` (24 by default), then on that interval while
+`openrouter` is in `OPENAI_COMPATIBLE_PROVIDERS`, and on demand with **Read the
+list now** on the OpenRouter card, which is
+`POST /api/v1/config/providers/openrouter/catalog/refresh` (admin; returns
+`{"source", "models", "fetched_at", "skipped", "last_error", "last_error_at",
+"refresh_hours"}`). `0` turns the schedule off. A read that fails, or that
+yields fewer than ten models, changes nothing in force: the last good list
+stays and the error is shown beside it, and the loop tries again within the
+hour. With no list ever read, the static entry above serves.
+
+A run on a model of the list carries its rates to the sandbox
+(`pricing_usd_per_mtok` in the runner config), since the sandbox has no copy of
+the list. A sandbox image built before this reads no rates and ends a finished
+run as "cost unknown"; the orchestrator then prices the run from its token
+counts and keeps the outcome the agent reached, and logs
+`catalog_model_priced_by_orchestrator` until the image is rebuilt.
 
 ### Adding a key
 

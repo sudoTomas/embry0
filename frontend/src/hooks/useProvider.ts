@@ -6,6 +6,7 @@ import {
   fetchModelsCatalog,
   testCatalogProvider,
   fetchProviderUsage,
+  refreshOpenRouterCatalog,
 } from "@/api/provider";
 import { addProviderKey } from "@/api/credentials";
 import type { LlmProviderName } from "@/lib/llmProviders";
@@ -75,5 +76,14 @@ export function useAddProviderKey() {
       qc.invalidateQueries({ queryKey: ["config", "providers", provider, "usage"] });
       qc.invalidateQueries({ queryKey: ["credentials"] });
     },
+  });
+}
+
+/** Read OpenRouter's model list now; every model selector reads the refreshed catalog. */
+export function useRefreshOpenRouterCatalog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: refreshOpenRouterCatalog,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["config", "models"] }),
   });
 }

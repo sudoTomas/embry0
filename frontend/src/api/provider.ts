@@ -5,6 +5,7 @@ import type {
   ConnectionTestResult,
   ModelsCatalog,
   ProviderProbeResult,
+  ProviderCatalogStatus,
 } from "@/lib/types/provider";
 import { api } from "./client";
 
@@ -42,5 +43,11 @@ export async function fetchProviderUsage(name: string, fresh = false): Promise<P
   const { data } = await api.get<ProviderUsage>(`/config/providers/${encodeURIComponent(name)}/usage`, {
     params: fresh ? { fresh: true } : {},
   });
+  return data;
+}
+
+/** Read OpenRouter's model list now (it is read daily by itself); a failed read keeps the list in force. */
+export async function refreshOpenRouterCatalog(): Promise<ProviderCatalogStatus> {
+  const { data } = await api.post<ProviderCatalogStatus>("/config/providers/openrouter/catalog/refresh");
   return data;
 }

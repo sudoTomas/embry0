@@ -36,6 +36,25 @@ export interface CatalogModel {
    * Absent on an older backend. */
   tool_calling?: boolean;
   pricing_usd_per_mtok: { input: number | null; output: number | null };
+  /** OpenRouter's live catalog: the model's display name ("Anthropic: Claude Opus 5.5"). */
+  name?: string;
+  /** OpenRouter's live catalog: the model's maker, the upstream id's first part ("anthropic"). */
+  vendor?: string;
+  /** OpenRouter's live catalog: the context window in tokens, when listed. */
+  context_length?: number | null;
+}
+
+/** Where a provider's model list comes from (OpenRouter): its live catalog, or the static entry. */
+export interface ProviderCatalogStatus {
+  source: "live" | "static";
+  models?: number;
+  /** ISO 8601: when OpenRouter listed the models in force. */
+  fetched_at?: string | null;
+  /** What the list left out, by reason (no_tools, batch, free, unpriced, ...). */
+  skipped?: Record<string, number>;
+  last_error?: string | null;
+  last_error_at?: string | null;
+  refresh_hours?: number;
 }
 
 export interface CatalogProvider {
@@ -52,6 +71,8 @@ export interface CatalogProvider {
    * Absent on an older backend. */
   last_probe?: ProviderLastProbe | null;
   models: CatalogModel[];
+  /** OpenRouter only: where its model list comes from. Absent on an older backend. */
+  catalog?: ProviderCatalogStatus;
 }
 
 export interface ProviderLastProbe {

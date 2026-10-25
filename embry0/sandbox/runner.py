@@ -81,7 +81,19 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
         run_id=str(cfg.get("run_id") or ""),
         node=str(cfg.get("node") or ""),
         skill_mounts=tuple(cfg.get("skill_mounts") or ()),
+        pricing_usd_per_mtok=_rates_from_config(cfg.get("pricing_usd_per_mtok")),
     )
+
+
+def _rates_from_config(value: Any) -> tuple[float, float] | None:
+    """The run's (input, output) $/Mtok the orchestrator sent for a catalog model; None when absent or not a pair."""
+    if not isinstance(value, list | tuple) or len(value) != 2:
+        return None
+    try:
+        rate_in, rate_out = float(value[0]), float(value[1])
+    except (TypeError, ValueError):
+        return None
+    return (rate_in, rate_out) if rate_in >= 0 and rate_out >= 0 else None
 
 
 def _build_run_kwargs(

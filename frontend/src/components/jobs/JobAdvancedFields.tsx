@@ -1,3 +1,4 @@
+import { ModelSelect } from "@/components/models/ModelSelect";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
@@ -49,7 +50,7 @@ export function JobAdvancedFields({ value, onChange, idPrefix = "job-adv" }: Job
   const { data: templates } = useTemplates();
   const { data: profiles } = useSandboxProfiles();
   const { data: agents } = useAgents();
-  const { models: knownModels } = useModels();
+  const { models: knownModels, providers } = useModels();
 
   const set = (patch: Partial<JobAdvancedState>) => onChange({ ...value, ...patch });
 
@@ -112,8 +113,9 @@ export function JobAdvancedFields({ value, onChange, idPrefix = "job-adv" }: Job
               <span className="text-sm text-white/60 font-mono truncate" title={agent.type}>
                 {agent.type}
               </span>
-              <Select
+              <ModelSelect
                 aria-label={`Model override for ${agent.type}`}
+                filterLabel={`Filter models for ${agent.type}`}
                 value={value.agentModels[agent.type] ?? ""}
                 onChange={(e) => {
                   const next = { ...value.agentModels };
@@ -121,14 +123,10 @@ export function JobAdvancedFields({ value, onChange, idPrefix = "job-adv" }: Job
                   else next[agent.type] = e.target.value;
                   set({ agentModels: next });
                 }}
-              >
-                <option value="">Auto</option>
-                {knownModels.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </Select>
+                models={knownModels}
+                providers={providers}
+                leading={<option value="">Auto</option>}
+              />
             </div>
           ))}
           {(agents ?? []).length === 0 && (

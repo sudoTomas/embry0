@@ -77,3 +77,7 @@ class AgentInvocation:
     # ``{"instead_of", "provider", "reason", "until"}``. Orchestrator-side
     # only: the sandbox is never sent it.
     fallback: dict[str, Any] | None = None
+    # OpenRouter's live catalog: the (input, output) $/Mtok of a model priced
+    # from it. The sandbox has no copy of the catalog, so the run's rates ride
+    # here; None for every model the static price table covers.
+    pricing_usd_per_mtok: tuple[float, float] | None = None

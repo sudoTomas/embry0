@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Label } from "@/components/ui/Label";
-import { Select } from "@/components/ui/Select";
+import { ModelSelect } from "@/components/models/ModelSelect";
 import { Switch } from "@/components/ui/Switch";
 import { useRepoPreferences, useSetRepoPreferences } from "@/hooks/useRepoPreferences";
 import { useModels } from "@/hooks/useModels";
@@ -50,7 +50,7 @@ interface PullRequestReviewCardProps {
 /** #30: per-repo pull request review settings, saved as one object. */
 export function PullRequestReviewCard({ repo, showIntro = true }: PullRequestReviewCardProps) {
   const { data: prefs, isLoading, isError, isSuccess } = useRepoPreferences(repo);
-  const { models } = useModels();
+  const { models, providers } = useModels();
   const setPrefs = useSetRepoPreferences();
   const [settings, setSettings] = useState<PrReviewSettings>(DEFAULTS);
   const [dirty, setDirty] = useState(false);
@@ -164,20 +164,20 @@ export function PullRequestReviewCard({ repo, showIntro = true }: PullRequestRev
 
       <div className="space-y-1">
         <Label htmlFor="pr-review-model">Model</Label>
-        <Select
+        <ModelSelect
           id="pr-review-model"
           value={settings.model ?? ""}
           disabled={locked}
           onChange={(e) => update({ model: e.target.value || null })}
-        >
-          <option value="">Default (heavy tier)</option>
-          {unlistedModel && <option value={unlistedModel}>{unlistedModel} (not in the model list)</option>}
-          {models.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </Select>
+          models={models}
+          providers={providers}
+          leading={
+            <>
+              <option value="">Default (heavy tier)</option>
+              {unlistedModel && <option value={unlistedModel}>{unlistedModel} (not in the model list)</option>}
+            </>
+          }
+        />
       </div>
 
       <p className="text-xs text-muted-foreground" data-testid="pr-review-webhook-note">
