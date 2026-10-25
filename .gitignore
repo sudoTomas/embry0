@@ -46,6 +46,8 @@ Thumbs.db
 # ...but the dashboard icons ship in the build: the browser tab and the
 # home screen request them from frontend/public/.
 !frontend/public/*.png
+# ...and so does the world view's art (frontend/public/world/README.md).
+!frontend/public/world/**/*.png
 snapshot.md
 snap*.md
 # Per-machine agent handoffs: working state (worktree paths, venvs, host

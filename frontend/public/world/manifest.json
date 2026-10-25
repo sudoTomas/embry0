@@ -1,9 +1,1045 @@
 {
   "version": 1,
   "tileSize": 32,
-  "creatures": {},
-  "terrain": {},
-  "buildings": {},
-  "props": {},
-  "vfx": {}
+  "tilesets": {
+    "path": {
+      "image": "tilesets/path.png",
+      "layout": "corner-4x4",
+      "terrains": {
+        "0": "dirt",
+        "1": "grass"
+      }
+    },
+    "shore": {
+      "image": "tilesets/shore.png",
+      "layout": "corner-4x4",
+      "terrains": {
+        "0": "water",
+        "1": "grass"
+      }
+    },
+    "rock": {
+      "image": "tilesets/rock.png",
+      "layout": "corner-4x4",
+      "terrains": {
+        "0": "grass",
+        "1": "rock"
+      }
+    },
+    "cobbles": {
+      "image": "tilesets/cobbles.png",
+      "layout": "corner-4x4",
+      "terrains": {
+        "0": "grass",
+        "1": "cobbles"
+      }
+    },
+    "forest": {
+      "image": "tilesets/forest.png",
+      "layout": "corner-4x4",
+      "terrains": {
+        "0": "grass",
+        "1": "forest"
+      }
+    },
+    "hall": {
+      "image": "tilesets/hall.png",
+      "layout": "corner-4x4",
+      "terrains": {
+        "0": "floor",
+        "1": "wall"
+      }
+    }
+  },
+  "atlases": {
+    "objects": {
+      "image": "objects.png",
+      "width": 512,
+      "height": 256
+    },
+    "creatures": {
+      "image": "creatures.png",
+      "width": 512,
+      "height": 256
+    }
+  },
+  "objects": {
+    "alchemy_table": {
+      "atlas": "objects",
+      "rect": [
+        328,
+        0,
+        48,
+        48
+      ],
+      "anchor": {
+        "x": 24,
+        "y": 45
+      },
+      "bounds": [
+        2,
+        6,
+        46,
+        46
+      ],
+      "category": "station"
+    },
+    "anvil": {
+      "atlas": "objects",
+      "rect": [
+        200,
+        130,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 29
+      },
+      "bounds": [
+        2,
+        2,
+        30,
+        30
+      ],
+      "category": "station"
+    },
+    "banner": {
+      "atlas": "objects",
+      "rect": [
+        234,
+        130,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 30
+      },
+      "bounds": [
+        8,
+        2,
+        25,
+        31
+      ],
+      "category": "town"
+    },
+    "bookshelf": {
+      "atlas": "objects",
+      "rect": [
+        378,
+        0,
+        48,
+        48
+      ],
+      "anchor": {
+        "x": 24,
+        "y": 43
+      },
+      "bounds": [
+        7,
+        4,
+        41,
+        44
+      ],
+      "category": "hall"
+    },
+    "boulder": {
+      "atlas": "objects",
+      "rect": [
+        428,
+        0,
+        48,
+        48
+      ],
+      "anchor": {
+        "x": 24,
+        "y": 43
+      },
+      "bounds": [
+        3,
+        5,
+        45,
+        44
+      ],
+      "category": "scenery"
+    },
+    "bush": {
+      "atlas": "objects",
+      "rect": [
+        268,
+        130,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 26
+      },
+      "bounds": [
+        5,
+        5,
+        27,
+        27
+      ],
+      "category": "scenery"
+    },
+    "chest_closed": {
+      "atlas": "objects",
+      "rect": [
+        302,
+        130,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 27
+      },
+      "bounds": [
+        4,
+        3,
+        28,
+        28
+      ],
+      "category": "loot"
+    },
+    "chest_gold": {
+      "atlas": "objects",
+      "rect": [
+        336,
+        130,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 29
+      },
+      "bounds": [
+        4,
+        2,
+        28,
+        30
+      ],
+      "category": "loot"
+    },
+    "chest_open": {
+      "atlas": "objects",
+      "rect": [
+        370,
+        130,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 28
+      },
+      "bounds": [
+        4,
+        2,
+        28,
+        29
+      ],
+      "category": "loot"
+    },
+    "desk": {
+      "atlas": "objects",
+      "rect": [
+        0,
+        130,
+        48,
+        48
+      ],
+      "anchor": {
+        "x": 24,
+        "y": 41
+      },
+      "bounds": [
+        3,
+        2,
+        45,
+        42
+      ],
+      "category": "station"
+    },
+    "fence": {
+      "atlas": "objects",
+      "rect": [
+        404,
+        130,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 24
+      },
+      "bounds": [
+        6,
+        7,
+        26,
+        25
+      ],
+      "category": "scenery"
+    },
+    "flowers": {
+      "atlas": "objects",
+      "rect": [
+        438,
+        130,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 27
+      },
+      "bounds": [
+        2,
+        4,
+        30,
+        28
+      ],
+      "category": "scenery"
+    },
+    "guild_hall": {
+      "atlas": "objects",
+      "rect": [
+        0,
+        0,
+        128,
+        128
+      ],
+      "anchor": {
+        "x": 64,
+        "y": 112
+      },
+      "bounds": [
+        7,
+        13,
+        121,
+        113
+      ],
+      "category": "building"
+    },
+    "house": {
+      "atlas": "objects",
+      "rect": [
+        130,
+        0,
+        64,
+        64
+      ],
+      "anchor": {
+        "x": 31,
+        "y": 56
+      },
+      "bounds": [
+        5,
+        2,
+        58,
+        57
+      ],
+      "category": "town"
+    },
+    "lectern": {
+      "atlas": "objects",
+      "rect": [
+        472,
+        130,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 29
+      },
+      "bounds": [
+        6,
+        2,
+        26,
+        30
+      ],
+      "category": "station"
+    },
+    "map_table": {
+      "atlas": "objects",
+      "rect": [
+        50,
+        130,
+        48,
+        48
+      ],
+      "anchor": {
+        "x": 24,
+        "y": 43
+      },
+      "bounds": [
+        3,
+        2,
+        45,
+        44
+      ],
+      "category": "station"
+    },
+    "quest_board": {
+      "atlas": "objects",
+      "rect": [
+        100,
+        130,
+        48,
+        48
+      ],
+      "anchor": {
+        "x": 24,
+        "y": 43
+      },
+      "bounds": [
+        9,
+        3,
+        39,
+        44
+      ],
+      "category": "hall"
+    },
+    "rock_small": {
+      "atlas": "objects",
+      "rect": [
+        0,
+        180,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 23
+      },
+      "bounds": [
+        5,
+        7,
+        28,
+        24
+      ],
+      "category": "scenery"
+    },
+    "signpost": {
+      "atlas": "objects",
+      "rect": [
+        34,
+        180,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 16,
+        "y": 29
+      },
+      "bounds": [
+        8,
+        2,
+        24,
+        30
+      ],
+      "category": "scenery"
+    },
+    "torch": {
+      "atlas": "objects",
+      "rect": [
+        68,
+        180,
+        32,
+        32
+      ],
+      "anchor": {
+        "x": 15,
+        "y": 29
+      },
+      "bounds": [
+        10,
+        2,
+        21,
+        30
+      ],
+      "category": "hall"
+    },
+    "tree_oak": {
+      "atlas": "objects",
+      "rect": [
+        196,
+        0,
+        64,
+        64
+      ],
+      "anchor": {
+        "x": 32,
+        "y": 60
+      },
+      "bounds": [
+        5,
+        3,
+        59,
+        61
+      ],
+      "category": "scenery"
+    },
+    "tree_pine": {
+      "atlas": "objects",
+      "rect": [
+        262,
+        0,
+        64,
+        64
+      ],
+      "anchor": {
+        "x": 32,
+        "y": 57
+      },
+      "bounds": [
+        14,
+        4,
+        50,
+        58
+      ],
+      "category": "scenery"
+    },
+    "well": {
+      "atlas": "objects",
+      "rect": [
+        150,
+        130,
+        48,
+        48
+      ],
+      "anchor": {
+        "x": 24,
+        "y": 43
+      },
+      "bounds": [
+        3,
+        4,
+        46,
+        44
+      ],
+      "category": "town"
+    }
+  },
+  "creatures": {
+    "case_bug": {
+      "atlas": "creatures",
+      "frames": [
+        [
+          270,
+          66,
+          32,
+          32
+        ],
+        [
+          304,
+          66,
+          32,
+          32
+        ],
+        [
+          338,
+          66,
+          32,
+          32
+        ],
+        [
+          372,
+          66,
+          32,
+          32
+        ],
+        [
+          406,
+          66,
+          32,
+          32
+        ]
+      ],
+      "fps": 5,
+      "loop": true,
+      "size": 32,
+      "anchor": {
+        "x": 16,
+        "y": 26
+      },
+      "bounds": [
+        4,
+        4,
+        28,
+        27
+      ],
+      "leadKinds": [
+        "case"
+      ],
+      "interaction": "attack"
+    },
+    "ci_golem": {
+      "atlas": "creatures",
+      "frames": [
+        [
+          330,
+          0,
+          48,
+          48
+        ],
+        [
+          380,
+          0,
+          48,
+          48
+        ],
+        [
+          430,
+          0,
+          48,
+          48
+        ],
+        [
+          0,
+          66,
+          48,
+          48
+        ],
+        [
+          50,
+          66,
+          48,
+          48
+        ]
+      ],
+      "fps": 5,
+      "loop": true,
+      "size": 48,
+      "anchor": {
+        "x": 24,
+        "y": 40
+      },
+      "bounds": [
+        4,
+        6,
+        45,
+        41
+      ],
+      "leadKinds": [
+        "ci_failure"
+      ],
+      "interaction": "attack"
+    },
+    "alert_wyrm": {
+      "atlas": "creatures",
+      "frames": [
+        [
+          0,
+          0,
+          64,
+          64
+        ],
+        [
+          66,
+          0,
+          64,
+          64
+        ],
+        [
+          132,
+          0,
+          64,
+          64
+        ],
+        [
+          198,
+          0,
+          64,
+          64
+        ],
+        [
+          264,
+          0,
+          64,
+          64
+        ]
+      ],
+      "fps": 5,
+      "loop": true,
+      "size": 64,
+      "anchor": {
+        "x": 32,
+        "y": 49
+      },
+      "bounds": [
+        18,
+        13,
+        46,
+        50
+      ],
+      "leadKinds": [
+        "security_alert",
+        "dependency_alert"
+      ],
+      "interaction": "attack"
+    },
+    "flaky_imp": {
+      "atlas": "creatures",
+      "frames": [
+        [
+          440,
+          66,
+          32,
+          32
+        ],
+        [
+          474,
+          66,
+          32,
+          32
+        ],
+        [
+          0,
+          116,
+          32,
+          32
+        ],
+        [
+          34,
+          116,
+          32,
+          32
+        ],
+        [
+          68,
+          116,
+          32,
+          32
+        ]
+      ],
+      "fps": 5,
+      "loop": true,
+      "size": 32,
+      "anchor": {
+        "x": 16,
+        "y": 25
+      },
+      "bounds": [
+        2,
+        3,
+        30,
+        26
+      ],
+      "leadKinds": [
+        "flaky_test"
+      ],
+      "interaction": "attack"
+    },
+    "review_ghost": {
+      "atlas": "creatures",
+      "frames": [
+        [
+          272,
+          116,
+          32,
+          32
+        ],
+        [
+          306,
+          116,
+          32,
+          32
+        ],
+        [
+          340,
+          116,
+          32,
+          32
+        ],
+        [
+          374,
+          116,
+          32,
+          32
+        ],
+        [
+          408,
+          116,
+          32,
+          32
+        ]
+      ],
+      "fps": 5,
+      "loop": true,
+      "size": 32,
+      "anchor": {
+        "x": 15,
+        "y": 25
+      },
+      "bounds": [
+        5,
+        5,
+        26,
+        26
+      ],
+      "leadKinds": [
+        "review_comment"
+      ],
+      "interaction": "talk"
+    },
+    "quest_giver": {
+      "atlas": "creatures",
+      "frames": [
+        [
+          102,
+          116,
+          32,
+          32
+        ],
+        [
+          136,
+          116,
+          32,
+          32
+        ],
+        [
+          170,
+          116,
+          32,
+          32
+        ],
+        [
+          204,
+          116,
+          32,
+          32
+        ],
+        [
+          238,
+          116,
+          32,
+          32
+        ]
+      ],
+      "fps": 5,
+      "loop": true,
+      "size": 32,
+      "anchor": {
+        "x": 17,
+        "y": 27
+      },
+      "bounds": [
+        9,
+        3,
+        26,
+        28
+      ],
+      "leadKinds": [
+        "ticket",
+        "issue"
+      ],
+      "interaction": "start_quest"
+    },
+    "audit_signpost": {
+      "atlas": "creatures",
+      "frames": [
+        [
+          100,
+          66,
+          32,
+          32
+        ],
+        [
+          134,
+          66,
+          32,
+          32
+        ],
+        [
+          168,
+          66,
+          32,
+          32
+        ],
+        [
+          202,
+          66,
+          32,
+          32
+        ],
+        [
+          236,
+          66,
+          32,
+          32
+        ]
+      ],
+      "fps": 5,
+      "loop": true,
+      "size": 32,
+      "anchor": {
+        "x": 17,
+        "y": 26
+      },
+      "bounds": [
+        8,
+        5,
+        26,
+        27
+      ],
+      "leadKinds": [
+        "finding"
+      ],
+      "interaction": "repair"
+    }
+  },
+  "vfx": {
+    "xp_drop": {
+      "image": "vfx/xp_drop.png",
+      "frames": [
+        [
+          0,
+          0,
+          40,
+          48
+        ],
+        [
+          40,
+          0,
+          40,
+          48
+        ],
+        [
+          0,
+          48,
+          40,
+          48
+        ],
+        [
+          40,
+          48,
+          40,
+          48
+        ]
+      ],
+      "fps": 12,
+      "loop": false,
+      "anchor": {
+        "x": 20,
+        "y": 38
+      }
+    },
+    "level_up": {
+      "image": "vfx/level_up.png",
+      "frames": [
+        [
+          0,
+          0,
+          67,
+          90
+        ],
+        [
+          67,
+          0,
+          67,
+          90
+        ],
+        [
+          134,
+          0,
+          67,
+          90
+        ],
+        [
+          0,
+          90,
+          67,
+          90
+        ],
+        [
+          67,
+          90,
+          67,
+          90
+        ],
+        [
+          134,
+          90,
+          67,
+          90
+        ],
+        [
+          0,
+          180,
+          67,
+          90
+        ],
+        [
+          67,
+          180,
+          67,
+          90
+        ]
+      ],
+      "fps": 12,
+      "loop": false,
+      "anchor": {
+        "x": 35,
+        "y": 42
+      }
+    },
+    "loot_sparkle": {
+      "image": "vfx/loot_sparkle.png",
+      "frames": [
+        [
+          0,
+          0,
+          40,
+          60
+        ],
+        [
+          40,
+          0,
+          40,
+          60
+        ],
+        [
+          0,
+          60,
+          40,
+          60
+        ],
+        [
+          40,
+          60,
+          40,
+          60
+        ]
+      ],
+      "fps": 6,
+      "loop": true,
+      "anchor": {
+        "x": 13,
+        "y": 30
+      }
+    },
+    "hitsplat": {
+      "image": "vfx/hitsplat.png",
+      "frames": [
+        [
+          0,
+          0,
+          24,
+          24
+        ]
+      ],
+      "fps": 1,
+      "loop": false,
+      "anchor": {
+        "x": 12,
+        "y": 12
+      },
+      "note": "a static badge: the renderer pops it in, writes the number on it and fades it"
+    }
+  }
 }
