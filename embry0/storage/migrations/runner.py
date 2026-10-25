@@ -3178,6 +3178,25 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             '{"instead_of", "provider", "reason", "until"} when the run ran on a fallback model; NULL otherwise.';
         """,
     ),
+    (
+        114,
+        "provider_catalogs: OpenRouter's live model list, every model with tool calling at its own price (docs/providers.md)",
+        # One row per provider whose model list is read live (only openrouter
+        # today). models holds the last good list; a failed refresh writes only
+        # last_error/last_error_at, so the list in force survives it.
+        """
+        CREATE TABLE IF NOT EXISTS provider_catalogs (
+            provider       TEXT PRIMARY KEY,
+            models         JSONB NOT NULL DEFAULT '[]'::jsonb,
+            skipped        JSONB NOT NULL DEFAULT '{}'::jsonb,
+            fetched_at     TIMESTAMPTZ,
+            last_error     TEXT,
+            last_error_at  TIMESTAMPTZ
+        );
+        COMMENT ON TABLE provider_catalogs IS
+            'A provider''s live model list (OpenRouter): models = the last good list, skipped = what it left out by reason.';
+        """,
+    ),
 ]
 
 

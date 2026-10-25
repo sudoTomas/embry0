@@ -16,12 +16,6 @@ def test_migration_113_present() -> None:
     assert "traces" in sql and "fallback" in sql
 
 
-def test_migration_113_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_112.py)."""
-    assert MIGRATIONS[-1][0] == 113, "migration 113 must add the provider fallback columns"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_the_order_defaults_to_off_and_a_trace_records_a_substitution(db_with_migrations: DatabasePool) -> None:

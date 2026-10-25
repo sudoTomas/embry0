@@ -23,6 +23,7 @@ import { ToolChecklist } from "@/components/agents/ToolChecklist";
 import { SkillPicker } from "@/components/skills/SkillPicker";
 import { useAgent, useCreateAgent, useUpdateAgent } from "@/hooks/useAgents";
 import { useModels } from "@/hooks/useModels";
+import { ModelSelect } from "@/components/models/ModelSelect";
 import { useProgression } from "@/hooks/useProgression";
 import { useSkills } from "@/hooks/useSkills";
 import { useTools } from "@/hooks/useTools";
@@ -422,23 +423,18 @@ export function AgentFormPage() {
           {/* Model */}
           <div>
             <Label htmlFor="agent-model">Model</Label>
-            <Select
+            <ModelSelect
               id="agent-model"
               value={form.model}
               onChange={(e) => setForm((prev) => ({ ...prev, model: e.target.value }))}
               className="mt-1"
               disabled={modelsLoading}
-            >
-              {offeredModels.map((m) => {
-                const notReady = notReadyModels.has(m);
-                return (
-                  <option key={m} value={m} disabled={notReady && m !== existing?.model}>
-                    {notReady ? `${m} (no credential)` : m}
-                  </option>
-                );
-              })}
-              <option value="__custom__">Custom...</option>
-            </Select>
+              models={offeredModels}
+              providers={providers}
+              labelOf={(m) => (notReadyModels.has(m) ? `${m} (no credential)` : m)}
+              disabledOf={(m) => notReadyModels.has(m) && m !== existing?.model}
+              trailing={<option value="__custom__">Custom...</option>}
+            />
             {form.model === "__custom__" && (
               <Input
                 className="mt-2 font-mono"

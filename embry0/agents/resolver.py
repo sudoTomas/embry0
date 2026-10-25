@@ -12,6 +12,7 @@ import structlog
 
 from embry0.agents.fallback import ModelFallback, substitute
 from embry0.agents.invocation import AgentInvocation
+from embry0.agents.openrouter_catalog import catalog_rates
 from embry0.agents.skills import effective_skills
 from embry0.execution.auth_provider import AuthConfigError
 from embry0.safety.error_codes import ErrorCode
@@ -458,6 +459,7 @@ def resolve_agent_invocation(
         channel_config=None,  # Phase 3
         provider=provider.name if provider else None,
         fallback=fallback_record,
+        pricing_usd_per_mtok=catalog_rates(final_model),
     )
 
 

@@ -59,7 +59,8 @@ async def get_model_config(
     # MODEL_* values show the pre-5-family models in every dashboard
     # dropdown while jobs ran on the current ones. RAV-1297: the complete
     # catalog (Anthropic was omitted as the implicit runtime default).
-    from embry0.agents.providers import catalog_providers
+    from embry0.agents.openrouter_catalog import catalog_model
+    from embry0.agents.providers import OPENROUTER, catalog_providers, model_rates, provider_models
 
     provider_cfg = await provider_repo.get()
     disabled = set(provider_cfg.get("disabled_models") or [])
@@ -91,26 +92,63 @@ async def get_model_config(
                     {"status": probe.status, "checked_at": probe.checked_at.isoformat()} if probe is not None else None
                 ),
                 "models": [
-                    {
-                        "model": m,
-                        "enabled": m not in disabled,
-                        # False: served without tool calling on this provider's API (chat-only).
-                        "tool_calling": m not in p.chat_only_models,
-                        "pricing_usd_per_mtok": {
-                            "input": p.pricing_usd_per_mtok.get(m, (None, None))[0],
-                            "output": p.pricing_usd_per_mtok.get(m, (None, None))[1],
-                        },
-                    }
-                    for m in p.models
+                    _catalog_entry(p, m, m not in disabled, model_rates(m), catalog_model(m))
+                    for m in provider_models(p)
                 ],
             }
         )
+        if p.name == OPENROUTER.name:
+            # Where OpenRouter's list comes from: its live catalog, or the static entry until one is read.
+            service = getattr(request.app.state, "openrouter_catalog", None)
+            providers[-1]["catalog"] = service.status() if service is not None else {"source": "static"}
     return {
         "heavy": provider_cfg.get("model_heavy") or config.model_heavy,
         "medium": provider_cfg.get("model_medium") or config.model_medium,
         "light": provider_cfg.get("model_light") or config.model_light,
         "providers": providers,
     }
+
+
+def _catalog_entry(provider: Any, model: str, enabled: bool, rates: Any, live: Any) -> dict[str, Any]:
+    """One model of GET /config/models: its enablement, tool calling and price, and for an OpenRouter
+    catalog model its name, maker and context window."""
+    entry: dict[str, Any] = {
+        "model": model,
+        "enabled": enabled,
+        # False: served without tool calling on this provider's API (chat-only).
+        "tool_calling": model not in provider.chat_only_models,
+        "pricing_usd_per_mtok": {
+            "input": rates[0] if rates is not None else None,
+            "output": rates[1] if rates is not None else None,
+        },
+    }
+    if live is not None:
+        entry["name"] = live.name
+        entry["vendor"] = live.vendor
+        entry["context_length"] = live.context_length
+    return entry
+
+
+@router.post("/config/providers/openrouter/catalog/refresh", dependencies=[require_admin])
+async def refresh_openrouter_catalog(request: Request) -> dict[str, Any]:
+    """Read OpenRouter's model list now (it is read daily by itself). Returns the list's state.
+
+    A failed read keeps the list in force and comes back in ``last_error``.
+    """
+    service = getattr(request.app.state, "openrouter_catalog", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="OpenRouter's model list is not available on this deployment")
+    status = await service.refresh()
+    db = getattr(request.app.state, "db", None)
+    config = getattr(request.app.state, "config", None)
+    await emit_audit(
+        db,
+        "provider_catalog_refreshed",
+        actor=request_actor(request),
+        details={"provider": "openrouter", "models": status.get("models"), "error": status.get("last_error")},
+        audit_log_path=getattr(config, "audit_log_path", None),
+    )
+    return dict(status)
 
 
 @router.get("/config/budget")
@@ -462,11 +500,16 @@ async def catalog_provider_usage(provider_name: str, request: Request, fresh: bo
 
 def _job_key_resolver(request: Request) -> Any:
     """The key a job with no repository binding gets for a provider: the global pool, then the env; None without one."""
+    return job_key_resolver(request.app.state)
+
+
+def job_key_resolver(state: Any) -> Any:
+    """``_job_key_resolver`` over the app's state, for a caller with no request (OpenRouter's model list)."""
     from embry0.agents.providers import provider_named
     from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
 
     async def resolve(name: str) -> str | None:
-        resolver = getattr(request.app.state, "credential_resolver", None)
+        resolver = getattr(state, "credential_resolver", None)
         if resolver is not None:
             try:
                 return str((await resolver.resolve_llm("", name)).secret)

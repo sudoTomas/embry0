@@ -40,6 +40,8 @@ from typing import Any, Final
 
 import structlog
 
+from embry0.agents.openrouter_catalog import catalog_model_ids, catalog_rates
+
 logger = structlog.get_logger(__name__)
 
 
@@ -151,7 +153,9 @@ OPENROUTER = ModelProvider(
     api_key_env="OPENROUTER_API_KEY",
     model_prefixes=("openrouter/",),
     # OpenRouter passes the upstream provider's price through; its credit-purchase fee
-    # is not modelled.
+    # is not modelled. The live catalog (embry0/agents/openrouter_catalog.py) replaces
+    # this list and its price once one is loaded; this entry is what a deployment that
+    # never reached OpenRouter's list offers.
     models=("openrouter/openai/gpt-6.1-sol",),
     pricing_usd_per_mtok={"openrouter/openai/gpt-6.1-sol": (2.0, 10.0)},
     openai_base_url="https://openrouter.ai/api/v1",
@@ -284,8 +288,25 @@ def upstream_model(provider: ModelProvider, model: str) -> str:
     return model
 
 
-def _rates(model: str) -> tuple[float, float] | None:
-    """``model``'s (input, output) $/Mtok: its own entry, else its provider's default rates."""
+def provider_models(provider: ModelProvider) -> tuple[str, ...]:
+    """The model ids ``provider`` offers: OpenRouter's live catalog once one is loaded, else the static list.
+
+    The catalog replaces OpenRouter's static entry rather than adding to it: a
+    model OpenRouter stopped listing no longer runs there, and offering it
+    would only produce failing jobs.
+    """
+    if provider.name == OPENROUTER.name:
+        live = catalog_model_ids()
+        if live is not None:
+            return live
+    return provider.models
+
+
+def model_rates(model: str) -> tuple[float, float] | None:
+    """``model``'s (input, output) $/Mtok: OpenRouter's live price, its own entry, else its provider's default rates."""
+    live = catalog_rates(model)
+    if live is not None:
+        return live
     for provider in ALL_PROVIDERS:
         rates = provider.pricing_usd_per_mtok.get(model)
         if rates is not None:
@@ -311,15 +332,20 @@ def price_usage(
     output_tokens: int,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    rates: tuple[float, float] | None = None,
 ) -> float | None:
     """Estimated USD for one message's usage, or None when the model is unpriced.
+
+    ``rates`` are the run's own (input, output) $/Mtok when the orchestrator
+    sent them: a model of OpenRouter's live catalog, which the sandbox has no
+    copy of.
 
     turn_usage events carry this so cost can tick during a run; cost_update
     (the provider's own total at the end of the run) stays authoritative.
     Prices every known provider, enabled or not: the sandbox prices the model
     the orchestrator routed it, without the orchestrator's settings.
     """
-    rates = _rates(model)
+    rates = rates if rates is not None else model_rates(model)
     if rates is None:
         return None
     rate_in, rate_out = rates
@@ -334,7 +360,7 @@ def price_usage(
 
 def known_models() -> set[str]:
     """Every model id any catalog provider of this deployment declares."""
-    return {m for provider in catalog_providers() for m in provider.models}
+    return {m for provider in catalog_providers() for m in provider_models(provider)}
 
 
 def unpriced_models(models: Iterable[str]) -> list[str]:
@@ -350,7 +376,7 @@ def unpriced_models(models: Iterable[str]) -> list[str]:
     for model in models:
         if not model:
             continue
-        if provider_for_model(model) is not None and _rates(model) is None:
+        if provider_for_model(model) is not None and model_rates(model) is None:
             found.add(model)
     return sorted(found)
 
@@ -359,8 +385,8 @@ def unpriced_models_message(models: Iterable[str]) -> str:
     """The operator-facing refusal for ``unpriced_models``' result."""
     return (
         f"model(s) have no price entry: {', '.join(models)} — a provider-routed model "
-        "must be listed in pricing_usd_per_mtok (embry0/agents/providers.py), or its "
-        "runs would be metered at $0"
+        "must be listed in pricing_usd_per_mtok (embry0/agents/providers.py) or, for "
+        "OpenRouter, in its live model list, or its runs would be metered at $0"
     )
 
 

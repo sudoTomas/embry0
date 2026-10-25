@@ -2227,6 +2227,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.leads_loop = None
         logger.critical("leads_unavailable", exc_info=True)
 
+    # OpenRouter's live model list (docs/providers.md): the stored list is put
+    # in force now, and refreshed daily while OpenRouter is enabled. Without
+    # one, OpenRouter's static entry serves.
+    try:
+        from embry0.agents.providers import OPENROUTER, enabled_openai_compatible
+        from embry0.api.v1.config import job_key_resolver
+        from embry0.services.openrouter_catalog import OpenRouterCatalogService, refresh_hours
+        from embry0.storage.repositories.provider_catalogs import ProviderCatalogsRepository
+
+        app.state.openrouter_catalog = OpenRouterCatalogService(
+            ProviderCatalogsRepository(db),
+            resolve_secret=job_key_resolver(app.state),
+            interval_hours=refresh_hours(),
+        )
+        await app.state.openrouter_catalog.load()
+        if OPENROUTER in enabled_openai_compatible():
+            catalog_task = asyncio.create_task(app.state.openrouter_catalog.start())
+            app.state.background_tasks.add(catalog_task)
+            catalog_task.add_done_callback(app.state.background_tasks.discard)
+    except Exception:
+        app.state.openrouter_catalog = None
+        logger.critical("openrouter_catalog_unavailable", exc_info=True)
+
     # Merge approvals (#319 phase 2): a job's PR on an enabled repo is asked
     # about in the operator's approval chat, and a relayed "merge it" is
     # checked and merged here. The executor holds it as an optional

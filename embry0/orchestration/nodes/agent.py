@@ -20,6 +20,7 @@ from embry0.agents.fallback import (
 )
 from embry0.agents.fallback import describe as describe_fallback
 from embry0.agents.model_policy import build_model_policy, resolve_tier_models
+from embry0.agents.providers import price_usage
 from embry0.agents.resolver import resolve_agent_invocation
 from embry0.agents.session import AgentSession
 from embry0.execution import events
@@ -33,6 +34,7 @@ from embry0.orchestration.budget import (
     resolve_job_cap,
 )
 from embry0.orchestration.state import AgentOutputEntry
+from embry0.safety.error_codes import ErrorCode
 from embry0.safety.redaction import redact_bounded, redact_secrets, secret_env_values
 
 logger = structlog.get_logger(__name__)
@@ -430,6 +432,46 @@ def _sandbox_llm_providers(state: dict[str, Any], configurable: dict[str, Any]) 
     return set(configurable.get("llm_providers") or ())
 
 
+_UNPRICED_PREFIX = "cost unknown:"
+"""How the sandbox's tool loop starts its refusal of a model it has no price for."""
+
+
+def _priced_from_the_catalog(result: Any, invocation: Any, agent_type: str) -> Any:
+    """Price a catalog model's run here when the sandbox could not.
+
+    A sandbox image built before OpenRouter's live catalog reads no
+    ``pricing_usd_per_mtok`` from its config, finds the model in no price
+    table of its own and ends a finished run as an error ("cost unknown").
+    The orchestrator has the rates and the run's token counts, so it prices
+    the run and keeps the outcome the agent reached. Any other result is
+    returned as it came.
+    """
+    rates = invocation.pricing_usd_per_mtok
+    if (
+        rates is None
+        or not result.is_error
+        or result.error_code != ErrorCode.INVALID_CONFIG.value
+        or not str(result.error_message or "").startswith(_UNPRICED_PREFIX)
+    ):
+        return result
+    cost = price_usage(
+        invocation.model,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cache_read_tokens=result.cache_read_tokens,
+        cache_creation_tokens=result.cache_creation_tokens,
+        rates=rates,
+    )
+    logger.warning(
+        "catalog_model_priced_by_orchestrator",
+        agent_type=agent_type,
+        model=invocation.model,
+        cost_usd=cost,
+        hint="the sandbox image predates OpenRouter's live catalog; rebuild it",
+    )
+    return replace(result, is_error=False, error_message="", error_code=None, cost_usd=cost or 0.0)
+
+
 async def run_agent_node(
     state: dict[str, Any],
     agent_runner: Any,
@@ -604,6 +646,9 @@ async def run_agent_node(
         "node": invocation.node,
         "skill_mounts": list(invocation.skill_mounts),
     }
+    if invocation.pricing_usd_per_mtok is not None:
+        # A model of OpenRouter's live catalog: the sandbox has no copy of it.
+        serialized["pricing_usd_per_mtok"] = list(invocation.pricing_usd_per_mtok)
 
     container = state.get("sandbox_container_id", "")
 
@@ -688,6 +733,8 @@ async def run_agent_node(
         # leave it that way.
         await _finish_trace(**_crashed_trace_fields(exc, None))
         raise
+
+    result = _priced_from_the_catalog(result, invocation, agent_type)
 
     output_entry = AgentOutputEntry(
         agent_type=result.agent_type,
@@ -816,7 +863,6 @@ def _enforce_ask_user_cap(
     ``state`` is captured at function entry — the second call sees the same
     snapshot value, not the value written by the first call.
     """
-    from embry0.safety.error_codes import ErrorCode
 
     blocking = [q for q in pending_questions if q.get("importance") != "auto_answerable"]
     auto = [q for q in pending_questions if q.get("importance") == "auto_answerable"]
