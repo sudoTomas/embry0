@@ -343,6 +343,7 @@ class Progression:
                 self.characters[a].to_dict(quest_cape=a == self.quest_cape_owner) for a in sorted(self.characters)
             ],
             "achievements": [a.to_dict() for a in self.achievements],
+            "achievement_categories": _achievement_categories(),
             "quests": [q.to_dict() for q in self.quests],
             # A repo whose diary has no task done yet is left out: every repo a job ever touched has one.
             "diaries": [d.to_dict() for d in self.diaries if d.started],
@@ -379,6 +380,13 @@ class Progression:
             levels + agent_levels + drops + unlocks + quests + diaries, key=lambda item: item[0], reverse=True
         )
         return [entry for _at, entry in merged[:count]]
+
+
+def _achievement_categories() -> list[dict[str, str]]:
+    """The achievement diary's categories, in the order the page shows them."""
+    from embry0.services.achievements import CATEGORIES
+
+    return [{"id": c.id, "name": c.name, "blurb": c.blurb} for c in CATEGORIES]
 
 
 def _utc(at: datetime) -> datetime:
@@ -495,7 +503,10 @@ class ProgressionService:
             # Quest XP feeds the levels, so the quests that give it are read first.
             progression = compute(events, await self._repository.agent_types(), quest_rewards(journal))
             progression.achievements, progression.unlocks = evaluate(
-                events, await self._repository.facts(), progression.level_ups
+                await self._repository.facts(),
+                progression.level_ups,
+                progression.agent_level_ups,
+                progression.drops,
             )
             progression.diaries = evaluate_diaries(journal)
             progression.quests = evaluate_quests(

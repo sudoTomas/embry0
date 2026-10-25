@@ -13,6 +13,8 @@ describe("chat box messages", () => {
       "Congratulations, Forge just advanced a Coding level. Its Coding level is now 42.",
     );
     expect(chatMessage(UNLOCK, () => "", () => "")).toBe("Well done! You have reached Steel in Forged in Fire.");
+    const objective: RecentEvent = { kind: "achievement", at: "2026-10-24T12:00:00+00:00", id: "long_grind", name: "Long Grind", tier: "complete" };
+    expect(chatMessage(objective, () => "", () => "")).toBe("Well done! You have completed the Long Grind achievement.");
     const drop: RecentEvent = { kind: "rare", at: "2026-12-25T10:00:00+00:00", agent_type: "developer", id: "party-hat" };
     expect(chatMessage(drop, () => "", () => "Forge")).toBe("Valuable drop: Forge received a party hat!");
     const up: RecentEvent = { kind: "agent_level", at: "2026-10-24T10:00:00+00:00", agent_type: "developer", level: 96 };

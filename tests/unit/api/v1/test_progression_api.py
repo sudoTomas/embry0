@@ -12,14 +12,17 @@ from httpx import ASGITransport, AsyncClient
 from embry0.api.v1 import progression as progression_api
 from embry0.services.achievements import evaluate
 from embry0.services.progression import compute
-from embry0.storage.repositories.progression import ProgressEvent
+from embry0.storage.repositories.progression import Fact, ProgressEvent
 
 
 class FakeService:
     async def read(self) -> Any:
         events = [ProgressEvent("merged", "developer", datetime(2026, 10, 1, tzinfo=UTC))]
         progression = compute(events, ["developer"])
-        progression.achievements, progression.unlocks = evaluate(events, [], progression.level_ups)
+        facts = [Fact("merged", datetime(2026, 10, 1, tzinfo=UTC), 1, "o/r #1")]
+        progression.achievements, progression.unlocks = evaluate(
+            facts, progression.level_ups, progression.agent_level_ups
+        )
         return progression
 
 
@@ -41,6 +44,7 @@ async def test_the_read_answers_the_account_its_characters_and_achievements() ->
         "skills",
         "characters",
         "achievements",
+        "achievement_categories",
         "quests",
         "diaries",
         "recent",
@@ -64,7 +68,9 @@ async def test_the_read_answers_the_account_its_characters_and_achievements() ->
     assert len(developer["skills"]) == 23
     assert {r["kind"] for r in body["recent"]} == {"level", "agent_level", "achievement"}
     assert developer["level"] >= 1
-    assert len(body["achievements"]) == 14 and body["achievements"][1]["id"] == "forged_in_fire"
+    assert len(body["achievements"]) == 50 and body["achievements"][0]["id"] == "forged_in_fire"
+    assert body["achievements"][0]["evidence"]["label"] == "o/r #1"
+    assert [c["id"] for c in body["achievement_categories"]][:2] == ["shipping", "slayer"]
 
 
 @pytest.mark.asyncio

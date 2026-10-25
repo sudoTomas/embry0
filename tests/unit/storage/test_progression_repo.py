@@ -126,45 +126,79 @@ async def test_the_agents_are_every_defined_type(db_with_migrations) -> None:
     assert "zz-custom" in types and types == sorted(types)
 
 
-async def test_the_facts_achievements_count(db_with_migrations) -> None:
+async def test_the_facts_count_outcomes_with_their_evidence(db_with_migrations) -> None:
     db = db_with_migrations
 
     async def job(
-        job_id: str, status: str, seconds: int, *, issue: str | None = None, cost: float = 0.0, minutes_ago: int = 0
+        job_id: str,
+        status: str,
+        minutes: int,
+        *,
+        issue: str | None = None,
+        cost: float = 0.0,
+        pr: int | None = None,
+        delivery: str = "none",
+        template: str | None = None,
+        ran_minutes: int = 10,
     ) -> None:
         await db.execute(
             """
-            INSERT INTO jobs (job_id, repo, task, status, issue_id, total_cost_usd, created_at, started_at, finished_at)
-            VALUES ($1, 'o/r', 't', $2, $3, $4, NOW() - make_interval(mins => $5),
-                    NOW() - make_interval(mins => $5), NOW() - make_interval(mins => $5) + make_interval(secs => $6))
+            INSERT INTO jobs (job_id, repo, task, status, issue_id, total_cost_usd, pr_url, delivery_state,
+                              pipeline_template, created_at, started_at, finished_at, delivery_state_at)
+            VALUES ($1, 'o/r', 't', $2, $3, $4, $5, $6, $7,
+                    TIMESTAMPTZ '2026-10-06 12:00Z' + make_interval(mins => $8),
+                    TIMESTAMPTZ '2026-10-06 12:00Z' + make_interval(mins => $8),
+                    TIMESTAMPTZ '2026-10-06 12:00Z' + make_interval(mins => $8 + $9),
+                    TIMESTAMPTZ '2026-10-06 12:00Z' + make_interval(mins => $8 + $9 + 1))
             """,
             job_id,
             status,
             issue,
             cost,
-            minutes_ago,
-            seconds,
+            f"https://forge/o/r/pull/{pr}" if pr else None,
+            delivery,
+            template,
+            minutes,
+            ran_minutes,
         )
 
-    await db.execute("INSERT INTO issues (id, title, repo) VALUES ('iss-1', 't', 'o/r')")
-    await job("job-quick", "completed", 5, cost=0.25)
-    await job("job-slow", "completed", 300)
-    await job("job-failed", "failed", 60, issue="iss-1", minutes_ago=10)
-    await job("job-merged", "pr_merged", 600, issue="iss-1", cost=1.5)
-    await job("job-cancelled", "cancelled", 3)
-    await db.execute("UPDATE jobs SET resume_attempts = 1 WHERE job_id IN ('job-slow', 'job-cancelled')")
-    await _trace(db, "trc-slow", "job-slow", "qa")
+    await db.execute("INSERT INTO issues (id, title, repo) VALUES ('iss-1', 'Fix the login', 'o/r')")
+    await job("job-first", "completed", 0, cost=0.5, pr=7, delivery="merged")  # the repo's first job
+    await job("job-failed", "failed", 10, issue="iss-1")
+    await job("job-merged", "pr_merged", 20, issue="iss-1", cost=1.5, pr=8, ran_minutes=180)
+    await job("job-open", "completed", 30, pr=9, delivery="pr_open")
+    await job("job-audit", "completed", 40, template="context-audit")
+    await db.execute("UPDATE jobs SET result_summary = 'Stale: 3' || chr(10) || 'Files: 2' WHERE job_id = 'job-audit'")
+    await _trace(db, "trc-err", "job-merged", "developer", error="ERR_AGENT_MAX_TURNS", result="error")
+    await _trace(db, "trc-review", "job-merged", "review")
 
-    repo = ProgressionRepository(db)
+    facts = await ProgressionRepository(db).facts()
     counted: dict[str, float] = {}
-    for fact in await repo.facts():
+    for fact in facts:
         counted[fact.metric] = counted.get(fact.metric, 0) + fact.value
-    assert counted == {"completed": 3, "spent": 1.75, "quick": 1}, counted
-    events = await repo.events()
-    assert sorted((e.source, e.agent_type) for e in events if e.source in ("comeback", "resumed")) == [
-        ("comeback", "developer"),
-        ("resumed", "qa"),
-    ], "a merge after a failure, and a resumed job credited to its last run's agent; a cancelled one is not"
+    assert counted == {
+        "merged": 2,
+        "first_try": 1,
+        "clean_kill": 1,
+        "bargain": 1,
+        "speedrun": 2,
+        "world_hopper": 1,
+        "issue_done": 1,
+        "comeback": 1,
+        "long_grind": 1,
+        "pet_drop": 1,
+        "audit": 1,
+        "reviews": 1,
+    }, counted
+    merged = [f for f in facts if f.metric == "merged"]
+    assert [(f.label, f.url) for f in merged] == [
+        ("o/r #7", "https://forge/o/r/pull/7"),
+        ("o/r #8", "https://forge/o/r/pull/8"),
+    ], "an open pull request is not a merge; the evidence names the pull request"
+    assert next(f for f in facts if f.metric == "issue_done").label == "Fix the login"
+    assert next(f for f in facts if f.metric == "audit").report == "Stale: 3\nFiles: 2"
+    events = await ProgressionRepository(db).events()
+    assert [e.agent_type for e in events if e.source == "comeback"] == ["developer"], "experience still reads events"
 
 
 async def test_the_journal_is_every_job_and_every_successful_run_with_its_repo(db_with_migrations) -> None:

@@ -71,20 +71,48 @@ export interface LevelUp {
 }
 
 /** One achievement; a secret before its first signal carries no name, metric or thresholds. */
+/** What a reached objective reads as, in place of a tier. */
+export type AchievementTier = Tier | "complete";
+
+/** A category of the achievement diary (spec 2026-10-25). */
+export interface AchievementCategory {
+  id: string;
+  name: string;
+  blurb: string;
+}
+
+/** What last moved an achievement: a pull request, a repository, an error. */
+export interface AchievementEvidence {
+  label: string | null;
+  url: string | null;
+  at: string | null;
+}
+
 export interface AchievementEntry {
   id: string;
   name: string;
+  /** Its category's id; a secret shows its category too. */
+  category: string;
+  /** Tiered: Bronze to Divine. Objective: one threshold, then complete. */
+  kind: "tiered" | "objective";
+  /** The pixel icon to draw; null while secret. */
+  icon: string | null;
   what_counts: string | null;
+  /** One line in the old game's voice. */
+  flavour: string | null;
   secret: boolean;
   state: "unlocked" | "discovered" | "secret";
-  /** The highest tier reached, or null before Bronze. */
-  tier: Tier | null;
+  /** The highest tier reached ("complete" for an objective), or null before the first. */
+  tier: AchievementTier | null;
   tiers_reached: number;
   value: number;
   next_threshold: number | null;
-  /** The value of each tier, Bronze to Divine. */
+  /** The value of each tier, Bronze to Divine, or the one value of an objective. */
   thresholds: number[] | null;
   unlocked_at: string | null;
+  /** When its highest tier was reached. */
+  latest_at: string | null;
+  evidence: AchievementEvidence | null;
 }
 
 export interface AchievementUnlock {
@@ -92,7 +120,7 @@ export interface AchievementUnlock {
   at: string;
   id: string;
   name: string;
-  tier: Tier;
+  tier: AchievementTier;
 }
 
 /** A step of a quest or a task of a repo diary, and when it was done. */
@@ -162,6 +190,7 @@ export interface Progression {
   skills: Skill[];
   characters: Character[];
   achievements: AchievementEntry[];
+  achievement_categories: AchievementCategory[];
   quests: Quest[];
   /** The diaries with at least one task done, the furthest along first. */
   diaries: Diary[];

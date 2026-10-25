@@ -38,8 +38,12 @@ export function character(overrides: Partial<Character> = {}): Character {
 export function entry(overrides: Partial<AchievementEntry> = {}): AchievementEntry {
   return {
     id: "forged_in_fire",
-    name: "Forged in Fire",
-    what_counts: "Pull requests merged",
+    name: "Gz on the Merge",
+    category: "shipping",
+    kind: "tiered",
+    icon: "anvil",
+    what_counts: "Pull requests embry0 opened that merged",
+    flavour: "Somebody type gz in chat.",
     secret: false,
     state: "unlocked",
     tier: "steel",
@@ -48,6 +52,8 @@ export function entry(overrides: Partial<AchievementEntry> = {}): AchievementEnt
     next_threshold: 30,
     thresholds: [1, 5, 15, 30, 60, 120, 250],
     unlocked_at: "2026-10-01T00:00:00+00:00",
+    latest_at: "2026-10-05T00:00:00+00:00",
+    evidence: { label: "o/app #42", url: "https://forge/o/app/pull/42", at: "2026-10-05T00:00:00+00:00" },
     ...overrides,
   };
 }
@@ -62,8 +68,15 @@ export function progression(overrides: Partial<Progression> = {}): Progression {
     ],
     achievements: [
       entry(),
-      entry({ id: "skill_cape", name: "Skill Cape", what_counts: "Skill capes earned across every character", state: "discovered", tier: null, tiers_reached: 0, value: 0, next_threshold: 1, unlocked_at: null }),
-      entry({ id: "oh_dear_you_are_dead", name: "???", what_counts: null, secret: true, state: "secret", tier: null, tiers_reached: 0, value: 0, next_threshold: null, thresholds: null, unlocked_at: null }),
+      entry({ id: "skill_cape", name: "Skill Cape", category: "skilling", icon: "cape", what_counts: "Skills at 99 across every character", flavour: "A cape.", state: "discovered", tier: null, tiers_reached: 0, value: 0, next_threshold: 1, unlocked_at: null, latest_at: null, evidence: null }),
+      entry({ id: "long_grind", name: "Long Grind", category: "oddities", kind: "objective", icon: "hourglass", what_counts: "A pull request that merged from a job that ran for more than two hours", flavour: "This was supposed to be a quick fix.", secret: true, tier: "complete", tiers_reached: 1, value: 1, next_threshold: null, thresholds: [1], latest_at: "2026-10-03T00:00:00+00:00", evidence: { label: "o/app #9", url: null, at: "2026-10-03T00:00:00+00:00" } }),
+      entry({ id: "oh_dear_you_are_dead", name: "???", category: "grit", icon: null, what_counts: null, flavour: null, secret: true, state: "secret", tier: null, tiers_reached: 0, value: 0, next_threshold: null, thresholds: null, unlocked_at: null, latest_at: null, evidence: null }),
+    ],
+    achievement_categories: [
+      { id: "shipping", name: "Shipping", blurb: "Pull requests that merged." },
+      { id: "grit", name: "Grit", blurb: "Comebacks." },
+      { id: "skilling", name: "Skilling", blurb: "Levels." },
+      { id: "oddities", name: "Oddities", blurb: "Secrets." },
     ],
     quests: [
       {

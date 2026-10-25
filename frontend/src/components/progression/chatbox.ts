@@ -52,5 +52,6 @@ export function chatMessage(
   if (event.kind === "rare") {
     return `Valuable drop: ${characterName(event.agent_type)} received a ${RARE_NAMES[event.id] ?? event.id}!`;
   }
+  if (event.tier === "complete") return `Well done! You have completed the ${event.name} achievement.`;
   return `Well done! You have reached ${TIER_NAME[event.tier]} in ${event.name}.`;
 }
