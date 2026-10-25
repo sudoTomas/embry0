@@ -4,7 +4,7 @@ import type { RunWith } from "@/api/runWith";
 
 const KEY = ["owner-proposals"];
 
-export function useOwnerProposals(filters: { owner?: string; kind?: OwnerProposalKind }) {
+export function useOwnerProposals(filters: { owner?: string; kind?: OwnerProposalKind; include_held?: boolean }) {
   return useQuery({
     queryKey: [...KEY, filters],
     queryFn: () => fetchOwnerProposals(filters),

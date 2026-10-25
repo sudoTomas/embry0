@@ -756,7 +756,9 @@ async def case_get(case_id: str) -> dict[str, Any]:
 async def proposal_list(owner: str | None = None, kind: str | None = None, since: str | None = None) -> dict[str, Any]:
     """The proposals still asked: work a repository's owners could start, newest first.
 
-    Each is {id, kind, repo, area, owners, title, summary, details, action, url, created_at}.
+    Each is {id, kind, repo, area, owners, title, summary, details, action, url, created_at,
+    brief, held}. brief is the proposal in plain words, {title, problem, fix, size}, or null
+    until it is written; held is a backlog ticket below the readiness floor (left out here).
     kind is "case" (a problem the watcher keeps seeing in production), "issue" (an issue
     open and not started), "finding" (one claim the context auditor thinks is wrong in
     a file that steers coding agents: ask the owner whether it is what they want), or a
@@ -765,7 +767,8 @@ async def proposal_list(owner: str | None = None, kind: str | None = None, since
     branch), "alert" (a dependency or code-scanning alert), "flaky" (a check that failed
     and then passed on the same commit) or "review" (review threads nobody answered).
     owner: a GitHub login, only its repositories' proposals. since: an ISO time, only
-    proposals asked after it. Message an owner with the summary and the id; answer with
+    proposals asked after it. Message an owner with the brief (its title, problem and fix)
+    when there is one, else the summary; keep the id for the answer, which is
     proposal_accept, proposal_decline or proposal_snooze, naming the id."""
     return await _get_client().proposal_list(owner=owner, kind=kind, since=since)
 

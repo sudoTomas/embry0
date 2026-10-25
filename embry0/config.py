@@ -768,6 +768,16 @@ class Embry0Config(BaseSettings):
     # Commits of the default branch the flaky-check finder reads.
     leads_flaky_commits: int = Field(default=10, ge=1, le=50)
 
+    # Owner proposals in plain words (spec 2026-10-25, proposal briefs). A
+    # backlog ticket is asked in chat only at this readiness and up; the page
+    # shows the rest folded. Each proposal's brief is written on
+    # PROPOSAL_BRIEF_MODEL, else on the watcher's local-first model
+    # (provider_config.watcher_local_model); with neither, none is written.
+    proposals_ticket_min_readiness: int = Field(default=60, ge=0, le=100)
+    proposal_brief_model: Annotated[str, NOT_SECRET] = ""
+    proposal_brief_interval_seconds: float = Field(default=60.0, gt=0)
+    proposal_briefs_per_tick: int = Field(default=3, ge=1, le=20)
+
     @field_validator(
         "audit_log_path",
         "job_log_retention_days",

@@ -77,7 +77,7 @@ describe("OwnerProposalsPage (owner proposals, spec 2026-10-24)", () => {
 
   it("filters by owner and kind from the address", () => {
     renderPage("/owner-proposals?owner=octo&kind=finding");
-    expect(mockUseOwnerProposals).toHaveBeenCalledWith({ owner: "octo", kind: "finding" });
+    expect(mockUseOwnerProposals).toHaveBeenCalledWith({ owner: "octo", kind: "finding", include_held: true });
   });
 
   it("answers as the person signed in: start, not this with a reason, later in a week", async () => {
@@ -109,6 +109,47 @@ describe("OwnerProposalsPage (owner proposals, spec 2026-10-24)", () => {
     expect(mutate.mock.calls[0][0].body.run_with).toEqual({ model: "claude-sonnet-5", credential_id: "k-team" });
     expect(mutate.mock.calls[1][0].body.run_with).toBeUndefined();
     prompt.mockRestore();
+  });
+
+  it("leads with the brief in plain words, and keeps the summary and the id in the details (spec 2026-10-25)", async () => {
+    mockUseOwnerProposals.mockReturnValue({
+      data: [
+        {
+          ...FINDING,
+          brief: {
+            title: "Fix the test command in the agent instructions",
+            problem: "The instructions tell coding agents to run make check, which does not exist.",
+            fix: "Change that line to make test. You get a one-line pull request.",
+            size: "small",
+            model: "custom/local",
+            written_at: "2026-10-25T12:00:00+00:00",
+          },
+        },
+      ],
+    });
+    renderPage();
+    const card = screen.getByTestId("owner-proposal");
+    const brief = within(card).getByTestId("owner-proposal-brief");
+    expect(brief).toHaveTextContent("Fix the test command in the agent instructions");
+    expect(brief).toHaveTextContent("Problem: The instructions tell coding agents to run make check, which does not exist.");
+    expect(brief).toHaveTextContent("Fix: Change that line to make test. You get a one-line pull request.");
+    expect(within(brief).getByText("small")).toHaveAttribute("title", "How much work the fix is");
+    expect(card).not.toHaveTextContent("Is that what you want it to say?");
+    expect(card).not.toHaveTextContent("finding:abc");
+    await userEvent.click(within(card).getByRole("button", { name: "Details" }));
+    const details = screen.getByTestId("owner-proposal-details");
+    expect(details).toHaveTextContent("Is that what you want it to say?");
+    expect(details).toHaveTextContent("finding:abc");
+  });
+
+  it("folds the backlog tickets below the readiness floor under their own heading", () => {
+    const TICKET: OwnerProposal = { ...FINDING, id: "ticket:t1", kind: "ticket", title: "Thin ticket", summary: "A backlog ticket", held: true };
+    mockUseOwnerProposals.mockReturnValue({ data: [FINDING, TICKET] });
+    renderPage();
+    const held = screen.getByTestId("owner-proposals-held");
+    expect(held).toHaveTextContent("Not ready enough to ask (1)");
+    expect(within(held).getByTestId("owner-proposal")).toHaveAttribute("data-kind", "ticket");
+    expect(screen.getAllByTestId("owner-proposal")).toHaveLength(2);
   });
 
   it("offers no answers to a session that is not admin, and says when nothing is asked", () => {

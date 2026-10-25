@@ -1362,6 +1362,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 114 | provider_catalogs: OpenRouter's live model list, every model with tool calling at its own price; a failed refresh keeps the last good list (docs/providers.md) | `provider_catalogs` |
 | 115 | local models: how many agent runs the operator's own model server takes at once, the model the watcher's analyses run on first while a slot is free (`''` is off), and a lease per run on one of its slots, expiring by itself ([providers](providers.md#local-models)) | `provider_config.local_max_runs`, `provider_config.watcher_local_model`, `local_model_leases` |
 | 116 | spent account waits: what a paused job waits for when its LLM account is spent with nothing ready to move to (provider, reason, until, mode), read by the account-wait loop that goes on with it ([providers](providers.md#spent-account-waits)) | `jobs.account_wait`, `idx_jobs_account_wait` |
+| 117 | proposal briefs: each owner proposal still asked, in plain words (title, problem, fix, size), written by a model from what embry0 holds about it; a changed proposal gets a new one ([spec](superpowers/specs/2026-10-25-proposal-briefs-design.md)) | `proposal_briefs` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

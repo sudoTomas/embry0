@@ -505,6 +505,13 @@ fallback, or the job named it) waits for a slot up to
 the job is parked for five minutes and tries again
 ([Spent account waits](#spent-account-waits)).
 
+**Proposal briefs on the local model.** The same `watcher_local_model` writes
+each owner proposal's plain-words brief (title, problem, fix, size) unless
+`PROPOSAL_BRIEF_MODEL` names another OpenAI-compatible model: a few a minute,
+in the background, with thinking off and a JSON answer asked for. With
+neither set, no briefs are written and the feed shows each proposal's
+summary ([proposal briefs](superpowers/specs/2026-10-25-proposal-briefs-design.md)).
+
 **Local-first for the watcher.** `watcher_local_model` in the provider
 settings (`""`, the default, is off) is a `custom/<model>` the watcher's log
 analyses run on first. The watcher stamps it on each analysis job

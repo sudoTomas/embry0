@@ -24,6 +24,7 @@ from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.services.leads import LEAD_KINDS
+from embry0.services.proposal_briefs import held, with_briefs
 from embry0.services.proposals import (
     ACTOR,
     CODEOWNERS_PATHS,
@@ -137,25 +138,34 @@ async def _areas(request: Request, repos: set[str]) -> dict[str, list[Any]]:
     return dict(await asyncio.gather(*(read(r) for r in repos)))
 
 
-async def _open_leads(request: Request) -> list[dict[str, Any]]:
-    leads = getattr(request.app.state, "leads_repo", None)
-    return await leads.open_leads() if leads is not None else []
-
-
-async def feed(request: Request) -> list[Proposal]:
-    """Every proposal still asked, newest first, with its owners."""
-    repo = _state(request, "proposals_repo")
-    cases, issues, audits, owners, decisions, leads = await asyncio.gather(
-        repo.cases(), repo.issues(), repo.audits(), repo.owners(), repo.decisions(), _open_leads(request)
+async def open_proposals(state: Any) -> list[Proposal]:
+    """Every proposal still asked, without its owners: what the feed and the brief writer read."""
+    repo = getattr(state, "proposals_repo", None)
+    if repo is None:
+        raise HTTPException(status_code=503, detail="proposals_repo is not initialized")
+    leads = getattr(state, "leads_repo", None)
+    cases, issues, audits, decisions, open_leads = await asyncio.gather(
+        repo.cases(), repo.issues(), repo.audits(), repo.decisions(), leads.open_leads() if leads else _none()
     )
     proposals = [case_proposal(r) for r in cases] + [issue_proposal(r) for r in issues]
-    proposals += [lead_proposal(r) for r in leads]
+    proposals += [lead_proposal(r) for r in open_leads]
     for audit in audits:
         proposals += finding_proposals(
             str(audit["repo"]), str(audit["job_id"]), audit["finished_at"], audit["result_summary"]
         )
     now = datetime.now(UTC)
-    proposals = [p for p in proposals if still_open(p.id, decisions, now)]
+    return [p for p in proposals if still_open(p.id, decisions, now)]
+
+
+async def _none() -> list[dict[str, Any]]:
+    return []
+
+
+async def feed(request: Request) -> list[Proposal]:
+    """Every proposal still asked, newest first, with its owners."""
+    proposals, owners = await asyncio.gather(
+        open_proposals(request.app.state), _state(request, "proposals_repo").owners()
+    )
     repos = {p.repo.lower() for p in proposals}
     unowned = repos - set(owners)
     codeowners, areas = await asyncio.gather(_codeowners(request, unowned), _areas(request, repos))
@@ -170,12 +180,31 @@ async def _open(request: Request, proposal_id: str) -> Proposal:
     return found
 
 
+def _min_readiness(request: Request) -> int:
+    return int(getattr(request.app.state.config, "proposals_ticket_min_readiness", 60))
+
+
+async def _shown(request: Request, proposals: list[Proposal]) -> list[dict[str, Any]]:
+    """The proposals as the API shows them: each with its brief (spec 2026-10-25) and whether it is held."""
+    briefs = getattr(request.app.state, "proposal_briefs_repo", None)
+    stored: dict[str, Any] = {}
+    if briefs is not None:
+        try:
+            stored = await briefs.all()
+        except Exception:  # noqa: BLE001 - the feed never waits on briefs
+            logger.warning("proposal_briefs_unread", exc_info=True)
+    return with_briefs(proposals, stored, _min_readiness(request))
+
+
 @router.get("/proposals")
 async def list_proposals(
     request: Request,
     owner: str | None = Query(default=None, description="A GitHub login: only the proposals it owns"),
     kind: str | None = Query(default=None, description=", ".join(KINDS)),
     since: datetime | None = Query(default=None, description="Only proposals asked after this time"),
+    include_held: bool = Query(
+        default=False, description="Also the backlog tickets below the readiness floor, which a chat does not ask"
+    ),
 ) -> dict[str, Any]:
     """The proposals still asked, newest first: what an assistant reads to message owners."""
     if kind is not None and kind not in KINDS:
@@ -185,12 +214,16 @@ async def list_proposals(
         proposals = [p for p in proposals if p.kind == kind]
     if since is not None:
         proposals = [p for p in proposals if p.created_at > since]
-    return {"proposals": [p.to_dict() for p in proposals], "count": len(proposals)}
+    if not include_held:
+        floor = _min_readiness(request)
+        proposals = [p for p in proposals if not held(p, floor)]
+    shown = await _shown(request, proposals)
+    return {"proposals": shown, "count": len(shown)}
 
 
 @router.get("/proposals/{proposal_id}")
 async def get_proposal(proposal_id: str, request: Request) -> dict[str, Any]:
-    return (await _open(request, proposal_id)).to_dict()
+    return (await _shown(request, [await _open(request, proposal_id)]))[0]
 
 
 async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | None = None) -> str:

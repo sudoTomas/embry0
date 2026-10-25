@@ -234,3 +234,89 @@ async def test_a_finding_fix_is_an_audit_job_on_its_one_file_that_opens_a_pull_r
 
 async def _resolved(value: Any) -> Any:
     return value
+
+
+# ---- proposal briefs (spec 2026-10-25) ----
+
+
+class FakeLeads:
+    async def open_leads(self) -> list[dict[str, Any]]:
+        def ticket(lead_id: str, readiness: int) -> dict[str, Any]:
+            return {
+                "id": lead_id,
+                "kind": "ticket",
+                "repo": "acme/api",
+                "title": f"Ticket {lead_id}",
+                "summary": f"A backlog ticket embry0 could take ({readiness}/100 ready): Ticket {lead_id}",
+                "details": "",
+                "action": "Put the trigger label on the ticket and start its pipeline",
+                "first_seen": T0,
+                "data": {"tracker": "linear", "key": lead_id, "readiness": readiness},
+            }
+
+        return [ticket("ticket:ready", 70), ticket("ticket:thin", 40)]
+
+
+class FakeBriefs:
+    def __init__(self, rows: dict[str, dict[str, Any]]) -> None:
+        self.rows = rows
+
+    async def all(self) -> dict[str, dict[str, Any]]:
+        return self.rows
+
+
+async def test_a_thin_ticket_is_held_out_of_the_chat_feed_but_the_page_can_see_it(app: FastAPI) -> None:
+    app.state.leads_repo = FakeLeads()
+    async with await _client(app) as client:
+        asked = (await client.get("/api/v1/proposals", params={"kind": "ticket"})).json()
+        everything = (await client.get("/api/v1/proposals", params={"kind": "ticket", "include_held": "true"})).json()
+        thin = (await client.get("/api/v1/proposals/ticket:thin")).json()
+    assert [p["id"] for p in asked["proposals"]] == ["ticket:ready"] and asked["count"] == 1
+    assert {p["id"]: p["held"] for p in everything["proposals"]} == {"ticket:ready": False, "ticket:thin": True}
+    assert thin["held"] is True, "a held proposal is still readable (and answerable) by id"
+
+
+async def test_the_floor_is_the_deployment_s(app: FastAPI) -> None:
+    app.state.leads_repo = FakeLeads()
+    app.state.config = SimpleNamespace(audit_log_path=None, proposals_ticket_min_readiness=30)
+    async with await _client(app) as client:
+        asked = (await client.get("/api/v1/proposals", params={"kind": "ticket"})).json()
+    assert sorted(p["id"] for p in asked["proposals"]) == ["ticket:ready", "ticket:thin"]
+
+
+async def test_each_proposal_carries_its_brief_while_it_matches(app: FastAPI) -> None:
+    from embry0.services.proposal_briefs import input_hash
+    from embry0.services.proposals import case_proposal
+
+    case = case_proposal(
+        {
+            "id": "hc-1",
+            "repo": "acme/api",
+            "title": "Timeouts",
+            "severity": "high",
+            "occurrence_count": 3,
+            "created_at": T0,
+            "tracked_at": T0,
+        }
+    )
+    row = {
+        "input_hash": input_hash(case),
+        "title": "Requests to the API time out",
+        "problem": "Some requests time out.",
+        "fix": "Find the slow call and fix it. You get a pull request.",
+        "size": "medium",
+        "model": "custom/local",
+        "written_at": T0,
+    }
+    app.state.proposal_briefs_repo = FakeBriefs({"case:hc-1": row})
+    async with await _client(app) as client:
+        listed = (await client.get("/api/v1/proposals")).json()
+        one = (await client.get("/api/v1/proposals/case:hc-1")).json()
+    by_id = {p["id"]: p for p in listed["proposals"]}
+    assert by_id["case:hc-1"]["brief"]["title"] == "Requests to the API time out"
+    assert by_id["issue:iss-1"]["brief"] is None, "not written yet"
+    assert one["brief"]["fix"].endswith("You get a pull request.")
+    app.state.proposal_briefs_repo = FakeBriefs({"case:hc-1": {**row, "input_hash": "older"}})
+    async with await _client(app) as client:
+        stale = (await client.get("/api/v1/proposals/case:hc-1")).json()
+    assert stale["brief"] is None, "a brief written from an older version is not shown"

@@ -3238,6 +3238,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_jobs_account_wait ON jobs (job_id) WHERE account_wait IS NOT NULL;
         """,
     ),
+    (
+        117,
+        "proposal briefs: what is wrong and how embry0 would fix it, in plain words (spec 2026-10-25, proposal briefs)",
+        # One brief per owner proposal still asked, written by a model from
+        # what embry0 holds about it; input_hash says what it was written
+        # from, so a changed proposal gets a new one.
+        """
+        CREATE TABLE IF NOT EXISTS proposal_briefs (
+            proposal_id TEXT PRIMARY KEY,
+            input_hash  TEXT NOT NULL,
+            title       TEXT NOT NULL,
+            problem     TEXT NOT NULL,
+            fix         TEXT NOT NULL,
+            size        TEXT NOT NULL CHECK (size IN ('small', 'medium', 'large')),
+            model       TEXT NOT NULL DEFAULT '',
+            written_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        COMMENT ON TABLE proposal_briefs IS
+            'an owner proposal in plain words (title, problem, fix, size), written by a model from the proposal as input_hash says.';
+        """,
+    ),
 ]
 
 
