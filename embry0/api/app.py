@@ -2388,6 +2388,7 @@ def _register_routers(app: FastAPI) -> None:
     from embry0.api.v1 import (
         agents,
         api_keys,
+        areas,
         audit,
         auth_session,
         bootstrap,
@@ -2488,6 +2489,8 @@ def _register_routers(app: FastAPI) -> None:
     # #278: healing-case lifecycle ledger (read-only).
     app.include_router(cases.router, prefix="/api/v1", tags=["cases"], dependencies=auth_deps)
     app.include_router(proposals.router, prefix="/api/v1", tags=["proposals"], dependencies=auth_deps)
+    # Areas (spec 2026-10-25): a repository's areas file, and mapping it with an agent.
+    app.include_router(areas.router, prefix="/api/v1", tags=["areas"], dependencies=auth_deps)
     # Run with (spec 2026-10-25): the keys a dashboard action may run a job with.
     app.include_router(run_with.router, prefix="/api/v1", tags=["run-with"], dependencies=auth_deps)
     # #319 phase 2: the chat merge-approval loop.

@@ -145,6 +145,12 @@ BUILTIN_IDENTITY: Final[dict[str, dict[str, str]]] = {
         "color": "sky",
         "tagline": "Finds the lines that steer agents wrong.",
     },
+    "area-mapper": {
+        "display_name": "Cartographer",
+        "avatar": "miner",
+        "color": "emerald",
+        "tagline": "Maps the parts of a monorepo.",
+    },
 }
 
 

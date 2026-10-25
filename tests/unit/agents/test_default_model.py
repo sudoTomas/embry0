@@ -48,6 +48,7 @@ _EVERY_AGENT_TYPE = (
     "comment-sicko",
     "design-auditor",
     "context-auditor",
+    "area-mapper",
 )
 
 

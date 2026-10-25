@@ -207,6 +207,7 @@ const SPECIALISTS = [
   "comment-sicko",
   "design-auditor",
   "context-auditor",
+  "area-mapper",
 ];
 
 const SPECIALIST_ROWS = SPECIALISTS.map((type) => ({

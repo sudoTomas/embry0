@@ -82,7 +82,7 @@ curl http://localhost:8200/api/v1/jobs/{job_id}/verification
 curl http://localhost:8200/api/v1/jobs/{job_id}/agents/developer/session
 ```
 
-A job's `area` (on the list and on `GET /jobs/{job_id}`) is the part of a monorepo the pull request embry0 opened for it changes, from the repository's `.embry0/areas.yml` ([areas](areas.md)); `null` when the repository names none or the change falls in none.
+A job's `area` (on the list and on `GET /jobs/{job_id}`) is the part of a monorepo the pull request embry0 opened for it changes, from the repository's `.embry0/areas.yml` ([areas](areas.md)); `null` when the repository names none or the change falls in none. `GET /repos/{repo}/areas` reads that file, and `POST /repos/{repo}/areas/map` starts the agent that writes it as a pull request ([map areas](areas.md#map-areas)).
 
 ## Run with
 

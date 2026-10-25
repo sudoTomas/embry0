@@ -28,6 +28,10 @@ Globs: `**` any number of directories, `*` and `?` within one, a trailing `/` al
 - **Pull requests embry0 opens** (the orchestrator's PR fallback, which opens nearly all of them since the sandbox cannot): before opening, embry0 reads the compare of the branch against its base (GitHub lists up to 300 files, enough to say where most of a change is). With an area, the PR gets the label `area:<slug>` and the title `[Name] <title>`, unless the title's conventional scope already names the area (`fix(billing): …`). Best-effort: any failure opens the PR as before.
 - **Jobs.** `jobs.area` (migration 109) records the area of the PR the job opened; `JobResponse.area` carries it; the Jobs list shows it before the title, the job page next to the repository.
 
+## Map areas (added the same day)
+
+Writing the file by hand is the chore embry0 should do itself (the user's words: from the dashboard, with a model or key set up in embry0). A tenth read-only specialist, `area-mapper` on template `map-areas`, reads the repository and reports the file; the output step (`areas_delivery.py`) writes the report's `## Areas file` block to `.embry0/areas.yml`, commits it on the job's branch and pushes, and the executor opens the pull request as for any pushed branch. The task carries the file already on the default branch, so a second map starts from the first, and the stack's LogQL, which names the containers the `logs` strings should match. A report with no file, a file with no area that has a path, a file the branch already has, or an earlier map's open pull request opens nothing. The repository page's Areas section lists the areas and the newest map and starts one, with the Run with control; one map of a repository at a time.
+
 ## Tests
 
 Parser (keys, bad files, owner filtering), globs, majority, logs and labels matching, titles, the cached reader, the compare lookup; proposals stamped with areas and area owners; the PR fallback's title, label and job record, and a repository without areas opening as before; the badges on the Jobs list and the Owner proposals page.

@@ -1,7 +1,7 @@
 # Specialist agents
 
 Nine built-in agents that each do one job on a cloned repository and return
-one Markdown report. All nine are read-only: their tools are Read, Glob, Grep
+one Markdown report. All ten are read-only: their tools are Read, Glob, Grep
 and Bash, they edit nothing and open no pull request. Bash runs the
 repository's own checks in a copy of the clone under `/tmp`, and the small
 scripts an agent writes there to prove a claim.
@@ -12,7 +12,7 @@ agent's behavior is its system prompt
 definitions at startup. Edit one on the Agents page; **Reset** there, `POST
 /api/v1/agents/{type}/reset` or the MCP `agent_reset` tool restores the seed.
 
-## The nine
+## The ten
 
 | Agent | Template | Model | Turns | Wall clock |
 |---|---|---|---|---|
@@ -25,6 +25,7 @@ definitions at startup. Edit one on the Agents page; **Reset** there, `POST
 | `comment-sicko` | `comment-pass` | claude-sonnet-5 | 25 | 10 min |
 | `design-auditor` | `design-audit` | claude-sonnet-5 | 40 | 15 min |
 | `context-auditor` | `context-audit` | claude-sonnet-5 | 40 | 20 min |
+| `area-mapper` | `map-areas` | claude-sonnet-5 | 40 | 15 min |
 
 The turn caps are defaults (`pipeline_config.agent_max_turns` overrides them
 per job). The model follows the usual resolution order in
@@ -117,18 +118,28 @@ model or a job's `agent_models` outranks the one above.
 - **why**: the question and its target (a file, a symbol, a decision). The
   sandbox has no access to a tracker or chat, so paste any issue or pull
   request text the answer may rest on.
+- **area-mapper** maps a monorepo's parts into `.embry0/areas.yml`
+  ([areas.md](areas.md)): it reads the tree, the workspace manifests, the
+  docs and CODEOWNERS that say what the parts are, and the compose and deploy
+  configuration that names what their logs run under, then reports one table
+  and the whole file. The output step commits the file on the job's branch
+  and the executor opens the pull request; owners are named only where the
+  repository says them.
 - **design-auditor**: the standard: token roles, the type scale, the radius
   set, how many accent colors, where tables are required. Without one it uses
   a default (one accent color, one text font plus one monospace font, colors
   only through tokens, tables for tabular data) and says so.
 - **context-auditor**: the files or directories to audit, or nothing for every
   instruction file in the repository.
+- **area-mapper**: started from the repository page's Areas section (or
+  `POST /repos/{repo}/areas/map`), whose task carries the file already on the
+  default branch and the LogQL the watcher reads the repository's logs with.
 
 ## Running one
 
 Each template is `triage → agent → output`. A job reaches a specialist only
 by naming its template in the job's `pipeline_template`. No job kind defaults
-to one, triage is not offered the nine when it picks a template for a job
+to one, triage is not offered the ten when it picks a template for a job
 that names none, and if triage names one anyway the job takes its kind's
 default route. Triage still runs first and can ask for missing information.
 The job is recorded as an analysis job, and the agent's report is its
@@ -175,10 +186,11 @@ job_deliverables(job_id)
 
 ## Reserved names
 
-The nine template names (`kintsugi-trace`, `garden`, `interrogate`, `why`,
-`how`, `blast-radius`, `comment-pass`, `design-audit`, `context-audit`) and
-the nine agent names (`kintsugi`, `gardener`, `interrogator`, `why`, `how`,
-`blast-radius`, `comment-sicko`, `design-auditor`, `context-auditor`) are
+The ten template names (`kintsugi-trace`, `garden`, `interrogate`, `why`,
+`how`, `blast-radius`, `comment-pass`, `design-audit`, `context-audit`,
+`map-areas`) and the ten agent names (`kintsugi`, `gardener`, `interrogator`,
+`why`, `how`, `blast-radius`, `comment-sicko`, `design-auditor`,
+`context-auditor`, `area-mapper`) are
 reserved. Check for them before you upgrade a deployment that already has its
 own templates or agents:
 
@@ -186,7 +198,7 @@ own templates or agents:
   over a saved template of the same name: that template is overwritten and
   marked built-in. Duplicate it under another name before you upgrade.
 - The agent seeder only adds agents that are missing. An existing agent with
-  one of the nine names keeps its definition, and the specialist template
+  one of the ten names keeps its definition, and the specialist template
   then runs it in place of the built-in agent. To get the built-in agent,
   delete the custom one (**Delete** on the Agents page, or
   `DELETE /api/v1/agents/{type}`) and restart the orchestrator: the seeder

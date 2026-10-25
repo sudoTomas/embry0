@@ -34,3 +34,10 @@ embry0 reads the file with the repository's organization credential and keeps it
 - **Owner proposals.** A context finding is in the area of its file, a watcher case in the area its log signature or title names, an issue in the area one of its labels names (`Billing`, `billing` or `area:billing`). The area's owners are asked; an area without owners asks the repository's ([owner proposals](api.md#owner-proposals)). The Owner proposals page shows the area next to the repository, and the feed's `area` field lets a chat assistant name it in its message.
 - **Pull requests embry0 opens.** On GitHub, embry0 reads the files the branch changes from its base: the area most of them fall in labels the pull request `area:<slug>` and starts its title with `[Name]`, unless a conventional scope already names it (`fix(billing): ...`). A change that falls in no area opens as before.
 - **Jobs.** The job records the area of the pull request it opened (`area` on `GET /jobs` and `GET /jobs/{id}`), shown before the job's title on the Jobs list and next to the repository on the job page.
+
+## Map areas
+
+The repository page's Areas section shows what the file names and starts **Map areas**: the `area-mapper` agent reads the repository (its tree, workspace manifests, docs, CODEOWNERS, compose and deploy configuration, and the LogQL the watcher reads its logs with) and reports the file; embry0 commits it on the job's branch and opens a pull request. Nothing changes until that merges; a map that writes the file the branch already has opens nothing. Mapping again starts from the file on the default branch. It runs with the model and key chosen beside the button ([run with](superpowers/specs/2026-10-25-run-with-design.md)), and only one map of a repository runs at a time.
+
+- `GET /api/v1/repos/{repo}/areas?fresh=` (read): `{repo, path, areas: [{name, slug, paths, logs, owners}], latest_job}`. `fresh=true` reads the file again instead of the hour-old copy.
+- `POST /api/v1/repos/{repo}/areas/map` (operate, `{"run_with": ...}` optional, 202): starts the map; 409 while one is live, 429 while the budget gate refuses.

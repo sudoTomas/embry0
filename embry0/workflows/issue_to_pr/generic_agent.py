@@ -45,6 +45,7 @@ GENERIC_AGENT_TIMEOUT_SECONDS: dict[str, int] = {
     "blast-radius": 1200,
     "design-auditor": 900,
     "context-auditor": 1200,
+    "area-mapper": 900,
     "gardener": 900,
 }
 DEFAULT_GENERIC_AGENT_TIMEOUT_SECONDS = 600
