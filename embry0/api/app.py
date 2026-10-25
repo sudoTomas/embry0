@@ -791,6 +791,10 @@ async def _init_app_state(
     from embry0.storage.repositories.proposals import ProposalsRepository
 
     app.state.proposals_repo = ProposalsRepository(db)
+    # Leads (spec 2026-10-25): work embry0 finds by itself, offered in the same feed.
+    from embry0.storage.repositories.leads import LeadsRepository
+
+    app.state.leads_repo = LeadsRepository(db)
     app.state.healing_cases = HealingCaseService(app.state.healing_cases_repo, metrics=loop_metrics)
     # #278 part 2: the fail-open face of the ledger that the watcher, the
     # dispatch path and the job lifecycle report to.
@@ -2101,6 +2105,60 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.context_audit = None
         logger.critical("context_audit_unavailable", exc_info=True)
 
+    # Leads (spec 2026-10-25): every finder on every repository someone answers
+    # for (owners set, or a watched stack), read with its organization's
+    # credential; what they find is offered as owner proposals. Off with
+    # LEADS_ENABLED=false; POST /leads/run runs one pass by hand either way.
+    app.state.leads_loop = None
+    try:
+        from embry0.api.trigger_context import resolve_trigger_labels
+        from embry0.api.v1.organizations import app_request as _leads_request
+        from embry0.api.v1.organizations import org_forge_client as _leads_forge_client
+        from embry0.services.leads.loop import LeadsLoop, leads_settings
+
+        async def _lead_targets() -> list[str]:
+            owned = await app.state.proposals_repo.owners()
+            stacks = [s.repo for s in await app.state.watcher_stacks_repo.list_all(enabled_only=True)]
+            registered = {str(r["repo"]).lower(): str(r["repo"]) for r in await app.state.repos_repo.list_all()}
+            wanted = set(owned) | {repo.lower() for repo in stacks}
+            return sorted(registered[repo] for repo in wanted if repo in registered)
+
+        async def _lead_client(repo: str) -> Any:
+            org = await app.state.organizations_repo.get(repo.split("/", 1)[0])
+            if org is None or org.status != "active" or org.forge != "github":
+                return None
+            return await _leads_forge_client(_leads_request(app), org)
+
+        async def _lead_linear() -> Any:
+            provider = getattr(app.state, "linear_provider", None)
+            resolved = (await provider.resolve())[0] if provider is not None else None
+            return resolved or getattr(app.state, "linear_sync", None)
+
+        async def _lead_tracked(tracker: str, repo: str, key: str) -> bool:
+            return await app.state.issues_repo.get_by_tracker_ref(tracker, repo, key) is not None
+
+        async def _lead_triggers() -> list[str]:
+            return await resolve_trigger_labels(_leads_request(app))
+
+        app.state.leads_loop = LeadsLoop(
+            settings=leads_settings(config),
+            leads=app.state.leads_repo,
+            targets=_lead_targets,
+            client_for=_lead_client,
+            linear=_lead_linear,
+            tracked=_lead_tracked,
+            trigger_labels=_lead_triggers,
+        )
+        if config.leads_enabled:
+            leads_task = asyncio.create_task(app.state.leads_loop.start())
+            app.state.background_tasks.add(leads_task)
+            leads_task.add_done_callback(app.state.background_tasks.discard)
+        else:
+            logger.info("leads_loop_disabled", hint="LEADS_ENABLED=false: no finder runs on a schedule")
+    except Exception:
+        app.state.leads_loop = None
+        logger.critical("leads_unavailable", exc_info=True)
+
     # Merge approvals (#319 phase 2): a job's PR on an enabled repo is asked
     # about in the operator's approval chat, and a relayed "merge it" is
     # checked and merged here. The executor holds it as an optional
@@ -2404,6 +2462,7 @@ def _register_routers(app: FastAPI) -> None:
         internal_qa,
         issues,
         jobs,
+        leads,
         logs,
         merge_approvals,
         org_actions,
@@ -2489,6 +2548,8 @@ def _register_routers(app: FastAPI) -> None:
     # #278: healing-case lifecycle ledger (read-only).
     app.include_router(cases.router, prefix="/api/v1", tags=["cases"], dependencies=auth_deps)
     app.include_router(proposals.router, prefix="/api/v1", tags=["proposals"], dependencies=auth_deps)
+    # Leads (spec 2026-10-25): what the finders found, and a pass by hand.
+    app.include_router(leads.router, prefix="/api/v1", tags=["leads"], dependencies=auth_deps)
     # Areas (spec 2026-10-25): a repository's areas file, and mapping it with an agent.
     app.include_router(areas.router, prefix="/api/v1", tags=["areas"], dependencies=auth_deps)
     # Run with (spec 2026-10-25): the keys a dashboard action may run a job with.

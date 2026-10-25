@@ -3098,6 +3098,39 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE jobs ADD COLUMN IF NOT EXISTS area TEXT;
         """,
     ),
+    (
+        110,
+        "leads: work embry0 finds by itself (backlog tickets, failing CI, alerts, flaky checks, unanswered reviews) (docs/superpowers/specs/2026-10-25-leads-design.md)",
+        # One row per thing a finder saw, keyed by a hash of the repository and
+        # what the finder knows it by. A finder that reads its whole source and
+        # no longer sees a lead marks it gone; it is never deleted. Owners
+        # answer leads through proposal_decisions, whose kinds widen to match.
+        """
+        CREATE TABLE IF NOT EXISTS leads (
+            id          TEXT PRIMARY KEY,
+            kind        TEXT NOT NULL CHECK (kind IN ('ticket', 'ci', 'alert', 'flaky', 'review')),
+            repo        TEXT NOT NULL,
+            source_key  TEXT NOT NULL,
+            title       TEXT NOT NULL,
+            summary     TEXT NOT NULL DEFAULT '',
+            details     TEXT NOT NULL DEFAULT '',
+            url         TEXT,
+            severity    TEXT NOT NULL DEFAULT 'medium' CHECK (severity IN ('low', 'medium', 'high', 'critical')),
+            effort      TEXT NOT NULL DEFAULT 'medium' CHECK (effort IN ('small', 'medium', 'large')),
+            action      TEXT NOT NULL DEFAULT '',
+            area        TEXT,
+            data        JSONB NOT NULL DEFAULT '{}',
+            state       TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'gone')),
+            first_seen  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            gone_at     TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_leads_state_repo_kind ON leads (state, repo, kind);
+        ALTER TABLE proposal_decisions DROP CONSTRAINT IF EXISTS proposal_decisions_kind_check;
+        ALTER TABLE proposal_decisions ADD CONSTRAINT proposal_decisions_kind_check
+            CHECK (kind IN ('case', 'issue', 'finding', 'ticket', 'ci', 'alert', 'flaky', 'review'));
+        """,
+    ),
 ]
 
 

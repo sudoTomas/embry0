@@ -1,11 +1,14 @@
 """Owner proposals (spec 2026-10-24): work embry0 asks a repository's owners to start.
 
-Three kinds, each read from rows other features write: a watcher case at
+Three kinds are read from rows other features write: a watcher case at
 stage ``tracked`` (accepting it runs the case's acceptance), an issue that is
 open with no job (accepting it sends it to triage), and one row of a
 completed context audit's findings table (accepting it starts a fix job for
-that file, which opens a pull request). An owner answers each with accept,
-decline or snooze; the newest answer decides whether it is still asked.
+that file, which opens a pull request). The rest are leads, work embry0's
+finders found by itself (spec 2026-10-25, ``embry0.services.leads``): a
+backlog ticket, failing CI, an alert, a flaky check, unanswered review
+threads. An owner answers each with accept, decline or snooze; the newest
+answer decides whether it is still asked.
 
 Owners are the repository's ``owners`` preference, else the users its
 ``CODEOWNERS`` names for every file. Nothing here messages anyone: an
@@ -22,8 +25,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from embry0.services.areas import Area, area_of_labels, area_of_logs, area_of_path
+from embry0.services.leads import LEAD_KINDS
 
-KINDS: tuple[str, ...] = ("case", "issue", "finding")
+KINDS: tuple[str, ...] = ("case", "issue", "finding", *LEAD_KINDS)
 DECISIONS: tuple[str, ...] = ("accept", "decline", "snooze")
 #: Who an assistant's answer is recorded under when it names nobody.
 ACTOR = "embry0:proposals"
@@ -243,6 +247,31 @@ def finding_proposals(repo: str, job_id: str, finished_at: datetime, report: str
     return out
 
 
+def lead_proposal(row: Mapping[str, Any]) -> Proposal:
+    """An open lead (``LeadsRepository.open_leads``), asked like every other proposal."""
+    data = dict(row.get("data") or {})
+    return Proposal(
+        id=str(row["id"]),
+        kind=str(row["kind"]),
+        repo=str(row["repo"]),
+        title=str(row.get("title") or ""),
+        summary=str(row.get("summary") or row.get("title") or ""),
+        details=str(row.get("details") or ""),
+        action=str(row.get("action") or ""),
+        created_at=row["first_seen"],
+        url=row.get("url"),
+        area=row.get("area"),
+        extra={
+            "severity": row.get("severity"),
+            "effort": row.get("effort"),
+            "last_seen": _iso(row.get("last_seen")),
+            "paths": list(data.get("paths") or []),
+            "labels": list(data.get("labels") or []),
+            "source": {k: v for k, v in data.items() if k not in ("paths", "labels")},
+        },
+    )
+
+
 @dataclass(frozen=True)
 class Decision:
     proposal_id: str
@@ -273,13 +302,25 @@ def with_owners(
 
     A finding is in the area of its file, a case in the area its log
     signature or title names, an issue in the area a label of it names
-    (``.embry0/areas.yml``).
+    (``.embry0/areas.yml``). A lead keeps the area its finder stored, else
+    takes the one its files or labels name.
     """
     out = []
     for p in proposals:
         areas = (areas_of or {}).get(p.repo.lower(), ())
         area: Area | None = None
-        if p.kind == "finding" and p.extra.get("path"):
+        if p.kind in LEAD_KINDS:
+            area = next((a for a in areas if a.name == p.area), None) if p.area else None
+            area = (
+                area
+                or area_of_paths_any(areas, p.extra.get("paths") or ())
+                or area_of_labels(areas, p.extra.get("labels") or ())
+            )
+            if area is None and p.area:
+                # The file changed since: keep the stored name, with the repository's owners.
+                out.append(Proposal(**{**p.__dict__, "owners": tuple(owners_of.get(p.repo.lower(), ()))}))
+                continue
+        elif p.kind == "finding" and p.extra.get("path"):
             area = area_of_path(areas, str(p.extra["path"]))
         elif p.kind == "case":
             area = area_of_logs(areas, p.extra.get("signature"), p.title)
@@ -288,6 +329,11 @@ def with_owners(
         owners = area.owners if area and area.owners else tuple(owners_of.get(p.repo.lower(), ()))
         out.append(Proposal(**{**p.__dict__, "owners": tuple(owners), "area": area.name if area else None}))
     return out
+
+
+def area_of_paths_any(areas: Sequence[Area], paths: Iterable[str]) -> Area | None:
+    """The area of the first of ``paths`` that falls in one."""
+    return next((area for path in paths if (area := area_of_path(areas, path)) is not None), None)
 
 
 def for_owner(proposals: Iterable[Proposal], owner: str | None) -> list[Proposal]:

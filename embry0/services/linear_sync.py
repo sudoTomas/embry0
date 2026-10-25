@@ -128,6 +128,25 @@ query TriggerLabeledIssues($filter: IssueFilter, $first: Int, $after: String) {{
 _LABELED_ISSUES_PAGE_SIZE = 25
 _LABELED_ISSUES_MAX_PAGES = 8
 
+# The backlog intake (leads, spec 2026-10-25): open tickets nobody started, in
+# the same shape as the trigger reads, plus who holds them and how big they are.
+_BACKLOG_ISSUES_QUERY = f"""\
+query BacklogIssues($filter: IssueFilter, $first: Int, $after: String) {{
+  issues(filter: $filter, first: $first, after: $after, orderBy: updatedAt) {{
+    nodes {{
+{_TRIGGER_ISSUE_FIELDS}      assignee {{ id }}
+      priority
+      estimate
+    }}
+    pageInfo {{ hasNextPage endCursor }}
+  }}
+}}
+"""
+_BACKLOG_PAGE_SIZE = 50
+_VIEWER_QUERY = "query Viewer { viewer { id } }"
+#: Workflow-state types a ticket nobody started is in.
+BACKLOG_STATE_TYPES: frozenset[str] = frozenset({"backlog", "unstarted"})
+
 _LABEL_HISTORY_QUERY = """\
 query IssueLabelHistory($id: String!, $after: String) {
   issue(id: $id) {
@@ -204,6 +223,23 @@ class LinearTriggerIssue(TrackerIssue):
     # Workflow-state type (``backlog`` / ``started`` / ``duplicate`` …). Empty
     # means "not read", which never dispatches (``DISPATCHABLE_STATE_TYPES``).
     state_type: str = ""
+
+
+@dataclass(frozen=True)
+class BacklogTicket:
+    """An open ticket nobody started, with the repository it resolves to (leads, spec 2026-10-25).
+
+    ``mine`` is whether the ticket is assigned to the account this key acts
+    as: a ticket a person holds is theirs, not a lead. ``priority`` is
+    Linear's (0 none, 1 urgent .. 4 low); ``estimate`` its points, if any.
+    """
+
+    issue: LinearTriggerIssue
+    repo: str
+    assigned: bool
+    mine: bool
+    priority: int = 0
+    estimate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -424,6 +460,46 @@ class LinearSyncService:
             }
             for n in nodes
         ]
+
+    async def list_backlog_tickets(self, *, max_pages: int = 8) -> tuple[list[BacklogTicket], bool]:
+        """Open tickets nobody started, newest-updated first, each with the repository it resolves to.
+
+        A ticket whose project names no repository is left out: the intake
+        never guesses one. Returns the tickets and whether the listing was
+        whole (False when ``max_pages`` stopped it). Raises on API failure.
+        """
+        viewer = ((await self._graphql(_VIEWER_QUERY, {})).get("data") or {}).get("viewer") or {}
+        me = str(viewer.get("id") or "")
+        issue_filter = {"state": {"type": {"in": sorted(BACKLOG_STATE_TYPES)}}}
+        found: list[BacklogTicket] = []
+        after: str | None = None
+        for _ in range(max_pages):
+            body = await self._graphql(
+                _BACKLOG_ISSUES_QUERY, {"filter": issue_filter, "first": _BACKLOG_PAGE_SIZE, "after": after}
+            )
+            issues = (body.get("data") or {}).get("issues") or {}
+            for node in issues.get("nodes") or []:
+                issue = _trigger_issue_from_node(node)
+                repo, _source = self._resolve_repo(issue)
+                if not repo:
+                    continue
+                assignee = str(((node.get("assignee") or {}).get("id")) or "")
+                estimate = node.get("estimate")
+                found.append(
+                    BacklogTicket(
+                        issue=issue,
+                        repo=repo,
+                        assigned=bool(assignee),
+                        mine=bool(assignee) and assignee == me,
+                        priority=int(node.get("priority") or 0),
+                        estimate=float(estimate) if isinstance(estimate, int | float) else None,
+                    )
+                )
+            page = issues.get("pageInfo") or {}
+            if not page.get("hasNextPage"):
+                return found, True
+            after = page.get("endCursor")
+        return found, False
 
     async def issue_state_types(self, team_id: str, identifiers: list[str]) -> dict[str, str]:
         """Map issue identifiers (e.g. 'RAV-1109') → workflow-state *type*.

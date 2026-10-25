@@ -23,6 +23,7 @@ from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
+from embry0.services.leads import LEAD_KINDS
 from embry0.services.proposals import (
     ACTOR,
     CODEOWNERS_PATHS,
@@ -34,6 +35,7 @@ from embry0.services.proposals import (
     finding_task,
     for_owner,
     issue_proposal,
+    lead_proposal,
     still_open,
     with_owners,
 )
@@ -135,13 +137,19 @@ async def _areas(request: Request, repos: set[str]) -> dict[str, list[Any]]:
     return dict(await asyncio.gather(*(read(r) for r in repos)))
 
 
+async def _open_leads(request: Request) -> list[dict[str, Any]]:
+    leads = getattr(request.app.state, "leads_repo", None)
+    return await leads.open_leads() if leads is not None else []
+
+
 async def feed(request: Request) -> list[Proposal]:
     """Every proposal still asked, newest first, with its owners."""
     repo = _state(request, "proposals_repo")
-    cases, issues, audits, owners, decisions = await asyncio.gather(
-        repo.cases(), repo.issues(), repo.audits(), repo.owners(), repo.decisions()
+    cases, issues, audits, owners, decisions, leads = await asyncio.gather(
+        repo.cases(), repo.issues(), repo.audits(), repo.owners(), repo.decisions(), _open_leads(request)
     )
     proposals = [case_proposal(r) for r in cases] + [issue_proposal(r) for r in issues]
+    proposals += [lead_proposal(r) for r in leads]
     for audit in audits:
         proposals += finding_proposals(
             str(audit["repo"]), str(audit["job_id"]), audit["finished_at"], audit["result_summary"]
@@ -166,7 +174,7 @@ async def _open(request: Request, proposal_id: str) -> Proposal:
 async def list_proposals(
     request: Request,
     owner: str | None = Query(default=None, description="A GitHub login: only the proposals it owns"),
-    kind: str | None = Query(default=None, description="case, issue or finding"),
+    kind: str | None = Query(default=None, description=", ".join(KINDS)),
     since: datetime | None = Query(default=None, description="Only proposals asked after this time"),
 ) -> dict[str, Any]:
     """The proposals still asked, newest first: what an assistant reads to message owners."""
@@ -294,6 +302,10 @@ async def accept_proposal(proposal_id: str, body: AcceptBody, request: Request) 
             TriageBody(run_with=body.run_with),
         )
         job_id = dispatched.job_id
+    elif proposal.kind in LEAD_KINDS:
+        from embry0.api.v1.leads import start_lead
+
+        job_id = await start_lead(request, proposal.id, by=body.by, run_with=run_with)
     else:
         job_id = await _start_fix(request, proposal, run_with)
     return await _answer(request, proposal, "accept", body, job_id=job_id)
