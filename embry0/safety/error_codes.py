@@ -81,7 +81,7 @@ class ErrorCode(StrEnum):
     PROVIDER_QUOTA_EXHAUSTED = "ERR_PROVIDER_QUOTA_EXHAUSTED"  # the account's usage window or quota is spent; CredentialHealth quarantines it longer
     PROVIDER_TOKEN_STALE = "ERR_PROVIDER_TOKEN_STALE"  # the provider could not validate the access token; the xAI token loop force-refreshes it, no quarantine
     LOCAL_MODEL_BUSY = "ERR_LOCAL_MODEL_BUSY"  # the run had to use the operator's local model server and found every one of its slots taken for the whole wait (docs/providers.md, local models); nothing ran
-    CONTEXT_WINDOW_EXCEEDED = "ERR_CONTEXT_WINDOW_EXCEEDED"  # the conversation outgrew the model's context window, even with earlier tool output elided, or the server refused a request as too long
+    CONTEXT_WINDOW_EXCEEDED = "ERR_CONTEXT_WINDOW_EXCEEDED"  # the conversation outgrew the model's context window, even with earlier tool output elided, or the server (or embry0's model proxy) refused a request as too long
 
     # #284 — dispatch asked for over the API
     DISPATCH_FAILED = "ERR_DISPATCH_FAILED"  # API asked for a job and execute() raised before one existed (#284) — response-only, never a jobs.error_code
@@ -412,6 +412,10 @@ _TEXT_CODES: tuple[tuple[str, ErrorCode], ...] = (
     ("maximum context length", ErrorCode.CONTEXT_WINDOW_EXCEEDED),
     ("exceeds the available context size", ErrorCode.CONTEXT_WINDOW_EXCEEDED),
     ("context_length_exceeded", ErrorCode.CONTEXT_WINDOW_EXCEEDED),
+    # A model proxy's request cap (embry0.execution.proxy.model_request), and
+    # aiohttp's own wording for the 1 MiB default it replaced.
+    ("request_too_large", ErrorCode.CONTEXT_WINDOW_EXCEEDED),
+    ("maximum request body size", ErrorCode.CONTEXT_WINDOW_EXCEEDED),
     # Most specific first: a spent usage window before "quota"; both before
     # "rate limit" and "429", which a spent window's message can also carry.
     *((phrase, ErrorCode.PROVIDER_QUOTA_EXHAUSTED) for phrase in USAGE_EXHAUSTED_PHRASES),

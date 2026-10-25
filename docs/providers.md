@@ -645,6 +645,13 @@ every minute: 429 quarantines the account as rate limited, 401 as auth
 rejected, and a stale-token 403 forces a refresh of that account. How the
 other xAI 403s are read is in `docs/credentials.md`.
 
+The proxy forwards a request of at most `MODEL_PROXY_MAX_REQUEST_BYTES`
+(32 MiB; the auth-proxy takes the same). Every agent turn resends the whole
+conversation, so a long run's requests reach megabytes: a 300k-token prompt
+is more than 1 MiB of JSON, the web server's default the proxy used to keep.
+A request over the cap gets a 413 `request_too_large`, and the run ends as
+`ERR_CONTEXT_WINDOW_EXCEEDED`.
+
 **Default grok runtime (EMB-46): the Agent SDK over the proxy.** When
 the proxy is live, provider-routed grok agents run through the normal
 `SdkAgentExecutor` with a per-agent env overlay on the CLI subprocess:

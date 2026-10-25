@@ -27,6 +27,7 @@ import structlog
 from aiohttp import web
 
 from embry0.execution.proxy.enrollment import EnrollRejected, check_bearer, guard_admin, register_admin_routes
+from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES, read_body
 from embry0.safety.xai_denials import XaiDenial, classify_xai_denial
 
 logger = structlog.get_logger(__name__)
@@ -97,7 +98,7 @@ def _forget_xai_credential(app: web.Application, sandbox_id: str) -> None:
     app["xai_credential_by_sandbox"].pop(sandbox_id, None)
 
 
-def create_xai_proxy_app(admin_token: str) -> web.Application:
+def create_xai_proxy_app(admin_token: str, *, max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES) -> web.Application:
     """Create the xAI proxy ASGI app.
 
     Args:
@@ -105,9 +106,12 @@ def create_xai_proxy_app(admin_token: str) -> web.Application:
 
     The access token is NOT passed here — it is pushed at runtime via ``/admin/token`` and
     refreshed by the orchestrator. The proxy starts un-provisioned and returns 503 until the
-    first token push.
+    first token push. ``max_request_bytes`` is the largest request body it forwards
+    (``model_request``): a long agent conversation is megabytes of JSON.
     """
-    app = web.Application()
+    if max_request_bytes <= 0:
+        raise ValueError("MAX_REQUEST_BYTES must be positive")
+    app = web.Application(client_max_size=max_request_bytes)
     # Current SuperGrok access token, pushed by the orchestrator. Held in a mutable dict
     # (not a bare app-mapping key) so it can be updated after startup without aiohttp's
     # "changing state of a started application" deprecation. Empty until provisioned.
@@ -257,7 +261,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     if "x-grok-conv-id" not in headers and "X-Grok-Conv-Id" not in headers:
         headers["x-grok-conv-id"] = sandbox_id
 
-    body = await request.read()
+    body = await read_body(request, "xai-proxy")
+    if isinstance(body, web.Response):
+        return body
     if body:
         normalized = _normalize_tool_schemas(body)
         if normalized is not body:

@@ -14,20 +14,26 @@ import structlog
 from aiohttp import web
 
 from embry0.execution.proxy.enrollment import check_bearer, register_admin_routes
+from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES, read_body
 
 logger = structlog.get_logger(__name__)
 
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
 
 
-def create_auth_proxy_app(api_key: str, admin_token: str) -> web.Application:
+def create_auth_proxy_app(
+    api_key: str, admin_token: str, *, max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
+) -> web.Application:
     """Create the auth proxy ASGI app.
 
     Args:
         api_key: Anthropic API key injected into forwarded requests.
         admin_token: Shared secret with orchestrator for /admin/enroll endpoints.
+        max_request_bytes: The largest request body it forwards (``model_request``).
     """
-    app = web.Application()
+    if max_request_bytes <= 0:
+        raise ValueError("MAX_REQUEST_BYTES must be positive")
+    app = web.Application(client_max_size=max_request_bytes)
     app["api_key"] = api_key
     register_admin_routes(app, proxy_name="auth_proxy", admin_token=admin_token)
     app.on_startup.append(_on_startup)
@@ -72,7 +78,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     headers.pop("X-Api-Key", None)  # case variants from dict() of CIMultiDict
     headers["x-api-key"] = api_key
 
-    body = await request.read()
+    body = await read_body(request, "auth-proxy")
+    if isinstance(body, web.Response):
+        return body
     client: httpx.AsyncClient = request.app["http_client"]
 
     logger.info("auth_credentials_used", sandbox_id=sandbox_id)
