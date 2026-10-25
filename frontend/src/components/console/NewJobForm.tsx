@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { type RunWith, runWithBody } from "@/api/runWith";
+import { RunWithControl } from "@/components/runwith/RunWithControl";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { useCreateJob } from "@/hooks/useJobs";
@@ -37,6 +39,7 @@ export function NewJobForm({ onClose, knownRepos = [] }: NewJobFormProps) {
   const [task, setTask] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [advanced, setAdvanced] = useState<JobAdvancedState>(EMPTY_ADVANCED);
+  const [runWith, setRunWith] = useState<RunWith>({});
   const createJob = useCreateJob();
   const navigate = useNavigate();
 
@@ -57,7 +60,7 @@ export function NewJobForm({ onClose, knownRepos = [] }: NewJobFormProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     createJob.mutate(
-      { repo, task, ...advancedToRequest(advanced) },
+      { repo, task, ...advancedToRequest(advanced), ...runWithBody(runWith) },
       {
         onSuccess: (job) => {
           toast.success("Job dispatched");
@@ -103,6 +106,7 @@ export function NewJobForm({ onClose, knownRepos = [] }: NewJobFormProps) {
               required
             />
           </div>
+          <RunWithControl value={runWith} onChange={setRunWith} repo={repo || null} />
           <div className="flex items-center gap-3">
             <input
               type="checkbox"

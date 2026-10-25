@@ -1049,6 +1049,8 @@ class LinearSyncService:
                 additional_context=compose_additional_context(issue.key),
                 agent_models=agent_models,
                 dispatched_by=ctx.actor or None,
+                # A person's choice when accepting a draft; a webhook carries none.
+                **({"run_with": ctx.run_with} if ctx.run_with is not None else {}),
             )
         except Exception:
             logger.warning("linear_trigger_execute_failed", issue_id=issue_id, exc_info=True)

@@ -25,8 +25,10 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.schemas import RunWithRequest
 from embry0.api.trigger_context import resolve_trigger_labels
 from embry0.api.v1.jobs import CREATE_A_JOB, start_onboard_job
+from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services.repo_readiness import build_readiness, readiness_inputs
@@ -52,6 +54,8 @@ class ProposeRequest(BaseModel):
 
     # Strict: "yes" or 1 must not start a paid run.
     confirm_spend: StrictBool = False
+    #: The model and key the run uses (spec 2026-10-25); none is the usual run.
+    run_with: RunWithRequest | None = None
 
 
 class ApplyRequest(BaseModel):
@@ -83,6 +87,7 @@ async def propose_setup(full_repo: str, request: Request, req: ProposeRequest | 
     # Before anything changes: a key that may not start work here must not
     # retire the proposal waiting here either.
     await enforce_repo_allowlist(request, full_repo, action=CREATE_A_JOB)
+    run_with = await checked_run_with(request, req.run_with, full_repo)
     state = request.app.state
     proposals = state.repo_setup_proposals_repo
     latest = await proposals.latest(full_repo)
@@ -103,8 +108,10 @@ async def propose_setup(full_repo: str, request: Request, req: ProposeRequest | 
             request,
             repo=full_repo,
             branch=await start_branch(state, full_repo),
-            agent_models={"onboarding": await medium_model(state)},
+            # The onboarding agent runs the medium tier, unless a model was chosen for the run.
+            agent_models={"onboarding": run_with.model if run_with and run_with.model else await medium_model(state)},
             proposal_id=proposal_id,
+            run_with=run_with,
         )
     except Exception:
         await proposals.delete(proposal_id)

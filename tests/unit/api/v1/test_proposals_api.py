@@ -124,11 +124,11 @@ async def test_accept_runs_each_kind_through_its_own_path(app: FastAPI, monkeypa
         calls.append(("case", f"{case_id} by {body.accepted_by}"))
         return {"job_id": "job-case"}
 
-    async def triage_issue(issue_id: str, request: Any, issues: Any, executor: Any) -> Any:
+    async def triage_issue(issue_id: str, request: Any, issues: Any, executor: Any, body: Any = None) -> Any:
         calls.append(("issue", issue_id))
         return SimpleNamespace(job_id="job-issue")
 
-    async def start_fix(request: Any, proposal: Any) -> str:
+    async def start_fix(request: Any, proposal: Any, run_with: Any = None) -> str:
         calls.append(("finding", proposal.extra["path"]))
         return "job-fix"
 
@@ -159,7 +159,7 @@ async def test_accept_runs_each_kind_through_its_own_path(app: FastAPI, monkeypa
 async def test_a_failed_start_records_no_answer(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi import HTTPException
 
-    async def refuse(issue_id: str, request: Any, issues: Any, executor: Any) -> Any:
+    async def refuse(issue_id: str, request: Any, issues: Any, executor: Any, body: Any = None) -> Any:
         raise HTTPException(status_code=409, detail="Cannot triage issue in 'triaging' state")
 
     monkeypatch.setattr("embry0.api.v1.issues.triage_issue", refuse)

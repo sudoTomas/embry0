@@ -26,6 +26,8 @@ import { providerLabel, statusLabel } from "@/lib/status";
 import type { NotificationChannel } from "@/lib/types";
 import { toastApiError } from "@/api/errorToast";
 import { trackerName } from "@/lib/forgeLinks";
+import type { RunWith } from "@/api/runWith";
+import { RunWithControl } from "@/components/runwith/RunWithControl";
 
 const NOTIFICATION_CHANNELS = ["dashboard", "telegram", "github", "linear", "gitlab", "slack"] as NotificationChannel[];
 
@@ -36,6 +38,7 @@ export function IssueDetailPage(): JSX.Element {
   const { data: issue, isLoading, isError, error, refetch } = useIssue(id);
   const { data: activity = [] } = useIssueActivity(id);
   const triageIssue = useTriageIssue();
+  const [runWith, setRunWith] = useState<RunWith>({});
   const syncIssue = useSyncIssue();
   const deleteIssue = useDeleteIssue();
   const updateIssue = useUpdateIssue();
@@ -86,7 +89,7 @@ export function IssueDetailPage(): JSX.Element {
   const canCancel = issue.status !== "closed" && issue.status !== "cancelled";
 
   const handleTriage = () => {
-    triageIssue.mutate(id!, {
+    triageIssue.mutate({ issueId: id!, runWith }, {
       // The API answers 200 even when no job could be started; the body says so.
       onSuccess: (result) =>
         result.dispatch_error
@@ -152,6 +155,11 @@ export function IssueDetailPage(): JSX.Element {
             <Send className="h-3.5 w-3.5" />
             {triageIssue.isPending ? "Triaging..." : "Send to triage"}
           </Button>
+          {canTriage && (
+            <div className="basis-full">
+              <RunWithControl value={runWith} onChange={setRunWith} repo={issue.repo} />
+            </div>
+          )}
 
           {canSync && (
             <Button

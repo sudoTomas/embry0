@@ -37,10 +37,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import ensure_admin, get_healing_cases_repo, request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.cases import CaseDetailResponse, CaseListResponse, CaseSummary
 from embry0.api.trigger_context import current_linear_sync, linear_trigger_context
+from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.services.healing.lifecycle import Origin, ResolutionPath, Stage, Verdict
+from embry0.services.run_with import RunWith
 from embry0.storage.repositories.healing_cases import HealingCasesRepository
 from embry0.storage.repositories.jobs import StatusTransitionConflict
 from embry0.storage.schemas import IssueStatus
@@ -141,6 +144,8 @@ class AcceptBody(BaseModel):
     #: limit buckets per human, #246) and in the audit row. Empty: the API
     #: principal.
     accepted_by: str = Field(default="", max_length=200)
+    #: The model and key the job runs with (spec 2026-10-25); none is the usual run.
+    run_with: RunWithRequest | None = None
 
 
 class CloseBody(BaseModel):
@@ -253,7 +258,9 @@ async def close_case(
     }
 
 
-async def _accept_github(request: Request, case: dict[str, Any], actor: str) -> tuple[str, str]:
+async def _accept_github(
+    request: Request, case: dict[str, Any], actor: str, run_with: RunWith | None = None
+) -> tuple[str, str]:
     """Dispatch a GitHub draft: read it back, mirror it as an embry0 issue,
     hand it to the executor — the label webhook's own steps. Returns
     ``(issue_id, job_id)``."""
@@ -297,7 +304,7 @@ async def _accept_github(request: Request, case: dict[str, Any], actor: str) -> 
             )
 
     job_id = await dispatch_open_issue(
-        issue_id, status, issues_repo, executor, tracker=tracker, reason="case_accepted", actor=actor
+        issue_id, status, issues_repo, executor, tracker=tracker, reason="case_accepted", actor=actor, run_with=run_with
     )
     if job_id is None:
         raise HTTPException(status_code=502, detail="the dispatch failed; the issue was returned to open, accept again")
@@ -348,7 +355,9 @@ def _linear_refusal(key: str, result: dict[str, Any]) -> HTTPException:
     return HTTPException(status_code=status, detail=f"{key} was not dispatched: {why.rstrip('.')}.{after}")
 
 
-async def _accept_linear(request: Request, case: dict[str, Any], actor: str) -> tuple[str, str]:
+async def _accept_linear(
+    request: Request, case: dict[str, Any], actor: str, run_with: RunWith | None = None
+) -> tuple[str, str]:
     """Dispatch a Linear draft: put the trigger label on the ticket for the
     person, then dispatch through the Linear trigger path (#460).
 
@@ -366,6 +375,7 @@ async def _accept_linear(request: Request, case: dict[str, Any], actor: str) -> 
     if getattr(request.app.state, "issue_executor", None) is None:
         raise HTTPException(status_code=503, detail="executor not initialized")
     ctx = await linear_trigger_context(request, actor=actor)
+    ctx.run_with = run_with
     try:
         result = await linear_sync.label_and_dispatch(key, ctx, created_by="case-accept", expected_repo=repo)
     except (ValueError, httpx.HTTPError) as exc:
@@ -378,7 +388,9 @@ async def _accept_linear(request: Request, case: dict[str, Any], actor: str) -> 
     return str(result.get("issue_id") or ""), job_id
 
 
-async def _accept_retry(request: Request, case: dict[str, Any], actor: str) -> tuple[str, str]:
+async def _accept_retry(
+    request: Request, case: dict[str, Any], actor: str, run_with: RunWith | None = None
+) -> tuple[str, str]:
     """Dispatch the retry of a case a ``not_healed`` verdict sent back (#658).
 
     Such a case already links the embry0 issue its failed attempt ran on,
@@ -424,19 +436,20 @@ async def _accept_retry(request: Request, case: dict[str, Any], actor: str) -> t
         tracker=str(case.get("tracker") or ""),
         reason="case_retry_accepted",
         actor=actor,
+        run_with=run_with,
     )
     if job_id is None:
         raise HTTPException(status_code=502, detail="the dispatch failed; the issue was returned to open, accept again")
     return issue_id, job_id
 
 
-#: How a draft is dispatched, per tracker: ``(request, case, actor)`` →
+#: How a draft is dispatched, per tracker: ``(request, case, actor, run_with)`` →
 #: ``(issue_id, job_id)``, or an HTTPException that says what, if anything,
 #: was left behind.
 #: A tracker that is not here keeps its label: GitLab drafts are still
 #: accepted in GitLab (#460 left it out). Adding it is one more entry — put
 #: the label on through the GitLab client, dispatch through ``gitlab_sync``.
-_ACCEPTORS: dict[str, Callable[[Request, dict[str, Any], str], Awaitable[tuple[str, str]]]] = {
+_ACCEPTORS: dict[str, Callable[..., Awaitable[tuple[str, str]]]] = {
     "github": _accept_github,
     "linear": _accept_linear,
 }
@@ -481,6 +494,7 @@ async def accept_case(
     tracker = str(case.get("tracker") or "")
     key = str(case.get("tracker_key") or "")
     await enforce_repo_allowlist(request, repo, action="accept a finding")
+    run_with = await checked_run_with(request, body.run_with, repo)
 
     if str(case.get("origin")) != Origin.WATCHER:
         raise HTTPException(status_code=409, detail=f"not a watcher finding (origin {case.get('origin')})")
@@ -511,7 +525,7 @@ async def accept_case(
         raise HTTPException(status_code=403, detail=f"{repo} is not a stack this embry0 watches")
 
     actor = body.accepted_by.strip() or request_actor(request)
-    issue_id, job_id = await acceptor(request, dict(case), actor)
+    issue_id, job_id = await acceptor(request, dict(case), actor, run_with)
 
     config = request.app.state.config
     await emit_audit(

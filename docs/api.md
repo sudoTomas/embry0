@@ -84,6 +84,15 @@ curl http://localhost:8200/api/v1/jobs/{job_id}/agents/developer/session
 
 A job's `area` (on the list and on `GET /jobs/{job_id}`) is the part of a monorepo the pull request embry0 opened for it changes, from the repository's `.embry0/areas.yml` ([areas](areas.md)); `null` when the repository names none or the change falls in none.
 
+## Run with
+
+Every route that starts agent work takes an optional `run_with`: `{"model": "<model id>", "credential_id": "<stored LLM key>"}`, either or both ([the design](superpowers/specs/2026-10-25-run-with-design.md)). Every agent of the job runs the model, except one the request names itself in `agent_models`; the key serves its provider for the job ([precedence](credentials.md)). Leaving it out is the usual run.
+
+- Taken by `POST /jobs` (every pipeline), `POST /issues/{id}/triage`, `POST /cases/{id}/accept`, `POST /proposals/{id}/accept`, `POST /repos/{repo}/setup/propose`, `POST /standards/{owner}/{kind}/audit/{repo}`, `POST /orgs/{owner}/context-audit/run`, `POST /orgs/{owner}/actions` (onboard) and `POST /watcher/run`.
+- Refused with 422, before anything starts, when the model is unpriced or disabled, the key is not a usable LLM key, it is not bound to the repository, its owner or the global pool, or it is not of the model's provider.
+- The job's `pipeline_config.run_with` says what was chosen (`model`, `credential_id`, `provider`, `credential_label`); the job page shows it.
+- `GET /api/v1/run-with/keys?repo=` (read): the keys a job on `repo` may use, `{"keys": [{"id", "label", "provider", "scope", "status"}]}`, each once from its most specific binding (`repo`, `owner`, `global`). Without `repo`, the global ones. Never a secret.
+
 ## Runtime configuration
 
 ```bash

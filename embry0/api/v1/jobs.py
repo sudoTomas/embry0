@@ -14,9 +14,11 @@ from embry0.api.deps import get_jobs_repo, request_actor, require_operator
 from embry0.api.repo_allowlist import enforce_repo_allowlist, refusal_detail
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
 from embry0.api.schemas.jobs import JobResumeRequest
+from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.safety.redaction import redact_event, secret_env_values
 from embry0.services.answer_recorder import record_answer
+from embry0.services.run_with import RunWith, apply_run_with
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.repos import UnregisteredRepoError
 
@@ -32,7 +34,7 @@ class AnswerJobInputRequest(BaseModel):
 CREATE_A_JOB = "create a job"
 
 
-async def _check_agent_models(request: Request, agent_models: dict[str, str] | None) -> None:
+async def check_agent_models(request: Request, agent_models: dict[str, str] | None) -> None:
     # RAV-1297: explicit per-agent model overrides must name enabled models —
     # a clear 422 at submit beats the runtime tier-fallback substituting one.
     # Fail-open when the repo isn't wired (minimal test apps).
@@ -72,6 +74,7 @@ async def start_onboard_job(
     skip_smoke: bool = False,
     agent_models: dict[str, str] | None = None,
     proposal_id: str | None = None,
+    run_with: RunWith | None = None,
 ) -> str:
     """EMB-50: start an onboard job after every check ``POST /jobs`` runs first.
 
@@ -86,7 +89,7 @@ async def start_onboard_job(
     Raises HTTPException as the route answers.
     """
     await enforce_repo_allowlist(request, repo, action=CREATE_A_JOB)
-    await _check_agent_models(request, agent_models)
+    await check_agent_models(request, agent_models)
     executor = getattr(request.app.state, "issue_executor", None)
     if executor is None:
         raise HTTPException(status_code=503, detail="executor not initialized")
@@ -98,6 +101,7 @@ async def start_onboard_job(
             agent_models=agent_models,
             dispatched_by=request_actor(request),
             proposal_id=proposal_id,
+            run_with=run_with,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -112,6 +116,8 @@ async def create_job(
     # the external config store. Issue-less, like qa. Without a branch the
     # executor resolves the repo's base branch (#29). Its checks live in
     # start_onboard_job, which the organization onboard action shares.
+    run_repo = req.repo or (req.context.repo if req.context else None)
+    run_with = await checked_run_with(request, req.run_with, run_repo)
     if req.pipeline == "onboard":
         assert req.repo is not None  # noqa: S101 — schema-enforced for onboard
         job_id = await start_onboard_job(
@@ -120,14 +126,15 @@ async def create_job(
             branch=req.branch or None,
             skip_smoke=req.skip_smoke,
             agent_models=req.agent_models,
+            run_with=run_with,
         )
         job = await jobs.get(job_id)
         return job or {"job_id": job_id}
 
     # The schema has folded `repo` into `context` for git jobs; a non-git job
     # names no repository, which a repository-restricted key may not start.
-    await enforce_repo_allowlist(request, req.repo or (req.context.repo if req.context else None), action=CREATE_A_JOB)
-    await _check_agent_models(request, req.agent_models)
+    await enforce_repo_allowlist(request, run_repo, action=CREATE_A_JOB)
+    await check_agent_models(request, req.agent_models)
 
     # QA pipeline takes a different code path: no triage, no issue, dispatched
     # via IssueExecutor.start_job which seeds the QA initial state.
@@ -146,6 +153,7 @@ async def create_job(
                 qa_overrides=qa_overrides,
                 agent_models=req.agent_models,
                 dispatched_by=request_actor(request),
+                run_with=run_with,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -160,7 +168,10 @@ async def create_job(
             raise HTTPException(status_code=503, detail="pull request review is not initialized")
         assert req.repo is not None and req.number is not None  # noqa: S101 — schema-enforced
         try:
-            result = await dispatcher.dispatch_manual(repo=req.repo, number=req.number, actor=request_actor(request))
+            chosen = {"run_with": run_with} if run_with is not None else {}
+            result = await dispatcher.dispatch_manual(
+                repo=req.repo, number=req.number, actor=request_actor(request), **chosen
+            )
         except UnregisteredRepoError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if result.reason == "repo_not_registered":
@@ -189,6 +200,7 @@ async def create_job(
         effective_config = {**(effective_config or {}), "execution_mode_override": req.execution_mode_override}
     if req.auth_mode_override:
         effective_config = {**(effective_config or {}), "auth_mode_override": req.auth_mode_override}
+    effective_config = apply_run_with(effective_config, run_with)
 
     trace_id = f"trc-{uuid.uuid4().hex[:12]}"
     job_id = await jobs.create(

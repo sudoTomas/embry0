@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { RunWith } from "./runWith";
 
 /** Work a repository's owners could start (owner proposals, spec 2026-10-24). */
 export type OwnerProposalKind = "case" | "issue" | "finding";
@@ -41,7 +42,7 @@ export async function fetchOwnerProposals(params: { owner?: string; kind?: Owner
 export async function answerOwnerProposal(
   id: string,
   decision: OwnerProposalAnswer["decision"],
-  body: { by: string; reason?: string; until?: string },
+  body: { by: string; reason?: string; until?: string; run_with?: RunWith },
 ): Promise<OwnerProposalAnswer> {
   const { data } = await api.post<OwnerProposalAnswer>(`/proposals/${encodeURIComponent(id)}/${decision}`, body);
   return data;

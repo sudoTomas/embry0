@@ -190,7 +190,7 @@ describe("StandardReposTable", () => {
     });
     renderTable();
     fireEvent.click(within(rowOf("acme/Low")).getByTestId("standard-audit-button"));
-    await waitFor(() => expect(mockAudit).toHaveBeenCalledWith("acme", "design", "acme/Low"));
+    await waitFor(() => expect(mockAudit).toHaveBeenCalledWith("acme", "design", "acme/Low", {}));
     const error = await screen.findByTestId("standard-repo-error");
     expect(within(error).getByRole("alert")).toHaveTextContent("acme/Low: an audit of acme/Low is already running: job job-x");
 

@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type { Forge } from "./repos";
+import type { RunWith } from "./runWith";
 
 /** What one credential can do at one owner, learned by calling the forge
  * (ADR 0010). `null` means "not probed", never "no". */
@@ -231,7 +232,7 @@ export async function reopenNeed(owner: string, needId: string): Promise<OrgNeed
  * second identical call answers "already" for every repository. */
 export async function runOrganizationAction(
   owner: string,
-  body: { action: OrgActionName; repos: string[]; dry_run: boolean },
+  body: { action: OrgActionName; repos: string[]; dry_run: boolean; run_with?: RunWith },
 ): Promise<OrgActionResponse> {
   const { data } = await api.post<OrgActionResponse>(`/orgs/${encodeURIComponent(owner)}/actions`, body, {
     suppressValidationToast: true,

@@ -18,7 +18,9 @@ from starlette.types import Scope
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import validate_repo_path
+from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.services import org_discovery, org_maintain, org_webhooks
 from embry0.services import organizations as org_service
@@ -713,6 +715,7 @@ class ContextAuditRunBody(BaseModel):
     limit: int | None = Field(
         default=None, ge=1, le=50, description="the most jobs a run without repo starts; absent is the owner's cap"
     )
+    run_with: RunWithRequest | None = Field(default=None, description="the model and key the jobs run with")
 
     @field_validator("repo")
     @classmethod
@@ -742,8 +745,9 @@ async def run_organization_context_audit(owner: str, body: ContextAuditRunBody, 
     if schedule is None:
         raise HTTPException(status_code=503, detail="the context audit schedule is not initialized")
     await enforce_repo_allowlist(request, body.repo, action="start a context audit")
+    run_with = await checked_run_with(request, body.run_with, body.repo)
     try:
-        result = await schedule.run(org, repo=body.repo, force=body.force, limit=body.limit)
+        result = await schedule.run(org, repo=body.repo, force=body.force, limit=body.limit, run_with=run_with)
     except (UnsupportedForge, InvalidRun) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except UnknownRepository as exc:

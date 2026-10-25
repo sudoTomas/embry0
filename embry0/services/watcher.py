@@ -69,6 +69,7 @@ from embry0.services.log_signatures import (
 )
 from embry0.services.logql_check import LogQLCheck, LogQLStatus, check_logql
 from embry0.services.loop_schedule import seconds_until_next_run
+from embry0.services.run_with import apply_run_with
 from embry0.services.signature_attribution import anchor_signature, fallback_anchor
 from embry0.services.signature_delta import (
     DEFAULT_REGRESSION_SILENCE_SECONDS,
@@ -472,6 +473,8 @@ class WatcherService:
         self._recorder = case_recorder
         self._deploy_sync = deploy_sync
         self._running_tick = asyncio.Lock()
+        # The model and key of the tick now running, when one was started by hand.
+        self._run_with: Any = None
         # #270: env var name -> Loki's verdict on that query. Empty until
         # validate_queries() has run, which reads as "unverified".
         self._query_checks: dict[str, LogQLCheck] = {}
@@ -1349,7 +1352,9 @@ class WatcherService:
             pipeline_template="analysis-default",
             # #275: nobody watches a tick, so its cap is a hard stop whatever
             # the fleet-wide overrun mode is.
-            pipeline_config=resolve_watcher_job_budget(self._config).as_pipeline_config(),
+            pipeline_config=apply_run_with(
+                resolve_watcher_job_budget(self._config).as_pipeline_config(), self._run_with
+            ),
             # #281: a fixed actor, exempt from the per-author hourly limit
             # (see dispatch_actors) — never from the spend caps.
             dispatched_by=dispatch_actors.WATCHER,
@@ -1485,9 +1490,16 @@ class WatcherService:
 
     # ---- the tick ---------------------------------------------------------
 
-    async def run_once(self) -> dict[str, Any]:
-        """One watcher tick. Returns {action, ...} — also persisted to watcher_runs."""
+    async def run_once(self, run_with: Any = None) -> dict[str, Any]:
+        """One watcher tick. Returns {action, ...} — also persisted to watcher_runs.
+
+        ``run_with`` is the model and key a tick started by hand runs its
+        analysis with (embry0/services/run_with.py); the scheduled loop passes
+        none. Every tick sets it first, under the lock, so it holds for that
+        tick only.
+        """
         async with self._running_tick:
+            self._run_with = run_with
             window_end = datetime.now(UTC)
             window_start, unanalysed_seconds = await self._window_start(window_end)
             # Diagnostics known only partway through the tick (degraded

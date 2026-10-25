@@ -146,6 +146,16 @@ describe("JobDetailPage", () => {
     expect(screen.getByRole("meter").getAttribute("aria-valuemax")).toBe("2");
   });
 
+  it("says what a person chose the job to run with, and nothing for the usual run", () => {
+    state.job = job({ pipeline_config: { run_with: { model: "claude-sonnet-5", credential_label: "team key" } } });
+    const { unmount } = mount();
+    expect(screen.getByTestId("job-ran-with")).toHaveTextContent("Ran with claude-sonnet-5 · team key");
+    unmount();
+    state.job = job({ pipeline_config: { max_budget_usd: 2 } });
+    mount();
+    expect(screen.queryByTestId("job-ran-with")).toBeNull();
+  });
+
   it("selecting a run on the strip filters the conversation and highlights its node", async () => {
     mount();
     const buttons = within(screen.getByTestId("party-strip")).getAllByRole("button");

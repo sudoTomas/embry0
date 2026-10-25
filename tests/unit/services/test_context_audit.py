@@ -914,6 +914,25 @@ async def test_a_job_another_actor_starts_carries_its_task_and_never_anchors_the
 
 
 @pytest.mark.asyncio
+async def test_a_run_by_hand_carries_the_model_and_key_chosen_for_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run with (spec 2026-10-25): the choice rides on the job's pipeline_config, beside the audit's own keys."""
+    from embry0.services.run_with import RunWith, pins_of
+
+    async def record(_db: Any, action: str, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(context_audit, "emit_audit", record)
+    jobs = FakeJobs(Clock(T0))
+    chosen = RunWith(model="claude-sonnet-5", credential_id="cred-1", provider="anthropic", credential_label="k")
+    await start_context_audit_job(
+        ctx(), jobs=jobs, executor=FakeExecutor(), templates=FakeTemplates(TEMPLATE), budget_usd=1.0, run_with=chosen
+    )
+    config = jobs.rows[0]["created_with"]["pipeline_config"]
+    assert config["agent_models_override"] == {"*": "claude-sonnet-5"} and pins_of(config) == {"anthropic": "cred-1"}
+    assert config["budget_overrun_mode"] == "hard", "the audit's own keys stay"
+
+
+@pytest.mark.asyncio
 async def test_no_job_row_is_written_without_the_template_or_an_executor() -> None:
     jobs = FakeJobs(Clock(T0))
     with pytest.raises(LookupError, match="no pipeline template named 'context-audit'"):

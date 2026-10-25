@@ -16,6 +16,13 @@ vi.mock("@/stores/authStore", () => ({
   useAuthStore: (select: (s: { user: { email: string } }) => unknown) => select({ user: { email: "owner@example.com" } }),
 }));
 
+vi.mock("@/hooks/useRunWith", () => ({
+  useRunWithKeys: () => ({
+    data: [{ id: "k-team", label: "team router", provider: "anthropic", scope: "repo", status: "ok" }],
+  }),
+}));
+vi.mock("@/hooks/useModels", () => ({ useModels: () => ({ models: ["claude-sonnet-5"], providers: [], isLoading: false }) }));
+
 import { OwnerProposalsPage } from "../OwnerProposalsPage";
 
 const FINDING: OwnerProposal = {
@@ -87,6 +94,20 @@ describe("OwnerProposalsPage (owner proposals, spec 2026-10-24)", () => {
       ["finding:abc", "snooze", "owner@example.com", null],
     ]);
     expect(Date.parse(mutate.mock.calls[2][0].body.until)).toBeGreaterThan(Date.now() + 6 * 86_400_000);
+    prompt.mockRestore();
+  });
+
+  it("starts a yes with the model and key chosen above the list, and only a yes", async () => {
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue("no");
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: /Run with/ }));
+    await userEvent.selectOptions(screen.getByLabelText("Model"), "claude-sonnet-5");
+    await userEvent.selectOptions(screen.getByLabelText("Key"), "k-team");
+    const card = screen.getByTestId("owner-proposal");
+    await userEvent.click(within(card).getByRole("button", { name: "Start" }));
+    await userEvent.click(within(card).getByRole("button", { name: "Not this" }));
+    expect(mutate.mock.calls[0][0].body.run_with).toEqual({ model: "claude-sonnet-5", credential_id: "k-team" });
+    expect(mutate.mock.calls[1][0].body.run_with).toBeUndefined();
     prompt.mockRestore();
   });
 

@@ -23,6 +23,8 @@ import {
 } from "@/lib/standards";
 import { statusLabel, statusTone } from "@/lib/status";
 import { cn, formatDate } from "@/lib/utils";
+import type { RunWith } from "@/api/runWith";
+import { RunWithControl } from "@/components/runwith/RunWithControl";
 
 interface Props {
   owner: string;
@@ -59,6 +61,7 @@ export function StandardReposTable({ owner, kind, rows, hasStandard, isAdmin, ca
   const [text, setText] = useState("");
   const [showOff, setShowOff] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [runWith, setRunWith] = useState<RunWith>({});
 
   const needle = text.trim().toLowerCase();
   // `rows` is sorted with the off, unscored ones last, so held + folded keeps that order.
@@ -96,7 +99,7 @@ export function StandardReposTable({ owner, kind, rows, hasStandard, isAdmin, ca
   };
   const startAudit = (repo: string) => {
     clear(repo);
-    audit.mutate(repo, { onError: (err) => fail(repo, err, "The audit did not start.") });
+    audit.mutate({ repo, runWith }, { onError: (err) => fail(repo, err, "The audit did not start.") });
   };
 
   const renderRow = (row: StandardRepoRow) => {
@@ -106,7 +109,7 @@ export function StandardReposTable({ owner, kind, rows, hasStandard, isAdmin, ca
     const reason = blocked(row);
     const audited = state.last_audit_at !== null;
     const settingMode = setMode.isPending && setMode.variables?.repo === row.repo;
-    const starting = audit.isPending && audit.variables === row.repo;
+    const starting = audit.isPending && audit.variables?.repo === row.repo;
     const error = errors[row.repo];
     const mode = isAdmin ? (
       <Select
@@ -228,6 +231,7 @@ export function StandardReposTable({ owner, kind, rows, hasStandard, isAdmin, ca
           {` · ${counts.enforce} enforce · ${counts.advise} advise · ${counts.off} off`}
         </span>
       </div>
+      {canAudit && <RunWithControl value={runWith} onChange={setRunWith} />}
       {!isAdmin && (
         <p className="text-xs text-muted-foreground" data-testid="standard-mode-admin-note">
           An admin sets each repository&apos;s mode.

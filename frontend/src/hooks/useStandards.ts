@@ -8,6 +8,7 @@ import {
   startStandardAudit,
   type StandardMode,
 } from "@/api/standards";
+import type { RunWith } from "@/api/runWith";
 
 /** While an audit runs, the unfinished jobs are read this often. */
 export const AUDIT_POLL_MS = 10_000;
@@ -112,7 +113,8 @@ export function useSetRepoMode(owner: string, kind: string) {
 export function useStartAudit(owner: string, kind: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (repo: string) => startStandardAudit(owner, kind, repo),
+    mutationFn: ({ repo, runWith }: { repo: string; runWith?: RunWith }) =>
+      startStandardAudit(owner, kind, repo, runWith),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ["standards", owner] });
       void qc.invalidateQueries({ queryKey: ["repos", "detail"] });

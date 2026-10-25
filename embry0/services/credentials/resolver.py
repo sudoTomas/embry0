@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -75,8 +75,11 @@ class CredentialResolver:
         credentials_file: str | None = None,
         cache_ttl_seconds: float = FORGE_CACHE_TTL_SECONDS,
         clock: Callable[[], float] | None = None,
+        job_pins: Callable[[str], Awaitable[Mapping[str, str]]] | None = None,
     ) -> None:
         self._repo = repo
+        # A job's chosen keys, provider to credential id (embry0.services.run_with).
+        self._job_pins = job_pins
         self._secrets = secrets
         self._config = config
         self._environ: Mapping[str, str] = os.environ if environ is None else environ
@@ -348,9 +351,12 @@ class CredentialResolver:
     # -- llm --------------------------------------------------------------------
 
     async def resolve_llm(self, repo: str, provider: str, *, job_id: str = "") -> ResolvedCredential:
-        """Repo binding, then owner (github scope, then gitlab), then the global pool, then env."""
+        """The key chosen for the job, else repo binding, then owner (github scope, then gitlab), then the global pool, then env."""
         self._check_llm_provider(provider)
         if job_id:
+            pinned = await self._job_pin(job_id, provider)
+            if pinned:
+                return await self._resolve_job_pin(pinned, provider, job_id=job_id)
             reused = await self._reuse_llm(provider, job_id, await self._uses(job_id))
             if reused is not None:
                 return reused
@@ -368,9 +374,45 @@ class CredentialResolver:
         parent_uses = await self._uses(parent_job_id) if parent_job_id else []
         resolved: dict[str, ResolvedCredential] = {}
         for provider in providers:
-            reused = await self._reuse_llm(provider, job_id, parent_uses) if parent_uses else None
+            # A key chosen for this job outranks the parent's: resolve_llm serves it.
+            chosen = await self._job_pin(job_id, provider)
+            reused = await self._reuse_llm(provider, job_id, parent_uses) if parent_uses and not chosen else None
             resolved[provider] = reused if reused is not None else await self.resolve_llm(repo, provider, job_id=job_id)
         return resolved
+
+    async def _job_pin(self, job_id: str, provider: str) -> str | None:
+        """The credential id the job chose for ``provider``, or None.
+
+        A pin that cannot be read fails the job: a person chose that key, and
+        another one must not run in its place.
+        """
+        if self._job_pins is None or not job_id:
+            return None
+        try:
+            pins = await self._job_pins(job_id)
+        except Exception as exc:
+            raise CredentialUnavailableError(f"the key chosen for job {job_id} could not be read: {exc}") from exc
+        pinned = pins.get(provider)
+        return str(pinned) if pinned else None
+
+    async def _resolve_job_pin(self, credential_id: str, provider: str, *, job_id: str) -> ResolvedCredential:
+        """The key chosen for the job; :class:`CredentialUnavailableError` when it cannot serve ``provider``."""
+        row = await self._repo.get(credential_id)
+        if not row:
+            raise CredentialUnavailableError(f"the key chosen for this job ({credential_id}) no longer exists")
+        label = str(row.get("label") or credential_id)
+        if str(row.get("provider") or "") != provider or str(row.get("kind") or "") not in ("llm_api_key", "llm_oauth"):
+            raise CredentialUnavailableError(f"the key chosen for this job, '{label}', is not a {provider} key")
+        why = self._availability(row)
+        if why:
+            raise CredentialUnavailableError(f"the key chosen for this job, '{label}', is {why}")
+        secret = await self._decrypt_or_disable(row)
+        if secret is None:
+            raise CredentialUnavailableError(f"the key chosen for this job, '{label}', could not be decrypted")
+        await self._record_use(row, job_id=job_id, role="llm", provider=provider)
+        return self._resolved_registry(
+            row, secret, (f"job:{job_id} -> {label} (chosen for the job)",), provider=provider
+        )
 
     def _check_llm_provider(self, provider: str) -> None:
         if provider not in llm_providers(self._environ):

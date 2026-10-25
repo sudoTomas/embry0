@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 import { RadioTower, Play } from "lucide-react";
@@ -15,6 +16,8 @@ import { formatDateTime, formatTime } from "@/lib/utils";
 import { watcherActionLabel, watcherActionTone } from "@/lib/watcherActions";
 import { WATCHER_TABS, watcherTab } from "@/lib/watcherTabs";
 import { toastApiError } from "@/api/errorToast";
+import type { RunWith } from "@/api/runWith";
+import { RunWithControl } from "@/components/runwith/RunWithControl";
 
 
 function windowLabel(startIso: string, endIso: string): string {
@@ -37,8 +40,9 @@ export function WatcherPage() {
   const tab = watcherTab(params.get("tab")).value;
   const openTab = (value: string) => setParams(value === WATCHER_TABS[0].value ? {} : { tab: value }, { replace: true });
 
+  const [runWith, setRunWith] = useState<RunWith>({});
   const tick = useMutation({
-    mutationFn: triggerWatcherRun,
+    mutationFn: () => triggerWatcherRun(runWith),
     onSuccess: (result) => {
       const label = watcherActionLabel(result.action);
       if (result.action === "proposed") {
@@ -62,6 +66,8 @@ export function WatcherPage() {
           {tick.isPending ? "Running tick… (can take minutes)" : "Run tick now"}
         </Button>
       </div>
+      {/* Every watched stack ticks, so only the keys every repository may use are offered. */}
+      <RunWithControl value={runWith} onChange={setRunWith} />
 
       <p className="text-sm text-muted-foreground">
         Each tick reads the last log window from Loki, and — when there&apos;s

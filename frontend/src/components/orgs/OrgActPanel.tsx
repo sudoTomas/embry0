@@ -20,6 +20,8 @@ import { cn } from "@/lib/utils";
 import { NeedsEndpointMissing } from "./OrgNeedsList";
 import { statusLabel } from "@/lib/status";
 import { TABLE_BOX, TD, TH } from "./styles";
+import { type RunWith, runWithBody } from "@/api/runWith";
+import { RunWithControl } from "@/components/runwith/RunWithControl";
 
 interface ResultRow extends OrgActionResult {
   action: OrgActionName;
@@ -193,6 +195,7 @@ export function OrgActPanel({
   const [busy, setBusy] = useState(false);
   const [missing, setMissing] = useState(false);
   const [statusNote, setStatusNote] = useState<string | null>(null);
+  const [runWith, setRunWith] = useState<RunWith>({});
 
   if (needs === undefined) return <Skeleton className="h-24 w-full" />;
   if (needs === null) return <NeedsEndpointMissing />;
@@ -236,7 +239,13 @@ export function OrgActPanel({
     let error: string | null = null;
     for (const step of plan) {
       try {
-        const res = await runOrganizationAction(owner, { action: step.action, repos: step.repos, dry_run: dryRun });
+        const res = await runOrganizationAction(owner, {
+          action: step.action,
+          repos: step.repos,
+          dry_run: dryRun,
+          // Only an onboard starts agent work; it runs with the model and key chosen here.
+          ...(step.action === "onboard" ? runWithBody(runWith) : {}),
+        });
         rows.push(...res.results.map((r) => ({ ...r, action: step.action })));
       } catch (err) {
         if (isMissingEndpoint(err)) {
@@ -330,6 +339,9 @@ export function OrgActPanel({
         </p>
       )}
 
+      {plan.some((step) => step.action === "onboard") && (
+        <RunWithControl value={runWith} onChange={setRunWith} />
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"

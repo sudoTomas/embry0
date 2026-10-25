@@ -9,6 +9,7 @@ import {
   type QaCheckWarningCode,
   type SetupProposal,
 } from "@/api/repoSetup";
+import type { RunWith } from "@/api/runWith";
 
 /** The cadence useProposals polls at. */
 const POLL_MS = 30_000;
@@ -43,7 +44,7 @@ export function useSetupCost(fullRepo: string) {
 export function useStartSetup(fullRepo: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => startSetup(fullRepo),
+    mutationFn: (runWith?: RunWith) => startSetup(fullRepo, runWith),
     onSuccess: () => invalidateAfterSetup(qc, fullRepo),
   });
 }

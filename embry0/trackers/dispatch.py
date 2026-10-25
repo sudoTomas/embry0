@@ -92,6 +92,7 @@ async def dispatch_open_issue(
     tracker: str,
     reason: str,
     actor: str = "",
+    run_with: Any = None,
 ) -> str | None:
     """:func:`start_triage`, returning the job id it dispatched (None if not).
 
@@ -118,7 +119,9 @@ async def dispatch_open_issue(
         return None
 
     try:
-        job_id = await issue_executor.execute(issue_id, dispatched_by=actor or None)
+        # Only a person's choice rides along: a webhook's dispatch is the call it always was.
+        chosen = {"run_with": run_with} if run_with is not None else {}
+        job_id = await issue_executor.execute(issue_id, dispatched_by=actor or None, **chosen)
     except Exception as exc:
         if isinstance(exc, UnregisteredRepoError):
             # #360: refused, not broken — the repo has no `repos` row.
