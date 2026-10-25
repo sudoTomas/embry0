@@ -1,6 +1,7 @@
 import { useSearchParams } from "react-router";
-import type { AchievementEntry } from "@/api/progression";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import { AchievementDiary } from "@/components/progression/AchievementDiary";
+import { STATE_FILTERS, type StateFilter } from "@/components/progression/diaryFilters";
 import { QuestJournal } from "@/components/progression/QuestJournal";
 import { RepoDiaries } from "@/components/progression/RepoDiaries";
 import { SkillSheet } from "@/components/progression/SkillSheet";
@@ -8,56 +9,17 @@ import { PageError } from "@/components/PageError";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useProgression } from "@/hooks/useProgression";
-import { TIER_COLOR, TIER_NAME, TIER_ORDER } from "@/lib/tiers";
-import { cn, formatDate } from "@/lib/utils";
+import { TIER_COLOR } from "@/lib/tiers";
+import { cn } from "@/lib/utils";
 
 const number = (n: number) => n.toLocaleString("en-US");
 
-/** One achievement: its seven tier pips, its progress to the next tier, and what counts. */
-function AchievementCard({ entry }: { entry: AchievementEntry }) {
-  const hidden = entry.state === "secret";
-  return (
-    <div
-      className={cn("rounded-md border border-border p-3", entry.state === "unlocked" ? "bg-white/[0.04]" : "bg-white/[0.01]")}
-      data-testid="achievement"
-      data-state={entry.state}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className={cn("text-sm font-semibold", hidden ? "text-white/40" : "text-white/90")}>{entry.name}</p>
-          <p className="text-xs text-muted-foreground">{hidden ? "A secret achievement." : entry.what_counts}</p>
-        </div>
-        <span className="flex shrink-0 gap-0.5" aria-label={entry.tier ? `${TIER_NAME[entry.tier]} tier` : "No tier yet"} role="img">
-          {TIER_ORDER.map((tier, i) => (
-            <span
-              key={tier}
-              data-testid="tier-pip"
-              data-reached={i < entry.tiers_reached}
-              className="h-2.5 w-2.5 rounded-[1px]"
-              style={{ backgroundColor: i < entry.tiers_reached ? TIER_COLOR[tier] : "rgba(255,255,255,0.08)" }}
-              title={TIER_NAME[tier]}
-            />
-          ))}
-        </span>
-      </div>
-      {!hidden && (
-        <p className="mt-2 text-xs text-white/60" data-testid="achievement-progress">
-          {entry.next_threshold === null
-            ? `${number(entry.value)} · every tier reached`
-            : `${number(entry.value)} of ${number(entry.next_threshold)} for ${TIER_NAME[TIER_ORDER[entry.tiers_reached]]}`}
-          {entry.unlocked_at && ` · first unlocked ${formatDate(entry.unlocked_at)}`}
-        </p>
-      )}
-    </div>
-  );
-}
-
 /**
- * The account (spec 2026-10-24): the player's experience and totals, the
- * achievement diary it earned across everything, its quests and repo
+ * The achievement diary (spec 2026-10-25) and, below it, the account (spec
+ * 2026-10-24): the player's experience and totals, its quests and repo
  * diaries, its characters as a roster, and the selected character's skill
- * sheet. `?character=<agent type>` picks
- * the sheet; without it, the highest level shows.
+ * sheet. `?character=<agent type>` picks the sheet; without it, the highest
+ * level shows. `?category=` and `?state=` filter the diary.
  */
 export function AchievementsPage() {
   const progression = useProgression();
@@ -73,26 +35,35 @@ export function AchievementsPage() {
   const roster = [...data.characters].sort((a, b) => b.level - a.level || b.total_level - a.total_level || a.agent_type.localeCompare(b.agent_type));
   const skillName = new Map(data.skills.map((s) => [s.id, s.name]));
   const selected = roster.find((c) => c.agent_type === params.get("character")) ?? roster[0];
+  const category = params.get("category") ?? "all";
+  const stateParam = params.get("state");
+  const state: StateFilter = STATE_FILTERS.includes(stateParam as StateFilter) ? (stateParam as StateFilter) : "all";
+  // Each filter is its own parameter, so picking one keeps the character and the other filter.
+  const setParam = (key: string, value: string | null) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setParams(next, { replace: true });
+  };
 
   return (
     <div className="space-y-6" data-testid="achievements-page">
-      <header className="space-y-1">
-        <h1 className="title-pixel text-xl font-bold">Achievements</h1>
+      <AchievementDiary
+        data={data}
+        category={category}
+        state={state}
+        onCategory={(id) => setParam("category", id === "all" ? null : id)}
+        onState={(value) => setParam("state", value === "all" ? null : value)}
+      />
+
+      <header className="space-y-1 border-t border-border pt-6">
+        <h2 className="title-pixel text-xl font-bold">The account</h2>
         <p className="text-sm text-fg-secondary" data-testid="account-summary">
           Account {number(data.account.xp)} XP · account total {number(data.account.total_level)} ·{" "}
           {number(data.account.characters)} characters · {unlocked} of {data.achievements.length} achievements unlocked ·{" "}
           {data.account.quest_points} quest points
         </p>
       </header>
-
-      <section className="space-y-2">
-        <h2 className="text-section font-semibold">Achievement diary</h2>
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-          {data.achievements.map((entry) => (
-            <AchievementCard key={entry.id} entry={entry} />
-          ))}
-        </div>
-      </section>
 
       <QuestJournal quests={data.quests} points={data.account.quest_points} />
 
@@ -111,7 +82,7 @@ export function AchievementsPage() {
                   type="button"
                   data-testid="character"
                   aria-current={isSelected ? "true" : undefined}
-                  onClick={() => setParams({ character: character.agent_type }, { replace: true })}
+                  onClick={() => setParam("character", character.agent_type)}
                   className={cn(
                     "flex w-full items-center gap-2.5 rounded-md border p-2.5 text-left",
                     isSelected ? "border-white/40 bg-white/[0.06]" : "border-border bg-white/[0.02] hover:bg-white/[0.04]",

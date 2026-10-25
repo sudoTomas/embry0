@@ -82,6 +82,8 @@ The account shows its XP (every character's added up), the account total (every 
 
 ## Achievements
 
+> The catalogue and page below are superseded by [the achievement diary](2026-10-25-achievement-diary-design.md): outcomes only, fifty entries, the Hermes layout.
+
 An achievement is data: `{ id, name, what_counts, metric, thresholds[7], secret? }`. `id` is stable forever (it keys the unlock); `thresholds` are the metric's value for Bronze through Divine. An achievement is **unlocked** at its first tier, **discovered** with its progress shown while locked, or **secret**, shown as `???` until its first signal. Its unlock time is the time the metric crossed the threshold, so it is derived from history like XP. Every achievement counts across the whole account.
 
 | Name | What counts | Tiers (Bronze → Divine) |

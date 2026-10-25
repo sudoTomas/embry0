@@ -1,17 +1,22 @@
-"""Achievements (spec 2026-10-24): what the account has done, in seven tiers from Bronze to Divine.
+"""Achievements (spec 2026-10-25, the achievement diary): what the account has achieved, never how busy it was.
 
 An achievement is data: a stable ``id`` (it keys every unlock forever), a
-name in the old-school game's voice, the metric it counts and seven
-thresholds, one per tier. Its metric adds up from rows the database already
-holds, so like experience it is recomputed, never stored: each tier's unlock
-time is the time of the event that crossed its threshold. A secret
-achievement shows as ``???`` until its first signal. Every achievement
-counts across the whole account: all its characters, and the work no
-character does.
+name in the old-school game's voice that still says what it counts, a
+category, a flavour line, the metric it counts and its thresholds. Most are
+tiered, Bronze to Divine; an objective has one threshold and is simply
+complete. Every metric adds up from rows the database already holds, so like
+experience it is recomputed, never stored: each tier's unlock time is the time
+of the step that crossed its threshold, and the step that last moved a metric
+is its evidence. A secret achievement shows as ``???`` until its first signal.
+
+Every metric is an outcome: a pull request that merged, a production error
+that stayed fixed, an issue finished, a claim corrected, a change the gate
+stopped. Nothing counts spend, runs or jobs started, which a busy and useless
+week would win.
 
 The shape follows the Hermes Agent achievements plugin (MIT): tiered
-progress, discovered and secret entries, a "what counts" line, all derived
-from history.
+progress, discovered and secret entries, categories, a "what counts" line and
+evidence, all derived from history.
 """
 
 from __future__ import annotations
@@ -23,133 +28,593 @@ from datetime import UTC, datetime
 from typing import Any
 
 from embry0.services.context_audit import report_counts
-from embry0.services.progression import MAX_LEVEL, STATS, LevelUp
-from embry0.storage.repositories.progression import Fact, ProgressEvent
+from embry0.services.progression import MAX_LEVEL, STATS, AgentLevelUp, LevelUp, RareDrop
+from embry0.storage.repositories.progression import Fact
 
 TIER_NAMES: tuple[str, ...] = ("bronze", "iron", "steel", "mithril", "adamant", "rune", "divine")
+#: What a reached objective reads as, in place of a tier.
+COMPLETE = "complete"
+
+
+@dataclass(frozen=True)
+class Category:
+    id: str
+    name: str
+    blurb: str
+
+
+CATEGORIES: tuple[Category, ...] = (
+    Category("shipping", "Shipping", "Pull requests that merged, and how cleanly they got there."),
+    Category("slayer", "Slayer", "Production errors the watcher found, and the fixes that kept them dead."),
+    Category("questing", "Questing", "Issues finished, and the answers owners gave."),
+    Category("lore", "Lore", "Instruction files, area maps and standards kept true."),
+    Category("guarding", "Guarding", "Reviews, QA and the gate that stops a bad merge."),
+    Category("grit", "Grit", "Work that failed, came back, and landed anyway."),
+    Category("skilling", "Skilling", "What the characters grew into."),
+    Category("oddities", "Oddities", "Strange hours and rare finds. Mostly secret."),
+)
 
 
 @dataclass(frozen=True)
 class Achievement:
     id: str
     name: str
+    category: str
     what_counts: str
+    flavour: str
     metric: str
-    #: The metric's value for Bronze through Divine.
-    thresholds: tuple[float, float, float, float, float, float, float]
+    #: The metric's value for Bronze through Divine, or one value for an objective.
+    thresholds: tuple[float, ...]
     secret: bool = False
+    #: The pixel icon the page draws (frontend/src/components/progression/achievementIcons.tsx).
+    icon: str = "star"
 
+    @property
+    def objective(self) -> bool:
+        return len(self.thresholds) == 1
+
+
+_COUNTS = (1, 5, 10, 25, 50, 100, 200)
+_RARE = (1, 2, 5, 10, 25, 50, 100)
+_REPOS = (1, 2, 3, 5, 8, 13, 21)
 
 CATALOGUE: tuple[Achievement, ...] = (
-    Achievement(
-        "fresh_off_the_tutorial",
-        "Fresh off the Tutorial",
-        "Jobs that finished their work",
-        "completed",
-        (1, 25, 100, 250, 1_000, 2_500, 5_000),
-    ),
+    # ---- Shipping ----
     Achievement(
         "forged_in_fire",
-        "Forged in Fire",
-        "Pull requests merged",
+        "Gz on the Merge",
+        "shipping",
+        "Pull requests embry0 opened that merged",
+        "Somebody type gz in chat.",
         "merged",
         (1, 5, 15, 30, 60, 120, 250),
+        icon="anvil",
     ),
+    Achievement(
+        "no_death_run",
+        "No-Death Run",
+        "shipping",
+        "Merged pull requests whose issue or pull request had no earlier attempt",
+        "First try. No grave to run back to.",
+        "first_try",
+        _COUNTS,
+        icon="sword",
+    ),
+    Achievement(
+        "clean_kill",
+        "Flawless Kill",
+        "shipping",
+        "Merged pull requests whose job never had an agent run end in an error",
+        "Not a single hitsplat taken.",
+        "clean_kill",
+        _COUNTS,
+        icon="sword",
+    ),
+    Achievement(
+        "merged_for_1gp",
+        "Merged for 1gp",
+        "shipping",
+        "Merged pull requests whose job spent under one US dollar",
+        "Cheapest upgrade in the game.",
+        "bargain",
+        (1, 3, 10, 25, 50, 100, 200),
+        icon="coins",
+    ),
+    Achievement(
+        "speedrun_any_percent",
+        "Speedrun Any%",
+        "shipping",
+        "Pull requests merged within a day of their job starting",
+        "Skipped every cutscene.",
+        "speedrun",
+        _COUNTS,
+        icon="boots",
+    ),
+    Achievement(
+        "world_hopper",
+        "World Hopper",
+        "shipping",
+        "Repositories with at least one merged pull request",
+        "Same agent, new world, same result.",
+        "world_hopper",
+        _REPOS,
+        icon="map",
+    ),
+    Achievement(
+        "know_your_zones",
+        "Know Your Zones",
+        "shipping",
+        "Merged pull requests that named the area of the monorepo they changed",
+        "Never lost in the wilderness again.",
+        "area_merged",
+        _COUNTS,
+        icon="map",
+    ),
+    Achievement(
+        "full_raid_party",
+        "Full Raid Party",
+        "shipping",
+        "Merged pull requests whose job passed both a review and a QA run",
+        "Tank, healer and damage all showed up.",
+        "full_party",
+        _COUNTS,
+        icon="helm",
+    ),
+    Achievement(
+        "hot_streak",
+        "Hot Streak",
+        "shipping",
+        "Days with three merged pull requests or more",
+        "The XP drops would not stop.",
+        "hot_streak",
+        (1, 3, 5, 10, 20, 40, 80),
+        icon="flame",
+    ),
+    # ---- Slayer ----
+    Achievement(
+        "slayer_task_complete",
+        "Slayer Task Complete",
+        "slayer",
+        "Production errors whose fix was checked against the logs afterwards and found healed",
+        "Return to a slayer master for a new task.",
+        "healed",
+        (1, 3, 10, 25, 50, 100, 200),
+        icon="skull",
+    ),
+    Achievement(
+        "safespotted",
+        "Safespotted",
+        "slayer",
+        "Production errors the watcher found itself that embry0's pull request then fixed",
+        "Killed it before it could hit anyone.",
+        "safespotted",
+        (1, 3, 10, 25, 50, 100, 200),
+        icon="shield",
+    ),
+    Achievement(
+        "task_assigned",
+        "Task Assigned",
+        "slayer",
+        "Watcher findings a person accepted for fixing",
+        "Your new task is to kill this bug.",
+        "cases_accepted",
+        _COUNTS,
+        icon="scroll",
+    ),
+    Achievement(
+        "boss_slayer",
+        "Boss Slayer",
+        "slayer",
+        "High-severity production errors found healed",
+        "It had a health bar the size of the screen.",
+        "boss_healed",
+        _RARE,
+        icon="crown",
+    ),
+    Achievement(
+        "superior_slayer",
+        "Superior Slayer",
+        "slayer",
+        "Healed production errors that had been seen ten times or more",
+        "A superior foe has appeared. It is gone now.",
+        "superior_healed",
+        _RARE,
+        icon="skull",
+    ),
+    Achievement(
+        "never_respawned",
+        "Never Respawned",
+        "slayer",
+        "Healed production errors that never came back after their fix was checked",
+        "It stayed down. They usually don't.",
+        "never_respawned",
+        (1, 3, 10, 25, 50, 100, 200),
+        icon="grave",
+    ),
+    Achievement(
+        "deployed_and_dusted",
+        "Deployed and Dusted",
+        "slayer",
+        "Fixes for production errors that reached a deploy",
+        "Loot picked up, teleported home.",
+        "deployed_fix",
+        _COUNTS,
+        icon="coins",
+    ),
+    # ---- Questing ----
+    Achievement(
+        "quest_complete",
+        "Quest Complete!",
+        "questing",
+        "Issues finished by a merged pull request",
+        "Congratulations! Quest complete!",
+        "issue_done",
+        (1, 5, 15, 30, 60, 120, 250),
+        icon="scroll",
+    ),
+    Achievement(
+        "side_quest",
+        "Side Quest",
+        "questing",
+        "Sub-issues triage split off a bigger issue that a merged pull request finished",
+        "You were only meant to deliver a letter.",
+        "side_quest",
+        _COUNTS,
+        icon="scroll",
+    ),
+    Achievement(
+        "talked_to_the_quest_giver",
+        "Talked to the Quest Giver",
+        "questing",
+        "Answers owners gave to embry0's proposals: start it, not this, or later",
+        "Select an option.",
+        "owner_answer",
+        (1, 5, 10, 25, 50, 100, 250),
+        icon="speech",
+    ),
+    Achievement(
+        "quest_accepted",
+        "Quest Accepted",
+        "questing",
+        "Proposals an owner said yes to",
+        "Yes, I will help you.",
+        "proposal_accepted",
+        _COUNTS,
+        icon="quill",
+    ),
+    Achievement(
+        "reward_claimed",
+        "Reward Claimed",
+        "questing",
+        "Accepted proposals whose job's pull request merged",
+        "The quest giver hands you a lamp.",
+        "proposal_merged",
+        _COUNTS,
+        icon="lamp",
+    ),
+    Achievement(
+        "continue_clicked",
+        "Click Here to Continue",
+        "questing",
+        "Questions an agent asked that a person answered",
+        "The dialogue box finally moved on.",
+        "question_answered",
+        (1, 5, 10, 25, 50, 100, 250),
+        icon="speech",
+    ),
+    # ---- Lore ----
+    Achievement(
+        "lines_straightened",
+        "Lines Straightened",
+        "lore",
+        "Outdated claims the context audit found in the files that steer coding agents",
+        "The tutor was lying the whole time.",
+        "stale_claims",
+        (10, 50, 100, 250, 500, 1_000, 2_500),
+        icon="quill",
+    ),
+    Achievement(
+        "lore_corrected",
+        "Lore Corrected",
+        "lore",
+        "Context-audit pull requests that merged",
+        "The library books are true again.",
+        "audit_merged",
+        _COUNTS,
+        icon="book",
+    ),
+    Achievement(
+        "weeded_garden",
+        "Weeded Garden",
+        "lore",
+        "Context audits that found every instruction file already true",
+        "Not a single weed in the patch.",
+        "clean_audit",
+        _COUNTS,
+        icon="leaf",
+    ),
+    Achievement(
+        "cartographer",
+        "Cartographer",
+        "lore",
+        "Repositories whose areas map merged",
+        "You can see the whole world map now.",
+        "areas_mapped",
+        _REPOS,
+        icon="map",
+    ),
+    Achievement(
+        "fashion_inspector",
+        "Fashion Inspector",
+        "lore",
+        "Repositories whose design audit scored 90 or more against their standard",
+        "Matching outfit, full set bonus.",
+        "design_ninety",
+        _REPOS,
+        icon="gem",
+    ),
+    # ---- Guarding ----
     Achievement(
         "guardian_of_the_gate",
         "Guardian of the Gate",
-        "Reviews that finished",
+        "guarding",
+        "Reviews a reviewer agent finished",
+        "None shall pass unread.",
         "reviews",
         (1, 10, 25, 50, 100, 250, 500),
+        icon="shield",
+    ),
+    Achievement(
+        "second_opinion",
+        "Second Opinion",
+        "guarding",
+        "Pull request reviews embry0 posted on a pull request",
+        "A wise old reviewer has left a comment.",
+        "review_posted",
+        (1, 10, 25, 50, 100, 250, 500),
+        icon="eye",
     ),
     Achievement(
         "potion_master",
         "Potion Master",
-        "QA jobs that completed",
+        "guarding",
+        "QA runs that completed",
+        "Every dose checked before it was drunk.",
         "qa_passed",
         (1, 5, 15, 30, 60, 120, 250),
+        icon="potion",
     ),
     Achievement(
-        "slayer_task_complete",
-        "Slayer Task Complete",
-        "Healing cases judged healed",
-        "healed",
-        (1, 3, 10, 25, 50, 100, 200),
+        "you_shall_not_merge",
+        "You Shall Not Merge",
+        "guarding",
+        "Changes the verification gate stopped because they broke tests that passed before",
+        "Prayer flicked just in time.",
+        "gate_blocked",
+        _RARE,
+        icon="gate",
     ),
     Achievement(
-        "prospector",
-        "Prospector",
-        "Watcher runs that read logs",
-        "watched",
-        (10, 100, 500, 1_000, 2_500, 5_000, 10_000),
+        "training_grounds",
+        "Training Grounds",
+        "guarding",
+        "Test setups embry0 proposed that a person applied to a repository",
+        "Somewhere safe to practise.",
+        "setup_applied",
+        _REPOS,
+        icon="target",
+    ),
+    # ---- Grit ----
+    Achievement(
+        "oh_dear_you_are_dead",
+        "Oh Dear, You Are Dead",
+        "grit",
+        "Merges on an issue whose earlier job failed",
+        "Ran back from the gravestone and finished it.",
+        "comeback",
+        (1, 3, 5, 10, 25, 50, 100),
+        secret=True,
+        icon="grave",
     ),
     Achievement(
-        "green_thumb",
-        "Green Thumb",
-        "Audits the schedules started",
-        "scheduled",
-        (1, 10, 25, 50, 100, 250, 500),
+        "back_from_the_respawn",
+        "Back from the Respawn",
+        "grit",
+        "Jobs a restart interrupted that resumed and finished their work",
+        "Logged back in mid-fight and won.",
+        "resumed",
+        (1, 3, 5, 10, 25, 50, 100),
+        icon="hourglass",
     ),
     Achievement(
-        "lines_straightened",
-        "Lines Straightened",
-        "Outdated claims the context audit found",
-        "stale_claims",
-        (10, 50, 100, 250, 500, 1_000, 2_500),
+        "lag_survivor",
+        "Lag Survivor",
+        "grit",
+        "A job interrupted twice or more that still finished its work",
+        "The server restarted. Twice. You lived.",
+        "lag_survivor",
+        (1,),
+        secret=True,
+        icon="hourglass",
     ),
     Achievement(
-        "bank_value",
-        "Bank Value",
-        "USD the jobs spent",
-        "spent",
-        (10, 50, 100, 250, 500, 1_000, 2_500),
+        "second_wind",
+        "Second Wind",
+        "grit",
+        "Follow-up jobs on a pull request whose pull request then merged",
+        "Ate a shark, kept swinging.",
+        "followup_merged",
+        _RARE,
+        icon="heart",
     ),
     Achievement(
-        "tick_perfect",
-        "Tick Perfect",
-        "Jobs that finished within 15 seconds of starting",
-        "quick",
-        (1, 5, 10, 25, 50, 100, 250),
+        "iron_will",
+        "Iron Will",
+        "grit",
+        "Issues that merged on their third attempt or later",
+        "Third time is the charm, apparently.",
+        "iron_will",
+        (1, 2, 3, 5, 10, 25, 50),
+        icon="pickaxe",
     ),
+    # ---- Skilling ----
     Achievement(
         "wise_old_agent",
         "Wise Old Agent",
-        "The highest total level of any character",
+        "skilling",
+        "The highest total level of any one character",
+        "Seen it all, levelled most of it.",
         "best_total",
         (100, 250, 500, 750, 1_000, 1_500, 2_000),
+        icon="beard",
     ),
     Achievement(
         "skill_cape",
         "Skill Cape",
-        "Skill capes earned across every character",
+        "skilling",
+        "Skills at 99 across every character",
+        "A cape that says you did nothing else for weeks.",
         "capes",
         (1, 2, 5, 10, 23, 50, 100),
+        icon="cape",
     ),
     Achievement(
-        "oh_dear_you_are_dead",
-        "Oh Dear, You Are Dead",
-        "Merges on an issue whose earlier job failed",
-        "comeback",
-        (1, 3, 5, 10, 25, 50, 100),
+        "maxed_main",
+        "Maxed Main",
+        "skilling",
+        "The highest level any one character reached",
+        "One character, every stat that matters.",
+        "best_level",
+        (10, 25, 50, 75, 100, 115, 126),
+        icon="sword",
+    ),
+    Achievement(
+        "half_of_ninety_nine",
+        "92 Is Half of 99",
+        "skilling",
+        "Skills that reached level 92, across every character",
+        "Halfway there, by the experience table.",
+        "level_92",
+        (1, 2, 5, 10, 23, 50, 100),
+        icon="star",
+    ),
+    Achievement(
+        "thousand_club",
+        "Thousand Club",
+        "skilling",
+        "Characters whose total level reached 1,000",
+        "The roster stopped being a bunch of noobs.",
+        "thousand_club",
+        (1, 2, 3, 5, 8, 12, 18),
+        icon="star",
+    ),
+    Achievement(
+        "rare_drop_table",
+        "Rare Drop Table",
+        "skilling",
+        "Rare drops characters earned",
+        "Purple loot beam.",
+        "rares",
+        _REPOS,
+        icon="gem",
+    ),
+    # ---- Oddities ----
+    Achievement(
+        "afk_weekend",
+        "AFK Weekend",
+        "oddities",
+        "A pull request that merged on a Saturday or Sunday (UTC)",
+        "The agents grind while you touch grass.",
+        "weekend_merge",
+        (1,),
         secret=True,
+        icon="moon",
     ),
     Achievement(
-        "click_here_to_continue",
-        "Click Here to Continue",
-        "Questions an agent asked a person",
-        "asked",
-        (1, 5, 10, 25, 50, 100, 250),
+        "night_shift",
+        "Night Shift",
+        "oddities",
+        "A pull request that merged between midnight and four in the morning (UTC)",
+        "Nobody else was online.",
+        "midnight_merge",
+        (1,),
+        secret=True,
+        icon="moon",
+    ),
+    Achievement(
+        "friday_night_merge",
+        "Friday Night Merge",
+        "oddities",
+        "A pull request that merged on a Friday after eight in the evening (UTC)",
+        "Bold. Very bold.",
+        "friday_night",
+        (1,),
+        secret=True,
+        icon="flame",
+    ),
+    Achievement(
+        "holiday_event",
+        "Holiday Event",
+        "oddities",
+        "A pull request that merged on 25 December, 31 October or 1 January (UTC)",
+        "Limited-time event. Log in to claim.",
+        "holiday_merge",
+        (1,),
+        secret=True,
+        icon="gift",
+    ),
+    Achievement(
+        "long_grind",
+        "Long Grind",
+        "oddities",
+        "A pull request that merged from a job that ran for more than two hours",
+        "This was supposed to be a quick fix.",
+        "long_grind",
+        (1,),
+        secret=True,
+        icon="hourglass",
+    ),
+    Achievement(
+        "pet_drop",
+        "Pet Drop",
+        "oddities",
+        "A pull request that merged from the first job embry0 ever ran on its repository",
+        "You have a funny feeling you are being followed.",
+        "pet_drop",
+        (1,),
+        secret=True,
+        icon="paw",
+    ),
+    Achievement(
+        "ninety_nine_problems",
+        "99 Problems",
+        "oddities",
+        "A production error seen 99 times or more that a merged fix killed",
+        "But a bug ain't one.",
+        "ninety_nine",
+        (1,),
+        secret=True,
+        icon="skull",
     ),
 )
 
-#: A metric's value before any event: a character starts with every skill at 1.
-_BASE: dict[str, float] = {"best_total": float(len(STATS))}
+#: A metric's value before any step: a character starts with every skill at 1, and at level 1.
+_BASE: dict[str, float] = {"best_total": float(len(STATS)), "best_level": 1.0}
 
-#: The events whose count is a metric of the same name.
-_COUNTED = frozenset({"merged", "qa_passed", "healed", "watched", "scheduled", "comeback", "asked"})
+#: The total level a character reaches to join the Thousand Club.
+THOUSAND = 1_000
+#: Level 92 holds half the experience of level 99.
+HALF_OF_MAX = 92
 
-#: The agents whose finished run is a review.
-_REVIEWERS = frozenset({"review", "pr-reviewer"})
+
+@dataclass(frozen=True)
+class Step:
+    """One step of a metric: ``value`` added at ``at``, and what did it (a pull request, a repo, an error)."""
+
+    at: datetime
+    value: float = 1.0
+    label: str | None = None
+    url: str | None = None
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -159,36 +624,52 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def metric_steps(
-    events: Iterable[ProgressEvent], facts: Iterable[Fact], level_ups: Sequence[LevelUp]
-) -> dict[str, list[tuple[datetime, float]]]:
-    """Every metric as the steps it rose by, each with its time, oldest first."""
-    steps: dict[str, list[tuple[datetime, float]]] = defaultdict(list)
-    for event in events:
-        if event.source in _COUNTED:
-            steps[event.source].append((event.at, 1))
-        elif event.source == "run" and event.agent_type in _REVIEWERS:
-            steps["reviews"].append((event.at, 1))
-        elif event.source == "audited":
-            stale, _files = report_counts(event.report)
-            if stale:
-                steps["stale_claims"].append((event.at, stale))
+    facts: Iterable[Fact],
+    level_ups: Sequence[LevelUp] = (),
+    agent_level_ups: Sequence[AgentLevelUp] = (),
+    drops: Sequence[RareDrop] = (),
+) -> dict[str, list[Step]]:
+    """Every metric as the steps it rose by, each with its time and evidence, oldest first."""
+    steps: dict[str, list[Step]] = defaultdict(list)
     for fact in facts:
-        steps[fact.metric].append((fact.at, fact.value))
-    # The highest total level of any character, stepping as its skills level.
+        if fact.metric == "audit":
+            # A completed context audit: its outdated claims, or, with none, a clean audit.
+            stale, files = report_counts(fact.report)
+            if stale:
+                steps["stale_claims"].append(Step(fact.at, stale, fact.label, fact.url))
+            elif files:
+                steps["clean_audit"].append(Step(fact.at, 1, fact.label, fact.url))
+            continue
+        steps[fact.metric].append(Step(fact.at, fact.value, fact.label, fact.url))
+    # The highest total level of any character, stepping as its skills level; the capes; the Thousand Club.
     levels: dict[tuple[str, str], int] = {}
     totals: dict[str, int] = defaultdict(lambda: len(STATS))
     best = len(STATS)
+    reached_92: set[tuple[str, str]] = set()
     for up in sorted(level_ups, key=lambda u: u.at):
         key = (up.agent_type, up.stat)
+        before = totals[up.agent_type]
         totals[up.agent_type] += up.level - levels.get(key, 1)
         levels[key] = up.level
         if totals[up.agent_type] > best:
-            steps["best_total"].append((up.at, totals[up.agent_type] - best))
+            steps["best_total"].append(Step(up.at, totals[up.agent_type] - best, up.agent_type))
             best = totals[up.agent_type]
         if up.level == MAX_LEVEL:
-            steps["capes"].append((up.at, 1))
+            steps["capes"].append(Step(up.at, 1, f"{up.agent_type} · {up.stat}"))
+        if up.level >= HALF_OF_MAX and key not in reached_92:
+            reached_92.add(key)
+            steps["level_92"].append(Step(up.at, 1, f"{up.agent_type} · {up.stat}"))
+        if before < THOUSAND <= totals[up.agent_type]:
+            steps["thousand_club"].append(Step(up.at, 1, up.agent_type))
+    best_level = int(_BASE["best_level"])
+    for agent_up in sorted(agent_level_ups, key=lambda u: u.at):
+        if agent_up.level > best_level:
+            steps["best_level"].append(Step(agent_up.at, agent_up.level - best_level, agent_up.agent_type))
+            best_level = agent_up.level
+    for drop in drops:
+        steps["rares"].append(Step(drop.at, 1, f"{drop.agent_type} · {drop.rare}"))
     for series in steps.values():
-        series.sort(key=lambda step: step[0])
+        series.sort(key=lambda step: step.at)
     return steps
 
 
@@ -196,17 +677,25 @@ def metric_steps(
 class AchievementState:
     achievement: Achievement
     value: float
-    #: When each reached tier was crossed, Bronze first.
+    #: When each reached tier was crossed, Bronze first (an objective has at most one).
     tier_at: list[datetime] = field(default_factory=list)
+    #: The step that last moved the metric.
+    evidence: Step | None = None
 
     @property
     def tier(self) -> int:
-        """Tiers reached: 0 for none, 7 for Divine."""
+        """Tiers reached: 0 for none, 7 for Divine; 1 for a complete objective."""
         return len(self.tier_at)
 
     @property
     def hidden(self) -> bool:
-        return self.achievement.secret and self.value <= 0
+        return self.achievement.secret and self.value <= _BASE.get(self.achievement.metric, 0.0)
+
+    @property
+    def tier_name(self) -> str | None:
+        if not self.tier:
+            return None
+        return COMPLETE if self.achievement.objective else TIER_NAMES[self.tier - 1]
 
     def to_dict(self) -> dict[str, Any]:
         a = self.achievement
@@ -214,7 +703,11 @@ class AchievementState:
             return {
                 "id": a.id,
                 "name": "???",
+                "category": a.category,
+                "kind": "objective" if a.objective else "tiered",
+                "icon": None,
                 "what_counts": None,
+                "flavour": None,
                 "secret": True,
                 "state": "secret",
                 "tier": None,
@@ -223,20 +716,29 @@ class AchievementState:
                 "next_threshold": None,
                 "thresholds": None,
                 "unlocked_at": None,
+                "latest_at": None,
+                "evidence": None,
             }
-        money = a.metric == "spent"
         return {
             "id": a.id,
             "name": a.name,
+            "category": a.category,
+            "kind": "objective" if a.objective else "tiered",
+            "icon": a.icon,
             "what_counts": a.what_counts,
+            "flavour": a.flavour,
             "secret": a.secret,
             "state": "unlocked" if self.tier else "discovered",
-            "tier": TIER_NAMES[self.tier - 1] if self.tier else None,
+            "tier": self.tier_name,
             "tiers_reached": self.tier,
-            "value": round(self.value, 2) if money else int(self.value),
-            "next_threshold": None if self.tier >= len(TIER_NAMES) else a.thresholds[self.tier],
+            "value": int(self.value),
+            "next_threshold": None if self.tier >= len(a.thresholds) else a.thresholds[self.tier],
             "thresholds": list(a.thresholds),
             "unlocked_at": _iso(self.tier_at[0]) if self.tier_at else None,
+            "latest_at": _iso(self.tier_at[-1]) if self.tier_at else None,
+            "evidence": None
+            if self.evidence is None
+            else {"label": self.evidence.label, "url": self.evidence.url, "at": _iso(self.evidence.at)},
         }
 
 
@@ -258,19 +760,24 @@ class Unlock:
 
 
 def evaluate(
-    events: Iterable[ProgressEvent], facts: Iterable[Fact], level_ups: Sequence[LevelUp]
+    facts: Iterable[Fact],
+    level_ups: Sequence[LevelUp] = (),
+    agent_level_ups: Sequence[AgentLevelUp] = (),
+    drops: Sequence[RareDrop] = (),
 ) -> tuple[list[AchievementState], list[Unlock]]:
-    """Each achievement's value and tiers, and every tier unlock in time order."""
-    steps = metric_steps(events, facts, level_ups)
+    """Each achievement's value, tiers and evidence, and every tier unlock in time order."""
+    steps = metric_steps(facts, level_ups, agent_level_ups, drops)
     states: list[AchievementState] = []
     unlocks: list[Unlock] = []
     for achievement in CATALOGUE:
         state = AchievementState(achievement, _BASE.get(achievement.metric, 0.0))
-        for at, value in steps.get(achievement.metric, []):
-            state.value += value
-            while state.tier < len(TIER_NAMES) and state.value >= achievement.thresholds[state.tier]:
-                state.tier_at.append(at)
-                unlocks.append(Unlock(at, achievement.id, achievement.name, TIER_NAMES[state.tier - 1]))
+        thresholds = achievement.thresholds
+        for step in steps.get(achievement.metric, []):
+            state.value += step.value
+            state.evidence = step
+            while state.tier < len(thresholds) and state.value >= thresholds[state.tier]:
+                state.tier_at.append(step.at)
+                unlocks.append(Unlock(step.at, achievement.id, achievement.name, state.tier_name or COMPLETE))
         states.append(state)
     unlocks.sort(key=lambda u: u.at)
     return states, unlocks
