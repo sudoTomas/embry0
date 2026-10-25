@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import structlog
 from cryptography.fernet import InvalidToken
 
+from embry0.agents.fallback import Pause
 from embry0.execution import github_tokens, gitlab_tokens
 from embry0.safety.error_codes import ErrorCode
 from embry0.services.credentials.providers import (
@@ -379,6 +380,64 @@ class CredentialResolver:
             reused = await self._reuse_llm(provider, job_id, parent_uses) if parent_uses and not chosen else None
             resolved[provider] = reused if reused is not None else await self.resolve_llm(repo, provider, job_id=job_id)
         return resolved
+
+    async def job_pinned(self, job_id: str, provider: str) -> bool:
+        """Whether a person chose the key that serves ``provider`` for this job (Run with)."""
+        return bool(await self._job_pin(job_id, provider))
+
+    async def llm_pause(self, repo: str, provider: str) -> Pause | None:
+        """Why ``provider`` has no usable account for ``repo``, or None when it has one.
+
+        Provider fallback (spec 2026-10-25) asks this before it moves a job's
+        agents to another provider. It walks the bindings ``resolve_llm`` walks
+        and records no use. Paused means every bound account is quarantined or
+        disabled and the environment holds none, or holds the same secret as
+        one of them: an account imported into the registry keeps its
+        environment copy, which would otherwise serve the spent token again.
+        A provider this deployment does not enable is paused (``not_enabled``);
+        a registry error is not, so a broken read never moves a job. The job's
+        own pin is the caller's to check (``job_pinned``).
+        """
+        if provider not in llm_providers(self._environ):
+            return Pause(provider, "not_enabled")
+        owner = self.owner_of(repo)
+        steps: list[tuple[str, str]] = [("repo", repo.lower())] if repo else []
+        if owner:
+            steps += [("owner", f"github:{owner}"), ("owner", f"gitlab:{owner}")]
+        steps.append(("global", ""))
+        unusable: list[Mapping[str, Any]] = []
+        try:
+            for scope_kind, scope_value in steps:
+                for row in await self._repo.candidates(
+                    scope_kind=scope_kind, scope_value=scope_value, role="llm", provider=provider
+                ):
+                    if self._availability(row) is None:
+                        return None
+                    unusable.append(row)
+        except Exception as exc:  # noqa: BLE001 — a registry outage must not move a job off its provider
+            logger.warning("credential_registry_error", op="llm_pause", provider=provider, error=str(exc)[:200])
+            return None
+        fallback = env_fallback(provider, self._environ, self._config, credentials_file=self._credentials_file)
+        if fallback is not None and not await self._is_secret_of(fallback[1], unusable):
+            return None
+        if not unusable:
+            return Pause(provider, "missing")
+        # The pause ends when the first timed quarantine does; a disabled
+        # account, or one quarantined until cleared, names no end.
+        timed = [row for row in unusable if isinstance(row.get("quarantined_until"), datetime)]
+        first = min(timed, key=lambda row: row["quarantined_until"]) if timed else unusable[0]
+        reason = str(first.get("status_reason") or first.get("status") or "paused")
+        return Pause(provider, reason, first["quarantined_until"] if timed else None)
+
+    async def _is_secret_of(self, secret: str, rows: Iterable[Mapping[str, Any]]) -> bool:
+        """Whether ``secret`` is the stored secret of one of ``rows``."""
+        for row in rows:
+            try:
+                if await self._decrypt(str(row["secret_ciphertext"])) == secret:
+                    return True
+            except Exception:  # noqa: BLE001 — an unreadable row is not the same account
+                continue
+        return False
 
     async def _job_pin(self, job_id: str, provider: str) -> str | None:
         """The credential id the job chose for ``provider``, or None.

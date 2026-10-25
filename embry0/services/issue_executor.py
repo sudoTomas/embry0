@@ -250,6 +250,7 @@ class IssueExecutor:
         *,
         llm_providers: tuple[str, ...] = (),
         llm_credential_kinds: dict[str, str] | None = None,
+        model_fallbacks: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Build the graph config dict for LangGraph execution."""
         # Read OAuth token so the resolver can validate credentials before
@@ -338,6 +339,10 @@ class IssueExecutor:
                 # Provider names and kinds only. Secrets stay in the resolver.
                 "llm_providers": tuple(llm_providers),
                 "llm_credential_kinds": dict(llm_credential_kinds or {}),
+                # Provider fallback (spec 2026-10-25): the model each paused
+                # provider's agents run on instead, planned by the pre-check
+                # of this run. Empty: every agent runs its own model.
+                "model_fallbacks": dict(model_fallbacks or {}),
                 # Workspace-init strategies read allowlist/bounds off the app
                 # config (RAV-600).
                 "embry0_config": self._config,

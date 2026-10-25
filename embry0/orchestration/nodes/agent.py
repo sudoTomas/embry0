@@ -10,9 +10,19 @@ from typing import Any
 
 import structlog
 
+from embry0.agents.fallback import (
+    ModelFallback,
+    fallback_order,
+    fallbacks_from_config,
+    paused_by_outputs,
+    replan,
+    runnable_fallback_models,
+)
+from embry0.agents.fallback import describe as describe_fallback
 from embry0.agents.model_policy import build_model_policy, resolve_tier_models
 from embry0.agents.resolver import resolve_agent_invocation
 from embry0.agents.session import AgentSession
+from embry0.execution import events
 from embry0.execution.auth_provider import AuthConfigError
 from embry0.execution.skill_actions import count_action
 from embry0.orchestration.budget import (
@@ -219,7 +229,7 @@ async def load_model_policy(config: Any) -> dict[str, Any] | None:
     if cfg is None:
         return None
     policy = build_model_policy(cfg)
-    if not policy["disabled_models"] and not policy["default_model"]:
+    if not policy["disabled_models"] and not policy["default_model"] and not policy["fallback_models"]:
         return None
     return policy
 
@@ -371,6 +381,55 @@ def _credentials_for_resolve(credentials: dict[str, str], config: Any) -> dict[s
     return copied
 
 
+async def _model_fallbacks_for_run(
+    state: dict[str, Any], config: Any, model_policy: dict[str, Any] | None
+) -> dict[str, ModelFallback]:
+    """Provider fallback's plan for this agent run (spec 2026-10-25).
+
+    The pre-check's plan (``configurable["model_fallbacks"]``), plus each
+    provider an earlier run of this job ended on with a spent or rate-limited
+    account: its account is only quarantined when the job finishes, and the
+    next run would fail the same way. A stand-in is only a provider whose key
+    the run's sandbox holds, and a provider whose key a person chose for the
+    job (Run with) never moves. Empty without a fallback order.
+    """
+    order = runnable_fallback_models(fallback_order(model_policy), (model_policy or {}).get("disabled_models") or ())
+    if not order:
+        return {}
+    configurable = _graph_configurable(config)
+    plan = fallbacks_from_config(configurable.get("model_fallbacks"))
+    paused_now = paused_by_outputs(state.get("agent_outputs") or [])
+    resolver = configurable.get("credential_resolver")
+    job_id = str(configurable.get("job_id") or state.get("job_id") or "")
+    for provider in list(paused_now):
+        try:
+            pinned = resolver is not None and bool(await resolver.job_pinned(job_id, provider))
+        except Exception:  # noqa: BLE001 - an unreadable pin keeps the person's key: no move
+            pinned = True
+        if pinned:
+            paused_now.pop(provider)
+    if not plan and not paused_now:
+        return {}
+    return replan(plan, paused_now, order, _sandbox_llm_providers(state, configurable))
+
+
+def _sandbox_llm_providers(state: dict[str, Any], configurable: dict[str, Any]) -> set[str]:
+    """The providers whose keys this run's sandbox holds.
+
+    The sandbox manager's record for the container when it has one: a resume
+    into a sandbox created before the pause keeps the keys it was created
+    with. Else (a container from before a restart) the providers this run's
+    pre-check resolved, which every sandbox it creates gets.
+    """
+    known = getattr(configurable.get("sandbox_manager"), "last_llm_credentials", None)
+    container = state.get("sandbox_container_id")
+    if callable(known) and container:
+        held = known(container)
+        if isinstance(held, dict) and held:
+            return set(held)
+    return set(configurable.get("llm_providers") or ())
+
+
 async def run_agent_node(
     state: dict[str, Any],
     agent_runner: Any,
@@ -463,6 +522,7 @@ async def run_agent_node(
     # Model policy: the default model (#465) and the RAV-1297 enablement set
     # with its tier fallbacks, best-effort — None means no policy.
     model_policy = await load_model_policy(config)
+    model_fallbacks = await _model_fallbacks_for_run(state, config, model_policy)
 
     try:
         invocation = resolve_agent_invocation(
@@ -483,9 +543,17 @@ async def run_agent_node(
             credentials=_credentials_for_resolve(credentials, config),
             model_policy=model_policy,
             job_agent_models=job_agent_models,
+            model_fallbacks=model_fallbacks,
         )
     except AuthConfigError as exc:
         return _stamp_loaded_preferences(_auth_error_updates(agent_type, exc, state), state, loaded_prefs)
+    if invocation.fallback is not None and on_event is not None:
+        # The job's events say which model ran and why (provider fallback).
+        on_event(
+            events.progress(
+                message=describe_fallback(agent_type, invocation.model, invocation.fallback), node=node or agent_type
+            )
+        )
 
     # RAV-1260: turn-budget awareness. Agents with investigation tools kept
     # investigating until the harness killed them at max_turns with no
@@ -546,10 +614,18 @@ async def run_agent_node(
     traces_repo = configurable.get("traces_repo")
     trace_job_id = configurable.get("job_id", "")
     running_row_written = False
+    # The run's substitution, when it ran on a fallback model; kept off the
+    # call otherwise so a traces repository without the column still works.
+    trace_fallback: dict[str, Any] = {"fallback": invocation.fallback} if invocation.fallback is not None else {}
     if traces_repo is not None and trace_job_id:
         try:
             await traces_repo.create(
-                job_id=trace_job_id, agent_type=agent_type, model=invocation.model, result="running", trace_id=run_id
+                job_id=trace_job_id,
+                agent_type=agent_type,
+                model=invocation.model,
+                result="running",
+                trace_id=run_id,
+                **trace_fallback,
             )
             running_row_written = True
         except Exception:
@@ -570,7 +646,12 @@ async def run_agent_node(
                 # it now with the final fields under the same run id, so the
                 # trace, its spend and its events still join up.
                 await traces_repo.create(
-                    job_id=trace_job_id, agent_type=agent_type, model=invocation.model, trace_id=run_id, **fields
+                    job_id=trace_job_id,
+                    agent_type=agent_type,
+                    model=invocation.model,
+                    trace_id=run_id,
+                    **trace_fallback,
+                    **fields,
                 )
         except Exception:
             logger.warning("trace_finish_persist_failed", agent_type=agent_type, exc_info=True)

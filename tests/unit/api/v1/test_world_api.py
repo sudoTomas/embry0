@@ -104,6 +104,14 @@ class FakeRepo:
                 "created_at": NOW,
                 "tools_called": {"Read": 4},
                 "skill_actions": None,
+                # Provider fallback: this run stood in for a paused account's model.
+                "model": "grok-4.7",
+                "fallback": {
+                    "instead_of": "claude-sonnet-5",
+                    "provider": "anthropic",
+                    "reason": "quota_exhausted",
+                    "until": "2026-10-26T00:00:00+00:00",
+                },
             },
         ]
 
@@ -206,6 +214,17 @@ async def test_a_quest_scroll_says_what_it_did_and_what_it_earned(app: Any) -> N
     assert [p["agent_type"] for p in scroll["party"]] == ["developer", "review"]
     assert scroll["xp"] and scroll["cost_usd"] == 2.5 and scroll["seconds"] == pytest.approx(3600, abs=5)
     assert scroll["evaluation"] is None and missing.status_code == 404
+    assert scroll["fallbacks"] == [
+        {
+            "agent_type": "review",
+            "model": "grok-4.7",
+            "instead_of": "claude-sonnet-5",
+            "provider": "anthropic",
+            "reason": "quota_exhausted",
+            "until": "2026-10-26T00:00:00+00:00",
+            "runs": 1,
+        }
+    ], "the scroll names the run that ran on a stand-in, and why"
 
 
 async def test_the_player_rates_a_quest_once_it_is_back(app: Any) -> None:

@@ -5,7 +5,8 @@ triage prompt cannot disagree about which model the deployment wants:
 
     {"default_model": str,          # "" = no deployment-wide default
      "disabled_models": [str, ...],
-     "tier_models": {"model_heavy": str, "model_medium": str, "model_light": str}}
+     "tier_models": {"model_heavy": str, "model_medium": str, "model_light": str},
+     "fallback_models": [str, ...]}  # [] = no provider fallback
 
 Consumed by ``embry0.agents.resolver.resolve_agent_invocation``.
 """
@@ -45,10 +46,13 @@ def usable_default_model(raw: Any) -> str:
 def build_model_policy(provider_config: Mapping[str, Any]) -> dict[str, Any]:
     """The model policy held by one provider_config row (or its env defaults)."""
     disabled = provider_config.get("disabled_models")
+    fallback = provider_config.get("fallback_models")
     return {
         "default_model": usable_default_model(provider_config.get("default_model")),
         "disabled_models": list(disabled) if isinstance(disabled, (list, tuple, set, frozenset)) else [],
         "tier_models": {tier: provider_config.get(tier) or "" for tier in TIER_KEYS},
+        # The provider fallback order (embry0.agents.fallback); [] is off.
+        "fallback_models": [m for m in fallback if isinstance(m, str) and m] if isinstance(fallback, list) else [],
     }
 
 

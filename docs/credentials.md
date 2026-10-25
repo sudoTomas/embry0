@@ -78,6 +78,8 @@ Env fallback, only when no registry row is usable. For Anthropic it follows the 
 
 **Quarantine.** A terminal `ERR_PROVIDER_RATE_LIMITED` sets `quarantined_until` to now plus `CREDENTIAL_RATE_LIMIT_QUARANTINE_SECONDS` (default 900). `ERR_PROVIDER_QUOTA_EXHAUSTED` lasts until the reset the provider named, when it named one, capped at eight days (`QUOTA_RESET_QUARANTINE_MAX`); otherwise it uses `CREDENTIAL_QUOTA_QUARANTINE_SECONDS` (default 3600). `ERR_AUTH_REJECTED` quarantines with no until, so an operator clears it. The hook attributes the failure to the terminal agent output's provider, so a 429 on xAI leaves the Anthropic account alone. A missing provider on that output quarantines every LLM account the job used.
 
+With a [fallback order](providers.md#provider-fallback) set, a job whose provider has every account quarantined (or only the environment copy of one) runs on the next ready provider's model instead of failing; without one, it resolves as above.
+
 **An xAI 403 is read by its body.** xAI answers three unrelated conditions with HTTP 403, and only the body tells them apart (`embry0/safety/xai_denials.py`; the phrases follow NousResearch/hermes-agent, which handles the same account type):
 
 | Body says | Code | Account |

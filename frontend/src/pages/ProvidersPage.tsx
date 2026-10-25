@@ -69,6 +69,7 @@ function ProviderCard({
   disabledModels,
   tierModels,
   defaultModel,
+  fallbackModels,
   isAdmin,
   onToggleModel,
   pending,
@@ -77,6 +78,7 @@ function ProviderCard({
   disabledModels: string[];
   tierModels: string[];
   defaultModel: string;
+  fallbackModels: string[];
   isAdmin: boolean;
   onToggleModel: (model: string, enable: boolean) => void;
   pending: boolean;
@@ -188,10 +190,11 @@ function ProviderCard({
               {provider.models.map((m) => {
                 const isTier = tierModels.includes(m.model);
                 const isDefault = defaultModel !== "" && m.model === defaultModel;
+                const isFallback = fallbackModels.includes(m.model);
                 const enabled = !disabledModels.includes(m.model);
-                // Backend interlock: a model that a tier or the default model
-                // points at cannot be disabled — reassign it first.
-                const locked = (isTier || isDefault) && enabled;
+                // Backend interlock: a model that a tier, the default model or
+                // the fallback order points at cannot be disabled — change that first.
+                const locked = (isTier || isDefault || isFallback) && enabled;
                 return (
                   <tr key={m.model}>
                     <td className="font-mono">
@@ -201,6 +204,9 @@ function ProviderCard({
                       )}
                       {isDefault && (
                         <span className="ml-2 text-xs text-muted-foreground">(default model)</span>
+                      )}
+                      {isFallback && (
+                        <span className="ml-2 text-xs text-muted-foreground">(fallback)</span>
                       )}
                       {m.tool_calling === false && (
                         <span
@@ -224,7 +230,9 @@ function ProviderCard({
                             ? undefined
                             : isDefault
                               ? "The default model cannot be disabled — change the default model first"
-                              : "Tier-assigned models cannot be disabled — reassign the tier first"
+                              : isTier
+                                ? "Tier-assigned models cannot be disabled — reassign the tier first"
+                                : "A fallback model cannot be disabled — remove it from the fallback order first"
                         }
                         onChange={(e) => onToggleModel(m.model, e.target.checked)}
                         className="h-4 w-4 accent-fg-secondary"
@@ -236,6 +244,131 @@ function ProviderCard({
             </tbody>
           </table>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Provider fallback: the models, in order, an agent runs on when the account
+ * its own model needs is paused (a spent usage window, a rate limit) or
+ * missing. Empty is off.
+ */
+function FallbackOrderCard({
+  saved,
+  options,
+  isAdmin,
+  pending,
+  onSave,
+}: {
+  saved: string[];
+  options: string[];
+  isAdmin: boolean;
+  pending: boolean;
+  onSave: (order: string[], done: () => void) => void;
+}) {
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const [adding, setAdding] = useState("");
+  const order = draft ?? saved;
+  const addable = options.filter((m) => !order.includes(m));
+  const changed = draft != null && draft.join("\n") !== saved.join("\n");
+
+  const move = (index: number, by: number) => {
+    const next = [...order];
+    const [model] = next.splice(index, 1);
+    next.splice(index + by, 0, model);
+    setDraft(next);
+  };
+
+  return (
+    <Card data-testid="fallback-order">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg">Fallback order</CardTitle>
+          <Button
+            size="sm"
+            onClick={() => onSave(order, () => setDraft(null))}
+            disabled={!isAdmin || !changed || pending}
+          >
+            {pending ? "Saving..." : "Save order"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          When the account an agent&apos;s model needs is paused (out of usage, rate-limited) or missing, the
+          agent runs on the first model below whose provider has a usable account, and the job says so. A model
+          the job names itself, or a key chosen with Run with, is never replaced. Empty: off, and a paused
+          account fails the job.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {order.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No fallback: off.</p>
+        ) : (
+          <ol className="space-y-1">
+            {order.map((model, i) => (
+              <li key={model} className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="w-5 text-muted-foreground">{i + 1}.</span>
+                <span className="font-mono">{model}</span>
+                {isAdmin && (
+                  <span className="ml-auto flex gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Move ${model} up`}
+                      disabled={i === 0}
+                      onClick={() => move(i, -1)}
+                    >
+                      ↑
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Move ${model} down`}
+                      disabled={i === order.length - 1}
+                      onClick={() => move(i, 1)}
+                    >
+                      ↓
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Remove ${model}`}
+                      onClick={() => setDraft(order.filter((m) => m !== model))}
+                    >
+                      Remove
+                    </Button>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+        )}
+        {isAdmin && addable.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-end gap-2">
+            <div>
+              <Label htmlFor="fallback_add">Add a model</Label>
+              <Select id="fallback_add" className="max-w-xs" value={adding} onChange={(e) => setAdding(e.target.value)}>
+                <option value="">(choose)</option>
+                {addable.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!adding}
+              onClick={() => {
+                setDraft([...order, adding]);
+                setAdding("");
+              }}
+            >
+              Add
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -268,6 +401,17 @@ export function ProvidersPage() {
   }, [catalog, tierModels]);
 
   const savedDefaultModel = providerConfig?.default_model ?? "";
+  const fallbackModels = useMemo(() => providerConfig?.fallback_models ?? [], [providerConfig]);
+
+  // Fallback options: enabled catalog models that call tools — a fallback
+  // replaces the model of agents that use them, and the API refuses the rest.
+  const fallbackOptions = useMemo(
+    () =>
+      (catalog?.providers ?? []).flatMap((p) =>
+        p.models.filter((m) => m.enabled && m.tool_calling !== false).map((m) => m.model),
+      ),
+    [catalog],
+  );
 
   // Default-model options: enabled catalog models only — the API refuses an
   // id outside the catalog, and one that is disabled. The saved value is
@@ -406,6 +550,27 @@ export function ProvidersPage() {
         </CardContent>
       </Card>
 
+      {providerConfig?.fallback_models !== undefined && (
+        <FallbackOrderCard
+          saved={fallbackModels}
+          options={fallbackOptions}
+          isAdmin={isAdmin}
+          pending={updateProvider.isPending}
+          onSave={(order, done) =>
+            updateProvider.mutate(
+              { fallback_models: order },
+              {
+                onSuccess: () => {
+                  done();
+                  toast.success(order.length ? "Fallback order saved" : "Fallback turned off");
+                },
+                onError: (e) => toastApiError(e, "Failed to save the fallback order"),
+              },
+            )
+          }
+        />
+      )}
+
       {catalog.providers.map((p) => (
         <ProviderCard
           key={p.name}
@@ -413,6 +578,7 @@ export function ProvidersPage() {
           disabledModels={disabledModels}
           tierModels={tierModels}
           defaultModel={savedDefaultModel}
+          fallbackModels={fallbackModels}
           isAdmin={isAdmin}
           onToggleModel={handleToggleModel}
           pending={updateProvider.isPending}

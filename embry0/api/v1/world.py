@@ -45,6 +45,7 @@ from embry0.services.world import (
     failure_words,
     job_entry,
     lead_entry,
+    quest_fallbacks,
     quest_title,
     quest_xp,
 )
@@ -324,6 +325,8 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
             else None
         ),
         "party": list(party.values()),
+        # Runs that ran on a fallback model because their own model's account was paused.
+        "fallbacks": quest_fallbacks(runs),
         "xp": quest_xp(quest, runs),
         "cost_usd": round(float(quest.get("total_cost_usd") or 0), 4),
         "seconds": (finished - started).total_seconds()

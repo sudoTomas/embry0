@@ -364,6 +364,36 @@ def character_entries(
     return out
 
 
+def quest_fallbacks(runs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The models a quest's party ran on because its own model's account was paused (provider fallback).
+
+    One entry per agent, stand-in model and model it replaced, in the order
+    they first ran, with how many runs it covered.
+    """
+    entries: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for run in runs:
+        record = run.get("fallback")
+        if not isinstance(record, Mapping):
+            continue
+        agent = str(run.get("agent_type") or "unknown")
+        model = str(run.get("model") or "")
+        instead_of = str(record.get("instead_of") or "")
+        entry = entries.setdefault(
+            (agent, model, instead_of),
+            {
+                "agent_type": agent,
+                "model": model,
+                "instead_of": instead_of,
+                "provider": record.get("provider"),
+                "reason": record.get("reason"),
+                "until": record.get("until"),
+                "runs": 0,
+            },
+        )
+        entry["runs"] += 1
+    return list(entries.values())
+
+
 def quest_xp(job: Mapping[str, Any], runs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """What a quest earned each character, by skill: its agents' runs, and the pull request it opened or merged."""
     gains: dict[tuple[str, str], int] = {}

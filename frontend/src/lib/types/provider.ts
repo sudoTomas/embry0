@@ -7,6 +7,9 @@ export interface ProviderConfig {
   model_light: string;
   default_model: string;
   disabled_models: string[];
+  /** Provider fallback: models, in order, an agent runs on when its own
+   * model's account is paused. Empty is off. Absent on an older backend. */
+  fallback_models?: string[];
   api_key_set: boolean;
   oauth_token_set: boolean;
 }
@@ -17,6 +20,7 @@ export interface ProviderConfigUpdate {
   model_light?: string;
   default_model?: string;
   disabled_models?: string[];
+  fallback_models?: string[];
 }
 
 export interface ConnectionTestResult {

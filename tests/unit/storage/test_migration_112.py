@@ -14,12 +14,6 @@ def test_migration_112_present() -> None:
     assert "job_ratings" in next(d for v, d, _ in MIGRATIONS if v == 112)
 
 
-def test_migration_112_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_111.py)."""
-    assert MIGRATIONS[-1][0] == 112, "migration 112 must add job_ratings"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_a_rating_and_a_verdict_are_stored_once_per_job(db_with_migrations: DatabasePool) -> None:

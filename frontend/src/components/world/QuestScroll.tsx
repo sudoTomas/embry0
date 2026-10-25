@@ -11,6 +11,8 @@ import { Dialog } from "@/components/ui/Dialog";
 import { Textarea } from "@/components/ui/Textarea";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useApproveMerge, useQuest, useRateQuest, useRejectQuest, useSendBack } from "@/hooks/useWorld";
+import { providerLabel } from "@/lib/status";
+import { formatDateTime } from "@/lib/utils";
 import { OUTCOME_WORDS, formatCost, formatSeconds, outcomeBadgeTone, placeOf } from "@/lib/world";
 
 const RATINGS: { value: Rating; label: string }[] = [
@@ -130,6 +132,21 @@ function ScrollBody({ quest, skillName, canAct, onClose }: { quest: Scroll; skil
               <li key={p.agent_type}>
                 {lookup(p.agent_type).displayName}: {p.runs} run{p.runs === 1 ? "" : "s"}, {formatSeconds(p.seconds)}, {formatCost(p.cost_usd)}
                 {p.failed ? ` · ${p.failed} failed` : ""}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {(quest.fallbacks ?? []).length > 0 && (
+        <Section title="Fallback models">
+          <ul className="space-y-0.5 text-xs text-fg-secondary" data-testid="quest-fallbacks">
+            {(quest.fallbacks ?? []).map((f) => (
+              <li key={`${f.agent_type}-${f.model}-${f.instead_of}`}>
+                {lookup(f.agent_type).displayName} ran on {f.model} instead of {f.instead_of}
+                {f.runs > 1 ? ` (${f.runs} runs)` : ""}: the {f.provider ? providerLabel(f.provider) : "provider"}{" "}
+                account was paused{f.reason ? ` (${f.reason.replace(/_/g, " ")})` : ""}
+                {f.until ? ` until ${formatDateTime(f.until)}` : ""}.
               </li>
             ))}
           </ul>

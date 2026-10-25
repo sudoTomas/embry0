@@ -686,23 +686,70 @@ async def _model_policy_for_precheck(self: IssueExecutor) -> dict[str, Any] | No
     return build_model_policy(cfg)
 
 
+async def _job_account_failures(self: IssueExecutor, job_id: str) -> dict[str, Any]:
+    """The job's own runs that ended on a spent or rate-limited account, by provider (provider fallback)."""
+    traces = getattr(self, "_traces", None)
+    if traces is None:
+        return {}
+    try:
+        rows, _total = await traces.list_all(job_id=job_id, limit=50)
+    except Exception:
+        logger.warning("provider_fallback_traces_unread", job_id=job_id, exc_info=True)
+        return {}
+    from datetime import UTC, datetime
+
+    from embry0.services.credentials.fallback import job_account_failures
+
+    return job_account_failures(rows, getattr(self, "_config", None), datetime.now(UTC))
+
+
+async def _plan_model_fallbacks(
+    self: IssueExecutor,
+    resolver: Any,
+    repo: str,
+    providers: tuple[str, ...],
+    job_id: str,
+    model_policy: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Provider fallback's plan for this run: ``{paused provider: ModelFallback}``; empty when the order is."""
+    from embry0.agents.fallback import fallback_order
+    from embry0.services.credentials.fallback import plan_model_fallbacks
+
+    if not fallback_order(model_policy):
+        return {}
+    return await plan_model_fallbacks(
+        resolver,
+        repo,
+        providers,
+        job_id=job_id,
+        model_policy=model_policy,
+        job_failures=await _job_account_failures(self, job_id),
+    )
+
+
 async def _precheck_llm_accounts(
     self: IssueExecutor,
     job_id: str,
     input_value: Any,
-) -> tuple[Any, tuple[str, ...], dict[str, str], dict[str, str]]:
+) -> tuple[Any, tuple[str, ...], dict[str, str], dict[str, str], dict[str, dict[str, Any]]]:
     """Resolve the job's LLM accounts before a container can exist.
 
-    Returns ``(input_value, providers, kinds, ids)``; ``ids`` is the credential
-    id per provider, which a resume re-enrolls its sandbox with. A dict input gains
-    ``llm_credential_ids`` (ids only). A resume ``Command`` is left as-is;
-    the provider set still comes back so a later sandbox in the same job
-    passes ``llm_providers``. No resolver means nothing to resolve — callers
-    that have not been wired to the registry keep today's empty set.
+    Returns ``(input_value, providers, kinds, ids, fallbacks)``; ``ids`` is the
+    credential id per provider, which a resume re-enrolls its sandbox with. A
+    dict input gains ``llm_credential_ids`` (ids only). A resume ``Command`` is
+    left as-is; the provider set still comes back so a later sandbox in the
+    same job passes ``llm_providers``. No resolver means nothing to resolve —
+    callers that have not been wired to the registry keep today's empty set.
+
+    ``fallbacks`` is provider fallback's plan (spec 2026-10-25), ``{paused
+    provider: {model, provider, reason, until}}``, empty unless the deployment
+    sets a fallback order and one of the job's providers has no usable
+    account. A planned stand-in's provider joins the set, so its key is in
+    the sandbox; the paused provider stays only while it still resolves.
     """
     resolver = getattr(self, "_credential_resolver", None)
     if resolver is None:
-        return input_value, (), {}, {}
+        return input_value, (), {}, {}, {}
 
     state = input_value if isinstance(input_value, dict) else None
     if state is None:
@@ -722,14 +769,31 @@ async def _precheck_llm_accounts(
         }
 
     from embry0.services.credentials.providers import providers_for_job
+    from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
 
     override = state.get("agent_models_override")
+    model_policy = await _model_policy_for_precheck(self)
     providers = providers_for_job(
         await _agent_definitions_for_precheck(self),
         override if isinstance(override, dict) else None,
-        await _model_policy_for_precheck(self),
+        model_policy,
     )
-    resolved = await resolver.resolve_llm_for_job(str(state.get("repo") or ""), providers, job_id=job_id)
+    repo = str(state.get("repo") or "")
+    plan = await _plan_model_fallbacks(self, resolver, repo, providers, job_id, model_policy)
+    if plan:
+        required = tuple(sorted((set(providers) - set(plan)) | {fallback.provider for fallback in plan.values()}))
+    else:
+        required = providers
+    resolved = await resolver.resolve_llm_for_job(repo, required, job_id=job_id)
+    for paused in sorted(plan):
+        # Kept while it resolves, so an agent the fallback may not move (a
+        # model the job names itself) finds the account it always had.
+        try:
+            resolved.update(await resolver.resolve_llm_for_job(repo, (paused,), job_id=job_id))
+        except (CredentialMissingError, CredentialUnavailableError):
+            logger.info("provider_fallback_paused_provider_dropped", job_id=job_id, provider=paused)
+    if plan:
+        providers = tuple(sorted(resolved))
     # spec 3.6: registry secrets are registered at startup; an env-fallback
     # credential is not, so register whatever this job resolved to.
     register_known_secrets(cred.secret for cred in resolved.values() if isinstance(cred.secret, str))
@@ -737,7 +801,7 @@ async def _precheck_llm_accounts(
     kinds = {provider: cred.kind for provider, cred in resolved.items()}
     if isinstance(input_value, dict):
         input_value = {**input_value, "llm_credential_ids": ids}
-    return input_value, providers, kinds, ids
+    return input_value, providers, kinds, ids, {paused: fallback.to_config() for paused, fallback in plan.items()}
 
 
 async def _execute_workflow_stream(
@@ -765,8 +829,12 @@ async def _execute_workflow_stream(
     # Resolve every declared LLM provider before graph config, and therefore
     # before any node can create a container. There is no ``_run_graph``;
     # this function is the only caller of ``_build_graph_config``.
-    input_value, llm_providers, llm_kinds, llm_ids = await _precheck_llm_accounts(self, job_id, input_value)
-    graph_config = self._build_graph_config(job_id, llm_providers=llm_providers, llm_credential_kinds=llm_kinds)
+    input_value, llm_providers, llm_kinds, llm_ids, model_fallbacks = await _precheck_llm_accounts(
+        self, job_id, input_value
+    )
+    graph_config = self._build_graph_config(
+        job_id, llm_providers=llm_providers, llm_credential_kinds=llm_kinds, model_fallbacks=model_fallbacks
+    )
 
     carried: dict[str, Any] = {}
     async with checkpointer_context(self._database_url) as saver:

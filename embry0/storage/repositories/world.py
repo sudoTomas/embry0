@@ -131,7 +131,7 @@ WHERE j.job_id = $1
 """
 
 _QUEST_RUNS_SQL = """
-SELECT agent_type, cost_usd, duration_ms, result, error_code, created_at, tools_called, skill_actions
+SELECT agent_type, model, cost_usd, duration_ms, result, error_code, created_at, tools_called, skill_actions, fallback
 FROM traces WHERE job_id = $1 ORDER BY created_at
 """
 

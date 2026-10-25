@@ -42,6 +42,7 @@ class TracesRepository:
         error_code: str | None = None,
         stderr_tail: str | None = None,
         trace_id: str | None = None,
+        fallback: dict[str, Any] | None = None,
     ) -> str:
         """Create a trace record and return its ID.
 
@@ -52,6 +53,9 @@ class TracesRepository:
         ``error_code`` / ``stderr_tail`` (#281) describe an ERRORED run: the
         runner's diagnosis and the redacted, size-capped end of its stderr.
         Callers pass the tail already scrubbed — this layer stores verbatim.
+
+        ``fallback`` is set for a run that ran on a provider-fallback model:
+        what it stood in for (spec 2026-10-25-provider-fallback-design).
         """
         trace_id = trace_id or f"trc-{uuid.uuid4().hex[:12]}"
         await self._db.execute(
@@ -60,9 +64,9 @@ class TracesRepository:
                 trace_id, job_id, agent_type, model, result,
                 cost_usd, duration_ms, tools_called, result_summary,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                error_code, stderr_tail, skill_actions
+                error_code, stderr_tail, skill_actions, fallback
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             """,
             trace_id,
             job_id,
@@ -80,6 +84,7 @@ class TracesRepository:
             error_code,
             stderr_tail,
             skill_actions or {},
+            fallback,
         )
         logger.info("trace_created", trace_id=trace_id, job_id=job_id, agent_type=agent_type)
         if self._metrics is not None and cost_usd > 0:
