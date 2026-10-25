@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from embry0.services.areas import Area, area_of_labels, area_of_logs, area_of_path
+
 KINDS: tuple[str, ...] = ("case", "issue", "finding")
 DECISIONS: tuple[str, ...] = ("accept", "decline", "snooze")
 #: Who an assistant's answer is recorded under when it names nobody.
@@ -150,6 +152,8 @@ class Proposal:
     owners: tuple[str, ...] = ()
     url: str | None = None
     extra: Mapping[str, Any] = field(default_factory=dict)
+    #: The repository's area it is about (``.embry0/areas.yml``), None for a repository without areas.
+    area: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -157,6 +161,7 @@ class Proposal:
             "kind": self.kind,
             "repo": self.repo,
             "owners": list(self.owners),
+            "area": self.area,
             "title": self.title,
             "summary": self.summary,
             "details": self.details,
@@ -189,7 +194,7 @@ def case_proposal(row: Mapping[str, Any]) -> Proposal:
         action="Run the fix pipeline on the draft ticket",
         created_at=row.get("tracked_at") or row.get("detected_at") or row["created_at"],
         url=row.get("tracker_url"),
-        extra={"severity": severity, "occurrences": seen},
+        extra={"severity": severity, "occurrences": seen, "signature": row.get("signature")},
     )
 
 
@@ -206,6 +211,7 @@ def issue_proposal(row: Mapping[str, Any]) -> Proposal:
         action="Send it to triage, which starts its pipeline",
         created_at=row["created_at"],
         url=row.get("tracker_url"),
+        extra={"labels": [str(label) for label in row.get("labels") or [] if isinstance(label, str)]},
     )
 
 
@@ -258,12 +264,29 @@ def still_open(proposal_id: str, decisions: Mapping[str, Decision], now: datetim
     return False
 
 
-def with_owners(proposals: Iterable[Proposal], owners_of: Mapping[str, Sequence[str]]) -> list[Proposal]:
-    """Each proposal stamped with its repository's owners."""
+def with_owners(
+    proposals: Iterable[Proposal],
+    owners_of: Mapping[str, Sequence[str]],
+    areas_of: Mapping[str, Sequence[Area]] | None = None,
+) -> list[Proposal]:
+    """Each proposal stamped with its area and its owners: the area's when it names some, else the repository's.
+
+    A finding is in the area of its file, a case in the area its log
+    signature or title names, an issue in the area a label of it names
+    (``.embry0/areas.yml``).
+    """
     out = []
     for p in proposals:
-        owners = tuple(owners_of.get(p.repo.lower(), ()))
-        out.append(Proposal(**{**p.__dict__, "owners": owners}))
+        areas = (areas_of or {}).get(p.repo.lower(), ())
+        area: Area | None = None
+        if p.kind == "finding" and p.extra.get("path"):
+            area = area_of_path(areas, str(p.extra["path"]))
+        elif p.kind == "case":
+            area = area_of_logs(areas, p.extra.get("signature"), p.title)
+        elif p.kind == "issue":
+            area = area_of_labels(areas, p.extra.get("labels") or ())
+        owners = area.owners if area and area.owners else tuple(owners_of.get(p.repo.lower(), ()))
+        out.append(Proposal(**{**p.__dict__, "owners": tuple(owners), "area": area.name if area else None}))
     return out
 
 

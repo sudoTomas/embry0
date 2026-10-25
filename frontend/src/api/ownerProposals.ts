@@ -8,7 +8,9 @@ export interface OwnerProposal {
   id: string;
   kind: OwnerProposalKind;
   repo: string;
-  /** GitHub logins: the repository's owners preference, else its CODEOWNERS. */
+  /** The part of a monorepo it is about, from the repository's `.embry0/areas.yml`; null when it names none. */
+  area?: string | null;
+  /** GitHub logins: the area's owners, else the repository's owners preference, else its CODEOWNERS. */
   owners: string[];
   title: string;
   /** A sentence a chat message can carry. */

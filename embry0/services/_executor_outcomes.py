@@ -461,6 +461,34 @@ def _stopped_because(error_code: str | None) -> str:
     return _STOPPED_BECAUSE.get(category_for_code(error_code).value, _STOPPED_BECAUSE["unknown"])
 
 
+async def _area_of_branch(self: IssueExecutor, repo: str, base: str, branch: str) -> Any | None:
+    """The area (``.embry0/areas.yml``) most of the files ``branch`` changes from ``base`` fall in.
+
+    GitHub only, and best-effort: None whenever the repository names no
+    areas or this cannot read them, and the pull request opens as before.
+    """
+    from embry0.services.areas import area_of_change
+
+    # getattr: unit tests build the executor via __new__; without a reader
+    # they open their PRs without asking GitHub for areas.
+    reader = getattr(self, "_area_reader", None)
+    if reader is None:
+        return None
+    try:
+        if await _forge_for(self, repo) != "github":
+            return None
+        from embry0.execution.github_client import GitHubClient
+
+        client = GitHubClient(
+            default_token=str(getattr(self, "_github_token", "") or ""),
+            credential_resolver=getattr(self, "_credential_resolver", None),
+        )
+        return await area_of_change(lambda url: client.get(url, repo=repo), repo, base, branch, reader)
+    except Exception:
+        logger.info("pr_area_unread", repo=repo, branch=branch, exc_info=True)
+        return None
+
+
 async def _open_fallback_pr(
     self: IssueExecutor,
     issue_id: str | None,
@@ -551,6 +579,16 @@ async def _open_fallback_pr(
         # #163: mark orchestrator-opened PRs. A failed job's also says a person
         # must merge it; a gate-blocked one gets that label from its verdict.
         labels = ["embry0"] if not error_code or gate_blocked else ["embry0", HUMAN_MERGE_LABEL]
+        # Spec 1A §3.7: the branch init_node resolved and the clone actually
+        # fetched. Never empty — see §3.8 and _base_branch_for_change_request.
+        target_branch = await _base_branch_for_change_request(self, repo_for_pr, state)
+        # In a monorepo the PR says which part it changes (spec 2026-10-25).
+        area = await _area_of_branch(self, repo_for_pr, target_branch, str(state["branch_name"]))
+        if area is not None:
+            from embry0.services.areas import titled
+
+            pr_title = titled(pr_title, area)[:100]
+            labels.append(f"area:{area.slug}")
         url = await _open_change_request(
             self,
             repo=repo_for_pr,
@@ -558,10 +596,13 @@ async def _open_fallback_pr(
             title=pr_title,
             body="\n\n".join(body_parts),
             labels=labels,
-            # Spec 1A §3.7: the branch init_node resolved and the clone actually
-            # fetched. Never empty — see §3.8 and _base_branch_for_change_request.
-            target_branch=await _base_branch_for_change_request(self, repo_for_pr, state),
+            target_branch=target_branch,
         )
+        if url and area is not None:
+            try:
+                await self._jobs.update(job_id, area=area.name)
+            except Exception:
+                logger.warning("pr_area_record_failed", job_id=job_id, exc_info=True)
         return url, job_row
     except Exception:
         logger.warning("pr_fallback_failed", job_id=job_id, exc_info=True)

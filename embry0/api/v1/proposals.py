@@ -10,7 +10,6 @@ assistant holding a ``propose`` key may read this and answer, nothing else.
 from __future__ import annotations
 
 import asyncio
-import base64
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -65,6 +64,26 @@ def _state(request: Request, name: str) -> Any:
     return value
 
 
+def _repo_reader(request: Request) -> Any:
+    """Reads a file of a repository's default branch with its organization's credential; None when it cannot."""
+    from embry0.services.areas import read_contents
+
+    organizations = getattr(request.app.state, "organizations_repo", None)
+    clients: dict[str, Any] = {}
+
+    async def read(repo: str, path: str) -> str | None:
+        from embry0.api.v1.organizations import org_forge_client
+
+        owner = repo.split("/", 1)[0]
+        if owner not in clients:
+            org = await organizations.get(owner) if organizations is not None else None
+            clients[owner] = await org_forge_client(request, org) if org is not None else None
+        client = clients[owner]
+        return await read_contents(client.get, repo, path) if client is not None else None
+
+    return read
+
+
 async def _codeowners(request: Request, repos: set[str]) -> dict[str, list[str]]:
     """Each repository's CODEOWNERS users for every file, read with its organization's credential and cached.
 
@@ -74,24 +93,16 @@ async def _codeowners(request: Request, repos: set[str]) -> dict[str, list[str]]
     cache: dict[str, tuple[float, list[str]]] = request.app.state.__dict__.setdefault("codeowners_cache", {})
     now = time.monotonic()
     wanted = [r for r in repos if r not in cache or cache[r][0] < now]
-    organizations = getattr(request.app.state, "organizations_repo", None)
+    reader = _repo_reader(request)
     gate = asyncio.Semaphore(_CODEOWNERS_READS)
 
     async def read(repo: str) -> None:
         owners: list[str] = []
         async with gate:
             try:
-                from embry0.api.v1.organizations import org_forge_client
-
-                org = await organizations.get(repo.split("/", 1)[0]) if organizations is not None else None
-                if org is not None:
-                    client = await org_forge_client(request, org)
-                    for path in CODEOWNERS_PATHS:
-                        resp = await client.get(f"/repos/{repo}/contents/{path}")
-                        if resp.status_code != 200:
-                            continue
-                        body = resp.json()
-                        text = base64.b64decode(body.get("content", "")).decode("utf-8", "replace")
+                for path in CODEOWNERS_PATHS:
+                    text = await reader(repo, path)
+                    if text is not None:
                         owners = codeowners_for_all(text)
                         break
             except Exception:  # noqa: BLE001 - a repository we cannot read has no CODEOWNERS owners
@@ -100,6 +111,20 @@ async def _codeowners(request: Request, repos: set[str]) -> dict[str, list[str]]
 
     await asyncio.gather(*(read(r) for r in wanted))
     return {r: cache[r][1] for r in repos if r in cache}
+
+
+async def _areas(request: Request, repos: set[str]) -> dict[str, list[Any]]:
+    """Each repository's areas (``.embry0/areas.yml``), read with its organization's credential and cached."""
+    from embry0.services.areas import AREAS
+
+    reader = _repo_reader(request)
+    gate = asyncio.Semaphore(_CODEOWNERS_READS)
+
+    async def read(repo: str) -> tuple[str, list[Any]]:
+        async with gate:
+            return repo, await AREAS.areas(repo, reader)
+
+    return dict(await asyncio.gather(*(read(r) for r in repos)))
 
 
 async def feed(request: Request) -> list[Proposal]:
@@ -115,10 +140,11 @@ async def feed(request: Request) -> list[Proposal]:
         )
     now = datetime.now(UTC)
     proposals = [p for p in proposals if still_open(p.id, decisions, now)]
-    unowned = {p.repo.lower() for p in proposals} - set(owners)
-    if unowned:
-        owners = {**owners, **(await _codeowners(request, unowned))}
-    return sorted(with_owners(proposals, owners), key=lambda p: p.created_at, reverse=True)
+    repos = {p.repo.lower() for p in proposals}
+    unowned = repos - set(owners)
+    codeowners, areas = await asyncio.gather(_codeowners(request, unowned), _areas(request, repos))
+    owners = {**owners, **codeowners}
+    return sorted(with_owners(proposals, owners, areas), key=lambda p: p.created_at, reverse=True)
 
 
 async def _open(request: Request, proposal_id: str) -> Proposal:

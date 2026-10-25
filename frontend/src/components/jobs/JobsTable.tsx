@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { FilterSelect } from "@/components/ui/FilterSelect";
 import { Pagination } from "@/components/ui/Pagination";
 import { JobStatusBadge } from "./JobStatusBadge";
+import { Badge } from "@/components/ui/Badge";
 import { EmptyJobsState } from "./EmptyJobsState";
 import { formatCost, formatDateTime } from "@/lib/utils";
 import { statusLabel } from "@/lib/status";
@@ -97,7 +98,14 @@ export function JobsTable({
                   <td className="w-full max-w-0 sm:w-auto sm:max-w-[200px]" title={job.task}>
                     {/* Two lines on a phone, where one cut every design audit to
                         "Design audit of ra..." and told none apart; one from sm up. */}
-                    <div className="line-clamp-2 break-words sm:line-clamp-1">{jobTitle(job.task)}</div>
+                    <div className="line-clamp-2 break-words sm:line-clamp-1">
+                      {job.area && (
+                        <Badge tone="purple" className="mr-1.5" title="The part of the repository its pull request changes">
+                          {job.area}
+                        </Badge>
+                      )}
+                      {jobTitle(job.task)}
+                    </div>
                     <div className="font-mono text-xs text-fg-muted sm:hidden" title={job.job_id}>
                       {shortJobId(job.job_id)}
                     </div>

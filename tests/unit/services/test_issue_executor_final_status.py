@@ -578,3 +578,86 @@ async def test_a_human_dispatched_job_still_emits():
         },
     )
     ex._webhook_notifier.emit_soon.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_a_monorepo_pr_names_its_area_in_its_title_and_labels():
+    """Spec 2026-10-25: the PR embry0 opens says which area of a monorepo it
+    changes (most of its files), and the job records it for the Jobs pages."""
+    import base64
+
+    import httpx
+
+    from embry0.execution.github_client import GitHubClient
+    from embry0.services.areas import AreaReader
+
+    ex = _executor()
+    ex._github_token = "tok"
+    ex._area_reader = AreaReader()
+    areas_file = 'areas:\n  - name: Billing\n    paths: ["services/billing/**"]\n'
+    asked: list[str] = []
+
+    async def fake_get(self, path, **kwargs):
+        asked.append(path)
+        if "/contents/" in path:
+            return httpx.Response(200, json={"content": base64.b64encode(areas_file.encode()).decode()})
+        return httpx.Response(200, json={"files": [{"filename": "services/billing/A.java"}, {"filename": "x.md"}]})
+
+    fallback = AsyncMock(return_value="https://github.com/o/r/pull/43")
+    with (
+        patch("embry0.services.github_prs.ensure_pr_for_branch", new=fallback),
+        patch.object(GitHubClient, "get", new=fake_get),
+    ):
+        await _run(
+            ex,
+            {
+                "triage_decision": {"action": "proceed"},
+                "current_stage": "review_passed",
+                "repo": "o/r",
+                "task": "fix the widget",
+                "base_branch": "main",
+                "branch_name": "embry0/iss-abc-fix",
+                "agent_outputs": [_ok("triage"), _ok("developer"), _ok("review")],
+            },
+        )
+    call = fallback.await_args.kwargs
+    assert call["title"] == "[Billing] fix the widget"
+    assert call["labels"] == ["embry0", "area:billing"]
+    assert "/repos/o/r/compare/main...embry0%2Fiss-abc-fix" in asked
+    ex._jobs.update.assert_any_await("job-1", area="Billing")
+
+
+@pytest.mark.asyncio
+async def test_a_repo_without_areas_opens_its_pr_as_before():
+    import httpx
+
+    from embry0.execution.github_client import GitHubClient
+    from embry0.services.areas import AreaReader
+
+    ex = _executor()
+    ex._github_token = "tok"
+    ex._area_reader = AreaReader()
+
+    async def no_file(self, path, **kwargs):
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    fallback = AsyncMock(return_value="https://github.com/o/r/pull/44")
+    with (
+        patch("embry0.services.github_prs.ensure_pr_for_branch", new=fallback),
+        patch.object(GitHubClient, "get", new=no_file),
+    ):
+        await _run(
+            ex,
+            {
+                "triage_decision": {"action": "proceed"},
+                "current_stage": "review_passed",
+                "repo": "o/r",
+                "task": "fix the widget",
+                "base_branch": "main",
+                "branch_name": "embry0/iss-abc-fix",
+                "agent_outputs": [_ok("triage"), _ok("developer"), _ok("review")],
+            },
+        )
+    call = fallback.await_args.kwargs
+    assert (call["title"], call["labels"]) == ("fix the widget", ["embry0"])
+    assert not [c for c in ex._jobs.update.await_args_list if "area" in c.kwargs]

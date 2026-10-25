@@ -82,6 +82,8 @@ curl http://localhost:8200/api/v1/jobs/{job_id}/verification
 curl http://localhost:8200/api/v1/jobs/{job_id}/agents/developer/session
 ```
 
+A job's `area` (on the list and on `GET /jobs/{job_id}`) is the part of a monorepo the pull request embry0 opened for it changes, from the repository's `.embry0/areas.yml` ([areas](areas.md)); `null` when the repository names none or the change falls in none.
+
 ## Runtime configuration
 
 ```bash
@@ -200,7 +202,7 @@ curl -X POST http://localhost:8200/api/v1/agents/developer/skills/superpowers:wr
 
 Work embry0 asks a repository's owners to start ([the design](superpowers/specs/2026-10-24-owner-proposals-design.md)). A chat assistant reads the feed through the MCP server, messages an owner, and answers with the owner's reply.
 
-- `GET /api/v1/proposals?owner=&kind=&since=` (read): `{"proposals": [{"id", "kind", "repo", "owners", "title", "summary", "details", "action", "url", "created_at", ...}], "count"}`, newest first. `kind` is `case` (a watcher finding at stage `tracked` on an enabled stack), `issue` (an issue open with no job) or `finding` (one row of a repository's newest completed context audit's findings table, which adds `path`, `line`, `claim`, `fix` and `audit_job_id`; its id is a hash of the repository, file and claim, so the next audit finding the same thing asks nothing new). `owners` is the repository's `owners` preference, else the users its `CODEOWNERS` names for `*` (teams skipped), read with its organization's credential and kept an hour. `owner` filters by GitHub login, without regard to case or a leading `@`.
+- `GET /api/v1/proposals?owner=&kind=&since=` (read): `{"proposals": [{"id", "kind", "repo", "area", "owners", "title", "summary", "details", "action", "url", "created_at", ...}], "count"}`, newest first. `kind` is `case` (a watcher finding at stage `tracked` on an enabled stack), `issue` (an issue open with no job) or `finding` (one row of a repository's newest completed context audit's findings table, which adds `path`, `line`, `claim`, `fix` and `audit_job_id`; its id is a hash of the repository, file and claim, so the next audit finding the same thing asks nothing new). `area` is the part of a monorepo it is about, from the repository's `.embry0/areas.yml` ([areas](areas.md)), or `null`. `owners` is that area's owners when it names some, else the repository's `owners` preference, else the users its `CODEOWNERS` names for `*` (teams skipped), read with its organization's credential and kept an hour. `owner` filters by GitHub login, without regard to case or a leading `@`.
 - `GET /api/v1/proposals/{id}`: one proposal still asked; 404 once it is answered or has moved on (a case accepted on the dashboard, an issue triaged).
 - `POST /api/v1/proposals/{id}/accept` (`{"by": "<login>"}`, 202): starts it through its kind's own path, `POST /cases/{id}/accept` or `POST /issues/{id}/triage`, or for a finding a context-audit job narrowed to its file that opens a pull request for that claim (whatever the organization's `context_audit_open_prs`: the owner asked for this one; refused 429 while the budget gate refuses). The answer is recorded only once the start worked; the response carries the `job_id`.
 - `POST /api/v1/proposals/{id}/decline` (`{"by", "reason"}`) and `/snooze` (`{"by", "until"}`, a future time): it is not asked again, or not until `until`. Every answer is a `proposal.answered` audit row.

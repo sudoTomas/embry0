@@ -48,6 +48,13 @@ describe("JobsTable rows", () => {
     expect(screen.getByText("[watcher] Fix the contacts lookup failing closed")).toBeInTheDocument();
   });
 
+  it("names the area of a monorepo its pull request changes before its title", () => {
+    renderTable([{ ...issueJob, area: "Billing" } as JobResponse, issueJob]);
+    const [inArea, plain] = screen.getAllByRole("link", { name: /View job/ });
+    expect(within(inArea).getByText("Billing")).toHaveAttribute("title", "The part of the repository its pull request changes");
+    expect(within(plain).queryByText("Billing")).toBeNull();
+  });
+
   it("shows 8 characters of the id, after the job- prefix", () => {
     renderTable([tick("job-fd155299c8a4", "acme/backend", 22)]);
     for (const id of screen.getAllByText("fd155299")) expect(id).toHaveAttribute("title", "job-fd155299c8a4");

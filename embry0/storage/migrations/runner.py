@@ -3088,6 +3088,16 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             CHECK (scope IN ('read', 'operate', 'admin', 'merge', 'propose'));
         """,
     ),
+    (
+        109,
+        "jobs.area: the part of a monorepo a job's pull request changes (docs/superpowers/specs/2026-10-25-monorepo-areas-design.md)",
+        # The name of the area in the repository's .embry0/areas.yml that most
+        # of the PR's files fall in; NULL when the repository names no areas,
+        # the files fall in none, or embry0 did not open the PR.
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS area TEXT;
+        """,
+    ),
 ]
 
 

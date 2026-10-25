@@ -25,6 +25,7 @@ import { isNotFound } from "@/api/errorDetail";
 import { toastApiError } from "@/api/errorToast";
 import { PageError } from "@/components/PageError";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
+import { Badge } from "@/components/ui/Badge";
 import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
 import { AutoAnswerCard } from "@/components/jobs/AutoAnswerCard";
 import { AgentCard } from "@/components/jobs/AgentCard";
@@ -205,6 +206,11 @@ export function JobDetailPage() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="title-pixel text-base truncate">{job.repo}</span>
+            {job.area && (
+              <Badge tone="purple" title="The part of the repository its pull request changes">
+                {job.area}
+              </Badge>
+            )}
             <JobStatusBadge status={job.status} />
           </div>
           <div className="text-[10px] text-muted-foreground font-mono">{job.job_id}</div>
