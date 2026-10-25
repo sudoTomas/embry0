@@ -9,13 +9,15 @@ Dispatches to one of the stateless proxy apps based on PROXY_TYPE env:
 - xai     -> xai_proxy.create_xai_proxy_app(PROXY_ADMIN_TOKEN)  # access token pushed at runtime
 - minio   -> minio_proxy.create_minio_proxy_app(UPSTREAM_URL)
 - presign -> presign_proxy.create_presign_proxy_app(UPSTREAM_URL)
+- local_llm -> local_llm_proxy.create_local_llm_proxy_app(UPSTREAM_URL, PROXY_ADMIN_TOKEN,
+             upstream_api_key=UPSTREAM_API_KEY, max_request_bytes=MAX_REQUEST_BYTES)
 - context -> context_proxy.create_context_proxy_app(UPSTREAM_URL, ORCHESTRATOR_API_KEY,
              PROXY_ADMIN_TOKEN, CONTAINER_ALLOWLIST, QUERY_QUOTA)  # RAV-1140
              (LOG_REDACTION_FIELDS: payload fields its redaction also removes, #294)
 
 Listens on 0.0.0.0:LISTEN_PORT (default depends on proxy type).
 PROXY_ADMIN_TOKEN must be set for credential-injection proxies (git/github/auth)
-and for the context proxy (per-sandbox enrollment); the network-plumbing proxies
+and for the context and local_llm proxies (per-sandbox enrollment); the network-plumbing proxies
 (minio/presign) do not require it.
 """
 
@@ -31,6 +33,7 @@ from embry0.execution.proxy.auth_proxy import create_auth_proxy_app
 from embry0.execution.proxy.context_proxy import create_context_proxy_app
 from embry0.execution.proxy.git_proxy import create_git_proxy_app
 from embry0.execution.proxy.github_proxy import create_github_proxy_app
+from embry0.execution.proxy.local_llm_proxy import DEFAULT_MAX_REQUEST_BYTES, create_local_llm_proxy_app
 from embry0.execution.proxy.minio_proxy import create_minio_proxy_app
 from embry0.execution.proxy.presign_proxy import create_presign_proxy_app
 from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
@@ -47,7 +50,8 @@ DEFAULT_PORTS = {
     "minio": 9100,
     "presign": 9104,
     "context": 9107,
-    # 9105 and 9108+ are free; 9100/9101/9103/9104/9106/9107 are taken.
+    "local_llm": 9108,
+    # 9109+ is free; 9100/9101/9103-9108 are taken.
     "gitlab": 9105,
 }
 
@@ -144,6 +148,14 @@ def build_app_from_env() -> web.Application:
         # No static credential: the SuperGrok access token is pushed at runtime via
         # /admin/token by the orchestrator's refresher.
         return create_xai_proxy_app(admin_token)
+    if proxy_type == "local_llm":
+        # The operator's own model server: one upstream, its key held here.
+        return create_local_llm_proxy_app(
+            _require_env("UPSTREAM_URL"),
+            admin_token,
+            upstream_api_key=os.environ.get("UPSTREAM_API_KEY", ""),
+            max_request_bytes=int(os.environ.get("MAX_REQUEST_BYTES") or DEFAULT_MAX_REQUEST_BYTES),
+        )
     if proxy_type == "context":
         # RAV-1140: mediated read-only log queries for watcher analysis jobs.
         # ORCHESTRATOR_API_KEY may be empty (dev mode — upstream auth is skipped

@@ -43,7 +43,7 @@ import inspect
 import json
 import re
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -468,8 +468,14 @@ class WatcherService:
         # auto-accept bar, ``(repo, bar) -> accepted``. None: nothing is
         # accepted without a person, whatever the setting says.
         auto_acceptor: Any = None,
+        # Local models (docs/providers.md): the model on the operator's own
+        # server an analysis runs on first, '' for none. Read per analysis so
+        # a change on the LLM Providers page applies to the next tick. None:
+        # every analysis runs on its own model.
+        local_first_model: Callable[[], Awaitable[str]] | None = None,
     ) -> None:
         self._config = config
+        self._local_first_model = local_first_model
         self._auto_acceptor = auto_acceptor
         self._credential_resolver = credential_resolver
         self._metrics = metrics or NULL_METRICS
@@ -1396,6 +1402,16 @@ class WatcherService:
             quota=getattr(self._config, "context_proxy_query_quota", 30),
         )
 
+    async def _local_first(self) -> str:
+        """The local-first model for this tick's analyses, '' for none. A failed read is none."""
+        if self._local_first_model is None:
+            return ""
+        try:
+            return str(await self._local_first_model() or "")
+        except Exception:  # noqa: BLE001 - the analysis runs on its own model
+            logger.warning("watcher_local_first_read_failed", exc_info=True)
+            return ""
+
     async def _run_analysis_job(self, task: str) -> dict[str, Any] | None:
         """Dispatch an issue-less analysis job and poll it to a terminal state."""
         # #294: this text is the prompt, and the job row stores it. The items
@@ -1411,6 +1427,11 @@ class WatcherService:
         context: dict[str, Any] = {"type": "none"}
         if self._context_proxy_on():
             context["watcher_log_access"] = True
+        pipeline_config = apply_run_with(resolve_watcher_job_budget(self._config).as_pipeline_config(), self._run_with)
+        local_model = await self._local_first()
+        # A model a person chose for the tick (Run with) wins over the preference.
+        if local_model and not ((pipeline_config or {}).get("agent_models_override") or {}):
+            pipeline_config = {**(pipeline_config or {}), "local_first_model": local_model}
         job_id = await self._jobs.create(
             # #378: the job is about this stack, so the row says so — that is
             # what routes its notifications and lists it under the repo. The
@@ -1429,10 +1450,9 @@ class WatcherService:
             # increment 3), making this deterministic.
             pipeline_template="analysis-default",
             # #275: nobody watches a tick, so its cap is a hard stop whatever
-            # the fleet-wide overrun mode is.
-            pipeline_config=apply_run_with(
-                resolve_watcher_job_budget(self._config).as_pipeline_config(), self._run_with
-            ),
+            # the fleet-wide overrun mode is. Local models: and it may prefer
+            # the local model, while a slot is free.
+            pipeline_config=pipeline_config,
             # #281: a fixed actor, exempt from the per-author hourly limit
             # (see dispatch_actors) — never from the spend caps.
             dispatched_by=dispatch_actors.WATCHER,

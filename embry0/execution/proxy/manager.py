@@ -30,6 +30,7 @@ embry0/workflows/_validation.py).
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import secrets
 import socket
 import time
@@ -72,6 +73,7 @@ _PROXY_CONTAINER_NAMES: tuple[str, ...] = (
     "minio-proxy",
     "presign-proxy",
     "context-proxy",
+    "local-llm-proxy",
 )
 
 # Connection failures only. A name conflict or a permission error will not
@@ -127,6 +129,34 @@ def _daemon_unreachable(exc: BaseException) -> bool:
     """
     text = str(exc).lower()
     return any(marker in text for marker in _DAEMON_UNREACHABLE_MARKERS)
+
+
+def resolve_upstream_url(url: str) -> str:
+    """``url`` with its host replaced by the address it resolves to, for a proxy in DinD.
+
+    DinD resolves no name the orchestrator's networks know, so an http
+    upstream named by such a name is baked in by address, as the backend
+    proxies' are. An https upstream keeps its name for the certificate check,
+    and a name that does not resolve here is kept for DinD to try.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if parts.scheme != "http" or not host:
+        return url
+    try:
+        ipaddress.ip_address(host)
+        return url
+    except ValueError:
+        pass
+    try:
+        address = socket.gethostbyname(host)
+    except OSError:
+        logger.warning("local_llm_upstream_unresolved", host=host)
+        return url
+    netloc = address if parts.port is None else f"{address}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 def _resolve_backend_url(host: str, port: int) -> str:
@@ -200,6 +230,7 @@ class ProxyManager:
         self.minio_proxy_url: str = ""
         self.presign_proxy_url: str = ""
         self.context_proxy_url: str = ""
+        self.local_llm_proxy_url: str = ""
 
     async def start(
         self,
@@ -217,6 +248,9 @@ class ProxyManager:
         log_redaction_fields: str = "",
         has_github_credential: bool | None = None,
         has_gitlab_credential: bool | None = None,
+        local_llm_upstream: str = "",
+        local_llm_api_key: str = "",
+        local_llm_max_request_bytes: int = 0,
     ) -> None:
         """Start the credential proxies as DinD containers.
 
@@ -228,6 +262,10 @@ class ProxyManager:
         Idempotent: any pre-existing containers with the same names are removed first.
 
         ``has_*_credential`` come from the credential registry; None falls back to the token arguments.
+
+        ``local_llm_upstream`` launches the local-llm-proxy, which forwards a
+        sandbox's model calls to that one API root (the operator's model
+        server); ``local_llm_api_key`` is the key that server checks, if any.
         """
         if self._http is None:
             self._http = aiohttp.ClientSession()
@@ -403,6 +441,24 @@ class ProxyManager:
         elif enable_context_proxy:
             logger.info("context_proxy_skipped", reason="CONTEXT_PROXY_CONTAINER_ALLOWLIST is empty")
 
+        # The operator's own model server, reached through one proxy instead of
+        # an egress exception that would open every port of its machine. It
+        # sits on sandbox-internet only for the route out of DinD; sandboxes
+        # reach it on sandbox-restricted, and only the ones enrolled for it.
+        if local_llm_upstream:
+            local_env = {
+                "PROXY_TYPE": "local_llm",
+                "UPSTREAM_URL": resolve_upstream_url(local_llm_upstream),
+                "UPSTREAM_API_KEY": local_llm_api_key,
+                "LISTEN_PORT": "9108",
+                "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
+            }
+            if local_llm_max_request_bytes > 0:
+                local_env["MAX_REQUEST_BYTES"] = str(local_llm_max_request_bytes)
+            await self._launch(name="local-llm-proxy", env=local_env, attach_internet=True)
+            self.local_llm_proxy_url = "http://local-llm-proxy:9108"
+            logger.info("local_llm_proxy_started")
+
         # Only leftovers we did not just launch. A name in ``_launched`` is the
         # live shared proxy; the sweep must not remove it.
         self._pending_removal -= set(self._launched)
@@ -466,6 +522,7 @@ class ProxyManager:
         git_push: bool = False,
         git_push_branches: Sequence[str] = (),
         job_id: str | None = None,
+        local_llm: bool = False,
     ) -> str:
         """Enroll a new sandbox with all running credential proxies.
 
@@ -512,6 +569,9 @@ class ProxyManager:
         that does not echo them runs an image older than ref scoping, which
         would let the push touch any ref: refused the same way. ``job_id``
         goes to the git-proxy so its refusals name the job.
+
+        ``local_llm`` also enrolls the sandbox with the local-llm-proxy: only a
+        sandbox whose job resolved the operator's model server asks for it.
 
         Raises RuntimeError if any enrollment exec fails, if such a stale
         proxy cannot be revoked, or if the git-proxy does not confirm its
@@ -560,6 +620,8 @@ class ProxyManager:
             targets.append(("auth-proxy", 9100))
         if self.xai_proxy_url:
             targets.append(("xai-proxy", 9106))
+        if self.local_llm_proxy_url and local_llm:
+            targets.append(("local-llm-proxy", 9108))
         # context-proxy is deliberately ABSENT from this broadcast: log access is
         # per-job opt-in (watcher analysis jobs only). init_node calls
         # enroll_context() explicitly when the job carries the watcher flag —
@@ -827,6 +889,9 @@ class ProxyManager:
             # accept_404 tolerates the common never-enrolled case, and a
             # watcher-enrolled sandbox must be revoked with the rest.
             targets.append(("context-proxy", 9107))
+        if self.local_llm_proxy_url:
+            # Swept like the context-proxy: accept_404 covers a sandbox never enrolled there.
+            targets.append(("local-llm-proxy", 9108))
 
         for name, port in targets:
             for attempt in range(3):
@@ -1121,6 +1186,7 @@ class ProxyManager:
         self.minio_proxy_url = ""
         self.presign_proxy_url = ""
         self.context_proxy_url = ""
+        self.local_llm_proxy_url = ""
         session = self._http
         self._http = None
         if session is not None:

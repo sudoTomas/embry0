@@ -400,6 +400,17 @@ def chat_only_models(models: Iterable[str]) -> list[str]:
     return sorted(found)
 
 
+def is_custom_model(model: str) -> bool:
+    """Whether ``model`` is a ``custom/<id>`` the enabled custom provider serves.
+
+    The operator's own server lists no catalogue: any id it serves routes by
+    the prefix and is priced at $0. Local models (docs/providers.md) let such
+    an id be the watcher's local-first model and a fallback model.
+    """
+    provider = provider_for_model(model) if model else None
+    return provider is not None and provider.name == CUSTOM.name and len(model) > len(CUSTOM.model_prefixes[0])
+
+
 def chat_only_message(provider: ModelProvider, model: str, agent_type: str, tools: Iterable[str]) -> str:
     """The refusal for an agent that needs tools on a model served without tool calling."""
     return (

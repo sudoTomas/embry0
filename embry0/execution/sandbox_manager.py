@@ -155,6 +155,7 @@ class SandboxManager:
         runtime: AgentRuntime | None = None,
         skill_store: SkillStore | None = None,
         skill_sources_repo: Any | None = None,
+        local_llm_context_tokens: int = 0,
     ) -> None:
         self._docker = docker
         # #268: production passes the runtime chosen at startup, whose client
@@ -198,6 +199,9 @@ class SandboxManager:
         # returning: the daemon does not list that container yet, so
         # gc_skill_trees must not take its trees for unmounted.
         self._skill_mounts_creating: list[list[SkillMount]] = []
+        # The local model's context window, when the operator set one; the
+        # chat-completions executor asks the server otherwise.
+        self._local_llm_context_tokens = local_llm_context_tokens
 
     @property
     def runtime(self) -> AgentRuntime:
@@ -369,8 +373,20 @@ class SandboxManager:
         return (host or "gitlab.com"), "oauth2"
 
     @staticmethod
-    def _inject_llm_env(env: dict[str, str], resolved: dict[str, ResolvedCredential]) -> str | None:
-        """Apply the injection table. Returns the xAI oauth credential id, if any."""
+    def _inject_llm_env(
+        env: dict[str, str],
+        resolved: dict[str, ResolvedCredential],
+        *,
+        local_proxy_url: str = "",
+        context_tokens: int = 0,
+    ) -> str | None:
+        """Apply the injection table. Returns the xAI oauth credential id, if any.
+
+        With ``local_proxy_url`` the custom provider is reached through the
+        local-llm-proxy: the sandbox gets the proxy as its base URL and the
+        flag that it authenticates with its bearer file, and neither the
+        account's key nor its server's address.
+        """
         xai_credential_id: str | None = None
         for provider, cred in resolved.items():
             if provider == "anthropic" and cred.kind == "llm_oauth":
@@ -390,6 +406,14 @@ class SandboxManager:
                 from embry0.agents.providers import provider_named
 
                 catalog = provider_named(provider)
+                if provider == "custom" and local_proxy_url and catalog is not None:
+                    from embry0.sandbox.local_llm_token import LOCAL_LLM_CONTEXT_ENV, LOCAL_LLM_PROXY_FLAG
+
+                    env[catalog.sandbox_base_url_env] = f"{local_proxy_url.rstrip('/')}/v1"
+                    env[LOCAL_LLM_PROXY_FLAG] = "true"
+                    if context_tokens > 0:
+                        env[LOCAL_LLM_CONTEXT_ENV] = str(context_tokens)
+                    continue
                 if catalog is not None and catalog.sandbox_key_env and cred.kind == "llm_api_key":
                     env[catalog.sandbox_key_env] = cred.secret
                     base_url = str(cred.metadata.get("base_url") or "")
@@ -398,16 +422,19 @@ class SandboxManager:
         return xai_credential_id
 
     @staticmethod
-    def _llm_egress_destinations(resolved: dict[str, ResolvedCredential]) -> list[str]:
+    def _llm_egress_destinations(resolved: dict[str, ResolvedCredential], *, via_proxy: bool = False) -> list[str]:
         """The hosts of the operator-given LLM endpoints a job resolved (the custom provider).
 
         Such a server usually sits on the operator's own network, which the egress drop
         blocks. Declaring its host lets this job's agent reach it; nothing else is opened.
+        ``via_proxy``: the local-llm-proxy reaches it instead, and no host is declared.
         """
         from embry0.services.credentials.providers import base_url_host
 
         hosts: list[str] = []
-        for cred in resolved.values():
+        for provider, cred in resolved.items():
+            if via_proxy and provider == "custom":
+                continue
             host = base_url_host(str(cred.metadata.get("base_url") or ""))
             if host and host not in hosts:
                 hosts.append(host)
@@ -510,6 +537,7 @@ class SandboxManager:
         providers = tuple(llm_providers)
         llm_resolved: dict[str, ResolvedCredential] = {}
         xai_credential_id: str | None = None
+        local_proxy_url = self._local_llm_proxy_url()
         if self._credential_resolver is not None and providers:
             # A pinned account that cannot run fails before any container exists.
             try:
@@ -525,7 +553,12 @@ class SandboxManager:
                 raise SandboxInitError(str(exc), error_code=ErrorCode.CREDENTIAL_UNAVAILABLE) from exc
             except CredentialMissingError as exc:
                 raise SandboxInitError(str(exc), error_code=ErrorCode.CREDENTIAL_MISSING) from exc
-            xai_credential_id = self._inject_llm_env(env, llm_resolved)
+            xai_credential_id = self._inject_llm_env(
+                env,
+                llm_resolved,
+                local_proxy_url=local_proxy_url,
+                context_tokens=self._local_llm_context_tokens,
+            )
 
         # Spec 1A §3.2: point every in-sandbox TLS client at the merged CA
         # bundle _install_ca_bundle writes just after the container starts.
@@ -715,6 +748,7 @@ class SandboxManager:
 
         # The git-proxy forwards to the forge this sandbox would clone from,
         # and sends the credential only to its enrolled host (#166, #521).
+        local_llm = bool(local_proxy_url) and "custom" in llm_resolved
         try:
             sandbox_token = await self._proxy_manager.enroll_sandbox(
                 container_id,
@@ -730,11 +764,15 @@ class SandboxManager:
                 git_push=git_push,
                 git_push_branches=git_push_branches,
                 job_id=job_id,
+                # Only a sandbox that reaches the operator's model server gets a bearer the proxy accepts.
+                **({"local_llm": True} if local_llm else {}),
             )
             # spec 3.6: the bearer matches no pattern on its own, so it is an
             # exact-value scrub target from the moment it exists.
             self._remember_bearer(container_id, sandbox_token)
-        except RuntimeError as exc:
+            if local_llm:
+                await self._write_local_llm_token(container_id, sandbox_token)
+        except (RuntimeError, TimeoutError) as exc:
             logger.error("sandbox_enroll_failed_rolling_back", container=name, error=str(exc))
             # Clean any partial enrollment from earlier proxies before rm.
             # unenroll_sandbox is best-effort and never raises.
@@ -783,7 +821,10 @@ class SandboxManager:
             try:
                 await self._runtime.attach_policy(
                     container_id,
-                    allowed_destinations=[*(egress_allowlist or []), *self._llm_egress_destinations(llm_resolved)],
+                    allowed_destinations=[
+                        *(egress_allowlist or []),
+                        *self._llm_egress_destinations(llm_resolved, via_proxy=bool(local_proxy_url)),
+                    ],
                     reachable_containers=list(internet_proxies()) if callable(internet_proxies) else [],
                 )
                 self._egress_enforced.add(container_id)
@@ -910,6 +951,7 @@ class SandboxManager:
             ) from exc
 
         proxy = self._proxy_manager
+        local_llm = bool(self._local_llm_proxy_url()) and await self._reached_local_llm(container)
         try:
             sandbox_token = await proxy.enroll_sandbox(
                 container,
@@ -923,10 +965,13 @@ class SandboxManager:
                 git_push=git_push,
                 git_push_branches=git_push_branches,
                 job_id=job_id,
+                **({"local_llm": True} if local_llm else {}),
             )
             # spec 3.6: the bearer matches no pattern on its own, so it is an
             # exact-value scrub target from the moment it exists.
             self._remember_bearer(container, sandbox_token)
+            if local_llm:
+                await self._write_local_llm_token(container, sandbox_token)
             if getattr(proxy, "xai_proxy_url", ""):
                 await self._docker.run_cmd(
                     self._docker.build_exec_cmd(container, build_xai_token_write_cmd(sandbox_token)), timeout=10
@@ -964,6 +1009,38 @@ class SandboxManager:
             xai_credential_id=xai_credential_id,
             context=bool(context_scope),
         )
+
+    def _local_llm_proxy_url(self) -> str:
+        """The local-llm-proxy's URL while it runs, else ''."""
+        url = getattr(self._proxy_manager, "local_llm_proxy_url", "")
+        return url if isinstance(url, str) else ""
+
+    async def _write_local_llm_token(self, container: str, sandbox_token: str) -> None:
+        """Write the local-llm-proxy bearer where the chat-completions executor reads it."""
+        from embry0.sandbox.local_llm_token import build_local_llm_token_write_cmd
+
+        await self._docker.run_cmd(
+            self._docker.build_exec_cmd(container, build_local_llm_token_write_cmd(sandbox_token)), timeout=10
+        )
+
+    async def _reached_local_llm(self, container: str) -> bool:
+        """Whether ``container`` was created to reach the local model through the proxy.
+
+        This process's record when it created the container; else (a sandbox
+        from before a restart) the flag in the container's own env.
+        """
+        held = self._llm_credentials.get(container)
+        if held is not None:
+            return "custom" in held
+        from embry0.sandbox.local_llm_token import LOCAL_LLM_PROXY_FLAG
+
+        try:
+            answer = await self._docker.run_cmd(
+                self._docker.build_inspect_has_env_cmd(container, f"{LOCAL_LLM_PROXY_FLAG}=true"), timeout=10
+            )
+        except (RuntimeError, TimeoutError):
+            return False
+        return "yes" in str(answer)
 
     @staticmethod
     def _resolve_dind_gateway_ip() -> str:

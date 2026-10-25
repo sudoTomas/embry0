@@ -638,6 +638,17 @@ async def _bring_up_qa_minio(
     logger.info("qa_minio_ready", retention_days=expire_days)
 
 
+def _watcher_local_first_model(app: FastAPI) -> Any:
+    """``() -> model``: the watcher's local-first model from provider_config, '' for none."""
+
+    async def read() -> str:
+        from embry0.storage.repositories.provider_config import ProviderConfigRepository
+
+        return str((await ProviderConfigRepository(app.state.db).get()).get("watcher_local_model") or "")
+
+    return read
+
+
 def _watcher_auto_acceptor(app: FastAPI) -> Any:
     """``(repo, bar) -> accepted``: accepts a stack's tracked drafts that clear its bar (spec 2026-10-25).
 
@@ -1301,6 +1312,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # not taken from app.state: _init_app_state creates repos_repo later.
         # Without it no repo gets the daemon (closed, not open).
         docker_access_registry=ReposRepository(db, default_forge=config.default_forge),
+        # Local models: the server's context window, when the operator set one.
+        local_llm_context_tokens=config.local_llm_context_tokens,
         runtime=runtime,
         # Spec 3.3: every sandbox gets the enabled skill sources, read-only.
         # Built here, like the registry above: _init_app_state creates
@@ -1463,6 +1476,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         context_container_allowlist=config.context_proxy_container_allowlist,
         context_query_quota=config.context_proxy_query_quota,
         log_redaction_fields=config.log_redaction_fields,
+        # Local models (docs/providers.md): the one model server the
+        # local-llm-proxy forwards to. Empty launches no proxy.
+        local_llm_upstream=config.local_llm_upstream,
+        local_llm_api_key=config.local_llm_api_key,
+        local_llm_max_request_bytes=config.local_llm_max_request_bytes,
     )
 
     # #554, #568: a sandbox may reach the proxies just launched and no other
@@ -1968,6 +1986,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     def _watcher_for(stack: WatcherStack) -> WatcherService:
         return WatcherService(
             auto_acceptor=auto_acceptor,
+            local_first_model=_watcher_local_first_model(app),
             cases_repo=app.state.healing_cases_repo,
             case_recorder=app.state.case_recorder,
             # #278: a deploy marker is reported on a case only after the forge

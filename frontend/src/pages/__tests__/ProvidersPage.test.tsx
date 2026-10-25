@@ -403,5 +403,63 @@ describe("ProvidersPage keys and spend", () => {
       await screen.findByTestId("provider-card-anthropic");
       expect(screen.queryByTestId("fallback-order")).toBeNull();
     });
+
+    it("offers the local model, which no catalogue lists, to end the order", async () => {
+      mockFetchProviderConfig.mockResolvedValue({
+        ...PROVIDER_CONFIG,
+        fallback_models: ["grok-4.7"],
+        local_max_runs: 1,
+        watcher_local_model: "custom/qwen",
+      });
+      renderPage();
+      const card = await screen.findByTestId("fallback-order");
+      await userEvent.selectOptions(within(card).getByLabelText("Add a model"), "custom/qwen");
+      await userEvent.click(within(card).getByRole("button", { name: "Add" }));
+      await userEvent.click(within(card).getByRole("button", { name: "Save order" }));
+      await waitFor(() =>
+        expect(mockUpdateProviderConfig).toHaveBeenCalledWith({ fallback_models: ["grok-4.7", "custom/qwen"] }),
+      );
+    });
+  });
+
+  describe("local model", () => {
+    it("saves how many runs at once and the model log analyses run first on", async () => {
+      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, local_max_runs: 1, watcher_local_model: "" });
+      renderPage();
+      const card = await screen.findByTestId("local-model");
+      const save = within(card).getByRole("button", { name: "Save" });
+      expect(save).toBeDisabled();
+
+      const runs = within(card).getByLabelText("Runs at once");
+      await userEvent.clear(runs);
+      await userEvent.type(runs, "2");
+      await userEvent.type(within(card).getByLabelText("Log analyses run first on"), "custom/qwen");
+      await userEvent.click(save);
+      await waitFor(() =>
+        expect(mockUpdateProviderConfig).toHaveBeenCalledWith({ local_max_runs: 2, watcher_local_model: "custom/qwen" }),
+      );
+    });
+
+    it("will not save a model of another server or a cap out of range", async () => {
+      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, local_max_runs: 1, watcher_local_model: "" });
+      renderPage();
+      const card = await screen.findByTestId("local-model");
+      await userEvent.type(within(card).getByLabelText("Log analyses run first on"), "claude-sonnet-5");
+      expect(within(card).getByText("The model starts with custom/.")).toBeInTheDocument();
+      expect(within(card).getByRole("button", { name: "Save" })).toBeDisabled();
+
+      await userEvent.clear(within(card).getByLabelText("Log analyses run first on"));
+      const runs = within(card).getByLabelText("Runs at once");
+      await userEvent.clear(runs);
+      await userEvent.type(runs, "65");
+      expect(within(card).getByText("Runs at once is a whole number from 1 to 64.")).toBeInTheDocument();
+      expect(within(card).getByRole("button", { name: "Save" })).toBeDisabled();
+    });
+
+    it("is hidden against a backend without the setting", async () => {
+      renderPage();
+      await screen.findByTestId("provider-card-anthropic");
+      expect(screen.queryByTestId("local-model")).toBeNull();
+    });
   });
 });

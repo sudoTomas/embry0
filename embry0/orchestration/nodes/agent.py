@@ -472,6 +472,70 @@ def _priced_from_the_catalog(result: Any, invocation: Any, agent_type: str) -> A
     return replace(result, is_error=False, error_message="", error_code=None, cost_usd=cost or 0.0)
 
 
+def _local_first_for_run(
+    state: dict[str, Any], configurable: dict[str, Any], model_fallbacks: dict[str, ModelFallback]
+) -> str | None:
+    """The job's local-first model when this run may use it (docs/providers.md, local models).
+
+    The job asks for it (the watcher's analyses), it routes to an enabled
+    provider, the run's sandbox holds that provider's route, and the
+    provider is not paused for the job. Otherwise None: the run resolves as
+    it would without the preference.
+    """
+    from embry0.agents.fallback import model_provider
+    from embry0.agents.providers import provider_for_model
+
+    model = state.get("local_first_model")
+    if not isinstance(model, str) or not model or provider_for_model(model) is None:
+        return None
+    provider = model_provider(model)
+    if provider in model_fallbacks or provider not in _sandbox_llm_providers(state, configurable):
+        return None
+    return model
+
+
+async def _local_slots(config: Any) -> tuple[Any, int] | None:
+    """``(LocalSlots, cap)`` over the deployment's database, or None without one.
+
+    ``configurable["local_slots"]``, when set, is used instead (a seam for tests).
+    """
+    configurable = _graph_configurable(config)
+    slots = configurable.get("local_slots")
+    if slots is None:
+        db = configurable.get("db")
+        if db is None:
+            return None
+        from embry0.services.local_slots import LocalSlots
+        from embry0.storage.repositories.local_model_leases import LocalModelLeasesRepository
+
+        slots = LocalSlots(LocalModelLeasesRepository(db))
+    row = await _provider_config_row(config, failure_event="local_slot_config_load_failed")
+    cap = (row or {}).get("local_max_runs")
+    return slots, cap if isinstance(cap, int) and cap > 0 else 1
+
+
+def _slot_wait_seconds(config: Any) -> float:
+    app_config = _graph_configurable(config).get("embry0_config")
+    value = getattr(app_config, "local_llm_slot_wait_seconds", None)
+    if isinstance(value, int) and value >= 0:
+        return float(value)
+    return float(_env_cap("LOCAL_LLM_SLOT_WAIT_SECONDS", 900))
+
+
+def _local_busy_updates(agent_type: str, model: str, wait_seconds: float, state: dict[str, Any]) -> dict[str, Any]:
+    """The failed run's state update when no local slot came free: nothing ran."""
+    exc = AuthConfigError(
+        ErrorCode.LOCAL_MODEL_BUSY,
+        f"{model} runs on the local model server, and every one of its slots stayed taken for "
+        f"{int(wait_seconds)}s (provider_config.local_max_runs; docs/providers.md, local models)",
+    )
+    updates = _auth_error_updates(agent_type, exc, state)
+    entry = updates["agent_outputs"][0]
+    entry["error_code"] = exc.error_code.value
+    entry["provider"] = "custom"
+    return updates
+
+
 async def run_agent_node(
     state: dict[str, Any],
     agent_runner: Any,
@@ -565,9 +629,10 @@ async def run_agent_node(
     # with its tier fallbacks, best-effort — None means no policy.
     model_policy = await load_model_policy(config)
     model_fallbacks = await _model_fallbacks_for_run(state, config, model_policy)
+    local_first = _local_first_for_run(state, _graph_configurable(config), model_fallbacks)
 
-    try:
-        invocation = resolve_agent_invocation(
+    def _resolve(local_first_model: str | None) -> Any:
+        return resolve_agent_invocation(
             agent_type=agent_type,
             prompt=prompt,
             system_context=state.get("global_context") or "",
@@ -586,9 +651,78 @@ async def run_agent_node(
             model_policy=model_policy,
             job_agent_models=job_agent_models,
             model_fallbacks=model_fallbacks,
+            local_first_model=local_first_model,
         )
+
+    try:
+        invocation = _resolve(local_first)
     except AuthConfigError as exc:
         return _stamp_loaded_preferences(_auth_error_updates(agent_type, exc, state), state, loaded_prefs)
+
+    # Local models: a run on the operator's own server holds one of its slots
+    # for the length of the run. A local-first run takes one only if it is
+    # free now, else it runs on its own model; any other run waits for one.
+    local_slots: Any = None
+    lease_id: str | None = None
+    job_ref = str(_graph_configurable(config).get("job_id") or state.get("job_id") or "")
+    if invocation.provider == "custom":
+        slots_and_cap = await _local_slots(config)
+        if slots_and_cap is not None:
+            local_slots, cap = slots_and_cap
+            slot_args = {
+                "cap": cap,
+                "job_id": job_ref,
+                "agent_type": agent_type,
+                "model": invocation.model,
+                "run_seconds": invocation.timeout_seconds,
+            }
+            if invocation.local_first is not None:
+                lease_id = await local_slots.try_acquire(**slot_args)
+                if lease_id is None:
+                    local_model = invocation.model
+                    try:
+                        invocation = _resolve(None)
+                    except AuthConfigError as exc:
+                        return _stamp_loaded_preferences(
+                            _auth_error_updates(agent_type, exc, state), state, loaded_prefs
+                        )
+                    if on_event is not None:
+                        on_event(
+                            events.progress(
+                                message=(
+                                    f"{agent_type} runs on {invocation.model}: every slot of the local model "
+                                    f"{local_model} is taken."
+                                ),
+                                node=node or agent_type,
+                            )
+                        )
+            else:
+                wait_seconds = _slot_wait_seconds(config)
+
+                def _waiting() -> None:
+                    if on_event is not None:
+                        on_event(
+                            events.progress(
+                                message=f"{agent_type} waits for a free slot on the local model {invocation.model}.",
+                                node=node or agent_type,
+                            )
+                        )
+
+                lease_id = await local_slots.acquire(**slot_args, wait_seconds=wait_seconds, on_wait=_waiting)
+                if lease_id is None:
+                    return _stamp_loaded_preferences(
+                        _local_busy_updates(agent_type, invocation.model, wait_seconds, state), state, loaded_prefs
+                    )
+    if invocation.local_first is not None and on_event is not None:
+        on_event(
+            events.progress(
+                message=(
+                    f"{agent_type} runs on the local model {invocation.model} instead of "
+                    f"{invocation.local_first.get('instead_of')}: this job prefers it while a slot is free."
+                ),
+                node=node or agent_type,
+            )
+        )
     if invocation.fallback is not None and on_event is not None:
         # The job's events say which model ran and why (provider fallback).
         on_event(
@@ -597,142 +731,149 @@ async def run_agent_node(
             )
         )
 
-    # RAV-1260: turn-budget awareness. Agents with investigation tools kept
-    # investigating until the harness killed them at max_turns with no
-    # decision emitted (review job-54a05ee073d6, triage job-9a889c7c42c5).
-    # The runner is the one place that knows the final budget for every
-    # agent type, so the advisory rides here — appended to the user turn,
-    # after any delta-prompt truncation the nodes perform, so prompt caching
-    # of the system block is unaffected. Written after resolution: the
-    # provider may have scaled the budget (grok), and the advisory must state
-    # the one the agent really gets.
-    invocation = replace(
-        invocation,
-        prompt=(
-            f"{invocation.prompt}\n\n"
-            f"Turn budget: you have {invocation.max_turns} turns for this task. Reserve your final 2 turns to "
-            "emit the required final output (decision / verdict / report). If the budget nears exhaustion "
-            "before your investigation feels complete, decide from what you already know — a final "
-            "output on partial evidence beats hitting the turn cap with none."
-        ),
-    )
+    # Released on every way out of the run: success, failure, cancel.
+    try:
+        # RAV-1260: turn-budget awareness. Agents with investigation tools kept
+        # investigating until the harness killed them at max_turns with no
+        # decision emitted (review job-54a05ee073d6, triage job-9a889c7c42c5).
+        # The runner is the one place that knows the final budget for every
+        # agent type, so the advisory rides here — appended to the user turn,
+        # after any delta-prompt truncation the nodes perform, so prompt caching
+        # of the system block is unaffected. Written after resolution: the
+        # provider may have scaled the budget (grok), and the advisory must state
+        # the one the agent really gets.
+        invocation = replace(
+            invocation,
+            prompt=(
+                f"{invocation.prompt}\n\n"
+                f"Turn budget: you have {invocation.max_turns} turns for this task. Reserve your final 2 turns to "
+                "emit the required final output (decision / verdict / report). If the budget nears exhaustion "
+                "before your investigation feels complete, decide from what you already know — a final "
+                "output on partial evidence beats hitting the turn cap with none."
+            ),
+        )
 
-    # Spec 3.4: the run id is minted here, before the exec, so the trace row
-    # and every event of this run share it; the sandbox stamps it on events.
-    run_id = f"run-{uuid.uuid4().hex}"
-    # Spec 3.3: the skill sources this job's sandbox has mounted; the sandbox
-    # turns each into a local plugin of the SDK. A runner without the method
-    # (test doubles that only run) mounts nothing.
-    skill_mounts_of = getattr(agent_runner, "skill_mounts", None)
-    skill_mounts = await skill_mounts_of(state.get("sandbox_container_id", "")) if skill_mounts_of else []
-    invocation = replace(invocation, run_id=run_id, node=node or agent_type, skill_mounts=tuple(skill_mounts))
+        # Spec 3.4: the run id is minted here, before the exec, so the trace row
+        # and every event of this run share it; the sandbox stamps it on events.
+        run_id = f"run-{uuid.uuid4().hex}"
+        # Spec 3.3: the skill sources this job's sandbox has mounted; the sandbox
+        # turns each into a local plugin of the SDK. A runner without the method
+        # (test doubles that only run) mounts nothing.
+        skill_mounts_of = getattr(agent_runner, "skill_mounts", None)
+        skill_mounts = await skill_mounts_of(state.get("sandbox_container_id", "")) if skill_mounts_of else []
+        invocation = replace(invocation, run_id=run_id, node=node or agent_type, skill_mounts=tuple(skill_mounts))
 
-    # Build the serialized invocation dict the sandbox runner receives.
-    serialized = {
-        "agent_type": invocation.agent_type,
-        "prompt": invocation.prompt,
-        "system_prompt": invocation.system_prompt,
-        "system_context": invocation.system_context,
-        "model": invocation.model,
-        "tools": list(invocation.tools),
-        "skills": list(invocation.skills),
-        "mcp_servers": dict(invocation.mcp_servers),
-        "max_turns": invocation.max_turns,
-        "timeout_seconds": invocation.timeout_seconds,
-        "execution_mode": invocation.execution_mode,
-        "auth_mode": invocation.auth_mode,
-        "provider": invocation.provider,
-        "run_id": invocation.run_id,
-        "node": invocation.node,
-        "skill_mounts": list(invocation.skill_mounts),
-    }
-    if invocation.pricing_usd_per_mtok is not None:
-        # A model of OpenRouter's live catalog: the sandbox has no copy of it.
-        serialized["pricing_usd_per_mtok"] = list(invocation.pricing_usd_per_mtok)
+        # Build the serialized invocation dict the sandbox runner receives.
+        serialized = {
+            "agent_type": invocation.agent_type,
+            "prompt": invocation.prompt,
+            "system_prompt": invocation.system_prompt,
+            "system_context": invocation.system_context,
+            "model": invocation.model,
+            "tools": list(invocation.tools),
+            "skills": list(invocation.skills),
+            "mcp_servers": dict(invocation.mcp_servers),
+            "max_turns": invocation.max_turns,
+            "timeout_seconds": invocation.timeout_seconds,
+            "execution_mode": invocation.execution_mode,
+            "auth_mode": invocation.auth_mode,
+            "provider": invocation.provider,
+            "run_id": invocation.run_id,
+            "node": invocation.node,
+            "skill_mounts": list(invocation.skill_mounts),
+        }
+        if invocation.pricing_usd_per_mtok is not None:
+            # A model of OpenRouter's live catalog: the sandbox has no copy of it.
+            serialized["pricing_usd_per_mtok"] = list(invocation.pricing_usd_per_mtok)
 
-    container = state.get("sandbox_container_id", "")
+        container = state.get("sandbox_container_id", "")
 
-    # Write the trace row as running before the exec so a running agent has a
-    # row the job-detail UI can show, and finalize it after. Best-effort —
-    # failure to write a trace must not fail the agent run.
-    configurable = _graph_configurable(config)
-    traces_repo = configurable.get("traces_repo")
-    trace_job_id = configurable.get("job_id", "")
-    running_row_written = False
-    # The run's substitution, when it ran on a fallback model; kept off the
-    # call otherwise so a traces repository without the column still works.
-    trace_fallback: dict[str, Any] = {"fallback": invocation.fallback} if invocation.fallback is not None else {}
-    if traces_repo is not None and trace_job_id:
-        try:
-            await traces_repo.create(
-                job_id=trace_job_id,
-                agent_type=agent_type,
-                model=invocation.model,
-                result="running",
-                trace_id=run_id,
-                **trace_fallback,
-            )
-            running_row_written = True
-        except Exception:
-            logger.warning("trace_start_persist_failed", agent_type=agent_type, exc_info=True)
-
-    async def _finish_trace(**fields: Any) -> None:
-        if traces_repo is None or not trace_job_id:
-            return
-        # spec 3.6: the summary is redacted at write, and before the cap, so a
-        # cut can never leave a fragment no pattern recognises.
-        summary = str(fields.get("result_summary") or "")
-        fields["result_summary"] = redact_bounded(summary, TRACE_SUMMARY_CAP, redact=_redact_trace_text)
-        try:
-            if running_row_written:
-                await traces_repo.finish(run_id, **fields)
-            else:
-                # The start write failed, so there is no row to UPDATE; create
-                # it now with the final fields under the same run id, so the
-                # trace, its spend and its events still join up.
+        # Write the trace row as running before the exec so a running agent has a
+        # row the job-detail UI can show, and finalize it after. Best-effort —
+        # failure to write a trace must not fail the agent run.
+        configurable = _graph_configurable(config)
+        traces_repo = configurable.get("traces_repo")
+        trace_job_id = configurable.get("job_id", "")
+        running_row_written = False
+        # The run's substitution, when it ran on a fallback model; kept off the
+        # call otherwise so a traces repository without the column still works.
+        trace_fallback: dict[str, Any] = {"fallback": invocation.fallback} if invocation.fallback is not None else {}
+        if traces_repo is not None and trace_job_id:
+            try:
                 await traces_repo.create(
                     job_id=trace_job_id,
                     agent_type=agent_type,
                     model=invocation.model,
+                    result="running",
                     trace_id=run_id,
                     **trace_fallback,
-                    **fields,
                 )
-        except Exception:
-            logger.warning("trace_finish_persist_failed", agent_type=agent_type, exc_info=True)
+                running_row_written = True
+            except Exception:
+                logger.warning("trace_start_persist_failed", agent_type=agent_type, exc_info=True)
 
-    # Progression (spec 2026-10-24): each tool call this run makes, by the
-    # skill it trains, counted from the events as they stream past.
-    skill_actions: dict[str, int] = {}
+        async def _finish_trace(**fields: Any) -> None:
+            if traces_repo is None or not trace_job_id:
+                return
+            # spec 3.6: the summary is redacted at write, and before the cap, so a
+            # cut can never leave a fragment no pattern recognises.
+            summary = str(fields.get("result_summary") or "")
+            fields["result_summary"] = redact_bounded(summary, TRACE_SUMMARY_CAP, redact=_redact_trace_text)
+            try:
+                if running_row_written:
+                    await traces_repo.finish(run_id, **fields)
+                else:
+                    # The start write failed, so there is no row to UPDATE; create
+                    # it now with the final fields under the same run id, so the
+                    # trace, its spend and its events still join up.
+                    await traces_repo.create(
+                        job_id=trace_job_id,
+                        agent_type=agent_type,
+                        model=invocation.model,
+                        trace_id=run_id,
+                        **trace_fallback,
+                        **fields,
+                    )
+            except Exception:
+                logger.warning("trace_finish_persist_failed", agent_type=agent_type, exc_info=True)
 
-    def _count_then_forward(event: dict[str, Any]) -> None:
-        if event.get("type") == "tool_call":
-            tool_input = event.get("tool_input")
-            count_action(
-                skill_actions, str(event.get("tool_name") or ""), tool_input if isinstance(tool_input, dict) else None
+        # Progression (spec 2026-10-24): each tool call this run makes, by the
+        # skill it trains, counted from the events as they stream past.
+        skill_actions: dict[str, int] = {}
+
+        def _count_then_forward(event: dict[str, Any]) -> None:
+            if event.get("type") == "tool_call":
+                tool_input = event.get("tool_input")
+                count_action(
+                    skill_actions,
+                    str(event.get("tool_name") or ""),
+                    tool_input if isinstance(tool_input, dict) else None,
+                )
+            if on_event is not None:
+                on_event(event)
+
+        try:
+            # Production path: docker-exec the sandbox runner with the serialized
+            # invocation; the in-container SdkAgentExecutor handles the actual
+            # Claude call.
+            result = await agent_runner.run(
+                container=container,
+                config=serialized,
+                network=network,
+                on_event=_count_then_forward,
+                resume_session=resume_session,
             )
-        if on_event is not None:
-            on_event(event)
-
-    try:
-        # Production path: docker-exec the sandbox runner with the serialized
-        # invocation; the in-container SdkAgentExecutor handles the actual
-        # Claude call.
-        result = await agent_runner.run(
-            container=container,
-            config=serialized,
-            network=network,
-            on_event=_count_then_forward,
-            resume_session=resume_session,
-        )
-    except AuthConfigError as exc:
-        await _finish_trace(**_crashed_trace_fields(exc, exc.error_code.value))
-        return _stamp_loaded_preferences(_auth_error_updates(agent_type, exc, state), state, loaded_prefs)
-    except Exception as exc:
-        # The row says running until told otherwise; a crashed exec must not
-        # leave it that way.
-        await _finish_trace(**_crashed_trace_fields(exc, None))
-        raise
+        except AuthConfigError as exc:
+            await _finish_trace(**_crashed_trace_fields(exc, exc.error_code.value))
+            return _stamp_loaded_preferences(_auth_error_updates(agent_type, exc, state), state, loaded_prefs)
+        except Exception as exc:
+            # The row says running until told otherwise; a crashed exec must not
+            # leave it that way.
+            await _finish_trace(**_crashed_trace_fields(exc, None))
+            raise
+    finally:
+        if lease_id is not None and local_slots is not None:
+            await local_slots.release(lease_id)
 
     result = _priced_from_the_catalog(result, invocation, agent_type)
 

@@ -295,6 +295,17 @@ class DockerClient:
         """Build `docker inspect` printing whether a container is running (``true``/``false``)."""
         return [*self._build_base_cmd(), "inspect", "--format", "{{.State.Running}}", container]
 
+    def build_inspect_has_env_cmd(self, container: str, entry: str) -> list[str]:
+        """Build `docker inspect` printing ``yes`` when the container's env holds ``entry`` (``KEY=value``).
+
+        Only that answer leaves the daemon: the rest of the env, credentials
+        among it, is never printed.
+        """
+        if '"' in entry or "{" in entry or "}" in entry:
+            raise ValueError("env entry must not contain quotes or braces")
+        fmt = f'{{{{range .Config.Env}}}}{{{{if eq . "{entry}"}}}}yes{{{{end}}}}{{{{end}}}}'
+        return [*self._build_base_cmd(), "inspect", "--format", fmt, container]
+
     def build_inspect_id_cmd(self, container: str) -> list[str]:
         """Build `docker inspect` printing a container's full ID, from its name or a short ID."""
         return [*self._build_base_cmd(), "inspect", "--format", "{{.Id}}", container]

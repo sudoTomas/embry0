@@ -43,6 +43,7 @@ COPY embry0/execution/proxy/git_proxy.py          /app/embry0/execution/proxy/gi
 COPY embry0/execution/proxy/git_scope.py          /app/embry0/execution/proxy/git_scope.py
 COPY embry0/execution/proxy/github_proxy.py       /app/embry0/execution/proxy/github_proxy.py
 COPY embry0/execution/proxy/gitlab_proxy.py       /app/embry0/execution/proxy/gitlab_proxy.py
+COPY embry0/execution/proxy/local_llm_proxy.py    /app/embry0/execution/proxy/local_llm_proxy.py
 COPY embry0/execution/proxy/minio_proxy.py        /app/embry0/execution/proxy/minio_proxy.py
 COPY embry0/execution/proxy/presign_proxy.py      /app/embry0/execution/proxy/presign_proxy.py
 COPY embry0/execution/proxy/receive_pack.py       /app/embry0/execution/proxy/receive_pack.py

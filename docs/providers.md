@@ -218,7 +218,9 @@ needs a model with tool support, vLLM needs `--enable-auto-tool-choice` and a
 `--tool-call-parser` for the model, LM Studio needs a model with tool use. A
 server that ignores `tools` makes the agent answer in prose and stop; the run
 ends with no tool calls and nothing done. A custom server usually sits on the
-operator's network, which the sandbox egress drop blocks, so a job that runs
+operator's network, which the sandbox egress drop blocks. With
+`LOCAL_LLM_UPSTREAM` set, sandboxes reach it through the local-llm-proxy and
+nothing is opened ([Local models](#local-models)). Without it, a job that runs
 on one declares that host as an egress exception for its sandbox. The
 exception is the whole address, every port: put the model server on a machine
 that serves nothing else.
@@ -376,6 +378,79 @@ log says `agent_model_provider_fallback`.
 
 `PUT /config/provider` answers 422 to a list with an unknown, unpriced,
 chat-only, disabled or repeated id, and to disabling a model the list names.
+A `custom/<model>` of the operator's own server is accepted while the custom
+provider is enabled: no catalogue lists its models, and it is priced at $0
+([Local models](#local-models)). Put it last, so the local server only takes
+the work no other provider can.
+
+## Local models
+
+A model server on the operator's own hardware (vLLM, Ollama, LM Studio) runs
+agents through the `custom` provider: any `custom/<model>` it serves, priced
+at $0, with tool calling as the server and the model provide it
+([what tool calling requires](#what-tool-calling-requires)). Such a server is
+usually shared hardware on the operator's network, so three things keep it
+safe to point embry0 at.
+
+**The local-llm-proxy.** `LOCAL_LLM_UPSTREAM` names the server's API root
+(`http://host:port/v1`). Set, the orchestrator starts `local-llm-proxy` on
+`sandbox-restricted`, which forwards to that one root and nowhere else:
+
+- only `POST /v1/chat/completions` and `GET /v1/models`; any other path is
+  404 and never reaches the server;
+- only for a sandbox enrolled with it, which is a sandbox whose job resolved
+  the custom provider. Its bearer is checked and dropped there, and the
+  server's own key (`LOCAL_LLM_API_KEY`, when it checks one) is added by the
+  proxy, so neither the key nor the server's address is in the sandbox;
+- a request over `LOCAL_LLM_MAX_REQUEST_BYTES` (8 MiB) is refused with 413.
+
+No egress exception is declared for the server's machine, so a sandbox
+cannot reach anything else on it. The custom provider still needs an account
+(the registry or `CUSTOM_LLM_API_KEY` with `CUSTOM_LLM_BASE_URL`; for a
+server that checks no key any placeholder will do): it is what makes the
+provider ready, pinnable and quarantinable. With the proxy on, the account's
+base URL is not used; every custom run goes to `LOCAL_LLM_UPSTREAM`.
+
+**One run at a time.** `local_max_runs` in the provider settings (default 1,
+at most 64) is how many agent runs embry0 sends the server at once. Each run
+on the custom provider holds a slot, a row in `local_model_leases`, from just
+before it starts until it ends, however it ends. A lease expires by itself
+five minutes after the run's own time limit, so one left by a process that
+died frees its slot. A run that has to use the local model (it is the
+fallback, or the job named it) waits for a slot up to
+`LOCAL_LLM_SLOT_WAIT_SECONDS` (900), saying so in a `progress` event, then
+fails with `ERR_LOCAL_MODEL_BUSY` without having run; the job's next agents
+on the custom provider then move, as for a spent account
+([Provider fallback](#provider-fallback)).
+
+**Local-first for the watcher.** `watcher_local_model` in the provider
+settings (`""`, the default, is off) is a `custom/<model>` the watcher's log
+analyses run on first. The watcher stamps it on each analysis job
+(`pipeline_config.local_first_model`) unless the tick runs with a model a
+person chose. For each agent of such a job:
+
+- with a slot free, the agent runs on the local model; a `progress` event
+  says "analysis runs on the local model custom/... instead of
+  claude-sonnet-5: this job prefers it while a slot is free";
+- with every slot taken, it runs on its own model at once, and a `progress`
+  event says so. It never waits;
+- it is a preference, not a pin: an agent whose model the job names keeps
+  it, and when the custom provider is paused or does not resolve for the
+  job, the job runs as if it had none. The job's own models' keys stay in
+  its sandbox, so the fall back to them is always there.
+
+The trace's `model` is the model that ran, local or not.
+
+**The context window.** A model on one card often has a small window. For a
+custom model, the chat-completions executor reads its window from
+`LOCAL_LLM_CONTEXT_TOKENS` when set, else from the server's `/models`
+(`max_model_len`, `context_length` or `context_window`). Before each request
+it estimates the conversation's tokens, kept honest by the server's own
+`prompt_tokens`; over the window less room for the answer, it replaces the
+oldest tool results with a one-line note, keeping the task and the last
+messages whole. A conversation that still does not fit fails the run with
+`ERR_CONTEXT_WINDOW_EXCEEDED`, as does a request any server refuses as over
+its window, instead of being sent until the turn cap.
 
 ## Provider readiness
 

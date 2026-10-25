@@ -116,14 +116,15 @@ def fallback_order(model_policy: Mapping[str, Any] | None) -> list[str]:
 def runnable_fallback_models(order: Iterable[str], disabled: Iterable[str]) -> list[str]:
     """The models of ``order`` an agent may run on: catalogue, priced, with tool calling, not disabled.
 
-    ``PUT /config/provider`` refuses the rest, so this only drops what changed
-    after the order was saved (a model disabled or no longer priced, a
-    provider no longer enabled).
+    A ``custom/<id>`` of the operator's own server counts while the custom
+    provider is enabled (local models). ``PUT /config/provider`` refuses the
+    rest, so this only drops what changed after the order was saved (a model
+    disabled or no longer priced, a provider no longer enabled).
     """
-    from embry0.agents.providers import chat_only_models, known_models, unpriced_models
+    from embry0.agents.providers import chat_only_models, is_custom_model, known_models, unpriced_models
 
     off = set(disabled)
-    models = [m for m in order if m in known_models() and m not in off]
+    models = [m for m in order if (m in known_models() or is_custom_model(m)) and m not in off]
     unrunnable = set(unpriced_models(models)) | set(chat_only_models(models))
     return [m for m in models if m not in unrunnable]
 

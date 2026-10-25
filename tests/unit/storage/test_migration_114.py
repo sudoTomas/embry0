@@ -17,12 +17,6 @@ def test_migration_114_present() -> None:
     assert "provider_catalogs" in sql and "last_error" in sql
 
 
-def test_migration_114_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_113.py)."""
-    assert MIGRATIONS[-1][0] == 114, "migration 114 must add provider_catalogs"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_a_failed_read_keeps_the_stored_list(db_with_migrations: DatabasePool) -> None:
