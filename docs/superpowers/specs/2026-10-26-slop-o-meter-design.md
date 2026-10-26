@@ -14,6 +14,7 @@ Every changed line of every commit is weighted by its file:
 - **Tests and examples** (`.test.*`, `.spec.*`, `_test.go`, `test_*.py`, `__tests__/`, `tests/`, `test/`, `examples/`, `demos/`, `samples/`, …) weigh half their type.
 - **Excluded (0):** vendored and third-party directories (`vendor/`, `node_modules/`, `third_party/`, `external/`, `deps/`), minified, bundled and map files, `.d.ts`, and every path a linter or formatter of the repository ignores. **Choice:** the ignore lists read are `.prettierignore`, `.eslintignore`, `.stylelintignore`, `.gitattributes` (`linguist-generated`, `linguist-vendored`), `biome.json` (`files.ignore`), and ruff's `exclude`/`extend-exclude` in `pyproject.toml` or `ruff.toml`, at the default branch's head; gitignore-style globs, negations skipped.
 - **Outlier files:** a file whose current size is above `Q3 + 1.5·IQR` of the code files' sizes is excluded when it is at most its fair share (`total lines / files`), and kept when larger. **Choice:** sizes are current line counts, the sum of each path's additions minus deletions over the history (renames are counted as delete and add).
+- **At least one outlier (embry0, 2026-10-26):** the count is `max(1, ⌈4 × age in years⌉)`. A history that spans no time (one commit) gave 0, so its first commit, which the spec always excuses as setup, counted as slop.
 
 A week's **net weighted additions** are `max(0, weighted additions − weighted deletions)` over its commits, by author date, in weeks starting Monday 00:00 UTC.
 
@@ -27,6 +28,7 @@ A week's **net weighted additions** are `max(0, weighted additions − weighted 
 - **Bots** (known names, names ending `[bot]`, `[bot]@users.noreply.github.com`, `noreply@…`, AI agent addresses such as `codex@`, `claude@`) add lines but no sessions. An AI co-author is a bot co-author.
 - **Sessions:** a contributor's neighborhoods are merged into sessions; a week's hours are the length of the union inside the week.
 - **Core factor:** `clamp((commits − 10)/50, 0, 1) × (1 + 0.25·commit share)`, where commits are the contributor's human-authored commits. **Choice:** counted over the whole history at the time of computing, so a core contributor's early weeks count too.
+- **Small repositories (embry0's departure, 2026-10-26):** when no author reaches 10 human commits, everyone's time counts in full (core factor 1). Read literally, the core factor makes every author of a small repository a drive-by worth nothing, so a 6-commit, 778-line repository read as "Just The Slop". A fast big dump still reads high: 47,000 lines in six days from one person is far beyond what its commits' hours cover.
 - **Weekly capacity:** per contributor, effective hours `h = hours × core factor`, capped concavely: `h − h³/(3·80²)` up to 80 h, the value at 80 h above it; summed over contributors, `× 40` lines per hour.
 
 ### Slop and the score
