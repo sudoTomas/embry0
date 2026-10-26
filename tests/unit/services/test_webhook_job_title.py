@@ -125,3 +125,27 @@ async def test_duplicate_pr_skip_title_is_present_even_without_a_task():
     )
     _event, data = ex._webhook_notifier.emit_soon.call_args_list[0].args
     assert data["title"] == ""
+
+
+@pytest.mark.asyncio
+async def test_the_brief_title_wins_once_the_job_has_one():
+    """A job's brief says in plain words what it is (spec 2026-10-26, job briefs)."""
+    ex = _executor(job_row={"task": "[KEY-1] [watcher] Diagnose boot crash-loop that 502s both copies"})
+    with patch(
+        "embry0.services._executor_outcomes._brief_title",
+        new=AsyncMock(return_value="Find why the service crash-looped"),
+    ):
+        _, data = await _run(ex, {"agent_outputs": [{"agent_type": "review", "is_error": False}]})
+    assert data["title"] == "Find why the service crash-looped"
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_brief_falls_back_to_the_task_line():
+    ex = _executor(job_row={"task": "fix(api): stop double-charging"})
+    ex._db = object()
+    with patch(
+        "embry0.storage.repositories.job_briefs.JobBriefsRepository.current",
+        new=AsyncMock(side_effect=RuntimeError("down")),
+    ):
+        _, data = await _run(ex, {"agent_outputs": [{"agent_type": "review", "is_error": False}]})
+    assert data["title"] == "fix(api): stop double-charging"
