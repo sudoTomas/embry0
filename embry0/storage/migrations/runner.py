@@ -3396,6 +3396,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'the slop-o-meter''s current score per repository (an empty area) and per area: cumulative slop over cumulative attention cost, its level and name, provisional while an outlier commit is not judged.';
         """,
     ),
+    (
+        122,
+        "slop-o-meter: the way each repository's history was read, so a better one reads it again (renames found)",
+        # history_version 1 read moves as deletions plus additions; a
+        # repository whose version is older than the code's is read again.
+        """
+        ALTER TABLE slop_meter_repos ADD COLUMN IF NOT EXISTS history_version INTEGER NOT NULL DEFAULT 1;
+        COMMENT ON COLUMN slop_meter_repos.history_version IS
+            'how the stored history was read (embry0.services.slop_meter.history.HISTORY_VERSION); older is read again.';
+        """,
+    ),
 ]
 
 

@@ -24,7 +24,7 @@ import structlog
 
 from embry0.services.areas import AREAS_PATH, area_of_path, parse_areas
 from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader
-from embry0.services.slop_meter.history import Commit, login_of_email, parse_log
+from embry0.services.slop_meter.history import HISTORY_VERSION, Commit, login_of_email, parse_log
 from embry0.services.slop_meter.score import Event, Meter, meters, outliers
 from embry0.services.slop_meter.weights import CONFIG_FILES, Weigher, ignore_patterns, outlier_files
 
@@ -230,6 +230,13 @@ class SlopMeterLoop:
             logger.info("slop_meter_history_rewritten", repo=repo, read=done)
             await self._store.forget_history(repo)
             done = 0
+        if int(state.get("history_version") or 1) != HISTORY_VERSION:
+            # Read with an older way of reading a history: read it again.
+            if done:
+                logger.info("slop_meter_history_reread", repo=repo, read=done, version=HISTORY_VERSION)
+                await self._store.forget_history(repo)
+                done = 0
+            await self._store.set_state(repo, history_version=HISTORY_VERSION)
         batch = history[done : done + self._settings.commits_per_tick]
         if batch:
             commits = parse_log(await self._mirror.log(repo, batch))

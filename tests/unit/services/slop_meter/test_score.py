@@ -235,3 +235,27 @@ def test_a_fast_dump_by_one_person_still_reads_as_slop() -> None:
     ]
     meter = meters(parse_log(_log(*dump)), [], {}, Weigher(), {})[""]
     assert meter.score > 0.6
+
+
+def test_a_moved_file_counts_only_the_lines_it_changed() -> None:
+    """git log -M names a rename old => new, or dir/{old => new}/file; the file is the new path."""
+    from embry0.services.slop_meter.history import LOG_ARGS, commit_from
+
+    assert "-M" in LOG_ARGS and "--no-renames" not in LOG_ARGS
+    numstat = "\n".join(
+        [
+            "0\t0\tplatform/{api => leads}/src/Lead.java",
+            "3\t1\told/name.py => new/name.py",
+            "2\t0\t{ => pkg}/x.py",
+            "1\t1\tpkg/{a => }/y.py",
+            "4\t0\tsrc/plain.py",
+        ]
+    )
+    c = commit_from("s", START, "Dev", "dev@example.com", "Move", numstat)
+    assert c.files == (
+        ("platform/leads/src/Lead.java", 0, 0),
+        ("new/name.py", 3, 1),
+        ("pkg/x.py", 2, 0),
+        ("pkg/y.py", 1, 1),
+        ("src/plain.py", 4, 0),
+    )

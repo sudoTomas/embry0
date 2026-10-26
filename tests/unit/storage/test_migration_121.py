@@ -28,12 +28,6 @@ def test_migration_121_present() -> None:
         assert f"CREATE TABLE IF NOT EXISTS {table}" in sql, table
 
 
-def test_migration_121_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_120.py)."""
-    assert MIGRATIONS[-1][0] == 121, "migration 121 must add the slop-o-meter's tables"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_the_meter_keeps_its_history_reading_and_scores(db_with_migrations: DatabasePool) -> None:

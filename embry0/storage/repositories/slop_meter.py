@@ -25,6 +25,7 @@ _STATE_FIELDS = frozenset(
         "computed_at",
         "error",
         "error_at",
+        "history_version",
     }
 )
 
