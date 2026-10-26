@@ -90,6 +90,21 @@ def _tracker_channel_for(self: IssueExecutor, issue: dict[str, Any] | None) -> A
     return channels.get(str(issue.get("tracker") or ""))
 
 
+async def _brief_title(self: Any, job_id: str) -> str:
+    """The job's brief title when its current brief is written, else ``""``; never raises."""
+    db = getattr(self, "_db", None)
+    if db is None:
+        return ""
+    try:
+        from embry0.storage.repositories.job_briefs import JobBriefsRepository
+
+        row = (await JobBriefsRepository(db).current([job_id])).get(job_id)
+    except Exception:
+        logger.warning("job_brief_title_unread", job_id=job_id, exc_info=True)
+        return ""
+    return str((row or {}).get("title") or "").strip()
+
+
 async def _post_tracker_outcome(self: IssueExecutor, issue_id: str | None, job_id: str) -> None:
     """Write-back (#163, née EMB-47): comment the terminal job outcome on the
     issue's originating tracker (Linear, GitLab). No-op unless a channel is
@@ -917,9 +932,12 @@ async def _handle_workflow_result(
             # RAV-1074 gave consumers a clean summary but still nothing to
             # identify the job BY: every notification opened with a job id, so
             # they all read alike and the reader had to open the dashboard to
-            # learn what the job even was. The title a human wrote is the first
-            # line of the task.
-            job_title = job_title_from_task(str(result.get("task") or notify_row.get("task") or ""))
+            # learn what the job even was. Its brief's plain title when one is
+            # written (spec 2026-10-26, job briefs), else the first line of the
+            # task, the title a human wrote.
+            job_title = await _brief_title(self, job_id) or job_title_from_task(
+                str(result.get("task") or notify_row.get("task") or "")
+            )
             self._webhook_notifier.emit_soon(
                 f"job.{final_status}",
                 {
