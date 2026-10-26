@@ -19,6 +19,7 @@ import { RepoDockerAccessSection } from "@/components/repos/RepoDockerAccessSect
 import { ReadinessChip, SetupChecklist } from "@/components/repos/SetupChecklist";
 import { AdvancedSection } from "@/components/repos/AdvancedSection";
 import { HistoryPanel } from "@/components/repos/HistoryPanel";
+import { SlopMeterSection } from "@/components/repos/SlopMeterSection";
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
 import { PullRequestReviewCard } from "@/components/environments/PullRequestReviewCard";
 import { PageError } from "@/components/PageError";
@@ -238,6 +239,8 @@ export function RepoDetailPage() {
       </section>
 
       <HistoryPanel repo={full} />
+
+      <SlopMeterSection repo={full} />
 
       <section className="space-y-2">
         <div className="flex items-center gap-2">

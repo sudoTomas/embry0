@@ -216,6 +216,14 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     if open_prs_block:
         prompt += f"\n\n{open_prs_block}"
 
+    # The Slop-O-Meter (spec 2026-10-26): how sloppy the job's area is, so a
+    # borderline bug-or-slop verdict leans toward slop in a sloppy one.
+    from embry0.services.slop_meter.context import job_meter, meter_sentence
+
+    reading = await job_meter(config, state)
+    if reading is not None:
+        prompt += f"\n\n{meter_sentence(*reading)}"
+
     # EMB-35: the triage instructions ride as a real system prompt (appended
     # to the CLI's preset system block, which its prompt caching covers)
     # instead of being prepended into the user turn and re-billed uncached

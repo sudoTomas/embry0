@@ -402,7 +402,9 @@ async def test_slop_is_cleaned_in_its_dungeon_by_the_slopmaster(app: Any, monkey
     [lead] = world["quests"]
     assert lead["kind"] == "slop" and lead["verb"] == "Clean up" and lead["leader"] == "slopmaster"
     assert lead["creature"] == "slop_ooze" and lead["level"] > 1
-    assert world["dungeons"] == [{"repo": "acme/web", "area": "Billing", "score": 70, "open": 1, "cleaned": 1}]
+    assert world["dungeons"] == [
+        {"repo": "acme/web", "area": "Billing", "score": 70, "open": 1, "cleaned": 1, "meter": None}
+    ]
 
 
 async def test_a_merged_cleanup_is_the_slopmasters_and_earns_its_removed_lines(app: Any) -> None:
@@ -456,3 +458,38 @@ async def test_a_job_without_a_brief_keeps_its_task_s_first_line(app: Any) -> No
     async with await _client(app) as client:
         world = (await client.get("/api/v1/world")).json()
     assert world["inbox"][0]["title"] == "Fix the sender"
+
+
+async def test_a_dungeon_shows_its_slop_o_meter_reading(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Slop-O-Meter (spec 2026-10-26): a scored area has a dungeon with its level, even with no open finding."""
+
+    class Meters:
+        async def scores(self, repo: str | None = None) -> list[dict[str, Any]]:
+            return [
+                {
+                    "repo": "acme/web",
+                    "area": "Billing",
+                    "score": 0.52,
+                    "level": 3,
+                    "name": "Lasagna",
+                    "provisional": False,
+                    "computed_at": NOW,
+                }
+            ]
+
+    async def no_leads(request: Any) -> list[dict[str, Any]]:
+        return []
+
+    app.state.slop_meter_repo = Meters()
+    monkeypatch.setattr(world_api, "_leads", no_leads)
+    async with await _client(app) as client:
+        world = (await client.get("/api/v1/world")).json()
+    [dungeon] = world["dungeons"]
+    assert dungeon["area"] == "Billing" and dungeon["open"] == 0 and dungeon["cleaned"] == 1
+    assert dungeon["meter"] == {
+        "score": 0.52,
+        "level": 3,
+        "name": "Lasagna",
+        "provisional": False,
+        "computed_at": NOW.isoformat(),
+    }

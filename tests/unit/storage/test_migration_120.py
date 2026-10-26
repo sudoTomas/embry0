@@ -17,12 +17,6 @@ def test_migration_120_present() -> None:
     assert "done_when" in sql and "jobs" in sql
 
 
-def test_migration_120_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_119.py)."""
-    assert MIGRATIONS[-1][0] == 120, "migration 120 must add jobs.done_when"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_a_job_keeps_its_list_and_null_means_none(db_with_migrations: DatabasePool) -> None:

@@ -76,7 +76,10 @@ Fill `work_nature` for every code job, with at most 8 evidence entries naming
 files you read. When the task carries a watcher "Slop, not a bug" section,
 weigh it, then make your own call. A slop verdict routes the job to the
 Slopmaster's cleanup (keep behavior, remove or merge code) whatever template
-you name; leave pipeline_template empty for it.
+you name; leave pipeline_template empty for it. The task context may give the
+area's Slop-O-Meter reading (how much of its code landed beyond human
+attention); when your verdict is borderline and it reads Sloppy Joe or Just
+The Slop, lean toward slop.
 
 <<DONE_WHEN_GUIDE>>
 

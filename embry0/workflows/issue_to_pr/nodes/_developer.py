@@ -993,10 +993,15 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         )
     if coding_agent == SLOPMASTER:
         from embry0.services.slop import slop_brief
+        from embry0.services.slop_meter.context import job_meter, meter_sentence
 
         brief = slop_brief(state.get("work_nature"))
         if brief:
             prompt = f"{prompt}\n\n{brief}"
+        # The Slop-O-Meter (spec 2026-10-26): how much of the area landed beyond human attention.
+        reading = await job_meter(config, state)
+        if reading is not None:
+            prompt = f"{prompt}\n\n{meter_sentence(*reading)}"
     # Done when (spec 2026-10-26): the job's finish line, read from its row so
     # a person's edit counts from the next run on, as this run's contract.
     from embry0.services.done_when import contract as done_when_contract
