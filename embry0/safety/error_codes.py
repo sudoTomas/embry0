@@ -134,7 +134,7 @@ class ErrorCode(StrEnum):
     )
 
     # #358 — a turn-cap death must not discard the run
-    DEV_RUN_UNFINISHED = "ERR_DEV_RUN_UNFINISHED"  # the developer hit its turn cap before committing; embry0 committed and pushed its work so it survives, but the change is incomplete and was never self-reviewed. Distinct from DEV_BRANCH_NOT_PUSHED, where nothing reached origin at all.
+    DEV_RUN_UNFINISHED = "ERR_DEV_RUN_UNFINISHED"  # a coding run stopped (its turn cap, any error) before committing; embry0 committed and pushed its work so it survives, but the change is incomplete and was never self-reviewed. Distinct from DEV_BRANCH_NOT_PUSHED, where nothing reached origin at all.
 
     # #356 — the review verdict fails closed
     REVIEW_VERDICT_UNPARSEABLE = "ERR_REVIEW_VERDICT_UNPARSEABLE"  # the review agent ran WITHOUT erroring but emitted no verdict the router acts on (empty output, prose, a fenced block with no `decision` key, an unknown decision string, `null`, truncated JSON). Distinct from MAX_RETRIES (a real `changes_requested` out of retry budget) and from an errored review, which has no output at all.

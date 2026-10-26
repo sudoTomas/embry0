@@ -44,6 +44,12 @@ async def retry_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
     }
 
 
+def _over_budget(state: dict[str, Any]) -> bool:
+    from embry0.orchestration.routing.conditions import check_budget
+
+    return check_budget(state) == "over_budget"
+
+
 async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Max retries reached — pause pipeline and ask user what to do.
 
@@ -58,7 +64,9 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
     exhausted = bool(state.get("agent_questions_exhausted"))
 
     if exhausted:
-        message = "Agent exceeded the ask_user round cap — cannot continue."
+        from embry0.workflows.issue_to_pr.nodes._salvage import pause_note
+
+        message = "Agent exceeded the ask_user round cap — cannot continue." + pause_note(state.get("unfinished_work"))
         reason = "agent_questions_exhausted"
         options = ["merge_as_is", "abandon"] if pr_url else ["abandon"]
     else:
@@ -109,8 +117,14 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
                     job_id=state.get("job_id"),
                     context=state.get("context"),
                 )
+            _kept = state.get("unfinished_work") or {}
+            _who = (
+                f"{_kept.get('agent') or 'developer'} stopped ({_kept['reason']})"
+                if _kept.get("reason")
+                else ("Developer hit its turn cap")
+            )
             message = (
-                "Developer hit its turn cap before committing — embry0 preserved its work"
+                f"{_who[0].upper()}{_who[1:]} before committing — embry0 preserved its work"
                 + (f" on `{_branch}`" if _branch else "")
                 + ". The change is UNFINISHED and was never self-reviewed; continue from that "
                 "branch rather than starting over."
@@ -148,10 +162,25 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             )
         elif arrival_stage == "review_retries_exhausted":
             message = f"Review requested changes and the retry budget is exhausted ({retry_count} attempts)"
+        elif _over_budget(state):
+            # The developer node routes here on a soft budget overrun before
+            # any review runs: "Review failed" was wrong for it.
+            from embry0.orchestration.budget import resolve_job_cap
+
+            message = (
+                f"The job reached its budget (${float(state.get('total_cost_usd') or 0):.2f} of "
+                f"${resolve_job_cap(state):.2f})"
+            )
         elif retry_count:
             message = f"Review failed after {retry_count} attempts"
         else:
             message = f"Pipeline paused at stage {arrival_stage or 'unknown'}"
+        if arrival_stage != "dev_run_unfinished":
+            # Salvage (spec 2026-10-25): a budget or question stop that kept
+            # the coding run's work says where it is.
+            from embry0.workflows.issue_to_pr.nodes._salvage import pause_note
+
+            message += pause_note(state.get("unfinished_work"))
         reason = "max_retries"
         if arrival_stage == "review_toolchain_missing":
             options = ["abandon"]

@@ -1413,6 +1413,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_SANDBOX_EXEC_STALLED` | `docker exec` never read the agent config from stdin; the exec was killed before any agent work. |
 | `ERR_DISPATCH_FAILED` | **API responses only, never `jobs.error_code`.** `POST /issues` (with `auto_triage`) or `POST /issues/{id}/triage` asked for a job and `execute()` raised before a job row existed. Returned as `dispatch_error_code` beside a fixed safe `dispatch_error`; the exception is only logged (#284). |
 | `ERR_DEV_BRANCH_NOT_PUSHED` | Developer finished without pushing the expected branch. |
+| `ERR_DEV_RUN_UNFINISHED` | A coding run stopped (its turn cap, any error) before committing; embry0 committed and pushed what it left as `wip: unfinished — <agent> stopped (<reason>)` so it survives (salvage, `docs/superpowers/specs/2026-10-25-salvage-unfinished-work-design.md`). The job pauses; `continue_retrying` tells the next run to finish that commit, not redo it. |
 | `ERR_AGENT_MAX_TURNS` | An agent hit its `max_turns` cap without finishing (and the decide-now recovery, where one exists, did not rescue it). |
 | `ERR_AGENT_PROCESS_FAILED` | The agent CLI subprocess exited non-zero ("Command failed with exit code N"). The cause is in the run's stored stderr tail — see below. |
 | `ERR_AGENT_IDLE` | The runner's idle watchdog killed an agent that produced no events. |
@@ -1511,7 +1512,10 @@ fleet cap is never outvoted by an LLM's pick. On a crossing:
   `ERR_BUDGET_OVERRUN`.
 - `overrun_mode=soft` records `budget_overrun_usd` on state and lets the
   current node finish; the `check_budget` routing condition then sends the run
-  to `max_retries`, which pauses and asks the operator what to do.
+  to `max_retries`, which pauses, says the job reached its budget, and asks the
+  operator what to do. When the developer run that crossed the cap left work
+  uncommitted, embry0 first commits and pushes it as unfinished (salvage,
+  below), and the pause names the branch.
 
 **An issue→PR-path job can pin itself to `hard`.** `budget_overrun_mode:
 "hard"` on the job row's `pipeline_config` wins over a `soft` fleet mode; any
