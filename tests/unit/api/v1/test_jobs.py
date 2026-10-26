@@ -454,3 +454,80 @@ async def test_create_job_enabled_agent_model_override_passes(app):
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
     assert resp.status_code == 201
+
+
+# ---- job briefs (spec 2026-10-26) ----
+
+
+class FakeJobBriefs:
+    def __init__(self, rows: dict) -> None:
+        self.rows = rows
+
+    async def current(self, job_ids):
+        return {i: self.rows[i] for i in job_ids if i in self.rows}
+
+
+BRIEF_ROW = {
+    "title": "Fix the login bug",
+    "what": "Signing in fails.",
+    "why": "Nobody can work.",
+    "done": "Signing in works. You get a pull request.",
+    "size": "small",
+    "model": "custom/local",
+    "written_at": None,
+}
+
+
+@pytest.mark.asyncio
+async def test_a_job_carries_its_brief_and_its_status_in_words(app):
+    app.state.job_briefs_repo = FakeJobBriefs({"job-test123": BRIEF_ROW})
+    app.state.jobs_repo.get = AsyncMock(
+        return_value={
+            "job_id": "job-test123",
+            "status": "paused",
+            "repo": "owner/repo",
+            "task": "Fix bug",
+            "current_stage": "dev_run_unfinished",
+        }
+    )
+    app.state.jobs_repo.latest_interrupt = AsyncMock(
+        return_value={
+            "type": "interrupt",
+            "reason": "max_retries",
+            "summary": {
+                "options": ["continue_retrying", "abandon"],
+                "budget": {"spent": 9, "cap": 8, "continue_adds": 8},
+            },
+        }
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        job = (await client.get("/api/v1/jobs/job-test123")).json()
+    assert job["brief"]["title"] == "Fix the login bug" and job["brief"]["done"].endswith("You get a pull request.")
+    assert job["status_words"]["headline"] == "Paused: it went over its budget, $9.00 of $8.00."
+    assert job["status_words"]["next"] == "Continue (+$8.00) or stop."
+
+
+@pytest.mark.asyncio
+async def test_a_job_without_a_brief_still_says_what_is_happening(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        job = (await client.get("/api/v1/jobs/job-test123")).json()
+    assert job["brief"] is None
+    assert job["status_words"]["headline"] == "Queued: it starts when a run slot is free."
+
+
+@pytest.mark.asyncio
+async def test_a_list_row_carries_its_brief_title_only_once_written(app):
+    app.state.jobs_repo.list_all = AsyncMock(
+        return_value=(
+            [
+                {"job_id": "job-test123", "status": "pending", "repo": "owner/repo", "task": "Fix bug"},
+                {"job_id": "job-other", "status": "pending", "repo": "owner/repo", "task": "Other"},
+            ],
+            2,
+        )
+    )
+    app.state.job_briefs_repo = FakeJobBriefs({"job-test123": BRIEF_ROW})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        rows = (await client.get("/api/v1/jobs", params={"brief": "true"})).json()["jobs"]
+    assert rows[0]["brief_title"] == "Fix the login bug"
+    assert "brief_title" not in rows[1], "no key at all until the brief is written: the list stays small"

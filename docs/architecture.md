@@ -1364,6 +1364,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 116 | spent account waits: what a paused job waits for when its LLM account is spent with nothing ready to move to (provider, reason, until, mode), read by the account-wait loop that goes on with it ([providers](providers.md#spent-account-waits)) | `jobs.account_wait`, `idx_jobs_account_wait` |
 | 117 | proposal briefs: each owner proposal still asked, in plain words (title, problem, fix, size), written by a model from what embry0 holds about it; a changed proposal gets a new one ([spec](superpowers/specs/2026-10-25-proposal-briefs-design.md)) | `proposal_briefs` |
 | 118 | slop is not a bug: the slopometer's verdict on a code job (nature bug, slop or noise, a slop score, kinds, evidence, and a cleanup's diff counts) and on a watcher finding ([spec](superpowers/specs/2026-10-25-slop-dungeon-design.md)) | `jobs.work_nature`, `healing_cases.work_nature` |
+| 119 | job briefs: each job in plain words (title, what, why, done, size), written by a model from its task and what embry0 knows about it; a changed task or a new prompt gets a new one ([spec](superpowers/specs/2026-10-26-job-briefs-design.md)) | `job_briefs` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

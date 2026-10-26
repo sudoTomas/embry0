@@ -137,6 +137,18 @@ async def _regions(request: Request) -> dict[str, Any]:
     return {"regions": regions, "frontier": frontier}
 
 
+async def _brief_titles(request: Request, job_ids: list[str]) -> dict[str, str]:
+    """Each job's brief title (spec 2026-10-26, job briefs), for the jobs that have a current one."""
+    briefs = getattr(request.app.state, "job_briefs_repo", None)
+    if briefs is None or not job_ids:
+        return {}
+    try:
+        return {job_id: str(row["title"]) for job_id, row in (await briefs.current(job_ids)).items()}
+    except Exception:  # noqa: BLE001 - the hall shows each task's own first line instead
+        logger.warning("job_brief_titles_unread", exc_info=True)
+        return {}
+
+
 @router.get("/world")
 async def read_world(request: Request) -> dict[str, Any]:
     """Everything the guild hall and the map show, read in one go; the parties are always fresh."""
@@ -158,6 +170,7 @@ async def read_world(request: Request) -> dict[str, Any]:
         cache.get("cleaned", lambda: repo.cleaned(days=CLEANED_DAYS)),
     )
     quests = [lead_entry(lead) for lead in leads]
+    titles = await _brief_titles(request, [*ids, *(str(r["job_id"]) for r in [*inbox, *loot])])
     parties = [
         job_entry(
             j,
@@ -168,6 +181,8 @@ async def read_world(request: Request) -> dict[str, Any]:
         )
         for j in jobs
     ]
+    for party in parties:
+        party["title"] = titles.get(str(party["job_id"]), party["title"])
     snapshot = progression.to_dict()
     return {
         "generated_at": _iso(now),
@@ -184,7 +199,7 @@ async def read_world(request: Request) -> dict[str, Any]:
                 "job_id": r["job_id"],
                 "repo": r["repo"],
                 "area": r["area"],
-                "title": quest_title(r["task"]),
+                "title": titles.get(str(r["job_id"])) or quest_title(r["task"]),
                 "outcome": _outcome(r),
                 "leader": r["agent_type"] or "developer",
                 "pr_url": r["pr_url"],
@@ -200,7 +215,7 @@ async def read_world(request: Request) -> dict[str, Any]:
                 "job_id": r["job_id"],
                 "repo": r["repo"],
                 "area": r["area"],
-                "title": quest_title(r["task"]),
+                "title": titles.get(str(r["job_id"])) or quest_title(r["task"]),
                 "pr_url": r["pr_url"],
                 "merged": r["delivery_state"] == "merged",
                 "at": _iso(r["delivery_state_at"] or r["finished_at"]),
@@ -221,6 +236,7 @@ async def read_character(agent_type: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"no character {agent_type}")
     repo = _state(request, "world_repo")
     stats, log = await asyncio.gather(repo.stats(agent_type), repo.quest_log(agent_type))
+    titles = await _brief_titles(request, [str(r["job_id"]) for r in log])
     entry = character_entries([character.to_dict()], [], stats, datetime.now(UTC))[0]
     return {
         **entry,
@@ -229,7 +245,7 @@ async def read_character(agent_type: str, request: Request) -> dict[str, Any]:
                 "job_id": r["job_id"],
                 "repo": r["repo"],
                 "area": r["area"],
-                "title": quest_title(r["task"]),
+                "title": titles.get(str(r["job_id"])) or quest_title(r["task"]),
                 "outcome": _outcome(r),
                 "pr_url": r["pr_url"],
                 "template": r["pipeline_template"],
@@ -291,12 +307,13 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
     quest = await _quest_or_404(request, job_id)
     repo = _state(request, "world_repo")
     verifications = getattr(request.app.state, "job_verifications_repo", None)
-    runs, approval, links, verification, pr = await asyncio.gather(
+    runs, approval, links, verification, pr, titles = await asyncio.gather(
         repo.quest_runs(job_id),
         repo.merge_approval(job_id),
         repo.lead_links([job_id]),
         verifications.get(job_id) if verifications is not None else asyncio.sleep(0, result=None),
         _pr_stats(request, quest.get("pr_url")),
+        _brief_titles(request, [job_id]),
     )
     party: dict[str, dict[str, Any]] = {}
     for run in runs:
@@ -312,7 +329,7 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
         "job_id": job_id,
         "repo": quest.get("repo"),
         "area": quest.get("area"),
-        "title": quest_title(quest.get("task")),
+        "title": titles.get(job_id) or quest_title(quest.get("task")),
         "task": str(quest.get("task") or "")[:4_000],
         "status": quest.get("status"),
         "outcome": _outcome(quest),

@@ -777,6 +777,12 @@ class Embry0Config(BaseSettings):
     proposal_brief_model: Annotated[str, NOT_SECRET] = ""
     proposal_brief_interval_seconds: float = Field(default=60.0, gt=0)
     proposal_briefs_per_tick: int = Field(default=3, ge=1, le=20)
+    # Jobs in plain words (spec 2026-10-26, job briefs): each job's brief is
+    # written on JOB_BRIEF_MODEL, else on the proposal brief model, else on the
+    # watcher's local-first model; with none, no job brief is written.
+    job_brief_model: Annotated[str, NOT_SECRET] = ""
+    job_brief_interval_seconds: float = Field(default=60.0, gt=0)
+    job_briefs_per_tick: int = Field(default=3, ge=1, le=20)
 
     @field_validator(
         "audit_log_path",

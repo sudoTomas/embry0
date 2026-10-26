@@ -511,6 +511,8 @@ each owner proposal's plain-words brief (title, problem, fix, size) unless
 in the background, with thinking off and a JSON answer asked for. With
 neither set, no briefs are written and the feed shows each proposal's
 summary ([proposal briefs](superpowers/specs/2026-10-25-proposal-briefs-design.md)).
+Each job's brief (what it is, why it matters, what done looks like) is
+written the same way, on `JOB_BRIEF_MODEL` when set ([job briefs](superpowers/specs/2026-10-26-job-briefs-design.md)).
 
 **Local-first for the watcher.** `watcher_local_model` in the provider
 settings (`""`, the default, is off) is a `custom/<model>` the watcher's log

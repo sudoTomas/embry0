@@ -48,6 +48,12 @@ describe("JobsTable rows", () => {
     expect(screen.getByText("[watcher] Fix the contacts lookup failing closed")).toBeInTheDocument();
   });
 
+  it("shows a job by its brief's plain title once one is written (job briefs)", () => {
+    renderTable([{ ...issueJob, brief_title: "Fix the contacts lookup so it stops failing closed" } as JobResponse]);
+    expect(screen.getByText("Fix the contacts lookup so it stops failing closed")).toBeInTheDocument();
+    expect(screen.queryByText("[watcher] Fix the contacts lookup failing closed")).toBeNull();
+  });
+
   it("names the area of a monorepo its pull request changes before its title", () => {
     renderTable([{ ...issueJob, area: "Billing" } as JobResponse, issueJob]);
     const [inArea, plain] = screen.getAllByRole("link", { name: /View job/ });

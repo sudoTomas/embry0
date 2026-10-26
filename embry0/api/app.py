@@ -868,6 +868,10 @@ async def _init_app_state(
     from embry0.storage.repositories.proposal_briefs import ProposalBriefsRepository
 
     app.state.proposal_briefs_repo = ProposalBriefsRepository(db)
+    # Job briefs (spec 2026-10-26): each job in plain words, on the same machinery.
+    from embry0.storage.repositories.job_briefs import JobBriefsRepository
+
+    app.state.job_briefs_repo = JobBriefsRepository(db)
 
     # The world (spec 2026-10-25): read-only over jobs, their log, traces and answers, plus the player's ratings.
     from embry0.services.world import WorldCache
@@ -2425,6 +2429,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     brief_task = asyncio.create_task(app.state.proposal_brief_writer.start())
     app.state.background_tasks.add(brief_task)
     brief_task.add_done_callback(app.state.background_tasks.discard)
+
+    # Job briefs (spec 2026-10-26): live jobs first, then the last week's.
+    from embry0.services.job_briefs import JobBriefWriter
+
+    async def job_brief_model() -> str:
+        return str(getattr(config, "job_brief_model", "") or "").strip() or await brief_model()
+
+    app.state.job_brief_writer = JobBriefWriter(
+        store=app.state.job_briefs_repo,
+        model=job_brief_model,
+        resolver=getattr(app.state, "credential_resolver", None),
+        per_tick=config.job_briefs_per_tick,
+        interval_seconds=config.job_brief_interval_seconds,
+    )
+    job_brief_task = asyncio.create_task(app.state.job_brief_writer.start())
+    app.state.background_tasks.add(job_brief_task)
+    job_brief_task.add_done_callback(app.state.background_tasks.discard)
 
     logger.info("embry0_started")
     yield

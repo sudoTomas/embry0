@@ -225,6 +225,22 @@ class JobsRepository:
             return None
         return dict(row)
 
+    async def latest_interrupt(self, job_id: str) -> dict[str, Any] | None:
+        """The job's newest ``interrupt`` event (why it paused or what it asks), or None."""
+        import json as json_mod
+
+        row = await self._db.fetchrow(
+            "SELECT text FROM job_logs WHERE job_id = $1 AND event_type = 'interrupt' ORDER BY id DESC LIMIT 1",
+            job_id,
+        )
+        if row is None:
+            return None
+        try:
+            event = json_mod.loads(row["text"])
+        except (TypeError, ValueError):
+            return None
+        return event if isinstance(event, dict) else None
+
     async def find_by_pr_url(self, pr_url: str, limit: int = 5) -> list[dict[str, Any]]:
         """Jobs that produced (or were linked to) a given PR, newest first.
 

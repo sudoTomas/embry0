@@ -3274,6 +3274,28 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'the watcher''s slopometer verdict on its finding, in the shape of jobs.work_nature; NULL when not classified.';
         """,
     ),
+    (
+        119,
+        "job briefs: what a job is about, why it matters and what done looks like, in plain words (spec 2026-10-26, job briefs)",
+        # One brief per job, written by a model from its task and what embry0
+        # knows about it; input_hash says what it was written from (and the
+        # prompt's version), so a changed task or a new prompt gets a new one.
+        """
+        CREATE TABLE IF NOT EXISTS job_briefs (
+            job_id     TEXT PRIMARY KEY,
+            input_hash TEXT NOT NULL,
+            title      TEXT NOT NULL,
+            what       TEXT NOT NULL,
+            why        TEXT NOT NULL,
+            done       TEXT NOT NULL,
+            size       TEXT NOT NULL CHECK (size IN ('small', 'medium', 'large')),
+            model      TEXT NOT NULL DEFAULT '',
+            written_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        COMMENT ON TABLE job_briefs IS
+            'a job in plain words (title, what, why, done, size), written by a model from the job as input_hash says.';
+        """,
+    ),
 ]
 
 

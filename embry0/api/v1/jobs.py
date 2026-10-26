@@ -266,6 +266,7 @@ def _brief_task(task: str) -> tuple[str, bool]:
 
 @router.get("/jobs")
 async def list_jobs(
+    request: Request,
     status: str | None = None,
     repo: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
@@ -284,7 +285,50 @@ async def list_jobs(
     if brief:
         for item in items:
             item.task, item.task_truncated = _brief_task(item.task)
+    titles = await _brief_titles(request, [item.job_id for item in items])
+    for item in items:
+        item.brief_title = titles.get(item.job_id)
     return JobListResponse(jobs=items, total=total, offset=offset, limit=limit)
+
+
+async def _current_briefs(request: Request, job_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """The job briefs written from the jobs as they are now (spec 2026-10-26); none when they cannot be read."""
+    briefs = getattr(request.app.state, "job_briefs_repo", None)
+    if briefs is None or not job_ids:
+        return {}
+    try:
+        return dict(await briefs.current(job_ids))
+    except Exception:
+        import structlog
+
+        structlog.get_logger(__name__).warning("job_briefs_unread", exc_info=True)
+        return {}
+
+
+async def _brief_titles(request: Request, job_ids: list[str]) -> dict[str, str]:
+    return {job_id: str(row["title"]) for job_id, row in (await _current_briefs(request, job_ids)).items()}
+
+
+async def _brief_and_words(
+    request: Request, jobs: Any, job: dict[str, Any]
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """A job's brief (or None until it is written) and its status in plain words (spec 2026-10-26)."""
+    from embry0.services.job_briefs import brief_view
+    from embry0.services.job_status_words import status_words
+    from embry0.services.world import failure_words
+
+    row = (await _current_briefs(request, [str(job["job_id"])])).get(str(job["job_id"]))
+    interrupt = None
+    if job.get("status") in ("paused", "awaiting_input"):
+        try:
+            found = await jobs.latest_interrupt(str(job["job_id"]))
+            interrupt = found if isinstance(found, dict) else None
+        except Exception:
+            import structlog
+
+            structlog.get_logger(__name__).warning("job_interrupt_unread", job_id=job["job_id"], exc_info=True)
+    failure = failure_words(job.get("error_code"), job.get("error_message")) if job.get("status") == "failed" else None
+    return (brief_view(row) if row else None), status_words(job, interrupt, failure=failure)
 
 
 @router.get("/jobs/{job_id}")
@@ -314,6 +358,7 @@ async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(
 
             structlog.get_logger(__name__).warning("agent_failures_query_failed", job_id=job_id, exc_info=True)
             job["agent_failures"] = []
+    job["brief"], job["status_words"] = await _brief_and_words(request, jobs, job)
     return job
 
 
