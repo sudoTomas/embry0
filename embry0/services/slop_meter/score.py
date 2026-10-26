@@ -138,9 +138,15 @@ def weekly_capacity(
             continue
         neighborhoods[contributor_of(e.login, logins)].append((e.at - timedelta(hours=BASE_NEIGHBORHOOD), e.at))
     total = sum(authored.values())
+    # A small repository has no core team to measure drive-bys against: when
+    # no author reaches CORE_RAMP_START commits, everyone's time counts in
+    # full. Otherwise its every author would count for nothing and all its
+    # code read as slop. This is embry0's departure from the published
+    # algorithm; a repository with a core contributor is scored as written.
+    small = not authored or max(authored.values()) < CORE_RAMP_START
     out: dict[str, dict[date, float]] = {}
     for who, spans in neighborhoods.items():
-        factor = core_factor(authored.get(who, 0), total)
+        factor = 1.0 if small else core_factor(authored.get(who, 0), total)
         if factor <= 0:
             continue
         out[who] = {
@@ -195,13 +201,17 @@ def commit_lines(commit: Commit, weigh: Callable[[str], float]) -> tuple[float, 
 def outliers(commits: Sequence[Commit], weigh: Callable[[str], float], judgments: Mapping[str, bool]) -> list[Outlier]:
     """The top ``⌈4 × age in years⌉`` commits of at least 2,000 net weighted additions, with what is known of them.
 
-    The repository's first two commits are never slop; the rest are what the
-    model judged (``judgments``), or None while not judged.
+    At least one commit is considered, however young the repository. The
+    repository's first two commits are never slop; the rest are what the model
+    judged (``judgments``), or None while not judged.
     """
     if not commits:
         return []
     first, last = commits[0].at, commits[-1].at
-    count = math.ceil(OUTLIERS_PER_YEAR * (last - first) / _YEAR)
+    # At least one: a history that spans no time (one commit, or one day of
+    # commits at one instant) would otherwise judge none, and its first
+    # commit, setup the spec always excuses, would count as slop.
+    count = max(1, math.ceil(OUTLIERS_PER_YEAR * (last - first) / _YEAR))
     nets: list[tuple[float, int, Commit]] = []
     for index, c in enumerate(commits):
         add, delete = commit_lines(c, weigh)

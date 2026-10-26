@@ -136,8 +136,11 @@ def test_a_weekend_slop_project_is_just_the_slop() -> None:
     commits = parse_log(_log(*drop))
     meter = meters(commits, [], {}, Weigher(), {})[""]
     # One outlier is judged for a two-day project, and the first commit is never slop:
-    # its 10,000 lines stay in the cost and leave the excess; the other 40,000 are slop.
-    assert meter.score == pytest.approx(0.8, abs=1e-6) and meter.name == "Just The Slop"
+    # its 10,000 lines stay in the cost and leave the excess; the other 40,000 are slop,
+    # less the 200 lines its five commits' hours attend to. The developer has under 10
+    # commits, so in this small repository their time counts in full (embry0's rule);
+    # the published algorithm counts it for nothing and reads exactly 0.8.
+    assert meter.score == pytest.approx(0.796, abs=1e-3) and meter.name == "Sloppy Joe"
     assert not meter.provisional
 
 
@@ -205,3 +208,30 @@ def test_an_area_has_its_own_lines_and_a_share_of_the_capacity() -> None:
     assert found["api"].score == 0.0, "the api's lines are within its share of the attention"
     assert found["web"].score > found[""].score > 0.0, "the drop landed in web and is diluted across the repository"
     assert found["web"].weeks[-1].lines == pytest.approx(12 * 6 * 10 + 1_500)
+
+
+def test_a_small_repository_counts_everyone_in_full() -> None:
+    """No author reaches 10 commits: nobody is a drive-by, so a small honest repository reads low."""
+    small = [
+        (f"s{i}", START + timedelta(days=i, hours=1), "Dev", "dev@example.com", "Work", [(f"src/f{i}.py", 120, 0)])
+        for i in range(6)
+    ]
+    meter = meters(parse_log(_log(*small)), [], {}, Weigher(), {})[""]
+    assert meter.score < 0.2 and meter.name == "Buttered Noodles"
+
+
+def test_a_one_commit_repository_has_its_setup_excused() -> None:
+    """A history that spans no time still judges one outlier, and a first commit is never slop."""
+    drop = [("only", START, "Dev", "dev@example.com", "Initial import", [("src/app.py", 10_000, 0)])]
+    meter = meters(parse_log(_log(*drop)), [], {}, Weigher(), {})[""]
+    assert meter.score == 0.0 and not meter.provisional
+
+
+def test_a_fast_dump_by_one_person_still_reads_as_slop() -> None:
+    """Counting everyone in full does not excuse 47,000 lines in six days from one person."""
+    dump = [
+        (f"m{i}", START + timedelta(hours=3 * i), "Dev", "dev@example.com", "More", [(f"src/m{i}.py", 1_080, 0)])
+        for i in range(44)
+    ]
+    meter = meters(parse_log(_log(*dump)), [], {}, Weigher(), {})[""]
+    assert meter.score > 0.6
