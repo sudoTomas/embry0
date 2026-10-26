@@ -26,6 +26,7 @@ from typing import Any
 
 from embry0.services.areas import Area, area_of_labels, area_of_logs, area_of_path
 from embry0.services.leads import LEAD_KINDS
+from embry0.services.slop import is_slop, parse_work_nature
 
 KINDS: tuple[str, ...] = ("case", "issue", "finding", *LEAD_KINDS)
 DECISIONS: tuple[str, ...] = ("accept", "decline", "snooze")
@@ -188,17 +189,31 @@ def case_proposal(row: Mapping[str, Any]) -> Proposal:
         details.append(f"Matching log lines: {row['signature']}")
     if row.get("tracker_url"):
         details.append(f"Draft ticket: {row['tracker_url']}")
+    extra: dict[str, Any] = {"severity": severity, "occurrences": seen, "signature": row.get("signature")}
+    # Slop dungeon (spec 2026-10-25): a finding the watcher judged slop reads
+    # as a cleanup, so the owner is not asked to "fix" what is shape, not a bug.
+    verdict = parse_work_nature(row.get("work_nature"))
+    if verdict is not None:
+        extra.update(nature=verdict["nature"], slop_score=verdict["slop_score"], slop_kinds=verdict["kinds"])
+    if is_slop(verdict):
+        kinds = ", ".join(k.replace("_", " ") for k in verdict["kinds"]) if verdict else ""
+        details.insert(0, f"Slop, not a bug: slop score {extra['slop_score']}/100" + (f" ({kinds})" if kinds else ""))
+        summary = f"The watcher found slop in production ({seen}x, {severity}), a cleanup, not a fix: {title}"
+        action = "Run the Slopmaster's cleanup on the draft ticket"
+    else:
+        summary = f"The watcher keeps seeing this in production ({seen}x, {severity}): {title}"
+        action = "Run the fix pipeline on the draft ticket"
     return Proposal(
         id=f"case:{row['id']}",
         kind="case",
         repo=str(row["repo"]),
         title=title,
-        summary=f"The watcher keeps seeing this in production ({seen}x, {severity}): {title}",
+        summary=summary,
         details="\n".join(details),
-        action="Run the fix pipeline on the draft ticket",
+        action=action,
         created_at=row.get("tracked_at") or row.get("detected_at") or row["created_at"],
         url=row.get("tracker_url"),
-        extra={"severity": severity, "occurrences": seen, "signature": row.get("signature")},
+        extra=extra,
     )
 
 

@@ -136,6 +136,12 @@
       "display_name": "Reviewer",
       "tagline": "Guards the gate."
     },
+    "slopmaster": {
+      "avatar": "steel-warrior",
+      "color": "emerald",
+      "display_name": "Slopmaster",
+      "tagline": "Clears the slop, keeps the behavior."
+    },
     "triage": {
       "avatar": "seer",
       "color": "violet",

@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { toast } from "sonner";
 import { toastApiError } from "@/api/errorToast";
 import type { RunWith } from "@/api/runWith";
-import type { QuestScroll as Scroll } from "@/api/world";
+import type { QuestScroll as Scroll, WorkNature } from "@/api/world";
 import { RunWithControl } from "@/components/runwith/RunWithControl";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -94,6 +94,43 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+const NATURE_WORDS: Record<WorkNature["nature"], string> = {
+  bug: "A bug",
+  slop: "Slop, not a bug",
+  noise: "Noise, nothing to do",
+};
+
+/** The slopometer's verdict (spec 2026-10-25, slop dungeon): what the job was judged to be, and what a cleanup removed. */
+function SlopVerdict({ verdict }: { verdict: WorkNature }) {
+  const kinds = verdict.kinds.map((k) => k.replace(/_/g, " ")).join(", ");
+  return (
+    <Section title="Slop or bug">
+      <div className="space-y-1 text-xs text-fg-secondary" data-testid="quest-slop" data-nature={verdict.nature}>
+        <p>
+          <span className="font-semibold text-fg">{NATURE_WORDS[verdict.nature]}</span>: slop score {verdict.slop_score}/100
+          {kinds ? ` (${kinds})` : ""}.
+        </p>
+        {verdict.evidence.length > 0 && (
+          <ul className="list-disc space-y-0.5 pl-4">
+            {verdict.evidence.map((e) => (
+              <li key={`${e.path}-${e.why}`}>
+                <span className="font-mono">{e.path}</span>
+                {e.why ? `: ${e.why}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
+        {verdict.cleanup && (
+          <p data-testid="quest-cleanup">
+            The cleanup adds <span className="text-success">+{verdict.cleanup.added}</span> and removes{" "}
+            <span className="text-destructive">−{verdict.cleanup.removed}</span> lines.
+          </p>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 function ScrollBody({
   quest,
   skillName,
@@ -173,6 +210,8 @@ function ScrollBody({
           )}
         </div>
       )}
+
+      {quest.work_nature && <SlopVerdict verdict={quest.work_nature} />}
 
       <Section title="Report">
         {quest.report ? (

@@ -75,6 +75,9 @@ USER_RETRY_ROUNDS_CAP = _env_cap("USER_RETRY_ROUNDS_CAP", 5)
 DEFAULT_AGENT_MAX_TURNS: dict[str, int] = {
     "triage": 15,
     "developer": 40,
+    # Slop dungeon: the Slopmaster's cleanup runs on the developer node and
+    # gets the developer's budget.
+    "slopmaster": 40,
     "review": 25,
     "qa": 40,
     # RAV-604 non-code agents: research is a bounded read-and-report pass;

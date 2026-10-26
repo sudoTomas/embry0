@@ -30,6 +30,12 @@ logger = structlog.get_logger(__name__)
 # type needs its BUILTIN_SEED row and an entry here.
 GENERIC_AGENT_TYPES: tuple[str, ...] = ("research", "analysis", "ops", *SPECIALIST_AGENT_TYPES)
 
+# The agents that run on the developer node (spec 2026-10-25, slop dungeon):
+# the developer, and the Slopmaster, whose slop-cleanup step is a cleanup on
+# the same branch, push and PR machinery. plan_route records which one a job
+# runs as state["coding_agent"]; the node runs that definition under that type.
+CODING_AGENT_TYPES: tuple[str, ...] = ("developer", "slopmaster")
+
 # Template agent_type → physical LangGraph node. ``qa`` maps to the head of
 # the whole QA chain (init_orchestrator → orchestrate_qa → qa_report →
 # qa_failure_bookkeeping) — one template step, internal edges untouched.
@@ -37,7 +43,7 @@ GENERIC_AGENT_TYPES: tuple[str, ...] = ("research", "analysis", "ops", *SPECIALI
 # here and any custom agent_definitions row) runs on the one generic_agent
 # node, which reads the current route step to know which definition to run.
 AGENT_TYPE_TO_NODE: dict[str, str] = {
-    "developer": "developer",
+    **dict.fromkeys(CODING_AGENT_TYPES, "developer"),
     "reviewer": "review",
     # RAV-1288: the runtime spelling is valid template vocabulary too.
     "review": "review",
@@ -116,7 +122,7 @@ def _step_target(step: dict[str, Any]) -> str:
     and runs on generic_agent (spec 3.5).
     """
     mapping = {
-        "developer": "developer",
+        **dict.fromkeys(CODING_AGENT_TYPES, "developer"),
         "reviewer": "review",
         "review": "review",
         "qa": "qa",
@@ -236,12 +242,22 @@ def cursor_at(state: dict[str, Any], agent_type: str) -> int:
     Used by re-entry paths (QA-failure retry_developer / rerun_qa) that jump
     the graph to a specific node: the cursor must point back AT that step so
     forward progression resumes from there instead of continuing past the
-    stale position.
+    stale position. ``"developer"`` finds any coding step (CODING_AGENT_TYPES):
+    a slop-cleanup route's is the Slopmaster's.
     """
+    wanted = CODING_AGENT_TYPES if agent_type == "developer" else (agent_type,)
     for i, step in enumerate(state.get("route_plan") or []):
-        if step.get("agent_type") == agent_type:
+        if step.get("agent_type") in wanted:
             return i
     return 0
+
+
+def coding_agent_of(plan: list[dict[str, Any]]) -> str:
+    """The agent a route's coding step runs as: the Slopmaster on a slop-cleanup route, else the developer."""
+    for step in plan:
+        if step.get("agent_type") in CODING_AGENT_TYPES:
+            return str(step["agent_type"])
+    return "developer"
 
 
 def advance(state: dict[str, Any]) -> dict[str, Any]:

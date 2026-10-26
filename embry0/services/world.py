@@ -15,6 +15,7 @@ and what a finished quest earned.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
@@ -25,6 +26,7 @@ from typing import Any
 from embry0.orchestration import dispatch_actors
 from embry0.services.progression import OUTCOME_XP, price
 from embry0.services.proposals import ACTOR as PROPOSALS_ACTOR
+from embry0.services.slop import SLOP_TEMPLATE, SLOPMASTER
 from embry0.storage.repositories.progression import ProgressEvent
 
 #: How long a party that finished stays out, walking home, before it is back in the hall.
@@ -37,6 +39,8 @@ IDLE_DAYS = 14
 INBOX_DAYS = 14
 #: How far back the loot chest looks.
 LOOT_DAYS = 7
+#: How far back a Slop Dungeon counts the cleanups merged in it.
+CLEANED_DAYS = 30
 #: Service actors that act for a person: their finished jobs are the player's quests too.
 PLAYER_ACTORS: tuple[str, ...] = (dispatch_actors.MASTER_KEY, PROPOSALS_ACTOR)
 #: The highest level a lead or a character reaches.
@@ -66,8 +70,14 @@ LEAD_KINDS: dict[str, LeadKind] = {
     "alert": LeadKind("Attack", "alert_wyrm", "developer"),
     "flaky": LeadKind("Attack", "flaky_imp", "developer"),
     "review": LeadKind("Talk", "review_ghost", "developer"),
+    # Slop dungeon (spec 2026-10-25): a finding judged slop, not a bug. It is
+    # cleaned, not fought, and the Slopmaster leads it.
+    "slop": LeadKind("Clean up", "slop_ooze", SLOPMASTER),
 }
 UNKNOWN_KIND = LeadKind("Investigate", "mystery", "developer")
+#: Creatures the art manifest has no sheet for yet: the map draws each as its original
+#: pixel glyph (frontend CreatureIcon's GLYPHS), and the art guard checks the glyph exists.
+GLYPH_CREATURES: frozenset[str] = frozenset({"slop_ooze"})
 
 _SEVERITY = {"critical": 4, "high": 3, "medium": 2, "low": 1, "misleads": 2, "dead": 1, "drift": 1}
 _BASE_LEVEL = {"finding": 9, "ci": 45, "alert": 40, "flaky": 30, "review": 12}
@@ -90,6 +100,7 @@ LEADER_BY_TEMPLATE: dict[str, str] = {
     "design-audit": "design-auditor",
     "context-audit": "context-auditor",
     "map-areas": "area-mapper",
+    SLOP_TEMPLATE: SLOPMASTER,
 }
 
 #: The template a quest the player writes for a character runs: its own, or None for the
@@ -144,10 +155,17 @@ def lead_level(lead: Mapping[str, Any]) -> int:
 
 
 def lead_entry(proposal: Mapping[str, Any]) -> dict[str, Any]:
-    """A proposal as the quest board shows it: its level, the verb that sends a party, and who leads it."""
-    kind = lead_kind(str(proposal.get("kind") or ""))
+    """A proposal as the quest board shows it: its level, the verb that sends a party, and who leads it.
+
+    A proposal judged slop is a ``slop`` lead whatever it came from: the
+    world draws it in its Slop Dungeon and the Slopmaster cleans it. Its level
+    still reads from what it came from.
+    """
+    slop = proposal.get("nature") == "slop"
+    kind = lead_kind("slop" if slop else str(proposal.get("kind") or ""))
     return {
         **proposal,
+        **({"kind": "slop"} if slop else {}),
         "level": lead_level(proposal),
         "verb": kind.verb,
         "creature": kind.creature,
@@ -416,12 +434,18 @@ def quest_xp(job: Mapping[str, Any], runs: Iterable[Mapping[str, Any]]) -> list[
         for r in runs
         if r.get("agent_type") and not r.get("error_code") and r.get("result") == "success"
     ]
+    # A slop cleanup's pull request is the Slopmaster's, and its merge earns
+    # the code it removed (spec 2026-10-25, slop dungeon).
+    coder = SLOPMASTER if job.get("pipeline_template") == SLOP_TEMPLATE else "developer"
     if job.get("pr_url"):
-        events.append(ProgressEvent("opened", "developer", at))
+        events.append(ProgressEvent("opened", coder, at))
     if job.get("status") == "pr_merged" or job.get("delivery_state") == "merged":
-        events.append(ProgressEvent("merged", "developer", at))
+        events.append(ProgressEvent("merged", coder, at))
+        cleanup = (job.get("work_nature") or {}).get("cleanup") if coder == SLOPMASTER else None
+        if isinstance(cleanup, Mapping):
+            events.append(ProgressEvent("cleaned", SLOPMASTER, at, json.dumps(dict(cleanup))))
     for event in events:
-        if event.source != "run" and event.source not in OUTCOME_XP:
+        if event.source not in ("run", "cleaned") and event.source not in OUTCOME_XP:
             continue
         for stat, xp in price(event):
             key = (str(event.agent_type), stat)

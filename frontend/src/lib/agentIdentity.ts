@@ -49,6 +49,7 @@ export const BUILTIN_IDENTITY: Record<string, BuiltinIdentity> = {
   qa: { avatar: "alchemist", color: "emerald", display_name: "QA", tagline: "Proves it in the vessel." },
   research: { avatar: "scholar", color: "gold", display_name: "Research", tagline: "Reads everything first." },
   review: { avatar: "warden", color: "rose", display_name: "Reviewer", tagline: "Guards the gate." },
+  slopmaster: { avatar: "steel-warrior", color: "emerald", display_name: "Slopmaster", tagline: "Clears the slop, keeps the behavior." },
   triage: { avatar: "seer", color: "violet", display_name: "Triage", tagline: "Reads the issue, sets the course." },
   why: { avatar: "mystic", color: "violet", display_name: "Why", tagline: "Finds the forces that shaped the code." },
 };

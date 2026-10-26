@@ -79,6 +79,18 @@ LIMIT $2
 """
 
 
+# Slop dungeon (spec 2026-10-25): the slop cleanups merged in the last ``$1``
+# days, by repository and area — what each Slop Dungeon's ``cleaned`` counts.
+_CLEANED_SQL = """
+SELECT repo, area, COUNT(*) AS cleaned
+FROM jobs
+WHERE pipeline_template = 'slop-cleanup' AND repo IS NOT NULL
+  AND (status = 'pr_merged' OR delivery_state = 'merged')
+  AND COALESCE(delivery_state_at, finished_at, created_at) > NOW() - make_interval(days => $1)
+GROUP BY repo, area
+"""
+
+
 _LAST_EVENT_SQL = """
 SELECT job_id, MAX(created_at) AS at FROM job_logs WHERE job_id = ANY($1::text[]) GROUP BY job_id
 """
@@ -125,7 +137,7 @@ GROUP BY q.agent_type
 _QUEST_SQL = """
 SELECT j.job_id, j.repo, j.area, j.task, j.status, j.delivery_state, j.delivery_state_at, j.pr_url,
        j.pipeline_template, j.job_kind, j.created_at, j.started_at, j.finished_at, j.error_code, j.error_message,
-       j.total_cost_usd, j.result_summary, j.dispatched_by, j.issue_id, j.account_wait,
+       j.total_cost_usd, j.result_summary, j.dispatched_by, j.issue_id, j.account_wait, j.work_nature,
        r.rating, r.verdict, r.note, r.followup_job_id, r.rated_by, r.rated_at
 FROM jobs j LEFT JOIN job_ratings r ON r.job_id = j.job_id
 WHERE j.job_id = $1
@@ -216,6 +228,11 @@ class WorldRepository:
 
     async def loot(self, *, days: int, limit: int = 30) -> list[dict[str, Any]]:
         return [dict(r) for r in await self._db.fetch(_LOOT_SQL, days, limit)]
+
+    async def cleaned(self, *, days: int) -> dict[tuple[str, str | None], int]:
+        """The slop cleanups merged in the last ``days``, by (repository, area)."""
+        rows = await self._db.fetch(_CLEANED_SQL, days)
+        return {(str(r["repo"]), r["area"] or None): int(r["cleaned"] or 0) for r in rows}
 
     async def last_event_at(self, job_ids: list[str]) -> dict[str, Any]:
         """When each job last wrote to its event log: a party silent too long is stuck."""

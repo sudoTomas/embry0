@@ -31,6 +31,8 @@ _TIERS = {
 _EVERY_AGENT_TYPE = (
     "triage",
     "developer",
+    # The slop cleanup, on the developer node.
+    "slopmaster",
     "review",
     "qa",
     "analysis",

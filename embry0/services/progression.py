@@ -17,6 +17,7 @@ skill packs.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import time
 from bisect import bisect_right
@@ -28,6 +29,7 @@ from typing import Any, Protocol
 from embry0.execution.skill_actions import actions_from_tools
 from embry0.services.context_audit import report_counts
 from embry0.services.quests import Reward, evaluate_diaries, evaluate_quests, quest_rewards
+from embry0.services.slop import cleaned_xp
 from embry0.storage.repositories.progression import Fact, Journal, ProgressEvent
 
 MAX_LEVEL = 99
@@ -175,6 +177,14 @@ def price(event: ProgressEvent) -> list[tuple[str, int]]:
         if outcome is not None:
             gains[outcome[0]] = gains.get(outcome[0], 0) + outcome[1]
         return list(gains.items())
+    if event.source == "cleaned":
+        # Slop dungeon: a merged cleanup earns per net line it removed (its report holds the counts).
+        try:
+            counts = json.loads(event.report or "{}")
+        except ValueError:
+            counts = {}
+        counts = counts if isinstance(counts, dict) else {}
+        return [("coding", cleaned_xp(counts.get("added"), counts.get("removed")))]
     if event.source not in OUTCOME_XP:
         return []
     stat, xp = OUTCOME_XP[event.source]

@@ -181,3 +181,28 @@ describe("QuestScroll review bar", () => {
     expect(onDone).toHaveBeenCalledOnce();
   });
 });
+
+describe("QuestScroll slop verdict", () => {
+  it("says the job was slop, not a bug, and what the cleanup removed", () => {
+    renderScroll({
+      ...SCROLL,
+      work_nature: {
+        nature: "slop",
+        slop_score: 72,
+        kinds: ["symptom_patch", "duplication"],
+        evidence: [{ path: "svc/outbox.py", why: "three retry wrappers around one insert" }],
+        cleanup: { added: 12, removed: 140 },
+      },
+    });
+    const verdict = screen.getByTestId("quest-slop");
+    expect(verdict).toHaveAttribute("data-nature", "slop");
+    expect(verdict).toHaveTextContent("Slop, not a bug: slop score 72/100 (symptom patch, duplication).");
+    expect(verdict).toHaveTextContent("svc/outbox.py: three retry wrappers around one insert");
+    expect(screen.getByTestId("quest-cleanup")).toHaveTextContent("adds +12 and removes −140 lines");
+  });
+
+  it("shows nothing for a job nobody classified", () => {
+    renderScroll(SCROLL);
+    expect(screen.queryByTestId("quest-slop")).toBeNull();
+  });
+});

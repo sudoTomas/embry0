@@ -133,6 +133,42 @@ const GLYPHS: Record<string, { rows: string[]; colours: Record<string, string> }
     ],
     colours: { w: "#dfe6e9", k: "#2d3436" },
   },
+  // A dripping green ooze with two eyes: slop, not a bug (spec 2026-10-25, slop dungeon).
+  slop_ooze: {
+    rows: [
+      "............",
+      "............",
+      "....gggg....",
+      "...gggggg...",
+      "..gwkggwkg..",
+      "..gggggggg..",
+      ".gggllgggg..",
+      ".gggggggggg.",
+      "gggggggggggg",
+      "g.gg.ggg.g.g",
+      "g..g..g....g",
+      "...d......d.",
+    ],
+    colours: { g: "#7fb800", l: "#b6e35a", w: "#ffffff", k: "#1d2b06", d: "#5e8a00" },
+  },
+  // A cave mouth with ooze running out of it: a Slop Dungeon on the map.
+  slop_dungeon: {
+    rows: [
+      "....ssss....",
+      "..ssssssss..",
+      ".sssskksss..",
+      ".sskkkkkkss.",
+      "sskkkkkkkkss",
+      "sskkkggkkkss",
+      "sskkggggkkss",
+      "sskggggggkss",
+      "sssgggggggss",
+      "ssggggggggss",
+      ".gggggggggg.",
+      "gggg.gg.gggg",
+    ],
+    colours: { s: "#6d6a63", k: "#141210", g: "#7fb800" },
+  },
   mystery: {
     rows: [
       "....yyyy....",

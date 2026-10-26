@@ -131,6 +131,23 @@ def _configured_base_branch(state: dict[str, Any]) -> str | None:
     return str(configured) if configured else None
 
 
+def _slop_review_section(state: dict[str, Any]) -> str:
+    """What the reviewer checks of a slop cleanup (spec 2026-10-25, slop dungeon); '' for any other change.
+
+    Placed before the JSON contract, so a resumed review's delta prompt
+    (which keeps only the contract) does not resend it.
+    """
+    from embry0.services.slop import SLOP_REVIEW_GUIDE, SLOPMASTER
+
+    if state.get("coding_agent") != SLOPMASTER:
+        return ""
+    section = SLOP_REVIEW_GUIDE
+    cleanup = (state.get("work_nature") or {}).get("cleanup")
+    if isinstance(cleanup, dict) and {"added", "removed"} <= cleanup.keys():
+        section += f"\nThe branch adds {cleanup['added']} lines and removes {cleanup['removed']} against its base."
+    return section + "\n"
+
+
 async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[str] | dict[str, Any]:
     """Run review agent — tests, lint, typecheck, code review.
 
@@ -224,12 +241,13 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[
     task_block, failure_step, failure_verdict_field = format_review_task(
         state, failure_step_number=8 if overlap_step else 7
     )
+    slop_section = _slop_review_section(state)
 
     prompt = f"""Repository: {repo}
 Branch: {branch}
 PR: {pr_url or "N/A"}
 
-{task_block}{scope_block}{open_prs_section}
+{task_block}{scope_block}{open_prs_section}{slop_section}
 You are reviewing code changes made by the developer agent against the task above. Your job:
 
 1. Run the tests that cover the change — the test files the diff touches and the tests of

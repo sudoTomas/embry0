@@ -149,3 +149,41 @@ async def compute_changed_files_via_diff(
         n_files=len(files),
     )
     return files
+
+
+def parse_numstat(raw: str) -> tuple[int, int]:
+    """``git diff --numstat`` output → (lines added, lines removed); binary files ("-") count as nothing."""
+    added = removed = 0
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        if parts[0].isdigit():
+            added += int(parts[0])
+        if parts[1].isdigit():
+            removed += int(parts[1])
+    return added, removed
+
+
+async def diff_line_counts(*, docker: Any, container_id: str, base_branch: str) -> dict[str, int] | None:
+    """The branch's own change against its base, in lines: ``{"added", "removed"}``, or None when unknown.
+
+    Same merge-base diff as :func:`compute_changed_files_via_diff` (three
+    dots), counted with ``--numstat``. Read for a slop cleanup, whose worth is
+    the code it removed (spec 2026-10-25, slop dungeon). Best-effort: any
+    failure is None, logged at WARNING.
+    """
+    if not _BRANCH_RE.match(base_branch or ""):
+        return None
+    base = shlex.quote(base_branch)
+    shell = (
+        f"cd /workspace && git fetch origin {base}:refs/remotes/origin/{base} --depth=50 >/dev/null 2>&1; "
+        f"git diff --numstat origin/{base}...HEAD"
+    )
+    try:
+        raw = await docker.run_cmd(docker.build_exec_cmd(container_id, ["bash", "-c", shell]), timeout=60)
+    except Exception as exc:  # noqa: BLE001 - the count is a bonus, never a failure
+        logger.warning("workspace_diff_numstat_failed", base_branch=base_branch, error=str(exc))
+        return None
+    added, removed = parse_numstat(raw.decode() if isinstance(raw, bytes) else str(raw or ""))
+    return {"added": added, "removed": removed}

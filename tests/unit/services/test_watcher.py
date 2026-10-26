@@ -637,7 +637,34 @@ def test_parse_line_format_basic():
         "severity": "high",
         "body": "## Evidence\nboom",
         "fingerprint_hint": None,
+        "work_nature": None,
     }
+
+
+def test_a_slop_proposal_carries_its_verdict_and_its_ticket_says_so():
+    """Slop dungeon (spec 2026-10-25): the NATURE:/SLOP_* lines become the proposal's verdict."""
+    from embry0.services.slop import ticket_section
+
+    p = parse_proposal(
+        "TITLE: Clean up the outbox retry wrappers\nSEVERITY: medium\nNATURE: slop\nSLOP_SCORE: 72\n"
+        "SLOP_KINDS: symptom_patch\nSLOP_EVIDENCE: svc/outbox.py | three retry wrappers around one insert\n"
+        "BODY:\n## Evidence\nboom"
+    )
+    assert p is not None and p["work_nature"] == {
+        "nature": "slop",
+        "slop_score": 72,
+        "kinds": ["symptom_patch"],
+        "evidence": [{"path": "svc/outbox.py", "why": "three retry wrappers around one insert"}],
+    }
+    assert ticket_section(p["work_nature"]).startswith("## Slop, not a bug")
+
+
+def test_a_proposal_its_verdict_calls_noise_files_nothing():
+    from embry0.services.watcher import parse_verdict
+
+    verdict = parse_verdict("TITLE: Fix the 404s\nSEVERITY: low\nNATURE: noise\nRATIONALE: handled 404s\nBODY:\nx")
+    assert verdict["kind"] == "no_issue" and verdict["proposal"] is None
+    assert verdict["rationale"] == "handled 404s"
 
 
 def test_parse_line_format_body_with_json_and_fences_survives_verbatim():

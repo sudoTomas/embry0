@@ -14,7 +14,7 @@ from embry0.storage.database import DatabasePool
 
 _CASES_SQL = """
 SELECT c.id, c.repo, c.title, c.severity, c.signature, c.occurrence_count, c.tracker_url,
-       c.detected_at, c.tracked_at, c.created_at
+       c.detected_at, c.tracked_at, c.created_at, c.work_nature
 FROM healing_cases c
 WHERE c.origin = 'watcher' AND c.stage = 'tracked'
   AND (c.tracker_key IS NOT NULL OR c.issue_id IS NOT NULL)
