@@ -531,3 +531,36 @@ async def test_a_list_row_carries_its_brief_title_only_once_written(app):
         rows = (await client.get("/api/v1/jobs", params={"brief": "true"})).json()["jobs"]
     assert rows[0]["brief_title"] == "Fix the login bug"
     assert "brief_title" not in rows[1], "no key at all until the brief is written: the list stays small"
+
+
+# Done when (spec 2026-10-26): a person replaces a job's finish line.
+
+_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
+
+
+@pytest.mark.asyncio
+async def test_a_person_replaces_a_live_job_s_done_when_list(app):
+    transport = ASGITransport(app=app)
+    body = {
+        "items": [{"done": "The cause is written down", "shown_by": "a PR section"}, {"done": "No new warnings"}],
+        "out_of_scope": ["Deploy tooling"],
+    }
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put("/api/v1/jobs/job-test123/done-when", json=body, headers=_HEADERS)
+    assert resp.status_code == 200
+    listed = resp.json()
+    assert listed["source"] == "person" and listed["edited_by"] and listed["report"] is None
+    assert [i["id"] for i in listed["items"]] == ["d1", "d2"]
+    assert listed["items"][1] == {"id": "d2", "done": "No new warnings", "shown_by": ""}
+    app.state.jobs_repo.update.assert_awaited_with("job-test123", done_when=listed)
+
+
+@pytest.mark.asyncio
+async def test_a_finished_job_s_list_is_not_edited_and_an_empty_list_is_refused(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        empty = await client.put("/api/v1/jobs/job-test123/done-when", json={"items": []}, headers=_HEADERS)
+        app.state.jobs_repo.get.return_value = {**app.state.jobs_repo.get.return_value, "status": "completed"}
+        done = await client.put("/api/v1/jobs/job-test123/done-when", json={"items": [{"done": "x"}]}, headers=_HEADERS)
+    assert empty.status_code == 422
+    assert done.status_code == 409

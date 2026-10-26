@@ -83,11 +83,19 @@ def format_review_task(state: dict[str, Any], *, failure_step_number: int = 7) -
         task += "\n… [task truncated]"
     criteria = redact_bounded(acceptance_criteria_in(raw_task), REVIEW_TASK_CHARS_CAP // 3)
     parts = [f"Task the developer was given:\n{task or '(none recorded)'}"]
-    parts.append(
-        f"Acceptance criteria:\n{criteria}"
-        if criteria
-        else 'Acceptance criteria: none stated — derive what "done" means from the task.'
-    )
+    # Done when (spec 2026-10-26): the job's own finish line, with the
+    # developer's report on it, replaces the ticket's criteria section.
+    from embry0.services.done_when import review_block
+
+    finish_line = redact_bounded(review_block(state.get("done_when")), REVIEW_TASK_CHARS_CAP // 2)
+    if finish_line:
+        parts.append(finish_line)
+    else:
+        parts.append(
+            f"Acceptance criteria:\n{criteria}"
+            if criteria
+            else 'Acceptance criteria: none stated — derive what "done" means from the task.'
+        )
     evidence_block = format_evidence_block(state.get("case_evidence"))
     if not evidence_block:
         return "\n\n".join(parts) + "\n", "", ""

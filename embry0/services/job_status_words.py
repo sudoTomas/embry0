@@ -19,6 +19,7 @@ _STAGE_WORDS: dict[str, str] = {
     "plan_route": "Planning: the task is being read and the way to run it chosen.",
     "developer": "Working: the developer is writing the change.",
     "developer_retry": "Working again: the developer is addressing the review.",
+    "developer_done_when_retry": "Working again: the developer is finishing the done-when items it had not met.",
     "review": "Checking: the reviewer is reviewing the change.",
     "qa": "Testing: QA is trying the change.",
     "orchestrate_qa": "Testing: QA is trying the change.",
@@ -36,6 +37,7 @@ _PAUSE_WORDS: dict[str, str] = {
     "review_unparseable": "the review gave no verdict embry0 can act on.",
     "review_toolchain_missing": "the sandbox has no compiler or test runner, so the review could not run the tests.",
     "review_retries_exhausted": "the reviewer still asked for changes after every retry.",
+    "done_when_unmet": "the branch is pushed, but items of its done-when list are still not met after a retry.",
 }
 
 _OPTION_WORDS = {"continue_retrying": "continue", "merge_as_is": "merge it as it is", "abandon": "stop"}

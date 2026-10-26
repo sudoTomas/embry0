@@ -102,6 +102,7 @@ class TriageDecision(TypedDict, total=False):
     reasoning: str
     duplicate_of_pr: dict[str, Any] | None  # RAV-1079: {pr_number, reason} when the task duplicates an open PR
     work_nature: dict[str, Any] | None  # slop dungeon: the slopometer's verdict (embry0.services.slop)
+    done_when: dict[str, Any] | None  # done when: the finish line of a code job (embry0.services.done_when)
 
 
 class AgentOutputEntry(TypedDict, total=False):
@@ -218,6 +219,11 @@ class TriageDecisionModel(BaseModel):
     # parsed leniently by plan_route (embry0.services.slop.parse_work_nature):
     # a malformed verdict is dropped, never job-terminal.
     work_nature: Any = None
+    # Done when (spec 2026-10-26): the finish line triage drafts for a code
+    # job, loose here and parsed leniently by plan_route
+    # (embry0.services.done_when.resolve): a malformed list falls back to the
+    # ticket's acceptance criteria, never job-terminal.
+    done_when: Any = None
     # RAV-1079: optional duplicate-PR flag. Only meaningful when the user
     # turn carried an "Existing OPEN pull requests" list; triage_node
     # validates pr_number against that list (state["open_prs"]) and ends the
@@ -475,6 +481,12 @@ class JobState(TypedDict, total=False):
     # LangGraph's merge reducer silently drops undeclared keys.
     work_nature: Annotated[dict[str, Any] | None, FoldingLastValue]
     coding_agent: Annotated[str | None, FoldingLastValue]
+    # Done when (spec 2026-10-26): the finish line (embry0.services.done_when)
+    # with the coding run's report on it, the one-shot instructions of its
+    # retry, and how many retries the check sent (one per job).
+    done_when: Annotated[dict[str, Any] | None, FoldingLastValue]
+    done_when_followup: Annotated[str | None, FoldingLastValue]
+    done_when_retries: Annotated[int, max_value]
     route_plan: Annotated[list[dict[str, Any]], FoldingLastValue]
     route_cursor: Annotated[int, last_value]
     route_template_name: Annotated[str | None, FoldingLastValue]

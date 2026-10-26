@@ -3296,6 +3296,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'a job in plain words (title, what, why, done, size), written by a model from the job as input_hash says.';
         """,
     ),
+    (
+        120,
+        "done when: the finish line a code job works to (spec 2026-10-26, done when)",
+        # Triage drafts it, a person may replace it, and the coding run's
+        # report on it is kept with it. NULL: the job has no list.
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS done_when JSONB;
+        COMMENT ON COLUMN jobs.done_when IS
+            'the finish line a code job works to: {items [{id, done, shown_by}], out_of_scope, source triage|ticket|person, edited_by, edited_at, report {items [{id, met, evidence}], unmet, reported, checked_at}}; NULL when the job has none.';
+        """,
+    ),
 ]
 
 

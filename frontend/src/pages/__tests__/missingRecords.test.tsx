@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({ jobError: null as unknown, issueError: null as
 const useJobLogs = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/useJobs", () => ({
+  useUpdateDoneWhen: () => ({ mutateAsync: vi.fn() }),
   useJob: () => ({
     data: undefined,
     isLoading: state.jobError === null,

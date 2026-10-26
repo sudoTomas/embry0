@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@/hooks/useJobs", () => ({
+  useUpdateDoneWhen: () => ({ mutateAsync: vi.fn() }),
   useJob: () => ({ data: state.job, isLoading: false, isError: false, refetch: state.refetch }),
 }));
 vi.mock("@/hooks/useJobLogs", () => ({

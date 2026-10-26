@@ -708,6 +708,20 @@ async def _after_spent_account(
     return None
 
 
+def _done_when_pacing(state: dict[str, Any], agent_type: str, max_turns: int) -> str:
+    """The turn-budget note's pacing for a coding run working to a done-when list (spec 2026-10-26).
+
+    Only the job's coding step (the developer, or the Slopmaster on a cleanup
+    route) gets it, and only when the job has a list.
+    """
+    from embry0.services.done_when import items_of, pacing_line
+
+    coding = {"developer", str(state.get("coding_agent") or "developer")}
+    if agent_type not in coding or not items_of(state.get("done_when")):
+        return ""
+    return " " + pacing_line(max_turns)
+
+
 async def run_agent_node(
     state: dict[str, Any],
     agent_runner: Any,
@@ -995,6 +1009,7 @@ async def run_agent_node(
                 "emit the required final output (decision / verdict / report). If the budget nears exhaustion "
                 "before your investigation feels complete, decide from what you already know — a final "
                 "output on partial evidence beats hitting the turn cap with none."
+                + _done_when_pacing(state, agent_type, invocation.max_turns)
             ),
         )
 

@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { JobResponse } from "@/lib/types";
 
 const job = vi.hoisted(() => ({ current: null as unknown }));
-vi.mock("@/hooks/useJobs", () => ({ useJob: () => ({ data: job.current, isLoading: false, isError: false, refetch: vi.fn() }) }));
+vi.mock("@/hooks/useJobs", () => ({ useUpdateDoneWhen: () => ({ mutateAsync: vi.fn() }), useJob: () => ({ data: job.current, isLoading: false, isError: false, refetch: vi.fn() }) }));
 vi.mock("@/hooks/useInputs", () => ({ useJobInputs: () => ({ data: [], refetch: vi.fn() }) }));
 vi.mock("@/hooks/useTraces", () => ({ useTraces: () => ({ data: { traces: [], total: 0 } }) }));
 vi.mock("@/hooks/useQaResults", () => ({ useQaAttempts: () => ({ data: [] }), useQaServices: () => ({ data: [] }) }));

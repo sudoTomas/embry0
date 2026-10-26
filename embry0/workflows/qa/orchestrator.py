@@ -1013,6 +1013,22 @@ async def _qa_orchestrator_node_impl(
             job_id=state.get("job_id"),
             n_criteria=len(override_criteria),
         )
+    else:
+        # Done when (spec 2026-10-26): with no criteria of triage's own, QA
+        # also checks the job's finish line, after each app's own criteria.
+        from embry0.services.done_when import qa_criteria
+
+        finish_line = qa_criteria(state.get("done_when"))
+        if finish_line:
+            resolved_configs = [
+                replace(
+                    rc,
+                    acceptance_criteria=list(rc.acceptance_criteria)
+                    + [c for c in finish_line if c not in rc.acceptance_criteria],
+                )
+                for rc in resolved_configs
+            ]
+            logger.info("qa_acceptance_criteria_done_when", job_id=state.get("job_id"), n_criteria=len(finish_line))
 
     # 4c. EMB-39: append fired conditional criteria AFTER the 4b replace.
     # The relevance gate is the orchestrator's decision, not the caller's —

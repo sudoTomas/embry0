@@ -427,6 +427,16 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
 
     # Mirror onto the job row for dashboard filtering — best-effort.
     jobs_repo = config["configurable"].get("jobs_repo")
+
+    # Done when (spec 2026-10-26): a code job's finish line — triage's list,
+    # else the ticket's acceptance criteria, else none. A list a person set
+    # on the job (an early edit is on the row before triage runs) wins.
+    done_when = None
+    if effective_kind == "code":
+        from embry0.services.done_when import person_list, resolve
+
+        done_when = await person_list(jobs_repo, str(state.get("job_id") or ""), state.get("done_when"))
+        done_when = done_when or resolve(decision.get("done_when"), str(state.get("task") or ""))
     if jobs_repo is not None:
         try:
             await jobs_repo.update(
@@ -434,6 +444,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
                 job_kind=effective_kind,
                 **({"pipeline_template": resolved_name} if resolved_name else {}),
                 **({"work_nature": work_nature} if work_nature is not None else {}),
+                **({"done_when": done_when} if done_when is not None else {}),
             )
         except Exception:
             logger.warning("plan_route_job_row_update_failed", job_id=state.get("job_id"), exc_info=True)
@@ -476,6 +487,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
         "route_template_name": resolved_name,
         "work_nature": work_nature,
         "coding_agent": coding_agent_of(plan),
+        "done_when": done_when,
     }
 
 

@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type { AgentSession, JobCreateRequest, JobFilters, JobListResponse, JobResponse, JobVerification } from "@/lib/types";
+import type { DoneWhen, DoneWhenEdit } from "@/lib/types/jobs";
 
 export async function fetchJobs(filters: JobFilters = {}): Promise<JobListResponse> {
   // Lists show one line per job, so ask for brief tasks: a watcher analysis
@@ -33,6 +34,12 @@ export async function fetchJobEventsToken(jobId: string): Promise<{ token: strin
 
 export async function resumeJob(jobId: string, choice: string, guidance?: string): Promise<{ job_id: string; status: string; choice: string }> {
   const { data } = await api.post(`/jobs/${jobId}/resume`, { choice, guidance });
+  return data;
+}
+
+/** Replace a job's finish line (done when); the next coding run works to it. */
+export async function updateDoneWhen(jobId: string, body: DoneWhenEdit): Promise<DoneWhen> {
+  const { data } = await api.put(`/jobs/${jobId}/done-when`, body);
   return data;
 }
 

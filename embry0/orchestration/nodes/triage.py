@@ -15,6 +15,7 @@ import structlog
 
 from embry0.agents.model_policy import TIER_KEYS
 from embry0.orchestration.state import TriageDecision
+from embry0.services.done_when import DONE_WHEN_GUIDE
 from embry0.services.slop import CLASSIFIER_GUIDE
 
 logger = structlog.get_logger(__name__)
@@ -55,6 +56,8 @@ Respond with a JSON object containing:
 - work_nature: the slopometer's verdict (when job_kind="code"; see "Bug or
   slop" below): {"nature": "bug"|"slop"|"noise", "slop_score": 0-100,
   "kinds": [...], "evidence": [{"path": "...", "why": "..."}]}
+- done_when: the job's finish line (when job_kind="code"; see "Done when"
+  below): {"items": [{"done": "...", "shown_by": "..."}], "out_of_scope": [...]}
 
 Guidelines:
 - Pick a lighter template (e.g. quick-fix) for simple, well-defined changes
@@ -74,6 +77,8 @@ files you read. When the task carries a watcher "Slop, not a bug" section,
 weigh it, then make your own call. A slop verdict routes the job to the
 Slopmaster's cleanup (keep behavior, remove or merge code) whatever template
 you name; leave pipeline_template empty for it.
+
+<<DONE_WHEN_GUIDE>>
 
 <<MODEL_GUIDANCE>>
 
@@ -230,7 +235,9 @@ action ends the job with ERR_TRIAGE_QA_ACTION_INVALID.
 Omit `qa_failure_action` entirely on the initial invocation (when QA
 hasn't run yet).
 
-Respond ONLY with the JSON object, no markdown fences or extra text.""".replace("<<SLOP_GUIDE>>", CLASSIFIER_GUIDE)
+Respond ONLY with the JSON object, no markdown fences or extra text.""".replace(
+    "<<SLOP_GUIDE>>", CLASSIFIER_GUIDE
+).replace("<<DONE_WHEN_GUIDE>>", DONE_WHEN_GUIDE)
 
 _SUB_AGENT_MODELS_NOTE = """\
 - The developer agent itself can dispatch sub-agents (via the Agent tool) for

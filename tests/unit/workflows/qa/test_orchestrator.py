@@ -2851,3 +2851,36 @@ async def test_init_orchestrator_emits_the_pipeline_graph(monkeypatch):
     graph = next(e for e in events_out if e["type"] == "pipeline_graph")
     assert graph["node"] == "init_orchestrator" and graph["graph"]["graph_id"] == "qa-run-graph"
     assert [n["node_id"] for n in graph["graph"]["nodes"]] == ["init_orchestrator", "orchestrate_qa", "qa_report"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_adds_the_job_s_done_when_list_after_each_app_s_own_criteria(monkeypatch):
+    """Done when (spec 2026-10-26): with no criteria of triage's own, QA also
+    checks the job's finish line, after each app's criteria from qa.yaml."""
+    fake_provider = _fake_hub_companion_provider()
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    seen = _capture_subtasks(monkeypatch)
+
+    state = {
+        "job_id": "aaaa4444-4444-4444-4444-444444444444",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "done_when": {
+            "items": [{"id": "d1", "done": "The export has a header row", "shown_by": "the downloaded CSV"}],
+            "out_of_scope": [],
+            "source": "triage",
+        },
+        "qa": {"qa_yaml_v2_raw": _QA_YAML_V2_CONDITIONAL, "changed_files": ["apps/hub/src/pricing/calc.ts"]},
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    assert out["qa"]["final_status"] == "passed"
+    # The list joins the app's criteria; the conditional groups the diff fires
+    # are still appended on top (4c), as on a triage-criteria run.
+    assert seen["hub"] == [
+        "The export has a header row (shown by: the downloaded CSV)",
+        "Exercise Place Order",
+        "Hub deep check",
+    ]

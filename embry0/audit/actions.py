@@ -103,6 +103,8 @@ AuditAction = Literal[
     "job.budget_refused",
     "job.skipped_duplicate_pr",
     "job.cancelled",
+    # Done when (spec 2026-10-26): a person replaced a job's finish line.
+    "job.done_when_edited",
     "qa_image_build",
     # Watcher, healing cases and merges
     "watcher_stack_updated",
@@ -200,6 +202,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "job.budget_refused": "Job refused by budget",
     "job.skipped_duplicate_pr": "Job skipped as a duplicate",
     "job.cancelled": "Job cancelled",
+    "job.done_when_edited": "Job done-when list edited",
     "qa_image_build": "QA image build",
     "watcher_stack_updated": "Watcher stack updated",
     "watcher_stack_deleted": "Watcher stack deleted",
