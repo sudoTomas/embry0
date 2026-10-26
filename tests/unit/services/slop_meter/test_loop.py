@@ -12,7 +12,7 @@ import pytest
 from embry0.services.slop_meter import loop as loop_mod
 from embry0.services.slop_meter.context import job_meter, meter_sentence
 from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader
-from embry0.services.slop_meter.history import Commit
+from embry0.services.slop_meter.history import HISTORY_VERSION, Commit
 from embry0.services.slop_meter.judge import parse_judgment, user_prompt
 from embry0.services.slop_meter.loop import SlopMeterLoop, SlopMeterSettings
 from embry0.services.slop_meter.mirror import GitError, GitMirror, auth_env
@@ -158,6 +158,22 @@ async def test_a_rewritten_history_is_read_again_from_the_start() -> None:
     mirror.order = new_order
     await loop.tick()
     assert [r["sha"] for r in store.rows[REPO]] == new_order
+
+
+@pytest.mark.asyncio
+async def test_a_history_read_the_older_way_is_read_again() -> None:
+    """A repository read before renames were found (version 1) is read again from the start, once."""
+    records, order = _history(4)
+    mirror, store = FakeMirror(records, order), FakeStore()
+    loop = _loop(mirror, store, per_tick=10)
+    await loop.tick()
+    assert store.states[REPO]["history_version"] == HISTORY_VERSION
+    store.states[REPO]["history_version"] = 1
+    await loop.tick()
+    assert mirror.logged == [order, order], "the whole history was read again"
+    assert [r["sha"] for r in store.rows[REPO]] == order and store.states[REPO]["history_version"] == HISTORY_VERSION
+    await loop.tick()
+    assert len(mirror.logged) == 2, "and only once"
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,24 @@ from typing import Any
 #: One record per commit: a record separator, then the fields, then ``--numstat`` lines.
 LOG_FORMAT = "%x1e%H%x1f%aI%x1f%aN%x1f%aE%x1f%B%x1f"
 #: The ``git log`` arguments that go with it: per-file counts, renames as delete and add, raw paths.
-LOG_ARGS = ("-c", "core.quotepath=off", "log", "--no-renames", "--numstat", f"--format={LOG_FORMAT}")
+# Renames found (-M), with a limit high enough for a restructure's hundreds of
+# files: a moved file counts only the lines it changed. Without it a move
+# reads as its whole size deleted in one place and added in another, and an
+# area that code moved into counts all of it as new.
+LOG_ARGS = (
+    "-c",
+    "core.quotepath=off",
+    "-c",
+    "diff.renameLimit=20000",
+    "log",
+    "-M",
+    "--numstat",
+    f"--format={LOG_FORMAT}",
+)
+#: Bumped whenever how a history is read changes; a repository read with an
+#: older version is read again from the start (2: renames found).
+HISTORY_VERSION = 2
+_BRACE_RENAME = re.compile(r"\{([^{}]*) => ([^{}]*)\}")
 
 KNOWN_BOTS = frozenset(
     {
@@ -124,10 +141,18 @@ def _count(value: str) -> int:
 
 
 def _path(raw: str) -> str:
-    """A numstat path; a C-quoted one (an odd character in it) loses its quotes."""
+    """A numstat path, the new one for a rename; a C-quoted one (an odd character in it) loses its quotes.
+
+    A rename reads ``old => new`` or, sharing parts, ``dir/{old => new}/file``
+    (either side of the braces may be empty).
+    """
     if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
-        return raw[1:-1].encode().decode("unicode_escape", errors="replace")
-    return raw
+        raw = raw[1:-1].encode().decode("unicode_escape", errors="replace")
+    if " => " not in raw:
+        return raw
+    if _BRACE_RENAME.search(raw):
+        return re.sub(r"/{2,}", "/", _BRACE_RENAME.sub(lambda m: m.group(2), raw)).strip("/")
+    return raw.split(" => ", 1)[1]
 
 
 def commit_from(sha: str, at: datetime, name: str, email: str, body: str, numstat: str) -> Commit:
