@@ -1,6 +1,7 @@
 import { api } from "./client";
 import { type RunWith, runWithBody } from "./runWith";
 import type { RecentEvent } from "./progression";
+import type { SlopMeterReading } from "./slopMeter";
 
 /** The world (spec 2026-10-25): the guild hall, the quest board and the quests' scrolls. */
 
@@ -119,6 +120,8 @@ export interface Dungeon {
   score: number;
   open: number;
   cleaned: number;
+  /** Its Slop-O-Meter reading (spec 2026-10-26); null when not scored, absent on an older backend. */
+  meter?: SlopMeterReading | null;
 }
 
 export interface InboxQuest {

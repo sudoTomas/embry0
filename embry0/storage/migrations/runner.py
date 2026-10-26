@@ -3307,6 +3307,95 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'the finish line a code job works to: {items [{id, done, shown_by}], out_of_scope, source triage|ticket|person, edited_by, edited_at, report {items [{id, met, evidence}], unmet, reported, checked_at}}; NULL when the job has none.';
         """,
     ),
+    (
+        121,
+        "the slop-o-meter: each repository's history, forge events and weekly slop score (spec 2026-10-26, slop-o-meter)",
+        # A repository's commits and forge events are read into these tables a
+        # bounded batch at a time; the weekly series and the score per
+        # repository and area are recomputed from them. area '' is the whole
+        # repository.
+        """
+        CREATE TABLE IF NOT EXISTS slop_meter_repos (
+            repo            TEXT PRIMARY KEY,
+            head_sha        TEXT,
+            commits_read    INTEGER NOT NULL DEFAULT 0,
+            commits_total   INTEGER NOT NULL DEFAULT 0,
+            comments_since          TIMESTAMPTZ,
+            review_comments_since   TIMESTAMPTZ,
+            reviews_since           TIMESTAMPTZ,
+            mirrored_at     TIMESTAMPTZ,
+            computed_at     TIMESTAMPTZ,
+            error           TEXT,
+            error_at        TIMESTAMPTZ
+        );
+        COMMENT ON TABLE slop_meter_repos IS
+            'where the slop-o-meter is in each repository: the mirror''s head, how many commits of its history are read, a cursor per forge event listing, the last error.';
+        CREATE TABLE IF NOT EXISTS slop_meter_commits (
+            repo         TEXT NOT NULL,
+            sha          TEXT NOT NULL,
+            seq          INTEGER NOT NULL,
+            authored_at  TIMESTAMPTZ NOT NULL,
+            author_name  TEXT NOT NULL DEFAULT '',
+            author_email TEXT NOT NULL DEFAULT '',
+            message      TEXT NOT NULL DEFAULT '',
+            files        JSONB NOT NULL DEFAULT '[]'::jsonb,
+            coauthors    JSONB NOT NULL DEFAULT '[]'::jsonb,
+            ai_coauthor  BOOLEAN NOT NULL DEFAULT FALSE,
+            bot          BOOLEAN NOT NULL DEFAULT FALSE,
+            subcommits   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (repo, sha)
+        );
+        CREATE INDEX IF NOT EXISTS idx_slop_meter_commits_seq ON slop_meter_commits (repo, seq);
+        CREATE TABLE IF NOT EXISTS slop_meter_events (
+            repo   TEXT NOT NULL,
+            id     TEXT NOT NULL,
+            kind   TEXT NOT NULL,
+            login  TEXT NOT NULL,
+            at     TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (repo, id)
+        );
+        CREATE TABLE IF NOT EXISTS slop_meter_logins (
+            login      TEXT PRIMARY KEY,
+            email      TEXT NOT NULL DEFAULT '',
+            checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        COMMENT ON TABLE slop_meter_logins IS
+            'a forge login''s commit email (empty when none was found), so its comments count toward its sessions.';
+        CREATE TABLE IF NOT EXISTS slop_meter_judgments (
+            repo       TEXT NOT NULL,
+            sha        TEXT NOT NULL,
+            slop       BOOLEAN NOT NULL,
+            reason     TEXT NOT NULL DEFAULT '',
+            model      TEXT NOT NULL DEFAULT '',
+            judged_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (repo, sha)
+        );
+        CREATE TABLE IF NOT EXISTS slop_meter_weeks (
+            repo     TEXT NOT NULL,
+            area     TEXT NOT NULL DEFAULT '',
+            week     DATE NOT NULL,
+            cost     DOUBLE PRECISION NOT NULL,
+            capacity DOUBLE PRECISION NOT NULL,
+            slop     DOUBLE PRECISION NOT NULL,
+            lines    DOUBLE PRECISION NOT NULL,
+            score    DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (repo, area, week)
+        );
+        CREATE TABLE IF NOT EXISTS slop_meter_scores (
+            repo         TEXT NOT NULL,
+            area         TEXT NOT NULL DEFAULT '',
+            score        DOUBLE PRECISION NOT NULL,
+            level        INTEGER NOT NULL,
+            name         TEXT NOT NULL,
+            provisional  BOOLEAN NOT NULL DEFAULT FALSE,
+            commits      INTEGER NOT NULL DEFAULT 0,
+            computed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (repo, area)
+        );
+        COMMENT ON TABLE slop_meter_scores IS
+            'the slop-o-meter''s current score per repository (an empty area) and per area: cumulative slop over cumulative attention cost, its level and name, provisional while an outlier commit is not judged.';
+        """,
+    ),
 ]
 
 

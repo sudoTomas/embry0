@@ -783,6 +783,28 @@ class Embry0Config(BaseSettings):
     job_brief_model: Annotated[str, NOT_SECRET] = ""
     job_brief_interval_seconds: float = Field(default=60.0, gt=0)
     job_briefs_per_tick: int = Field(default=3, ge=1, le=20)
+    # The Slop-O-Meter (spec 2026-10-26, slop-o-meter): it reads the
+    # repositories the world map shows, plus SLOP_METER_REPOS, minus
+    # SLOP_METER_EXCLUDE (comma-separated). Each one's bare mirror lives under
+    # the data path; the loop runs every interval (0 is off), sooner while a
+    # history is still being read, and each tick reads at most these many
+    # commits, event pages, pull requests' reviews, logins and outlier
+    # judgments per repository. Its forge calls share one budget per tick and
+    # stop when the credential's remaining rate limit drops below the reserve
+    # (jobs use the same credential). Outliers are judged on the job brief model.
+    slop_meter_repos: Annotated[str, NOT_SECRET] = ""
+    slop_meter_exclude: Annotated[str, NOT_SECRET] = ""
+    slop_meter_api_calls_per_tick: int = Field(default=200, ge=0)
+    slop_meter_rate_reserve: int = Field(default=2_000, ge=0)
+    slop_meter_interval_seconds: float = Field(default=86_400.0, ge=0)
+    slop_meter_catchup_seconds: float = Field(default=300.0, gt=0)
+    slop_meter_data_path: Annotated[str, NOT_SECRET] = "/data/embry0/slop-meter"
+    slop_meter_git_timeout_seconds: float = Field(default=900.0, gt=0)
+    slop_meter_commits_per_tick: int = Field(default=5_000, ge=1)
+    slop_meter_event_pages: int = Field(default=10, ge=1)
+    slop_meter_reviews_per_tick: int = Field(default=50, ge=0)
+    slop_meter_logins_per_tick: int = Field(default=20, ge=0)
+    slop_meter_judgments_per_tick: int = Field(default=5, ge=0)
 
     @field_validator(
         "audit_log_path",

@@ -111,6 +111,18 @@ async def _leads(request: Request) -> list[dict[str, Any]]:
         return []
 
 
+async def _meters(request: Request) -> list[dict[str, Any]]:
+    """Every Slop-O-Meter score, by repository and area (none without the store)."""
+    store = getattr(request.app.state, "slop_meter_repo", None)
+    if store is None:
+        return []
+    try:
+        return list(await store.scores())
+    except Exception:  # noqa: BLE001 - a dungeon without a meter is still drawn
+        logger.info("world_meters_unread", exc_info=True)
+        return []
+
+
 async def _regions(request: Request) -> dict[str, Any]:
     from embry0.api.v1.proposals import _areas
 
@@ -158,7 +170,7 @@ async def read_world(request: Request) -> dict[str, Any]:
     now = datetime.now(UTC)
     jobs = await repo.jobs(returning_seconds=RETURN_SECONDS)
     ids = [str(j["job_id"]) for j in jobs]
-    runs, links, last_events, leads, places, stats, inbox, loot, cleaned = await asyncio.gather(
+    runs, links, last_events, leads, places, stats, inbox, loot, cleaned, meter_rows = await asyncio.gather(
         repo.agent_runs(ids),
         repo.lead_links(ids),
         repo.last_event_at(ids),
@@ -168,6 +180,7 @@ async def read_world(request: Request) -> dict[str, Any]:
         repo.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS)),
         repo.loot(days=LOOT_DAYS),
         cache.get("cleaned", lambda: repo.cleaned(days=CLEANED_DAYS)),
+        cache.get("meters", lambda: _meters(request)),
     )
     quests = [lead_entry(lead) for lead in leads]
     titles = await _brief_titles(request, [*ids, *(str(r["job_id"]) for r in [*inbox, *loot])])
@@ -193,7 +206,7 @@ async def read_world(request: Request) -> dict[str, Any]:
         "quests": quests,
         # Slop dungeon (spec 2026-10-25): each repository's and area's open
         # slop, its score, and the cleanups merged lately.
-        "dungeons": dungeons(quests, cleaned),
+        "dungeons": dungeons(quests, cleaned, meter_rows),
         "inbox": [
             {
                 "job_id": r["job_id"],

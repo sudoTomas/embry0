@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable, Mapping
+from datetime import date
 from typing import Any
 
 NATURES: tuple[str, ...] = ("bug", "slop", "noise")
@@ -239,15 +240,44 @@ def dungeon_score(scores: Iterable[int]) -> int:
     return int(round(100 * (1 - clean)))
 
 
-def dungeons(leads: Iterable[Mapping[str, Any]], cleaned: Mapping[tuple[str, str | None], int]) -> list[dict[str, Any]]:
-    """One Slop Dungeon per repository and area that has open slop or recent cleanups, worst first."""
+#: The Slop-O-Meter level at which an area has a dungeon even with no open slop finding (Spaghetti Bolognese).
+METER_DUNGEON_LEVEL = 2
+
+
+def meter_view(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """A Slop-O-Meter score row as the world and the repository page show it (spec 2026-10-26, slop-o-meter)."""
+    if not row:
+        return None
+    computed = row.get("computed_at")
+    return {
+        "score": round(float(row.get("score") or 0.0), 4),
+        "level": int(row.get("level") or 1),
+        "name": str(row.get("name") or ""),
+        "provisional": bool(row.get("provisional")),
+        "computed_at": computed.isoformat() if isinstance(computed, date) else computed,
+    }
+
+
+def dungeons(
+    leads: Iterable[Mapping[str, Any]],
+    cleaned: Mapping[tuple[str, str | None], int],
+    meters: Iterable[Mapping[str, Any]] = (),
+) -> list[dict[str, Any]]:
+    """One Slop Dungeon per repository and area that has open slop, recent cleanups or a sloppy meter, worst first.
+
+    Each carries its Slop-O-Meter reading (``meter``, None when not scored);
+    an area at Spaghetti Bolognese or worse has a dungeon even with no open
+    slop finding.
+    """
     open_scores: dict[tuple[str, str | None], list[int]] = {}
     for lead in leads:
         if lead.get("nature") != "slop" or not lead.get("repo"):
             continue
         key = (str(lead["repo"]), lead.get("area") or None)
         open_scores.setdefault(key, []).append(int(lead.get("slop_score") or 0))
+    by_scope = {(str(m["repo"]), m.get("area") or None): m for m in meters}
     keys = set(open_scores) | {k for k, n in cleaned.items() if n}
+    keys |= {k for k, m in by_scope.items() if int(m.get("level") or 1) >= METER_DUNGEON_LEVEL}
     out = [
         {
             "repo": repo,
@@ -255,6 +285,7 @@ def dungeons(leads: Iterable[Mapping[str, Any]], cleaned: Mapping[tuple[str, str
             "score": dungeon_score(open_scores.get((repo, area), [])),
             "open": len(open_scores.get((repo, area), [])),
             "cleaned": int(cleaned.get((repo, area), 0)),
+            "meter": meter_view(by_scope.get((repo, area))),
         }
         for repo, area in keys
     ]

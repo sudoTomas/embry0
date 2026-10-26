@@ -872,6 +872,10 @@ async def _init_app_state(
     from embry0.storage.repositories.job_briefs import JobBriefsRepository
 
     app.state.job_briefs_repo = JobBriefsRepository(db)
+    # The Slop-O-Meter (spec 2026-10-26): each repository's history as read, and its scores.
+    from embry0.storage.repositories.slop_meter import SlopMeterRepository
+
+    app.state.slop_meter_repo = SlopMeterRepository(db)
 
     # The world (spec 2026-10-25): read-only over jobs, their log, traces and answers, plus the player's ratings.
     from embry0.services.world import WorldCache
@@ -2447,6 +2451,65 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(job_brief_task)
     job_brief_task.add_done_callback(app.state.background_tasks.discard)
 
+    # The Slop-O-Meter (spec 2026-10-26): each registered repository's history,
+    # read a bounded batch a tick from a bare mirror fetched with its
+    # organization's credential, scored daily. Outliers are judged on the job
+    # brief model.
+    from pathlib import Path as _Path
+
+    from fastapi import HTTPException
+
+    from embry0.api.v1.organizations import app_request as _slop_meter_request
+    from embry0.api.v1.organizations import org_forge_client as _slop_meter_forge_client
+    from embry0.api.v1.organizations import org_token as _slop_meter_token
+    from embry0.services.slop_meter.loop import SlopMeterLoop, slop_meter_settings
+    from embry0.services.slop_meter.loop import scope as slop_meter_scope
+    from embry0.services.slop_meter.mirror import GitMirror
+
+    async def _slop_meter_repos() -> list[str]:
+        # The registered repositories the world map shows (its regions), plus and minus the operator's lists.
+        regions = await app.state.world_repo.regions()
+        registered = {str(r["repo"]).lower() for r in await app.state.repos_repo.list_all()}
+        shown = (str(r["repo"]) for r in regions if str(r["repo"]).lower() in registered)
+        return slop_meter_scope(shown, config.slop_meter_repos, config.slop_meter_exclude)
+
+    async def _slop_meter_org(repo: str) -> Any:
+        org = await app.state.organizations_repo.get(repo.split("/", 1)[0])
+        return org if org is not None and org.status == "active" else None
+
+    async def _slop_meter_credential(repo: str) -> tuple[str, str, str] | None:
+        org = await _slop_meter_org(repo)
+        if org is None:
+            return None
+        try:
+            token = await _slop_meter_token(_slop_meter_request(app), org)
+        except HTTPException:
+            return None
+        return org.forge, token, str(config.gitlab_url or "")
+
+    async def _slop_meter_client(repo: str) -> Any:
+        org = await _slop_meter_org(repo)
+        if org is None or org.forge != "github":
+            return None
+        try:
+            return await _slop_meter_forge_client(_slop_meter_request(app), org)
+        except HTTPException:
+            return None
+
+    app.state.slop_meter = SlopMeterLoop(
+        repos=_slop_meter_repos,
+        store=app.state.slop_meter_repo,
+        mirror=GitMirror(_Path(config.slop_meter_data_path), timeout=config.slop_meter_git_timeout_seconds),
+        token_for=_slop_meter_credential,
+        client_for=_slop_meter_client,
+        model=job_brief_model,
+        resolver=getattr(app.state, "credential_resolver", None),
+        settings=slop_meter_settings(config),
+    )
+    slop_meter_task = asyncio.create_task(app.state.slop_meter.start())
+    app.state.background_tasks.add(slop_meter_task)
+    slop_meter_task.add_done_callback(app.state.background_tasks.discard)
+
     logger.info("embry0_started")
     yield
 
@@ -2659,6 +2722,7 @@ def _register_routers(app: FastAPI) -> None:
         sandbox_profiles,
         sandboxes,
         skills,
+        slop_meter,
         standards,
         stats,
         telegram,
@@ -2726,6 +2790,9 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(leads.router, prefix="/api/v1", tags=["leads"], dependencies=auth_deps)
     # Areas (spec 2026-10-25): a repository's areas file, and mapping it with an agent.
     app.include_router(areas.router, prefix="/api/v1", tags=["areas"], dependencies=auth_deps)
+    # The Slop-O-Meter (spec 2026-10-26): a repository's score and weekly series.
+    # Before repos' catch-all /repos/{full_repo:path}, like areas.
+    app.include_router(slop_meter.router, prefix="/api/v1", tags=["slop-meter"], dependencies=auth_deps)
     # The world (spec 2026-10-25): the guild hall, the quest board and the quests' scrolls.
     app.include_router(world.router, prefix="/api/v1", tags=["world"], dependencies=auth_deps)
     # Run with (spec 2026-10-25): the keys a dashboard action may run a job with.

@@ -670,6 +670,14 @@ async def organization_runs(owner: str, request: Request, limit: int = 20) -> di
 # ---- the context audit schedule (ADR 0020) ----
 
 
+async def org_token(request: Request, org: Organization) -> str:
+    """The organization's forge credential, the one discovery reads with (the
+    slop-o-meter clones its mirrors with it). Raises HTTPException as the routes
+    answer when it cannot be resolved."""
+    token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
+    return token
+
+
 async def org_forge_client(request: Request, org: Organization) -> Any:
     """The client that reads the owner's repositories with the organization's
     credential, the one discovery reads them with. Raises HTTPException as

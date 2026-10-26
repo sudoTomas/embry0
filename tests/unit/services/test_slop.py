@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from embry0.services.slop import (
     CLEANED_XP,
     MAX_EVIDENCE,
@@ -89,10 +91,55 @@ def test_a_dungeon_rises_with_slop_and_falls_as_it_is_cleaned() -> None:
     ]
     found = dungeons(leads, {("acme/web", "Billing"): 2, ("acme/old", None): 1})
     assert found == [
-        {"repo": "acme/web", "area": "Billing", "score": 80, "open": 2, "cleaned": 2},
-        {"repo": "acme/api", "area": None, "score": 30, "open": 1, "cleaned": 0},
-        {"repo": "acme/old", "area": None, "score": 0, "open": 0, "cleaned": 1},
+        {"repo": "acme/web", "area": "Billing", "score": 80, "open": 2, "cleaned": 2, "meter": None},
+        {"repo": "acme/api", "area": None, "score": 30, "open": 1, "cleaned": 0, "meter": None},
+        {"repo": "acme/old", "area": None, "score": 0, "open": 0, "cleaned": 1, "meter": None},
     ]
+
+
+def test_a_dungeon_carries_its_meter_and_a_sloppy_area_has_one_without_findings() -> None:
+    """The Slop-O-Meter (spec 2026-10-26): each dungeon's reading, and areas at Spaghetti Bolognese or worse."""
+    at = datetime(2026, 10, 26, tzinfo=UTC)
+    meters = [
+        {
+            "repo": "acme/web",
+            "area": "Billing",
+            "score": 0.73,
+            "level": 4,
+            "name": "Sloppy Joe",
+            "provisional": True,
+            "computed_at": at,
+        },
+        {
+            "repo": "acme/web",
+            "area": "",
+            "score": 0.12,
+            "level": 1,
+            "name": "Buttered Noodles",
+            "provisional": False,
+            "computed_at": at,
+        },
+        {
+            "repo": "acme/api",
+            "area": "",
+            "score": 0.45,
+            "level": 3,
+            "name": "Lasagna",
+            "provisional": False,
+            "computed_at": at,
+        },
+    ]
+    leads = [{"repo": "acme/web", "area": "Billing", "nature": "slop", "slop_score": 60}]
+    found = {(d["repo"], d["area"]): d for d in dungeons(leads, {}, meters)}
+    assert set(found) == {("acme/web", "Billing"), ("acme/api", None)}, "a clean repository has no dungeon of its own"
+    assert found[("acme/web", "Billing")]["meter"] == {
+        "score": 0.73,
+        "level": 4,
+        "name": "Sloppy Joe",
+        "provisional": True,
+        "computed_at": at.isoformat(),
+    }
+    assert found[("acme/api", None)]["open"] == 0 and found[("acme/api", None)]["meter"]["name"] == "Lasagna"
 
 
 def test_a_cleanup_earns_for_its_net_lines_removed() -> None:

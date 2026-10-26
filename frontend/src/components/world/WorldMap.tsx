@@ -201,7 +201,9 @@ export function WorldMap({ art, regions, quests, parties, characters, dungeons =
                 .filter((q) => q.kind === "slop" && q.repo === d.repo && (q.area ?? null) === d.area)
                 .sort((a, b) => (b.slop_score ?? 0) - (a.slop_score ?? 0))[0];
               const where = d.area ?? placeOf(d.repo);
-              const title = `Slop Dungeon · ${where} · slop score ${d.score} · ${d.open} open, ${d.cleaned} cleaned lately`;
+              // Its Slop-O-Meter reading (spec 2026-10-26): how much of it landed beyond human attention.
+              const meter = d.meter ? ` · Slop-O-Meter ${d.meter.name} (${d.meter.score.toFixed(2)}${d.meter.provisional ? ", provisional" : ""})` : "";
+              const title = `Slop Dungeon · ${where} · slop score ${d.score} · ${d.open} open, ${d.cleaned} cleaned lately${meter}`;
               return (
                 <button
                   key={`dungeon-${d.repo}-${d.area ?? ""}`}
@@ -210,6 +212,7 @@ export function WorldMap({ art, regions, quests, parties, characters, dungeons =
                   aria-label={title}
                   data-testid="map-dungeon"
                   data-score={d.score}
+                  data-meter-level={d.meter?.level}
                   disabled={!worst}
                   onClick={() => worst && onPickLead(worst)}
                   style={{ ...anchored(spot.x, spot.y, { x: 12, y: 24 }), width: 24, height: 24 }}
@@ -220,6 +223,7 @@ export function WorldMap({ art, regions, quests, parties, characters, dungeons =
                     style={{ fontSize: 8, textShadow: "1px 1px 0 #000" }}
                   >
                     Slop {d.score}
+                    {d.meter && ` · ${d.meter.name}`}
                   </span>
                 </button>
               );

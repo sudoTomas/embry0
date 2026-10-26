@@ -85,3 +85,27 @@ describe("WorldMap Slop Dungeons", () => {
     expect(screen.queryByTestId("map-dungeon")).toBeNull();
   });
 });
+
+describe("WorldMap Slop-O-Meter", () => {
+  it("names a dungeon's Slop-O-Meter level beside its open slop", () => {
+    const meter = { score: 0.73, level: 4, name: "Sloppy Joe", provisional: true, computed_at: "2026-10-26T06:00:00Z" };
+    render(
+      <WorldMap
+        art={EMPTY_ART}
+        regions={[REGION]}
+        quests={[]}
+        parties={[]}
+        characters={[]}
+        dungeons={[{ repo: "acme/web", area: "Billing", score: 0, open: 0, cleaned: 0, meter }]}
+        onPickLead={() => {}}
+        onPickCharacter={() => {}}
+      />,
+    );
+    const dungeon = screen.getByTestId("map-dungeon");
+    expect(dungeon).toHaveAttribute("data-meter-level", "4");
+    expect(dungeon).toHaveAccessibleName(
+      "Slop Dungeon · Billing · slop score 0 · 0 open, 0 cleaned lately · Slop-O-Meter Sloppy Joe (0.73, provisional)",
+    );
+    expect(dungeon).toHaveTextContent("Slop 0 · Sloppy Joe");
+  });
+});
