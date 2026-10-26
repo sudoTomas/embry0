@@ -88,3 +88,20 @@ def test_a_pause_within_budget_carries_no_budget_line_and_continuing_grants_noth
     }
     updates, summary = _run(state, {"choice": "continue_retrying"})
     assert "budget" not in summary and "budget_allowance_usd" not in updates
+
+
+def test_the_budget_pause_names_the_cap_in_force_not_the_one_triage_asked_for() -> None:
+    state = {"pipeline_config": {"budget_usd": 35.0}, "total_cost_usd": 16.15, "budget_overrun_usd": 6.15}
+    state.update(job_id="job-1", current_stage="developer_complete")
+    _, summary = _run(state, {"choice": "abandon"})
+    assert summary["message"].startswith("The job reached its budget ($16.15 of $10.00)")
+    assert summary["budget"]["cap"] == 10.0
+
+
+@pytest.mark.parametrize("stage", ["dev_run_unfinished", "dev_branch_missing", "review_errored"])
+def test_a_job_over_budget_that_paused_for_another_reason_still_gets_its_budget_line(stage: str) -> None:
+    """The budget line is written whatever the pause's own message: no stage may leave it unbound."""
+    state = {**OVER, "job_id": "job-1", "current_stage": stage, "branch_name": "embry0/x"}
+    updates, summary = _run(state, {"choice": "continue_retrying"})
+    assert summary["budget"] == {"spent": 11.49, "cap": 10.0, "continue_adds": 10.0}
+    assert updates["budget_allowance_usd"] == 11.49

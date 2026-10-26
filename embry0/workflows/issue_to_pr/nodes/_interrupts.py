@@ -168,11 +168,14 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         elif _over_budget(state):
             # The developer node routes here on a soft budget overrun before
             # any review runs: "Review failed" was wrong for it.
-            from embry0.orchestration.budget import resolve_job_cap
-
+            # The cap in force: the fleet ceiling bounds the cap triage picked.
+            # (resolve_job_cap is the module's own import: a local one here
+            # would make the name local to the whole function, unbound for
+            # the budget line below whenever this branch is not taken.)
+            pause_ceiling, _mode = await load_budget_policy(config)
             message = (
                 f"The job reached its budget (${float(state.get('total_cost_usd') or 0):.2f} of "
-                f"${resolve_job_cap(state):.2f})"
+                f"${resolve_job_cap(state, ceiling=pause_ceiling):.2f})"
             )
         elif retry_count:
             message = f"Review failed after {retry_count} attempts"
