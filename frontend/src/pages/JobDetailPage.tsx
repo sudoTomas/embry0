@@ -286,7 +286,7 @@ export function JobDetailPage() {
         <AccountWaitBanner wait={job.account_wait} onTryNow={() => handleResume("continue_retrying")} onCancel={handleDiscard} />
       )}
       {job.status === "paused" && !job.account_wait && (
-        <PausedBanner jobId={job.job_id} reason={interruptData?.reason || job.current_stage || "paused"} retryCount={interruptData?.retry_count} latestReview={interruptData?.latest_review} prUrl={displayPrUrl || undefined} pausedAt={job.finished_at || job.started_at || undefined} onResume={handleResume} onDiscard={handleDiscard} />
+        <PausedBanner jobId={job.job_id} reason={interruptData?.reason || job.current_stage || "paused"} retryCount={interruptData?.retry_count} latestReview={interruptData?.latest_review} budget={interruptData?.budget} prUrl={displayPrUrl || undefined} pausedAt={job.finished_at || job.started_at || undefined} onResume={handleResume} onDiscard={handleDiscard} />
       )}
       {job.status === "awaiting_input" && <AwaitingInputCard jobInputs={jobInputs ?? []} jobId={job.job_id} />}
       {autoAnswered.length > 0 && <div className="space-y-2">{autoAnswered.map((inp) => <AutoAnswerCard key={inp.id} input={inp} jobId={job.job_id} />)}</div>}

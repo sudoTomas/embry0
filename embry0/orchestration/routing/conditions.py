@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any, Literal
 
-from embry0.orchestration.budget import resolve_job_cap
+from embry0.orchestration.budget import budget_allowance, resolve_job_cap
 
 
 def check_triage_action(state: dict[str, Any]) -> Literal["proceed", "split"]:
@@ -204,9 +204,12 @@ def check_budget(state: dict[str, Any]) -> Literal["within_budget", "over_budget
     inside the agent node the moment the ceiling is crossed. ``budget_overrun_usd``
     is that node's verdict against the fully-resolved cap (including the
     fleet-wide ceiling it reads from the DB); the direct comparison is the
-    fallback for states no agent node has written yet.
+    fallback for states no agent node has written yet. Once a person let the
+    job spend past its cap (``budget_allowance_usd``), that verdict predates
+    the allowance and only ever grows (its reducer keeps the max), so the
+    comparison against the raised cap decides.
     """
-    if state.get("budget_overrun_usd", 0.0) > 0:
+    if state.get("budget_overrun_usd", 0.0) > 0 and budget_allowance(state) <= 0:
         return "over_budget"
     cost = state.get("total_cost_usd", 0.0)
     if cost > resolve_job_cap(state):

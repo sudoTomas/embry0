@@ -405,6 +405,9 @@ class JobState(TypedDict, total=False):
     retry_count: Annotated[int, max_value]
     total_cost_usd: Annotated[float, max_value]
     budget_overrun_usd: Annotated[float, max_value]
+    # How much past its cap a person let the job spend, by continuing it from
+    # a budget pause (orchestration.budget.resolve_job_cap adds it on top).
+    budget_allowance_usd: Annotated[float, max_value]
     branch_name: Annotated[str | None, FoldingLastValue]
     # base_branch is the repo's integration branch: the ref the clone fetches,
     # the orchestrator's git-diff bases on, and the MR/PR targets. Resolved

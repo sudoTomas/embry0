@@ -17,3 +17,6 @@ class JobResumeRequest(BaseModel):
 
     choice: Literal["continue_retrying", "merge_as_is", "abandon"]
     guidance: str = Field(default="", max_length=50000)
+    #: With continue_retrying on a job over its budget: how much more it may spend.
+    #: Absent, a job over its budget may spend one more cap.
+    extra_budget_usd: float | None = Field(default=None, gt=0, le=1000)
