@@ -85,6 +85,38 @@ export interface JobResponse {
   brief?: JobBrief | null;
   /** The job's status in plain words and what a person can do next (GET /jobs/{id} only). */
   status_words?: JobStatusWords;
+  /** The finish line a code job works to (GET /jobs/{id} only); null when it has none. */
+  done_when?: DoneWhen | null;
+}
+
+/** One condition of a job's finish line, and how it is shown (done when, spec 2026-10-26). */
+export interface DoneWhenItem {
+  id: string;
+  done: string;
+  shown_by: string;
+}
+
+/** A coding run's report on one item, as embry0 checked it. */
+export interface DoneWhenCheck {
+  id: string;
+  met: boolean;
+  evidence: string;
+}
+
+/** A code job's finish line: drafted by triage or taken from the ticket, replaceable by a person. */
+export interface DoneWhen {
+  items: DoneWhenItem[];
+  out_of_scope: string[];
+  source: "triage" | "ticket" | "person";
+  edited_by: string | null;
+  edited_at: string | null;
+  report: { items: DoneWhenCheck[]; unmet: string[]; reported: boolean; checked_at: string } | null;
+}
+
+/** PUT /jobs/{id}/done-when body. */
+export interface DoneWhenEdit {
+  items: { done: string; shown_by: string }[];
+  out_of_scope: string[];
 }
 
 /** A job in plain words (job briefs), written by a model from its task. */

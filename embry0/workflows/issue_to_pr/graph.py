@@ -176,7 +176,9 @@ class IssueToprWorkflow:
         builder.add_node(
             "developer",
             developer_node,  # type: ignore[type-var]
+            # "developer": the done-when check's one retry of the coding step.
             destinations=(
+                "developer",
                 "review",
                 "max_retries",
                 "ask_user_interrupt",

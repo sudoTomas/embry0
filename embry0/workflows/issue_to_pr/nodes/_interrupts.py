@@ -163,6 +163,15 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
                 "set the repository's sandbox profile to an image that has the "
                 "toolchain, then run the job again. The branch is already pushed."
             )
+        elif arrival_stage == "done_when_unmet":
+            # Done when (spec 2026-10-26): the branch is pushed, but the run's
+            # report left items of the job's finish line unmet after one retry.
+            from embry0.services.done_when import unmet_summary
+
+            _list = state.get("done_when") or {}
+            message = "Done-when items still not met after a retry: " + (
+                unmet_summary(_list, _list.get("report")) or "see the job's done-when list"
+            )
         elif arrival_stage == "review_retries_exhausted":
             message = f"Review requested changes and the retry budget is exhausted ({retry_count} attempts)"
         elif _over_budget(state):

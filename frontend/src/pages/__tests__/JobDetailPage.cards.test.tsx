@@ -11,7 +11,7 @@ import { STANDALONE_QA_EVENTS, STANDALONE_QA_GRAPH } from "@/lib/__tests__/stand
 
 const job = vi.hoisted(() => ({ current: null as unknown }));
 const logs = vi.hoisted(() => ({ events: [] as unknown[], graph: null as unknown }));
-vi.mock("@/hooks/useJobs", () => ({ useJob: () => ({ data: job.current, isLoading: false, isError: false, refetch: vi.fn() }) }));
+vi.mock("@/hooks/useJobs", () => ({ useUpdateDoneWhen: () => ({ mutateAsync: vi.fn() }), useJob: () => ({ data: job.current, isLoading: false, isError: false, refetch: vi.fn() }) }));
 vi.mock("@/hooks/useInputs", () => ({ useJobInputs: () => ({ data: [], refetch: vi.fn() }) }));
 vi.mock("@/hooks/useTraces", () => ({ useTraces: () => ({ data: { traces: [], total: 0 } }) }));
 vi.mock("@/hooks/useRepos", () => ({ useRegisteredRepos: () => ({ data: [] }) }));

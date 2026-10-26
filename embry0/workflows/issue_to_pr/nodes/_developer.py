@@ -997,6 +997,16 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         brief = slop_brief(state.get("work_nature"))
         if brief:
             prompt = f"{prompt}\n\n{brief}"
+    # Done when (spec 2026-10-26): the job's finish line, read from its row so
+    # a person's edit counts from the next run on, as this run's contract.
+    from embry0.services.done_when import contract as done_when_contract
+    from embry0.services.done_when import current as current_done_when
+
+    done_when = await current_done_when(
+        configurable.get("jobs_repo"), str(state.get("job_id") or ""), state.get("done_when")
+    )
+    if done_when:
+        prompt = f"{prompt}\n\n{done_when_contract(done_when, followup=state.get('done_when_followup'))}"
 
     # RAV-602: definition (model/tools/skills) from the DB row, per-step
     # template overrides from the current route step; triage's
@@ -1029,7 +1039,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         )
     developer_template_config = step_template_config(state, coding_agent)
     result = await _nodes.run_agent_node(
-        state=state,
+        state={**state, "done_when": done_when} if done_when else state,
         agent_runner=agent_runner,
         agent_type=coding_agent,
         prompt=prompt,
@@ -1329,10 +1339,20 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 cleaned = await _record_cleanup_diff(state, configurable)
                 if cleaned is not None:
                     updates["work_nature"] = cleaned
+            # Done when (spec 2026-10-26): an unmet item sends the coding step
+            # once more, then pauses the job; all met goes on as before.
+            from embry0.workflows.issue_to_pr.nodes._done_when import check_done_when
+
+            checked, held = await check_done_when(
+                state, configurable, result, done_when, writer=writer, agent=coding_agent
+            )
+            updates.update(checked)
             # RAV-601: forward progression follows the route plan. Jobs
             # without one (pre-RAV-601 checkpoints resumed mid-flight) keep
             # the legacy fixed hop to review.
-            if state.get("route_plan"):
+            if held is not None:
+                goto = held
+            elif state.get("route_plan"):
                 from embry0.workflows.issue_to_pr.route_plan import (
                     CODING_AGENT_TYPES,
                     ROUTE_TARGETS,

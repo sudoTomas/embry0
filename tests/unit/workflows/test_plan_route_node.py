@@ -503,3 +503,55 @@ async def test_no_db_means_the_builtin_types_only():
     """Without a database the validator falls back to the seed types; a custom template is skipped."""
     out = await plan_route_node(_state(pipeline_template="bot-run", job_kind="code"), _config(_repo_with_bot()))
     assert out["route_template_name"] == "review-only"
+
+
+# Done when (spec 2026-10-26): plan_route stores a code job's finish line.
+
+
+class _RowJobs:
+    def __init__(self, row=None):
+        self.row = row or {}
+        self.updates = []
+
+    async def get(self, job_id):
+        return self.row
+
+    async def update(self, job_id, **fields):
+        self.updates.append(fields)
+
+
+_LIST = {
+    "items": [{"done": "The cause is written down", "shown_by": "a PR section"}],
+    "out_of_scope": ["Deploy tooling"],
+}
+
+
+@pytest.mark.asyncio
+async def test_a_code_job_keeps_triage_s_done_when_list_on_state_and_row():
+    jobs = _RowJobs()
+    out = await plan_route_node(_state(job_kind="code", done_when=_LIST), _config(_repo(), jobs))
+    assert out["done_when"]["items"] == [{"id": "d1", "done": "The cause is written down", "shown_by": "a PR section"}]
+    assert out["done_when"]["source"] == "triage"
+    assert jobs.updates[0]["done_when"] == out["done_when"]
+
+
+@pytest.mark.asyncio
+async def test_without_triage_s_list_the_ticket_s_acceptance_criteria_serve():
+    state = {**_state(job_kind="code"), "task": "Fix it\n\n## Acceptance criteria\n- The export has a header row"}
+    out = await plan_route_node(state, _config(_repo(), _RowJobs()))
+    assert out["done_when"]["source"] == "ticket"
+    assert out["done_when"]["items"][0]["done"] == "The export has a header row"
+
+
+@pytest.mark.asyncio
+async def test_a_list_a_person_set_before_triage_wins():
+    mine = {"items": [{"id": "d1", "done": "Only this", "shown_by": ""}], "out_of_scope": [], "source": "person"}
+    jobs = _RowJobs({"done_when": mine})
+    out = await plan_route_node(_state(job_kind="code", done_when=_LIST), _config(_repo(), jobs))
+    assert out["done_when"]["source"] == "person" and out["done_when"]["items"][0]["done"] == "Only this"
+
+
+@pytest.mark.asyncio
+async def test_a_job_that_is_not_code_has_no_list():
+    out = await plan_route_node(_state(job_kind="research", done_when=_LIST), _config(_repo(), _RowJobs()))
+    assert out["done_when"] is None

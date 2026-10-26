@@ -134,6 +134,8 @@ _UPDATABLE_FIELDS = frozenset(
         "account_wait",
         # Slop dungeon (migration 118): the slopometer's verdict on the job.
         "work_nature",
+        # Done when (migration 120): the job's finish line and the report on it.
+        "done_when",
     }
 )
 

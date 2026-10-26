@@ -426,3 +426,15 @@ def test_parse_triage_response_known_field_typos_still_fail():
 
     with pytest.raises(TriageParseError):
         parse_triage_response('{"action": "proceed", "confidence": "not-a-number"}')
+
+
+def test_parse_triage_response_keeps_its_done_when_list():
+    """Done when (spec 2026-10-26): triage's finish line survives the parse
+    (an undeclared key would be dropped as an extra), and the prompt asks for it."""
+    from embry0.orchestration.nodes.triage import build_triage_system_prompt
+
+    listed = {"items": [{"done": "The cause is written down", "shown_by": "a PR section"}], "out_of_scope": []}
+    raw = json.dumps({"action": "proceed", "confidence": 0.8, "reasoning": "r", "done_when": listed})
+    assert parse_triage_response(raw)["done_when"] == listed
+    prompt = build_triage_system_prompt(default_model="m", tier_models={})
+    assert "## Done when" in prompt and "<<" not in prompt

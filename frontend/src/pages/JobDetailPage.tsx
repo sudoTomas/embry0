@@ -7,7 +7,7 @@ import { jobToOperation, shouldFireCompletionFlare } from "@/components/divine/o
 import { buttonVariants } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
-import { useJob } from "@/hooks/useJobs";
+import { useJob, useUpdateDoneWhen } from "@/hooks/useJobs";
 import { useRegisteredRepos } from "@/hooks/useRepos";
 import { useJobInputs } from "@/hooks/useInputs";
 import { useTraces } from "@/hooks/useTraces";
@@ -65,6 +65,7 @@ const MAP_BOX = "rounded-lg border border-border bg-card p-2 min-h-[320px]";
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const { data: job, isLoading, isError, error, refetch } = useJob(jobId);
+  const updateDoneWhen = useUpdateDoneWhen(jobId);
   const missing = isNotFound(error);
   const { data: jobInputs, refetch: refetchInputs } = useJobInputs(missing ? "" : (jobId ?? ""), job?.status);
 
@@ -251,7 +252,7 @@ export function JobDetailPage() {
       </div>
 
       {/* What the job is, why it matters, done, and now, in plain words; the task one click away. */}
-      <JobBriefCard job={job} />
+      <JobBriefCard job={job} onSaveDoneWhen={jobFinished ? undefined : (body) => updateDoneWhen.mutateAsync(body)} />
 
       {/* 2. Party strip */}
       <PartyStrip agents={agents} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />

@@ -1,6 +1,7 @@
 import { useState } from "react";
-import type { JobResponse } from "@/lib/types/jobs";
+import type { DoneWhenEdit, JobResponse } from "@/lib/types/jobs";
 import { IssueBody } from "@/components/issues/IssueBody";
+import { DoneWhenList } from "@/components/jobs/DoneWhenList";
 import { jobTitle } from "@/lib/jobTitle";
 import { formatDateTime } from "@/lib/utils";
 
@@ -9,9 +10,17 @@ import { formatDateTime } from "@/lib/utils";
  * about, why it matters and what done looks like, in plain words a model
  * wrote from its task, then what is happening now and what a person can do.
  * The task itself, written for the agents, is one click away. Before the
- * brief is written, the title is the task's first line.
+ * brief is written, the title is the task's first line. Below the brief, the
+ * job's done-when list (spec 2026-10-26), editable while the job is live.
  */
-export function JobBriefCard({ job }: { job: JobResponse }) {
+export function JobBriefCard({
+  job,
+  onSaveDoneWhen,
+}: {
+  job: JobResponse;
+  /** Saves a person's done-when list; absent once the job has finished. */
+  onSaveDoneWhen?: (body: DoneWhenEdit) => Promise<unknown>;
+}) {
   const [taskOpen, setTaskOpen] = useState(false);
   const brief = job.brief ?? null;
   const words = job.status_words;
@@ -46,6 +55,7 @@ export function JobBriefCard({ job }: { job: JobResponse }) {
           )}
         </dl>
       )}
+      <DoneWhenList doneWhen={job.done_when} onSave={onSaveDoneWhen} />
       <div className="flex justify-end">
         <button
           type="button"

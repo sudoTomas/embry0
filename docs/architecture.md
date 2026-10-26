@@ -1365,6 +1365,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 117 | proposal briefs: each owner proposal still asked, in plain words (title, problem, fix, size), written by a model from what embry0 holds about it; a changed proposal gets a new one ([spec](superpowers/specs/2026-10-25-proposal-briefs-design.md)) | `proposal_briefs` |
 | 118 | slop is not a bug: the slopometer's verdict on a code job (nature bug, slop or noise, a slop score, kinds, evidence, and a cleanup's diff counts) and on a watcher finding ([spec](superpowers/specs/2026-10-25-slop-dungeon-design.md)) | `jobs.work_nature`, `healing_cases.work_nature` |
 | 119 | job briefs: each job in plain words (title, what, why, done, size), written by a model from its task and what embry0 knows about it; a changed task or a new prompt gets a new one ([spec](superpowers/specs/2026-10-26-job-briefs-design.md)) | `job_briefs` |
+| 120 | done when: the finish line a code job works to (conditions with how each is shown, out of scope, who set it, and the coding run's report on it), drafted by triage or taken from the ticket, replaceable by a person ([spec](superpowers/specs/2026-10-26-done-when-design.md)) | `jobs.done_when` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 
@@ -1384,6 +1385,14 @@ The `IssueExecutor` (`embry0/services/issue_executor.py`) owns the lifecycle of 
 - *Bound.* A recovery after an unclean stop (no `interrupted_at`) spends one `jobs.resume_attempts`; at `MAX_RESUME_ATTEMPTS` boot fails the job with `ERR_RESUME_LIMIT`. Recovery clears `interrupted_at`, so each stop is judged on its own. Migration 92 adds the three columns.
 
 **Trace ID threading (Plan H).** Every job is assigned a `trace_id` (format `trc-<12hex>`) at creation; the id is bound to structlog contextvars for the duration of `_run_workflow` and persisted onto every `audit_log` row written in that span. Use it as a grep key to reconstruct an issue's full timeline across logs and audit events.
+
+**Done when (the finish line, spec 2026-10-26).** Triage writes `done_when` for a code job, and `plan_route` keeps it on state and on `jobs.done_when`. When triage gives none, the ticket's `## Acceptance criteria` serve, and a list a person set wins.
+- **Before the run.** `developer_node` reads the job row at the start of every run, so an edit counts from the next run. It appends the list as the run's contract (`embry0.services.done_when.contract`), and `run_agent_node` adds pacing in turns to the coding step's turn-budget note.
+- **After a run that pushed,** `nodes/_done_when.check_done_when` reads the report in the final JSON strictly:
+  - all met → the route goes on;
+  - an item unmet or unreported → `developer` once more, with `done_when_followup` naming the unmet items (`done_when_retries`, one per job);
+  - still unmet → `max_retries` at stage `done_when_unmet`.
+- **Review and QA.** The review prompt's finish line is the list plus the report, in place of the ticket's criteria section. QA adds the items after each app's own criteria when triage named none.
 
 **Agent-initiated questions (Plan L — `ask_user`).** Agents can pause the pipeline mid-execution by calling `embry0.sandbox.ask_user(question, category, options)`. The sandbox runner emits `agent_ask_user` events; `developer_node` picks them up and the graph routes to `ask_user_interrupt`, which raises `interrupt(...)` with the pending questions. `_handle_needs_info` persists questions to `issue_inputs` and transitions status to `awaiting_input` (reusing the triage-question infrastructure). On resume via `Command(resume=answers)`, the developer re-runs with a Q&A block prepended to its prompt. Capped per job (default 10 rounds, env-tunable via `ASK_USER_ROUNDS_CAP`); past that the job fails with `ERR_MAX_AGENT_QUESTIONS`.
 

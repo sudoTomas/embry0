@@ -15,12 +15,6 @@ def test_migration_119_present() -> None:
     assert "job_briefs" in sql and "input_hash" in sql
 
 
-def test_migration_119_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_118.py)."""
-    assert MIGRATIONS[-1][0] == 119, "migration 119 must add job_briefs"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_briefs_are_written_live_jobs_first_and_shown_while_they_match(db_with_migrations: DatabasePool) -> None:

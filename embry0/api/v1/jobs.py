@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from embry0.api.deps import get_jobs_repo, request_actor, require_operator
 from embry0.api.repo_allowlist import enforce_repo_allowlist, refusal_detail
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
-from embry0.api.schemas.jobs import JobResumeRequest
+from embry0.api.schemas.jobs import DoneWhenEditRequest, JobResumeRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.safety.redaction import redact_event, secret_env_values
@@ -626,6 +626,35 @@ async def resume_job(
     )
 
     return {"job_id": job_id, "status": "resuming", "choice": req.choice}
+
+
+@router.put("/jobs/{job_id}/done-when")
+async def edit_done_when(
+    job_id: str, req: DoneWhenEditRequest, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)
+) -> dict[str, Any]:
+    """Replace a job's finish line (done when, spec 2026-10-26). The next coding run works to it."""
+    from embry0.services.done_when import edited
+
+    job = await jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await enforce_repo_allowlist(request, job.get("repo"), action="edit a job's done-when list")
+    if job["status"] not in ("pending", "running", "awaiting_input", "paused"):
+        raise HTTPException(status_code=409, detail=f"Cannot edit the done-when list of a job in {job['status']} state")
+    actor = request_actor(request)
+    listed = edited(req.model_dump(), by=actor)
+    if listed is None:
+        raise HTTPException(status_code=422, detail="the list needs at least one condition")
+    await jobs.update(job_id, done_when=listed)
+    config = request.app.state.config
+    await emit_audit(
+        getattr(request.app.state, "db", None),
+        "job.done_when_edited",
+        actor=actor,
+        details={"job_id": job_id, "items": len(listed["items"])},
+        audit_log_path=config.audit_log_path,
+    )
+    return listed
 
 
 @router.post("/jobs/{job_id}/cancel")
