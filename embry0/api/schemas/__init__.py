@@ -264,6 +264,10 @@ class JobResponse(BaseModel):
     # True when a list was asked for ``brief`` tasks and this one was cut to
     # its first line; the full text is on GET /jobs/{job_id}.
     task_truncated: bool = False
+    # The job in plain words, its brief's title (spec 2026-10-26); left out
+    # until the brief is written, so a list page stays as small as before.
+    # The whole brief is on GET /jobs/{job_id}.
+    brief_title: str | None = Field(default=None, exclude_if=lambda value: value is None)
     issue_number: int | None = None
     # Internal issues-table FK. NULL means the job did not originate from an
     # embry0 issue (operator/API dispatch) — the Console board's explicit

@@ -104,7 +104,7 @@ export function JobsTable({
                           {job.area}
                         </Badge>
                       )}
-                      {jobTitle(job.task)}
+                      {job.brief_title ?? jobTitle(job.task)}
                     </div>
                     <div className="font-mono text-xs text-fg-muted sm:hidden" title={job.job_id}>
                       {shortJobId(job.job_id)}

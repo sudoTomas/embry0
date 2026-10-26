@@ -30,6 +30,7 @@ import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
 import { AutoAnswerCard } from "@/components/jobs/AutoAnswerCard";
 import { AgentCard } from "@/components/jobs/AgentCard";
 import { AccountWaitBanner } from "@/components/jobs/AccountWaitBanner";
+import { JobBriefCard } from "@/components/jobs/JobBriefCard";
 import { PausedBanner } from "@/components/jobs/PausedBanner";
 import { PartyStrip } from "@/components/jobs/PartyStrip";
 import { JobHud } from "@/components/jobs/JobHud";
@@ -249,7 +250,8 @@ export function JobDetailPage() {
         )}
       </div>
 
-      <div className="px-3 py-2 rounded-md bg-card border border-border text-xs text-muted-foreground line-clamp-3">{job.task}</div>
+      {/* What the job is, why it matters, done, and now, in plain words; the task one click away. */}
+      <JobBriefCard job={job} />
 
       {/* 2. Party strip */}
       <PartyStrip agents={agents} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />

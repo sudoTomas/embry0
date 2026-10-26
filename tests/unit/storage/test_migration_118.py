@@ -16,12 +16,6 @@ def test_migration_118_present() -> None:
     assert "healing_cases ADD COLUMN IF NOT EXISTS work_nature JSONB" in sql
 
 
-def test_migration_118_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_117.py)."""
-    assert MIGRATIONS[-1][0] == 118, "migration 118 must add work_nature"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_a_job_keeps_its_verdict(db_with_migrations: DatabasePool) -> None:

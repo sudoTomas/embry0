@@ -79,6 +79,36 @@ export interface JobResponse {
   agent_failures?: AgentFailure[];
   /** What a paused job waits for: a spent LLM account and when it resets (GET /jobs/{id} only). Null when it is not waiting for one. */
   account_wait?: AccountWait | null;
+  /** The job in plain words, its brief's title: on list rows once the brief is written. */
+  brief_title?: string;
+  /** The job in plain words (GET /jobs/{id} only); null until a model has written it. */
+  brief?: JobBrief | null;
+  /** The job's status in plain words and what a person can do next (GET /jobs/{id} only). */
+  status_words?: JobStatusWords;
+}
+
+/** A job in plain words (job briefs), written by a model from its task. */
+export interface JobBrief {
+  title: string;
+  /** What happened or what is asked. */
+  what: string;
+  /** Why it matters. */
+  why: string;
+  /** What finished looks like, and what the person gets back. */
+  done: string;
+  size: "small" | "medium" | "large";
+  model: string;
+  written_at: string | null;
+}
+
+/** A job's status in plain words, worked out by the API from its status and its latest pause. */
+export interface JobStatusWords {
+  state: string;
+  headline: string;
+  next: string | null;
+  actions: string[];
+  /** When a wait ends (UTC ISO); show it in the viewer's time. */
+  until: string | null;
 }
 
 /** A job parked for an LLM account (spent account waits). `until` is UTC ISO; show it in the viewer's time. */

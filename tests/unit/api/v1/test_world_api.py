@@ -425,3 +425,34 @@ async def test_a_merged_cleanup_is_the_slopmasters_and_earns_its_removed_lines(a
     assert earned[("developer", "coding")] == 2 * 1_400, "the developer keeps only its own runs' edits"
     assert earned[("slopmaster", "coding")] == 60_000 + 20_000 + 300 * 100
     assert scroll["work_nature"]["cleanup"] == {"added": 10, "removed": 110}
+
+
+async def test_the_hall_names_each_job_by_its_brief_once_written(app: Any) -> None:
+    """Job briefs (spec 2026-10-26): a plain title in the hall, the inbox, the loot, the log and the scroll."""
+
+    class Briefs:
+        async def current(self, job_ids: list[str]) -> dict[str, dict[str, Any]]:
+            titles = {"job-live": "Find why the sender drops mail", "job-1": "Stop the sender dropping mail"}
+            return {i: {"title": titles[i]} for i in job_ids if i in titles}
+
+    app.state.job_briefs_repo = Briefs()
+    async with await _client(app) as client:
+        world = (await client.get("/api/v1/world")).json()
+        scroll = (await client.get("/api/v1/world/quests/job-1")).json()
+        dev = (await client.get("/api/v1/world/characters/developer")).json()
+    assert world["parties"][0]["title"] == "Find why the sender drops mail"
+    assert world["inbox"][0]["title"] == "Stop the sender dropping mail"
+    assert world["loot"][0]["title"] == "Stop the sender dropping mail"
+    assert scroll["title"] == "Stop the sender dropping mail"
+    assert dev["quest_log"][0]["title"] == "Stop the sender dropping mail"
+
+
+async def test_a_job_without_a_brief_keeps_its_task_s_first_line(app: Any) -> None:
+    class Unreadable:
+        async def current(self, job_ids: list[str]) -> dict[str, dict[str, Any]]:
+            raise RuntimeError("database away")
+
+    app.state.job_briefs_repo = Unreadable()
+    async with await _client(app) as client:
+        world = (await client.get("/api/v1/world")).json()
+    assert world["inbox"][0]["title"] == "Fix the sender"

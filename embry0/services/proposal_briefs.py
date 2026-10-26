@@ -149,6 +149,11 @@ def user_prompt(p: Proposal) -> str:
     return "\n".join(lines)
 
 
+def cut_title(title: str) -> str:
+    """A title cut to ``TITLE_MAX`` at a word."""
+    return _cut(title)
+
+
 def _cut(title: str) -> str:
     title = " ".join(title.split())
     if len(title) <= TITLE_MAX:
@@ -236,18 +241,30 @@ async def resolve_endpoint(model: str, resolver: Any) -> Endpoint | None:
     )
 
 
-async def write_brief(p: Proposal, endpoint: Endpoint, client: httpx.AsyncClient) -> Brief:
-    """Ask the model for ``p``'s brief; ``ValueError`` when the answer is not one, ``httpx.HTTPError`` when the call fails."""
+async def ask_json(
+    endpoint: Endpoint,
+    client: httpx.AsyncClient,
+    *,
+    system: str,
+    user: str,
+    schema: Mapping[str, Any],
+    name: str,
+    max_tokens: int = 600,
+) -> str:
+    """One short JSON answer from the model, as text; ``httpx.HTTPError`` when the call fails.
+
+    Shared by every brief (proposals here, jobs in ``job_briefs``).
+    """
     body: dict[str, Any] = {
         "model": endpoint.upstream_model,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user_prompt(p)}],
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": 0.3,
-        "max_tokens": 600,
+        "max_tokens": max_tokens,
     }
     if endpoint.local:
-        # A vLLM-style server: the brief's own schema, enforced while it decodes,
+        # A vLLM-style server: the answer's own schema, enforced while it decodes,
         # and no thinking for a short task.
-        body["response_format"] = {"type": "json_schema", "json_schema": {"name": "brief", "schema": BRIEF_SCHEMA}}
+        body["response_format"] = {"type": "json_schema", "json_schema": {"name": name, "schema": dict(schema)}}
         body["chat_template_kwargs"] = {"enable_thinking": False}
     resp = await client.post(
         f"{endpoint.root}/chat/completions",
@@ -258,7 +275,15 @@ async def write_brief(p: Proposal, endpoint: Endpoint, client: httpx.AsyncClient
     resp.raise_for_status()
     choices = resp.json().get("choices") or []
     content = (choices[0].get("message") or {}).get("content") if choices else None
-    return parse_brief(str(content or ""))
+    return str(content or "")
+
+
+async def write_brief(p: Proposal, endpoint: Endpoint, client: httpx.AsyncClient) -> Brief:
+    """Ask the model for ``p``'s brief; ``ValueError`` when the answer is not one, ``httpx.HTTPError`` when the call fails."""
+    answer = await ask_json(
+        endpoint, client, system=SYSTEM_PROMPT, user=user_prompt(p), schema=BRIEF_SCHEMA, name="brief"
+    )
+    return parse_brief(answer)
 
 
 class ProposalBriefWriter:

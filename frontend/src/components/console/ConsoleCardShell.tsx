@@ -26,7 +26,7 @@ interface ConsoleCardShellProps {
 export function ConsoleCardShell({ job, className, style, headerRight, children }: ConsoleCardShellProps) {
   const navigate = useNavigate();
   const hasIssue = job.issue_id != null || job.issue_number != null;
-  const title = jobTitle(job.task);
+  const title = job.brief_title ?? jobTitle(job.task);
 
   return (
     <div
