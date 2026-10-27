@@ -485,6 +485,8 @@ _PROBES = [
     *[(PUBLIC_HOST, p) for p in INGRESS_ONLY_PATHS],
     (OTHER_HOST, "/"),
     (OTHER_HOST, "/api/v1/webhook"),
+    (OTHER_HOST, "/api/v1/maps"),
+    (OTHER_HOST, "/api/v1/maps/shop"),
 ]
 
 
@@ -632,6 +634,17 @@ def test_nginx_keeps_the_lan_vhost_for_other_hosts(nginx_public: NginxRun) -> No
     assert webhook.status == 502, f"LAN vhost answered {webhook.status} for /api/v1/webhook"
     for resp in (page, webhook):
         assert "content-security-policy" not in resp.headers and "strict-transport-security" not in resp.headers
+
+
+@pytest.mark.requires_docker
+def test_nginx_proxies_the_knowledge_map_routes_on_the_lan_vhost(nginx_public: NginxRun) -> None:
+    """The maps location takes a larger upload; its list path is proxied too, never redirected."""
+    _assert_started(nginx_public)
+    for path in ("/api/v1/maps", "/api/v1/maps/shop"):
+        resp = nginx_public.responses[(OTHER_HOST, path)]
+        assert resp.status == 502, (
+            f"LAN vhost answered {resp.status} for {path} (location {resp.headers.get('location')})"
+        )
 
 
 @pytest.mark.requires_docker

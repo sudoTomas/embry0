@@ -44,6 +44,7 @@ from embry0.services.knowledge_maps import (
     part_repo,
     part_text,
     part_url,
+    removable,
     send_task,
     source_key,
 )
@@ -137,13 +138,17 @@ def _work_view(row: dict[str, Any], base: str) -> dict[str, Any]:
 async def _sync_lead(
     request: Request, slug: str, part: dict[str, Any], node: dict[str, Any], now: datetime
 ) -> str | None:
-    """Keep the part's weed lead open while someone marks it bloat, closed when nobody does; its id, or None."""
+    """Keep the part's weed lead open while someone marks it bloat, closed when nobody does; its id, or None.
+
+    A part an agent cannot remove (a whole system or repository, :func:`removable`) has no lead: one opened
+    for it before is closed.
+    """
     repo = part_repo(part["repo"], node)
     if repo is None:
         return None
     marks = _marks_of(await _maps(request).marks(slug, node["id"]))
     key = source_key(slug, node["id"])
-    if not any(m.verdict == "bloat" for m in marks):
+    if not removable(part["repo"], node) or not any(m.verdict == "bloat" for m in marks):
         await _leads(request).close(lead_id("weed", repo, key), now=now)
         return None
     detail = await _maps(request).detail(slug, node["id"])
@@ -283,6 +288,7 @@ async def get_part(slug: str, node_id: str, request: Request) -> dict[str, Any]:
         "map": {"slug": slug, "title": part["title"], "repo": part["repo"]},
         "node": node,
         "repo": repo,
+        "removable": removable(part["repo"], node),
         "detail": await maps.detail(slug, node_id),
         "marks": [_mark_view(m) for m in await maps.marks(slug, node_id)],
         "work": _work_view(work[0], _base_url(request)) if work else None,
@@ -356,6 +362,11 @@ async def _start_removal(
 
     now = datetime.now(UTC)
     maps = _maps(request)
+    if not removable(part["repo"], node):
+        raise HTTPException(
+            status_code=409,
+            detail="this part is a whole system or repository, not a file in one: removing it is not a code change",
+        )
     mine = next((m for m in await maps.marks(slug, node["id"]) if m["marked_by"] == body.by), None)
     if mine is None or mine["verdict"] != "bloat":
         await maps.set_mark(slug, node["id"], body.by, "bloat", body.note.strip()[:500], now=now)
@@ -416,7 +427,8 @@ async def send_parts(slug: str, body: SendBody, request: Request) -> dict[str, A
     results: list[dict[str, Any]] = []
     for node_id in dict.fromkeys(body.node_ids):
         node = part["nodes"].get(node_id)
-        kind = body.kind or ("remove" if mine.get(node_id) == "bloat" else "analysis")
+        can_remove = node is not None and removable(part["repo"], node)
+        kind = body.kind or ("remove" if mine.get(node_id) == "bloat" and can_remove else "analysis")
         result: dict[str, Any] = {"node_id": node_id, "kind": kind, "lead_id": None, "job_id": None, "error": None}
         repo = part_repo(part["repo"], node) if node else None
         try:

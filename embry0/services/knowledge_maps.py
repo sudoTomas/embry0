@@ -198,6 +198,17 @@ def part_repo(map_repo: str | None, node: Mapping[str, Any]) -> str | None:
     return map_repo if map_repo and node.get("path") else None
 
 
+def removable(map_repo: str | None, node: Mapping[str, Any]) -> bool:
+    """Whether an agent can remove the part: a file or folder (``path``) in a repository.
+
+    A part without a path is a whole system, repository, host or table: retiring
+    it is not a code change, so a bloat mark on it stays on the map and makes no
+    lead, and it cannot be sent for removal. It can still go for a fix or an
+    analysis when it lives in a repository.
+    """
+    return part_repo(map_repo, node) is not None and bool(node.get("path"))
+
+
 def source_key(slug: str, node_id: str) -> str:
     return f"{SOURCE_PREFIX}{slug}:{node_id}"
 
@@ -268,9 +279,9 @@ def map_lead(
     marks: Sequence[Mark],
     url: str | None,
 ) -> Lead | None:
-    """The weed lead a part marked bloat becomes; None when the part lives in no repository."""
+    """The weed lead a part marked bloat becomes; None when an agent cannot remove it (:func:`removable`)."""
     repo = part_repo(map_repo, node)
-    if repo is None:
+    if repo is None or not removable(map_repo, node):
         return None
     bloat = [m for m in marks if m.verdict == "bloat"]
     names = ", ".join(dict.fromkeys(m.by for m in bloat)) or "someone"

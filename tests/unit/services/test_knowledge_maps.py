@@ -173,3 +173,15 @@ def test_marks_are_counted_per_part_with_the_viewers_own() -> None:
         "a": {"bloat": 1, "keep": 1, "unsure": 0, "mine": "bloat"},
         "b": {"bloat": 0, "keep": 0, "unsure": 1, "mine": None},
     }
+
+
+def test_only_a_file_in_a_repository_can_be_removed_or_become_a_lead() -> None:
+    from embry0.services.knowledge_maps import removable
+
+    system = {"id": "sys:billing", "label": "billing", "repo": "acme/billing", "path": None}
+    marks = [Mark("ann", "bloat", "", T0)]
+    assert removable(None, system) is False, "a whole system is not removed by a code change"
+    assert removable("acme/shop", {"id": "f", "path": "scripts/a.py"}) is True
+    assert removable(None, {"id": "f", "path": "scripts/a.py"}) is False, "a path with no repository"
+    lead = map_lead(slug="org", map_title="Org", map_repo=None, node=system, detail=None, marks=marks, url=None)
+    assert lead is None
