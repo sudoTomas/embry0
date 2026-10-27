@@ -70,6 +70,10 @@ LEAD_KINDS: dict[str, LeadKind] = {
     "alert": LeadKind("Attack", "alert_wyrm", "developer"),
     "flaky": LeadKind("Attack", "flaky_imp", "developer"),
     "review": LeadKind("Talk", "review_ghost", "developer"),
+    # The scout's finds (spec 2026-10-27): a crack is mended like a bug, a weed
+    # is pulled like slop, by the Slopmaster.
+    "crack": LeadKind("Mend", "crack_pot", "developer"),
+    "weed": LeadKind("Pull", "weed_sprout", SLOPMASTER),
     # Slop dungeon (spec 2026-10-25): a finding judged slop, not a bug. It is
     # cleaned, not fought, and the Slopmaster leads it.
     "slop": LeadKind("Clean up", "slop_ooze", SLOPMASTER),
@@ -77,10 +81,10 @@ LEAD_KINDS: dict[str, LeadKind] = {
 UNKNOWN_KIND = LeadKind("Investigate", "mystery", "developer")
 #: Creatures the art manifest has no sheet for yet: the map draws each as its original
 #: pixel glyph (frontend CreatureIcon's GLYPHS), and the art guard checks the glyph exists.
-GLYPH_CREATURES: frozenset[str] = frozenset({"slop_ooze"})
+GLYPH_CREATURES: frozenset[str] = frozenset({"slop_ooze", "crack_pot", "weed_sprout"})
 
 _SEVERITY = {"critical": 4, "high": 3, "medium": 2, "low": 1, "misleads": 2, "dead": 1, "drift": 1}
-_BASE_LEVEL = {"finding": 9, "ci": 45, "alert": 40, "flaky": 30, "review": 12}
+_BASE_LEVEL = {"finding": 9, "ci": 45, "alert": 40, "flaky": 30, "review": 12, "crack": 25, "weed": 6}
 
 #: The character that leads a job of each template when no agent has started yet.
 LEADER_BY_TEMPLATE: dict[str, str] = {

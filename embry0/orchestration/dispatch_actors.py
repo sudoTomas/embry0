@@ -65,10 +65,15 @@ AUTO_ACCEPT = f"{RESERVED_PREFIX}auto-accept"
 # proxy all its requests share the proxy's address, so the key is the actor.
 # Rate-limited: it is a person at a keyboard or a script acting for one.
 MASTER_KEY = f"{RESERVED_PREFIX}master-key"
+# The scout loop (spec 2026-10-27): read-only jobs pinned to the operator's
+# local model. Exempt from the per-author limit, which would hold it to a few
+# jobs an hour: its brakes are SCOUT_MAX_IN_FLIGHT (never more out at once),
+# the pin (a local model bills nothing), and each job's hard budget.
+SCOUT = f"{RESERVED_PREFIX}scout"
 # A request with no identity at all: only AUTH_DEV_MODE lets one through.
 ANONYMOUS = f"{RESERVED_PREFIX}anonymous"
 
-RATE_LIMIT_EXEMPT: frozenset[str] = frozenset({WATCHER, AUTO_RETRIAGE, ANSWER_RESUME, CONTEXT_AUDIT})
+RATE_LIMIT_EXEMPT: frozenset[str] = frozenset({WATCHER, AUTO_RETRIAGE, ANSWER_RESUME, CONTEXT_AUDIT, SCOUT})
 
 
 def is_rate_limit_exempt(actor: str | None) -> bool:

@@ -151,6 +151,42 @@ const GLYPHS: Record<string, { rows: string[]; colours: Record<string, string> }
     ],
     colours: { g: "#7fb800", l: "#b6e35a", w: "#ffffff", k: "#1d2b06", d: "#5e8a00" },
   },
+  // A clay pot with a gold seam down a crack: a crack the scout found, to mend (spec 2026-10-27).
+  crack_pot: {
+    rows: [
+      "............",
+      "....cccc....",
+      "...c.cc.c...",
+      "....cccc....",
+      "...cccyccc..",
+      "..cccyccccc.",
+      "..ccccyyccc.",
+      "..cccccyccc.",
+      "..ccccycccc.",
+      "...cccyccc..",
+      "....ccccc...",
+      "............",
+    ],
+    colours: { c: "#b5653a", y: "#f2c230" },
+  },
+  // A weed with two leaves on a clod of earth: dead code the scout found, to pull (spec 2026-10-27).
+  weed_sprout: {
+    rows: [
+      "............",
+      ".....g......",
+      "....ggg.....",
+      "..ll.g......",
+      ".llll.g.....",
+      "..lll.g.ll..",
+      ".....g.llll.",
+      ".....g.lll..",
+      ".....g......",
+      "...ddgddd...",
+      "..dddddddd..",
+      "............",
+    ],
+    colours: { g: "#3f7d1e", l: "#7fb800", d: "#6b4a2b" },
+  },
   // A cave mouth with ooze running out of it: a Slop Dungeon on the map.
   slop_dungeon: {
     rows: [

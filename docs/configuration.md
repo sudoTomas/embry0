@@ -101,6 +101,14 @@ embry0 uses environment variables for infrastructure config and API endpoints fo
 | `LEADS_TICKET_MIN_SCORE` | `40` | Lowest readiness (0 to 100) a backlog ticket must score to be offered ([how it is scored](leads.md#backlog-tickets)) |
 | `LEADS_REVIEW_STALE_DAYS` | `3` | Days a review thread waits for an answer before it counts |
 | `LEADS_FLAKY_COMMITS` | `10` | Newest commits of the default branch the flaky-check finder reads |
+| `SCOUT_MODEL` | (empty) | The model the scout pins its read-only `garden` and `kintsugi-trace` jobs to, a model on the operator's own server (`custom/<model>`); their cracks and weeds become leads ([leads.md](leads.md#the-scout-cracks-and-weeds)). Empty turns the scout off |
+| `SCOUT_TEMPLATES` | `garden,kintsugi-trace` | The templates the scout runs; names it does not know are ignored, and a list naming none falls back to both |
+| `SCOUT_MAX_IN_FLIGHT` | `2` | Most scouting jobs out at once; `0` starts none. Keep it below the local server's slots so the watcher and briefs still get one |
+| `SCOUT_REVISIT_HOURS` | `24` | Hours before a repository or area is scouted again with the same template |
+| `SCOUT_TICK_SECONDS` | `300` | How often the scout harvests finished jobs and starts new ones (at least 30) |
+| `SCOUT_MAX_LEADS_PER_JOB` | `5` | Most leads one scouting job adds, the worst first |
+| `SCOUT_REPOS` / `SCOUT_EXCLUDE` | (empty) | Comma-separated repositories added to, or taken from, the world map's for the scout |
+| `CONTEXT_AUDIT_LOCAL_MODEL` | (empty) | A model on the operator's own server (`custom/<model>`) that scheduled context audits prefer while it has a free slot, as the watcher's analyses prefer `watcher_local_model`. A preference, never a pin: with every slot taken the audit runs on its usual model, and a model chosen with Run with wins |
 | `CONTEXT_AUDIT_MAX_JOBS_PER_TICK` | `3` | Most context-audit jobs one tick of the schedule starts for an organization that sets no `context_audit_max_jobs_per_tick` of its own. Each organization's cap is its own, so one tick starts at most the sum of them. The tick comes every 15 minutes, and the due repositories left over wait for the next one. `0` starts none for those organizations. Its jobs are dispatched by `embry0:context-audit`, which `RATE_LIMIT_PER_AUTHOR_PER_HOUR` limits like any other actor |
 
 ### Watched stacks (#378)

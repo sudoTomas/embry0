@@ -774,6 +774,23 @@ class Embry0Config(BaseSettings):
     # Commits of the default branch the flaky-check finder reads.
     leads_flaky_commits: int = Field(default=10, ge=1, le=50)
 
+    # Scout (spec 2026-10-27): read-only scouting jobs (garden, kintsugi-trace)
+    # pinned to SCOUT_MODEL, a model on the operator's own server, rotating
+    # through the world map's repositories (plus SCOUT_REPOS, minus
+    # SCOUT_EXCLUDE, comma-separated) and each area of one that declares areas.
+    # Each finished job's weed card and ledger rows become weed and crack leads,
+    # at most SCOUT_MAX_LEADS_PER_JOB, the worst first. Off while SCOUT_MODEL is
+    # empty. At most SCOUT_MAX_IN_FLIGHT jobs are out at once, and a unit
+    # (repository, area, template) is scouted again after SCOUT_REVISIT_HOURS.
+    scout_model: Annotated[str, NOT_SECRET] = ""
+    scout_templates: Annotated[str, NOT_SECRET] = "garden,kintsugi-trace"
+    scout_max_in_flight: int = Field(default=2, ge=0)
+    scout_revisit_hours: float = Field(default=24.0, gt=0)
+    scout_tick_seconds: float = Field(default=300.0, ge=30)
+    scout_max_leads_per_job: int = Field(default=5, ge=1)
+    scout_repos: Annotated[str, NOT_SECRET] = ""
+    scout_exclude: Annotated[str, NOT_SECRET] = ""
+
     # Owner proposals in plain words (spec 2026-10-25, proposal briefs). A
     # backlog ticket is asked in chat only at this readiness and up; the page
     # shows the rest folded. Each proposal's brief is written on

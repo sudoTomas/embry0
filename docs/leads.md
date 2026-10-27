@@ -14,7 +14,20 @@ A repository is read when it is registered and active and someone answers for it
 | `flaky` | Flaky checks | Every run of every check on the newest `LEADS_FLAKY_COMMITS` commits of the default branch | medium, high from 3 commits; medium | A job that finds and fixes the cause |
 | `review` | Unanswered reviews | Open, non-draft pull requests from the repository itself with review threads a reviewer started, neither resolved nor outdated, and unanswered for `LEADS_REVIEW_STALE_DAYS` | low, medium from 3 threads; small | A follow-up job on the pull request's branch |
 
+| `crack` | The scout (below) | A finished `kintsugi-trace` job's ledger: one lead per row | break high, fracture medium, hairline low; the seal's size | A job that checks the evidence still holds, then fixes the cause |
+| `weed` | The scout (below) | A finished `garden` job's weed card | low, small | A job that removes it with the checked diff and changes no behavior |
+
 A ticket that already carries the trigger label, or that embry0 already tracks, is left to the path that has it. A source the credential cannot read (alerts without the scope, a forge other than GitHub) is skipped quietly, one log line per reason.
+
+## The scout: cracks and weeds
+
+The scout keeps a model on the operator's own server busy finding work around the clock. It is off until `SCOUT_MODEL` names that model (`custom/<model>`, see [providers.md](providers.md)).
+
+- **What it runs.** Every `SCOUT_TICK_SECONDS` it starts read-only jobs while fewer than `SCOUT_MAX_IN_FLIGHT` are out: `garden` (one provable weed) and `kintsugi-trace` (a ledger of graded cracks), the templates `SCOUT_TEMPLATES` names. Each job is pinned to `SCOUT_MODEL`: a pinned run waits for a free local slot and never moves to a hosted model, so the scout spends nothing.
+- **Where.** The repositories the world map shows, plus `SCOUT_REPOS` and minus `SCOUT_EXCLUDE`, and each area of one that declares [areas](areas.md) (the job is told to look only under the area's paths). A unit, one repository or area and one template, is scouted again after `SCOUT_REVISIT_HOURS`; never-scouted units go first, then the longest ago. A model reads the same code differently run to run, and the lead id of what it found before keeps a repeat from becoming a second lead.
+- **What becomes a lead.** When a job finishes, its deliverable is read once: each ledger row a `crack`, a weed card a `weed`, at most `SCOUT_MAX_LEADS_PER_JOB` a job, the worst first. A failed job yields nothing.
+- **What reaches chat.** Only a crack graded `break` (high) is asked in chat; every other crack and every weed stays on the page, so a scout running all day does not fill the chat.
+- **Brakes.** `SCOUT_MAX_IN_FLIGHT` is the one that counts: never more jobs out at once. Its jobs are dispatched by `embry0:scout`, which is exempt from `RATE_LIMIT_PER_AUTHOR_PER_HOUR` (that limit would hold it to a few jobs an hour), and each has a hard budget in case its pin is ever lost. The fleet's daily and monthly budget gates still apply.
 
 ## Backlog tickets
 
