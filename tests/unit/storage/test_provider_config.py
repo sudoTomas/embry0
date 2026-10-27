@@ -166,3 +166,44 @@ async def test_the_fallback_order_is_off_until_saved_and_keeps_its_order(provide
     saved = await provider_repo.update(fallback_models=["grok-4.7", "claude-haiku-4-5"])
     assert saved["fallback_models"] == ["grok-4.7", "claude-haiku-4-5"]
     assert (await provider_repo.update(fallback_models=[]))["fallback_models"] == []
+
+
+_TIERS = ("model_heavy", "model_medium", "model_light", "default_model")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"local_max_runs": 2},
+        {"fallback_models": ["grok-4.7"]},
+        {"disabled_models": ["claude-haiku-4-5"]},
+        {"watcher_local_model": "custom/local"},
+    ],
+    ids=lambda fields: next(iter(fields)),
+)
+@pytest.mark.parametrize("env", ["set", "unset"])
+async def test_a_first_save_of_one_field_keeps_the_tiers_get_reported(
+    provider_repo: ProviderConfigRepository, monkeypatch, fields, env
+):
+    """#183: the first save of any one field creates the row, and the row wins
+    from then on. Its tiers must be what get() reported before (env, then the
+    code defaults), not migration 2's column defaults."""
+    if env == "set":
+        monkeypatch.setenv("MODEL_HEAVY", "claude-opus-5-env")
+        monkeypatch.setenv("MODEL_MEDIUM", "claude-sonnet-5-env")
+        monkeypatch.setenv("MODEL_LIGHT", "claude-haiku-4-5-env")
+        monkeypatch.setenv("DEFAULT_MODEL", "grok-4.7")
+    else:
+        for var in ("MODEL_HEAVY", "MODEL_MEDIUM", "MODEL_LIGHT", "DEFAULT_MODEL"):
+            monkeypatch.delenv(var, raising=False)
+    before = await provider_repo.get()
+
+    after = await provider_repo.update(**fields)
+
+    for key in _TIERS:
+        assert after[key] == before[key], (
+            f"saving only {next(iter(fields))} moved {key} from {before[key]!r} to {after[key]!r}"
+        )
+    for key, value in fields.items():
+        assert after[key] == value
