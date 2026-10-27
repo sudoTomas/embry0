@@ -867,6 +867,9 @@ async def _init_app_state(
     from embry0.storage.repositories.handoffs import HandoffsRepository
 
     app.state.handoffs_repo = HandoffsRepository(db)
+    from embry0.storage.repositories.asks import AsksRepository
+
+    app.state.asks_repo = AsksRepository(db)
     # Proposal briefs (spec 2026-10-25): each proposal in plain words, for its owner.
     from embry0.storage.repositories.proposal_briefs import ProposalBriefsRepository
 
@@ -2578,6 +2581,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(scout_task)
     scout_task.add_done_callback(app.state.background_tasks.discard)
 
+    # Asks (spec 2026-10-27, decisions): keeps one ask per person a decision
+    # waits on, for a chat assistant to send. Off until ASKS_ENABLED.
+    from embry0.api.v1.decisions import list_decisions as _ask_decisions
+    from embry0.services.ask_loop import AskLoop
+    from embry0.services.asks import ask_settings
+
+    async def _asked_decisions() -> list[dict[str, Any]]:
+        listed = await _ask_decisions(
+            _slop_meter_request(app),
+            stage="all",
+            owner=None,
+            repo=None,
+            include_held=True,
+            for_="all",
+            limit=500,
+        )
+        return list(listed["decisions"])
+
+    async def _ask_people() -> dict[str, str]:
+        users = getattr(app.state, "users_repo", None)
+        if users is None:
+            return {}
+        return {str(u.github_login).lower(): u.email.lower() for u in await users.people() if u.github_login}
+
+    app.state.ask_loop = AskLoop(
+        settings=ask_settings(config), asks=app.state.asks_repo, decisions=_asked_decisions, people=_ask_people
+    )
+    ask_task = asyncio.create_task(app.state.ask_loop.start())
+    app.state.background_tasks.add(ask_task)
+    ask_task.add_done_callback(app.state.background_tasks.discard)
+
     logger.info("embry0_started")
     yield
 
@@ -2751,6 +2785,7 @@ def _register_routers(app: FastAPI) -> None:
         agents,
         api_keys,
         areas,
+        asks,
         audit,
         auth_session,
         bootstrap,
@@ -2872,6 +2907,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(knowledge_maps.router, prefix="/api/v1", tags=["knowledge-maps"], dependencies=auth_deps)
     # Hand-offs (spec 2026-10-27): a decision sent to a teammate; who signs in, and their GitHub login.
     app.include_router(handoffs.router, prefix="/api/v1", tags=["handoffs"], dependencies=auth_deps)
+    # Asks (spec 2026-10-27): the feed a chat assistant sends decisions from, and its answers.
+    app.include_router(asks.router, prefix="/api/v1", tags=["asks"], dependencies=auth_deps)
     # Run with (spec 2026-10-25): the keys a dashboard action may run a job with.
     app.include_router(run_with.router, prefix="/api/v1", tags=["run-with"], dependencies=auth_deps)
     # #319 phase 2: the chat merge-approval loop.

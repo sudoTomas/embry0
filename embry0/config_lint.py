@@ -58,8 +58,11 @@ _SHARED_PREFIXES: Final[tuple[str, ...]] = (
 # and EMBRY0_URL (the `health` subcommand, services/linear_dispatch.py). The
 # orchestrator image sets EMBRY0_API_URL so the in-container CLI reaches :8000
 # (#334) - without this entry every boot would log an unknown-env warning
-# about a variable embry0 itself set.
-_UNDECLARED_KEYS: Final[frozenset[str]] = frozenset({"XAI_DIRECT_EXECUTOR", "EMBRY0_API_URL", "EMBRY0_URL"})
+# about a variable embry0 itself set. ASK_USER_ROUNDS_CAP is the agent node's
+# own cap (orchestration/nodes/agent.py), under the prefix the asks settings use.
+_UNDECLARED_KEYS: Final[frozenset[str]] = frozenset(
+    {"XAI_DIRECT_EXECUTOR", "EMBRY0_API_URL", "EMBRY0_URL", "ASK_USER_ROUNDS_CAP"}
+)
 
 _SUGGESTION_CUTOFF: Final[float] = 0.85
 

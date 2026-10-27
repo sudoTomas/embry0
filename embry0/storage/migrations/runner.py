@@ -3516,6 +3516,40 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'decisions (spec 2026-10-27): a decision one person sent another; at most one open per decision.';
         """,
     ),
+    (
+        126,
+        "decisions: asks, one message to one person about one decision, and each decision's code",
+        # spec 2026-10-27. A code is never given to another decision; at most one
+        # live ask per decision and person.
+        """
+        CREATE TABLE IF NOT EXISTS decision_codes (
+            decision_id TEXT PRIMARY KEY,
+            code        TEXT NOT NULL UNIQUE,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS asks (
+            id          TEXT PRIMARY KEY,
+            decision_id TEXT NOT NULL,
+            recipient   TEXT NOT NULL,
+            state       TEXT NOT NULL DEFAULT 'queued'
+                        CHECK (state IN ('queued', 'sent', 'reminded', 'answered', 'expired', 'withdrawn')),
+            due_at      TIMESTAMPTZ NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+            sent_at     TIMESTAMPTZ,
+            reminders   INTEGER NOT NULL DEFAULT 0,
+            message_ref TEXT,
+            answered_at TIMESTAMPTZ,
+            answer      TEXT,
+            answered_by TEXT,
+            closed_at   TIMESTAMPTZ
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_asks_live ON asks (decision_id, LOWER(recipient))
+            WHERE state IN ('queued', 'sent', 'reminded');
+        CREATE INDEX IF NOT EXISTS idx_asks_live_due ON asks (due_at) WHERE state IN ('queued', 'sent', 'reminded');
+        COMMENT ON TABLE asks IS
+            'decisions (spec 2026-10-27): one message to one person about one decision, queued to answered or expired.';
+        """,
+    ),
 ]
 
 

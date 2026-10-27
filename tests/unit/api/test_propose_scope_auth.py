@@ -103,6 +103,8 @@ def test_every_allowed_mutation_is_a_real_route() -> None:
     missing = sorted(m for m in PROPOSE_SCOPE_MUTATIONS if m not in routes)
     assert not missing, f"PROPOSE_SCOPE_MUTATIONS names routes the app does not have: {missing}"
     assert all(
-        re.fullmatch(r"/api/v1/proposals/\{proposal_id\}/(accept|decline|snooze)", t)
+        re.fullmatch(
+            r"/api/v1/proposals/\{proposal_id\}/(accept|decline|snooze)|/api/v1/asks/(\{ask_id\}/sent|answer)", t
+        )
         for _, t in PROPOSE_SCOPE_MUTATIONS
     )

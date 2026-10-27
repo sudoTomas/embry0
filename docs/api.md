@@ -287,6 +287,18 @@ Send a decision to the teammate better placed to make it; it is then theirs to d
 - Each decision carries `assigned_to`, its open hand-off: `{"handoff_id", "email", "name", "github_login", "from", "note", "at"}`, else `null`. `GET /api/v1/decisions?for=me` keeps what was handed to you, plus the quests on offer that your GitHub login owns and nobody was handed.
 - Who answered a proposal is now the signed-in person the server knows. A key that acts for people (a chat assistant) still names the person in `by`.
 
+## Asks
+
+One message to one person about one decision, tracked from `queued` to `answered`, `expired` or `withdrawn`, for a chat assistant to send ([the design](superpowers/specs/2026-10-27-decisions-design.md)). embry0 decides who is asked about what and when; the assistant only renders, sends, and passes a button press back. No model turns a reply into an answer. Off until `ASKS_ENABLED`. A `propose` key may call all of these.
+
+- **Who is asked.** While a hand-off is open, only its person. Otherwise each owner of a decision that is not `held`: by email when a person named that GitHub login, else as `github:<login>`.
+- **When.** Within `ASK_HOURS` on `ASK_WEEKDAYS` in `ASK_TIMEZONE`. A person holds at most `ASK_MAX_OPEN_PER_PERSON` (3) unanswered asks at once; the next, worst first, is released as one is answered or expires. One reminder after `ASK_REMIND_HOURS` unanswered. After `ASK_EXPIRE_DAYS` the ask expires, which answers nothing: that person is not asked about that decision again.
+- **Codes.** Each decision gets one code: four letters from its id, lengthened on a collision, never given to another decision. A late press cannot land on the wrong quest.
+- `GET /api/v1/asks/due?limit=` lists what to send now: queued and due, or a first reminder due within working hours. Each item is `{"id", "code", "recipient": {"email", "name", "github_login"}, "reminder", "decision", "actions", "dashboard_url"}`. `decision` is the decision as `GET /decisions/{id}` shows it. `actions` are what a chat may answer by itself: `start`, `decline`, `later` and `send_to` on offer; `merge` (through a pending merge approval) and `send_to` on a quest to review. Everything else opens `dashboard_url`. An ask whose decision was answered meanwhile is withdrawn.
+- `POST /api/v1/asks/{id}/sent` (`{"message_ref"}`): the assistant sent it. A second report counts as the reminder.
+- `POST /api/v1/asks/answer` (`{"code", "action", "person", "reason", "to", "note"}`): a button press by `person` (an email the assistant verified). It is answered through the paths the dashboard uses, as that person, and only when they may decide: the hand-off's person while one is open, else an owner (by their GitHub login) or an admin. Every live ask of the decision closes as `answered`, and the `ask.answered` event lists each message to update. A second press returns `{"already": true, "answer", "by"}` and runs nothing.
+- `GET /api/v1/asks?limit=`: the latest asks.
+
 ## Leads
 
 Work embry0 finds by itself and offers as owner proposals ([leads.md](leads.md), [the design](superpowers/specs/2026-10-25-leads-design.md)).
