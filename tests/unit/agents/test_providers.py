@@ -230,3 +230,12 @@ def test_price_usage_is_none_for_an_unpriced_model() -> None:
     assert price_usage("grok-9-unlisted", input_tokens=10, output_tokens=10) is None, (
         "an unpriced model must not read as free"
     )
+
+
+def test_a_local_model_server_gets_the_slow_provider_budgets() -> None:
+    """A model served on the operator's own card is slower per call than a hosted one: the
+    agents' Claude-sized turn and time budgets double, as grok-4.7's do."""
+    from embry0.agents.providers import CUSTOM
+
+    assert CUSTOM.timeout_factor == XAI.timeout_factor == 2.0
+    assert CUSTOM.turn_budget_factor == XAI.turn_budget_factor == 2.0

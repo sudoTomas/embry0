@@ -82,6 +82,9 @@ def test_every_scheduled_job_gets_the_hard_budget_and_the_job_path() -> None:
     assert passed.get("jobs") == "app.state.jobs_repo"
     assert "issue_executor" in passed.get("executor", ""), "a job row nobody runs sits in pending forever"
     assert passed.get("db") == "db", "the job_created audit row goes to the database"
+    assert passed.get("local_first_model") == "config.context_audit_local_model or None", (
+        "scheduled audits must prefer CONTEXT_AUDIT_LOCAL_MODEL, and an empty setting means none"
+    )
 
 
 def test_each_start_asks_the_executors_gate_for_the_context_audit_actor() -> None:

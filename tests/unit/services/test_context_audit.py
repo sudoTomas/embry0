@@ -933,6 +933,55 @@ async def test_a_run_by_hand_carries_the_model_and_key_chosen_for_it(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_a_scheduled_audit_prefers_the_local_model_and_a_person_s_choice_wins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CONTEXT_AUDIT_LOCAL_MODEL: a preference the job carries, never a pin over Run with."""
+    from embry0.services.run_with import RunWith
+
+    async def record(_db: Any, action: str, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(context_audit, "emit_audit", record)
+    jobs = FakeJobs(Clock(T0))
+    local = "custom/qwen3-27b"
+    await start_context_audit_job(
+        ctx(),
+        jobs=jobs,
+        executor=FakeExecutor(),
+        templates=FakeTemplates(TEMPLATE),
+        budget_usd=1.0,
+        local_first_model=local,
+    )
+    config = jobs.rows[0]["created_with"]["pipeline_config"]
+    assert config["local_first_model"] == local and "agent_models_override" not in config
+    assert config["budget_overrun_mode"] == "hard", "the audit's own keys stay"
+
+    chosen = RunWith(model="claude-sonnet-5", credential_id="cred-1", provider="anthropic", credential_label="k")
+    await start_context_audit_job(
+        ctx(),
+        jobs=jobs,
+        executor=FakeExecutor(),
+        templates=FakeTemplates(TEMPLATE),
+        budget_usd=1.0,
+        run_with=chosen,
+        local_first_model=local,
+    )
+    config = jobs.rows[1]["created_with"]["pipeline_config"]
+    assert "local_first_model" not in config and config["agent_models_override"] == {"*": "claude-sonnet-5"}
+
+    await start_context_audit_job(
+        ctx(),
+        jobs=jobs,
+        executor=FakeExecutor(),
+        templates=FakeTemplates(TEMPLATE),
+        budget_usd=1.0,
+        local_first_model="",
+    )
+    assert "local_first_model" not in jobs.rows[2]["created_with"]["pipeline_config"]
+
+
+@pytest.mark.asyncio
 async def test_no_job_row_is_written_without_the_template_or_an_executor() -> None:
     jobs = FakeJobs(Clock(T0))
     with pytest.raises(LookupError, match="no pipeline template named 'context-audit'"):

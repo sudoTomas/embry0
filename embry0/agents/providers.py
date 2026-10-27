@@ -221,6 +221,11 @@ CUSTOM = ModelProvider(
     # A server on the operator's own hardware (Ollama, vLLM, LM Studio) bills nothing
     # per token, so any model it serves is recorded at $0 instead of being refused.
     default_pricing_usd_per_mtok=(0.0, 0.0),
+    # The turn and time budgets are sized for Claude, and a model served on one card
+    # is slower per call than a hosted one. On Claude-sized budgets a 27B model on one
+    # card timed out 6 of 35 log analyses in a day where grok-4.7, at 2x, timed out none.
+    turn_budget_factor=2.0,
+    timeout_factor=2.0,
 )
 
 PROVIDERS: tuple[ModelProvider, ...] = (XAI,)

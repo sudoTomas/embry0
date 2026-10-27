@@ -990,6 +990,7 @@ async def start_context_audit_job(
     task: str | None = None,
     dispatched_by: str = ACTOR,
     run_with: Any = None,
+    local_first_model: str | None = None,
 ) -> str:
     """Start one context-audit job the way ``POST /jobs`` starts a job, and return its id.
 
@@ -1004,6 +1005,9 @@ async def start_context_audit_job(
     claim), and ``dispatched_by`` the schedule's actor: a job dispatched by
     another never anchors the schedule's due rule, which reads only its own.
     ``run_with`` is the model and key a person chose (embry0/services/run_with.py).
+    ``local_first_model`` is a model on the operator's own server the job
+    prefers while it has a free slot (``CONTEXT_AUDIT_LOCAL_MODEL``); a model
+    a person chose with ``run_with`` is a pin and wins over it.
     """
     rows = await templates.list_all() if templates is not None else []
     if not any(row.get("name") == TEMPLATE for row in rows):
@@ -1011,24 +1015,26 @@ async def start_context_audit_job(
     if executor is None:
         raise RuntimeError("executor not initialized")
     task = task or audit_task(context)
+    pipeline_config = {
+        # Nobody watches a scheduled audit, so its cap is a hard stop
+        # whatever the fleet-wide overrun mode is, as the watcher's (#275).
+        "max_budget_usd": budget_usd,
+        "budget_overrun_mode": "hard",
+        # What the due rule compares the next reading with.
+        "context_fingerprint": context.fingerprint,
+        "head_sha": context.head_sha,
+        "actor": dispatched_by,
+        # Read by the executor into the job's state; the output step reads it there.
+        "open_pr": open_pr,
+    } | (apply_run_with(None, run_with) or {})
+    if local_first_model and not pipeline_config.get("agent_models_override"):
+        pipeline_config["local_first_model"] = local_first_model
     job_id = await jobs.create(
         repo=context.repo,
         task=task,
         context={"type": "git", "repo": context.repo},
         pipeline_template=TEMPLATE,
-        pipeline_config={
-            # Nobody watches a scheduled audit, so its cap is a hard stop
-            # whatever the fleet-wide overrun mode is, as the watcher's (#275).
-            "max_budget_usd": budget_usd,
-            "budget_overrun_mode": "hard",
-            # What the due rule compares the next reading with.
-            "context_fingerprint": context.fingerprint,
-            "head_sha": context.head_sha,
-            "actor": dispatched_by,
-            # Read by the executor into the job's state; the output step reads it there.
-            "open_pr": open_pr,
-        }
-        | (apply_run_with(None, run_with) or {}),
+        pipeline_config=pipeline_config,
         trace_id=f"trc-{uuid.uuid4().hex[:12]}",
         dispatched_by=dispatched_by,
     )
