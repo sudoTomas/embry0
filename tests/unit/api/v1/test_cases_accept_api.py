@@ -76,6 +76,25 @@ async def test_accept_dispatches_the_draft_like_the_label_would(api_client: Asyn
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("route", "body"),
+    [
+        ("accept", {"accepted_by": "embry0:scout"}),
+        ("close", {"closed_by": "embry0:watcher", "resolution_path": "non_code"}),
+    ],
+)
+async def test_a_case_answer_may_not_name_an_embry0_actor(
+    api_client: AsyncClient, wired: dict[str, Any], route: str, body: dict[str, str]
+) -> None:
+    """The name is the dispatcher (#246) and the audit's ``accepted_by``; an embry0 actor's name is not a person's."""
+    case_id = await _tracked_case(wired["cases"])
+    r = await api_client.post(f"/api/v1/cases/{case_id}/{route}", json=body)
+    assert r.status_code == 422, f"{route} naming an embry0 actor is refused, got {r.status_code}: {r.text}"
+    wired["app"].state.issue_executor.execute.assert_not_awaited()
+    assert (await api_client.get(f"/api/v1/cases/{case_id}")).json()["stage"] == "tracked"
+
+
+@pytest.mark.asyncio
 async def test_unknown_case_is_404(api_client: AsyncClient, wired: dict[str, Any]) -> None:
     assert (await api_client.post("/api/v1/cases/hc-nope/accept", json={})).status_code == 404
 

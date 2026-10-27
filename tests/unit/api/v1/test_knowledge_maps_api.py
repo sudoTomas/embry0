@@ -340,6 +340,26 @@ async def test_without_a_kind_each_part_goes_for_what_its_senders_mark_says(app:
     )
 
 
+async def test_a_mark_or_a_send_may_not_name_an_embry0_actor(app: FastAPI) -> None:
+    async with await _client(app) as client:
+        await _upload(client)
+        mark = await client.post(
+            "/api/v1/maps/shop/marks",
+            json={"node_id": PROBE, "verdict": "bloat", "by": "embry0:scout"},
+            headers=HEADERS,
+        )
+        send = await client.post(
+            "/api/v1/maps/shop/send",
+            json={"node_ids": ["script:util.mjs"], "kind": "analysis", "by": "embry0:scout"},
+            headers=HEADERS,
+        )
+    assert (mark.status_code, send.status_code) == (422, 422), (
+        f"a mark or a send naming an embry0 actor is refused: {mark.status_code} {send.status_code}"
+    )
+    assert app.state.knowledge_maps_repo.marks_ == {}, "no mark is stored under an embry0 actor's name"
+    app.state.jobs_repo.create.assert_not_awaited()
+
+
 async def test_a_fix_opens_an_issue_labelled_for_the_map_and_runs_it(app: FastAPI) -> None:
     async with await _client(app) as client:
         await _upload(client)

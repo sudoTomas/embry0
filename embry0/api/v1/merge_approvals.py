@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from embry0.api.deps import TIER_MERGE, ensure_admin, request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist, restricted_key_name
+from embry0.api.schemas.person_name import PersonName
 from embry0.audit.helpers import emit_audit
 from embry0.services.merge_approvals import DASHBOARD_CHANNEL, DecisionRefused, MergeApprovalService
 
@@ -39,7 +40,7 @@ class DecideBody(BaseModel):
     and the route names the actor from who authenticated (spec 3.8)."""
 
     decision: str = Field(min_length=1, max_length=20, description="'approve' or 'reject'")
-    decided_by: str | None = Field(
+    decided_by: PersonName | None = Field(
         default=None, min_length=1, max_length=200, description="who answered in the chat (the relay's form)"
     )
     chat_id: str | None = Field(

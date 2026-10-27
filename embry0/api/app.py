@@ -684,7 +684,10 @@ def _watcher_auto_acceptor(app: FastAPI) -> Any:
         request = app_request(app)
 
         async def accept(case_id: str) -> str:
-            result = await accept_case(case_id, AcceptBody(accepted_by=AUTO_ACCEPT), request, cases)
+            # model_construct: the body's rule refuses an embry0: name from a
+            # request; this one is embry0's own, given by embry0.
+            body = AcceptBody.model_construct(accepted_by=AUTO_ACCEPT)
+            result = await accept_case(case_id, body, request, cases)
             job_id = str(result.get("job_id") or "")
             await emit_audit(
                 state.db,

@@ -47,6 +47,17 @@ async def test_decide_relays_an_approval(api_client) -> None:
     assert details["via"] == "chat", "the relay's form is the chat channel"
 
 
+async def test_a_relay_decision_may_not_name_an_embry0_actor(api_client) -> None:
+    _, github, row = await _wire(api_client)
+    resp = await api_client.post(
+        f"/api/v1/merge-approvals/{row['id']}/decide",
+        json={"decision": "approve", "decided_by": "embry0:watcher", "chat_id": CHAT},
+    )
+    assert resp.status_code == 422, f"a decision naming an embry0 actor is refused, got {resp.status_code}: {resp.text}"
+    assert (await api_client.app.state.merge_approvals.get(row["id"]))["status"] == "pending"
+    assert github.merge_calls == []
+
+
 async def test_decide_from_the_wrong_chat_is_403(api_client) -> None:
     _, _, row = await _wire(api_client)
     resp = await api_client.post(

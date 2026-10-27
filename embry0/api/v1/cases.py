@@ -39,6 +39,7 @@ from embry0.api.deps import ensure_admin, get_healing_cases_repo, request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.cases import CaseDetailResponse, CaseListResponse, CaseSummary
+from embry0.api.schemas.person_name import PersonName
 from embry0.api.trigger_context import current_linear_sync, linear_trigger_context
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
@@ -142,8 +143,9 @@ class AcceptBody(BaseModel):
 
     #: Who said yes. Lands on the job as its dispatcher (the dispatch rate
     #: limit buckets per human, #246) and in the audit row. Empty: the API
-    #: principal.
-    accepted_by: str = Field(default="", max_length=200)
+    #: principal. Never an ``embry0:`` actor: only the watcher's auto-accept
+    #: names one, and it builds the body without validation.
+    accepted_by: PersonName = Field(default="", max_length=200)
     #: The model and key the job runs with (spec 2026-10-25); none is the usual run.
     run_with: RunWithRequest | None = None
 
@@ -157,7 +159,7 @@ class CloseBody(BaseModel):
     #: Free text for the ledger; truncated at the service boundary.
     note: str | None = Field(default=None, max_length=2000)
     #: Who decided. Empty: the API principal.
-    closed_by: str = Field(default="", max_length=200)
+    closed_by: PersonName = Field(default="", max_length=200)
 
 
 def _github_issues(request: Request) -> Any:
