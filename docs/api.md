@@ -261,6 +261,18 @@ Work embry0 asks a repository's owners to start ([the design](superpowers/specs/
 - `POST /api/v1/proposals/{id}/decline` (`{"by", "reason"}`) and `/snooze` (`{"by", "until"}`, a future time): it is not asked again, or not until `until`. Every answer is a `proposal.answered` audit row.
 
 
+## Decisions
+
+Every choice waiting on a person, a quest on offer or a quest to review, in one shape that the dashboard's cards and a chat's cards both render ([the design](superpowers/specs/2026-10-27-decisions-design.md)). Read only: the actions a decision lists stay on their own routes (owner proposals above, the world's quest routes, merge approvals).
+
+- `GET /api/v1/decisions?stage=offered|done|all&owner=&repo=&include_held=true&limit=100` (read): `{"decisions": [...], "count"}`, the worst first (`bad`, `warn`, `good`, `info`), then the newest. Each is `{"id", "stage", "kind", "kind_label", "verdict": {"label", "tone"}, "title", "repo", "area", "at", "facts": [{"label", "value", "tone"}], "why", "yes_starts", "actions", "owners", "held", "assigned_to", "links", "details"}`.
+  - `id` is `offer:<proposal id>` for a quest on offer (the owner proposals feed, with its brief) or `done:<job id>` for a quest to review (the world's inbox: finished in the last 14 days and not yet rated).
+  - `verdict`: a quest on offer reads its severity, else its kind's name. A quest to review reads `Ready to merge` (checks passing, the merge recommendation is merge, every done-when item met), `Checks failing`, `Needs a look`, `Failed`, `Recalled`, `Merged`, `Closed` or `Report ready`.
+  - `facts`: at most six, in a fixed order, with no empty ones.
+  - `actions`: on offer `start`, `decline`, `later`, `send_to`; to review, what the quest allows (`merge`, `send_back`, `reject`, `run_again`, `good`, `bad`, `dismiss`), then `send_to`.
+  - `owner` keeps the quests on offer a GitHub login owns; `include_held=false` leaves out what a chat does not ask.
+- `GET /api/v1/decisions/{id}`: one decision by its id; 404 for an answered proposal or an unknown job.
+
 ## Leads
 
 Work embry0 finds by itself and offers as owner proposals ([leads.md](leads.md), [the design](superpowers/specs/2026-10-25-leads-design.md)).

@@ -2750,6 +2750,7 @@ def _register_routers(app: FastAPI) -> None:
         cases,
         config,
         credentials,
+        decisions,
         deliverables,
         environment,
         github,
@@ -2856,6 +2857,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(slop_meter.router, prefix="/api/v1", tags=["slop-meter"], dependencies=auth_deps)
     # The world (spec 2026-10-25): the guild hall, the quest board and the quests' scrolls.
     app.include_router(world.router, prefix="/api/v1", tags=["world"], dependencies=auth_deps)
+    # Decisions (spec 2026-10-27): every choice waiting on a person, in one shape.
+    app.include_router(decisions.router, prefix="/api/v1", tags=["decisions"], dependencies=auth_deps)
     # Run with (spec 2026-10-25): the keys a dashboard action may run a job with.
     app.include_router(run_with.router, prefix="/api/v1", tags=["run-with"], dependencies=auth_deps)
     # #319 phase 2: the chat merge-approval loop.
