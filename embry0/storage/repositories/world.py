@@ -166,7 +166,7 @@ LIMIT $3
 """
 
 _MERGE_APPROVAL_SQL = """
-SELECT id, status, pr_url, pr_number FROM merge_approvals WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1
+SELECT id, status, pr_url, pr_number, ask FROM merge_approvals WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1
 """
 
 _RATE_SQL = """
