@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from embry0.branding import GIT_AUTHOR_EMAIL
 from embry0.services.slop_meter import loop as loop_mod
 from embry0.services.slop_meter.context import job_meter, meter_sentence
 from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader
@@ -98,16 +99,29 @@ class FakeStore:
         self.stored[repo] = results
 
 
+async def _no_bots() -> tuple[str, ...]:
+    return ()
+
+
 def _history(n: int) -> tuple[dict[str, str], list[str]]:
     order = [f"c{i:03d}" for i in range(n)]
     return {s: _record(s, START + timedelta(hours=3 * i), [("src/a.py", 20, 0)]) for i, s in enumerate(order)}, order
 
 
 def _loop(
-    mirror: FakeMirror, store: FakeStore, *, client: Any = None, per_tick: int = 3, model: str = ""
+    mirror: FakeMirror,
+    store: FakeStore,
+    *,
+    client: Any = None,
+    per_tick: int = 3,
+    model: str = "",
+    owner_bots: tuple[str, ...] = (),
 ) -> SlopMeterLoop:
     async def repos() -> list[str]:
         return [REPO]
+
+    async def bots(repo: str) -> tuple[str, ...]:
+        return owner_bots
 
     async def token_for(repo: str) -> tuple[str, str, str] | None:
         return ("github", "secret-token", "")
@@ -125,6 +139,7 @@ def _loop(
         token_for=token_for,
         client_for=client_for,
         model=model_fn,
+        bots=bots,
         resolver=None,
         settings=SlopMeterSettings(commits_per_tick=per_tick),
         clock=lambda: START + timedelta(days=60),
@@ -174,6 +189,38 @@ async def test_a_history_read_the_older_way_is_read_again() -> None:
     assert [r["sha"] for r in store.rows[REPO]] == order and store.states[REPO]["history_version"] == HISTORY_VERSION
     await loop.tick()
     assert len(mirror.logged) == 2, "and only once"
+
+
+@pytest.mark.asyncio
+async def test_embry0s_identity_and_the_owners_bots_are_bots_when_scored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#184: rows read before either was known count as a bot's too, without reading the history again."""
+    records = {
+        "c0": _record("c0", START, [("src/a.py", 20, 0)]),
+        "c1": _record("c1", START + timedelta(hours=3), [("src/a.py", 20, 0)], email="release@acme.example"),
+        "c2": _record("c2", START + timedelta(hours=6), [("src/a.py", 20, 0)], email=GIT_AUTHOR_EMAIL),
+    }
+    mirror, store = FakeMirror(records, ["c0", "c1", "c2"]), FakeStore()
+    store.event_rows[REPO] = {
+        "e1": {"kind": "comment", "login": "ana", "at": START},
+        "e2": {"kind": "comment", "login": "Release-Bot", "at": START},
+    }
+    seen: list[Any] = []
+    real = loop_mod.compute
+
+    def spy(inputs: Any) -> Any:
+        seen.append(inputs)
+        return real(inputs)
+
+    monkeypatch.setattr(loop_mod, "compute", spy)
+    loop = _loop(mirror, store, per_tick=10, owner_bots=("Release@Acme.example", "release-bot"))
+    await loop.tick()
+    for row in store.rows[REPO]:
+        row["bot"] = False  # as stored by a reader that knew neither identity
+    await loop.tick()
+    assert len(mirror.logged) == 1, "the history was not read again"
+    inputs = seen[-1]
+    assert {c.sha for c in inputs.commits if c.bot} == {"c1", "c2"}, "the owner's bot and embry0's own commits"
+    assert [e.login for e in inputs.events] == ["ana"], "the owner's bot's comments add no attention"
 
 
 @pytest.mark.asyncio
@@ -395,6 +442,7 @@ async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
         token_for=token_for,
         client_for=client_for,
         model=no_model,
+        bots=lambda repo: _no_bots(),
         resolver=None,
         settings=SlopMeterSettings(commits_per_tick=10, event_pages=100, api_calls_per_tick=16, rate_reserve=0),
         clock=lambda: START + timedelta(days=60),
@@ -499,3 +547,26 @@ def test_the_loop_module_names_its_settings_from_config() -> None:
 
     settings = loop_mod.slop_meter_settings(Config())
     assert settings.interval_seconds == 0 and settings.commits_per_tick == 7 and settings.judgments_per_tick == 5
+
+
+@pytest.mark.asyncio
+async def test_a_repositorys_bots_are_embry0s_authors_there_and_the_owners_list() -> None:
+    """#184: production's ``bots`` reads the repository's preferred author, the owner's credential's
+    author and the owner's ``slop_meter_bots``; a missing source adds nothing."""
+    from types import SimpleNamespace
+
+    class Store:
+        def __init__(self, rows: dict[str, Any]) -> None:
+            self.rows = rows
+
+        async def get(self, key: str) -> Any:
+            return self.rows.get(key)
+
+    prefs = Store({REPO: {"git_author_email": "agent@acme.example"}})
+    org = SimpleNamespace(credential_id="cred-1", settings={"slop_meter_bots": ["release-bot"]})
+    orgs = Store({REPO.split("/")[0]: org})
+    credentials = Store({"cred-1": {"git_author_email": "bot@acme.example"}})
+    got = await loop_mod.repo_bots(REPO, prefs=prefs, orgs=orgs, credentials=credentials)
+    assert got == ["agent@acme.example", "bot@acme.example", "release-bot"]
+    nothing = await loop_mod.repo_bots(REPO, prefs=Store({}), orgs=Store({}), credentials=Store({}))
+    assert nothing == []

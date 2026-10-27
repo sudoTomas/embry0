@@ -531,6 +531,7 @@ An owner with the `context_audit_days` setting on has its instruction files audi
 | `context_audit_budget_usd` | number more than 0 and at most 50, or `null` | `null` (`CONTEXT_AUDIT_JOB_BUDGET_USD`) | The hard cap in USD of each context-audit job started for the owner; a whole number is stored as a float |
 | `context_audit_max_jobs_per_tick` | integer from 0 to 50, or `null` | `null` (`CONTEXT_AUDIT_MAX_JOBS_PER_TICK`) | The most context-audit jobs one tick of the schedule starts for the owner; `0` starts none |
 | `context_audit_open_prs` | boolean | off | A context audit that finds outdated claims opens a pull request from the patch it checked, one at a time per repository ([ADR 0022](adr/0022-context-audit-pull-requests.md)) |
+| `slop_meter_bots` | list of up to 100 strings, each at most 200 characters | empty | The owner's own bots: commit names, addresses and forge logins the Slop-O-Meter counts as a bot's, not a person's attention. embry0's own commit identities are always counted so; the list applies to every reading, including history read before it was set |
 
 `GET` and `POST /api/v1/orgs/{owner}/webhook` inspect and install the organization's one GitHub webhook, and the receiver's gate handles deliveries for repositories nobody registered ([webhooks.md](webhooks.md#organization-webhooks-github), [ADR 0012](adr/0012-organization-webhook.md)).
 

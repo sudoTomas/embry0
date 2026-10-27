@@ -24,7 +24,15 @@ import structlog
 
 from embry0.services.areas import AREAS_PATH, area_of_path, parse_areas
 from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader
-from embry0.services.slop_meter.history import HISTORY_VERSION, Commit, login_of_email, parse_log
+from embry0.services.slop_meter.history import (
+    HISTORY_VERSION,
+    Commit,
+    is_bot,
+    login_of_email,
+    own_identities,
+    parse_log,
+    with_bots,
+)
 from embry0.services.slop_meter.score import Event, Meter, meters, outliers
 from embry0.services.slop_meter.weights import CONFIG_FILES, Weigher, ignore_patterns, outlier_files
 
@@ -140,6 +148,29 @@ class _Work:
     more: bool
 
 
+async def repo_bots(repo: str, *, prefs: Any, orgs: Any, credentials: Any) -> list[str]:
+    """The identities a repository's readings count as bots beyond embry0's default one (#184).
+
+    The addresses embry0 commits under there (the repository's preferred author,
+    the owner's credential's author) and the bots the owner lists in its
+    ``slop_meter_bots`` setting.
+    """
+    out: list[str] = []
+    pref = await prefs.get(repo)
+    if pref and pref.get("git_author_email"):
+        out.append(str(pref["git_author_email"]))
+    org = await orgs.get(repo.split("/", 1)[0])
+    if org is not None:
+        if org.credential_id:
+            cred = await credentials.get(org.credential_id)
+            if cred and cred.get("git_author_email"):
+                out.append(str(cred["git_author_email"]))
+        listed = org.settings.get("slop_meter_bots")
+        if isinstance(listed, list):
+            out.extend(str(v) for v in listed)
+    return out
+
+
 class SlopMeterLoop:
     """Reads each repository in scope a bounded batch a tick, and scores it when caught up.
 
@@ -159,6 +190,7 @@ class SlopMeterLoop:
         token_for: TokenFor,
         client_for: ClientFor,
         model: Callable[[], Awaitable[str]],
+        bots: Callable[[str], Awaitable[Iterable[str]]],
         resolver: Any,
         settings: SlopMeterSettings,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -170,6 +202,8 @@ class SlopMeterLoop:
         self._token_for = token_for
         self._client_for = client_for
         self._model = model
+        #: A repository's own bots and embry0's commit identities for it (#184).
+        self._bots = bots
         self._resolver = resolver
         self._settings = settings
         self._clock = clock
@@ -315,8 +349,13 @@ class SlopMeterLoop:
                 work[repo].more = True
 
     async def _inputs(self, repo: str) -> Inputs:
-        commits = [Commit.from_row(r) for r in await self._store.commits(repo)]
-        events = [Event(str(e["login"]), e["at"], str(e["kind"])) for e in await self._store.events(repo)]
+        bots = own_identities(await self._bots(repo))
+        commits = with_bots([Commit.from_row(r) for r in await self._store.commits(repo)], bots)
+        events = [
+            Event(str(e["login"]), e["at"], str(e["kind"]))
+            for e in await self._store.events(repo)
+            if not is_bot(str(e["login"]), "", bots)
+        ]
         files = {name: await self._mirror.read(repo, name) for name in (*CONFIG_FILES, AREAS_PATH)}
         return Inputs(commits, events, await self._store.logins(), await self._store.judgments(repo), files)
 
