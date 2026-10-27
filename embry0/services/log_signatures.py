@@ -60,10 +60,10 @@ _MIN_RECORD_ID_DIGITS = 5
 def _record_id(match: re.Match[str]) -> str:
     """``<id>`` for a generated record id such as an order or shipment number, the token otherwise.
 
-    The opaque-token rule needs lower case too, so ``NF42610190220`` and
-    ``N1D26102002095`` passed through it, and every order number in one
-    recurring warning became a signature of its own: on one stack 175 of the
-    218 signatures first seen in three days were that one warning. Codes stay
+    The opaque-token rule needs lower case too, so ids such as
+    ``ORD00000000001`` and ``ORD7A000000042`` passed through it, and a
+    recurring warning that named a different record each time became a new
+    signature per record. Codes stay
     as they are (``E11000``, ``SHA256``, ``PGRST002``, ``HTTP2``): too short or
     too few digits.
     """
@@ -112,7 +112,7 @@ _RULES: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]], ...]
     # rule, which would otherwise shred the token into fragments.
     (re.compile(r"[A-Za-z0-9_+/=-]{20,}"), lambda m: "<id>" if _is_opaque_token(m.group(0)) else m.group(0)),
     # Upper-case record ids the rule above cannot see (no lower case), e.g. an
-    # order number "N1D26102002095". Before the number rule for the same reason.
+    # order number "ORD7A000000042". Before the number rule for the same reason.
     (re.compile(r"\b[A-Z][A-Z0-9]*\d[A-Z0-9]*\b"), _record_id),
     # Durations, sizes and other number-with-unit forms.
     (re.compile(r"\b\d+(?:\.\d+)?(ms|s|m|h|ns|us|µs|KB|MB|GB|kB|B)\b"), r"<n>\1"),

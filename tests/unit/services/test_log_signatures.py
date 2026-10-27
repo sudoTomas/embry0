@@ -77,10 +77,10 @@ def test_screaming_snake_constants_are_not_masked():
 
 
 def test_upper_case_record_ids_are_masked_and_codes_kept():
-    """One recurring warning named a different order number each time and split
-    into a signature per order: 175 of 218 new signatures in three days."""
-    a = normalize_line("WARN lookup fallback: invalid order id format: NF42610190220.2")
-    b = normalize_line("WARN lookup fallback: invalid order id format: N1D26102002095.1")
+    """A recurring warning that names a different order number each time must
+    stay one signature, not one per order."""
+    a = normalize_line("WARN lookup fallback: invalid order id format: ORD00000000001.2")
+    b = normalize_line("WARN lookup fallback: invalid order id format: ORD7A000000042.1")
     assert a == b == "WARN lookup fallback: invalid order id format: <id>.<n>"
     for code in ("E11000 duplicate key", "SHA256 mismatch", "PGRST002 schema cache", "HTTP2 stream reset"):
         assert normalize_line(code) == code, code
