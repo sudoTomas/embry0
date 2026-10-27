@@ -2,10 +2,12 @@ import { toast } from "sonner";
 import { toastApiError } from "@/api/errorToast";
 import type { InboxQuest } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import { VerdictBadge } from "@/components/decisions/DecisionCard";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
+import { useDecisions } from "@/hooks/useDecisions";
 import { useDismissQuest, useRateQuest, useRunAgain } from "@/hooks/useWorld";
 import {
   OUTCOME_WORDS,
@@ -39,6 +41,9 @@ export function QuestInbox({
   canAct?: boolean;
 }) {
   const lookup = useIdentityLookup();
+  // Each card's verdict and its first fact (decisions, spec 2026-10-27); the outcome until they load.
+  const decisions = useDecisions({ stage: "done" });
+  const verdicts = new Map((decisions.data ?? []).map((d) => [d.links.job ?? "", d]));
   const again = useRunAgain();
   const dismiss = useDismissQuest();
   const rate = useRateQuest();
@@ -119,9 +124,20 @@ export function QuestInbox({
                     <span className="block truncate text-sm text-fg">
                       {q.title}
                     </span>
-                    <Badge tone={outcomeBadgeTone(q.outcome)}>
-                      {OUTCOME_WORDS[q.outcome]}
-                    </Badge>
+                    {verdicts.get(q.job_id) ? (
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <VerdictBadge decision={verdicts.get(q.job_id)!} />
+                        {verdicts.get(q.job_id)!.facts[0] && (
+                          <span className="truncate text-2xs text-fg-secondary">
+                            {verdicts.get(q.job_id)!.facts[0].value}
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <Badge tone={outcomeBadgeTone(q.outcome)}>
+                        {OUTCOME_WORDS[q.outcome]}
+                      </Badge>
+                    )}
                     <span className="block truncate text-2xs text-fg-muted">
                       {identity.displayName} · {placeOf(q.repo, q.area)} ·{" "}
                       {formatCost(q.cost_usd)}

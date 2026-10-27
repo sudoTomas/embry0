@@ -128,7 +128,7 @@ export function WorldMap({ art, regions, quests, parties, characters, dungeons =
     <Card role="region" className="space-y-2 p-2" data-testid="world-map" aria-label="Map">
       <div className="flex items-center justify-between gap-2 px-1">
         <span className="text-xs text-fg-muted">
-          {map.regions.length} repositories · drag to pan · click a lead to open it
+          {map.regions.length} repositories · drag to pan · click a quest to open it
         </span>
         <span className="flex gap-1">
           {[1, 2].map((z) => (

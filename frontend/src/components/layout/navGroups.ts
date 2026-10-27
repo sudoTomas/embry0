@@ -65,8 +65,8 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       { path: "/console", label: "Console", icon: SquareTerminal },
       { path: "/issues", label: "Issues", icon: CircleDot },
-      // Owner proposals (spec 2026-10-24): what embry0 asks repositories' owners to start.
-      { path: "/owner-proposals", label: "Owner proposals", icon: Inbox },
+      // Decisions (spec 2026-10-27): quests to review and quests on offer, one card each.
+      { path: "/decisions", label: "Decisions", icon: Inbox },
       // Knowledge maps (spec 2026-10-27): a scanner's maps; mark parts, send them to agents.
       { path: "/maps", label: "Maps", icon: Network },
       { path: "/jobs", label: "Jobs", icon: Zap },

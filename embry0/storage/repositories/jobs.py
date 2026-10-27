@@ -265,6 +265,7 @@ class JobsRepository:
         limit: int = 50,
         offset: int = 0,
         pipeline_template: str | None = None,
+        exclude_dispatched_by: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """List jobs with optional filters. Returns (rows, total_count)."""
         conditions: list[str] = []
@@ -286,6 +287,10 @@ class JobsRepository:
         if pipeline_template:
             conditions.append(f"pipeline_template = ${idx}")
             args.append(pipeline_template)
+            idx += 1
+        if exclude_dispatched_by:
+            conditions.append(f"NOT (COALESCE(dispatched_by, '') = ANY(${idx}::text[]))")
+            args.append(list(exclude_dispatched_by))
             idx += 1
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""

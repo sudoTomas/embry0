@@ -127,6 +127,13 @@ def test_a_running_job_refuses(deploy) -> None:
     assert _docker(calls) == []
 
 
+def test_the_running_jobs_check_leaves_out_the_scout_s_jobs(deploy) -> None:
+    """One scouting job is always out: read-only, it resumes after the recreate, so it never holds a deploy."""
+    result, calls = deploy(STUB_JOBS_BODY='{"jobs": [], "total": 0}')
+    assert result.returncode == 0, result.stderr
+    assert any("jobs?status=running" in c and "exclude_dispatched_by=embry0:scout" in c for c in calls), calls
+
+
 def test_force_deploys_past_the_refusals(deploy) -> None:
     result, calls = deploy(STUB_GIT_STATUS=" M embry0/config.py\n", STUB_JOBS_HTTP="401", EMBRY0_DEPLOY_FORCE="1")
     assert result.returncode == 0, result.stderr

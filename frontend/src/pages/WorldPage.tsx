@@ -147,7 +147,7 @@ export function WorldPage() {
             >
               {data.characters.length} agents ·{" "}
               {data.characters.filter((c) => c.state !== "idle").length} busy ·{" "}
-              {data.quests.length} leads · account total{" "}
+              {data.quests.length} quests on offer · account total{" "}
               {data.account.total_level.toLocaleString("en-US")}
             </p>
           </div>

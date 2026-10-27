@@ -7,7 +7,7 @@ describe("QuestJournal (progression spec 2026-10-24)", () => {
   it("lists each quest in its state's colour with its points and where it happened", () => {
     const { quests } = progression();
     render(<QuestJournal quests={quests} points={1} />);
-    expect(screen.getByRole("heading", { name: /Quests/ })).toHaveTextContent("1 of 6 quest points");
+    expect(screen.getByRole("heading", { name: /Deeds/ })).toHaveTextContent("1 of 6 deed points");
     const [done, open] = screen.getAllByTestId("quest");
     expect(done).toHaveAttribute("data-state", "complete");
     expect(within(done).getByRole("heading", { level: 3 })).toHaveClass("text-[#5fc95a]");

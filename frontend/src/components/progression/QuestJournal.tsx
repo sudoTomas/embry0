@@ -18,7 +18,7 @@ export function QuestJournal({ quests, points }: { quests: Quest[]; points: numb
   return (
     <section className="space-y-2" aria-labelledby="quests-heading">
       <h2 id="quests-heading" className="text-section font-semibold">
-        Quests <span className="font-normal text-fg-secondary">· {points} of {total} quest points</span>
+        Deeds <span className="font-normal text-fg-secondary">· {points} of {total} deed points</span>
       </h2>
       <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
         {quests.map((quest) => (
