@@ -3434,6 +3434,58 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'scout loop (embry0.services.scout): one row per scouting job; harvested_at once its leads were stored.';
         """,
     ),
+    (
+        124,
+        "knowledge maps: the uploaded maps, people's marks on their parts, and what was sent",
+        # spec 2026-10-27. A scanner uploads a map of a codebase or an
+        # organization (embry0.map/1); a person marks its parts, a bloat mark
+        # becomes a weed lead, and sending a part starts a job.
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_maps (
+            slug          TEXT PRIMARY KEY,
+            title         TEXT NOT NULL,
+            repo          TEXT,
+            commit_sha    TEXT,
+            source        TEXT NOT NULL DEFAULT '',
+            generated_at  TIMESTAMPTZ,
+            uploaded_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+            uploaded_by   TEXT NOT NULL DEFAULT '',
+            node_count    INTEGER NOT NULL DEFAULT 0,
+            edge_count    INTEGER NOT NULL DEFAULT 0,
+            graph         TEXT NOT NULL,
+            details       JSONB NOT NULL DEFAULT '{}'::jsonb
+        );
+        COMMENT ON TABLE knowledge_maps IS
+            'knowledge maps (embry0.services.knowledge_maps): the last upload per slug; graph is the parts and links as JSON text, details one record per part.';
+        CREATE TABLE IF NOT EXISTS knowledge_map_marks (
+            map_slug  TEXT NOT NULL,
+            node_id   TEXT NOT NULL,
+            marked_by TEXT NOT NULL,
+            verdict   TEXT NOT NULL CHECK (verdict IN ('bloat', 'keep', 'unsure')),
+            note      TEXT NOT NULL DEFAULT '',
+            marked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (map_slug, node_id, marked_by)
+        );
+        COMMENT ON TABLE knowledge_map_marks IS
+            'knowledge maps: each person''s current mark on a part; clearing a mark deletes its row.';
+        CREATE TABLE IF NOT EXISTS knowledge_map_sends (
+            id        BIGSERIAL PRIMARY KEY,
+            map_slug  TEXT NOT NULL,
+            node_id   TEXT NOT NULL,
+            kind      TEXT NOT NULL CHECK (kind IN ('remove', 'fix', 'analysis')),
+            repo      TEXT NOT NULL,
+            lead_id   TEXT,
+            job_id    TEXT,
+            error     TEXT,
+            sent_by   TEXT NOT NULL,
+            note      TEXT NOT NULL DEFAULT '',
+            sent_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_knowledge_map_sends_part ON knowledge_map_sends (map_slug, node_id, sent_at DESC);
+        COMMENT ON TABLE knowledge_map_sends IS
+            'knowledge maps: every part sent to an agent, with the lead and the job it started or the error it met.';
+        """,
+    ),
 ]
 
 

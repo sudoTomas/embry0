@@ -16,6 +16,7 @@ A repository is read when it is registered and active and someone answers for it
 
 | `crack` | The scout (below) | A finished `kintsugi-trace` job's ledger: one lead per row | break high, fracture medium, hairline low; the seal's size | A job that checks the evidence still holds, then fixes the cause |
 | `weed` | The scout (below) | A finished `garden` job's weed card | low, small | A job that removes it with the checked diff and changes no behavior |
+| `weed` | A [knowledge map](maps.md) | A part someone marked bloat on a map, while anyone does | low, small | A job that removes the part and what only it uses, without re-assessing the mark |
 
 A ticket that already carries the trigger label, or that embry0 already tracks, is left to the path that has it. A source the credential cannot read (alerts without the scope, a forge other than GitHub) is skipped quietly, one log line per reason.
 

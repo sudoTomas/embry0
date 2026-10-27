@@ -102,6 +102,23 @@ class LeadsRepository:
             or 0
         )
 
+    async def close(self, lead_id: str, *, now: datetime) -> bool:
+        """Close one open lead (a knowledge map's weed whose bloat marks were all taken back); whether it was open."""
+        result = await self._db.execute(
+            "UPDATE leads SET state = 'gone', gone_at = $2 WHERE id = $1 AND state = 'open'", lead_id, now
+        )
+        return str(result).endswith(" 1")
+
+    async def open_by_source_prefix(self, kind: str, prefix: str) -> list[dict[str, Any]]:
+        """The open leads of ``kind`` whose ``source_key`` starts with ``prefix`` (one knowledge map's weeds)."""
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        rows = await self._db.fetch(
+            f"SELECT {_COLUMNS} FROM leads WHERE kind = $1 AND state = 'open' AND source_key LIKE $2 ESCAPE '\\'",
+            kind,
+            escaped + "%",
+        )
+        return [_row(r) for r in rows]
+
     async def open_leads(self) -> list[dict[str, Any]]:
         rows = await self._db.fetch(f"SELECT {_COLUMNS} FROM leads WHERE state = 'open' ORDER BY first_seen DESC")
         return [_row(r) for r in rows]

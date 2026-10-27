@@ -876,6 +876,10 @@ async def _init_app_state(
     from embry0.storage.repositories.slop_meter import SlopMeterRepository
 
     app.state.slop_meter_repo = SlopMeterRepository(db)
+    # Knowledge maps (spec 2026-10-27): a scanner's maps, people's marks on their parts, what was sent.
+    from embry0.storage.repositories.knowledge_maps import KnowledgeMapsRepository
+
+    app.state.knowledge_maps_repo = KnowledgeMapsRepository(db)
 
     # The world (spec 2026-10-25): read-only over jobs, their log, traces and answers, plus the player's ratings.
     from embry0.services.world import WorldCache
@@ -2760,6 +2764,7 @@ def _register_routers(app: FastAPI) -> None:
         internal_qa,
         issues,
         jobs,
+        knowledge_maps,
         leads,
         logs,
         merge_approvals,
@@ -2859,6 +2864,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(world.router, prefix="/api/v1", tags=["world"], dependencies=auth_deps)
     # Decisions (spec 2026-10-27): every choice waiting on a person, in one shape.
     app.include_router(decisions.router, prefix="/api/v1", tags=["decisions"], dependencies=auth_deps)
+    # Knowledge maps (spec 2026-10-27): upload, read, mark and send a scanner's maps.
+    app.include_router(knowledge_maps.router, prefix="/api/v1", tags=["knowledge-maps"], dependencies=auth_deps)
     # Run with (spec 2026-10-25): the keys a dashboard action may run a job with.
     app.include_router(run_with.router, prefix="/api/v1", tags=["run-with"], dependencies=auth_deps)
     # #319 phase 2: the chat merge-approval loop.
