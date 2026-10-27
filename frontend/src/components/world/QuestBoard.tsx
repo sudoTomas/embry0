@@ -36,7 +36,7 @@ export function QuestBoard({ quests, partyLevel, onPick }: QuestBoardProps) {
     <Card role="region" className="flex min-h-0 flex-col" aria-labelledby="quest-board-title" data-testid="quest-board">
       <CardHeader className="flex-row items-baseline justify-between space-y-0 pb-3">
         <h2 id="quest-board-title" className="text-section font-semibold">
-          Leads
+          Quests on offer
         </h2>
         <span className="text-xs text-fg-muted">
           {shown.length} of {quests.length}
@@ -56,7 +56,7 @@ export function QuestBoard({ quests, partyLevel, onPick }: QuestBoardProps) {
           />
         </div>
         <ul className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1" data-testid="quest-list">
-          {shown.length === 0 && <li className="py-2 text-sm text-muted-foreground">No leads match.</li>}
+          {shown.length === 0 && <li className="py-2 text-sm text-muted-foreground">No quests match.</li>}
           {shown.map((q) => (
             <li key={q.id}>
               <button

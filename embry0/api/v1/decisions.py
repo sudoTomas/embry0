@@ -110,6 +110,8 @@ async def done_inputs(request: Request, rows: Sequence[dict[str, Any]]) -> list[
             "pr": pr,
             "verification": verification if isinstance(verification, dict) else None,
             "approval_ask": _json((approval or {}).get("ask")) or {},
+            # Merge on the card merges through a pending merge approval, as the review bar does.
+            "approval_id": (approval or {}).get("id") if (approval or {}).get("status") == "pending" else None,
             "brief": briefs.get(job_id) or {},
             "report": report[:_REPORT_CHARS],
         }

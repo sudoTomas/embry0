@@ -14,7 +14,7 @@ const MergeApprovalsPage = lazy(() => import("../pages/MergeApprovalsPage").then
 const MergeApprovalPage = lazy(() => import("../pages/MergeApprovalPage").then(m => ({ default: m.MergeApprovalPage })));
 const AgentsPage = lazy(() => import("../pages/AgentsPage").then(m => ({ default: m.AgentsPage })));
 const AchievementsPage = lazy(() => import("../pages/AchievementsPage").then(m => ({ default: m.AchievementsPage })));
-const OwnerProposalsPage = lazy(() => import("../pages/OwnerProposalsPage").then(m => ({ default: m.OwnerProposalsPage })));
+const DecisionsPage = lazy(() => import("../pages/DecisionsPage").then(m => ({ default: m.DecisionsPage })));
 // Knowledge maps (spec 2026-10-27): a scanner's maps, marked and sent to agents.
 const MapsPage = lazy(() => import("../pages/MapsPage").then(m => ({ default: m.MapsPage })));
 const MapPage = lazy(() => import("../pages/MapPage").then(m => ({ default: m.MapPage })));
@@ -83,7 +83,9 @@ export const router = createBrowserRouter([
       { path: "sandboxes/:name", element: <ErrorBoundary inline><Suspense fallback={fallback}><SandboxFormPage /></Suspense></ErrorBoundary> },
       { path: "hosts", element: <ErrorBoundary inline><Suspense fallback={fallback}><HostsPage /></Suspense></ErrorBoundary> },
       { path: "pipelines", element: <ErrorBoundary inline><Suspense fallback={fallback}><PipelinesPage /></Suspense></ErrorBoundary> },
-      { path: "owner-proposals", element: <ErrorBoundary inline><Suspense fallback={fallback}><OwnerProposalsPage /></Suspense></ErrorBoundary> },
+      { path: "decisions", element: <ErrorBoundary inline><Suspense fallback={fallback}><DecisionsPage /></Suspense></ErrorBoundary> },
+      // Owner proposals became the decisions' quests on offer (spec 2026-10-27); old links keep working.
+      { path: "owner-proposals", element: <Navigate to="/decisions?stage=offered" replace /> },
       { path: "maps", element: <ErrorBoundary inline><Suspense fallback={fallback}><MapsPage /></Suspense></ErrorBoundary> },
       { path: "maps/:slug", element: <ErrorBoundary inline><Suspense fallback={fallback}><MapPage /></Suspense></ErrorBoundary> },
       { path: "issues", element: <ErrorBoundary inline><Suspense fallback={fallback}><IssuesPage /></Suspense></ErrorBoundary> },

@@ -271,6 +271,10 @@ async def list_jobs(
     repo: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    exclude_dispatched_by: str | None = Query(
+        default=None,
+        description="Comma-separated actors whose jobs are left out (a deploy leaves out the scout's: embry0:scout)",
+    ),
     brief: bool = Query(
         default=False,
         description=(
@@ -280,7 +284,10 @@ async def list_jobs(
     ),
     jobs: JobsRepository = Depends(get_jobs_repo),
 ) -> JobListResponse:
-    rows, total = await jobs.list_all(status=status, repo=repo, limit=limit, offset=offset)
+    excluded = [a.strip() for a in (exclude_dispatched_by or "").split(",") if a.strip()] or None
+    rows, total = await jobs.list_all(
+        status=status, repo=repo, limit=limit, offset=offset, exclude_dispatched_by=excluded
+    )
     items = [JobResponse(**r) for r in rows]
     if brief:
         for item in items:

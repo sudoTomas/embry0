@@ -125,6 +125,7 @@ async def test_every_decision_is_listed_worst_first_in_one_shape(app: Any) -> No
     assert review["verdict"] == {"label": "Ready to merge", "tone": "good"}
     assert review["title"] == "Fix the leads crash loop" and review["why"] == "Users got 502s."
     assert review["facts"][0] == {"label": "Pull request", "value": "#7 · +40 −2 · 3 files", "tone": ""}
+    assert review["links"]["merge_approval"] == "ma-1", "a pending merge approval is what Merge goes through"
     assert decisions[3]["held"] is True, "a ticket below the readiness floor is shown, marked held"
 
 

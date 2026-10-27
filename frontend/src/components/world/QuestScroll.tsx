@@ -4,12 +4,14 @@ import { toast } from "sonner";
 import { toastApiError } from "@/api/errorToast";
 import type { RunWith } from "@/api/runWith";
 import type { QuestScroll as Scroll, WorkNature } from "@/api/world";
+import { DecisionSummary } from "@/components/decisions/DecisionCard";
 import { RunWithControl } from "@/components/runwith/RunWithControl";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Textarea } from "@/components/ui/Textarea";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
+import { useDecision } from "@/hooks/useDecisions";
 import {
   useApproveMerge,
   useDismissQuest,
@@ -147,6 +149,8 @@ function ScrollBody({
   position?: string;
 }) {
   const lookup = useIdentityLookup();
+  // The decision's verdict and facts open the scroll (spec 2026-10-27): read before the report.
+  const decision = useDecision(`done:${quest.job_id}`);
   const xpTotal = quest.xp.reduce((sum, g) => sum + g.xp, 0);
   return (
     <div
@@ -171,6 +175,8 @@ function ScrollBody({
           Open the job
         </Link>
       </div>
+
+      {decision.data && <DecisionSummary decision={decision.data} />}
 
       {quest.failure && (
         <div
