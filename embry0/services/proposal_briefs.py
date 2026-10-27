@@ -116,6 +116,8 @@ _KIND_WORDS = {
     "alert": "a firing alert",
     "flaky": "a flaky check",
     "review": "review comments nobody answered",
+    "crack": "a crack the scout found in the code",
+    "weed": "dead or duplicated code the scout found",
 }
 
 
@@ -129,6 +131,8 @@ _YES_WORDS = {
     "alert": "the agents fix what the alert names and open a pull request",
     "flaky": "the agents find why the check is unreliable and open a pull request",
     "review": "the agents answer the open review comments on the pull request's branch",
+    "crack": "the agents fix what the crack names and open a pull request",
+    "weed": "the agents remove the dead code, change no behavior, and open a pull request",
 }
 
 
@@ -192,8 +196,15 @@ def parse_brief(text: str) -> Brief:
     return Brief(title=_cut(fields["title"]), problem=fields["problem"], fix=fields["fix"], size=size.strip().lower())
 
 
+#: The least severity of a scout lead asked in chat; the rest stay on the page.
+SCOUT_CHAT_SEVERITIES = frozenset({"high", "critical"})
+
+
 def held(p: Proposal, min_readiness: int) -> bool:
-    """A backlog ticket below the readiness floor: shown on the page, not asked in chat."""
+    """Shown on the page, not asked in chat: a backlog ticket below the readiness floor, a weed, or a
+    crack below ``break`` (spec 2026-10-27: a scout running all day must not fill the chat)."""
+    if p.kind in ("crack", "weed"):
+        return str(p.extra.get("severity") or "") not in SCOUT_CHAT_SEVERITIES
     if p.kind != "ticket":
         return False
     readiness = (p.extra.get("source") or {}).get("readiness") if isinstance(p.extra.get("source"), Mapping) else None

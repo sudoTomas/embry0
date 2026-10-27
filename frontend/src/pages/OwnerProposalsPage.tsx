@@ -23,6 +23,8 @@ const KIND_LABEL: Record<OwnerProposalKind, string> = {
   alert: "Alert",
   flaky: "Flaky check",
   review: "Unanswered review",
+  crack: "Scout crack",
+  weed: "Scout weed",
 };
 
 const SIZE_TONE = { small: "success", medium: "info", large: "warning" } as const;

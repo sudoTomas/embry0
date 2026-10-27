@@ -3407,6 +3407,33 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'how the stored history was read (embry0.services.slop_meter.history.HISTORY_VERSION); older is read again.';
         """,
     ),
+    (
+        123,
+        "scout: the loop's runs, and its two lead kinds (crack, weed)",
+        # spec 2026-10-27. A crack is a kintsugi ledger row and a weed a garden
+        # weed card, read from a scouting job pinned to the local model.
+        """
+        ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_kind_check;
+        ALTER TABLE leads ADD CONSTRAINT leads_kind_check
+            CHECK (kind IN ('ticket', 'ci', 'alert', 'flaky', 'review', 'crack', 'weed'));
+        ALTER TABLE proposal_decisions DROP CONSTRAINT IF EXISTS proposal_decisions_kind_check;
+        ALTER TABLE proposal_decisions ADD CONSTRAINT proposal_decisions_kind_check
+            CHECK (kind IN ('case', 'issue', 'finding', 'ticket', 'ci', 'alert', 'flaky', 'review', 'crack', 'weed'));
+        CREATE TABLE IF NOT EXISTS scout_runs (
+            job_id        TEXT PRIMARY KEY,
+            repo          TEXT NOT NULL,
+            area          TEXT NOT NULL DEFAULT '',
+            template      TEXT NOT NULL,
+            dispatched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            harvested_at  TIMESTAMPTZ,
+            leads         INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_scout_runs_unit ON scout_runs (lower(repo), area, template, dispatched_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_scout_runs_open ON scout_runs (dispatched_at) WHERE harvested_at IS NULL;
+        COMMENT ON TABLE scout_runs IS
+            'scout loop (embry0.services.scout): one row per scouting job; harvested_at once its leads were stored.';
+        """,
+    ),
 ]
 
 

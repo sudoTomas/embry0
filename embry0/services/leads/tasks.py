@@ -85,6 +85,30 @@ def lead_task(row: Mapping[str, Any]) -> str:
             "For each thread, make the change the reviewer asked for; where you disagree, say why in the commit",
             f"message. Commit and push to {head}. The pull request exists: do NOT create a new pull request or branch.",
         ]
+    elif kind == "crack":
+        lines = [
+            f"Mend a crack the scout found in {repo}: {row.get('title')}",
+            "",
+            *_area_line(row),
+            details,
+            "",
+            "First check the evidence still holds on the default branch; if it does not, say so and stop.",
+            "Fix the cause, prove it with a test or the command that showed it, and say in the pull request",
+            "what was wrong. Where the seal says a person must decide first, ask instead of choosing.",
+        ]
+    elif kind == "weed":
+        pull = str(data.get("pull") or "").strip()
+        lines = [
+            f"Pull a weed the scout found in {repo}: {str(row.get('title') or '').removeprefix('Weed: ')}",
+            "",
+            *_area_line(row),
+            details,
+            "",
+            *(["The diff the scout checked:", "```diff", pull, "```", ""] if pull else []),
+            "Confirm nothing references it on the default branch, then remove it (the diff above, or its",
+            "equivalent if the code moved), run the check that covers it, and open a pull request.",
+            "Change no behavior: if anything a user would notice changes, it is not a weed; stop and say so.",
+        ]
     else:
         raise ValueError(f"a {kind} lead has no task of its own")
     return "\n".join(line for line in lines if line is not None).strip()

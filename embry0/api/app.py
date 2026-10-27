@@ -2512,6 +2512,65 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(slop_meter_task)
     slop_meter_task.add_done_callback(app.state.background_tasks.discard)
 
+    # Scout (spec 2026-10-27): read-only jobs pinned to the operator's local
+    # model, rotating through the world map's repositories and their areas;
+    # each finished job's cracks and weeds become leads. Off until SCOUT_MODEL
+    # names a model.
+    from embry0.audit.helpers import emit_audit as _scout_audit
+    from embry0.orchestration import dispatch_actors as _scout_actors
+    from embry0.services.areas import AREAS as _SCOUT_AREAS
+    from embry0.services.areas import read_contents as _scout_read_contents
+    from embry0.services.scout import ScoutLoop, scout_settings
+    from embry0.storage.repositories.scout import ScoutRunsRepository
+
+    async def _scout_repos() -> list[str]:
+        regions = await app.state.world_repo.regions()
+        registered = {str(r["repo"]).lower() for r in await app.state.repos_repo.list_all()}
+        shown = (str(r["repo"]) for r in regions if str(r["repo"]).lower() in registered)
+        return slop_meter_scope(shown, config.scout_repos, config.scout_exclude)
+
+    async def _scout_areas(repo: str) -> list[Any]:
+        client = await _slop_meter_client(repo)
+        if client is None:
+            return []
+
+        async def read(name: str, path: str) -> str | None:
+            return await _scout_read_contents(lambda url: client.get(url, repo=name), name, path)
+
+        return await _SCOUT_AREAS.areas(repo, read)
+
+    async def _scout_gate() -> Any:
+        executor = getattr(app.state, "issue_executor", None)
+        if executor is None:
+            return "executor not initialized"
+        return await executor.dispatch_refusal(actor=_scout_actors.SCOUT)
+
+    async def _scout_submit(job_id: str, unit: Any, text: str) -> None:
+        await _scout_audit(
+            db,
+            "job_created",
+            actor=_scout_actors.SCOUT,
+            details={"job_id": job_id, "repo": unit.repo, "pipeline_template": unit.template},
+            audit_log_path=config.audit_log_path,
+        )
+        app.state.issue_executor.submit_job(
+            job_id, repo=unit.repo, title=text.splitlines()[0][:200], body=text, kind="scout"
+        )
+
+    app.state.scout = ScoutLoop(
+        settings=scout_settings(config),
+        runs=ScoutRunsRepository(db),
+        jobs=app.state.jobs_repo,
+        leads=app.state.leads_repo,
+        repos=_scout_repos,
+        areas_for=_scout_areas,
+        ask_gate=_scout_gate,
+        submit=_scout_submit,
+    )
+    scout_task = asyncio.create_task(app.state.scout.start())
+    app.state.background_tasks.add(scout_task)
+    scout_task.add_done_callback(app.state.background_tasks.discard)
+
     logger.info("embry0_started")
     yield
 
