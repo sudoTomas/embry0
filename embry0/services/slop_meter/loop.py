@@ -14,6 +14,7 @@ has a backlog the loop comes back sooner (``SLOP_METER_CATCHUP_SECONDS``).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -146,6 +147,9 @@ class _Work:
 
     forge: str
     more: bool
+    #: Which credential reads it: a digest of its token, never the token. Each
+    #: credential has its own rate limit, so each gets its own budget (#185).
+    credential: str = ""
 
 
 async def repo_bots(repo: str, *, prefs: Any, orgs: Any, credentials: Any) -> list[str]:
@@ -277,7 +281,8 @@ class SlopMeterLoop:
             await self._store.add_commits(repo, done, [c.to_row() for c in commits])
             done += len(batch)
             await self._store.set_state(repo, commits_read=done, commits_total=len(history), head_sha=batch[-1])
-        return _Work(forge=forge, more=done < len(history))
+        credential = hashlib.sha256(token.encode()).hexdigest()[:16]
+        return _Work(forge=forge, more=done < len(history), credential=credential)
 
     async def _reader(self, repo: str) -> EventReader | None:
         client = await self._client_for(repo)
@@ -301,8 +306,14 @@ class SlopMeterLoop:
         )
 
     async def _read_forge(self, order: list[str], work: dict[str, _Work]) -> None:
-        """Every GitHub repository's events, one API call per repository in turn, under the tick's shared budget."""
-        budget = ApiBudget(self._settings.api_calls_per_tick, self._settings.rate_reserve)
+        """Every GitHub repository's events, one API call per repository in turn.
+
+        Repositories read with one credential share its budget for the tick:
+        ``api_calls_per_tick`` calls, stopping at its rate limit's reserve. One
+        credential running low never stops a repository read with another (#185).
+        """
+        s = self._settings
+        budgets: dict[str, ApiBudget] = {}
         readers: dict[str, EventReader] = {}
         for repo in order:
             if repo in work and work[repo].forge == "github":
@@ -313,26 +324,32 @@ class SlopMeterLoop:
                     continue
                 if reader is not None:
                     readers[repo] = reader
+                    budgets.setdefault(work[repo].credential, ApiBudget(s.api_calls_per_tick, s.rate_reserve))
         active = list(readers)
-        while active and not budget.spent:
+        waiting: list[str] = []
+        while active:
             for repo in list(active):
                 try:
-                    going = await readers[repo].step(budget)
+                    going = await readers[repo].step(budgets[work[repo].credential])
                 except BudgetSpent:
-                    break
+                    # Its credential's budget is gone; the others' repositories go on.
+                    active.remove(repo)
+                    waiting.append(repo)
+                    continue
                 except Exception as exc:  # noqa: BLE001 - this repository's events stop for the tick
                     logger.warning("slop_meter_events_failed", repo=repo, error=str(exc)[:300])
                     active.remove(repo)
                     continue
                 if not going:
                     active.remove(repo)
-        if active:
+        if waiting:
+            spent = [b for b in budgets.values() if b.spent]
             logger.info(
                 "slop_meter_api_budget_spent",
-                calls=budget.made,
-                remaining=budget.remaining,
-                reserve=budget.reserve,
-                waiting=sorted(active),
+                calls=[b.made for b in spent],
+                remaining=[b.remaining for b in spent],
+                reserve=s.rate_reserve,
+                waiting=sorted(waiting),
             )
         for repo, reader in readers.items():
             batch = reader.batch
@@ -345,7 +362,7 @@ class SlopMeterLoop:
             )
             for login, email in batch.logins.items():
                 await self._store.set_login(login, email)
-            if repo in active:
+            if repo in waiting:
                 work[repo].more = True
 
     async def _inputs(self, repo: str) -> Inputs:
