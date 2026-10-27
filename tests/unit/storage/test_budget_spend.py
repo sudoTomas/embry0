@@ -51,7 +51,7 @@ async def test_dispatch_count_passes_actor_and_window():
     since = datetime(2026, 9, 17, 11, 0, tzinfo=UTC)
     db = FakeDB(value=3)
     assert await BudgetSpendRepository(db).dispatch_count_since("alex", since) == 3
-    assert db.queries[0][1] == ("alex", since, None)
+    assert db.queries[0][1] == ("alex", since, None, None)
 
 
 @pytest.mark.asyncio
@@ -174,6 +174,24 @@ async def test_actor_count_sql_against_the_migrated_schema(db_with_migrations):
     # #116: the runner's own job is not one of the actor's other jobs.
     assert await repo.dispatch_count_since("alex", since, excluding="job-b") == 1
     assert await repo.dispatch_count_since("alex", since, excluding="job-missing") == 2
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_actor_count_of_one_repository(db_with_migrations):
+    """#172: a stack's auto-accept cap counts that stack's jobs only, whatever another stack spent."""
+    db = db_with_migrations
+    for job_id, job_repo in (("job-1", "acme/one"), ("job-2", "acme/one"), ("job-3", "acme/two")):
+        await db.execute(
+            "INSERT INTO jobs (job_id, repo, task, status, dispatched_by) VALUES ($1, $2, 't', 'completed', 'bot')",
+            job_id,
+            job_repo,
+        )
+    repo = BudgetSpendRepository(db)
+    since = datetime.now(UTC) - timedelta(hours=1)
+    assert await repo.dispatch_count_since("bot", since, repo="acme/one") == 2, "only acme/one's jobs"
+    assert await repo.dispatch_count_since("bot", since, repo="ACME/Two") == 1, "the repository in any case"
+    assert await repo.dispatch_count_since("bot", since) == 3, "no repository: every job of the actor"
 
 
 @pytest.mark.requires_postgres

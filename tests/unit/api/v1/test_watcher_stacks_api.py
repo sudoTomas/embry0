@@ -99,6 +99,20 @@ async def test_an_unknown_setting_is_reported_not_stored(app: Any) -> None:
     assert resp.json()["settings"] == {}
 
 
+async def test_a_bad_setting_value_is_refused_naming_it(app: Any) -> None:
+    """#172: a value the tick cannot use is a 422 at write, not an error on every tick after."""
+    async with _client(app) as client:
+        resp = await client.put(
+            "/api/v1/watcher/stacks/o/r",
+            json={"logql": "{x=1}", "settings": {"auto_accept_max_per_day": "x", "auto_accept_min_severity": "hgh"}},
+        )
+        got = await client.get("/api/v1/watcher/stacks/o/r")
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert "settings.auto_accept_max_per_day" in detail and "settings.auto_accept_min_severity" in detail, detail
+    assert got.status_code == 404, "nothing was stored"
+
+
 async def test_an_unknown_tracker_is_refused(app: Any) -> None:
     async with _client(app) as client:
         resp = await client.put("/api/v1/watcher/stacks/o/r", json={"logql": "{x=1}", "tracker": "jira"})

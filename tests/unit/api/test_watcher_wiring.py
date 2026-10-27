@@ -194,3 +194,4 @@ async def test_the_auto_acceptor_accepts_through_the_case_route_as_its_own_actor
     assert accepted == [("hc-1", AUTO_ACCEPT)]
     assert audits == [("case_auto_accepted", AUTO_ACCEPT)]
     assert db.fetchval.await_args.args[1] == AUTO_ACCEPT, "the day's cap counts the auto-accept actor's jobs"
+    assert db.fetchval.await_args.args[4] == "owner/repo", "#172: and only this stack's repository's"

@@ -655,7 +655,8 @@ def _watcher_auto_acceptor(app: FastAPI) -> Any:
     Each through the path ``POST /cases/{id}/accept`` takes, as
     ``embry0:auto-accept``, with its own audit row; a draft an owner already
     answered as a proposal is left alone, and the day's count is the jobs that
-    actor dispatched in the last 24 hours.
+    actor dispatched for this stack's repository in the last 24 hours (#172):
+    each stack's cap is its own.
     """
 
     async def run(repo: str, bar: Any) -> list[dict[str, str]]:
@@ -677,7 +678,7 @@ def _watcher_auto_acceptor(app: FastAPI) -> Any:
         if not candidates:
             return []
         accepted_today = await BudgetSpendRepository(state.db).dispatch_count_since(
-            AUTO_ACCEPT, now - timedelta(days=1)
+            AUTO_ACCEPT, now - timedelta(days=1), repo=repo
         )
         proposals = getattr(state, "proposals_repo", None)
         decisions = await proposals.decisions() if proposals is not None else {}

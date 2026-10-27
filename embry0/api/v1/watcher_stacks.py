@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.audit.helpers import emit_audit
-from embry0.services.watcher_stacks import OVERRIDABLE, WatcherStack
+from embry0.services.watcher_stacks import OVERRIDABLE, WatcherStack, check_settings
 from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
 
 router = APIRouter()
@@ -89,9 +89,15 @@ async def get_stack(owner: str, name: str, request: Request) -> dict[str, Any]:
 @router.put("/watcher/stacks/{owner}/{name}", dependencies=[require_admin])
 async def put_stack(owner: str, name: str, body: StackBody, request: Request) -> dict[str, Any]:
     """Create or replace a watched stack. Unknown ``settings`` keys are
-    dropped rather than stored — the response shows what was kept."""
+    dropped rather than stored — the response shows what was kept. A known key
+    with a wrong type or a value out of range is a 422 naming it (#172): the
+    stored value is what every tick reads."""
     repo = f"{owner}/{name}"
     unknown = sorted(set(body.settings) - set(OVERRIDABLE))
+    try:
+        settings = check_settings(body.settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     stored = await save_stack(
         request,
         WatcherStack(
@@ -99,7 +105,7 @@ async def put_stack(owner: str, name: str, body: StackBody, request: Request) ->
             logql=body.logql,
             tracker=body.tracker,
             tracker_target=body.tracker_target,
-            settings=body.settings,
+            settings=settings,
             enabled=body.enabled,
         ),
         ignored_settings=unknown,

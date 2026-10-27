@@ -14,10 +14,12 @@ row behaves exactly as before.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import structlog
+from pydantic import BeforeValidator, Field, TypeAdapter, ValidationError
 
 logger = structlog.get_logger(__name__)
 
@@ -54,6 +56,105 @@ OVERRIDABLE: dict[str, str] = {
 _OWN = {"repo": "watcher_repo", "logql": "watcher_logql"}
 
 
+def _lower(value: Any) -> Any:
+    return value.strip().lower() if isinstance(value, str) else value
+
+
+_Mode = Annotated[Literal["off", "shadow", "on"], BeforeValidator(_lower)]
+_Severity = Annotated[Literal["low", "medium", "high", "critical"], BeforeValidator(_lower)]
+_Count = Annotated[int, Field(ge=0)]
+_Positive = Annotated[int, Field(ge=1)]
+_Text = Annotated[str, Field(max_length=4000)]
+
+#: The type and bounds of each key, checked on every write and again when a
+#: stack is read for a tick. Strict: ``"5"`` is not a number and ``"true"`` is
+#: not a boolean, because the stored value is what the watcher reads.
+_SETTING_TYPES: dict[str, Any] = {
+    "interval_seconds": _Positive,
+    "min_log_lines": _Count,
+    "max_log_lines": _Positive,
+    "max_open_proposals": _Count,
+    "max_deferred_findings": _Count,
+    "max_full_cap_analyses_per_day": _Count,
+    "proposal_window_days": _Count,
+    "job_timeout_seconds": _Positive,
+    "job_budget_usd": Annotated[float, Field(gt=0)],
+    "spike_factor": Annotated[float, Field(gt=0)],
+    "spike_min_count": _Count,
+    "regression_silence_seconds": _Count,
+    "max_lookback_seconds": _Count,
+    "deploy_logql": _Text,
+    "context_proxy_container_allowlist": _Text,
+    "log_clustering_mode": _Mode,
+    "skip_unchanged_mode": _Mode,
+    "skip_known_hours": _Count,
+    "auto_accept": bool,
+    "auto_accept_after_hours": Annotated[float, Field(ge=0)],
+    "auto_accept_min_severity": _Severity,
+    "auto_accept_min_occurrences": _Count,
+    "auto_accept_max_per_day": _Count,
+}
+_ADAPTERS: dict[str, TypeAdapter[Any]] = {key: TypeAdapter(kind) for key, kind in _SETTING_TYPES.items()}
+
+
+def _problems(key: str, exc: ValidationError) -> list[str]:
+    out = []
+    for error in exc.errors():
+        where = ".".join(str(part) for part in (key, *error.get("loc", ())))
+        out.append(f"settings.{where}: {error.get('msg', 'invalid')}")
+    return out
+
+
+def check_setting(key: str, value: Any) -> Any:
+    """``value`` as stored for ``key``; :class:`ValueError` naming the key when it is not one.
+
+    ``key`` must be in :data:`OVERRIDABLE`.
+    """
+    try:
+        clean = _ADAPTERS[key].validate_python(value, strict=True)
+    except ValidationError as exc:
+        raise ValueError("; ".join(_problems(key, exc))) from None
+    return clean
+
+
+def check_settings(settings: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The known keys of ``settings``, each checked; :class:`ValueError` listing every problem.
+
+    Unknown keys are dropped here, as they always were: the API reports them
+    as ``ignored_settings`` rather than refusing the stack.
+    """
+    clean: dict[str, Any] = {}
+    problems: list[str] = []
+    for key, value in (settings or {}).items():
+        if key not in OVERRIDABLE:
+            continue
+        try:
+            clean[key] = check_setting(key, value)
+        except ValueError as exc:
+            problems.append(str(exc))
+    if problems:
+        raise ValueError("; ".join(problems))
+    return clean
+
+
+def usable_settings(stack: WatcherStack) -> dict[str, Any]:
+    """The overrides a tick can use: a stored value that no longer checks is left out, with a warning.
+
+    A row written before its keys were checked (#172) can hold anything; the
+    tick must not raise on it, and the deployment's default is the safe
+    reading of a value nobody can trust.
+    """
+    usable: dict[str, Any] = {}
+    for key, value in (stack.settings or {}).items():
+        if key not in OVERRIDABLE:
+            continue
+        try:
+            usable[key] = check_setting(key, value)
+        except ValueError as exc:
+            logger.warning("watcher_stack_setting_invalid", stack=stack.repo, key=key, error=str(exc))
+    return usable
+
+
 @dataclass(frozen=True)
 class WatcherStack:
     """One watched stack."""
@@ -88,9 +189,7 @@ class StackConfig:
     def __init__(self, base: Any, stack: WatcherStack) -> None:
         self._base = base
         self._stack = stack
-        self._overrides: dict[str, Any] = {
-            OVERRIDABLE[key]: value for key, value in (stack.settings or {}).items() if key in OVERRIDABLE
-        }
+        self._overrides: dict[str, Any] = {OVERRIDABLE[key]: value for key, value in usable_settings(stack).items()}
         self._overrides["watcher_repo"] = stack.repo
         self._overrides["watcher_logql"] = stack.logql
 
