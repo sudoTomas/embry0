@@ -113,6 +113,8 @@ export interface PartView {
   map: { slug: string; title: string; repo: string | null };
   node: MapNode;
   repo: string | null;
+  /** A file or folder in a repository: an agent can remove it. A whole system or repository cannot be. */
+  removable: boolean;
   detail: PartDetail | null;
   marks: MarkView[];
   work: WorkView | null;

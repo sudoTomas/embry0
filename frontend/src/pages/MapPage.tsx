@@ -117,7 +117,11 @@ export function MapPage() {
     if (picked && query) return new Set([...found].filter((id) => picked?.has(id)));
     return picked ?? found;
   }, [map.data, query, show, marks.data, work.data]);
-  const unsent = useMemo(() => unsentBloat(marks.data, work.data), [marks.data, work.data]);
+  const unsent = useMemo(() => {
+    // Only a file or folder in a repository can be removed; a whole system's mark stays on the map.
+    const removable = new Set((map.data?.nodes ?? []).filter((n) => n.path && (n.repo ?? map.data?.repo)).map((n) => n.id));
+    return unsentBloat(marks.data, work.data).filter((id) => removable.has(id));
+  }, [map.data, marks.data, work.data]);
   const running = Object.values(work.data ?? {}).filter((w) => workState(w) === "running").length;
 
   if (map.isLoading) return <Skeleton className="h-[70vh] w-full" />;

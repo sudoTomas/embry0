@@ -17,6 +17,7 @@ const PART: PartView = {
   map: { slug: "shop", title: "Shop", repo: "acme/shop" },
   node: GRAPH.nodes[0],
   repo: "acme/shop",
+  removable: true,
   detail: { narrative: { does: "Prints one row." }, bloat: { score: 70, band: "bloat", against: [{ text: "Nothing runs it.", w: 70 }] } },
   marks: [{ by: "owner@example.com", verdict: "bloat", note: "dead", at: null }, { by: "bo@example.com", verdict: "keep", note: "", at: null }],
   work: null,
@@ -100,6 +101,18 @@ describe("MapPage (knowledge maps, spec 2026-10-27)", () => {
     renderAt("/maps/shop?part=script%3Aprobe.mjs");
     await userEvent.click(within(screen.getByTestId("part-panel")).getByRole("button", { name: "Bloat" }));
     expect(markMutate).toHaveBeenCalledWith(expect.objectContaining({ node_id: "script:probe.mjs", verdict: "clear" }), expect.anything());
+  });
+
+  it("offers no removal for a whole system, and leaves its bloat mark out of the batch", () => {
+    const system = { ...GRAPH.nodes[0], id: "sys:billing", label: "billing", path: null, repo: "acme/billing" };
+    hooks.map = { data: { ...GRAPH, repo: null, nodes: [system] }, isLoading: false, isError: false };
+    hooks.part = { data: { ...PART, node: system, repo: "acme/billing", removable: false, marks: [{ by: "owner@example.com", verdict: "bloat", note: "", at: null }] }, isLoading: false, isError: false };
+    renderAt("/maps/shop?part=sys%3Abilling");
+    const panel = screen.getByTestId("part-panel");
+    expect(within(panel).getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: "Analysis" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(panel).getByText(/a mark stays on the map/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send my bloat marks (0)" })).toBeDisabled();
   });
 
   it("leaves sending to an admin", () => {

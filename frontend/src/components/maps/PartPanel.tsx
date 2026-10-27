@@ -55,10 +55,11 @@ export function PartPanel({ slug, nodeId, by, canSend, onClose }: PartPanelProps
   const [runWith, setRunWith] = useState<RunWith>({});
   const [sendNote, setSendNote] = useState("");
 
+  const canRemove = part.data?.removable ?? false;
   useEffect(() => {
     setNote(mine?.note ?? "");
-    setKind(mine?.verdict === "bloat" ? "remove" : "analysis");
-  }, [nodeId, mine?.note, mine?.verdict]);
+    setKind(mine?.verdict === "bloat" && canRemove ? "remove" : "analysis");
+  }, [nodeId, mine?.note, mine?.verdict, canRemove]);
 
   if (part.isLoading) return <Skeleton className="h-64 w-full" />;
   if (part.isError || !part.data) {
@@ -212,7 +213,11 @@ export function PartPanel({ slug, nodeId, by, canSend, onClose }: PartPanelProps
           </ul>
         ) : (
           <p className="text-xs text-fg-muted">
-            {repo ? "A bloat mark offers it to the owners of " + repo + " as a lead." : "This part is in no repository: a mark stays on the map."}
+            {canRemove
+              ? `A bloat mark offers it to the owners of ${repo} as a lead.`
+              : repo
+                ? "A whole system or repository, not a file in one: a mark stays on the map."
+                : "This part is in no repository: a mark stays on the map."}
           </p>
         )}
         {lead && <p className="text-xs text-fg-muted">Lead: {lead.state === "open" ? "open" : "closed"}</p>}
@@ -239,7 +244,15 @@ export function PartPanel({ slug, nodeId, by, canSend, onClose }: PartPanelProps
           <div className="space-y-2 pt-1">
             <div className="flex gap-1.5" role="group" aria-label="What the agent does">
               {SEND_KINDS.map((k) => (
-                <Button key={k.id} size="xs" variant={kind === k.id ? "default" : "outline"} aria-pressed={kind === k.id} onClick={() => setKind(k.id)}>
+                <Button
+                  key={k.id}
+                  size="xs"
+                  variant={kind === k.id ? "default" : "outline"}
+                  aria-pressed={kind === k.id}
+                  disabled={k.id === "remove" && !canRemove}
+                  title={k.id === "remove" && !canRemove ? "A whole system or repository is not removed by a code change" : undefined}
+                  onClick={() => setKind(k.id)}
+                >
                   {k.label}
                 </Button>
               ))}

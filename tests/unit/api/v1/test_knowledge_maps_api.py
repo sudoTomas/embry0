@@ -373,3 +373,41 @@ async def test_a_refused_dispatch_is_recorded_with_its_reason(app: FastAPI) -> N
         ).json()
     assert result["results"][0]["error"] == "the daily budget is spent"
     assert app.state.knowledge_maps_repo.sends[0]["error"] == "the daily budget is spent"
+
+
+async def test_a_whole_system_keeps_its_mark_on_the_map_and_is_never_sent_for_removal(app: FastAPI) -> None:
+    system = {"id": "sys:billing", "kind": "system", "label": "billing", "repo": "acme/billing"}
+    system_lead = lead_id("weed", "acme/billing", source_key("shop", "sys:billing"))
+    async with await _client(app) as client:
+        await _upload(client, _doc(nodes=[*_doc()["nodes"], system]))
+        # a lead opened for it before the rule closes at the next mark
+        app.state.leads_repo.rows[system_lead] = {
+            "id": system_lead,
+            "kind": "weed",
+            "state": "open",
+            "source_key": source_key("shop", "sys:billing"),
+        }
+        marked = (
+            await client.post(
+                "/api/v1/maps/shop/marks",
+                json={"node_id": "sys:billing", "verdict": "bloat", "by": "ann"},
+                headers=HEADERS,
+            )
+        ).json()
+        removal = (
+            await client.post(
+                "/api/v1/maps/shop/send",
+                json={"node_ids": ["sys:billing"], "kind": "remove", "by": "ann"},
+                headers=HEADERS,
+            )
+        ).json()
+        default = (
+            await client.post(
+                "/api/v1/maps/shop/send", json={"node_ids": ["sys:billing"], "by": "ann"}, headers=HEADERS
+            )
+        ).json()
+        part = (await client.get("/api/v1/maps/shop/parts/sys:billing")).json()
+    assert marked["lead_id"] is None and app.state.leads_repo.rows[system_lead]["state"] == "gone"
+    assert "not a file in one" in removal["results"][0]["error"] and removal["results"][0]["job_id"] is None
+    assert default["results"][0]["kind"] == "analysis" and default["results"][0]["job_id"] == "job-analysis"
+    assert part["removable"] is False and part["repo"] == "acme/billing"
