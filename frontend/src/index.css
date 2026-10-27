@@ -1,26 +1,56 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Pixelify+Sans:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&family=Pixelify+Sans:wght@400;600;700&display=swap');
 @import "tailwindcss";
 
+/* D-DIN, the face embry0.ai sets every word in: Datto's, under the SIL Open
+   Font License 1.1 (public/fonts/d-din/OFL.txt), served from the dashboard
+   itself so font-src 'self' holds. The fallback face is Arial sized to
+   D-DIN's metrics, so the page does not jump when it arrives. */
+@font-face {
+  font-family: "D-DIN";
+  src: url("/fonts/d-din/D-DIN.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "D-DIN";
+  src: url("/fonts/d-din/D-DIN-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "D-DIN Fallback";
+  src: local("Arial");
+  ascent-override: 89.01%;
+  descent-override: 18.1%;
+  line-gap-override: 9.21%;
+  size-adjust: 93.36%;
+}
+
 @theme static {
-  --color-background: #060d12;
-  --color-foreground: #fafafa;
-  --color-card: #0f1419;
-  --color-card-foreground: #fafafa;
-  --color-popover: #0f1419;
-  --color-popover-foreground: #fafafa;
+  /* The ink embry0.ai is drawn in (the shared base, spec 2026-10-27): a pure
+     black page, a near-black surface and overlay, cool white text in three
+     strengths, hairline rules, gold the one accent. */
+  --color-background: #000000;
+  --color-foreground: rgb(240 240 250);
+  --color-card: #08080a;
+  --color-card-foreground: rgb(240 240 250);
+  --color-popover: #141418;
+  --color-popover-foreground: rgb(240 240 250);
   --color-primary: #d4af37;
-  --color-primary-foreground: #09090b;
-  --color-secondary: #1c2526;
-  --color-secondary-foreground: #fafafa;
-  --color-muted: #1c2526;
-  --color-muted-foreground: #a1a1aa;
-  --color-accent: #1c2526;
-  --color-accent-foreground: #fafafa;
+  --color-primary-foreground: #000;
+  --color-secondary: #141418;
+  --color-secondary-foreground: rgb(240 240 250);
+  --color-muted: #141418;
+  --color-muted-foreground: rgb(240 240 250 / 0.52);
+  --color-accent: #141418;
+  --color-accent-foreground: rgb(240 240 250);
   --color-destructive: #ef4444;
-  --color-destructive-foreground: #fafafa;
-  --color-border: #1a2e2e;
-  --color-input: #1a2e2e;
-  --color-ring: #06b6d4;
+  --color-destructive-foreground: rgb(240 240 250);
+  --color-border: rgb(240 240 250 / 0.14);
+  --color-input: rgb(240 240 250 / 0.14);
+  --color-ring: rgb(240 240 250);
   --color-success: #22c55e;
   --color-warning: #f59e0b;
 
@@ -39,9 +69,9 @@
   --color-palette-slate: #94a3b8;
 
   /* Surfaces the chrome used to hard-code */
-  --color-canvas: #0c1015;    /* sidebar, editor and graph canvases */
-  --color-elevated: #1a1d2e;  /* lifted surfaces: control hover, popovers */
-  --color-grid: #1e2040;      /* dots of the React Flow background */
+  --color-canvas: #08080a;    /* sidebar, editor and graph canvases */
+  --color-elevated: #141418;  /* lifted surfaces: control hover, popovers */
+  --color-grid: rgb(240 240 250 / 0.12); /* dots of the React Flow background */
   --color-feedback: #f87171;  /* feedback (loop) edges */
 
   /* Family skeleton names (the operator standard shared with the sibling
@@ -56,10 +86,10 @@
   --color-overlay: var(--color-elevated);
 
   --color-fg: var(--color-foreground);
-  --color-fg-secondary: color-mix(in srgb, var(--color-foreground) 55%, var(--color-muted-foreground));
+  --color-fg-secondary: rgb(240 240 250 / 0.72);
   --color-fg-muted: var(--color-muted-foreground);
 
-  --color-border-strong: color-mix(in srgb, var(--color-border) 80%, var(--color-foreground));
+  --color-border-strong: rgb(240 240 250 / 0.3);
 
   --color-teal: var(--color-success);
   --color-teal-dim: color-mix(in srgb, var(--color-teal) 12%, transparent);
@@ -100,9 +130,9 @@
   --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
   --default-transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 
-  --font-sans: 'Outfit', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
-  --font-display: 'Outfit', system-ui, sans-serif;
+  --font-sans: 'D-DIN', 'D-DIN Fallback', Arial, Verdana, sans-serif;
+  --font-mono: 'Roboto Mono', ui-monospace, monospace;
+  --font-display: 'D-DIN', 'D-DIN Fallback', Arial, Verdana, sans-serif;
   --font-pixel: 'Pixelify Sans', monospace;
 }
 
@@ -141,14 +171,28 @@ h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-display);
 }
 
-/* The pixel face (spec 3.1): HUD numerals and labels, page titles and the
-   sprite nameplate (components/roster/roster.css). Nothing else. */
-.hud {
-  font-family: var(--font-pixel);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
+/* A page's title, as embry0.ai sets a section's: D-DIN bold, uppercase,
+   tightly set. The product's name keeps its lowercase inside it
+   (<span className="normal-case">embry0</span>). */
+.title-page {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.005em;
+  text-transform: uppercase;
+  text-wrap: balance;
 }
 
+/* Numbers and readouts (a level, a cost, a count) are telemetry: Roboto Mono
+   with tabular figures, as on embry0.ai. No number is set in the pixel face. */
+.hud {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The pixel face (shared base, spec 2026-10-27) is for the game's nouns
+   only: an achievement's or a character's name, and the sprite nameplate
+   (components/roster/roster.css). Never a page title, never a number. */
 .title-pixel {
   font-family: var(--font-pixel);
   letter-spacing: 0.01em;

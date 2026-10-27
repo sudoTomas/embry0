@@ -19,7 +19,7 @@ export function SandboxesPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="title-pixel text-xl font-bold">Sandboxes</h1>
+        <h1 className="title-page text-xl font-bold">Sandboxes</h1>
         {activeTab === "profiles" && (
           <Link to="/sandboxes/new">
             <Button size="sm" className="gap-1.5">

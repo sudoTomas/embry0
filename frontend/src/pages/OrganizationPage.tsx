@@ -117,7 +117,7 @@ export function OrganizationPage() {
           ← Organizations
         </Link>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="title-pixel text-xl font-bold">{o.display_name || o.owner}</h1>
+          <h1 className="title-page text-xl font-bold">{o.display_name || o.owner}</h1>
           <Badge tone="neutral">{o.forge === "gitlab" ? "GitLab" : "GitHub"}</Badge>
           <Badge tone={o.status === "active" ? "success" : o.status === "paused" ? "warning" : "neutral"}>
             {statusLabel(o.status)}

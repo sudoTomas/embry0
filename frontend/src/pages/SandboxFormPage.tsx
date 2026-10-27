@@ -224,7 +224,7 @@ export function SandboxFormPage() {
             <OperationGlyph operation="ferment" size={36} titled />
           </span>
           <div className="flex flex-col">
-            <h1 className="title-pixel text-xl font-bold leading-tight">
+            <h1 className="title-page text-xl font-bold leading-tight">
               {isEditMode ? `Edit "${name}"` : "New Sandbox Profile"}
             </h1>
             <span className="text-[10px] uppercase tracking-[0.18em] text-fg-muted font-mono mt-0.5">

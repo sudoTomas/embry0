@@ -50,9 +50,11 @@ PSF-2.0 or MIT-0. These are the exceptions:
   Apache-2.0 or BSD-3-Clause. Icons come from `lucide-react` (ISC).
 - `lightningcss` (MPL-2.0) is a build-time dependency of Tailwind CSS and is not
   part of the built bundle.
-- No fonts are redistributed. The dashboard loads IBM Plex Sans, IBM Plex Mono,
-  Outfit and JetBrains Mono from Google Fonts at runtime (SIL Open Font License
-  1.1), so each dashboard load makes a request to Google.
+- One font is redistributed: D-DIN, by Datto Inc., under the SIL Open Font
+  License 1.1, in `frontend/public/fonts/d-din/` with its licence (`OFL.txt`).
+  The dashboard serves it unmodified.
+- The dashboard loads Roboto Mono and Pixelify Sans from Google Fonts at runtime
+  (SIL Open Font License 1.1), so each dashboard load makes a request to Google.
 
 ## Software in the images you build
 

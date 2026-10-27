@@ -120,7 +120,7 @@ export function OnboardRepoPage() {
     const enc = encodeURIComponent(result.repo);
     return (
       <div className="space-y-4 max-w-2xl">
-        <h1 className="title-pixel text-xl font-bold">Test setup saved</h1>
+        <h1 className="title-page text-xl font-bold">Test setup saved</h1>
         <Card className="p-4 space-y-4" data-testid="bootstrap-success">
           <div className="space-y-1 text-sm">
             <p className="font-medium">{result.repo}</p>
@@ -180,7 +180,7 @@ export function OnboardRepoPage() {
       <Link to="/repos" className="text-sm text-white/50 hover:underline">
         ← Repos
       </Link>
-      <h1 className="title-pixel text-xl font-bold">Set up testing by hand</h1>
+      <h1 className="title-page text-xl font-bold">Set up testing by hand</h1>
       <p className="text-sm text-white/60">
         Fill in how embry0 starts your app. Most people should use 'Let embry0 set up testing' on
         the repository page instead.

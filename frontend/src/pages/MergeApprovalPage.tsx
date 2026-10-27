@@ -172,7 +172,7 @@ export function MergeApprovalPage() {
           ← Merge approvals
         </Link>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="title-pixel text-xl font-bold">{approvalTitle(row)}</h1>
+          <h1 className="title-page text-xl font-bold">{approvalTitle(row)}</h1>
           <Badge tone={statusTone(row.status)}>{statusLabel(row.status)}</Badge>
           {row.dry_run && <Badge tone="neutral">Dry run</Badge>}
           {recommendation && <Badge tone={VERDICT_TONES[recommendation.verdict]}>{VERDICT_LABELS[recommendation.verdict]}</Badge>}

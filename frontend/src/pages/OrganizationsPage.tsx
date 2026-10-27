@@ -55,7 +55,7 @@ export function OrganizationsPage() {
     <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="title-pixel text-xl font-bold">Organizations</h1>
+          <h1 className="title-page text-xl font-bold">Organizations</h1>
           <p className="text-sm text-white/60">
             A GitHub organization or user, or a GitLab group, that embry0 looks after as a whole.
           </p>

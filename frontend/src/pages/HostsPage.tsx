@@ -161,7 +161,7 @@ export function HostsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="title-pixel text-xl font-bold">Hosts</h1>
+          <h1 className="title-page text-xl font-bold">Hosts</h1>
           <p className="text-sm text-muted-foreground">The machines that run the code embry0 maintains, and how it reaches them.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

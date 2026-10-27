@@ -92,7 +92,7 @@ export function ReposPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="title-pixel text-xl font-bold">Repos</h1>
+      <h1 className="title-page text-xl font-bold">Repos</h1>
 
       <p className="text-sm text-white/60" data-testid="repos-orgs-pointer">
         Looking after every repository under one owner?{" "}

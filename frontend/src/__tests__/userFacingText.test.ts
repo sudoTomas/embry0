@@ -80,8 +80,8 @@ describe("user-facing text", () => {
   });
 });
 
-describe("pixel face (spec 3.1)", () => {
-  it("is reachable only through .hud, .title-pixel and .sprite-nameplate", () => {
+describe("pixel face (spec 3.1; the shared base, spec 2026-10-27)", () => {
+  it("is reachable only through .title-pixel and .sprite-nameplate, the game's nouns", () => {
     const styles = import.meta.glob(["/src/**/*.css"], { query: "?raw", import: "default", eager: true }) as Record<string, string>;
     const owners = new Set<string>();
     for (const [file, source] of Object.entries(styles)) {
@@ -89,8 +89,8 @@ describe("pixel face (spec 3.1)", () => {
       const loose = source.replace(/\n\.[a-z-]+\s*\{[^}]*\}/g, "");
       expect(loose.includes("var(--font-pixel)"), `${file}: --font-pixel outside a class rule`).toBe(false);
     }
-    const allowed = [".hud", ".title-pixel", ".sprite-nameplate"];
+    const allowed = [".title-pixel", ".sprite-nameplate"];
     expect([...owners].filter((o) => !allowed.includes(o))).toEqual([]);
-    expect(owners.has(".hud") && owners.has(".title-pixel")).toBe(true);
+    expect(owners.has(".title-pixel") && owners.has(".sprite-nameplate")).toBe(true);
   });
 });

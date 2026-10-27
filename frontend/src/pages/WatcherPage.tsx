@@ -60,7 +60,7 @@ export function WatcherPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="title-pixel text-xl font-bold">Watcher</h1>
+        <h1 className="title-page text-xl font-bold">Watcher</h1>
         <Button disabled={tick.isPending} onClick={() => tick.mutate()}>
           <Play className="mr-2 h-4 w-4" />
           {tick.isPending ? "Running tick… (can take minutes)" : "Run tick now"}

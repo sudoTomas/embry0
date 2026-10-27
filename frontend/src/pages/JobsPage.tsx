@@ -47,7 +47,7 @@ export function JobsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="title-pixel text-xl font-bold">Jobs</h1>
+        <h1 className="title-page text-xl font-bold">Jobs</h1>
         <Button onClick={() => setShowCreate(true)}>
           <Plus className="h-4 w-4 mr-2" /> New job
         </Button>

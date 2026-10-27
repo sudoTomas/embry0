@@ -56,7 +56,7 @@ export function UsersAdminPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <UsersRound size={18} className="text-fg-muted" />
-          <h1 className="title-pixel text-xl font-bold">Users</h1>
+          <h1 className="title-page text-xl font-bold">Users</h1>
           {users.data && (
             <span className="text-sm text-muted-foreground">{users.data.total}</span>
           )}
