@@ -13,6 +13,7 @@ import { WorldChat } from "@/components/world/WorldChat";
 import { WorldMap } from "@/components/world/WorldMap";
 import { WriteQuestDialog } from "@/components/world/WriteQuestDialog";
 import { useArt } from "@/components/world/art/manifest";
+import { NightfallFilter } from "@/components/world/art/Nightfall";
 import "@/components/world/world.css";
 import { Button } from "@/components/ui/Button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
@@ -138,6 +139,7 @@ export function WorldPage() {
       onValueChange={(v) => set("view", v === "map" ? "map" : null)}
     >
       <div className="space-y-4" data-testid="world-page">
+        <NightfallFilter />
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
             <h1 className="title-page text-xl font-bold">Guild</h1>

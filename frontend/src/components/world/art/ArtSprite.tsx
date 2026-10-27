@@ -20,17 +20,19 @@ interface ArtSpriteProps {
   title?: string;
   children?: ReactNode;
   onAnimationEnd?: () => void;
+  /** Light itself (an effect): Nightfall leaves it as drawn. */
+  lit?: boolean;
 }
 
 /** One frame of a sheet, or its frames stepping, at an integer scale: crisp, and as clickable as its box. */
-export function ArtSprite({ image, rect, frames, animation, fps = 6, loop = true, scale = 1, className, style, title, children, onAnimationEnd }: ArtSpriteProps) {
+export function ArtSprite({ image, rect, frames, animation, fps = 6, loop = true, scale = 1, className, style, title, children, onAnimationEnd, lit }: ArtSpriteProps) {
   const [x, y, w, h] = rect;
   const animated = frames && frames.length > 1 && animation;
   const name = animated ? frameKeyframes(animation, frames) : null;
   return (
     <span className={className} style={{ display: "inline-block", position: "relative", width: w * scale, height: h * scale, ...style }} title={title}>
       <span
-        className={name ? "art-anim" : undefined}
+        className={["art-sheet", lit ? "art-lit" : "", name ? "art-anim" : ""].filter(Boolean).join(" ")}
         onAnimationEnd={onAnimationEnd}
         style={{
           position: "absolute",

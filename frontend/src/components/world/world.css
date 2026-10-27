@@ -81,3 +81,45 @@
     animation: none !important;
   }
 }
+
+/*
+ * Nightfall (spec 2026-10-27, art direction). A scene marked .nightfall is
+ * the world after dark: its sheets and its characters pass through the
+ * #nightfall colour matrix (art/relight.ts; the terrain canvas is
+ * re-lit by the same matrix in script), effects stay as drawn, and gold
+ * torchlight is added where the work is. Gold is the one accent the page
+ * and the world share. The scene sits in a dark frame with a gold inlay.
+ */
+.nightfall .art-sheet:not(.art-lit),
+.nightfall .sprite {
+  filter: url(#nightfall);
+}
+
+.torchlight {
+  position: absolute;
+  z-index: 49000;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--color-primary) 55%, transparent),
+    color-mix(in srgb, var(--color-primary) 31%, transparent) 25%,
+    color-mix(in srgb, var(--color-primary) 14%, transparent) 50%,
+    color-mix(in srgb, var(--color-primary) 3%, transparent) 75%,
+    transparent
+  );
+  /* Light adds to what it falls on. */
+  mix-blend-mode: plus-lighter;
+}
+
+@supports not (mix-blend-mode: plus-lighter) {
+  .torchlight {
+    mix-blend-mode: screen;
+  }
+}
+
+.night-frame {
+  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, #000);
+  background: var(--color-background);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 30%, transparent);
+}

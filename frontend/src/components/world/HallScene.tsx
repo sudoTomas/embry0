@@ -5,6 +5,7 @@ import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { STATE_POSE } from "@/lib/world";
 import { SPACING, STATION_OF, chestOf, hallLayout } from "@/lib/worldHall";
 import { ArtObjectAt, EffectAt } from "./art/Pieces";
+import { Torchlight } from "./art/Nightfall";
 import { anchored } from "./art/style";
 import { TerrainCanvas } from "./art/TerrainCanvas";
 import type { ArtManifest } from "./art/manifest";
@@ -24,7 +25,9 @@ interface HallSceneProps {
  * The guild hall's inside: the floor and walls, each character standing at
  * its station (the station stands empty while it is out), the quest board,
  * the loot chest. Drawn at the art's size and scaled by a whole number to
- * fill the width; a click on a character opens its panel.
+ * fill the width; a click on a character opens its panel. It is night
+ * (Nightfall, art/relight.ts): the wall torches and the quest board light
+ * the room, and loot waiting for a look has a light of its own.
  */
 export function HallScene({ art, characters, loot, xpDrops, levelUps, onSelect, onBoard, onLoot }: HallSceneProps) {
   const lookup = useIdentityLookup();
@@ -48,10 +51,10 @@ export function HallScene({ art, characters, loot, xpDrops, levelUps, onSelect, 
   const torchY = 2 * art.tileSize + 2;
 
   return (
-    <div ref={box} className="w-full overflow-x-auto" data-testid="hall-scene">
+    <div ref={box} className="nightfall w-full overflow-x-auto" data-testid="hall-scene">
       <div style={{ width: layout.width * scale, height: layout.height * scale, position: "relative" }}>
         <div style={{ position: "absolute", inset: 0, width: layout.width, height: layout.height, transform: `scale(${scale})`, transformOrigin: "0 0" }}>
-          <TerrainCanvas art={art} cols={layout.cols} rows={layout.rows} base="floor" layers={layers} />
+          <TerrainCanvas art={art} cols={layout.cols} rows={layout.rows} base="floor" layers={layers} night />
           <ArtObjectAt art={art} name="torch" x={48} y={torchY} />
           <ArtObjectAt art={art} name="torch" x={layout.width - 48} y={torchY} />
           <ArtObjectAt art={art} name="bookshelf" x={104} y={torchY + 12} />
@@ -115,6 +118,11 @@ export function HallScene({ art, characters, loot, xpDrops, levelUps, onSelect, 
               </div>
             );
           })}
+
+          <Torchlight x={48} y={torchY - 22} radius={72} />
+          <Torchlight x={layout.width - 48} y={torchY - 22} radius={72} />
+          <Torchlight x={layout.width / 2 + 40} y={torchY - 10} radius={88} />
+          {loot.length > 0 && <Torchlight x={chestAt.x} y={chestAt.y - 12} radius={48} />}
         </div>
       </div>
     </div>

@@ -72,6 +72,7 @@ export function EffectAt({
       scale={scale}
       className={className}
       onAnimationEnd={onEnd}
+      lit
       style={{ ...anchored(x, y, { x: effect.anchor.x * scale, y: effect.anchor.y * scale }), zIndex: 100_000, pointerEvents: "none" }}
     >
       {label !== undefined && (

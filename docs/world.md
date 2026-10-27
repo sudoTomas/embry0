@@ -35,4 +35,6 @@ Only an admin session reviews, starts and cancels; others see everything read-on
 
 ## Art
 
-The hall's inside and the map are pixel pictures, each in a plain card. `frontend/public/world/manifest.json` names the art and `frontend/public/world/README.md` is its schema. Anything the manifest does not name is drawn as a placeholder. Experience, level-ups and hits show as effects over the characters; reduced motion stops them.
+The hall's inside and the map are pixel pictures, each in a dark frame with a gold inlay. `frontend/public/world/manifest.json` names the art and `frontend/public/world/README.md` is its schema. Anything the manifest does not name is drawn as a placeholder. Experience, level-ups and hits show as effects over the characters; reduced motion stops them.
+
+The world is at night (Nightfall, [art direction](superpowers/specs/2026-10-27-art-direction-design.md)): every sheet and character in a scene is re-lit toward the page's black, and gold light falls where the work is. In the hall it falls at the torches and the quest board, and at the loot chest while it holds loot. On the map it falls at the hall's door, and every party out on a quest carries one. Effects stay as drawn.

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { artUrl, type ArtManifest, type Tileset } from "./manifest";
+import { relightCanvas } from "./relight";
 
 /** One terrain layer: a corner mask and the tileset terrain it stands for. */
 export interface TerrainLayer {
@@ -17,6 +18,8 @@ interface TerrainCanvasProps {
   layers: readonly TerrainLayer[];
   scale?: number;
   className?: string;
+  /** Re-light the painted terrain for Nightfall (relight.ts). */
+  night?: boolean;
 }
 
 const IMAGES = new Map<string, Promise<HTMLImageElement>>();
@@ -52,7 +55,7 @@ function tilesetFor(art: ArtManifest, terrain: string): [Tileset, 0 | 1] | undef
  * being 1 where the tileset's terrain "1" is); tile ``i`` sits at column
  * i % 4, row i ÷ 4 of the tileset's sheet.
  */
-export function TerrainCanvas({ art, cols, rows, base, layers, scale = 1, className }: TerrainCanvasProps) {
+export function TerrainCanvas({ art, cols, rows, base, layers, scale = 1, className, night = false }: TerrainCanvasProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const tile = art.tileSize;
 
@@ -96,12 +99,13 @@ export function TerrainCanvas({ art, cols, rows, base, layers, scale = 1, classN
             }
           }
         }
+        if (night) relightCanvas(ctx, cols * tile, rows * tile);
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [art, cols, rows, base, layers, tile]);
+  }, [art, cols, rows, base, layers, tile, night]);
 
   return (
     <canvas

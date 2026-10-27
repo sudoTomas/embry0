@@ -127,7 +127,7 @@ export function GuildHall({ art, characters, parties, loot, skillName, xpDrops, 
         </span>
       </div>
       {Object.keys(art.tilesets).length > 0 && (
-        <Card className="overflow-hidden p-1.5">
+        <Card className="night-frame overflow-hidden p-1.5">
           <HallScene
             art={art}
             characters={characters}
