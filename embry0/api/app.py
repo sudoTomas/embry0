@@ -2184,6 +2184,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 db=db,
                 audit_log_path=config.audit_log_path,
                 run_with=run_with,
+                # Scheduled audits prefer the operator's local model while it has a free slot.
+                local_first_model=config.context_audit_local_model or None,
             )
 
         app.state.context_audit = ContextAuditLoop(

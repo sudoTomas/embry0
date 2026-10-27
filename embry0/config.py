@@ -747,6 +747,12 @@ class Embry0Config(BaseSettings):
     # take their place for it (ADR 0021).
     context_audit_job_budget_usd: float = 2.0
     context_audit_max_jobs_per_tick: int = Field(default=3, ge=0)
+    # CONTEXT_AUDIT_LOCAL_MODEL: a model on the operator's own server
+    # (custom/<model>) that scheduled audits prefer, as the watcher's analyses
+    # prefer provider_config.watcher_local_model. A preference, never a pin:
+    # with every local slot taken the audit runs on its usual model. Empty, or a
+    # model no enabled provider serves, for none.
+    context_audit_local_model: str = ""
 
     # Leads (spec 2026-10-25): work embry0 finds by itself on the repositories
     # someone answers for (owners set, or a watched stack) and offers as owner
