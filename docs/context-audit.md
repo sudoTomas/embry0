@@ -78,7 +78,7 @@ curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
 
 Each organization's cap is its own: one that reached its cap does not hold back another, so one tick starts at most the sum of the caps of the organizations on the schedule.
 
-The fleet-wide caps still apply to every job: `MAX_BUDGET_USD`, `DAILY_BUDGET_CAP_USD`, `MONTHLY_BUDGET_CAP_USD`, and `RATE_LIMIT_PER_AUTHOR_PER_HOUR`, which counts the schedule's jobs under its actor `embry0:context-audit` like any person's ([configuration.md](configuration.md)). The schedule asks the gate before each start and stops at its first refusal, which counts as no attempt. With the default `RATE_LIMIT_PER_AUTHOR_PER_HOUR` of 5, an owner with many repositories due gets about 5 audits an hour however high its per-tick cap.
+The fleet-wide caps still apply to every job: `MAX_BUDGET_USD`, `DAILY_BUDGET_CAP_USD` and `MONTHLY_BUDGET_CAP_USD` ([configuration.md](configuration.md)). `RATE_LIMIT_PER_AUTHOR_PER_HOUR` does not: the schedule's actor `embry0:context-audit` is exempt from it (`RATE_LIMIT_EXEMPT` in `embry0/orchestration/dispatch_actors.py`), so the per-tick cap, one live job per repository and the per-job cap are what pace it. The schedule asks the gate before each start and stops at its first refusal, which counts as no attempt.
 
 ## Reading what it sees
 

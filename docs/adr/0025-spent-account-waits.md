@@ -1,0 +1,9 @@
+# ADR 0025: A spent account parks the job until its reset; it never fails it
+
+Status: accepted (2026-10-25); extended to qa, onboard and pr-review (2026-10-25)
+
+A spent or rate-limited account has a known end, so failing a job on it threw away the work and asked a person to start it again later. A pause with a known end (a registry account quarantined until a time; a run that ended `ERR_PROVIDER_QUOTA_EXHAUSTED` or `ERR_PROVIDER_RATE_LIMITED`, until the reset the provider named, at most eight days; the local model with every slot taken, five minutes) parks the job when no model of the fallback order (ADR 0024) can take the work: `status` `paused`, with `account_wait` on the job naming the provider, the reason and `until`. The run that finds an account spent quarantines it at once, so the next job's pre-check sees the pause. A pipeline whose graph resumes from a checkpoint parks inside the node and continues from it (`mode: resume`); qa, onboard and pr-review park once their sandbox is released and nothing has been posted or stored, and start again from the beginning (`mode: relaunch`). An account-wait loop goes on with a parked job every minute once `until` has passed, or as soon as the registry says the account is usable again.
+
+Consequences: no key, a disabled key, a refused token and a provider the deployment does not enable still fail the job, because waiting would not end them. A parked job holds no sandbox for a relaunch wait, and keeps it for a resume wait. The watcher asks the same question before paying for an analysis and skips the tick (`skipped_account_paused`) rather than start a job that would wait.
+
+Evidence: `embry0/services/account_waits.py`; `account_wait` on `jobs` (migration 116); [Spent account waits](../providers.md#spent-account-waits); [the design](../superpowers/specs/2026-10-25-spent-account-waits-design.md).

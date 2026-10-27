@@ -774,7 +774,7 @@ class Embry0Config(BaseSettings):
     # Commits of the default branch the flaky-check finder reads.
     leads_flaky_commits: int = Field(default=10, ge=1, le=50)
 
-    # Scout (spec 2026-10-27): read-only scouting jobs (garden, kintsugi-trace)
+    # Scout (docs/leads.md, "The scout"): read-only scouting jobs (garden, kintsugi-trace)
     # pinned to SCOUT_MODEL, a model on the operator's own server, rotating
     # through the world map's repositories (plus SCOUT_REPOS, minus
     # SCOUT_EXCLUDE, comma-separated) and each area of one that declares areas.

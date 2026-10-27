@@ -232,8 +232,11 @@ that serves nothing else.
   Run one developer and review loop per model before relying on it, as for grok.
 - **Image rebuild.** The executor runs in the sandbox, so it takes effect after
   the sandbox images are rebuilt ([`docs/ops/deploy.md`](ops/deploy.md)).
-- **Claude-sized budgets.** These providers declare no turn or time factor;
-  how many turns their models need for embry0's agents is not measured.
+- **Turn and time budgets.** These providers declare no turn or time factor
+  except `custom`, which doubles both (a model on the operator's own server is
+  usually slower per call; see [Turn and time budgets](#turn-and-time-budgets)).
+  How many turns the hosted providers' models need for embry0's agents is not
+  measured.
 - **Retries, no fallback.** 408, 409, 429 and 5xx answers are retried twice;
   then the run fails, 429 as `ERR_PROVIDER_RATE_LIMITED`, 401 and 403 as
   `ERR_AUTH_REJECTED`. A failing provider is not swapped for another.
@@ -496,8 +499,10 @@ No egress exception is declared for the server's machine, so a sandbox
 cannot reach anything else on it. The custom provider still needs an account
 (the registry or `CUSTOM_LLM_API_KEY` with `CUSTOM_LLM_BASE_URL`; for a
 server that checks no key any placeholder will do): it is what makes the
-provider ready, pinnable and quarantinable. With the proxy on, the account's
-base URL is not used; every custom run goes to `LOCAL_LLM_UPSTREAM`.
+provider ready, pinnable and quarantinable. With the proxy on, every custom
+run in a sandbox goes to `LOCAL_LLM_UPSTREAM`. Calls the orchestrator makes
+itself (proposal and job briefs, the Slop-O-Meter's judgments) still use the
+account's base URL and key, so keep them pointing at the same server.
 
 **One run at a time.** `local_max_runs` in the provider settings (default 1,
 at most 64) is how many agent runs embry0 sends the server at once. Each run
@@ -630,6 +635,13 @@ p90; on Claude-sized budgets half of its first developer runs died at the
 turn cap. A grok developer therefore gets 80 turns and 3600 s, a review 50
 turns and 600 s, triage 30 turns and 360 s. The job's `budget_usd` still
 bounds spend.
+
+`custom` doubles both too: a model on the operator's own server is usually
+slower per call than a hosted one, and on Claude-sized budgets log analyses
+on such a model timed out. A context audit on a `custom/` model therefore
+gets 80 turns and 40 minutes. A `custom/` model is priced at $0, so
+`budget_usd` does not bound it; the turn and time caps and `local_max_runs`
+do.
 
 A run that reaches its cap is reported as `ERR_AGENT_MAX_TURNS` by both
 executors. That is what lets triage and review resume once to decide from

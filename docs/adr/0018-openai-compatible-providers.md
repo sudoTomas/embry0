@@ -1,6 +1,6 @@
 # ADR 0018: OpenAI-compatible providers run on embry0's own tool loop, off until enabled
 
-Status: accepted (2026-10-18)
+Status: accepted (2026-10-18); amended by [ADR 0023](0023-local-llm-proxy.md): with `LOCAL_LLM_UPSTREAM` set, a `custom` server is reached through the local-llm-proxy and its host is no longer an egress exception.
 
 Agents ran on the Claude CLI, which speaks only the Anthropic API, so a provider was usable only if it served that API. Most providers and every self-hosted model server serve OpenAI chat completions instead. They run on `OpenAICompatibleExecutor`, which drives the tool loop the CLI-free xAI executor already used over chat completions, rather than on a gateway that translates them into the Anthropic API.
 
