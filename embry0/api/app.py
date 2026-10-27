@@ -864,6 +864,9 @@ async def _init_app_state(
     from embry0.storage.repositories.leads import LeadsRepository
 
     app.state.leads_repo = LeadsRepository(db)
+    from embry0.storage.repositories.handoffs import HandoffsRepository
+
+    app.state.handoffs_repo = HandoffsRepository(db)
     # Proposal briefs (spec 2026-10-25): each proposal in plain words, for its owner.
     from embry0.storage.repositories.proposal_briefs import ProposalBriefsRepository
 
@@ -2759,6 +2762,7 @@ def _register_routers(app: FastAPI) -> None:
         environment,
         github,
         gitlab,
+        handoffs,
         health,
         hosts,
         internal_qa,
@@ -2866,6 +2870,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(decisions.router, prefix="/api/v1", tags=["decisions"], dependencies=auth_deps)
     # Knowledge maps (spec 2026-10-27): upload, read, mark and send a scanner's maps.
     app.include_router(knowledge_maps.router, prefix="/api/v1", tags=["knowledge-maps"], dependencies=auth_deps)
+    # Hand-offs (spec 2026-10-27): a decision sent to a teammate; who signs in, and their GitHub login.
+    app.include_router(handoffs.router, prefix="/api/v1", tags=["handoffs"], dependencies=auth_deps)
     # Run with (spec 2026-10-25): the keys a dashboard action may run a job with.
     app.include_router(run_with.router, prefix="/api/v1", tags=["run-with"], dependencies=auth_deps)
     # #319 phase 2: the chat merge-approval loop.

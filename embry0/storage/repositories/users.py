@@ -32,6 +32,8 @@ class UserRow:
     first_login_at: datetime | None
     last_login_at: datetime | None
     created_at: datetime | None
+    #: The GitHub login owners are named by (decisions, spec 2026-10-27); None until set.
+    github_login: str | None = None
 
 
 def _row(r: Any) -> UserRow:
@@ -47,6 +49,7 @@ def _row(r: Any) -> UserRow:
         first_login_at=r["first_login_at"],
         last_login_at=r["last_login_at"],
         created_at=r["created_at"],
+        github_login=r.get("github_login") if hasattr(r, "get") else None,
     )
 
 
@@ -124,6 +127,24 @@ class UsersRepository:
             "UPDATE users SET disabled = $2 WHERE id = $1 RETURNING *",
             user_id,
             disabled,
+        )
+        return _row(row) if row else None
+
+    async def get_by_email(self, email: str) -> UserRow | None:
+        row = await self._db.fetchrow("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", email)
+        return _row(row) if row else None
+
+    async def people(self) -> list[UserRow]:
+        """Everyone who can be sent a decision: the users not disabled, by name."""
+        rows = await self._db.fetch(
+            "SELECT * FROM users WHERE NOT disabled ORDER BY LOWER(COALESCE(NULLIF(name, ''), email))"
+        )
+        return [_row(r) for r in rows]
+
+    async def set_github_login(self, user_id: str, login: str | None) -> UserRow | None:
+        """Set (or clear, with None) the GitHub login a person is named by; one person per login."""
+        row = await self._db.fetchrow(
+            "UPDATE users SET github_login = $2 WHERE id = $1 RETURNING *", user_id, login or None
         )
         return _row(row) if row else None
 

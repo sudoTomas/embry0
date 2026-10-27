@@ -261,6 +261,18 @@ async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | N
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+#: A proposal answer as a decision's outcome (decisions, spec 2026-10-27).
+_OUTCOMES = {"accept": "start", "decline": "decline", "snooze": "later"}
+
+
+def decider(request: Request, said: str) -> str:
+    """Who answered: the signed-in person the server knows, else the person a key names (a chat assistant)."""
+    from embry0.api.session import request_session
+
+    session = request_session(request)
+    return str(session.email) if session is not None and session.email else said
+
+
 async def _answer(
     request: Request,
     proposal: Proposal,
@@ -270,6 +282,9 @@ async def _answer(
     until: datetime | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
+    from embry0.services.handoffs import settle
+
+    body = body.model_copy(update={"by": decider(request, body.by)})
     await _state(request, "proposals_repo").record(
         proposal_id=proposal.id,
         repo=proposal.repo,
@@ -296,6 +311,8 @@ async def _answer(
         audit_log_path=getattr(config, "audit_log_path", None),
     )
     logger.info("proposal_answered", proposal_id=proposal.id, decision=decision, by=body.by, job_id=job_id)
+    # Whoever answers, a hand-off of this decision is decided (spec 2026-10-27).
+    await settle(request.app.state, f"offer:{proposal.id}", _OUTCOMES.get(decision, decision), body.by)
     return {
         "proposal_id": proposal.id,
         "decision": decision,

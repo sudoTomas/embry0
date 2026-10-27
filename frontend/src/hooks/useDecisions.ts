@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type Decision, type DecisionAction, type DecisionFilters, fetchDecision, fetchDecisions } from "@/api/decisions";
+import { fetchPeople, returnHandoff, sendDecision, setMyGithubLogin } from "@/api/handoffs";
 import { answerOwnerProposal } from "@/api/ownerProposals";
 import { type RunWith, runWithBody } from "@/api/runWith";
 import {
@@ -97,4 +98,34 @@ export function useAnswerDecision() {
       void qc.invalidateQueries({ queryKey: ["issues"] });
     },
   });
+}
+
+/** Who a decision can be sent to: everyone who signs in. */
+export function usePeople() {
+  return useQuery({ queryKey: ["people"], queryFn: fetchPeople, staleTime: 5 * 60_000 });
+}
+
+function useDecisionsMutation<TVars, TResult>(fn: (vars: TVars) => Promise<TResult>, also: string[] = []) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: KEY });
+      for (const key of also) void qc.invalidateQueries({ queryKey: [key] });
+    },
+  });
+}
+
+/** Send a decision to a teammate (hand-offs, spec 2026-10-27): it is theirs to decide. */
+export function useSendDecision() {
+  return useDecisionsMutation((v: { id: string; to: string; note: string }) => sendDecision(v.id, v.to, v.note));
+}
+
+/** Not mine to decide: back to whoever sent it. */
+export function useReturnHandoff() {
+  return useDecisionsMutation((v: { handoffId: string; note: string }) => returnHandoff(v.handoffId, v.note));
+}
+
+export function useSetMyGithubLogin() {
+  return useDecisionsMutation((login: string) => setMyGithubLogin(login), ["people"]);
 }

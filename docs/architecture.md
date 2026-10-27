@@ -1370,6 +1370,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 122 | slop-o-meter: how each repository's history was read (`history_version`), so a better way of reading (renames found, version 2) reads it again ([spec](superpowers/specs/2026-10-26-slop-o-meter-design.md)) | `slop_meter_repos.history_version` |
 | 123 | scout: the loop's runs, and its two lead kinds, `crack` (a kintsugi ledger row) and `weed` (a garden weed card), read from scouting jobs pinned to the local model ([leads.md](leads.md#the-scout-cracks-and-weeds)) | `scout_runs`; the `leads` and `proposal_decisions` kind checks |
 | 124 | knowledge maps: the last upload of each map, each person's mark on a part, and every part sent to an agent ([maps.md](maps.md)) | `knowledge_maps`, `knowledge_map_marks`, `knowledge_map_sends` |
+| 125 | decisions: a person's GitHub login (`users.github_login`), linking who signs in to the owners proposals name, and hand-offs, a decision one person sent another, at most one open per decision ([spec](superpowers/specs/2026-10-27-decisions-design.md)) | `users.github_login`; `handoffs` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

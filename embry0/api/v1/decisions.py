@@ -16,6 +16,7 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.services.decisions import Decision, done, offered, ordered
 
@@ -132,6 +133,49 @@ async def _reviews(request: Request, *, repo: str | None) -> list[Decision]:
     return [done(q) for q in await done_inputs(request, rows)]
 
 
+async def with_assignees(request: Request, shown: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each decision's open hand-off as ``assigned_to`` (spec 2026-10-27), else None."""
+    from embry0.api.v1.handoffs import people_by_email
+    from embry0.services.handoffs import assignee
+
+    repo = getattr(request.app.state, "handoffs_repo", None)
+    if repo is None or not shown:
+        return shown
+    try:
+        open_ = await repo.open_for(d["id"] for d in shown)
+    except Exception:  # noqa: BLE001 - the cards still show without who has them
+        logger.warning("decisions_handoffs_unread", exc_info=True)
+        return shown
+    people = await people_by_email(request) if open_ else {}
+    return [{**d, "assigned_to": assignee(open_[d["id"]], people) if d["id"] in open_ else None} for d in shown]
+
+
+async def _my_login(request: Request) -> str | None:
+    users = getattr(request.app.state, "users_repo", None)
+    if users is None:
+        return None
+    try:
+        me = await users.get_by_email(request_actor(request))
+    except Exception:  # noqa: BLE001 - without a login, owned quests are not known
+        return None
+    return me.github_login if me is not None else None
+
+
+async def mine(request: Request, shown: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """What waits for the viewer: handed to them, or on offer, owned by their login, and handed to nobody."""
+    me = request_actor(request).lower()
+    login = (await _my_login(request) or "").lower()
+    out = []
+    for d in shown:
+        to = (d.get("assigned_to") or {}).get("email")
+        if to:
+            if to == me:
+                out.append(d)
+        elif login and d.get("stage") == "offered" and login in {o.lower().lstrip("@") for o in d.get("owners") or []}:
+            out.append(d)
+    return out
+
+
 @router.get("/decisions")
 async def list_decisions(
     request: Request,
@@ -139,6 +183,9 @@ async def list_decisions(
     owner: str | None = Query(default=None, description="A GitHub login: only the quests on offer it owns"),
     repo: str | None = Query(default=None, description="owner/name: only this repository's"),
     include_held: bool = Query(default=True, description="Also what a chat does not ask (shown on the page)"),
+    for_: Literal["me", "all"] = Query(
+        default="all", alias="for", description="me: handed to you, or on offer, owned by your GitHub login"
+    ),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> dict[str, Any]:
     """Every decision waiting on a person: the quests on offer and the quests to review, worst first."""
@@ -147,7 +194,10 @@ async def list_decisions(
         _reviews(request, repo=repo) if stage in ("done", "all") else asyncio.sleep(0, result=[]),
     )
     found = [d for d in [*offers, *reviews] if include_held or not d.held]
-    shown = [d.to_dict() for d in ordered(found)[:limit]]
+    shown = await with_assignees(request, [d.to_dict() for d in ordered(found)])
+    if for_ == "me":
+        shown = await mine(request, shown)
+    shown = shown[:limit]
     return {"decisions": shown, "count": len(shown)}
 
 
@@ -158,10 +208,12 @@ async def get_decision(decision_id: str, request: Request) -> dict[str, Any]:
     if stage == "offer" and ref:
         from embry0.api.v1.proposals import _open, _shown
 
-        return offered((await _shown(request, [await _open(request, ref)]))[0]).to_dict()
+        found = offered((await _shown(request, [await _open(request, ref)]))[0]).to_dict()
+        return (await with_assignees(request, [found]))[0]
     if stage == "done" and ref:
         from embry0.api.v1.world import _quest_or_404
 
         quest = await _quest_or_404(request, ref)
-        return done((await done_inputs(request, [quest]))[0]).to_dict()
+        found = done((await done_inputs(request, [quest]))[0]).to_dict()
+        return (await with_assignees(request, [found]))[0]
     raise HTTPException(status_code=404, detail="a decision id is offer:<proposal id> or done:<job id>")

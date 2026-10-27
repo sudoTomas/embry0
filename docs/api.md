@@ -273,6 +273,20 @@ Every choice waiting on a person, a quest on offer or a quest to review, in one 
   - `owner` keeps the quests on offer a GitHub login owns; `include_held=false` leaves out what a chat does not ask.
 - `GET /api/v1/decisions/{id}`: one decision by its id; 404 for an answered proposal or an unknown job.
 
+## Hand-offs
+
+Send a decision to the teammate better placed to make it; it is then theirs to decide ([the design](superpowers/specs/2026-10-27-decisions-design.md)).
+
+- `GET /api/v1/people`: who a decision can go to, everyone who signs in (`operator` or `admin`), as `{"people": [{"id", "email", "name", "github_login", "tier"}]}`.
+- `PUT /api/v1/me/github-login` (`{"login": "octocat"}`, empty to clear): the GitHub login you are, which owners are named by. A login belongs to one person (409 otherwise). `PUT /api/v1/users/{id}/github-login` does the same for someone else (admin).
+- `POST /api/v1/decisions/{id}/send-to` (`{"to": "<email>", "note": "..."}`, 201): opens a hand-off to someone else who signs in. A hand-off already open for that decision closes as `passed`. It writes a `handoff.created` audit row and emits the `handoff.created` event.
+- **What the recipient may do.** The recipient may take every action the decision lists, including merge (merge approvals admit them for that quest's approval only).
+- **How it closes.** Whoever answers the decision closes its open hand-off as `decided`, with the outcome: `start`, `decline`, `later`, `merge`, `send_back`, `reject`, `run_again`, `good`, `bad` or `dismiss`. This emits `handoff.closed`.
+- `GET /api/v1/handoffs?for=me|all`: the open hand-offs sent to you, or the latest of all.
+- `POST /api/v1/handoffs/{id}/return` (`{"note"}`, by the recipient) and `/cancel` (by the sender), or either by an admin: the hand-off closes as `returned` or `cancelled`.
+- Each decision carries `assigned_to`, its open hand-off: `{"handoff_id", "email", "name", "github_login", "from", "note", "at"}`, else `null`. `GET /api/v1/decisions?for=me` keeps what was handed to you, plus the quests on offer that your GitHub login owns and nobody was handed.
+- Who answered a proposal is now the signed-in person the server knows. A key that acts for people (a chat assistant) still names the person in `by`.
+
 ## Leads
 
 Work embry0 finds by itself and offers as owner proposals ([leads.md](leads.md), [the design](superpowers/specs/2026-10-25-leads-design.md)).
