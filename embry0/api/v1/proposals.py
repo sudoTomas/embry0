@@ -305,6 +305,11 @@ async def _answer(
     }
 
 
+async def record_lead_accept(request: Request, row: dict[str, Any], *, by: str, reason: str, job_id: str) -> None:
+    """Record a lead's yes given somewhere other than the proposals routes (a knowledge map's send)."""
+    await _answer(request, lead_proposal(row), "accept", AnswerBody(by=by, reason=reason[:2000]), job_id=job_id)
+
+
 @router.post("/proposals/{proposal_id}/accept", status_code=202)
 async def accept_proposal(proposal_id: str, body: AcceptBody, request: Request) -> dict[str, Any]:
     """Start it, through the path its kind already has; the answer is recorded only once the start worked."""

@@ -281,6 +281,20 @@ Work embry0 finds by itself and offers as owner proposals ([leads.md](leads.md),
 - `POST /api/v1/leads/run` (`{"repo": "owner/name", "backlog": true}`, both optional): one pass of the finders now, on that repository or on every repository the loop reads. `backlog` forces the backlog intake on (`true`) or off (`false`) whatever its interval says. Answers `{"repos": {"<repo>": {"<kind>": {"found", "new", "capped", "gone", "skipped"}}}}`.
 - A lead is answered through the owner proposals routes above; accepting one starts its kind's work: a ticket through its tracker's own path, a `ci`, `alert` or `flaky` lead as an issue in embry0 whose task says what was seen, a `review` lead as a follow-up job on the pull request's branch. All take `run_with`.
 
+## Knowledge maps
+
+A scanner's map of a codebase or an organization, marked and sent to agents ([maps.md](maps.md), [the design](superpowers/specs/2026-10-27-knowledge-maps-design.md)).
+
+- `GET /api/v1/maps` (read): `{"maps": [{"slug", "title", "repo", "commit", "source", "generated_at", "uploaded_at", "uploaded_by", "nodes", "edges"}]}`.
+- `PUT /api/v1/maps/{slug}`: stores an `embry0.map/1` document (`Content-Encoding: gzip` or plain JSON; at most 64 MB decompressed, and 32 MB on the wire through the LAN vhost), replacing the last upload. Answers `{"slug", "nodes", "edges", "leads", "leads_closed"}`: the weed leads of parts still marked bloat, refreshed, and those of parts that left the map, closed. 422 names what is wrong with a document that is not a map; a key limited to a repository allowlist may upload only a map of a repository on it.
+- `GET /api/v1/maps/{slug}` (read): the parts and links as stored, `{"slug", "title", "repo", "commit", "source", "generated_at", "kinds", "areas", "nodes", "edges"}`, with an `ETag` per upload (`If-None-Match` answers 304).
+- `GET /api/v1/maps/{slug}/parts/{id}` (read): one part, `{"map", "node", "repo", "detail", "marks": [{"by", "verdict", "note", "at"}], "work", "lead": {"id", "state"} | null}`. `repo` is the repository the part lives in, or `null`.
+- `GET /api/v1/maps/{slug}/marks?by=` (read): `{"marks": {"<part id>": {"bloat", "keep", "unsure", "mine"}}}`, `mine` being the verdict of `by`.
+- `POST /api/v1/maps/{slug}/marks` (`{"node_id", "verdict": "bloat" | "keep" | "unsure" | "clear", "note", "by"}`): sets or takes back `by`'s mark. A part that lives in a repository and that someone marks bloat keeps a `weed` lead open; answers `{"node_id", "marks", "lead_id"}`.
+- `POST /api/v1/maps/{slug}/send` (`{"node_ids": [...], "kind": "remove" | "fix" | "analysis", "run_with", "note", "by"}`, 202, at most 50 parts): one job per part. `remove` records `by`'s bloat mark and accepts the part's lead (the yes is recorded as `by`'s); `fix` files an issue labelled `embry0-map` and `map:<slug>` and dispatches it; `analysis` starts a read-only `analysis-default` job. Without `kind`, a part `by` marked bloat is removed and any other analysed. Answers `{"sent", "failed", "results": [{"node_id", "kind", "lead_id", "job_id", "error"}]}`; a part that cannot go says why and the others still go.
+- `GET /api/v1/maps/{slug}/work` (read): `{"work": {"<part id>": {"kind", "repo", "lead_id", "job_id", "job_url", "status", "pr_url", "cost_usd", "error", "by", "note", "sent_at", "finished_at"}}}`, each part's newest send with its job.
+- `DELETE /api/v1/maps/{slug}` (admin): removes the map; its marks and sends stay and come back with a new upload under the same slug.
+
 ## Pipeline templates
 
 The saved pipeline graphs the editor and the Pipelines page work on, under `/api/v1/pipelines/templates`: list, read, create, update, delete and duplicate. Every authenticated principal may read and write them; the two writes with answers worth knowing:

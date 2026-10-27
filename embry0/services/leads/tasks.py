@@ -96,6 +96,10 @@ def lead_task(row: Mapping[str, Any]) -> str:
             "Fix the cause, prove it with a test or the command that showed it, and say in the pull request",
             "what was wrong. Where the seal says a person must decide first, ask instead of choosing.",
         ]
+    elif kind == "weed" and data.get("source") == "map":
+        from embry0.services.knowledge_maps import removal_task
+
+        return removal_task(row)
     elif kind == "weed":
         pull = str(data.get("pull") or "").strip()
         lines = [

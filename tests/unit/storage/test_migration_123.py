@@ -20,9 +20,3 @@ def test_migration_123_keeps_every_lead_kind_the_code_knows() -> None:
     sql = next(s for v, _, s in MIGRATIONS if v == 123)
     for kind in LEAD_KINDS:
         assert f"'{kind}'" in sql, f"migration 123 would refuse stored leads of kind {kind!r}"
-
-
-def test_migration_123_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_122.py)."""
-    assert MIGRATIONS[-1][0] == 123, "migration 123 must add scout_runs and the crack and weed lead kinds"
