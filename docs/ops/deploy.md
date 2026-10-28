@@ -168,6 +168,7 @@ no host port; everything below reaches it through the frontend's nginx.
   docker exec embry0-dind docker run --rm --network none --entrypoint grep registry:5000/<image_tag> -c -e '--config-stdin' /app/embry0/sandbox/runner.py
   ```
   The `embry0` console script works inside the orchestrator container and defaults to the in-container API (`EMBRY0_API_URL=http://localhost:8000`, set in the image); the image build fails if it ever stops working.
+- **Refreshing OS packages.** Every image upgrades its distribution's packages in one early layer, and every build after the first reuses that layer from its cache: CI's GitHub Actions cache and the host's own. So a security fix Debian or Alpine publishes later never reaches an image by itself, and CI's Trivy step starts failing on a CRITICAL that is already fixed. To pick fixes up, raise `OS_PACKAGES_REFRESHED` (a date) in all five Dockerfiles (`infra/Dockerfile.orchestrator`, `infra/Dockerfile.sandbox`, `infra/Dockerfile.sandbox.qa`, `infra/Dockerfile.proxy`, `frontend/Dockerfile`) in one pull request. `tests/unit/infra/test_os_packages_refresh.py` keeps them on one date. After it merges, `infra/deploy.sh` rebuilds the orchestrator and frontend; the sandbox, QA and proxy images need the two recipes below.
 - **After code changes to `embry0/execution/proxy/`**:
   ```bash
   cd infra

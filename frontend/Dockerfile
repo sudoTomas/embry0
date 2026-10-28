@@ -1,9 +1,12 @@
 # Stage 1: Build the React SPA
 FROM node:26.11-alpine AS build
 
-# Upgrade OS packages first — the pinned base tags ship a CRITICAL OpenSSL
-# (CVE-2026-31789) whose fix is already in the Alpine repos.
-RUN apk upgrade --no-cache
+# Upgrade OS packages first: a pinned base tag can ship a CRITICAL whose fix
+# is already in the Alpine repos. A build reuses this layer from its cache, so
+# it never sees a fix published later; raising OS_PACKAGES_REFRESHED rebuilds
+# it (docs/ops/deploy.md, "Refreshing OS packages").
+ARG OS_PACKAGES_REFRESHED=2026-10-28
+RUN echo "OS packages as of ${OS_PACKAGES_REFRESHED}" && apk upgrade --no-cache
 
 # RAV-1058: the API key is NOT baked into the bundle. Vite inlines VITE_*
 # values at build time, which would ship the secret to every browser — so the
@@ -19,8 +22,9 @@ RUN npm run build
 # Stage 2: Serve with nginx
 FROM nginx:1.31-alpine
 
-# Upgrade OS packages first — see the build stage note (CVE-2026-31789).
-RUN apk upgrade --no-cache
+# Upgrade OS packages first — see the build stage note.
+ARG OS_PACKAGES_REFRESHED=2026-10-28
+RUN echo "OS packages as of ${OS_PACKAGES_REFRESHED}" && apk upgrade --no-cache
 
 # Replace default nginx config with ours: the LAN vhost.
 COPY nginx.conf /etc/nginx/conf.d/default.conf
