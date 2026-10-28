@@ -20,10 +20,8 @@ RENAMED = {
 }
 
 
-def test_migration_127_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_126.py)."""
-    assert MIGRATIONS[-1][0] == 127, "migration 127 must rename the stored avatars"
+def test_migration_127_is_present_once() -> None:
+    assert [v for v, _, _ in MIGRATIONS].count(127) == 1, "migration 127 must rename the stored avatars"
 
 
 def test_every_new_name_is_an_avatar_and_no_old_one_is() -> None:

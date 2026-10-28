@@ -161,6 +161,46 @@ curl -X POST http://localhost:8200/api/v1/config/providers/openrouter/catalog/re
 `GET /api/v1/config/models` lists every model a provider offers with its `enabled`, `tool_calling` and `pricing_usd_per_mtok`. OpenRouter's entry lists its [live model list](providers.md#openrouters-live-model-list), each model with its `name`, `vendor` and `context_length` too, and carries `catalog`: where the list comes from (`source`: `live` or `static`), when it was read, what it left out by reason, and the last failed read.
 `PUT /config/provider` takes any subset of its fields. `local_max_runs` is 1 to 64 (422 outside). `watcher_local_model` is `""` (off) or a `custom/<model>` with the custom provider enabled; anything else is 422.
 
+## Settings document
+
+The deployment's operator policy, one section per feature ([configuration.md](configuration.md#settings-document)). Reads take any key; writes take the admin tier and a key without a repository allowlist.
+
+```bash
+# The stored document: {yaml_text, data, schema_version, generation, updated_by, updated_at, sections,
+#                       unknown_sections, unknown_keys}
+curl http://localhost:8200/api/v1/config/settings
+curl http://localhost:8200/api/v1/config/settings?format=yaml      # the text alone; ETag: "<generation>"
+
+# Replace it (YAML keeps its comments; a JSON object is stored as the YAML it dumps to)
+curl -X PUT http://localhost:8200/api/v1/config/settings \
+  -H "Content-Type: application/yaml" -H 'If-Match: "3"' \
+  -H "X-Requested-With: XMLHttpRequest" \
+  --data-binary @settings.yaml
+# -> {"generation": 4, "revision_id": 12, "changes": [...], "unknown_sections": [], "unknown_keys": []}
+#    revision_id is null when the text was unchanged: nothing was recorded
+
+# What it would change, storing nothing
+curl -X PUT "http://localhost:8200/api/v1/config/settings?dry_run=1" ... --data-binary @settings.yaml
+# -> {"would_change": true, "text_diff": "--- stored\n+++ proposed\n...", "changes": [...],
+#     "unknown_sections": [], "unknown_keys": []}
+
+curl http://localhost:8200/api/v1/config/settings/effective   # every key: value, default, source, set_by, env, ...
+curl http://localhost:8200/api/v1/config/settings/schema      # JSON Schema of the document
+curl http://localhost:8200/api/v1/config/settings/revisions   # newest first
+curl http://localhost:8200/api/v1/config/settings/revisions/12
+curl -X POST http://localhost:8200/api/v1/config/settings/revisions/12/undo -H "X-Requested-With: XMLHttpRequest"
+```
+
+- **`text_diff`** is a unified diff as git writes it, one line per line. After the last line of a text with no final newline comes git's own line `\ No newline at end of file`, with no `' '`, `-` or `+` before it, and the hunk counts do not count it; a change of the final newline alone shows the last line removed and added.
+- **A change** in `changes` is `{key: "<section>.<key>", before, after, set_before, set_after, effective_before, effective_after}`: `before` and `after` are the stored values (null when not written), `effective_*` what a loop reads, its default included.
+- **422** lists every problem in one response, each `{loc, type, msg}` with `loc` the path from the document's root, e.g. `{"loc": ["sample", "per_tick"], "type": "less_than_equal", "msg": "Input should be less than or equal to 20"}`. The rejected value is never echoed. Unknown sections and keys get a "Did you mean" when one is close; a YAML error is one entry with `loc: []` and its line and column.
+- **The text** may not use aliases (`*name`) or merge keys (`<<`), write a key twice, nest too deeply, or hold the NUL character; each is a 422.
+- **If-Match** takes the `ETag` a GET returned (`"<generation>"`), a list of them, or `*` for any. Comparison is strong: a weak tag (`W/"3"`) never matches. It is checked on a dry run too.
+- **409** on PUT when `If-Match` names no generation that is stored; on undo for any change but the newest, or once the stored text is no longer what that change wrote. **413** past 256 KiB, before the body is read when `Content-Length` says so.
+- **Unknown parts.** `unknown_sections` and `unknown_keys` (`section.key`) list what a newer release wrote and this one does not know: kept while sent back exactly as stored, type included, as the stored text has it or as GET's `data` does; refused (422) when changed.
+- **Effective.** `{generation, sections: [{name, summary, keys: [{key, value, default, source, set_by, set_at, env, env_still_set, overridable, refused, description}]}], unknown_sections, unknown_keys}`. `source` is `default`, `document` or `bootstrap` (imported from the variable `env` and not changed since). `refused` holds why a stored value is read as its default.
+- **Revisions.** `{revisions: [{id, what, actor, source, reason, created_at, undoable, why_not}]}`; `source` is `person`, `file`, `bootstrap`, `restore` or `upgrade`. One revision adds `before_text`, `after_text` and its `changes`. Undo answers like a PUT (`{generation, revision_id, changes, unknown_sections, unknown_keys}`) and is recorded with source `restore`; an old text today's sections refuse is a 422 whose first entry says "That earlier version is no longer valid."
+
 ## Skills
 
 The skills agents load, and where they come from ([architecture](architecture.md#skills-store-and-mounts)). Reads need any authenticated principal; every mutation needs the `admin` tier and writes an audit row (`skill_source.created`, `skill_source.updated`, `skill_source.synced`, `skill_source.deleted`, `inline_skill.written`, `inline_skill.deleted`).

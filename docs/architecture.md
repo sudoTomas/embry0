@@ -1373,6 +1373,8 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 125 | decisions: a person's GitHub login (`users.github_login`), linking who signs in to the owners proposals name, and hand-offs, a decision one person sent another, at most one open per decision ([spec](superpowers/specs/2026-10-27-decisions-design.md)) | `users.github_login`; `handoffs` |
 | 126 | decisions: asks, one message to one person about one decision tracked from queued to answered or expired, and each decision's code, never given to another decision ([spec](superpowers/specs/2026-10-27-decisions-design.md)) | `asks`; `decision_codes` |
 | 127 | agent avatars: the adventurer presets renamed with the original progression theme (silver to obsidian and crimson warriors, the sorcerer, the artisan); a stored avatar keeps its look under its new name | `agent_definitions.avatar` |
+| 128 | config revisions: every change to a settings document, before and after, with its actor, source and reason; the newest 100 per scope and surface ([ADR 0026](adr/0026-settings-document.md)) | `config_revisions` |
+| 129 | settings documents: the deployment's operator policy as one YAML document, its validated values, its write counter (`generation`) and the keys whose environment values were imported (`bootstrapped_keys`) ([ADR 0026](adr/0026-settings-document.md)) | `settings_documents` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

@@ -236,6 +236,33 @@ Budget controls, context injection, and sandbox profiles are configurable via th
 
 See [api.md](api.md) for request examples.
 
+## Settings document
+
+Operator policy moves out of environment variables into one settings document per deployment, stored in the database ([ADR 0026](adr/0026-settings-document.md), [spec](superpowers/specs/2026-10-28-settings-documents-design.md)). Each feature owns one section of it. A change applies on the next tick of the loop that reads it, with no restart.
+
+```yaml
+# Every key is optional; an absent key takes its default (the reference below).
+version: 1
+<section>:
+  <key>: <value>
+```
+
+- **Read** it with `GET /api/v1/config/settings` (`?format=yaml` for the text alone), every setting's effective value and where it came from with `GET /api/v1/config/settings/effective`, and the JSON Schema with `GET /api/v1/config/settings/schema`. Any key can read: the document holds no secrets.
+- **Write** it with `PUT /api/v1/config/settings`, the whole document as YAML (comments are kept) or as a JSON object. Admin only, with a key that has no repository allowlist. A 422 lists every bad key at once, a key written twice included; `?dry_run=1` answers what would change and stores nothing; `If-Match: "<generation>"` (the `ETag` of a GET) refuses a write over a newer one with 409, on a dry run too.
+- **History.** Every write that changes the text is a revision with its actor and source: `GET /api/v1/config/settings/revisions`, and `POST /api/v1/config/settings/revisions/{id}/undo` for the newest one. The newest 100 are kept.
+- **From the environment.** When a release moves a feature's policy into a section, the first start of that release imports each of its variables you set, when the value differs from the default, once per key (source `bootstrap`); a key a later release adds to the section is imported at that release's first start. A value the section refuses is skipped with a `settings_bootstrap_value_refused` warning: set it in the document instead. A value refused only together with the section's other stored values is held (`settings_bootstrap_value_held`) and tried again at the next start. After that the variable is ignored: startup logs `settings_env_ignored` and `embry0 config` says the document governs it. The variable is removed one release later. The reference below names the variable each key was imported from.
+- **After a rollback.** A section or a key that a newer release wrote and this one does not know is kept as long as it is sent back exactly as stored (as the stored text has it, or as GET's `data` does), and is listed in `unknown_sections` or `unknown_keys`.
+
+### Settings reference
+
+Generated from the sections by `python -m embry0.settings.reference --write docs/configuration.md`; a test fails when it is out of date.
+
+<!-- settings-reference:start -->
+
+No section is registered yet.
+
+<!-- settings-reference:end -->
+
 ## Agent execution & auth modes
 
 embry0 invokes Claude through a pluggable executor layer with two orthogonal config dimensions:
