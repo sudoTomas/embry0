@@ -101,6 +101,10 @@ embry0 uses environment variables for infrastructure config and API endpoints fo
 | `LEADS_TICKET_MIN_SCORE` | `40` | Lowest readiness (0 to 100) a backlog ticket must score to be offered ([how it is scored](leads.md#backlog-tickets)) |
 | `LEADS_REVIEW_STALE_DAYS` | `3` | Days a review thread waits for an answer before it counts |
 | `LEADS_FLAKY_COMMITS` | `10` | Newest commits of the default branch the flaky-check finder reads |
+| `ASKS_ENABLED` | `false` | Keeps one ask per person a decision waits on, for a chat assistant to send from `GET /asks/due` ([api.md](api.md#asks)) |
+| `ASK_HOURS` / `ASK_WEEKDAYS` / `ASK_TIMEZONE` | `09-18` / `mon-fri` / `UTC` | When asks are due: working hours (`HH-HH`), days (`mon-fri` or `mon,wed`) and the zone they are read in |
+| `ASK_REMIND_HOURS` / `ASK_EXPIRE_DAYS` | `24` / `7` | One reminder after this long unanswered; expired after this long, which answers nothing |
+| `ASK_MAX_OPEN_PER_PERSON` | `3` | Unanswered asks one person holds at once; the next, worst first, is released as one is answered or expires |
 | `SCOUT_MODEL` | (empty) | The model the scout pins its read-only `garden` and `kintsugi-trace` jobs to, a model on the operator's own server (`custom/<model>`); their cracks and weeds become leads ([leads.md](leads.md#the-scout-cracks-and-weeds)). Empty turns the scout off |
 | `SCOUT_TEMPLATES` | `garden,kintsugi-trace` | The templates the scout runs; names it does not know are ignored, and a list naming none falls back to both |
 | `SCOUT_MAX_IN_FLIGHT` | `2` | Most scouting jobs out at once; `0` starts none. Keep it below the local server's slots so the watcher and briefs still get one |

@@ -116,14 +116,22 @@ class SendBody(BaseModel):
 @router.post("/decisions/{decision_id}/send-to", status_code=201)
 async def send_decision(decision_id: str, body: SendBody, request: Request) -> dict[str, Any]:
     """Send a decision to a teammate: it is theirs to decide until they answer it or send it back."""
+    return await hand_off(request, decision_id, to=body.to, note=body.note, actor=request_actor(request))
+
+
+async def hand_off(request: Request, decision_id: str, *, to: str, note: str, actor: str) -> dict[str, Any]:
+    """Open a hand-off of ``decision_id`` from ``actor`` to the person with email ``to``.
+
+    The dashboard's Send to, and a chat's (where ``actor`` is the person who
+    pressed the button, not the assistant's key).
+    """
     from embry0.api.v1.decisions import get_decision
 
     decision = await get_decision(decision_id, request)
     users = _repo(request, "users_repo")
-    person = await users.get_by_email(body.to.strip())
+    person = await users.get_by_email(to.strip())
     if person is None or person.disabled or person.tier not in _SIGNED_IN:
         raise HTTPException(status_code=422, detail="send it to someone who signs in to embry0")
-    actor = request_actor(request)
     if person.email.lower() == actor.lower():
         raise HTTPException(status_code=422, detail="it is yours already: answer it")
     row = await _repo(request, "handoffs_repo").send(
@@ -132,7 +140,7 @@ async def send_decision(decision_id: str, body: SendBody, request: Request) -> d
         title=str(decision.get("title") or ""),
         from_actor=actor,
         to_email=person.email,
-        note=body.note.strip(),
+        note=note.strip(),
         now=datetime.now(UTC),
     )
     await emit_audit(

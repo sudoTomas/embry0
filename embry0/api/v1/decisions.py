@@ -120,6 +120,28 @@ async def done_inputs(request: Request, rows: Sequence[dict[str, Any]]) -> list[
     return list(await asyncio.gather(*(one(r) for r in rows)))
 
 
+async def owners_of(request: Request, rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Each finished quest's owners, as a quest on offer's are: its area's, else its repository's, else CODEOWNERS'."""
+    from embry0.api.v1.proposals import _areas, _codeowners
+
+    proposals_repo = getattr(request.app.state, "proposals_repo", None)
+    if proposals_repo is None or not rows:
+        return {}
+    repos = {str(r.get("repo") or "").lower() for r in rows if r.get("repo")}
+    try:
+        set_owners = await proposals_repo.owners()
+        codeowners, areas = await asyncio.gather(_codeowners(request, repos - set(set_owners)), _areas(request, repos))
+    except Exception:  # noqa: BLE001 - a card without owners is asked of nobody, and still shown
+        logger.warning("decisions_owners_unread", exc_info=True)
+        return {}
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        name = str(r.get("repo") or "").lower()
+        area = next((a for a in areas.get(name, []) if a.name == r.get("area") and a.owners), None)
+        out[str(r["job_id"])] = list(area.owners if area else set_owners.get(name) or codeowners.get(name) or [])
+    return out
+
+
 async def _reviews(request: Request, *, repo: str | None) -> list[Decision]:
     from embry0.services.world import INBOX_DAYS, PLAYER_ACTORS
 
@@ -130,7 +152,8 @@ async def _reviews(request: Request, *, repo: str | None) -> list[Decision]:
     if repo:
         rows = [r for r in rows if str(r.get("repo") or "").lower() == repo.lower()]
     rows = [r for r in rows if await _allowed(request, r.get("repo"))]
-    return [done(q) for q in await done_inputs(request, rows)]
+    inputs, owners = await asyncio.gather(done_inputs(request, rows), owners_of(request, rows))
+    return [done({**q, "owners": owners.get(str(q["job_id"]), [])}) for q in inputs]
 
 
 async def with_assignees(request: Request, shown: list[dict[str, Any]]) -> list[dict[str, Any]]:

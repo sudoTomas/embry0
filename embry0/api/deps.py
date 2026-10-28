@@ -65,6 +65,9 @@ PROPOSE_SCOPE_MUTATIONS = frozenset(
         ("POST", "/api/v1/proposals/{proposal_id}/accept"),
         ("POST", "/api/v1/proposals/{proposal_id}/decline"),
         ("POST", "/api/v1/proposals/{proposal_id}/snooze"),
+        # Asks (spec 2026-10-27): the assistant reports a send and passes a button press back.
+        ("POST", "/api/v1/asks/{ask_id}/sent"),
+        ("POST", "/api/v1/asks/answer"),
     }
 )
 

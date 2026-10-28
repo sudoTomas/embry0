@@ -338,6 +338,7 @@ def done(q: Mapping[str, Any]) -> Decision:
         why=why,
         yes_starts=None,
         actions=done_actions(outcome, q.get("pr_url")),
+        owners=tuple(str(o) for o in q.get("owners") or ()),
         links={
             k: str(v)
             for k, v in (("job", q.get("job_id")), ("pr", q.get("pr_url")), ("merge_approval", q.get("approval_id")))
