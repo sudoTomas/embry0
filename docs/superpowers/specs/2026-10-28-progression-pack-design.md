@@ -4,7 +4,9 @@
 
 In the same change the service stops re-reading all history every minute. It drops three event branches nothing reads, and keeps experience as a per-day rollup per character and skill, rebuilt when the pack changes.
 
-Issue #176, part of epic #159. Line numbers are at `e1e0567d`.
+Issue #176, part of epic #159. Line numbers in sections 1 to 8 are at `e1e0567d`, before PR 1.
+
+**Status.** The four open decisions were answered on 2026-10-28, each as recommended (see [Decisions](#decisions)). PR 1 is built to this spec; section 11 records what it settled and what PR 2 and PR 3 build on.
 
 **Non-goals.**
 
@@ -53,7 +55,7 @@ Issue #176, part of epic #159. Line numbers are at `e1e0567d`.
    - the `holiday_merge` SQL, `repositories/progression.py:316`;
    - the achievement's text, `achievements.py:559`.
 
-   The SQL counts 1 January as a holiday, but the new-year rare is the first run of a new year, not a merge on 1 January.
+   The SQL counts 1 January as a holiday, but the new-year rare is the first run of a new year, not a merge on 1 January. The maintainer kept both as they are: two rules, apart on purpose. The shipped pack says so in a comment beside the Holiday Event.
 3. **Rare ids and order, three times:** `progression.py:218-222`, `outfit.ts:19`, `chatbox.ts:31-35`.
 4. **Skill ids, three times:** `STATS`, the keys of `MASTERY_CLOAK` (`palette.ts:117-141`), and every trace's stored keys, which the classifier writes as skill ids.
 5. **Total level 1,000, three times:** `progression.py:151`, `achievements.py:605`, and the requirement text `quests.py:331`.
@@ -93,7 +95,7 @@ Each recompute reads:
 YAML, or the same structure as JSON. An excerpt of the shipped default:
 
 ```yaml
-schema_version: 1
+version: 1
 timezone: UTC
 
 curve:            # level L starts at floor(sum_{n<L} floor(n + points * 2^(n / doubling)) / divisor)
@@ -198,7 +200,7 @@ labels:
 
 | Section | Holds | Rules (each failure is a 422 naming the key) |
 |---|---|---|
-| `schema_version` | the schema the document is written in | equals the release's |
+| `version` | the schema the document is written in | optional; absent means this release's, a newer one is a 422 |
 | `timezone` | the game's calendar | an IANA name `zoneinfo` knows; default `UTC` |
 | `curve` | `max_level`, `points`, `doubling`, `divisor` | `max_level` 2 to 200; the table it makes rises strictly |
 | `groups[]` | where skill tiles sit on a sheet | 1 to 8, unique ids |
@@ -255,7 +257,7 @@ The quest logic stays in `quests.py`. A pack instantiates it:
 
 A quest's XP rewards, `xp: [{agent, skill, xp}]`, land at its completion and feed the levels, as today (`quests.py:336-342`).
 
-`cloak_trim` replaces the check on the quest id `divine_warden` (`progression.py:318-321`). The trim is drawn in the top tier's colour. The API's `account.divine_trim` becomes `account.cloak_trim`, and `divine_trim` stays as an alias for one release.
+`cloak_trim` replaces the check on the quest id `divine_warden` (`progression.py:318-321`). The trim is art: it is drawn in the Divine metal, as before. The API's `account.divine_trim` becomes `account.cloak_trim`, and `divine_trim` stays as an alias for one release.
 
 The diary task kinds are `triage` (`agents: [triage]`), `finish_job`, `run_qa` (`agents: [qa]`), `merges` (`count`), `pass_qa` (`agents: [qa]`), `audit`, `clean_audit`, `reviews` (`count`, `agents: [review, pr-reviewer]`), `quiet_stretch` (`days`) and `all_above`. These are today's tasks (`quests.py:113-145`) with their numbers and agent names as params.
 
@@ -281,12 +283,12 @@ The server validates the placeholders. The client fills them, because `{characte
 |---|---|
 | `complete` | Complete |
 | `quest_journal` | Deeds |
-| `quest_point`, `quest_points` | deed point, deed points |
-| `diary` | diary |
+| `journal_points` | deed points |
+| `quest_point`, `quest_points` | point, points |
 | `gear` | `{tier} gear` |
 | `mastery_cloak` | `{skill} cape` |
+| `trimmed_cloak` | `{skill} cape (trimmed)` |
 | `quest_cloak` | quest cloak |
-| `trimmed` | trimmed |
 
 These are the nouns the progression components print today (`QuestJournal.tsx:21`, `SkillSheet.tsx:58-59, 74`, `AgentFormPage.tsx:367`, `lib/tiers.ts:23`).
 
@@ -294,19 +296,19 @@ These are the nouns the progression components print today (`QuestJournal.tsx:21
 
 The pack is a set of pydantic models with `extra="forbid"`, followed by cross-reference checks: groups, skills, categories, tiers, metrics and their params, kinds, art, placeholders. Every problem is collected, not just the first.
 
-The 422 has the standards shape (`api/v1/standards.py:187-189`): `{"message": "the pack cannot be stored", "problems": [...]}`. Each problem starts with its dotted key, for example `achievements[3].thresholds: 6 values; a tiered achievement has one per tier (7)`. Warnings (an unmapped category, an agent not defined now) come back with a successful save and a dry run, and never block.
+The 422 has the settings document's shape (#160), FastAPI's own list, which the dashboard already renders: `{"detail": [{"loc": ["achievements", 3, "thresholds"], "type": "thresholds", "msg": "3 values; an objective has one, a tiered achievement one per tier (7)"}]}`. Each problem's `loc` is its path from the document's root; its value is never echoed. In PR 1 the problems come from `progression_pack.parse` as `Problem(loc, type, msg)`, and `python -m embry0.services.progression_pack --check <file>` prints them as `achievements[3].thresholds: ...`. Warnings (an unmapped category, an agent not defined now) come back with a successful save and a dry run, and never block.
 
 ### Schema versioning
 
-`schema_version` starts at 1.
+`version` starts at 1, as in the settings document (#160).
 
-- **A write carries the release's version.** An older one gets a 422 on `schema_version` that names the version this release reads and points to `GET /progression/pack/default`.
+- **A write may leave `version` out**, which means this release's. A newer one gets a 422 on `version` that names the version this release reads. An older one, written by hand, gets the same 422 and a pointer to `GET /progression/pack/default`.
 - **A stored pack of an older version is upgraded at startup** by a code migrator chain, and saved as a new version with source `upgrade`. Its text is regenerated from the document, so its comments are lost, and the version's reason says so.
 - **The shipped default always carries the release's version.**
 
 ### Module boundaries
 
-- **`embry0/services/progression_vocabulary.py`.** A leaf module that imports nothing from the progression services, so nothing forms a cycle. It holds the outcome sources, action kinds, quest and task kind names with their parameter models, metric ids with their parameter models, and the art vocabulary.
+- **`embry0/services/progression_vocabulary.py`.** A leaf module: it imports pydantic and the classifier's category list (`embry0/execution/skill_actions.py`, itself standard library only), nothing from the progression services, so nothing forms a cycle. It holds the outcome sources, action kinds, quest and task kind names with their parameter models, metric ids with their parameter models, and the art vocabulary.
 - **`embry0/services/progression_pack.py`.** The schema models, `load(text)`, `validate(...)`, `default_pack()`, `pack_hash(pack)`, and `Rules`, which is precomputed from a pack: the XP table, the category-to-skill map, the tier lookup and the rare calendar.
 - **The services take a `Rules` argument and import no storage:** `progression.py` (`compute`, `price`, `Character`), `achievements.py`, `quests.py` and `world.quest_xp`.
 - **`embry0/storage/repositories/progression.py`.** It holds one SQL fragment per metric, keyed by the vocabulary's ids. A test pins the two key sets equal.
@@ -318,7 +320,7 @@ The 422 has the standards shape (`api/v1/standards.py:187-189`): `{"message": "t
 
 A character is an agent type, and agent types are deployment-wide: `agent_definitions` has no owner column (`runner.py:206, 2845-2848`). Its experience comes from the runs of jobs on any repository. Some jobs have no repository at all; the journal filters on `j.repo IS NOT NULL`, `repositories/progression.py:366`. The account is the deployment (`progression.py:7-9`).
 
-So one pack per deployment fits the model as it stands. A pack per organization would need an account per organization, with a character's experience split by the owner of each job's repository. That is open decision 1.
+So one pack per deployment fits the model as it stands. A pack per organization would need an account per organization, with a character's experience split by the owner of each job's repository. The maintainer chose one pack per deployment (decision 1).
 
 ### Table (migration 130)
 
@@ -326,12 +328,12 @@ So one pack per deployment fits the model as it stands. A pack per organization 
 CREATE TABLE IF NOT EXISTS progression_packs (
     version         INTEGER PRIMARY KEY CHECK (version >= 1),
     status          TEXT NOT NULL CHECK (status IN ('draft', 'active', 'superseded')),
-    schema_version  INTEGER NOT NULL,
+    schema_version  INTEGER NOT NULL,                 -- the document's `version`
     follows_default BOOLEAN NOT NULL DEFAULT FALSE,   -- reset: whatever default the running release ships
     text            TEXT,                             -- as written, comments kept; NULL when follows_default
     document        JSONB CHECK (document IS NULL OR jsonb_typeof(document) = 'object'),
     based_on        TEXT,                             -- pack_hash of the shipped default it was edited from
-    source          TEXT NOT NULL CHECK (source IN ('person', 'restore', 'reset', 'upgrade')),
+    source          TEXT NOT NULL CHECK (source IN ('person', 'file', 'restore', 'reset', 'upgrade')),
     reason          TEXT NOT NULL DEFAULT '',
     created_by      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -357,7 +359,7 @@ The versions are the revision history, as for standards (`runner.py:2896-2953`).
 | restore | A superseded version's document becomes a new active version, with source `restore`: this is undo |
 | reset | A new active version with `follows_default`, source `reset`, as `POST /agents/{type}/reset` restores a seed (`api/v1/agents.py:176-183`) |
 
-Open decision 3 is whether the stored draft and the preview are worth their routes. Open decision 4 is whether a customised pack is a whole document or an overlay on the shipped default.
+The maintainer chose the stored draft, the preview and the activate step, with the one-shot PUT beside them for the CLI and MCP (decision 3), and a customised pack as a whole document (decision 4). Revision sources follow the settings document's (#160), with `reset` added: `person`, `file` (#162's `apply`), `restore`, `reset`, `upgrade`. Writes take the admin tier and an unrestricted key, as for the settings document.
 
 The dashboard shows when the shipped default has moved on since a customised pack was based on it (`based_on` against the current default's hash), with the diff between the two defaults.
 
@@ -411,7 +413,7 @@ Audit actions:
 - **It reproduces today exactly.** A golden test pins it. PR 1's first commit records `Progression.to_dict()` for a seeded history from the code as it stands (see Testing). Under the default pack, the refactor must give the same value for every field that exists today; the new fields are tested on their own.
 - **Code removed.** `TIERS`, `STATS`, `ACTION_XP`, `RUN_OUTCOME`, `OUTCOME_XP`, `DIVINE_WARDEN_TOTAL`, `XP_PER_STALE_CLAIM`, `RARE_DAYS`, `NEW_YEAR_RARE`, `TIER_NAMES`, `COMPLETE`, `CATEGORIES`, `CATALOGUE`, `THOUSAND`, `HALF_OF_MAX`, `DIARY_TIERS`, `QUIET_DAYS`, the quest literals, `CLEANED_XP` and its siblings, and the threshold literals in the facts SQL.
 - **Frontend copies removed:**
-  - `TIER_COLOR`, `TIER_NAME`, `TIER_ORDER`, `COMPLETE_NAME` and `COMPLETE_COLOR` (`lib/tiers.ts`);
+  - `TIER_COLOR`, `TIER_NAME`, `TIER_ORDER` and `COMPLETE_NAME` (`lib/tiers.ts`, which is gone);
   - `RARE_NAMES`, `DIARY_TIER_NAME` and the message wording (`chatbox.ts`);
   - `GROUPS` (`SkillSheet.tsx`);
   - the `MASTERY_CLOAK` and `QUEST_CLOAK` colours (`palette.ts:117-145`);
@@ -419,7 +421,7 @@ Audit actions:
   - "Deeds" (`QuestJournal.tsx`);
   - the closed unions `Tier`, `SkillGroup` and `DiaryTierName`, which become `string`.
 
-  `readable()` and the slate colour for a tierless entry stay; they are presentation.
+  `readable()`, the parchment of a complete objective and the slate of a tierless entry stay, in `lib/gamePack.ts`; they are presentation.
 - **`GET /progression` gains:**
   - `pack: {version, hash, follows_default}`;
   - `groups`, `tiers`, `rares`, `diary_tiers`, `messages` and `labels`;
@@ -428,7 +430,7 @@ Audit actions:
   - `characters[].gear`, the art step of its tier.
 
   These are a few kilobytes on a once-a-minute poll. The guild page and the agent form read tier names through the same app-wide query, not `/world`.
-- **The world's lead cap** (`services/world.py:47`) reads `character_max_level` from the rules.
+- **The world's lead cap** (`services/world.py:47`) stays at 126. It is how menacing a lead looks on the map, not a character's level, so PR 1 leaves it.
 - **Docs:**
   - `docs/progression.md` gets a "Changing the content" section;
   - `docs/api.md` gets the routes and the new fields;
@@ -490,9 +492,9 @@ The frontend still falls back if a mismatched build ever sends one: the first st
   | `browser` | `browser` |
   | `log` | `log-query` |
 
-- **No new column.** The keys go in the same column, `traces.skill_actions`, whose comment is updated.
+- **No new column.** The keys go in the same column, `traces.skill_actions`; no migration changes.
 - **The categories mirror today's distinctions one to one.** Under the default pack every run therefore earns exactly what it earns today. A later, finer split (say, `shell:package-install`) is additive: it affects new traces only, and an older pack that does not name it earns nothing for it, which is reported as a warning.
-- **History without rewriting rows.** Traces written since migration 107 hold the 20 old `kind:skill` keys. A fixed table in code (`LEGACY_ACTION_KEYS`) maps each one to its category at read time, inside `run_actions` (`progression.py:157-161`), which `world.quest_xp` shares. A test pins that the old and new key sets are disjoint and that every old key maps. Traces from before 107 keep only tool names and read through `actions_from_tools` as today (`skill_actions.py:238-245`), as `shell:plain` and `edit:source`.
+- **History without rewriting rows.** Traces written since migration 107 hold the 21 old `kind:skill` keys. A fixed table in code (`LEGACY_ACTION_KEYS`) maps each one to its category at read time, inside `run_actions` (`progression.py:157-161`), which `world.quest_xp` shares. A test pins that the old and new key sets are disjoint and that every old key maps. Traces from before 107 keep only tool names and read through `actions_from_tools` as today (`skill_actions.py:238-245`), as `shell:plain` and `edit:source`.
 - **Re-pricing.** A trace never holds a skill again, so a pack that renames, merges, removes or remaps skills re-prices every run back to migration 107. Before 107, as today, only the tool name is known.
 
 ## 7. Performance and timezone
@@ -577,7 +579,7 @@ Durations do not depend on it: `merged_within`, `merged_running_over`, `quiet_st
 
 ## 8. Relation to #160
 
-#160 designs one settings document with a section per feature, for operator policy. The recommendation here is that the pack is **its own document** and not a section of it (open decision 2):
+#160 designs one settings document with a section per feature, for operator policy. The pack is **its own document**, not a section of it (decision 2, as recommended):
 
 - **A different lifecycle.**
   - A pack is edited at length (a translation is hundreds of lines).
@@ -713,6 +715,8 @@ These are cheap to reverse, so they were decided here:
 - Achievement ids stay. Metric ids keep their names where nothing about them changes in kind; the merged or generalised ones get capability names (the table in section 2).
 - Messages are rendered on the client, and the server validates their placeholders.
 - `labels` is a fixed key set, and page chrome is not in the pack.
+- `account.cloak_trim` is the capstone's trim; `divine_trim` stays beside it for one release.
+- The world's lead cap stays at 126 (section 4).
 - Art references are validated (a 422), and the frontend falls back anyway.
 - Mastery cloaks come from pack colours. There is no equipment section.
 - Action categories go in the existing `traces.skill_actions` column, with a read-time legacy table and no data rewrite.
@@ -722,22 +726,46 @@ These are cheap to reverse, so they were decided here:
 - The timezone is in the pack and defaults to UTC.
 - Who an outcome credits stays in SQL until #167.
 
-## Open decisions
+## Decisions
 
-Each lists the recommendation first. PR 1 is the same under every answer.
+Answered by the maintainer on 2026-10-28, each as recommended:
 
-1. **One pack per deployment, or per organization?** This decides the storage key, the account model, PR 2 and PR 3.
-   - **One per deployment (recommended).** It matches the model as it stands: agent definitions and the account are deployment-wide, and jobs without a repository have no organization. Cost: two organizations on one deployment share names, rates and a timezone.
-   - **One per deployment, with per-organization overrides of words only** (names, messages, labels). Each organization reads its own words over shared mechanics. Cost: a merge layer for lists of content, and a timezone that still cannot differ.
-   - **One per organization, with an account per organization.** A character's experience is split by the owner of each job's repository. Cost: the account, the rollup key, every query and the world change; jobs without a repository need a home. This is the largest option.
-2. **Its own document, or a section of #160's settings document?** This decides the storage, the API, and whether PR 2 waits for #160.
-   - **Its own document, sharing #160's conventions (recommended).** Section 8 gives the reasons. Cost: a second document mechanism, and #162's CLI has two targets.
-   - **A `progression` section of #160's document.** One mechanism and one CLI, and #161's layering comes for free. Cost: PR 2 waits for #160; content and policy share one undo history; there is no draft or preview; saving a setting has to tell whether to rebuild the rollup.
-   - **Content in its own document, the timezone in #160.** Cost: one feature's configuration in two mechanisms, which is what #159 sets out to end.
-3. **A stored draft with a preview, or only a one-shot PUT with a dry run?** This decides the API contract and the dashboard.
-   - **A stored draft, a preview and an activate step, plus the one-shot PUT for the CLI and MCP (recommended).** A long edit, such as a translation, survives a closed browser, and the re-pricing is seen before it is live. Cost: five more routes, a draft row and a preview that recomputes from the raw rows.
-   - **The one-shot PUT with `?dry_run=1` only,** which is #160's shape. Cost: an unfinished edit lives only in the browser, and a dry run shows a diff, not the re-priced levels. It also departs from the issue's "draft and active versions".
-   - **A stored draft without a preview.** Cost: the operator activates without seeing what it does to the history.
-4. **A customised pack: a whole document, or an overlay on the shipped default?** This decides the storage shape, and what a release does to a deployment that customised its pack.
-   - **A whole document (recommended).** Once customised, the deployment owns every line; the dashboard says when the shipped default has moved on and shows that diff. Cost: content a later release adds reaches it only when an operator ports it.
-   - **An overlay keyed by id over the shipped default,** with explicit removals. New shipped content flows in. Cost: merge rules for every list, problems that come from the combination rather than the operator's document, and a release that can change a customised deployment's levels behind its back.
+1. **One pack per deployment.** Agent definitions and the account are deployment-wide, and jobs without a repository have no organization. A per-organization pack would need an account per organization; if #161 ever asks for it, `progression_packs` gains an `owner` column.
+2. **The pack is its own document**, following the settings document's conventions (#160): YAML text kept with its comments beside the parsed document, the 422 list naming every key, `?dry_run=1`, the revision sources, and #162's CLI verbs. It does not import from the settings code: PR 1 does not depend on #160, and PR 2 copies its conventions, not its modules.
+3. **A stored draft, a preview and an activate step**, plus a one-shot PUT for the CLI and MCP.
+4. **A customised pack is a whole document**, and the dashboard shows when the shipped default has moved on since it was based on it.
+
+The Holiday Event and the new-year rare keep their two different rules (section 1).
+
+## 11. What PR 1 settled
+
+PR 1 reads everything from the shipped pack, with no visible change and no migration. Under the shipped pack `/progression` answers a seeded history field for field as before (`tests/unit/services/test_progression_golden.py`, recorded from the code before PR 1), and the outfits contact sheet regenerates byte for byte. One look differs: the Divine tier's colour is now the hex its CSS variable held (`#d4af37`), so its achievement icon takes the same 18% lift every other tier's icon takes.
+
+**Interfaces PR 2 and PR 3 build on.**
+
+- **The schema and loader: `embry0/services/progression_pack.py`.**
+  - `load_text(text)` reads YAML or JSON (aliases refused, 256 KiB at most).
+  - `parse(data)` and `parse_text(text)` return a `Pack` or raise `PackInvalid`, whose `problems` are `Problem(loc, type, msg)` with `to_dict()` in the 422 shape.
+  - `cross_check(pack)` and `warnings(pack)` are the two passes after the shape.
+  - `default_text()` and `default_pack()` are the shipped default; `pack_hash(pack)` is a pack's identity, the same for the same values whatever the comments.
+  - `contract()` and `--write-contract` regenerate `docs/contracts/progression.json`.
+- **The vocabulary: `embry0/services/progression_vocabulary.py`.** `METRICS`, `QUEST_KINDS`, `TASK_KINDS`, `OUTCOME_SOURCES`, `ACTION_KINDS`, `ACTION_KEYS`, `GEAR_STEPS`, `RARE_ART`, `ACHIEVEMENT_ICONS`, `MESSAGE_PLACEHOLDERS` and `LABEL_PLACEHOLDERS`; PR 2's `GET /progression/pack/vocabulary` serves them.
+- **Where the active pack is read.** `ProgressionService(repository, *, packs: PackSource, ...)`. `PackSource` is a protocol with one method, `async def active(self) -> Pack`. `embry0/api/app.py` passes `ShippedPack()`, which always answers `default_pack()`; PR 2 replaces it with a stored source, and the argument is required, so a source is never defaulted by accident. On each recompute the service asks the source, and a pack whose hash differs from the cached one is recomputed at once, whatever the time to live. `ProgressionService.rules()` answers the active `Rules` for callers that price outside a recompute (the quest scroll, `api/v1/world.py`).
+- **How pricing consumes it.** `rules_for(pack)` builds `Rules` once per hash. Every service takes `rules=` as a required keyword:
+  - `price(event, rules=)` and `compute(events, agent_types, rewards, rules=)` in `services/progression.py`;
+  - `first_total(level_ups, total, rules=)`;
+  - `evaluate(facts, ..., rules=)` and `metric_steps(..., rules=)` in `services/achievements.py`;
+  - `evaluate_diaries(journal, rules=)`, `quest_rewards(journal, rules=)` and `evaluate_quests(journal, diaries, total_reached, rules=)` in `services/quests.py`, where `total_reached(n)` answers when a character first reached total level n;
+  - `quest_xp(job, runs, rules=)` in `services/world.py`.
+
+  `Rules` holds the lookups: `skill_for_action` (category to skill), `action_xp`, `outcomes`, `run_outcomes`, `xp_for_level` and `level_for_xp`, `tier_for_level`, `character_level`, the rare calendar, `local(at)` on the pack's timezone, `achievements` (each with its `fact_key`), `fact_queries` and `view()`, which is the pack's part of `GET /progression`.
+- **The facts query.** `ProgressionRepository.facts(queries, timezone)` runs `rules.fact_queries`; `facts_sql(queries, timezone)` builds it from `FRAGMENTS`, binding every parameter and the timezone. A fact's `metric` is its query's key, so two achievements that count one metric with different parameters count apart.
+
+**What PR 3's rollup needs to know.**
+
+- **The key is `rules.hash`.** It changes with any value of the pack (rates, skills, the category map, the timezone, a tier's level, a rare's date), and not with comments. The rollup's day is `rules.local(at).date()`.
+- **The price of one event is `price(event, rules=rules)`.** The fold is `compute()`'s loop: events and quest rewards sorted by time, `gain()` per (skill, XP), level-ups and character level-ups recorded as they cross. The rares are decided in the same loop from `rules.rare_on_date` and `rules.rare_first_run_of_year` on the pack's calendar, so the rollup must fold them too, with `last_run_year` carried across days.
+- **Events come from `ProgressionRepository.events()`** with nine sources (`run`, `merged`, `opened`, `cleaned`, `comeback`, `resumed`, `qa_passed`, `audited`, `asked`; the three dead ones are gone). A run's event time is `traces.created_at`, the start of the run, written when it starts and finished later. Its keys may be categories or older skill keys; `run_actions()` translates them.
+- **Quest rewards feed the levels:** `quest_rewards(journal, rules=)`, each at its quest's completion, which a late merge can move into the past.
+- **The growth achievements and the capstone read the level-ups,** so stored milestones must keep their exact times; `test_progression_golden` and an equivalence test are the guards.
+- **`Character` and `Progression` take `rules=`;** `Progression.rules` is the pack it was computed under.
