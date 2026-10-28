@@ -9,9 +9,13 @@
 
 FROM python:3.12.15-slim-bookworm
 
-# Upgrade OS packages first — the pinned base tag ships a CRITICAL OpenSSL
-# (CVE-2026-31789) whose fix is already in the Debian repos.
-RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+# Upgrade OS packages first: a pinned base tag can ship a CRITICAL whose fix
+# is already in the Debian repos. A build reuses this layer from its cache, so
+# it never sees a fix published later; raising OS_PACKAGES_REFRESHED rebuilds
+# it (docs/ops/deploy.md, "Refreshing OS packages").
+ARG OS_PACKAGES_REFRESHED=2026-10-28
+RUN echo "OS packages as of ${OS_PACKAGES_REFRESHED}" \
+    && apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
