@@ -12,6 +12,11 @@ press back (``POST /asks/answer``). No model turns a reply into an answer.
 - **Codes.** One per decision, from its id, lengthened on a collision and
   never given to another decision, so a late answer cannot land on the wrong
   quest.
+
+The policy is the ``asks`` section of the settings document
+(:mod:`embry0.settings.sections.asks`), read by the loop every tick and by
+the feed on every request; :func:`ask_settings` turns it into the forms used
+here, so this module stays pure.
 """
 
 from __future__ import annotations
@@ -24,57 +29,49 @@ from datetime import datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from embry0.settings.sections.asks import AsksSettings, parse_hours, parse_weekdays
+
 #: The states of an ask still waiting on its person.
 LIVE = ("queued", "sent", "reminded")
-_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 @dataclass(frozen=True)
 class AskSettings:
-    enabled: bool = False
-    #: Working hours, ``HH-HH`` in ``timezone``, on ``weekdays``.
-    hours: tuple[int, int] = (9, 18)
-    weekdays: frozenset[int] = frozenset(range(5))
-    timezone: str = "UTC"
-    remind_hours: float = 24.0
-    expire_days: float = 7.0
-    tick_seconds: float = 120.0
+    """The ``asks`` section of the settings document, read into the forms the functions below use.
+
+    No defaults here: the section's model is their only home (:func:`ask_settings`).
+    """
+
+    enabled: bool
+    #: Working hours, ``(start, end)`` in ``timezone``, on ``weekdays``.
+    hours: tuple[int, int]
+    #: Weekday numbers, Monday 0.
+    weekdays: frozenset[int]
+    timezone: str
+    remind_hours: float
+    expire_days: float
+    tick_seconds: float
     #: Unanswered asks one person holds at once; the next is sent as one is answered or expires.
-    max_open_per_person: int = 3
+    max_open_per_person: int
 
 
-def ask_settings(config: Any) -> AskSettings:
-    raw_hours = str(getattr(config, "ask_hours", "09-18") or "09-18")
-    try:
-        start, end = (int(x) for x in raw_hours.split("-", 1))
-        hours = (start, end) if 0 <= start < end <= 24 else (9, 18)
-    except ValueError:
-        hours = (9, 18)
-    days = _weekdays(str(getattr(config, "ask_weekdays", "mon-fri") or "mon-fri"))
+def ask_settings(section: AsksSettings) -> AskSettings:
+    """The section as the functions here read it.
+
+    The section refused every value that does not read when it was written,
+    and a stored value the code no longer accepts reads as its default, so
+    nothing here falls back: a value that still does not read raises.
+    """
     return AskSettings(
-        enabled=bool(getattr(config, "asks_enabled", False)),
-        hours=hours,
-        weekdays=days or frozenset(range(5)),
-        timezone=str(getattr(config, "ask_timezone", "UTC") or "UTC"),
-        remind_hours=float(getattr(config, "ask_remind_hours", 24)),
-        expire_days=float(getattr(config, "ask_expire_days", 7)),
-        tick_seconds=max(30.0, float(getattr(config, "ask_tick_seconds", 120))),
-        max_open_per_person=max(1, int(getattr(config, "ask_max_open_per_person", 3))),
+        enabled=section.enabled,
+        hours=parse_hours(section.hours),
+        weekdays=parse_weekdays(section.weekdays),
+        timezone=section.timezone,
+        remind_hours=section.remind_hours,
+        expire_days=section.expire_days,
+        tick_seconds=section.tick_seconds,
+        max_open_per_person=section.max_open_per_person,
     )
-
-
-def _weekdays(text: str) -> frozenset[int]:
-    """``mon-fri`` or ``mon,wed,fri`` as weekday numbers (Monday 0)."""
-    out: set[int] = set()
-    for part in text.lower().replace(" ", "").split(","):
-        if "-" in part:
-            a, _, b = part.partition("-")
-            if a in _DAYS and b in _DAYS:
-                i, j = _DAYS.index(a), _DAYS.index(b)
-                out.update(range(i, j + 1) if i <= j else [*range(i, 7), *range(0, j + 1)])
-        elif part in _DAYS:
-            out.add(_DAYS.index(part))
-    return frozenset(out)
 
 
 def next_working_time(now: datetime, s: AskSettings) -> datetime:

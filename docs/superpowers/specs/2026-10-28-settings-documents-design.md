@@ -256,6 +256,8 @@ Tests:
 | `max_open_per_person` | `3` | ≥ 1 | yes | `ASK_MAX_OPEN_PER_PERSON` |
 | `tick_seconds` | `120` | ≥ 30 | no | `ASK_TICK_SECONDS` |
 
+As built (pull request B): the three text keys keep the form an operator already writes in `.env`, so the import converts nothing and `asks: {hours: "08-17", weekdays: sun-thu, timezone: Asia/Dubai}` reads as spoken. Each is checked by the one parser the feature uses (`parse_hours`, `parse_weekdays` in `embry0/settings/sections/asks.py`) and stored in one spelling (`9-17` is `09-17`, `Mon, Wed` is `mon,wed`), so an equivalent variable is not imported as a change; a time zone is checked by loading it, which is exactly what a tick does. The numbers also take upper bounds (`remind_hours` ≤ 8760, `expire_days` ≤ 365, `tick_seconds` ≤ 86400), so no stored value can overflow a tick's `timedelta` or its sleep. `GET /asks/due` answers `enabled` beside the list.
+
 What changes in the feature: `AskLoop.start` no longer returns when asks are off (`ask_loop.py:68-70`). It runs always, reads the section at the top of each tick, does nothing while `enabled` is false and sleeps the section's `tick_seconds`, so turning asks on applies within one tick. `ask_settings(config)` becomes a conversion from the section model to the existing `AskSettings` dataclass, so `embry0/services/asks.py` stays pure. `GET /asks/due` reads the snapshot per request.
 
 ## 11. Delivery

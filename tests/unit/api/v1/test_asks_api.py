@@ -15,6 +15,9 @@ from embry0.api.v1 import asks as asks_api
 from embry0.api.v1 import decisions as decisions_api
 from embry0.api.v1 import proposals as proposals_api
 from embry0.config import Embry0Config
+from embry0.settings.document import read_sections
+from embry0.settings.sections import CATALOG
+from embry0.settings.store import Snapshot
 
 HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 NOW = datetime.now(UTC)
@@ -114,6 +117,18 @@ class FakeUsers:
         return people.get(email.lower())
 
 
+class FakeSettings:
+    """The settings store as the feed reads it: a snapshot of a document held in memory."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self.data = data
+        self.reads = 0
+
+    async def snapshot(self) -> Snapshot:
+        self.reads += 1
+        return Snapshot(generation=self.reads, data=self.data, sections=read_sections(CATALOG, self.data))
+
+
 class FakeNotifier:
     def __init__(self) -> None:
         self.sent: list[tuple[str, dict[str, Any]]] = []
@@ -133,6 +148,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     app.state.asks_repo = FakeAsks()
     app.state.users_repo = FakeUsers()
     app.state.webhook_notifier = FakeNotifier()
+    app.state.settings = FakeSettings({"asks": {"enabled": True}})
     open_decisions = {"offer:crack:1": dict(CRACK), "done:job-1": dict(JOB)}
     app.state.open_decisions = open_decisions
 
@@ -190,6 +206,43 @@ async def test_the_feed_gives_each_due_ask_its_card_code_person_and_chat_actions
     assert app.state.asks_repo.rows[2]["state"] == "queued", (
         "the feed withdraws nothing: a key may not see every decision, and the ask loop sees them all"
     )
+
+
+@pytest.mark.asyncio
+async def test_the_feed_is_empty_while_asks_are_off_even_with_live_asks_stored(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(asks_api, "next_working_time", lambda now, _s: now)
+    app.state.asks_repo.rows = [
+        ask("a1", "offer:crack:1", "ada@example.com"),
+        ask("a2", "done:job-1", "github:bo", state="sent", sent_at=NOW - timedelta(days=2)),
+    ]
+    app.state.settings = FakeSettings({"asks": {"enabled": False}})
+    off = await call(app, "GET", "/api/v1/asks/due")
+    assert off.status_code == 200, off.text
+    assert off.json()["asks"] == [], "asks off means none is handed to a chat to send, queued or due a reminder"
+    assert off.json()["enabled"] is False
+    assert [r["state"] for r in app.state.asks_repo.rows] == ["queued", "sent"], "they wait, untouched"
+
+    app.state.settings.data = {"asks": {"enabled": True}}
+    on = (await call(app, "GET", "/api/v1/asks/due")).json()
+    assert [a["id"] for a in on["asks"]] == ["a2", "a1"] and on["enabled"] is True, (
+        "the same app, turned on in the document: the next request serves them, the reminder first"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_feed_reads_the_document_on_each_request(app: Any) -> None:
+    app.state.asks_repo.rows = [
+        ask("a1", "offer:crack:1", "ada@example.com", state="sent", sent_at=NOW - timedelta(hours=30))
+    ]
+    always = {"enabled": True, "hours": "00-24", "weekdays": "mon-sun"}
+    app.state.settings = FakeSettings({"asks": {**always, "remind_hours": 48}})
+    assert (await call(app, "GET", "/api/v1/asks/due")).json()["asks"] == [], "sent 30 hours ago, reminded after 48"
+    assert app.state.settings.reads == 1, "one snapshot per request"
+    app.state.settings.data = {"asks": {**always, "remind_hours": 24}}
+    due = (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]
+    assert [(a["id"], a["reminder"]) for a in due] == [("a1", True)], "remind_hours 24, read on the next request"
 
 
 @pytest.mark.asyncio

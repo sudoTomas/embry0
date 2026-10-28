@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from embry0.services.ask_loop import AskLoop
 from embry0.services.asks import (
-    AskSettings,
     ask_settings,
     code_for,
     expired,
@@ -20,8 +18,10 @@ from embry0.services.asks import (
     release,
     reminder_due,
 )
+from embry0.settings.sections.asks import AsksSettings
 
-S = AskSettings(enabled=True, hours=(9, 18), weekdays=frozenset(range(5)), timezone="America/Chicago")
+ON = AsksSettings(enabled=True, timezone="America/Chicago")
+S = ask_settings(ON)
 # Tuesday 2026-10-27, 10:00 in Chicago (CDT, UTC-5).
 TUE_10 = datetime(2026, 10, 27, 15, 0, tzinfo=UTC)
 
@@ -76,13 +76,14 @@ def test_one_reminder_after_a_day_and_expiry_after_a_week() -> None:
     assert expired({**sent, "created_at": TUE_10 - timedelta(days=8)}, TUE_10, S)
 
 
-def test_settings_read_hours_days_and_zone_and_fall_back_when_wrong() -> None:
-    s = ask_settings(
-        SimpleNamespace(asks_enabled=True, ask_hours="08-17", ask_weekdays="sun-thu", ask_timezone="Asia/Dubai")
-    )
+def test_the_section_reads_as_hours_days_and_zone() -> None:
+    s = ask_settings(AsksSettings(enabled=True, hours="08-17", weekdays="sun-thu", timezone="Asia/Dubai"))
     assert s.enabled and s.hours == (8, 17) and s.weekdays == frozenset({6, 0, 1, 2, 3}) and s.timezone == "Asia/Dubai"
-    bad = ask_settings(SimpleNamespace(ask_hours="nine to five", ask_weekdays="never"))
-    assert bad.hours == (9, 18) and bad.weekdays == frozenset(range(5)) and bad.enabled is False
+    assert S.hours == (9, 18) and S.weekdays == frozenset(range(5)), "the defaults: 09-18, mon-fri"
+
+
+async def _read(section: AsksSettings) -> AsksSettings:
+    return section
 
 
 class FakeAsks:
@@ -132,7 +133,7 @@ async def test_a_tick_queues_withdraws_and_expires_and_never_re_asks_an_expired_
     async def people() -> dict[str, str]:
         return {"ada": "ada@example.com"}
 
-    loop = AskLoop(settings=S, asks=asks, decisions=listed, people=people, clock=lambda: TUE_10)
+    loop = AskLoop(settings=lambda: _read(ON), asks=asks, decisions=listed, people=people, clock=lambda: TUE_10)
     assert await loop.tick() == {"expired": 0, "withdrawn": 0, "queued": 1}
     assert asks.rows[0]["due_at"] == TUE_10 and "d1" in asks.codes
     assert (await loop.tick())["queued"] == 0, "one live ask per person and decision"

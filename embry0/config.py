@@ -791,11 +791,11 @@ class Embry0Config(BaseSettings):
     scout_repos: Annotated[str, NOT_SECRET] = ""
     scout_exclude: Annotated[str, NOT_SECRET] = ""
 
-    # Asks (spec 2026-10-27, decisions): one message to one person about one
-    # decision, tracked from queued to answered or expired, for a chat
-    # assistant to send from GET /asks/due. Off until ASKS_ENABLED. Sent within
-    # ASK_HOURS (HH-HH) on ASK_WEEKDAYS in ASK_TIMEZONE; one reminder after
-    # ASK_REMIND_HOURS unanswered; expired after ASK_EXPIRE_DAYS.
+    # Asks (spec 2026-10-27, decisions): the policy is the settings document's
+    # `asks` section now (embry0/settings/sections/asks.py, spec 2026-10-28).
+    # These variables are only its import source: read once, at the first
+    # start of the release that added the section, and ignored after that.
+    # They are removed in the next release; nothing else reads them.
     asks_enabled: bool = False
     ask_hours: Annotated[str, NOT_SECRET] = "09-18"
     ask_weekdays: Annotated[str, NOT_SECRET] = "mon-fri"
@@ -803,8 +803,6 @@ class Embry0Config(BaseSettings):
     ask_remind_hours: float = Field(default=24.0, gt=0)
     ask_expire_days: float = Field(default=7.0, gt=0)
     ask_tick_seconds: float = Field(default=120.0, ge=30)
-    # ASK_MAX_OPEN_PER_PERSON: unanswered asks one person holds at once; the
-    # next is released, worst first, as one is answered or expires.
     ask_max_open_per_person: int = Field(default=3, ge=1)
 
     # Owner proposals in plain words (spec 2026-10-25, proposal briefs). A
