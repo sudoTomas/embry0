@@ -7,6 +7,7 @@ import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { STATE_POSE, placeOf } from "@/lib/world";
 import { buildTileMap, hash, leadSpot, TERRAINS, type TileMap } from "@/lib/worldTiles";
 import { ArtSprite } from "./art/ArtSprite";
+import { Torchlight } from "./art/Nightfall";
 import { ArtObjectAt, EffectAt } from "./art/Pieces";
 import { anchored } from "./art/style";
 import { TerrainCanvas } from "./art/TerrainCanvas";
@@ -44,7 +45,7 @@ function partyTarget(map: TileMap, party: Party): { x: number; y: number } {
   return { x: spot.x + 20, y: spot.y };
 }
 
-/** One party on the map: it sets out from the hall's door and walks to its quest, and back. */
+/** One party on the map: it sets out from the hall's door and walks to its quest, and back, carrying its light (a beaten party's goes out). */
 function PartyOnMap({ map, art, party, onPick }: { map: TileMap; art: ArtManifest; party: Party; onPick: () => void }) {
   const identity = useIdentityLookup()(party.leader);
   const target = partyTarget(map, party);
@@ -62,7 +63,9 @@ function PartyOnMap({ map, art, party, onPick }: { map: TileMap; art: ArtManifes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target.x, target.y]);
   const moving = walking && (party.state === "travelling" || party.state === "returning" || party.state === "working" || party.state === "waiting");
+  const walk = `left ${WALK_MS}ms linear, top ${WALK_MS}ms linear`;
   return (
+    <>
     <button
       type="button"
       onClick={onPick}
@@ -73,7 +76,7 @@ function PartyOnMap({ map, art, party, onPick }: { map: TileMap; art: ArtManifes
         ...anchored(at.x, at.y, { x: 16, y: 32 }),
         width: 32,
         height: 32,
-        transition: `left ${WALK_MS}ms linear, top ${WALK_MS}ms linear`,
+        transition: walk,
       }}
     >
       {party.state === "waiting" && <span className="world-bubble absolute -top-4 left-1/2 -translate-x-1/2">?</span>}
@@ -81,6 +84,8 @@ function PartyOnMap({ map, art, party, onPick }: { map: TileMap; art: ArtManifes
       {party.state === "defeated" && <EffectAt art={art} name="hitsplat" x={16} y={20} label="0" className="world-hitsplat" />}
       {party.state === "returning" && party.pr_url && <EffectAt art={art} name="loot_sparkle" x={16} y={36} />}
     </button>
+    {party.state !== "defeated" && <Torchlight x={at.x} y={at.y - 14} radius={56} style={{ transition: walk }} />}
+    </>
   );
 }
 
@@ -89,7 +94,8 @@ function PartyOnMap({ map, art, party, onPick }: { map: TileMap; art: ArtManifes
  * from the guild hall to every region's cobbled square, towns for areas,
  * forest, rock and ponds where no region is; each quest's creature in its
  * region, and every party at its quest or walking there. Drag to look around;
- * everything on it is a button.
+ * everything on it is a button. It is night (Nightfall, art/relight.ts):
+ * light falls at the hall's door and travels with every party out.
  */
 export function WorldMap({ art, regions, quests, parties, characters, dungeons = [], onPickLead, onPickCharacter }: WorldMapProps) {
   const lookup = useIdentityLookup();
@@ -140,7 +146,7 @@ export function WorldMap({ art, regions, quests, parties, characters, dungeons =
       </div>
       <div
         ref={scroller}
-        className="relative h-[70vh] min-h-[320px] cursor-grab overflow-auto rounded-md active:cursor-grabbing"
+        className="nightfall night-frame relative h-[70vh] min-h-[320px] cursor-grab overflow-auto rounded-md active:cursor-grabbing"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={() => (drag.current = null)}
@@ -148,7 +154,8 @@ export function WorldMap({ art, regions, quests, parties, characters, dungeons =
       >
         <div style={{ width: width * zoom, height: height * zoom, position: "relative" }}>
           <div style={{ position: "absolute", left: 0, top: 0, width, height, transform: `scale(${zoom})`, transformOrigin: "0 0" }}>
-            <TerrainCanvas art={art} cols={map.cols} rows={map.rows} base="grass" layers={layers} />
+            <TerrainCanvas art={art} cols={map.cols} rows={map.rows} base="grass" layers={layers} night />
+            <Torchlight x={map.hall.x} y={map.hall.y - 16} radius={96} />
             {map.objects.map((o, i) => (
               <ArtObjectAt key={`${o.name}-${i}`} art={art} name={o.name} x={o.x} y={o.y} />
             ))}
