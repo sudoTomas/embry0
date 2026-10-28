@@ -176,7 +176,7 @@ async def test_the_feed_gives_each_due_ask_its_card_code_person_and_chat_actions
     ]
     app.state.asks_repo.codes["offer:gone:9"] = "GONE"
     due = (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]
-    assert [a["id"] for a in due] == ["a1", "a2"], "the answered one is withdrawn, the later one waits"
+    assert [a["id"] for a in due] == ["a1", "a2"], "the answered one is left out, the later one waits"
     assert due[0]["code"] == "ABCD" and due[0]["recipient"] == {
         "email": "ada@example.com",
         "name": "Ada",
@@ -187,7 +187,9 @@ async def test_the_feed_gives_each_due_ask_its_card_code_person_and_chat_actions
     assert due[1]["recipient"]["github_login"] == "bo" and due[1]["actions"] == ["send_to"], (
         "no merge without an approval"
     )
-    assert app.state.asks_repo.rows[2]["state"] == "withdrawn"
+    assert app.state.asks_repo.rows[2]["state"] == "queued", (
+        "the feed withdraws nothing: a key may not see every decision, and the ask loop sees them all"
+    )
 
 
 @pytest.mark.asyncio

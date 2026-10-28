@@ -87,10 +87,10 @@ async def asks_due(request: Request, limit: int = Query(default=50, ge=1, le=200
     decisions = await open_decisions(request)
     by_id = {str(d["id"]): d for d in decisions}
     order = {str(d["id"]): i for i, d in enumerate(decisions)}
-    live = await asks.live()
-    # An ask whose decision is no longer open was answered or moved on since it was queued.
-    gone = [str(a["id"]) for a in live if str(a["decision_id"]) not in by_id]
-    live = [a for a in live if str(a["decision_id"]) in by_id]
+    # Only what the caller may read is sent. An ask whose decision is not listed here may have been
+    # answered, or may sit in a repo the caller's key does not cover: the ask loop, which reads every
+    # decision, is what withdraws it.
+    live = [a for a in await asks.live() if str(a["decision_id"]) in by_id]
     working = next_working_time(now, settings) == now
     out: list[dict[str, Any]] = []
     for ask, reminder in release(live, order, now, settings, working=working):
@@ -108,8 +108,6 @@ async def asks_due(request: Request, limit: int = Query(default=50, ge=1, le=200
         )
         if len(out) >= limit:
             break
-    if gone:
-        await asks.close(gone, state="withdrawn", now=now)
     return {"asks": out, "count": len(out)}
 
 
