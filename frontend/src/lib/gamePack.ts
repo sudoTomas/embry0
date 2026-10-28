@@ -4,9 +4,10 @@ import type { AchievementTier, Cloak, PackLabels, PackMessages, PackRare, PackTi
  * The active content pack's names, colours and words (#176), as GET
  * /progression answers them, in one lookup. The dashboard keeps no copy of
  * them: every tier, rare, skill group, diary tier, chat-box message and
- * game noun shown is the pack's. While the answer is not there yet (or for
- * an id the pack does not know), a name falls back to its id and a colour
- * to the slate of an entry with no tier.
+ * game noun shown is the pack's. While the answer is not there yet, or from
+ * a backend older than the pack, a name falls back to its id written as a
+ * word ("gold" reads "Gold"), a colour to the slate of an entry with no
+ * tier, and the skill groups to the ones the skills name.
  */
 export interface GamePack {
   tiers: PackTier[];
@@ -29,6 +30,18 @@ export const COMPLETE_COLOR = "#d8ccaa";
 
 type PackFields = Partial<Pick<Progression, "tiers" | "rares" | "groups" | "skills" | "diary_tiers" | "messages" | "labels" | "cloaks" | "curve">>;
 
+/** An id as a word: `quality_assurance` reads "Quality assurance", `paper-crown` "Paper crown". */
+export function asWords(id: string): string {
+  const words = id.replace(/[_-]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : id;
+}
+
+/** The skill groups the skills name, in the order they first appear: what an answer without `groups` still has. */
+function groupsOf(skills: Skill[]): { id: string; name: string }[] {
+  const ids = [...new Set(skills.map((s) => s.group))];
+  return ids.map((id) => ({ id, name: asWords(id) }));
+}
+
 export function gamePackOf(p: PackFields): GamePack {
   const tiers = p.tiers ?? [];
   const rares = p.rares ?? [];
@@ -37,7 +50,7 @@ export function gamePackOf(p: PackFields): GamePack {
     tierById: new Map(tiers.map((t) => [t.id, t])),
     rares,
     rareById: new Map(rares.map((r) => [r.id, r])),
-    groups: p.groups ?? [],
+    groups: p.groups ?? groupsOf(p.skills ?? []),
     skillById: new Map((p.skills ?? []).map((s) => [s.id, s])),
     diaryTierName: new Map((p.diary_tiers ?? []).map((t) => [t.id, t.name])),
     messages: p.messages ?? null,
@@ -47,17 +60,44 @@ export function gamePackOf(p: PackFields): GamePack {
   };
 }
 
-/** A template with its `{name}` placeholders filled; `{name:,}` writes a number with thousands separators. */
-export function fill(template: string, values: Record<string, string | number>): string {
-  return template.replace(/\{(\w+)(:,)?\}/g, (whole, name: string, comma?: string) => {
-    const value = values[name];
-    if (value === undefined) return whole;
-    return comma && typeof value === "number" ? value.toLocaleString("en-US") : String(value);
-  });
+type Value = string | number | boolean;
+
+/** A value as text, as the server writes it (embry0/services/progression_templates.py). */
+function written(value: Value, grouped: boolean): string {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number" && Number.isInteger(value)) return grouped ? value.toLocaleString("en-US") : String(value);
+  return String(value);
+}
+
+const TOKEN = /\{\{|\}\}|\{([A-Za-z_][A-Za-z0-9_]*)(:,)?\}|[^{}]+/y;
+
+/**
+ * A template filled in the content pack's one grammar, the same as the
+ * server's: `{name}` is a value, `{name:,}` a number with thousands
+ * separators, `{{` and `}}` a literal brace. The server refuses any other
+ * text when the pack is saved; one that somehow is not in the grammar is
+ * shown as written, and a value that is missing keeps its field.
+ * docs/contracts/progression.json carries the cases both sides are tested on.
+ */
+export function fill(template: string, values: Record<string, Value>): string {
+  const out: string[] = [];
+  TOKEN.lastIndex = 0;
+  while (TOKEN.lastIndex < template.length) {
+    const start = TOKEN.lastIndex;
+    const match = TOKEN.exec(template);
+    if (!match || match.index !== start) return template;
+    const [token, name, grouped] = match;
+    if (token === "{{") out.push("{");
+    else if (token === "}}") out.push("}");
+    else if (name === undefined) out.push(token);
+    else if (name in values) out.push(written(values[name], grouped !== undefined));
+    else out.push(token);
+  }
+  return out.join("");
 }
 
 export function tierName(pack: GamePack | null, id: string): string {
-  return pack?.tierById.get(id)?.name ?? id;
+  return pack?.tierById.get(id)?.name ?? asWords(id);
 }
 
 export function tierColor(pack: GamePack | null, id: string): string {
@@ -71,7 +111,7 @@ export function tierOrder(pack: GamePack | null): string[] {
 
 /** What a complete objective is called. */
 export function completeName(pack: GamePack | null): string {
-  return pack?.labels?.complete ?? "complete";
+  return label(pack, "complete");
 }
 
 /** An achievement tier's colour; a tierless entry draws in slate. */
@@ -86,17 +126,22 @@ export function achievementTierName(pack: GamePack | null, tier: AchievementTier
 }
 
 export function rareName(pack: GamePack | null, id: string): string {
-  return pack?.rareById.get(id)?.name ?? id;
+  return pack?.rareById.get(id)?.name ?? asWords(id).toLowerCase();
 }
 
 export function diaryTierName(pack: GamePack | null, id: string): string {
-  return pack?.diaryTierName.get(id) ?? id;
+  return pack?.diaryTierName.get(id) ?? asWords(id);
 }
 
-/** One of the pack's game nouns, its placeholders filled; the key itself before the pack is there. */
-export function label(pack: GamePack | null, key: keyof PackLabels, values: Record<string, string | number> = {}): string {
+/**
+ * One of the pack's game nouns, its placeholders filled. Without the pack the
+ * key is written as words after its values: `gear` with a tier reads "Gold gear".
+ */
+export function label(pack: GamePack | null, key: keyof PackLabels, values: Record<string, Value> = {}): string {
   const template = pack?.labels?.[key];
-  return template === undefined ? key : fill(template, values);
+  if (template !== undefined) return fill(template, values);
+  const given = Object.values(values).map((v) => written(v, false));
+  return given.length ? `${given.join(" ")} ${asWords(key).toLowerCase()}` : asWords(key);
 }
 
 /** A colour lightened enough to read as text on the dark panels (obsidian and crimson are dark). */

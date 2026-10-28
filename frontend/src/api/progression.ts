@@ -61,8 +61,8 @@ export interface Character {
   total_level: number;
   best_skill: string;
   tier: Tier;
-  /** The gear art step its tier wears. */
-  gear: string;
+  /** The gear art step its tier wears; absent from a backend older than the content pack. */
+  gear?: string;
   /** Its skills at 99, the most experience first: the first is the mastery cloak it wears. */
   capes: string[];
   /** The rares its work earned, by id, first earned first. */
@@ -82,8 +82,8 @@ export interface Account {
   characters: number;
   /** The points of every quest completed. */
   quest_points: number;
-  /** A completed quest that trims every cloak in the Divine metal. */
-  cloak_trim: boolean;
+  /** A completed quest that trims every cloak in the Divine metal; absent from a backend older than the content pack. */
+  cloak_trim?: boolean;
   /** The same, under its name before the content pack; kept for one release. */
   divine_trim: boolean;
 }

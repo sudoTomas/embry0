@@ -21,7 +21,9 @@ export function Chatbox() {
   const [current, setCurrent] = useState<RecentEvent | null>(null);
 
   useEffect(() => {
-    if (!data) return;
+    // Without the pack's words (a backend older than the pack) there is nothing to say: show nothing and
+    // mark nothing seen, so the messages wait for an answer that has them.
+    if (!data?.messages) return;
     const newest = data.recent[0]?.at ?? data.computed_at;
     const seen = readSeen();
     if (seen !== null) {
@@ -43,7 +45,7 @@ export function Chatbox() {
     return () => window.clearTimeout(timer);
   }, [current]);
 
-  if (!current || !data) return null;
+  if (!current || !data?.messages) return null;
   const names = new Map(data.skills.map((s) => [s.id, s.name]));
   return (
     <div

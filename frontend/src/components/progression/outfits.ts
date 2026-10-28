@@ -12,7 +12,9 @@ import type { GamePack } from "@/lib/gamePack";
  * account's cloak trim.
  */
 export function outfitOf(character: Character, pack: GamePack, divineTrim = false): Outfit {
-  const gear = (GEAR_TIERS as readonly string[]).includes(character.gear) ? (character.gear as GearTier) : "bronze";
+  // A backend older than the pack sends no `gear`; its tier ids are the shipped gear steps.
+  const step = character.gear ?? character.tier;
+  const gear = (GEAR_TIERS as readonly string[]).includes(step) ? (step as GearTier) : "bronze";
   const [best] = character.capes;
   const held = new Set(character.rares.map((r) => r.id));
   const rare = pack.rares.find((r) => held.has(r.id) && r.art !== null && (RARE_ART as readonly string[]).includes(r.art));
