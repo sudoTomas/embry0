@@ -804,6 +804,13 @@ async def _init_app_state(
     app.state.provider_repo = ProviderConfigRepository(db)
     app.state.env_repo = EnvironmentRepository(db)
     app.state.repo_preferences_repo = RepoPreferencesRepository(db)
+    # The lifespan builds the settings store right after migrations, so the
+    # environment import runs before anything reads it; a caller that skips
+    # the lifespan gets one here.
+    if not hasattr(app.state, "settings"):
+        from embry0.settings.store import SettingsStore
+
+        app.state.settings = SettingsStore(db)
     # The lifespan builds these before SandboxManager (which needs the
     # resolver); bare-bones callers that skip the lifespan get them here.
     if not hasattr(app.state, "credentials_repo"):
@@ -1050,6 +1057,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     db = DatabasePool(config.database_url)
     await db.connect()
     await run_migrations(db)
+
+    # The settings document (spec 2026-10-28): before any loop reads a
+    # section, import the environment value of each section key not imported
+    # yet, once, and load the first snapshot. A failed import is retried at
+    # the next boot (its ledger is not written) and never stops this one:
+    # every section reads as its defaults meanwhile.
+    from embry0.settings.bootstrap import import_env_once, log_ignored_env
+    from embry0.settings.store import SettingsStore
+
+    app.state.settings = SettingsStore(db)
+    try:
+        await import_env_once(app.state.settings, config)
+    except Exception:
+        logger.critical("settings_bootstrap_failed", exc_info=True)
+    try:
+        await app.state.settings.snapshot()
+        await log_ignored_env(app.state.settings, config)
+    except Exception:
+        # A loop's own snapshot() reads the document again on its first tick.
+        logger.critical("settings_first_read_failed", exc_info=True)
 
     # Seed canonical builtin sandbox profiles. Runs after migrations so the
     # sandbox_profiles schema (incl. QA columns from migration 18) is present.
@@ -2858,6 +2885,7 @@ def _register_routers(app: FastAPI) -> None:
         run_with,
         sandbox_profiles,
         sandboxes,
+        settings,
         skills,
         slop_meter,
         standards,
@@ -2917,6 +2945,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(sandbox_profiles.router, prefix="/api/v1", tags=["sandbox-profiles"], dependencies=auth_deps)
     app.include_router(sandboxes.router, prefix="/api/v1", tags=["sandboxes"], dependencies=auth_deps)
     app.include_router(config.router, prefix="/api/v1", tags=["config"], dependencies=auth_deps)
+    # Spec 2026-10-28: operator policy in one settings document, one section per feature.
+    app.include_router(settings.router, prefix="/api/v1", tags=["settings"], dependencies=auth_deps)
     app.include_router(stats.router, prefix="/api/v1", tags=["stats"], dependencies=auth_deps)
     app.include_router(progression.router, prefix="/api/v1", tags=["progression"], dependencies=auth_deps)
     app.include_router(traces.router, prefix="/api/v1", tags=["traces"], dependencies=auth_deps)

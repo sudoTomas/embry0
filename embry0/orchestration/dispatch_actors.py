@@ -72,6 +72,10 @@ MASTER_KEY = f"{RESERVED_PREFIX}master-key"
 SCOUT = f"{RESERVED_PREFIX}scout"
 # A request with no identity at all: only AUTH_DEV_MODE lets one through.
 ANONYMOUS = f"{RESERVED_PREFIX}anonymous"
+# The one-time import of a section's environment values into the settings
+# document at boot (spec 2026-10-28). It writes a revision and an audit row
+# and never dispatches.
+SETTINGS_BOOTSTRAP = f"{RESERVED_PREFIX}bootstrap"
 
 RATE_LIMIT_EXEMPT: frozenset[str] = frozenset({WATCHER, AUTO_RETRIAGE, ANSWER_RESUME, CONTEXT_AUDIT, SCOUT})
 

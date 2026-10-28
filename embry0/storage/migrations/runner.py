@@ -3571,6 +3571,63 @@ MIGRATIONS: list[tuple[int, str, str]] = [
                          'rune-warrior', 'dragon-warrior', 'mystic', 'skiller');
         """,
     ),
+    (
+        128,
+        "config_revisions: every change to a settings document (spec 2026-10-28)",
+        # One row per write that changed a settings document's text: the
+        # stored document before and after ({"yaml_text", "data",
+        # "schema_version"}), who made it and which path it came through.
+        # scope is 'deployment' today; the organization layer adds its own.
+        # The store appends in the write's own transaction and keeps the
+        # newest 100 rows per scope and surface, as repo_config_revisions
+        # does for a repository's test setup (ADR 0019), which stays as it is.
+        """
+        CREATE TABLE IF NOT EXISTS config_revisions (
+            id          BIGSERIAL PRIMARY KEY,
+            scope       TEXT NOT NULL,
+            surface     TEXT NOT NULL CHECK (surface IN ('settings')),
+            before      JSONB,
+            after       JSONB,
+            actor       TEXT NOT NULL DEFAULT '',
+            source      TEXT NOT NULL DEFAULT 'person'
+                        CHECK (source IN ('person', 'file', 'bootstrap', 'restore', 'upgrade')),
+            reason      TEXT NOT NULL DEFAULT '',
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_config_revisions_scope ON config_revisions (scope, surface, id DESC);
+        COMMENT ON TABLE config_revisions IS
+            'spec 2026-10-28: every change to a settings document, before and after, with actor, source and reason; newest 100 per scope and surface.';
+        """,
+    ),
+    (
+        129,
+        "settings_documents: the deployment's operator policy as one document (spec 2026-10-28)",
+        # yaml_text is the document as written, comments included; data is
+        # its sparse, validated values, which every reader reads. generation
+        # goes up in the transaction of every write, so a reader that sees a
+        # new generation also sees its values. bootstrapped_keys lists the
+        # section keys (section.key) whose environment value was imported, or
+        # found unset, so each key's import runs once, and a key a later
+        # release adds to a section is still imported. The deployment's row
+        # is inserted here, so a reader never meets a missing row; the
+        # application writes its content, since SQL cannot validate it.
+        """
+        CREATE TABLE IF NOT EXISTS settings_documents (
+            scope                  TEXT PRIMARY KEY CHECK (scope = 'deployment'),
+            yaml_text              TEXT NOT NULL DEFAULT '',
+            data                   JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(data) = 'object'),
+            schema_version         INTEGER NOT NULL DEFAULT 1 CHECK (schema_version >= 1),
+            generation             BIGINT NOT NULL DEFAULT 1,
+            bootstrapped_keys      TEXT[] NOT NULL DEFAULT '{}',
+            updated_by             TEXT NOT NULL DEFAULT '',
+            created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        INSERT INTO settings_documents (scope) VALUES ('deployment') ON CONFLICT (scope) DO NOTHING;
+        COMMENT ON TABLE settings_documents IS
+            'spec 2026-10-28: operator policy, one YAML document per deployment with one section per feature. data = the validated values of yaml_text.';
+        """,
+    ),
 ]
 
 

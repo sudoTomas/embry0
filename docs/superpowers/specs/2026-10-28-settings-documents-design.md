@@ -44,8 +44,8 @@ asks:
 - **Top level:** an optional `version` (the schema version, `1`; absent means the version the running code writes), and one key per registered section. Each section is a mapping of that section's fields.
 - **Sparse.** A key not written takes its default. An empty document (or one holding only comments) is every default; `PUT` of an empty document is how a deployment returns to the defaults, recorded and undoable. There is no `DELETE`.
 - **No secrets.** A section field whose name looks secret (`SECRET_NAME_PATTERN`, `embry0/config_redaction.py:66`) is refused at registration, and a test checks every registered section. Credentials stay in the credential registry or the environment.
-- **YAML or JSON in.** A JSON body is stored as the YAML it dumps to; a YAML body is stored byte for byte. Anchors and aliases are refused (an alias can expand a small text into a large `data` value), and the text is capped at 256 KiB (413 beyond).
-- **A section the running code does not know** (a rollback past the release that added it) is kept: `GET` returns it, and a `PUT` that leaves it exactly as stored passes and reports it as `unknown_sections`. A `PUT` that adds or changes an unknown section is a 422.
+- **YAML or JSON in.** A JSON body is stored as the YAML it dumps to; a YAML body is stored byte for byte. Refused with a 422 each: aliases (one can expand a small text into a large `data` value) and merge keys; a key written twice, at any level (YAML would silently keep the second); a document nested too deeply to parse; the NUL character, which Postgres cannot store. The text is capped at 256 KiB (413 beyond, before the body is read when `Content-Length` says so).
+- **What a newer release wrote** (a rollback past the release that added it) is kept: a section the running code does not know, and a key a known section does not have. A `PUT` passes while it sends each back exactly as stored, type included (`1` is not `true`): as the stored *text* has it (what an operator holds), or as the stored values do (what a JSON client sends back from GET's `data`, which a newer release may have normalised), and the answer lists them as `unknown_sections` and `unknown_keys`; the stored values are kept, so the newer release finds them on the way forward. For a section, nothing written, `null` and `{}` are alike. A `PUT` that changes one is a 422. A reader ignores them.
 - **Schema changes are additive.** A new field takes a default and needs no version change. A field that is renamed, retyped or removed bumps `version` and ships an upgrade step that the boot runs on the stored document, recorded as a revision with source `upgrade`. A `PUT` naming a version newer than the code is a 422.
 
 ## 3. Sections: the registry
@@ -72,9 +72,16 @@ ASKS = Section(
 - `Section` is generic over its model, so `snapshot.get(ASKS)` is typed `AsksSettings`.
 - **The model is the only home of defaults and bounds** (`Field(ge=..., le=...)`, validators). No feature repeats a default in code, as the scout defaults are repeated today (`embry0/config.py:787`, `embry0/services/scout.py:62`, `:79`).
 - **`org_keys` and `repo_keys`** name the fields an organization or a repository may override. They are declared and checked now, and served in the schema and the effective view, but nothing resolves them until #161, which then needs no change to the registry or the document.
-- **A `Section` refuses to be built**, at import time, with a `SectionError` naming every problem: a malformed or reserved name (`version`), an empty summary, a model that is not a `SectionModel` or loosens its `extra="forbid"` or `strict`, a field without a default or a `description`, a field whose name looks secret, and an `org_keys`, `repo_keys` or `env` entry that names no field. A `Catalog` refuses a section named twice.
+- **A `Section` refuses to be built**, at import time, with a `SectionError` naming every problem:
+  - a malformed name; a reserved one (`version`, and `body`, `query`, `path`, `header`, `cookie`, whose first `loc` segment the dashboard's error parser drops); a word YAML 1.1 reads as a boolean or null (`on`, `off`, `yes`, `no`, `true`, `false`, `null`), for a section or a field; a name that looks secret, for the section or any field, nested models included;
+  - an empty summary; a model, or a model nested in a field, that is not a `SectionModel` or loosens its `extra="forbid"` or `strict`; a field that turns strict off (`Field(strict=False)`);
+  - a field without a default or a `description`; defaults the section's own checks refuse;
+  - an `org_keys`, `repo_keys` or `env` entry that names no field.
+
+  A `Catalog` refuses a section named twice.
+- **Validation never raises anything but a refusal.** `Section.validate(raw)` (`validate_values`) validates through JSON, strictly, and turns whatever a check raises into `SectionRefused`, pinned to the key whose check raised: a validator that raises `KeyError` (as `zoneinfo` does for an unknown zone) is a 422 on a write, the default on a read, and a skipped value in the env import, never a 500, a failed tick or a boot that does not start.
 - **Where sections live.** `embry0/settings/sections/<name>.py`, one module per section, and `embry0/settings/sections/__init__.py` lists them in one tuple, `CATALOG`. A test fails when a module in that directory is not in `CATALOG`, so the set of sections never depends on which feature modules happen to be imported, and a feature cannot be missing from validation or from the generated docs.
-- **No import cycles.** `embry0/settings/registry.py` imports only pydantic, the standard library and `embry0.config_redaction` (a leaf, for the secret-name pattern). Section modules import only the registry. The store (section 6) imports the catalog. Features import their section module (for the type) and receive the store or a reader callable by injection. A test walks the imports of every module under `embry0/settings/sections/` with `ast` and fails on anything else.
+- **No import cycles.** `embry0/settings/registry.py` imports only pydantic, the standard library and `embry0.config_redaction` (a leaf, for the secret-name pattern). Section modules import only the registry, and the package's `__init__` imports each of them for `CATALOG`. The store (section 6) imports the catalog. Features import their section module (for the type) and receive the store or a reader callable by injection. A test walks the imports of every module under `embry0/settings/sections/` with `ast` and fails on anything but the registry, `pydantic` and its submodules (not a package whose name only starts with it), the standard library, and a sibling section module.
 
 ## 4. Storage
 
@@ -109,7 +116,7 @@ CREATE TABLE IF NOT EXISTS settings_documents (
     data                   JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(data) = 'object'),
     schema_version         INTEGER NOT NULL DEFAULT 1,
     generation             BIGINT NOT NULL DEFAULT 1,
-    bootstrapped_sections  TEXT[] NOT NULL DEFAULT '{}',
+    bootstrapped_keys      TEXT[] NOT NULL DEFAULT '{}',
     updated_by             TEXT NOT NULL DEFAULT '',
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -119,11 +126,11 @@ INSERT INTO settings_documents (scope) VALUES ('deployment') ON CONFLICT (scope)
 
 - `data` is the sparse, validated values of `yaml_text`. Readers read `data` and never parse YAML.
 - `generation` goes up by one in the transaction of every write, so a reader that sees a new generation also sees the values it belongs to. A Postgres sequence would not do: `nextval` is visible before the writer commits, and a reader could cache the old values under the new number until the next write.
-- `bootstrapped_sections` is the ledger of the one-time env import (section 7). It is per section because the row exists from the first boot of this release on, while later releases add sections whose env values still need importing once.
+- `bootstrapped_keys` is the ledger of the one-time env import (section 7), one `section.key` per key. It is per key because the row exists from the first boot of this release on, while later releases add sections, and keys to existing sections, whose env values still need importing once.
 - The row is inserted by the migration, so the read path never meets a missing row.
-- The `scope` CHECK allows only `deployment`. #161 decides whether organization documents become rows here or stay in `organizations.settings`; either way the reader's freshness check stays one indexed query returning one opaque token.
+- The `scope` CHECK allows only `deployment`. #161 decides whether organization documents become rows here or stay in `organizations.settings`; either way the reader's freshness check stays one indexed query returning one opaque token (today `generation` and `updated_at`).
 
-**Writes** run in one transaction: `SELECT ... FOR UPDATE` on the row, the optional `If-Match` check against `generation`, validation, the update (`generation + 1`), and the revision, appended only when `yaml_text` changed (the qa.yaml rule, `repo_qa_configs.py:162`). The newest 100 revisions per scope and surface are kept.
+**Writes** run in one transaction: `SELECT ... FOR UPDATE` on the row, the optional `If-Match` check against `generation` (strong comparison; `*` matches any, a weak tag never), validation, the update (`generation + 1`), and the revision, appended only when `yaml_text` changed (the qa.yaml rule, `repo_qa_configs.py:162`). The newest 100 revisions per scope and surface are kept.
 
 ## 5. API
 
@@ -131,14 +138,14 @@ All under `/api/v1`, in `embry0/api/v1/settings.py`, mounted with `auth_deps` li
 
 | Route | Tier | What it does |
 |---|---|---|
-| `GET /config/settings` | any key | `{yaml_text, data, schema_version, generation, updated_by, updated_at, sections, unknown_sections}` with `ETag: "<generation>"`; `?format=yaml` answers the text alone (`application/yaml`) |
-| `PUT /config/settings` | admin, unrestricted key | Replace the document. Body: YAML (`application/yaml`, `text/yaml`, `text/plain`) or a JSON object. Optional `If-Match: <generation>` (409 when it moved), `?reason=`, `?source=person\|file`. Answers `{generation, revision_id, changes, unknown_sections}`; `revision_id` is null when the text was unchanged. 413 past 256 KiB |
-| `PUT /config/settings?dry_run=1` | admin | Validate and compare; store nothing. Answers `{would_change, text_diff, changes: [{key, before, after, set_before, set_after, effective_before, effective_after}], unknown_sections}`, or the same 422 as a real `PUT` |
+| `GET /config/settings` | any key | `{yaml_text, data, schema_version, generation, updated_by, updated_at, sections, unknown_sections, unknown_keys}`, all from one read of the row, with `ETag: "<generation>"`; `?format=yaml` answers the text alone (`application/yaml`) |
+| `PUT /config/settings` | admin, unrestricted key | Replace the document. Body: YAML (`application/yaml`, `text/yaml`, `text/plain`) or a JSON object. Optional `If-Match` (the `ETag`, a list of them, or `*`; strong comparison, so a weak tag never matches; 409 when none is stored), `?reason=`, `?source=person\|file`. Answers `{generation, revision_id, changes, unknown_sections, unknown_keys}`; `revision_id` is null when the text was unchanged. 413 past 256 KiB |
+| `PUT /config/settings?dry_run=1` | admin | Validate and compare; store nothing. `If-Match` is checked as for a write. Answers `{would_change, text_diff, changes: [{key, before, after, set_before, set_after, effective_before, effective_after}], unknown_sections, unknown_keys}`, or the same 422 or 409 as a real `PUT` |
 | `GET /config/settings/effective` | any key | Every field of every section: `{key, value, default, source, set_by, set_at, env, env_still_set, overridable, refused, description}` (below) |
 | `GET /config/settings/schema` | any key | The JSON Schema of the whole document, as the generator reads it (editors, #162's offline `check`) |
 | `GET /config/settings/revisions` | any key | Newest first: `{id, what, actor, source, reason, created_at, undoable, why_not}`; `what` names the keys that changed |
 | `GET /config/settings/revisions/{id}` | any key | One revision with `before_text`, `after_text` and its `changes` |
-| `POST /config/settings/revisions/{id}/undo` | admin, unrestricted key | ADR 0019's rule: the newest revision only, while the stored document still equals its `after`, else 409 with the same `why_not` text (`repo_history.py:32`). The old text is validated against today's schema first (422 "That earlier version is no longer valid", as `repo_history.py:140-141`). Recorded with source `restore` |
+| `POST /config/settings/revisions/{id}/undo` | admin, unrestricted key | ADR 0019's rule: the newest revision only, while the stored document still equals its `after`, else 409 with the same `why_not` text (`repo_history.py:32`). The old text is validated against today's schema first (422 "That earlier version is no longer valid", as `repo_history.py:140-141`). Recorded with source `restore`; answers like a `PUT` |
 
 **The 422.** One response lists every problem, in FastAPI's own shape, so the dashboard's existing parser renders each as `asks.remind_hours: Input should be greater than 0` (`frontend/src/api/errorDetail.ts:9-42`):
 
@@ -150,7 +157,7 @@ All under `/api/v1`, in `embry0/api/v1/settings.py`, mounted with `auth_deps` li
 ]}
 ```
 
-- Each section is validated through JSON, strictly, by its model (`extra="forbid"`), and every error of every section is collected before anything is refused. Through JSON, so a value parsed from YAML, sent as JSON, or read back from the database meets the same rules. `loc` is the path from the document root; `input` is never returned.
+- Each section is validated through JSON, strictly, by its model (`extra="forbid"`), and every error of every section is collected before anything is refused. Through JSON, so a value parsed from YAML, sent as JSON, or read back from the database meets the same rules. `loc` is the path from the document root; `input` is never returned. A check that raises anything else is a `check_failed` problem at its key.
 - YAML reads a bare `on`, `off`, `yes` or `no` as a boolean; a field that wanted one of a few words and got a boolean says to put the word in quotes.
 - An unknown key gets a near-miss hint the way `qa_yaml_errors._pydantic_error` does (`qa_yaml_errors.py:46-55`).
 - A YAML syntax error is one entry with `loc: []`, `type: "yaml_syntax"` and the line and column.
@@ -168,7 +175,7 @@ All under `/api/v1`, in `embry0/api/v1/settings.py`, mounted with `auth_deps` li
 
 ```python
 class SettingsStore:                       # embry0/settings/store.py, app.state.settings
-    async def snapshot(self) -> Snapshot   # one SELECT generation; reload data when it moved
+    async def snapshot(self) -> Snapshot   # one SELECT generation, updated_at; reload data when either moved
     async def save(...) -> SaveResult      # the PUT path; replaces the cached snapshot at once
     async def preview(...) -> Preview      # the dry-run path
     async def undo(revision_id, *, actor) -> SaveResult
@@ -181,10 +188,10 @@ class Snapshot:                            # immutable
 def section_reader(store, section) -> Callable[[], Awaitable[M]]   # what a one-section loop is built with
 ```
 
-- **Once per tick.** A loop calls `await settings.snapshot()` at the top of its tick and uses that snapshot for the whole tick, so one tick never mixes two versions. The check is one primary-key query, `SELECT generation, data` only when the generation moved. An API handler that needs policy calls it once per request.
+- **Once per tick.** A loop calls `await settings.snapshot()` at the top of its tick and uses that snapshot for the whole tick, so one tick never mixes two versions. The check is one primary-key query for `generation` and `updated_at`; the row is read again (in one statement) whenever either differs from the snapshot's, in either direction, so a database restored to an older copy is read again too. This process's own writes replace its snapshot at once. An API handler that needs policy calls it once per request.
 - **Features stay testable without a database.** A loop receives a callable that returns its section (`Callable[[], Awaitable[AsksSettings]]`), wired in `app.py` with `section_reader(app.state.settings, ASKS)`. Unit tests pass a lambda.
 - **A refused stored value** (stored under an older, looser schema) is dropped key by key: the section is validated, the keys named by its errors are removed and it is validated again, so every other key keeps its value. Each is logged once per generation as `settings_stored_value_invalid` (section, key, reason), and the effective view marks it.
-- **Database errors.** If the generation check fails, the last snapshot is used and `settings_refresh_failed` is logged; a tick never fails because of it. The first load happens at boot, right after migrations and the env import, and a boot that cannot read the row fails as it would without migrations.
+- **Database errors.** If the check or the read fails, the last snapshot is used and `settings_refresh_failed` is logged; a tick never fails because of it. The first load happens at boot, right after migrations and the env import; a failure there is logged (`settings_first_read_failed`) and the first tick reads again.
 - **More than one process.** The orchestrator is one uvicorn process (`infra/Dockerfile.orchestrator:98-103` passes no `--workers`). The MCP container has no database connection and reaches settings only through the API (`infra/docker-compose.yml:494-512`, `EMBRY0_API_URL`), so it needs nothing. A CLI subcommand that runs as its own process reads the current generation when it starts. A second orchestrator replica, which the migration runner already allows for (`runner.py:3-12`), sees a write by the other within one tick, because the counter is in the row, not in memory. No `LISTEN`/`NOTIFY` is used anywhere today, and none is needed.
 
 ## 7. From environment variables to the document
@@ -193,17 +200,17 @@ def section_reader(store, section) -> Callable[[], Awaitable[M]]   # what a one-
 
 **The import, at every boot**, after migrations and before any loop starts (beside `run_migrations`, `embry0/api/app.py:1036`), in one transaction holding the row lock, so two replicas booting together import once:
 
-1. For each section in the catalog that is not in `bootstrapped_sections` and declares `env`:
-2. take each field whose attribute is in `config.model_fields_set` (the variable is set in the environment or `.env`; pydantic-settings marks a field set even when its value equals the default, checked) and whose converted value differs from the section model's default;
-3. validate them as the section; a value the section refuses is not imported and is logged as `settings_bootstrap_value_refused` (variable, key, reason), and the boot goes on;
-4. append the accepted values to `yaml_text` as a block under a comment naming the variables and the date, merge them into `data`, record a revision with source `bootstrap` and actor `embry0:bootstrap`, and write a `settings.bootstrapped` audit row, all only when something was imported;
-5. add the section to `bootstrapped_sections` whether or not anything was imported, so it never runs again for that section.
+1. For each key a section declares in `env` that is not in `bootstrapped_keys` (`section.key`), and not already written in the document:
+2. take it when its attribute is in `config.model_fields_set` (the variable is set in the environment or `.env`; pydantic-settings marks a field set even when its value equals the default, checked) and its converted value differs from the key's default;
+3. validate it as the section; a value the section refuses on its own, whatever its check or converter raises, is not imported and is logged as `settings_bootstrap_value_refused` (variable, key, reason), and the boot goes on. Then validate the accepted values together with the section's stored values this release still accepts (a stored value it refuses reads as its default and never blocks the import); a value refused only in that combination is *held*: logged as `settings_bootstrap_value_held`, not imported and not marked, so the next boot tries it again;
+4. write the accepted values into the text under a comment naming the variables and the date: a section the text does not hold is appended as a block, keys for a section it holds go at the end of that section's block. Merge them into `data`, record a revision with source `bootstrap` and actor `embry0:bootstrap`, and write a `settings.bootstrapped` audit row through the store's own pool, all only when something was imported;
+5. add every key it looked at, a held one aside, to `bootstrapped_keys` whether or not anything was imported, so it never runs again for that key. The ledger is per key so that a key a later release adds to a section imported before still gets its variable.
 
-Only variables an operator set are imported, never code defaults: a section that changes a default on purpose (#165 wants background readers off on a new deployment) must not have the old default frozen into every existing document. If the stored text is not block-style YAML (a flow-style mapping), the block cannot be appended; the whole document is written again from its values, and the new text's first line says its comments were lost. Each imported value is checked as its section when it is read, and the rest of the document is left as stored: a value an older release stored and this one refuses never blocks the import.
+Only variables an operator set are imported, never code defaults: a section that changes a default on purpose (#165 wants background readers off on a new deployment) must not have the old default frozen into every existing document. The document's own line ending (`\n` or `\r\n`) is kept. A section written as nothing, `~`, `null` or `{}` becomes a block; keys after a block scalar go above the blank and comment lines that follow it. Where the values cannot be written in (a flow-style section with keys, a `|+` scalar last, a text that would not parse back to the same values), the whole document is written again from its values: the new text's first line says its comments were lost, and `settings_text_rewritten` is logged. Each imported value is checked as its section when it is read, and the rest of the document is left as stored: a value an older release stored and this one refuses never blocks the import.
 
-**After the import.** At every boot, each variable that a bootstrapped section declares and that is still set is logged once as `settings_env_ignored` (variable, key, and whether it equals the document's effective value), and `env_still_set` is true in the effective view. `embry0 config` (`embry0/cli/__main__.py:310-353`), which runs without a database, adds a line for each such variable set in its environment: `ASK_HOURS is governed by the settings document (asks.hours); it is read once, at the first start of the release that added the section, and ignored after that`.
+**After the import.** At every boot, each variable whose key is in the ledger and that is still set is logged once as `settings_env_ignored` (variable, key, and whether it equals the document's effective value), and `env_still_set` is true in the effective view. `embry0 config` (`embry0/cli/__main__.py:310-353`), which runs without a database, adds a line for each such variable set in its environment: `ASK_HOURS is governed by the settings document (asks.hours); it is read once, at the first start of the release that added the section, and ignored after that`.
 
-**One release later** the `Embry0Config` fields go. The `env` entries stay, with the attribute replaced by the variable's name, for two reasons: the import still reads it from the process environment, so a deployment that skipped the deprecation release keeps its value; and `config_lint` reports the retired name with its new key (`ASK_HOURS is no longer read; set asks.hours in the settings document`). The near-miss detector alone would not catch it, since it only looks under prefixes that declared fields still use (`config_lint.py:1-21`).
+**One release later** the `Embry0Config` fields go. This step is not built yet; the release that first removes a moved variable builds it. The `env` entries stay, keyed by the variable's name once the attribute is gone (`tests/unit/settings/test_env.py`, which checks every attribute exists, then learns that form), for two reasons: the import still reads it from the process environment, so a deployment that skipped the deprecation release keeps its value; and `config_lint` reports the retired name with its new key (`ASK_HOURS is no longer read; set asks.hours in the settings document`). The near-miss detector alone would not catch it, since it only looks under prefixes that declared fields still use (`config_lint.py:1-21`).
 
 ## 8. Reference docs
 
@@ -276,7 +283,8 @@ Each new test is shown failing on a clean tree of `origin/main` before the chang
 Also, in A:
 
 - **Registry:** each refusal of `Section` and `Catalog` in section 3; every module under `embry0/settings/sections/` is in `CATALOG`; those modules import only the registry, pydantic and the standard library.
-- **Store:** a refused stored value reads as its default and keeps its sibling keys; a failing generation check keeps the last snapshot; the reload reads generation and data in one statement.
+- **Store:** a refused stored value reads as its default and keeps its sibling keys; a failing generation check keeps the last snapshot; the reload reads generation and data in one statement; a database restored to an older copy is read again; a stored value whose check raises `KeyError` does not stop a read.
+- **Review fixes:** a key a later release adds to an imported section imports its variable; a key written twice, a document nested too deeply and the NUL character are 422s; a check raising `KeyError` is a 422 on a write and a skipped value in the import; a rollback leaves the stored document writable; an Enum field is described with its values; `If-Match` is honoured on a dry run, `*` matches any and a weak tag never; undo answers like a PUT.
 - **Auth:** a read key, an operate key and a restricted admin key are each refused on PUT and undo; a read key can GET.
 - **Unknown sections:** a stored unknown section survives an unchanged PUT and is reported; changing it is a 422.
 - **Docs:** the generated block equals the committed one; every field is described.
@@ -296,8 +304,9 @@ These are cheap to change later, or follow from the issue:
 - Text that differs only in comments is a revision, as for qa.yaml.
 - Section definitions live in `embry0/settings/sections/`, listed in one catalog.
 - Only variables an operator set, with a value different from the default, are imported.
-- The env import ledger is per section.
-- A stored unknown section is kept and passed through.
+- The env import ledger is per key (an independent review found a per-section ledger would skip a key a later release adds).
+- A stored unknown section, or a key a known section does not have, is kept and passed through while sent back as the stored text has it.
+- Anything a section's check raises is a refusal, never an escape.
 - No draft state; a dry run answers what a change would do.
 - `config_revisions.source` lists `file` now, for #162.
 

@@ -333,6 +333,14 @@ def cmd_config(args: argparse.Namespace) -> None:
         hint = f" — did you mean {unknown.did_you_mean}?" if unknown.did_you_mean else ""
         _warn(f"{unknown.name} is set but is not an embry0 setting{hint}")
 
+    # Spec 2026-10-28: a policy variable a settings section imported is read
+    # once and then ignored; say so, since this command reads no database.
+    from embry0.settings.env import governed_lines
+    from embry0.settings.sections import CATALOG
+
+    for line in governed_lines(CATALOG, config):
+        _warn(line)
+
     if not config.github_token:
         issues.append("GITHUB_TOKEN is not set")
     # RAV-1239: provider_mode is gone — Anthropic agents run under whatever
