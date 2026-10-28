@@ -49,7 +49,9 @@ Every name, number and word above comes from one document, the content pack. Its
 - **The calendar is the pack's `timezone`** (UTC in the shipped pack): the day a rare drops on, the hour a merge counts as late, the day a hot streak counts in.
 - **The dashboard keeps no copy.** `GET /api/v1/progression` carries the pack's tiers, rares, skill groups and cloak colours, diary tiers, messages and nouns, and the pages read them from there. `docs/contracts/progression.json` pins the art a pack may name on both sides.
 
-Check a pack file with `python -m embry0.services.progression_pack --check <file>`: it prints every problem with its key. Today every deployment reads the shipped pack; storing and activating another (with a draft, a preview and a reset to the shipped default) is #176's next step.
+- **Texts take one small grammar.** `{name}` is a value, `{name:,}` a number with thousands separators, and `{{` and `}}` are literal braces. Anything else in braces is refused, so a text can never break or slow a read. Each text may name only its own values: an achievement's or a quest's parameters, a diary task's, or a message's (`{character}`, `{skill}`, `{level}`...).
+
+Check a pack file with `python -m embry0.services.progression_pack --check <file>`: it prints every problem with its key, then any warning, such as a category no skill is trained by. Today every deployment reads the shipped pack; storing and activating another (with a draft, a preview and a reset to the shipped default) is #176's next step.
 
 ## Turning it off
 

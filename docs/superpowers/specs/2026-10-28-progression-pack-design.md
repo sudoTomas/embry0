@@ -191,9 +191,10 @@ messages:
 labels:
   complete: Complete
   quest_journal: Deeds
-  quest_point: deed point
-  quest_points: deed points
-  # diary, gear, mastery_cloak, quest_cloak, trimmed
+  journal_points: deed points
+  quest_point: point
+  quest_points: points
+  # gear, mastery_cloak, trimmed_cloak, quest_cloak
 ```
 
 ### Sections and their rules
@@ -276,6 +277,14 @@ The template names the kinds read (`onboard`, `qa`, `context-audit`) stay in cod
 | `achievement_complete` | `{name}` |
 
 The server validates the placeholders. The client fills them, because `{character}` is the agent's display name, which the dashboard already resolves (`chatbox.ts:38-50` takes `characterName`).
+
+**One template grammar** (`embry0/services/progression_templates.py`), for every text a pack holds, whoever fills it:
+
+- `{name}` is a value, where `name` is an identifier the text may use;
+- `{name:,}` is a number with thousands separators (`{total_level:,}` reads `1,000`);
+- `{{` and `}}` are literal braces.
+
+Anything else in braces is refused when the pack is checked, each as a problem naming the key. That covers a conversion (`{name!r}`), any other format spec (`{name:>9}`), a nested or numbered field, an index or an attribute, and a lone brace. So an admin's text can neither raise nor grow on a read. The server renders with that module's `render`, never `str.format`, and the dashboard's `fill` (`frontend/src/lib/gamePack.ts`) implements the same grammar. `docs/contracts/progression.json` carries cases both are tested against. A list parameter cannot be written into a text.
 
 `labels` is a fixed set of nouns:
 
@@ -455,7 +464,7 @@ A pack cannot add a shape, rename an item or recolour a gear step. The finery ru
 
 **Mastery cloaks from data.** `MASTERY_CLOAKS` is built at module load for the 23 fixed ids today (`items.ts:744-753`). It becomes a cloak item composed at runtime from the pack's colours. `outfitKey` (`outfit.ts:110-112`) gains the cloak colours, so the sprite cache stays correct.
 
-**A name with no sprite.** The art vocabulary lives in `progression_vocabulary.py` and is exported to `docs/contracts/progression-art.json`. Both sides pin it, as `identity.json` is pinned (`tests/unit/agents/test_identity.py:18-22`, `frontend/src/lib/__tests__/agentIdentity.contract.test.ts`).
+**A name with no sprite.** The art vocabulary lives in `progression_vocabulary.py` and is exported to `docs/contracts/progression.json`. Both sides pin it, as `identity.json` is pinned (`tests/unit/agents/test_identity.py:18-22`, `frontend/src/lib/__tests__/agentIdentity.contract.test.ts`).
 
 | Field | Missing or unknown |
 |---|---|
@@ -641,7 +650,8 @@ A characterization test passes before and after by design. Each one is shown abl
   - healing cases and proposals;
   - enough work to level skills to 99.
 
-  Under the default pack, `Progression.to_dict()` equals what the code as it stands recorded, field for field, and so does `world.quest_xp`. A second test gives every run its new category keys instead and expects the same result.
+  Under the default pack, `Progression.to_dict()` equals what the code as it stands recorded, field for field, and so does `world.quest_xp`. A second test rewrites every run to the new category keys and expects the same result (`test_the_same_history_on_todays_category_keys_reads_the_same`).
+- **Boundaries.** The golden history sits far from every threshold, so the repository test adds rows just inside and just outside each shipped threshold an operator can now set. It also adds one case on a non-UTC clock.
 - **Validation.** A table of bad packs, each giving a 422 that names its key:
   - an unknown key or a wrong type;
   - thresholds whose count is not the tier count, or that do not rise;
@@ -713,7 +723,7 @@ These are cheap to reverse, so they were decided here:
 
 - One tier ladder for gear and achievements. A tiered achievement has one threshold per tier.
 - Achievement ids stay. Metric ids keep their names where nothing about them changes in kind; the merged or generalised ones get capability names (the table in section 2).
-- Messages are rendered on the client, and the server validates their placeholders.
+- Messages are rendered on the client, and the server validates their placeholders, in one grammar for both sides.
 - `labels` is a fixed key set, and page chrome is not in the pack.
 - `account.cloak_trim` is the capstone's trim; `divine_trim` stays beside it for one release.
 - The world's lead cap stays at 126 (section 4).
@@ -760,6 +770,29 @@ PR 1 reads everything from the shipped pack, with no visible change and no migra
 
   `Rules` holds the lookups: `skill_for_action` (category to skill), `action_xp`, `outcomes`, `run_outcomes`, `xp_for_level` and `level_for_xp`, `tier_for_level`, `character_level`, the rare calendar, `local(at)` on the pack's timezone, `achievements` (each with its `fact_key`), `fact_queries` and `view()`, which is the pack's part of `GET /progression`.
 - **The facts query.** `ProgressionRepository.facts(queries, timezone)` runs `rules.fact_queries`; `facts_sql(queries, timezone)` builds it from `FRAGMENTS`, binding every parameter and the timezone. A fact's `metric` is its query's key, so two achievements that count one metric with different parameters count apart.
+
+**Settled in review.** A review of PR 1 found validator gaps that PR 2's editing would have made live. They are fixed in PR 1, and PR 2 and PR 3 build on the result.
+
+- **Texts.** `embry0/services/progression_templates.py` is the one grammar and the one formatter: `parse`, `fields`, `render`, `TemplateError` and the shared `CASES`. The validator uses it, and every server render goes through `render`; nothing calls `str.format` on a pack's text. The dashboard's `fill` matches it. `progression_vocabulary.placeholders` is gone. PR 2's editor and its 422 rely on this module and build no grammar of their own.
+- **Bounds.** A pack cannot make a read fail or swell:
+  - every parameter Postgres reads as `::int` is bounded to int32 (`healed.min_seen` at most 1,000,000), and a test tries each one;
+  - the curve's `doubling` and `divisor` are at least 1, and its top stays under 2^53 - 1 XP;
+  - an overflow, a document deeper than 32 levels and a parser recursion are each a `Problem`, not an exception;
+  - a date must exist in some year (29 February does, 30 February does not).
+- **Problems never echo the value written.** A message names the location and what is allowed, as the settings document's do. The `Problem(loc, type, msg)` shape is unchanged.
+- **The facts query** binds every parameter of a metric. `rules.fact_queries` carries each metric's full `model_dump()`, defaults included, while `fact_key` still leaves them out. `facts_sql` raises `KeyError` on a parameter that is missing, rather than comparing with NULL and counting nothing.
+- **Explicit dispatch.**
+  - Quests dispatch on `QUEST_KINDS[kind].capstone`: `quests._KINDS` holds every other kind's evaluator.
+  - Diary tasks dispatch through `quests._TASKS`.
+  - The metrics with no fragment are `achievements.DERIVED_METRICS`.
+  - Tests pin each of these to the vocabulary, and pin every fragment's placeholders to its metric's parameters.
+- **The timezone.** The pack's timezone is checked with Python's timezone database, and Postgres applies it from its own. If the facts query fails under the pack's timezone, the service logs `progression_facts_timezone_fallback` and reads the facts on UTC's calendar, rather than failing `/progression`; a failure under UTC is raised. **PR 2 must also check a saved timezone against Postgres** (`SELECT now() AT TIME ZONE $1`), so the fallback stays a safety net.
+- **The dashboard against an older backend.** `Character.gear` and `Account.cloak_trim` are optional. Without the pack fields:
+  - a tier or diary tier reads as its id written as words ("Gold");
+  - a label reads as its key written as words, after its values ("Gold gear");
+  - the skill groups come from the skills;
+  - the outfit wears the tier's gear;
+  - the chat box shows nothing and marks nothing seen.
 
 **What PR 3's rollup needs to know.**
 
