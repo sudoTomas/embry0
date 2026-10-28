@@ -1,20 +1,12 @@
-import type { Character, Skill, SkillGroup, SkillProgress } from "@/api/progression";
+import type { Character, Skill, SkillProgress } from "@/api/progression";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import type { AgentIdentity } from "@/lib/agentIdentity";
-import { TIER_NAME } from "@/lib/tiers";
-import { RARE_NAMES } from "./chatbox";
+import { label, rareName, tierName, type GamePack } from "@/lib/gamePack";
 
 const number = (n: number) => n.toLocaleString("en-US");
 
-const GROUPS: { id: SkillGroup; name: string }[] = [
-  { id: "build", name: "Build" },
-  { id: "verify", name: "Verify" },
-  { id: "investigate", name: "Investigate" },
-  { id: "care", name: "Care" },
-];
-
 /** One skill of a character: its level and a bar to the next level. */
-function SkillTile({ skill, progress }: { skill: Skill; progress: SkillProgress }) {
+function SkillTile({ skill, progress, maxLevel }: { skill: Skill; progress: SkillProgress; maxLevel: number }) {
   const span = progress.xp_to_next === null ? 0 : progress.xp - progress.level_xp + progress.xp_to_next;
   const filled = span === 0 ? 1 : (progress.xp - progress.level_xp) / span;
   return (
@@ -28,7 +20,7 @@ function SkillTile({ skill, progress }: { skill: Skill; progress: SkillProgress 
       <div
         className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10"
         role="progressbar"
-        aria-label={`${skill.name} progress to level ${Math.min(progress.level + 1, 99)}`}
+        aria-label={`${skill.name} progress to level ${Math.min(progress.level + 1, maxLevel)}`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(filled * 100)}
@@ -46,18 +38,20 @@ function SkillTile({ skill, progress }: { skill: Skill; progress: SkillProgress 
 
 /**
  * A character's sheet (progression spec 2026-10-24): it in what it wears,
- * its level and total level, what it earned, and its 23 skills in the
- * classic three-column grid, grouped Build, Verify, Investigate, Care.
+ * its level and total level, what it earned, and its skills in the classic
+ * three-column grid, in the content pack's groups and words (#176).
  */
-export function SkillSheet({ character, skills, identity }: { character: Character; skills: Skill[]; identity: AgentIdentity }) {
+export function SkillSheet({ character, skills, identity, pack }: { character: Character; skills: Skill[]; identity: AgentIdentity; pack: GamePack }) {
   const progressOf = new Map(character.skills.map((s) => [s.stat, s]));
   const name = identity.displayName;
   const skillName = new Map(skills.map((s) => [s.id, s.name]));
   // What it wears for what it earned: the best 99's cape (trimmed for two or more) and its rares.
   const earned = [
-    ...character.capes.slice(0, 1).map((stat) => `${skillName.get(stat) ?? stat} cape${character.capes.length > 1 ? " (trimmed)" : ""}`),
-    ...(character.quest_cloak && character.capes.length === 0 ? ["quest cloak"] : []),
-    ...character.rares.map((r) => RARE_NAMES[r.id] ?? r.id),
+    ...character.capes
+      .slice(0, 1)
+      .map((stat) => label(pack, character.capes.length > 1 ? "trimmed_cloak" : "mastery_cloak", { skill: skillName.get(stat) ?? stat })),
+    ...(character.quest_cloak && character.capes.length === 0 ? [label(pack, "quest_cloak")] : []),
+    ...character.rares.map((r) => rareName(pack, r.id)),
   ];
   return (
     <section className="space-y-3" data-testid="skill-sheet" aria-label={`${name}'s skills`}>
@@ -71,11 +65,12 @@ export function SkillSheet({ character, skills, identity }: { character: Charact
             </span>
           </h2>
           <p className="text-xs text-muted-foreground" data-testid="worn">
-            {TIER_NAME[character.tier]} gear{earned.length ? ` · ${earned.join(", ")}` : ""}
+            {label(pack, "gear", { tier: tierName(pack, character.tier) })}
+            {earned.length ? ` · ${earned.join(", ")}` : ""}
           </p>
         </div>
       </div>
-      {GROUPS.map((group) => (
+      {pack.groups.map((group) => (
         <div key={group.id} className="space-y-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">{group.name}</h3>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -83,7 +78,7 @@ export function SkillSheet({ character, skills, identity }: { character: Charact
               .filter((s) => s.group === group.id)
               .map((skill) => {
                 const progress = progressOf.get(skill.id);
-                return progress ? <SkillTile key={skill.id} skill={skill} progress={progress} /> : null;
+                return progress ? <SkillTile key={skill.id} skill={skill} progress={progress} maxLevel={pack.maxLevel} /> : null;
               })}
           </div>
         </div>

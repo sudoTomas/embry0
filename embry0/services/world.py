@@ -24,7 +24,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from embry0.orchestration import dispatch_actors
-from embry0.services.progression import OUTCOME_XP, price
+from embry0.services.progression import price
+from embry0.services.progression_pack import Rules
 from embry0.services.proposals import ACTOR as PROPOSALS_ACTOR
 from embry0.services.slop import SLOP_TEMPLATE, SLOPMASTER
 from embry0.storage.repositories.progression import ProgressEvent
@@ -427,8 +428,8 @@ def quest_fallbacks(runs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return list(entries.values())
 
 
-def quest_xp(job: Mapping[str, Any], runs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """What a quest earned each character, by skill: its agents' runs, and the pull request it opened or merged."""
+def quest_xp(job: Mapping[str, Any], runs: Iterable[Mapping[str, Any]], *, rules: Rules) -> list[dict[str, Any]]:
+    """What a quest earned each character, by skill, under ``rules``: its agents' runs, and the pull request it opened or merged."""
     gains: dict[tuple[str, str], int] = {}
     at = job.get("finished_at") or job.get("created_at") or datetime.now(UTC)
     events = [
@@ -449,9 +450,9 @@ def quest_xp(job: Mapping[str, Any], runs: Iterable[Mapping[str, Any]]) -> list[
         if isinstance(cleanup, Mapping):
             events.append(ProgressEvent("cleaned", SLOPMASTER, at, json.dumps(dict(cleanup))))
     for event in events:
-        if event.source not in ("run", "cleaned") and event.source not in OUTCOME_XP:
+        if event.source != "run" and event.source not in rules.outcomes:
             continue
-        for stat, xp in price(event):
+        for stat, xp in price(event, rules=rules):
             key = (str(event.agent_type), stat)
             gains[key] = gains.get(key, 0) + xp
     return [

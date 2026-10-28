@@ -290,15 +290,3 @@ def dungeons(
         for repo, area in keys
     ]
     return sorted(out, key=lambda d: (-d["score"], -d["open"], d["repo"], d["area"] or ""))
-
-
-#: A merged cleanup's experience (progression ``cleaned``): a base, and per net line removed.
-CLEANED_XP = 20_000
-XP_PER_LINE_REMOVED = 300
-MAX_LINES_COUNTED = 1_000
-
-
-def cleaned_xp(added: int | None, removed: int | None) -> int:
-    """What a merged slop cleanup earns the Slopmaster: the base plus 300 per net line removed (≤ 1,000)."""
-    net = max(0, int(removed or 0) - int(added or 0))
-    return CLEANED_XP + XP_PER_LINE_REMOVED * min(net, MAX_LINES_COUNTED)

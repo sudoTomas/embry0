@@ -13,6 +13,7 @@ from embry0.api.app import create_app
 from embry0.api.v1 import world as world_api
 from embry0.config import Embry0Config
 from embry0.services.progression import Character, Progression
+from embry0.services.progression_pack import Rules, default_rules
 from embry0.services.world import WorldCache
 
 HEADERS = {"X-Requested-With": "XMLHttpRequest"}
@@ -127,8 +128,14 @@ class FakeRepo:
 
 
 class FakeProgression:
+    async def rules(self) -> Rules:
+        return default_rules()
+
     async def read(self) -> Progression:
-        return Progression(characters={a: Character(a) for a in ("developer", "review", "why")})
+        rules = default_rules()
+        return Progression(
+            characters={a: Character(a, rules=rules) for a in ("developer", "review", "why")}, rules=rules
+        )
 
 
 @pytest.fixture

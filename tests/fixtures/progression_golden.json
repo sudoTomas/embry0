@@ -1,0 +1,4700 @@
+{
+ "progression": {
+  "account": {
+   "characters": 13,
+   "divine_trim": false,
+   "quest_points": 4,
+   "total_level": 1901,
+   "xp": 23887000
+  },
+  "achievement_categories": [
+   {
+    "blurb": "Pull requests that merged, and how cleanly they got there.",
+    "id": "shipping",
+    "name": "Shipping"
+   },
+   {
+    "blurb": "Production errors the watcher found, and the fixes that kept them dead.",
+    "id": "hunting",
+    "name": "Hunting"
+   },
+   {
+    "blurb": "Issues finished, and the answers owners gave.",
+    "id": "questing",
+    "name": "Questing"
+   },
+   {
+    "blurb": "Instruction files, area maps and standards kept true.",
+    "id": "lore",
+    "name": "Lore"
+   },
+   {
+    "blurb": "Reviews, QA and the gate that stops a bad merge.",
+    "id": "guarding",
+    "name": "Guarding"
+   },
+   {
+    "blurb": "Work that failed, came back, and landed anyway.",
+    "id": "grit",
+    "name": "Grit"
+   },
+   {
+    "blurb": "What the characters grew into.",
+    "id": "growth",
+    "name": "Growth"
+   },
+   {
+    "blurb": "Strange hours and rare finds. Mostly secret.",
+    "id": "oddities",
+    "name": "Oddities"
+   }
+  ],
+  "achievements": [
+   {
+    "category": "shipping",
+    "evidence": {
+     "at": "2026-01-01T13:35:00+00:00",
+     "label": "acme/widgets #42",
+     "url": "https://forge/acme/widgets/pull/42"
+    },
+    "flavour": "Somebody ring the bell.",
+    "icon": "anvil",
+    "id": "forged_in_fire",
+    "kind": "tiered",
+    "latest_at": "2025-10-22T12:35:00+00:00",
+    "name": "Shipped It",
+    "next_threshold": 30,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     15,
+     30,
+     60,
+     120,
+     250
+    ],
+    "tier": "gold",
+    "tiers_reached": 3,
+    "unlocked_at": "2025-10-03T12:35:00+00:00",
+    "value": 28,
+    "what_counts": "Pull requests embry0 opened that merged"
+   },
+   {
+    "category": "shipping",
+    "evidence": {
+     "at": "2026-01-01T13:35:00+00:00",
+     "label": "acme/widgets #42",
+     "url": "https://forge/acme/widgets/pull/42"
+    },
+    "flavour": "First try. No grave to run back to.",
+    "icon": "sword",
+    "id": "no_death_run",
+    "kind": "tiered",
+    "latest_at": "2025-12-25T15:35:00+00:00",
+    "name": "No-Death Run",
+    "next_threshold": 50,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "platinum",
+    "tiers_reached": 4,
+    "unlocked_at": "2025-10-03T12:35:00+00:00",
+    "value": 26,
+    "what_counts": "Merged pull requests whose issue or pull request had no earlier attempt"
+   },
+   {
+    "category": "shipping",
+    "evidence": {
+     "at": "2026-01-01T13:35:00+00:00",
+     "label": "acme/widgets #42",
+     "url": "https://forge/acme/widgets/pull/42"
+    },
+    "flavour": "Not a single scratch.",
+    "icon": "sword",
+    "id": "clean_kill",
+    "kind": "tiered",
+    "latest_at": "2025-11-01T12:35:00+00:00",
+    "name": "Flawless Kill",
+    "next_threshold": 50,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "platinum",
+    "tiers_reached": 4,
+    "unlocked_at": "2025-10-03T12:35:00+00:00",
+    "value": 27,
+    "what_counts": "Merged pull requests whose job never had an agent run end in an error"
+   },
+   {
+    "category": "shipping",
+    "evidence": {
+     "at": "2025-10-06T12:35:00+00:00",
+     "label": "acme/widgets #12",
+     "url": "https://forge/acme/widgets/pull/12"
+    },
+    "flavour": "Cheapest upgrade in the game.",
+    "icon": "coins",
+    "id": "merged_for_a_penny",
+    "kind": "tiered",
+    "latest_at": "2025-10-06T12:35:00+00:00",
+    "name": "Merged for a Penny",
+    "next_threshold": 3,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     3,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-06T12:35:00+00:00",
+    "value": 1,
+    "what_counts": "Merged pull requests whose job spent under one US dollar"
+   },
+   {
+    "category": "shipping",
+    "evidence": {
+     "at": "2026-01-01T13:35:00+00:00",
+     "label": "acme/widgets #42",
+     "url": "https://forge/acme/widgets/pull/42"
+    },
+    "flavour": "Skipped every cutscene.",
+    "icon": "boots",
+    "id": "speedrun_any_percent",
+    "kind": "tiered",
+    "latest_at": "2025-10-31T22:35:00+00:00",
+    "name": "Speedrun Any%",
+    "next_threshold": 50,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "platinum",
+    "tiers_reached": 4,
+    "unlocked_at": "2025-10-03T12:35:00+00:00",
+    "value": 28,
+    "what_counts": "Pull requests merged within a day of their job starting"
+   },
+   {
+    "category": "shipping",
+    "evidence": {
+     "at": "2025-10-22T12:35:00+00:00",
+     "label": "acme/lib",
+     "url": "https://forge/acme/lib/pull/1"
+    },
+    "flavour": "Same agent, new repository, same result.",
+    "icon": "map",
+    "id": "repo_hopper",
+    "kind": "tiered",
+    "latest_at": "2025-10-22T12:35:00+00:00",
+    "name": "Repo Hopper",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     3,
+     5,
+     8,
+     13,
+     21
+    ],
+    "tier": "gold",
+    "tiers_reached": 3,
+    "unlocked_at": "2025-10-03T12:35:00+00:00",
+    "value": 3,
+    "what_counts": "Repositories with at least one merged pull request"
+   },
+   {
+    "category": "shipping",
+    "evidence": {
+     "at": "2025-10-05T15:05:00+00:00",
+     "label": "acme/widgets #11 \u00b7 Billing",
+     "url": "https://forge/acme/widgets/pull/11"
+    },
+    "flavour": "Never lost in the codebase again.",
+    "icon": "map",
+    "id": "know_your_zones",
+    "kind": "tiered",
+    "latest_at": "2025-10-05T15:05:00+00:00",
+    "name": "Know Your Zones",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-05T15:05:00+00:00",
+    "value": 1,
+    "what_counts": "Merged pull requests that named the area of the monorepo they changed"
+   },
+   {
+    "category": "shipping",
+    "evidence": {
+     "at": "2025-10-06T12:35:00+00:00",
+     "label": "acme/widgets #12",
+     "url": "https://forge/acme/widgets/pull/12"
+    },
+    "flavour": "Tank, healer and damage all showed up.",
+    "icon": "helm",
+    "id": "full_raid_party",
+    "kind": "tiered",
+    "latest_at": "2025-10-06T12:35:00+00:00",
+    "name": "Full Raid Party",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-06T12:35:00+00:00",
+    "value": 1,
+    "what_counts": "Merged pull requests whose job passed both a review and a QA run"
+   },
+   {
+    "category": "shipping",
+    "evidence": {
+     "at": "2025-10-21T14:35:00+00:00",
+     "label": "2025-10-21",
+     "url": null
+    },
+    "flavour": "The XP drops would not stop.",
+    "icon": "flame",
+    "id": "hot_streak",
+    "kind": "tiered",
+    "latest_at": "2025-10-21T14:35:00+00:00",
+    "name": "Hot Streak",
+    "next_threshold": 3,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     3,
+     5,
+     10,
+     20,
+     40,
+     80
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-21T14:35:00+00:00",
+    "value": 1,
+    "what_counts": "Days with three merged pull requests or more"
+   },
+   {
+    "category": "hunting",
+    "evidence": {
+     "at": "2025-11-15T12:00:00+00:00",
+     "label": "Null sender",
+     "url": "https://tracker/2"
+    },
+    "flavour": "Back to the board for the next one.",
+    "icon": "skull",
+    "id": "hunt_complete",
+    "kind": "tiered",
+    "latest_at": "2025-11-13T12:00:00+00:00",
+    "name": "Hunt Complete",
+    "next_threshold": 3,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     3,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-13T12:00:00+00:00",
+    "value": 2,
+    "what_counts": "Production errors whose fix was checked against the logs afterwards and found healed"
+   },
+   {
+    "category": "hunting",
+    "evidence": {
+     "at": "2025-11-11T12:00:00+00:00",
+     "label": "Timeout in checkout",
+     "url": "https://tracker/1"
+    },
+    "flavour": "Killed it before it could hit anyone.",
+    "icon": "shield",
+    "id": "out_of_reach",
+    "kind": "tiered",
+    "latest_at": "2025-11-11T12:00:00+00:00",
+    "name": "Out of Reach",
+    "next_threshold": 3,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     3,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-11T12:00:00+00:00",
+    "value": 1,
+    "what_counts": "Production errors the watcher found itself that embry0's pull request then fixed"
+   },
+   {
+    "category": "hunting",
+    "evidence": {
+     "at": "2025-11-10T12:00:00+00:00",
+     "label": "Timeout in checkout",
+     "url": "https://tracker/1"
+    },
+    "flavour": "This bug is somebody's job now.",
+    "icon": "scroll",
+    "id": "on_the_hunt",
+    "kind": "tiered",
+    "latest_at": "2025-11-10T12:00:00+00:00",
+    "name": "On the Hunt",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-10T12:00:00+00:00",
+    "value": 1,
+    "what_counts": "Watcher findings a person accepted for fixing"
+   },
+   {
+    "category": "hunting",
+    "evidence": {
+     "at": "2025-11-13T12:00:00+00:00",
+     "label": "Timeout in checkout",
+     "url": "https://tracker/1"
+    },
+    "flavour": "It had a health bar the size of the screen.",
+    "icon": "crown",
+    "id": "boss_hunter",
+    "kind": "tiered",
+    "latest_at": "2025-11-13T12:00:00+00:00",
+    "name": "Boss Hunter",
+    "next_threshold": 2,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     5,
+     10,
+     25,
+     50,
+     100
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-13T12:00:00+00:00",
+    "value": 1,
+    "what_counts": "High-severity production errors found healed"
+   },
+   {
+    "category": "hunting",
+    "evidence": {
+     "at": "2025-11-15T12:00:00+00:00",
+     "label": "Null sender",
+     "url": "https://tracker/2"
+    },
+    "flavour": "It kept coming back. Not any more.",
+    "icon": "skull",
+    "id": "elite_hunter",
+    "kind": "tiered",
+    "latest_at": "2025-11-15T12:00:00+00:00",
+    "name": "Elite Hunter",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     5,
+     10,
+     25,
+     50,
+     100
+    ],
+    "tier": "silver",
+    "tiers_reached": 2,
+    "unlocked_at": "2025-11-13T12:00:00+00:00",
+    "value": 2,
+    "what_counts": "Healed production errors that had been seen ten times or more"
+   },
+   {
+    "category": "hunting",
+    "evidence": {
+     "at": "2025-11-13T12:00:00+00:00",
+     "label": "Timeout in checkout",
+     "url": "https://tracker/1"
+    },
+    "flavour": "It stayed down. They usually don't.",
+    "icon": "grave",
+    "id": "never_respawned",
+    "kind": "tiered",
+    "latest_at": "2025-11-13T12:00:00+00:00",
+    "name": "Never Respawned",
+    "next_threshold": 3,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     3,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-13T12:00:00+00:00",
+    "value": 1,
+    "what_counts": "Healed production errors that never came back after their fix was checked"
+   },
+   {
+    "category": "hunting",
+    "evidence": {
+     "at": "2025-11-17T12:00:00+00:00",
+     "label": "Flaky upload",
+     "url": null
+    },
+    "flavour": "Loot picked up, teleported home.",
+    "icon": "coins",
+    "id": "deployed_and_dusted",
+    "kind": "tiered",
+    "latest_at": "2025-11-12T12:00:00+00:00",
+    "name": "Deployed and Dusted",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-12T12:00:00+00:00",
+    "value": 3,
+    "what_counts": "Fixes for production errors that reached a deploy"
+   },
+   {
+    "category": "questing",
+    "evidence": {
+     "at": "2025-10-09T12:35:00+00:00",
+     "label": "Issue iss-3",
+     "url": "https://forge/acme/widgets/pull/13"
+    },
+    "flavour": "Done, and marked done.",
+    "icon": "scroll",
+    "id": "quest_complete",
+    "kind": "tiered",
+    "latest_at": "2025-10-05T15:05:00+00:00",
+    "name": "Quest Complete",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     15,
+     30,
+     60,
+     120,
+     250
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-05T15:05:00+00:00",
+    "value": 3,
+    "what_counts": "Issues finished by a merged pull request"
+   },
+   {
+    "category": "questing",
+    "evidence": {
+     "at": "2025-10-06T12:35:00+00:00",
+     "label": "Issue iss-2",
+     "url": "https://forge/acme/widgets/pull/12"
+    },
+    "flavour": "You were only meant to deliver a letter.",
+    "icon": "scroll",
+    "id": "side_quest",
+    "kind": "tiered",
+    "latest_at": "2025-10-06T12:35:00+00:00",
+    "name": "Side Quest",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-06T12:35:00+00:00",
+    "value": 1,
+    "what_counts": "Sub-issues triage split off a bigger issue that a merged pull request finished"
+   },
+   {
+    "category": "questing",
+    "evidence": {
+     "at": "2025-11-22T12:00:00+00:00",
+     "label": "acme/widgets \u00b7 snooze",
+     "url": null
+    },
+    "flavour": "Yes, no, or later.",
+    "icon": "speech",
+    "id": "talked_to_the_quest_giver",
+    "kind": "tiered",
+    "latest_at": "2025-11-20T12:00:00+00:00",
+    "name": "Talked to the Quest Giver",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     250
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-20T12:00:00+00:00",
+    "value": 3,
+    "what_counts": "Answers owners gave to embry0's proposals: start it, not this, or later"
+   },
+   {
+    "category": "questing",
+    "evidence": {
+     "at": "2025-11-20T12:00:00+00:00",
+     "label": "acme/widgets",
+     "url": null
+    },
+    "flavour": "Yes, I will help you.",
+    "icon": "quill",
+    "id": "quest_accepted",
+    "kind": "tiered",
+    "latest_at": "2025-11-20T12:00:00+00:00",
+    "name": "Quest Accepted",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-20T12:00:00+00:00",
+    "value": 1,
+    "what_counts": "Proposals an owner said yes to"
+   },
+   {
+    "category": "questing",
+    "evidence": {
+     "at": "2025-10-06T12:35:00+00:00",
+     "label": "acme/widgets #12",
+     "url": "https://forge/acme/widgets/pull/12"
+    },
+    "flavour": "The quest giver pays up.",
+    "icon": "lamp",
+    "id": "reward_claimed",
+    "kind": "tiered",
+    "latest_at": "2025-10-06T12:35:00+00:00",
+    "name": "Reward Claimed",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-06T12:35:00+00:00",
+    "value": 1,
+    "what_counts": "Accepted proposals whose job's pull request merged"
+   },
+   {
+    "category": "questing",
+    "evidence": {
+     "at": "2025-10-05T13:00:00+00:00",
+     "label": "Should the retry stay?",
+     "url": null
+    },
+    "flavour": "The dialogue box finally moved on.",
+    "icon": "speech",
+    "id": "answer_given",
+    "kind": "tiered",
+    "latest_at": "2025-10-05T13:00:00+00:00",
+    "name": "Answer Given",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     250
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-05T13:00:00+00:00",
+    "value": 1,
+    "what_counts": "Questions an agent asked that a person answered"
+   },
+   {
+    "category": "lore",
+    "evidence": {
+     "at": "2025-10-13T12:30:00+00:00",
+     "label": "acme/widgets",
+     "url": null
+    },
+    "flavour": "The tutor was lying the whole time.",
+    "icon": "quill",
+    "id": "lines_straightened",
+    "kind": "tiered",
+    "latest_at": "2025-10-11T12:30:00+00:00",
+    "name": "Lines Straightened",
+    "next_threshold": 50,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     10,
+     50,
+     100,
+     250,
+     500,
+     1000,
+     2500
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-11T12:30:00+00:00",
+    "value": 18,
+    "what_counts": "Outdated claims the context audit found in the files that steer coding agents"
+   },
+   {
+    "category": "lore",
+    "evidence": {
+     "at": "2025-10-14T12:35:00+00:00",
+     "label": "acme/widgets #15",
+     "url": "https://forge/acme/widgets/pull/15"
+    },
+    "flavour": "The library books are true again.",
+    "icon": "book",
+    "id": "lore_corrected",
+    "kind": "tiered",
+    "latest_at": "2025-10-14T12:35:00+00:00",
+    "name": "Lore Corrected",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-14T12:35:00+00:00",
+    "value": 1,
+    "what_counts": "Context-audit pull requests that merged"
+   },
+   {
+    "category": "lore",
+    "evidence": {
+     "at": "2025-10-12T12:30:00+00:00",
+     "label": "acme/lib",
+     "url": null
+    },
+    "flavour": "Not a single weed in the patch.",
+    "icon": "leaf",
+    "id": "weeded_garden",
+    "kind": "tiered",
+    "latest_at": "2025-10-12T12:30:00+00:00",
+    "name": "Weeded Garden",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     10,
+     25,
+     50,
+     100,
+     200
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-12T12:30:00+00:00",
+    "value": 1,
+    "what_counts": "Context audits that found every instruction file already true"
+   },
+   {
+    "category": "lore",
+    "evidence": {
+     "at": "2025-10-16T12:35:00+00:00",
+     "label": "acme/widgets",
+     "url": "https://forge/acme/widgets/pull/16"
+    },
+    "flavour": "You can see the whole world map now.",
+    "icon": "map",
+    "id": "cartographer",
+    "kind": "tiered",
+    "latest_at": "2025-10-16T12:35:00+00:00",
+    "name": "Cartographer",
+    "next_threshold": 2,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     3,
+     5,
+     8,
+     13,
+     21
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-16T12:35:00+00:00",
+    "value": 1,
+    "what_counts": "Repositories whose areas map merged"
+   },
+   {
+    "category": "lore",
+    "evidence": {
+     "at": "2025-11-27T12:00:00+00:00",
+     "label": "acme/widgets \u00b7 design 95",
+     "url": null
+    },
+    "flavour": "Matching outfit, full set bonus.",
+    "icon": "gem",
+    "id": "fashion_inspector",
+    "kind": "tiered",
+    "latest_at": "2025-11-27T12:00:00+00:00",
+    "name": "Fashion Inspector",
+    "next_threshold": 2,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     3,
+     5,
+     8,
+     13,
+     21
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-27T12:00:00+00:00",
+    "value": 1,
+    "what_counts": "Repositories whose design audit scored 90 or more against their standard"
+   },
+   {
+    "category": "guarding",
+    "evidence": {
+     "at": "2025-11-01T12:12:00+00:00",
+     "label": "acme/lib",
+     "url": "https://forge/acme/lib/pull/19"
+    },
+    "flavour": "None shall pass unread.",
+    "icon": "shield",
+    "id": "guardian_of_the_gate",
+    "kind": "tiered",
+    "latest_at": "2025-10-30T12:12:00+00:00",
+    "name": "Guardian of the Gate",
+    "next_threshold": 25,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     10,
+     25,
+     50,
+     100,
+     250,
+     500
+    ],
+    "tier": "silver",
+    "tiers_reached": 2,
+    "unlocked_at": "2025-10-06T12:18:00+00:00",
+    "value": 12,
+    "what_counts": "Reviews a reviewer agent finished"
+   },
+   {
+    "category": "guarding",
+    "evidence": {
+     "at": "2025-11-25T12:00:00+00:00",
+     "label": "acme/widgets #7",
+     "url": null
+    },
+    "flavour": "A second pair of eyes has left a comment.",
+    "icon": "eye",
+    "id": "second_opinion",
+    "kind": "tiered",
+    "latest_at": "2025-11-25T12:00:00+00:00",
+    "name": "Second Opinion",
+    "next_threshold": 10,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     10,
+     25,
+     50,
+     100,
+     250,
+     500
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-25T12:00:00+00:00",
+    "value": 1,
+    "what_counts": "Pull request reviews embry0 posted on a pull request"
+   },
+   {
+    "category": "guarding",
+    "evidence": {
+     "at": "2025-10-15T12:30:00+00:00",
+     "label": "acme/widgets",
+     "url": null
+    },
+    "flavour": "Every dose checked before it was drunk.",
+    "icon": "potion",
+    "id": "potion_master",
+    "kind": "tiered",
+    "latest_at": "2025-10-15T12:30:00+00:00",
+    "name": "Potion Master",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     5,
+     15,
+     30,
+     60,
+     120,
+     250
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-15T12:30:00+00:00",
+    "value": 1,
+    "what_counts": "QA runs that completed"
+   },
+   {
+    "category": "guarding",
+    "evidence": {
+     "at": "2025-10-18T12:30:00+00:00",
+     "label": "acme/widgets",
+     "url": null
+    },
+    "flavour": "Blocked just in time.",
+    "icon": "gate",
+    "id": "you_shall_not_merge",
+    "kind": "tiered",
+    "latest_at": "2025-10-18T12:30:00+00:00",
+    "name": "You Shall Not Merge",
+    "next_threshold": 2,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     5,
+     10,
+     25,
+     50,
+     100
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-18T12:30:00+00:00",
+    "value": 1,
+    "what_counts": "Changes the verification gate stopped because they broke tests that passed before"
+   },
+   {
+    "category": "guarding",
+    "evidence": {
+     "at": "2025-11-26T12:00:00+00:00",
+     "label": "acme/widgets",
+     "url": null
+    },
+    "flavour": "Somewhere safe to practise.",
+    "icon": "target",
+    "id": "training_grounds",
+    "kind": "tiered",
+    "latest_at": "2025-11-26T12:00:00+00:00",
+    "name": "Training Grounds",
+    "next_threshold": 2,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     3,
+     5,
+     8,
+     13,
+     21
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-26T12:00:00+00:00",
+    "value": 1,
+    "what_counts": "Test setups embry0 proposed that a person applied to a repository"
+   },
+   {
+    "category": "grit",
+    "evidence": {
+     "at": "2025-10-09T12:35:00+00:00",
+     "label": "acme/widgets #13",
+     "url": "https://forge/acme/widgets/pull/13"
+    },
+    "flavour": "Ran back from the gravestone and finished it.",
+    "icon": "grave",
+    "id": "back_on_your_feet",
+    "kind": "tiered",
+    "latest_at": "2025-10-05T15:05:00+00:00",
+    "name": "Back on Your Feet",
+    "next_threshold": 3,
+    "secret": true,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     3,
+     5,
+     10,
+     25,
+     50,
+     100
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-05T15:05:00+00:00",
+    "value": 2,
+    "what_counts": "Merges on an issue whose earlier job failed"
+   },
+   {
+    "category": "grit",
+    "evidence": {
+     "at": "2025-10-09T12:30:00+00:00",
+     "label": "acme/widgets",
+     "url": "https://forge/acme/widgets/pull/13"
+    },
+    "flavour": "Logged back in mid-fight and won.",
+    "icon": "hourglass",
+    "id": "back_from_the_respawn",
+    "kind": "tiered",
+    "latest_at": "2025-10-05T15:00:00+00:00",
+    "name": "Back from the Respawn",
+    "next_threshold": 3,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     3,
+     5,
+     10,
+     25,
+     50,
+     100
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-05T15:00:00+00:00",
+    "value": 2,
+    "what_counts": "Jobs a restart interrupted that resumed and finished their work"
+   },
+   {
+    "category": "grit",
+    "evidence": {
+     "at": "2025-10-09T12:30:00+00:00",
+     "label": "acme/widgets",
+     "url": "https://forge/acme/widgets/pull/13"
+    },
+    "flavour": "The server restarted. Twice. You lived.",
+    "icon": "hourglass",
+    "id": "lag_survivor",
+    "kind": "objective",
+    "latest_at": "2025-10-09T12:30:00+00:00",
+    "name": "Lag Survivor",
+    "next_threshold": null,
+    "secret": true,
+    "state": "unlocked",
+    "thresholds": [
+     1
+    ],
+    "tier": "complete",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-09T12:30:00+00:00",
+    "value": 1,
+    "what_counts": "A job interrupted twice or more that still finished its work"
+   },
+   {
+    "category": "grit",
+    "evidence": {
+     "at": "2025-10-17T12:35:00+00:00",
+     "label": "acme/widgets #17",
+     "url": "https://forge/acme/widgets/pull/17"
+    },
+    "flavour": "Caught a breath, kept going.",
+    "icon": "heart",
+    "id": "second_wind",
+    "kind": "tiered",
+    "latest_at": "2025-10-17T12:35:00+00:00",
+    "name": "Second Wind",
+    "next_threshold": 2,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     5,
+     10,
+     25,
+     50,
+     100
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-17T12:35:00+00:00",
+    "value": 1,
+    "what_counts": "Follow-up jobs on a pull request whose pull request then merged"
+   },
+   {
+    "category": "grit",
+    "evidence": {
+     "at": "2025-10-09T12:35:00+00:00",
+     "label": "acme/widgets #13",
+     "url": "https://forge/acme/widgets/pull/13"
+    },
+    "flavour": "Third time is the charm, apparently.",
+    "icon": "pickaxe",
+    "id": "iron_will",
+    "kind": "tiered",
+    "latest_at": "2025-10-09T12:35:00+00:00",
+    "name": "Iron Will",
+    "next_threshold": 2,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     3,
+     5,
+     10,
+     25,
+     50
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-09T12:35:00+00:00",
+    "value": 1,
+    "what_counts": "Issues that merged on their third attempt or later"
+   },
+   {
+    "category": "growth",
+    "evidence": {
+     "at": "2026-01-01T13:30:00+00:00",
+     "label": "developer",
+     "url": null
+    },
+    "flavour": "Seen it all, levelled most of it.",
+    "icon": "beard",
+    "id": "elder_agent",
+    "kind": "tiered",
+    "latest_at": "2025-10-19T14:00:00+00:00",
+    "name": "Elder Agent",
+    "next_threshold": 1000,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     100,
+     250,
+     500,
+     750,
+     1000,
+     1500,
+     2000
+    ],
+    "tier": "platinum",
+    "tiers_reached": 4,
+    "unlocked_at": "2025-10-03T12:35:00+00:00",
+    "value": 787,
+    "what_counts": "The highest total level of any one character"
+   },
+   {
+    "category": "growth",
+    "evidence": {
+     "at": "2025-10-09T12:30:00+00:00",
+     "label": "developer \u00b7 reading",
+     "url": null
+    },
+    "flavour": "A cloak that says you did nothing else for weeks.",
+    "icon": "cape",
+    "id": "mastery_cloak",
+    "kind": "tiered",
+    "latest_at": "2025-10-09T12:30:00+00:00",
+    "name": "Mastery Cloak",
+    "next_threshold": 2,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     5,
+     10,
+     23,
+     50,
+     100
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-09T12:30:00+00:00",
+    "value": 1,
+    "what_counts": "Skills at 99 across every character"
+   },
+   {
+    "category": "growth",
+    "evidence": {
+     "at": "2025-11-01T12:30:00+00:00",
+     "label": "developer",
+     "url": null
+    },
+    "flavour": "One character, every stat that matters.",
+    "icon": "sword",
+    "id": "fully_trained",
+    "kind": "tiered",
+    "latest_at": "2025-11-01T12:30:00+00:00",
+    "name": "Fully Trained",
+    "next_threshold": 115,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     10,
+     25,
+     50,
+     75,
+     100,
+     115,
+     126
+    ],
+    "tier": "diamond",
+    "tiers_reached": 5,
+    "unlocked_at": "2025-10-03T12:30:00+00:00",
+    "value": 100,
+    "what_counts": "The highest level any one character reached"
+   },
+   {
+    "category": "growth",
+    "evidence": {
+     "at": "2025-10-06T12:12:00+00:00",
+     "label": "developer \u00b7 reading",
+     "url": null
+    },
+    "flavour": "Halfway there, by the experience table.",
+    "icon": "star",
+    "id": "halfway_by_experience",
+    "kind": "tiered",
+    "latest_at": "2025-10-06T12:12:00+00:00",
+    "name": "Halfway by Experience",
+    "next_threshold": 2,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     5,
+     10,
+     23,
+     50,
+     100
+    ],
+    "tier": "bronze",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-06T12:12:00+00:00",
+    "value": 1,
+    "what_counts": "Skills that reached level 92, across every character"
+   },
+   {
+    "category": "growth",
+    "evidence": null,
+    "flavour": "The roster stopped being a bunch of noobs.",
+    "icon": "star",
+    "id": "thousand_club",
+    "kind": "tiered",
+    "latest_at": null,
+    "name": "Thousand Club",
+    "next_threshold": 1,
+    "secret": false,
+    "state": "discovered",
+    "thresholds": [
+     1,
+     2,
+     3,
+     5,
+     8,
+     12,
+     18
+    ],
+    "tier": null,
+    "tiers_reached": 0,
+    "unlocked_at": null,
+    "value": 0,
+    "what_counts": "Characters whose total level reached 1,000"
+   },
+   {
+    "category": "growth",
+    "evidence": {
+     "at": "2026-01-01T12:12:00+00:00",
+     "label": "qa \u00b7 golden-paper-crown",
+     "url": null
+    },
+    "flavour": "Worth framing.",
+    "icon": "gem",
+    "id": "rare_finds",
+    "kind": "tiered",
+    "latest_at": "2026-01-01T12:12:00+00:00",
+    "name": "Rare Finds",
+    "next_threshold": 5,
+    "secret": false,
+    "state": "unlocked",
+    "thresholds": [
+     1,
+     2,
+     3,
+     5,
+     8,
+     13,
+     21
+    ],
+    "tier": "gold",
+    "tiers_reached": 3,
+    "unlocked_at": "2025-10-31T12:35:00+00:00",
+    "value": 3,
+    "what_counts": "Rare drops characters earned"
+   },
+   {
+    "category": "oddities",
+    "evidence": {
+     "at": "2025-11-01T12:35:00+00:00",
+     "label": "acme/lib #19",
+     "url": "https://forge/acme/lib/pull/19"
+    },
+    "flavour": "The agents grind while you touch grass.",
+    "icon": "moon",
+    "id": "afk_weekend",
+    "kind": "objective",
+    "latest_at": "2025-10-04T14:35:00+00:00",
+    "name": "AFK Weekend",
+    "next_threshold": null,
+    "secret": true,
+    "state": "unlocked",
+    "thresholds": [
+     1
+    ],
+    "tier": "complete",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-04T14:35:00+00:00",
+    "value": 5,
+    "what_counts": "A pull request that merged on a Saturday or Sunday (UTC)"
+   },
+   {
+    "category": "oddities",
+    "evidence": {
+     "at": "2025-10-07T02:35:00+00:00",
+     "label": "acme/widgets #22",
+     "url": "https://forge/acme/widgets/pull/22"
+    },
+    "flavour": "Nobody else was online.",
+    "icon": "moon",
+    "id": "night_shift",
+    "kind": "objective",
+    "latest_at": "2025-10-07T02:35:00+00:00",
+    "name": "Night Shift",
+    "next_threshold": null,
+    "secret": true,
+    "state": "unlocked",
+    "thresholds": [
+     1
+    ],
+    "tier": "complete",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-07T02:35:00+00:00",
+    "value": 1,
+    "what_counts": "A pull request that merged between midnight and four in the morning (UTC)"
+   },
+   {
+    "category": "oddities",
+    "evidence": {
+     "at": "2025-10-31T22:35:00+00:00",
+     "label": "acme/widgets #40",
+     "url": "https://forge/acme/widgets/pull/40"
+    },
+    "flavour": "Bold. Very bold.",
+    "icon": "flame",
+    "id": "friday_night_merge",
+    "kind": "objective",
+    "latest_at": "2025-10-03T21:35:00+00:00",
+    "name": "Friday Night Merge",
+    "next_threshold": null,
+    "secret": true,
+    "state": "unlocked",
+    "thresholds": [
+     1
+    ],
+    "tier": "complete",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-03T21:35:00+00:00",
+    "value": 2,
+    "what_counts": "A pull request that merged on a Friday after eight in the evening (UTC)"
+   },
+   {
+    "category": "oddities",
+    "evidence": {
+     "at": "2026-01-01T13:35:00+00:00",
+     "label": "acme/widgets #42",
+     "url": "https://forge/acme/widgets/pull/42"
+    },
+    "flavour": "Limited-time event. Log in to claim.",
+    "icon": "gift",
+    "id": "holiday_event",
+    "kind": "objective",
+    "latest_at": "2025-10-31T12:35:00+00:00",
+    "name": "Holiday Event",
+    "next_threshold": null,
+    "secret": true,
+    "state": "unlocked",
+    "thresholds": [
+     1
+    ],
+    "tier": "complete",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-31T12:35:00+00:00",
+    "value": 4,
+    "what_counts": "A pull request that merged on 25 December, 31 October or 1 January (UTC)"
+   },
+   {
+    "category": "oddities",
+    "evidence": {
+     "at": "2025-10-05T15:05:00+00:00",
+     "label": "acme/widgets #11",
+     "url": "https://forge/acme/widgets/pull/11"
+    },
+    "flavour": "This was supposed to be a quick fix.",
+    "icon": "hourglass",
+    "id": "long_grind",
+    "kind": "objective",
+    "latest_at": "2025-10-05T15:05:00+00:00",
+    "name": "Long Grind",
+    "next_threshold": null,
+    "secret": true,
+    "state": "unlocked",
+    "thresholds": [
+     1
+    ],
+    "tier": "complete",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-05T15:05:00+00:00",
+    "value": 1,
+    "what_counts": "A pull request that merged from a job that ran for more than two hours"
+   },
+   {
+    "category": "oddities",
+    "evidence": {
+     "at": "2025-10-03T21:35:00+00:00",
+     "label": "acme/widgets #20",
+     "url": "https://forge/acme/widgets/pull/20"
+    },
+    "flavour": "Beginner's luck.",
+    "icon": "paw",
+    "id": "lucky_find",
+    "kind": "objective",
+    "latest_at": "2025-10-03T21:35:00+00:00",
+    "name": "Lucky Find",
+    "next_threshold": null,
+    "secret": true,
+    "state": "unlocked",
+    "thresholds": [
+     1
+    ],
+    "tier": "complete",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-10-03T21:35:00+00:00",
+    "value": 1,
+    "what_counts": "A pull request that merged from the first job embry0 ever ran on its repository"
+   },
+   {
+    "category": "oddities",
+    "evidence": {
+     "at": "2025-11-11T12:00:00+00:00",
+     "label": "Timeout in checkout",
+     "url": "https://tracker/1"
+    },
+    "flavour": "But a bug ain't one.",
+    "icon": "skull",
+    "id": "ninety_nine_problems",
+    "kind": "objective",
+    "latest_at": "2025-11-11T12:00:00+00:00",
+    "name": "99 Problems",
+    "next_threshold": null,
+    "secret": true,
+    "state": "unlocked",
+    "thresholds": [
+     1
+    ],
+    "tier": "complete",
+    "tiers_reached": 1,
+    "unlocked_at": "2025-11-11T12:00:00+00:00",
+    "value": 1,
+    "what_counts": "A production error seen 99 times or more that a merged fix killed"
+   }
+  ],
+  "characters": [
+   {
+    "agent_type": "blast-radius",
+    "best_skill": "security",
+    "capes": [],
+    "level": 24,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 40,
+      "level_xp": 37224,
+      "stat": "security",
+      "xp": 40000,
+      "xp_to_next": 1171
+     },
+     {
+      "level": 33,
+      "level_xp": 18247,
+      "stat": "reading",
+      "xp": 20000,
+      "xp_to_next": 224
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "operations",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "gold",
+    "total_level": 94,
+    "xp": 60000
+   },
+   {
+    "agent_type": "context-auditor",
+    "best_skill": "documentation",
+    "capes": [],
+    "level": 18,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reading",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 53,
+      "level_xp": 136594,
+      "stat": "documentation",
+      "xp": 138000,
+      "xp_to_next": 12872
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "operations",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "platinum",
+    "total_level": 75,
+    "xp": 138000
+   },
+   {
+    "agent_type": "design-auditor",
+    "best_skill": "design",
+    "capes": [],
+    "level": 24,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 33,
+      "level_xp": 18247,
+      "stat": "reading",
+      "xp": 20000,
+      "xp_to_next": 224
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 40,
+      "level_xp": 37224,
+      "stat": "design",
+      "xp": 40000,
+      "xp_to_next": 1171
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "operations",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "gold",
+    "total_level": 94,
+    "xp": 60000
+   },
+   {
+    "agent_type": "developer",
+    "best_skill": "reading",
+    "capes": [
+     "reading"
+    ],
+    "level": 100,
+    "quest_cloak": false,
+    "rares": [
+     {
+      "at": "2025-10-31T12:35:00+00:00",
+      "id": "harvest-mask"
+     },
+     {
+      "at": "2025-12-25T15:35:00+00:00",
+      "id": "paper-crown"
+     }
+    ],
+    "skills": [
+     {
+      "level": 82,
+      "level_xp": 2421087,
+      "stat": "coding",
+      "xp": 2593800,
+      "xp_to_next": 79314
+     },
+     {
+      "level": 67,
+      "level_xp": 547953,
+      "stat": "version_control",
+      "xp": 575000,
+      "xp_to_next": 30032
+     },
+     {
+      "level": 20,
+      "level_xp": 4470,
+      "stat": "building",
+      "xp": 4800,
+      "xp_to_next": 218
+     },
+     {
+      "level": 42,
+      "level_xp": 45529,
+      "stat": "shell",
+      "xp": 48000,
+      "xp_to_next": 2339
+     },
+     {
+      "level": 21,
+      "level_xp": 5018,
+      "stat": "databases",
+      "xp": 5400,
+      "xp_to_next": 224
+     },
+     {
+      "level": 39,
+      "level_xp": 33648,
+      "stat": "testing",
+      "xp": 34800,
+      "xp_to_next": 2424
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 32,
+      "level_xp": 16456,
+      "stat": "browsing",
+      "xp": 18000,
+      "xp_to_next": 247
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 28,
+      "level_xp": 10824,
+      "stat": "linting",
+      "xp": 12000,
+      "xp_to_next": 31
+     },
+     {
+      "level": 12,
+      "level_xp": 1584,
+      "stat": "security",
+      "xp": 1800,
+      "xp_to_next": 33
+     },
+     {
+      "level": 99,
+      "level_xp": 13034431,
+      "stat": "reading",
+      "xp": 18060000,
+      "xp_to_next": null
+     },
+     {
+      "level": 68,
+      "level_xp": 605032,
+      "stat": "searching",
+      "xp": 656000,
+      "xp_to_next": 12051
+     },
+     {
+      "level": 19,
+      "level_xp": 3973,
+      "stat": "debugging",
+      "xp": 4000,
+      "xp_to_next": 470
+     },
+     {
+      "level": 32,
+      "level_xp": 16456,
+      "stat": "research",
+      "xp": 18000,
+      "xp_to_next": 247
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 25,
+      "level_xp": 7842,
+      "stat": "documentation",
+      "xp": 8400,
+      "xp_to_next": 340
+     },
+     {
+      "level": 16,
+      "level_xp": 2746,
+      "stat": "design",
+      "xp": 2800,
+      "xp_to_next": 315
+     },
+     {
+      "level": 21,
+      "level_xp": 5018,
+      "stat": "operations",
+      "xp": 5200,
+      "xp_to_next": 424
+     },
+     {
+      "level": 37,
+      "level_xp": 27473,
+      "stat": "planning",
+      "xp": 28000,
+      "xp_to_next": 2408
+     },
+     {
+      "level": 27,
+      "level_xp": 9730,
+      "stat": "delegation",
+      "xp": 10000,
+      "xp_to_next": 824
+     },
+     {
+      "level": 33,
+      "level_xp": 18247,
+      "stat": "communication",
+      "xp": 20000,
+      "xp_to_next": 224
+     },
+     {
+      "level": 64,
+      "level_xp": 407015,
+      "stat": "recovery",
+      "xp": 420000,
+      "xp_to_next": 29428
+     }
+    ],
+    "tier": "divine",
+    "total_level": 787,
+    "xp": 22526000
+   },
+   {
+    "agent_type": "my-custom-agent",
+    "best_skill": "reading",
+    "capes": [],
+    "level": 7,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 20,
+      "level_xp": 4470,
+      "stat": "reading",
+      "xp": 5000,
+      "xp_to_next": 18
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "operations",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "silver",
+    "total_level": 42,
+    "xp": 5000
+   },
+   {
+    "agent_type": "onboarding",
+    "best_skill": "operations",
+    "capes": [],
+    "level": 26,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 33,
+      "level_xp": 18247,
+      "stat": "reading",
+      "xp": 20000,
+      "xp_to_next": 224
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 47,
+      "level_xp": 75127,
+      "stat": "operations",
+      "xp": 80000,
+      "xp_to_next": 3014
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "platinum",
+    "total_level": 101,
+    "xp": 100000
+   },
+   {
+    "agent_type": "ops",
+    "best_skill": "operations",
+    "capes": [],
+    "level": 24,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 33,
+      "level_xp": 18247,
+      "stat": "reading",
+      "xp": 20000,
+      "xp_to_next": 224
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 40,
+      "level_xp": 37224,
+      "stat": "operations",
+      "xp": 40000,
+      "xp_to_next": 1171
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "gold",
+    "total_level": 94,
+    "xp": 60000
+   },
+   {
+    "agent_type": "pr-reviewer",
+    "best_skill": "reviewing",
+    "capes": [],
+    "level": 23,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 37,
+      "level_xp": 27473,
+      "stat": "reviewing",
+      "xp": 30000,
+      "xp_to_next": 408
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 33,
+      "level_xp": 18247,
+      "stat": "reading",
+      "xp": 20000,
+      "xp_to_next": 224
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "operations",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "gold",
+    "total_level": 91,
+    "xp": 50000
+   },
+   {
+    "agent_type": "qa",
+    "best_skill": "quality_assurance",
+    "capes": [],
+    "level": 34,
+    "quest_cloak": false,
+    "rares": [
+     {
+      "at": "2026-01-01T12:12:00+00:00",
+      "id": "golden-paper-crown"
+     }
+    ],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 49,
+      "level_xp": 91721,
+      "stat": "quality_assurance",
+      "xp": 100000,
+      "xp_to_next": 1333
+     },
+     {
+      "level": 47,
+      "level_xp": 75127,
+      "stat": "browsing",
+      "xp": 82000,
+      "xp_to_next": 1014
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reading",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 13,
+      "level_xp": 1833,
+      "stat": "debugging",
+      "xp": 2000,
+      "xp_to_next": 107
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "operations",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "platinum",
+    "total_level": 129,
+    "xp": 184000
+   },
+   {
+    "agent_type": "research",
+    "best_skill": "research",
+    "capes": [],
+    "level": 24,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 33,
+      "level_xp": 18247,
+      "stat": "reading",
+      "xp": 20000,
+      "xp_to_next": 224
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 40,
+      "level_xp": 37224,
+      "stat": "research",
+      "xp": 40000,
+      "xp_to_next": 1171
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "operations",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "gold",
+    "total_level": 94,
+    "xp": 60000
+   },
+   {
+    "agent_type": "review",
+    "best_skill": "reviewing",
+    "capes": [],
+    "level": 33,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 63,
+      "level_xp": 368599,
+      "stat": "reviewing",
+      "xp": 380000,
+      "xp_to_next": 27015
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 40,
+      "level_xp": 37224,
+      "stat": "reading",
+      "xp": 40000,
+      "xp_to_next": 1171
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "operations",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "diamond",
+    "total_level": 124,
+    "xp": 420000
+   },
+   {
+    "agent_type": "slopmaster",
+    "best_skill": "coding",
+    "capes": [],
+    "level": 29,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 55,
+      "level_xp": 166636,
+      "stat": "coding",
+      "xp": 182000,
+      "xp_to_next": 2040
+     },
+     {
+      "level": 33,
+      "level_xp": 18247,
+      "stat": "version_control",
+      "xp": 20000,
+      "xp_to_next": 224
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reading",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "triage",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "operations",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "communication",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "platinum",
+    "total_level": 109,
+    "xp": 202000
+   },
+   {
+    "agent_type": "triage",
+    "best_skill": "communication",
+    "capes": [],
+    "level": 15,
+    "quest_cloak": false,
+    "rares": [],
+    "skills": [
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "coding",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "version_control",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "building",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "shell",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "databases",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "testing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "quality_assurance",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "browsing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reviewing",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "linting",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "security",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "reading",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "searching",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "debugging",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "research",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 13,
+      "level_xp": 1833,
+      "stat": "triage",
+      "xp": 2000,
+      "xp_to_next": 107
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "documentation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "design",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "operations",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "planning",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "delegation",
+      "xp": 0,
+      "xp_to_next": 83
+     },
+     {
+      "level": 33,
+      "level_xp": 18247,
+      "stat": "communication",
+      "xp": 20000,
+      "xp_to_next": 224
+     },
+     {
+      "level": 1,
+      "level_xp": 0,
+      "stat": "recovery",
+      "xp": 0,
+      "xp_to_next": 83
+     }
+    ],
+    "tier": "gold",
+    "total_level": 67,
+    "xp": 22000
+   }
+  ],
+  "diaries": [
+   {
+    "repo": "acme/widgets",
+    "tiers": [
+     {
+      "completed_at": "2025-10-06T12:24:00+00:00",
+      "tasks": [
+       {
+        "done_at": "2025-10-06T12:06:00+00:00",
+        "text": "Triage an issue"
+       },
+       {
+        "done_at": "2025-10-03T21:35:00+00:00",
+        "text": "Finish a job"
+       },
+       {
+        "done_at": "2025-10-06T12:24:00+00:00",
+        "text": "Run QA"
+       }
+      ],
+      "tier": "easy"
+     },
+     {
+      "completed_at": "2025-10-11T12:30:00+00:00",
+      "tasks": [
+       {
+        "done_at": "2025-10-03T21:35:00+00:00",
+        "text": "Merge a pull request"
+       },
+       {
+        "done_at": "2025-10-06T12:35:00+00:00",
+        "text": "Pass QA"
+       },
+       {
+        "done_at": "2025-10-11T12:30:00+00:00",
+        "text": "Audit its context"
+       }
+      ],
+      "tier": "medium"
+     },
+     {
+      "completed_at": null,
+      "tasks": [
+       {
+        "done_at": "2025-10-17T12:35:00+00:00",
+        "text": "Merge 10 pull requests"
+       },
+       {
+        "done_at": null,
+        "text": "Audit its context and find no outdated claim"
+       },
+       {
+        "done_at": null,
+        "text": "Review 10 times"
+       }
+      ],
+      "tier": "hard"
+     },
+     {
+      "completed_at": null,
+      "tasks": [
+       {
+        "done_at": null,
+        "text": "Merge 50 pull requests"
+       },
+       {
+        "done_at": "2025-12-25T15:35:00+00:00",
+        "text": "Go 30 days without a failed job"
+       },
+       {
+        "done_at": null,
+        "text": "Complete every task above"
+       }
+      ],
+      "tier": "elite"
+     }
+    ]
+   },
+   {
+    "repo": "acme/lib",
+    "tiers": [
+     {
+      "completed_at": null,
+      "tasks": [
+       {
+        "done_at": null,
+        "text": "Triage an issue"
+       },
+       {
+        "done_at": "2025-10-12T12:30:00+00:00",
+        "text": "Finish a job"
+       },
+       {
+        "done_at": null,
+        "text": "Run QA"
+       }
+      ],
+      "tier": "easy"
+     },
+     {
+      "completed_at": null,
+      "tasks": [
+       {
+        "done_at": "2025-10-22T12:35:00+00:00",
+        "text": "Merge a pull request"
+       },
+       {
+        "done_at": null,
+        "text": "Pass QA"
+       },
+       {
+        "done_at": "2025-10-12T12:30:00+00:00",
+        "text": "Audit its context"
+       }
+      ],
+      "tier": "medium"
+     },
+     {
+      "completed_at": "2025-11-01T12:12:00+00:00",
+      "tasks": [
+       {
+        "done_at": "2025-10-31T12:35:00+00:00",
+        "text": "Merge 10 pull requests"
+       },
+       {
+        "done_at": "2025-10-12T12:30:00+00:00",
+        "text": "Audit its context and find no outdated claim"
+       },
+       {
+        "done_at": "2025-11-01T12:12:00+00:00",
+        "text": "Review 10 times"
+       }
+      ],
+      "tier": "hard"
+     },
+     {
+      "completed_at": null,
+      "tasks": [
+       {
+        "done_at": null,
+        "text": "Merge 50 pull requests"
+       },
+       {
+        "done_at": null,
+        "text": "Go 30 days without a failed job"
+       },
+       {
+        "done_at": null,
+        "text": "Complete every task above"
+       }
+      ],
+      "tier": "elite"
+     }
+    ]
+   },
+   {
+    "repo": "acme/new",
+    "tiers": [
+     {
+      "completed_at": null,
+      "tasks": [
+       {
+        "done_at": null,
+        "text": "Triage an issue"
+       },
+       {
+        "done_at": "2025-10-01T12:30:00+00:00",
+        "text": "Finish a job"
+       },
+       {
+        "done_at": null,
+        "text": "Run QA"
+       }
+      ],
+      "tier": "easy"
+     },
+     {
+      "completed_at": null,
+      "tasks": [
+       {
+        "done_at": "2025-10-03T12:35:00+00:00",
+        "text": "Merge a pull request"
+       },
+       {
+        "done_at": null,
+        "text": "Pass QA"
+       },
+       {
+        "done_at": null,
+        "text": "Audit its context"
+       }
+      ],
+      "tier": "medium"
+     },
+     {
+      "completed_at": null,
+      "tasks": [
+       {
+        "done_at": null,
+        "text": "Merge 10 pull requests"
+       },
+       {
+        "done_at": null,
+        "text": "Audit its context and find no outdated claim"
+       },
+       {
+        "done_at": null,
+        "text": "Review 10 times"
+       }
+      ],
+      "tier": "hard"
+     },
+     {
+      "completed_at": null,
+      "tasks": [
+       {
+        "done_at": null,
+        "text": "Merge 50 pull requests"
+       },
+       {
+        "done_at": null,
+        "text": "Go 30 days without a failed job"
+       },
+       {
+        "done_at": null,
+        "text": "Complete every task above"
+       }
+      ],
+      "tier": "elite"
+     }
+    ]
+   }
+  ],
+  "quests": [
+   {
+    "completed_at": "2025-10-03T12:35:00+00:00",
+    "id": "first_steps",
+    "name": "First Steps",
+    "points": 1,
+    "requirement": null,
+    "requirement_met": true,
+    "reward": "1 quest point; Operations and Coding XP",
+    "state": "complete",
+    "steps": [
+     {
+      "done_at": "2025-10-01T12:30:00+00:00",
+      "text": "Onboard a repository"
+     },
+     {
+      "done_at": "2025-10-02T12:30:00+00:00",
+      "text": "Finish its first job"
+     },
+     {
+      "done_at": "2025-10-03T12:35:00+00:00",
+      "text": "Merge its first pull request"
+     }
+    ],
+    "where": "acme/new"
+   },
+   {
+    "completed_at": "2025-10-05T15:05:00+00:00",
+    "id": "try_again",
+    "name": "Try, Try Again",
+    "points": 1,
+    "requirement": null,
+    "requirement_met": true,
+    "reward": "1 quest point; Recovery XP",
+    "state": "complete",
+    "steps": [
+     {
+      "done_at": "2025-10-04T12:30:00+00:00",
+      "text": "Watch a job on an issue fail"
+     },
+     {
+      "done_at": "2025-10-05T15:05:00+00:00",
+      "text": "Merge a later job on that issue"
+     }
+    ],
+    "where": "iss-1"
+   },
+   {
+    "completed_at": "2025-10-06T12:35:00+00:00",
+    "id": "gatekeeper",
+    "name": "Gatekeeper",
+    "points": 2,
+    "requirement": null,
+    "requirement_met": true,
+    "reward": "2 quest points; Reviewing and Quality assurance XP",
+    "state": "complete",
+    "steps": [
+     {
+      "done_at": "2025-10-06T12:18:00+00:00",
+      "text": "Review an issue's pull request"
+     },
+     {
+      "done_at": "2025-10-06T12:24:00+00:00",
+      "text": "Pass QA on it"
+     },
+     {
+      "done_at": "2025-10-06T12:35:00+00:00",
+      "text": "Merge it"
+     }
+    ],
+    "where": "iss-2"
+   },
+   {
+    "completed_at": null,
+    "id": "divine_warden",
+    "name": "Divine Warden",
+    "points": 5,
+    "requirement": "A character at total level 1,000",
+    "requirement_met": false,
+    "reward": "5 quest points; a Divine trim on every cape",
+    "state": "not_started",
+    "steps": [
+     {
+      "done_at": null,
+      "text": "Merge 100 pull requests"
+     },
+     {
+      "done_at": null,
+      "text": "Complete a repo diary at Elite"
+     }
+    ],
+    "where": null
+   }
+  ],
+  "recent": [
+   {
+    "agent_type": "developer",
+    "at": "2026-01-01T13:30:00+00:00",
+    "kind": "level",
+    "level": 67,
+    "stat": "version_control"
+   },
+   {
+    "agent_type": "qa",
+    "at": "2026-01-01T12:12:00+00:00",
+    "id": "golden-paper-crown",
+    "kind": "rare"
+   },
+   {
+    "at": "2026-01-01T12:12:00+00:00",
+    "id": "rare_finds",
+    "kind": "achievement",
+    "name": "Rare Finds",
+    "tier": "gold"
+   },
+   {
+    "agent_type": "developer",
+    "at": "2025-12-25T15:35:00+00:00",
+    "id": "paper-crown",
+    "kind": "rare"
+   },
+   {
+    "at": "2025-12-25T15:35:00+00:00",
+    "id": "no_death_run",
+    "kind": "achievement",
+    "name": "No-Death Run",
+    "tier": "platinum"
+   },
+   {
+    "at": "2025-12-25T15:35:00+00:00",
+    "id": "rare_finds",
+    "kind": "achievement",
+    "name": "Rare Finds",
+    "tier": "silver"
+   },
+   {
+    "at": "2025-11-27T12:00:00+00:00",
+    "id": "fashion_inspector",
+    "kind": "achievement",
+    "name": "Fashion Inspector",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-26T12:00:00+00:00",
+    "id": "training_grounds",
+    "kind": "achievement",
+    "name": "Training Grounds",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-25T12:00:00+00:00",
+    "id": "second_opinion",
+    "kind": "achievement",
+    "name": "Second Opinion",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-20T12:00:00+00:00",
+    "id": "talked_to_the_quest_giver",
+    "kind": "achievement",
+    "name": "Talked to the Quest Giver",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-20T12:00:00+00:00",
+    "id": "quest_accepted",
+    "kind": "achievement",
+    "name": "Quest Accepted",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-15T12:00:00+00:00",
+    "id": "elite_hunter",
+    "kind": "achievement",
+    "name": "Elite Hunter",
+    "tier": "silver"
+   },
+   {
+    "at": "2025-11-13T12:00:00+00:00",
+    "id": "hunt_complete",
+    "kind": "achievement",
+    "name": "Hunt Complete",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-13T12:00:00+00:00",
+    "id": "boss_hunter",
+    "kind": "achievement",
+    "name": "Boss Hunter",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-13T12:00:00+00:00",
+    "id": "elite_hunter",
+    "kind": "achievement",
+    "name": "Elite Hunter",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-13T12:00:00+00:00",
+    "id": "never_respawned",
+    "kind": "achievement",
+    "name": "Never Respawned",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-12T12:00:00+00:00",
+    "id": "deployed_and_dusted",
+    "kind": "achievement",
+    "name": "Deployed and Dusted",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-11T12:00:00+00:00",
+    "id": "out_of_reach",
+    "kind": "achievement",
+    "name": "Out of Reach",
+    "tier": "bronze"
+   },
+   {
+    "at": "2025-11-11T12:00:00+00:00",
+    "id": "ninety_nine_problems",
+    "kind": "achievement",
+    "name": "99 Problems",
+    "tier": "complete"
+   },
+   {
+    "at": "2025-11-10T12:00:00+00:00",
+    "id": "on_the_hunt",
+    "kind": "achievement",
+    "name": "On the Hunt",
+    "tier": "bronze"
+   }
+  ],
+  "skills": [
+   {
+    "group": "build",
+    "id": "coding",
+    "name": "Coding"
+   },
+   {
+    "group": "build",
+    "id": "version_control",
+    "name": "Version control"
+   },
+   {
+    "group": "build",
+    "id": "building",
+    "name": "Building"
+   },
+   {
+    "group": "build",
+    "id": "shell",
+    "name": "Shell"
+   },
+   {
+    "group": "build",
+    "id": "databases",
+    "name": "Databases"
+   },
+   {
+    "group": "verify",
+    "id": "testing",
+    "name": "Testing"
+   },
+   {
+    "group": "verify",
+    "id": "quality_assurance",
+    "name": "Quality assurance"
+   },
+   {
+    "group": "verify",
+    "id": "browsing",
+    "name": "Browsing"
+   },
+   {
+    "group": "verify",
+    "id": "reviewing",
+    "name": "Reviewing"
+   },
+   {
+    "group": "verify",
+    "id": "linting",
+    "name": "Linting"
+   },
+   {
+    "group": "verify",
+    "id": "security",
+    "name": "Security"
+   },
+   {
+    "group": "investigate",
+    "id": "reading",
+    "name": "Reading"
+   },
+   {
+    "group": "investigate",
+    "id": "searching",
+    "name": "Searching"
+   },
+   {
+    "group": "investigate",
+    "id": "debugging",
+    "name": "Debugging"
+   },
+   {
+    "group": "investigate",
+    "id": "research",
+    "name": "Research"
+   },
+   {
+    "group": "investigate",
+    "id": "triage",
+    "name": "Triage"
+   },
+   {
+    "group": "care",
+    "id": "documentation",
+    "name": "Documentation"
+   },
+   {
+    "group": "care",
+    "id": "design",
+    "name": "Design"
+   },
+   {
+    "group": "care",
+    "id": "operations",
+    "name": "Operations"
+   },
+   {
+    "group": "care",
+    "id": "planning",
+    "name": "Planning"
+   },
+   {
+    "group": "care",
+    "id": "delegation",
+    "name": "Delegation"
+   },
+   {
+    "group": "care",
+    "id": "communication",
+    "name": "Communication"
+   },
+   {
+    "group": "care",
+    "id": "recovery",
+    "name": "Recovery"
+   }
+  ]
+ },
+ "quest_xp": {
+  "cleanup": [
+   {
+    "agent_type": "slopmaster",
+    "stat": "coding",
+    "xp": 106100
+   },
+   {
+    "agent_type": "slopmaster",
+    "stat": "version_control",
+    "xp": 20000
+   }
+  ],
+  "merged": [
+   {
+    "agent_type": "developer",
+    "stat": "coding",
+    "xp": 95000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "reading",
+    "xp": 60000
+   },
+   {
+    "agent_type": "review",
+    "stat": "coding",
+    "xp": 56000
+   },
+   {
+    "agent_type": "review",
+    "stat": "testing",
+    "xp": 34800
+   },
+   {
+    "agent_type": "review",
+    "stat": "reviewing",
+    "xp": 30000
+   },
+   {
+    "agent_type": "review",
+    "stat": "shell",
+    "xp": 30000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "version_control",
+    "xp": 20000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "shell",
+    "xp": 18000
+   },
+   {
+    "agent_type": "review",
+    "stat": "planning",
+    "xp": 18000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "searching",
+    "xp": 16000
+   },
+   {
+    "agent_type": "review",
+    "stat": "version_control",
+    "xp": 15000
+   },
+   {
+    "agent_type": "review",
+    "stat": "browsing",
+    "xp": 14000
+   },
+   {
+    "agent_type": "review",
+    "stat": "linting",
+    "xp": 12000
+   },
+   {
+    "agent_type": "review",
+    "stat": "research",
+    "xp": 12000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "planning",
+    "xp": 10000
+   },
+   {
+    "agent_type": "review",
+    "stat": "documentation",
+    "xp": 8400
+   },
+   {
+    "agent_type": "developer",
+    "stat": "research",
+    "xp": 6000
+   },
+   {
+    "agent_type": "review",
+    "stat": "delegation",
+    "xp": 6000
+   },
+   {
+    "agent_type": "review",
+    "stat": "databases",
+    "xp": 5400
+   },
+   {
+    "agent_type": "review",
+    "stat": "operations",
+    "xp": 5200
+   },
+   {
+    "agent_type": "review",
+    "stat": "building",
+    "xp": 4800
+   },
+   {
+    "agent_type": "developer",
+    "stat": "browsing",
+    "xp": 4000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "delegation",
+    "xp": 4000
+   },
+   {
+    "agent_type": "review",
+    "stat": "debugging",
+    "xp": 2800
+   },
+   {
+    "agent_type": "review",
+    "stat": "design",
+    "xp": 2800
+   },
+   {
+    "agent_type": "review",
+    "stat": "security",
+    "xp": 1800
+   },
+   {
+    "agent_type": "developer",
+    "stat": "debugging",
+    "xp": 1200
+   }
+  ],
+  "plain": [
+   {
+    "agent_type": "developer",
+    "stat": "reading",
+    "xp": 60000
+   },
+   {
+    "agent_type": "review",
+    "stat": "coding",
+    "xp": 56000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "coding",
+    "xp": 35000
+   },
+   {
+    "agent_type": "review",
+    "stat": "testing",
+    "xp": 34800
+   },
+   {
+    "agent_type": "review",
+    "stat": "reviewing",
+    "xp": 30000
+   },
+   {
+    "agent_type": "review",
+    "stat": "shell",
+    "xp": 30000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "shell",
+    "xp": 18000
+   },
+   {
+    "agent_type": "review",
+    "stat": "planning",
+    "xp": 18000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "searching",
+    "xp": 16000
+   },
+   {
+    "agent_type": "review",
+    "stat": "version_control",
+    "xp": 15000
+   },
+   {
+    "agent_type": "review",
+    "stat": "browsing",
+    "xp": 14000
+   },
+   {
+    "agent_type": "review",
+    "stat": "linting",
+    "xp": 12000
+   },
+   {
+    "agent_type": "review",
+    "stat": "research",
+    "xp": 12000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "planning",
+    "xp": 10000
+   },
+   {
+    "agent_type": "review",
+    "stat": "documentation",
+    "xp": 8400
+   },
+   {
+    "agent_type": "developer",
+    "stat": "research",
+    "xp": 6000
+   },
+   {
+    "agent_type": "review",
+    "stat": "delegation",
+    "xp": 6000
+   },
+   {
+    "agent_type": "review",
+    "stat": "databases",
+    "xp": 5400
+   },
+   {
+    "agent_type": "review",
+    "stat": "operations",
+    "xp": 5200
+   },
+   {
+    "agent_type": "review",
+    "stat": "building",
+    "xp": 4800
+   },
+   {
+    "agent_type": "developer",
+    "stat": "browsing",
+    "xp": 4000
+   },
+   {
+    "agent_type": "developer",
+    "stat": "delegation",
+    "xp": 4000
+   },
+   {
+    "agent_type": "review",
+    "stat": "debugging",
+    "xp": 2800
+   },
+   {
+    "agent_type": "review",
+    "stat": "design",
+    "xp": 2800
+   },
+   {
+    "agent_type": "review",
+    "stat": "security",
+    "xp": 1800
+   },
+   {
+    "agent_type": "developer",
+    "stat": "debugging",
+    "xp": 1200
+   }
+  ]
+ }
+}

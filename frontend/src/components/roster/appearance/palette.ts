@@ -108,42 +108,6 @@ export const STRING: Hex = "#e6dcc0";
 export const CAPE_FILL: Hex = "var(--sprite-fill)";
 export const CAPE_SHADE: Hex = "color-mix(in srgb, var(--sprite-fill) 55%, black)";
 
-/**
- * A mastery cloak's body and trim, keyed by the development skill it marks
- * at 99 (progression spec 2026-10-24). Picked by eye for what the skill
- * evokes: forge orange on dark iron for coding, a red cross on white for
- * recovery.
- */
-export const MASTERY_CLOAK = {
-  coding: { base: "#4a4a52", trim: "#e07b2a" },
-  version_control: { base: "#3f6b2f", trim: "#8a5a2b" },
-  building: { base: "#8a6a4a", trim: "#d8ccaa" },
-  shell: { base: "#2f6a3a", trim: "#c0392b" },
-  databases: { base: "#3a3f55", trim: "#6fb7c9" },
-  testing: { base: "#e8e2d0", trim: "#9e2b2b" },
-  quality_assurance: { base: "#2f7a4a", trim: "#d8ccaa" },
-  browsing: { base: "#2a3550", trim: "#9a9aa2" },
-  reviewing: { base: "#2f4f9e", trim: "#d8ccaa" },
-  linting: { base: "#7a5a3a", trim: "#e3b94b" },
-  security: { base: "#efe9da", trim: "#e3b94b" },
-  reading: { base: "#2f6f9e", trim: "#d8ccaa" },
-  searching: { base: "#5c4a2a", trim: "#3f6e2d" },
-  debugging: { base: "#2b2a30", trim: "#9e2b2b" },
-  research: { base: "#3a2f7a", trim: "#7fb0ff" },
-  triage: { base: "#7a2a2a", trim: "#e3b94b" },
-  documentation: { base: "#2a6a6a", trim: "#c9a86a" },
-  design: { base: "#c9a227", trim: "#2a2a2e" },
-  operations: { base: "#c8641e", trim: "#f2c14e" },
-  planning: { base: "#4a7a2a", trim: "#c9a227" },
-  delegation: { base: "#3a2a4a", trim: "#9a9aa2" },
-  communication: { base: "#3a6a2a", trim: "#c9a86a" },
-  recovery: { base: "#d8d8d8", trim: "#c0392b" },
-} as const;
-export type SkillId = keyof typeof MASTERY_CLOAK;
-
-/** The quest cloak: every quest the account offers, done. */
-export const QUEST_CLOAK = { base: "#2f4a8f", trim: "#ece6d4" } as const;
-
 function channel(hex: Hex, i: number): number {
   return parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16);
 }

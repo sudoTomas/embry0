@@ -4,18 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from embry0.services.achievements import (
-    CATALOGUE,
-    CATEGORIES,
-    COMPLETE,
-    TIER_NAMES,
-    evaluate,
-    metric_steps,
-)
-from embry0.services.progression import STATS, AgentLevelUp, LevelUp, RareDrop, compute
+from embry0.services.achievements import COMPLETE, evaluate, metric_steps
+from embry0.services.progression import AgentLevelUp, LevelUp, RareDrop, compute
+from embry0.services.progression_pack import default_rules, fact_key
 from embry0.storage.repositories.progression import Fact, ProgressEvent
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
+RULES = default_rules()
+CATALOGUE = [a.entry for a in RULES.achievements]
+CATEGORIES = RULES.pack.achievement_categories
+TIER_NAMES = RULES.tier_ids
+SKILLS = RULES.skill_ids
 
 #: Ids an earlier catalogue unlocked with the same metric: they key unlocks, so they never change.
 KEPT_IDS = {
@@ -57,7 +56,7 @@ def test_the_catalogue_is_fifty_outcomes_in_eight_categories_with_stable_ids() -
 
 def test_each_tier_unlocks_at_the_step_that_crossed_it_and_the_last_step_is_the_evidence() -> None:
     facts = [Fact("merged", at(i), 1, f"o/r #{i}", f"https://forge/o/r/pull/{i}") for i in range(16)]
-    states, unlocks = evaluate(facts)
+    states, unlocks = evaluate(facts, rules=RULES)
     forged = by_id(states)["forged_in_fire"]
     assert forged.value == 16 and forged.tier == 3, "1, 5 and 15 merges: Bronze, Silver, Gold"
     assert forged.tier_at == [at(0), at(4), at(14)]
@@ -79,14 +78,14 @@ def test_an_audit_report_counts_its_claims_or_a_clean_audit() -> None:
         Fact("audit", at(6), 1, "o/clean", report="Stale: 0\nFiles: 4\n"),
         Fact("audit", at(7), 1, "o/empty", report="Stale: 0\nFiles: 0\n"),
     ]
-    s = by_id(evaluate(facts)[0])
+    s = by_id(evaluate(facts, rules=RULES)[0])
     assert s["lines_straightened"].value == 120 and s["lines_straightened"].tier == 3
     assert s["lines_straightened"].tier_at == [at(5)] * 3, "one step can cross several tiers"
     assert s["weeded_garden"].value == 1 and s["weeded_garden"].evidence.label == "o/clean"
 
 
 def test_an_objective_is_complete_once_and_has_no_tier() -> None:
-    states, unlocks = evaluate([Fact("long_grind", at(3), 1, "o/r #9")])
+    states, unlocks = evaluate([Fact(fact_key("merged_running_over", {"hours": 2}), at(3), 1, "o/r #9")], rules=RULES)
     body = by_id(states)["long_grind"].to_dict()
     assert body["kind"] == "objective" and body["tier"] == COMPLETE and body["state"] == "unlocked"
     assert body["next_threshold"] is None and body["thresholds"] == [1]
@@ -94,11 +93,11 @@ def test_an_objective_is_complete_once_and_has_no_tier() -> None:
 
 
 def test_a_secret_shows_its_category_and_nothing_else_until_its_first_signal() -> None:
-    hidden = by_id(evaluate([])[0])["back_on_your_feet"].to_dict()
+    hidden = by_id(evaluate([], rules=RULES)[0])["back_on_your_feet"].to_dict()
     assert hidden["name"] == "???" and hidden["state"] == "secret" and hidden["category"] == "grit"
     assert hidden["what_counts"] is None and hidden["flavour"] is None and hidden["icon"] is None
     assert hidden["evidence"] is None and hidden["thresholds"] is None
-    seen = by_id(evaluate([Fact("comeback", at(9), 1, "o/r #2")])[0])["back_on_your_feet"].to_dict()
+    seen = by_id(evaluate([Fact("comeback", at(9), 1, "o/r #2")], rules=RULES)[0])["back_on_your_feet"].to_dict()
     assert seen["name"] == "Back on Your Feet" and seen["state"] == "unlocked" and seen["secret"] is True
 
 
@@ -110,12 +109,12 @@ def test_progress_metrics_come_from_levels_capes_agent_levels_and_rares() -> Non
         LevelUp(at(4), "review", "reading", 99),
         LevelUp(at(5), "review", "searching", 50),
     ]
-    steps = metric_steps([], ups)
+    steps = metric_steps([], ups, rules=RULES)
     # developer: 23 + 98 = 121 at minute 2; review overtakes at minute 5 with 23 + 29 + 98 + 49 = 199.
-    assert sum(step.value for step in steps["best_total"]) == (23 + 29 + 98 + 49) - len(STATS)
+    assert sum(step.value for step in steps["best_total"]) == (23 + 29 + 98 + 49) - len(SKILLS)
     agent_ups = [AgentLevelUp(at(1), "developer", 12), AgentLevelUp(at(2), "review", 8)]
     drops = [RareDrop(at(6), "developer", "paper-crown")]
-    s = by_id(evaluate([], ups, agent_ups, drops)[0])
+    s = by_id(evaluate([], ups, agent_ups, drops, rules=RULES)[0])
     assert s["elder_agent"].value == 199, "the highest total of any one character, not the sum"
     assert s["mastery_cloak"].value == 2 and s["mastery_cloak"].tier_at == [at(2), at(4)]
     assert s["halfway_by_experience"].value == 2, "each skill counts once at 92, on its way to 99"
@@ -124,18 +123,19 @@ def test_progress_metrics_come_from_levels_capes_agent_levels_and_rares() -> Non
 
 
 def test_the_thousand_club_counts_each_character_once() -> None:
-    ups = [LevelUp(at(i), "developer", stat.id, 99) for i, stat in enumerate(STATS[:12])]
-    s = by_id(evaluate([], ups)[0])
+    ups = [LevelUp(at(i), "developer", stat, 99) for i, stat in enumerate(SKILLS[:12])]
+    s = by_id(evaluate([], ups, rules=RULES)[0])
     assert s["thousand_club"].value == 1 and s["thousand_club"].evidence.label == "developer"
 
 
 def test_recent_mixes_levels_and_unlocks_newest_first() -> None:
     events = [ProgressEvent("merged", "developer", at(0))]
-    progression = compute(events, [])
+    progression = compute(events, [], rules=RULES)
     progression.achievements, progression.unlocks = evaluate(
         [Fact("merged", at(0), 1, "o/r #1"), Fact("healed", at(30), 1, "Timeout")],
         progression.level_ups,
         progression.agent_level_ups,
+        rules=RULES,
     )
     recent = progression.to_dict()["recent"]
     assert [r["at"] for r in recent] == sorted((r["at"] for r in recent), reverse=True)

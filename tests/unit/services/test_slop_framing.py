@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 
 from embry0.orchestration.nodes.triage import build_triage_system_prompt, parse_triage_response
 from embry0.services.progression import price
+from embry0.services.progression_pack import default_rules
 from embry0.services.proposals import case_proposal
-from embry0.services.slop import CLEANED_XP, XP_PER_LINE_REMOVED
 from embry0.services.world import lead_entry
 from embry0.storage.repositories.progression import ProgressEvent
 from embry0.workflows.issue_to_pr.nodes._review import _slop_review_section
@@ -67,8 +67,10 @@ def test_the_reviewer_checks_a_cleanup_only_on_a_cleanup() -> None:
 
 def test_a_merged_cleanup_is_priced_by_its_net_lines_removed() -> None:
     event = ProgressEvent("cleaned", "slopmaster", NOW, json.dumps({"added": 10, "removed": 60}))
-    assert price(event) == [("coding", CLEANED_XP + 50 * XP_PER_LINE_REMOVED)]
-    assert price(ProgressEvent("cleaned", "slopmaster", NOW, None)) == [("coding", CLEANED_XP)]
+    rules = default_rules()
+    cleaned = rules.outcomes["cleaned"]
+    assert price(event, rules=rules) == [("coding", cleaned.xp + 50 * cleaned.per_line_removed)]
+    assert price(ProgressEvent("cleaned", "slopmaster", NOW, None), rules=rules) == [("coding", cleaned.xp)]
 
 
 def test_triage_is_asked_for_the_verdict_and_a_bad_one_never_fails_it() -> None:

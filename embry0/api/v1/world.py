@@ -320,6 +320,7 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
     quest = await _quest_or_404(request, job_id)
     repo = _state(request, "world_repo")
     verifications = getattr(request.app.state, "job_verifications_repo", None)
+    rules = await _state(request, "progression").rules()
     runs, approval, links, verification, pr, titles = await asyncio.gather(
         repo.quest_runs(job_id),
         repo.merge_approval(job_id),
@@ -370,7 +371,7 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
         "account_wait": account_wait_view(quest),
         # Slop dungeon: the slopometer's verdict, and a cleanup's diff counts.
         "work_nature": quest.get("work_nature"),
-        "xp": quest_xp(quest, runs),
+        "xp": quest_xp(quest, runs, rules=rules),
         "cost_usd": round(float(quest.get("total_cost_usd") or 0), 4),
         "seconds": (finished - started).total_seconds()
         if isinstance(started, datetime) and isinstance(finished, datetime)

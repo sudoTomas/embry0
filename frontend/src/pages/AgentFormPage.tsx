@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/Textarea";
 import { AgentIdentityFields } from "@/components/agents/AgentIdentityFields";
 import { ConfigSection } from "@/components/agents/ConfigSection";
 import { SkillSheet } from "@/components/progression/SkillSheet";
-import { TIER_NAME } from "@/lib/tiers";
+import { gamePackOf, label, tierName } from "@/lib/gamePack";
 import { ToolChecklist } from "@/components/agents/ToolChecklist";
 import { SkillPicker } from "@/components/skills/SkillPicker";
 import { useAgent, useCreateAgent, useUpdateAgent } from "@/hooks/useAgents";
@@ -364,11 +364,11 @@ export function AgentFormPage() {
         <ConfigSection
           id="character"
           title="Character"
-          summary={`Level ${character.level} · total level ${character.total_level.toLocaleString("en-US")} · ${TIER_NAME[character.tier]} gear`}
+          summary={`Level ${character.level} · total level ${character.total_level.toLocaleString("en-US")} · ${label(gamePackOf(progression.data), "gear", { tier: tierName(gamePackOf(progression.data), character.tier) })}`}
           open={sections.character}
           onToggle={(open) => setSections((prev) => ({ ...prev, character: open }))}
         >
-          <SkillSheet character={character} skills={progression.data.skills} identity={identityOf({ ...form, type: typeParam ?? "" })} />
+          <SkillSheet character={character} skills={progression.data.skills} identity={identityOf({ ...form, type: typeParam ?? "" })} pack={gamePackOf(progression.data)} />
         </ConfigSection>
       )}
 

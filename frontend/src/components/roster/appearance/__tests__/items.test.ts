@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ITEMS, type Item } from "../items";
-import { CAPE_FILL, METAL, MASTERY_CLOAK } from "../palette";
+import { ITEMS, cloakId, itemOf, type Item } from "../items";
+import { CAPE_FILL, METAL, dark } from "../palette";
 import { GRID, type EquipmentSlot, type Frame } from "../types";
 
 const SLOTS: EquipmentSlot[] = ["head", "cape", "neck", "weapon", "body", "shield", "legs", "hands", "feet"];
@@ -69,15 +69,16 @@ describe("equipment catalogue", () => {
     expect(wearing.map(([key]) => key).sort()).toEqual(["cape", "cape-divine", "paper-crown", "trimmed-cape", "trimmed-cape-divine"]);
   });
 
-  it("draws a plain and a trimmed mastery cloak for every skill, in its own colours", () => {
-    for (const skill of Object.keys(MASTERY_CLOAK)) {
-      const plain = ITEMS[`${skill}-cloak` as keyof typeof ITEMS] as Item;
-      const trimmed = ITEMS[`${skill}-cloak-t` as keyof typeof ITEMS] as Item;
-      expect(plain.slot, skill).toBe("cape");
-      expect(trimmed.slot, skill).toBe("cape");
-      expect(plain.colours.c, skill).toBe(MASTERY_CLOAK[skill as keyof typeof MASTERY_CLOAK].base);
-      expect(trimmed.layer, `${skill} trimmed`).not.toEqual(plain.layer);
-    }
+  it("draws a cloak in any colours the content pack gives it, plain or trimmed (#176)", () => {
+    const colours = { base: "#4a4a52", trim: "#e07b2a" };
+    const plain = itemOf(cloakId(colours))!;
+    const trimmed = itemOf(cloakId(colours, true))!;
+    expect(plain.slot).toBe("cape");
+    expect(plain.colours).toEqual({ o: "#15121c", c: "#4a4a52", C: dark("#4a4a52"), "5": "#e07b2a" });
+    expect(plain.drape, "its drape shows from the front").toBeDefined();
+    expect(trimmed.layer).not.toEqual(plain.layer);
+    expect(itemOf(cloakId(colours)), "composed once").toBe(plain);
+    expect(itemOf("cloak:red:blue"), "colours that are not #rrggbb draw nothing").toBeUndefined();
   });
 
   it("has a full set per metal tier and the three mage orders", () => {
@@ -93,13 +94,14 @@ describe("equipment catalogue", () => {
 describe("quest cloak and Divine trim (progression spec 2026-10-24)", () => {
   it("gives every cape a Divine-trimmed form on the trimmed cape, in the Divine metal", () => {
     const capes = items.filter(([, item]) => item.slot === "cape");
-    const plain = capes.filter(([key]) => !key.endsWith("-divine"));
-    expect(plain.map(([key]) => key)).toContain("quest-cloak");
-    for (const [key, item] of plain) {
+    for (const [key, item] of capes.filter(([key]) => !key.endsWith("-divine"))) {
       const divine = ITEMS[`${key}-divine` as keyof typeof ITEMS] as Item;
       expect(divine, key).toBeDefined();
       expect(divine.colours["5"], key).toBe(METAL.divine);
       expect(divine.colours.c, key).toBe(item.colours.c);
     }
+    const cloak = itemOf(cloakId({ base: "#2f4a8f", trim: "#ece6d4" }, false, true))!;
+    expect(cloak.colours["5"], "a cloak's trim too").toBe(METAL.divine);
+    expect(cloak.layer).toEqual(itemOf(cloakId({ base: "#2f4a8f", trim: "#ece6d4" }, true))!.layer);
   });
 });

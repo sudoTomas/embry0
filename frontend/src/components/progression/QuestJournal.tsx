@@ -1,4 +1,5 @@
 import type { Quest } from "@/api/progression";
+import { label, type GamePack } from "@/lib/gamePack";
 import { cn, formatDate } from "@/lib/utils";
 
 /** The old quest list's colours: red not started, yellow in progress, green complete. */
@@ -13,12 +14,15 @@ const STATE: Record<Quest["state"], { label: string; className: string }> = {
  * its state's colour, its steps struck through as they are done, what it
  * requires and what it rewards.
  */
-export function QuestJournal({ quests, points }: { quests: Quest[]; points: number }) {
+export function QuestJournal({ quests, points, pack }: { quests: Quest[]; points: number; pack: GamePack | null }) {
   const total = quests.reduce((n, q) => n + q.points, 0);
   return (
     <section className="space-y-2" aria-labelledby="quests-heading">
       <h2 id="quests-heading" className="text-section font-semibold">
-        Deeds <span className="font-normal text-fg-secondary">· {points} of {total} deed points</span>
+        {label(pack, "quest_journal")}{" "}
+        <span className="font-normal text-fg-secondary">
+          · {points} of {total} {label(pack, "journal_points")}
+        </span>
       </h2>
       <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
         {quests.map((quest) => (
@@ -26,7 +30,7 @@ export function QuestJournal({ quests, points }: { quests: Quest[]; points: numb
             <div className="flex items-baseline justify-between gap-2">
               <h3 className={cn("text-sm font-semibold", STATE[quest.state].className)}>{quest.name}</h3>
               <span className="shrink-0 text-xs text-muted-foreground">
-                {STATE[quest.state].label} · {quest.points} {quest.points === 1 ? "point" : "points"}
+                {STATE[quest.state].label} · {quest.points} {label(pack, quest.points === 1 ? "quest_point" : "quest_points")}
               </span>
             </div>
             {quest.requirement && (

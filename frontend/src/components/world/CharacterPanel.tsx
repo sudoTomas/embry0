@@ -6,7 +6,8 @@ import { Button, buttonVariants } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useCharacter } from "@/hooks/useWorld";
-import { TIER_NAME } from "@/lib/tiers";
+import { useGamePack } from "@/hooks/useGamePack";
+import { tierName } from "@/lib/gamePack";
 import {
   OUTCOME_WORDS,
   STATE_POSE,
@@ -20,7 +21,6 @@ import {
   stateTone,
 } from "@/lib/world";
 import { formatDate } from "@/lib/utils";
-import type { Tier } from "@/api/progression";
 import { WatchParty } from "./WatchParty";
 
 interface CharacterPanelProps {
@@ -55,6 +55,7 @@ function LogRow({ entry, onOpen }: { entry: QuestLogEntry; onOpen: () => void })
 /** One agent up close: its gear and skills, what it is doing (watched live while it works), its record and its job history. */
 export function CharacterPanel({ character, party, skillName, canAct, onClose, onOpenQuest, onWriteQuest }: CharacterPanelProps) {
   const identity = useIdentityLookup()(character.agent_type);
+  const pack = useGamePack();
   const detail = useCharacter(character.agent_type);
   const stats = character.stats;
   const out = party && ["travelling", "working", "waiting"].includes(party.state);
@@ -66,7 +67,7 @@ export function CharacterPanel({ character, party, skillName, canAct, onClose, o
           <AgentAvatar identity={identity} size={64} state={STATE_POSE[character.state]} />
           <div className="min-w-0 flex-1 space-y-1">
             <p className="text-sm text-fg-secondary">
-              <span className="hud text-fg">Level {character.level}</span> · total {character.total_level} · {TIER_NAME[character.tier as Tier] ?? character.tier}
+              <span className="hud text-fg">Level {character.level}</span> · total {character.total_level} · {tierName(pack, character.tier)}
             </p>
             <p className="text-xs text-fg-muted">{bestSkills(character, 5).map((s) => `${skillName(s.stat)} ${s.level}`).join(" · ")}</p>
           </div>

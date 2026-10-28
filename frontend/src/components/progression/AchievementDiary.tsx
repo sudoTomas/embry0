@@ -3,14 +3,16 @@ import { AchievementIcon } from "@/components/progression/achievementIcons";
 import { STATE_FILTERS, type StateFilter } from "@/components/progression/diaryFilters";
 import {
   COMPLETE_COLOR,
-  COMPLETE_NAME,
-  TIER_COLOR,
-  TIER_NAME,
-  TIER_ORDER,
   achievementColor,
   achievementTierName,
+  completeName,
+  gamePackOf,
   readable,
-} from "@/lib/tiers";
+  tierColor,
+  tierName,
+  tierOrder,
+  type GamePack,
+} from "@/lib/gamePack";
 import { cn, formatDate } from "@/lib/utils";
 
 const number = (n: number) => n.toLocaleString("en-US");
@@ -29,18 +31,18 @@ function Chip({ color, children, testId }: { color: string; children: React.Reac
 }
 
 /** The tier ladder an achievement's next step is on: the colour of the tier it is working towards. */
-function nextTier(entry: AchievementEntry): { name: string; color: string } | null {
+function nextTier(pack: GamePack, entry: AchievementEntry): { name: string; color: string } | null {
   if (entry.next_threshold === null) return null;
-  if (entry.kind === "objective") return { name: COMPLETE_NAME, color: COMPLETE_COLOR };
-  const tier = TIER_ORDER[entry.tiers_reached];
-  return { name: TIER_NAME[tier], color: TIER_COLOR[tier] };
+  if (entry.kind === "objective") return { name: completeName(pack), color: COMPLETE_COLOR };
+  const tier = tierOrder(pack)[entry.tiers_reached] ?? "";
+  return { name: tierName(pack, tier), color: tierColor(pack, tier) };
 }
 
-function AchievementCard({ entry, categoryName }: { entry: AchievementEntry; categoryName: string }) {
+function AchievementCard({ entry, categoryName, pack }: { entry: AchievementEntry; categoryName: string; pack: GamePack }) {
   const hidden = entry.state === "secret";
   const unlocked = entry.state === "unlocked";
-  const color = achievementColor(entry.tier);
-  const next = nextTier(entry);
+  const color = achievementColor(pack, entry.tier);
+  const next = nextTier(pack, entry);
   // The bar runs from the tier reached to the next one, so each tier starts empty.
   const floor = entry.thresholds && entry.tiers_reached > 0 ? entry.thresholds[entry.tiers_reached - 1] : 0;
   const pct =
@@ -80,7 +82,7 @@ function AchievementCard({ entry, categoryName }: { entry: AchievementEntry; cat
           </Chip>
           {entry.tier ? (
             <Chip testId="tier-chip" color={color}>
-              {achievementTierName(entry.tier)}
+              {achievementTierName(pack, entry.tier)}
             </Chip>
           ) : next ? (
             <Chip testId="tier-chip" color={next.color}>
@@ -104,7 +106,7 @@ function AchievementCard({ entry, categoryName }: { entry: AchievementEntry; cat
             <p className="mt-1 font-mono text-[10px] text-white/50">
               {entry.kind === "objective"
                 ? `Complete at ${number(entry.thresholds[0])}`
-                : entry.thresholds.map((t, i) => `${TIER_NAME[TIER_ORDER[i]]} ${number(t)}`).join(" · ")}
+                : entry.thresholds.map((t, i) => `${tierName(pack, tierOrder(pack)[i] ?? "")} ${number(t)}`).join(" · ")}
             </p>
           )}
         </details>
@@ -187,6 +189,8 @@ export function AchievementDiary({
   onCategory: (id: string) => void;
   onState: (state: StateFilter) => void;
 }) {
+  const pack = gamePackOf(data);
+  const order = tierOrder(pack);
   const entries = data.achievements;
   const categories = data.achievement_categories ?? [];
   const categoryName = new Map(categories.map((c) => [c.id, c.name]));
@@ -195,9 +199,9 @@ export function AchievementDiary({
   const latest = unlocks[0];
   const highestIndex = Math.max(
     -1,
-    ...entries.map((e) => (e.tier && e.tier !== "complete" ? TIER_ORDER.indexOf(e.tier) : -1)),
+    ...entries.map((e) => (e.tier && e.tier !== "complete" ? order.indexOf(e.tier) : -1)),
   );
-  const highest = highestIndex >= 0 ? TIER_ORDER[highestIndex] : null;
+  const highest = highestIndex >= 0 ? order[highestIndex] : null;
   const shown = entries.filter(
     (e) => (category === "all" || e.category === category) && (state === "all" || e.state === state),
   );
@@ -232,15 +236,15 @@ export function AchievementDiary({
         <Tile label="Secrets" value={number(count("secret"))} sub="hidden until first sign" />
         <Tile
           label="Highest tier"
-          value={highest ? TIER_NAME[highest] : "None yet"}
-          sub="Bronze → Divine"
-          color={highest ? TIER_COLOR[highest] : undefined}
+          value={highest ? tierName(pack, highest) : "None yet"}
+          sub={order.length ? `${tierName(pack, order[0])} → ${tierName(pack, order[order.length - 1])}` : ""}
+          color={highest ? tierColor(pack, highest) : undefined}
         />
         <Tile
           label="Latest"
           value={latest ? latest.name : "Nothing yet"}
-          sub={latest ? `${achievementTierName(latest.tier)} · ${formatDate(latest.at)}` : "go merge something"}
-          color={latest ? achievementColor(latest.tier) : undefined}
+          sub={latest ? `${achievementTierName(pack, latest.tier)} · ${formatDate(latest.at)}` : "go merge something"}
+          color={latest ? achievementColor(pack, latest.tier) : undefined}
         />
       </div>
 
@@ -248,16 +252,16 @@ export function AchievementDiary({
         <div className="border border-border p-3 lg:col-span-2" data-testid="tier-legend">
           <h2 className="font-mono text-[11px] uppercase tracking-widest text-white/80">Tiers</h2>
           <ol className="mt-2 flex flex-wrap items-center gap-1.5">
-            {TIER_ORDER.map((tier, i) => (
+            {order.map((tier, i) => (
               <li key={tier} className="flex items-center gap-1.5">
                 {i > 0 && (
                   <span aria-hidden="true" className="text-white/30">
                     →
                   </span>
                 )}
-                <Chip color={TIER_COLOR[tier]}>
-                  <span aria-hidden="true" className="h-2 w-2" style={{ backgroundColor: TIER_COLOR[tier] }} />
-                  {TIER_NAME[tier]}
+                <Chip color={tierColor(pack, tier)}>
+                  <span aria-hidden="true" className="h-2 w-2" style={{ backgroundColor: tierColor(pack, tier) }} />
+                  {tierName(pack, tier)}
                 </Chip>
               </li>
             ))}
@@ -265,7 +269,7 @@ export function AchievementDiary({
           <p className="mt-2 text-[11px] text-muted-foreground">
             Each tiered achievement climbs the metal ladder as its count grows; the colour on a card is the tier it
             reached. One-off objectives read{" "}
-            <span style={{ color: readable(COMPLETE_COLOR) }}>{COMPLETE_NAME}</span> instead.
+            <span style={{ color: readable(COMPLETE_COLOR) }}>{completeName(pack)}</span> instead.
           </p>
         </div>
         <div className="border border-border p-3">
@@ -317,13 +321,13 @@ export function AchievementDiary({
           <h2 className="title-page text-sm text-white/80">Recent unlocks</h2>
           <div className="flex flex-wrap gap-1.5">
             {recentChips.map((u) => {
-              const color = achievementColor(u.tier);
+              const color = achievementColor(pack, u.tier);
               return (
                 <span
                   key={u.id}
                   className="inline-flex items-center gap-1.5 border px-2 py-1 text-xs"
                   style={{ borderColor: color, color: readable(color) }}
-                  title={`${achievementTierName(u.tier)} · ${formatDate(u.at)}`}
+                  title={`${achievementTierName(pack, u.tier)} · ${formatDate(u.at)}`}
                 >
                   <AchievementIcon name={iconOf.get(u.id) ?? null} color={color} size={14} />
                   {u.name}
@@ -339,7 +343,7 @@ export function AchievementDiary({
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {shown.map((entry) => (
-            <AchievementCard key={entry.id} entry={entry} categoryName={categoryName.get(entry.category) ?? entry.category} />
+            <AchievementCard key={entry.id} entry={entry} categoryName={categoryName.get(entry.category) ?? entry.category} pack={pack} />
           ))}
         </div>
       )}

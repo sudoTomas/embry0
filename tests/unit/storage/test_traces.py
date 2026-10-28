@@ -321,7 +321,7 @@ async def test_finish_records_the_runs_actions_by_skill(repos: tuple[JobsReposit
         cost_usd=0.0,
         duration_ms=1,
         tools_called={"Bash": 2},
-        skill_actions={"shell:testing": 2},
+        skill_actions={"shell:test-runner": 2},
         result_summary="",
         input_tokens=0,
         output_tokens=0,
@@ -330,4 +330,4 @@ async def test_finish_records_the_runs_actions_by_skill(repos: tuple[JobsReposit
         error_code=None,
         stderr_tail=None,
     )
-    assert (await traces_repo.get("run-sk"))["skill_actions"] == {"shell:testing": 2}
+    assert (await traces_repo.get("run-sk"))["skill_actions"] == {"shell:test-runner": 2}

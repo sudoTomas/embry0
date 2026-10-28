@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from embry0.services.quests import QUIET_DAYS, evaluate_diaries, evaluate_quests, quest_rewards
+from embry0.services.progression_pack import default_rules
+from embry0.services.quests import evaluate_diaries, evaluate_quests, quest_rewards
 from embry0.storage.repositories.progression import JobRow, Journal, RunRow
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
+RULES = default_rules()
+QUIET_DAYS = 30  # the shipped pack's quiet stretch
 
 
 def at(hours: float) -> datetime:
@@ -38,10 +41,10 @@ def by_id(quests: list) -> dict:
 
 
 def test_nothing_done_reads_as_four_quests_not_started() -> None:
-    quests = evaluate_quests(Journal([], []), [], None)
+    quests = evaluate_quests(Journal([], []), [], lambda _total: None, rules=RULES)
     assert [q.id for q in quests] == ["first_steps", "try_again", "gatekeeper", "divine_warden"]
     assert {q.state for q in quests} == {"not_started"}
-    assert quest_rewards(Journal([], [])) == []
+    assert quest_rewards(Journal([], []), rules=RULES) == []
 
 
 def test_the_first_steps_follows_one_repo_from_onboarding_to_its_first_merge() -> None:
@@ -54,10 +57,10 @@ def test_the_first_steps_follows_one_repo_from_onboarding_to_its_first_merge() -
         ],
         [],
     )
-    quest = by_id(evaluate_quests(journal, [], None))["first_steps"]
+    quest = by_id(evaluate_quests(journal, [], lambda _total: None, rules=RULES))["first_steps"]
     assert [s.done_at for s in quest.steps] == [at(1), at(2), at(3)]
     assert quest.state == "complete" and quest.completed_at == at(3) and quest.where == "o/new"
-    assert [(t, r.agent_type, r.stat) for t, r in quest_rewards(journal)] == [
+    assert [(t, r.agent_type, r.stat) for t, r in quest_rewards(journal, rules=RULES)] == [
         (at(3), "onboarding", "operations"),
         (at(3), "developer", "coding"),
     ]
@@ -65,30 +68,30 @@ def test_the_first_steps_follows_one_repo_from_onboarding_to_its_first_merge() -
 
 def test_the_try_again_needs_a_merge_after_a_failure_on_the_same_issue() -> None:
     failed_only = Journal([job(1, "failed", issue="i-1"), job(2, "pr_merged", issue="i-2")], [])
-    quest = by_id(evaluate_quests(failed_only, [], None))["try_again"]
+    quest = by_id(evaluate_quests(failed_only, [], lambda _total: None, rules=RULES))["try_again"]
     assert quest.state == "in_progress" and quest.steps[0].done_at == at(1)
     comeback = Journal([job(1, "failed", issue="i-1"), job(2, "pr_merged", issue="i-1")], [])
-    quest = by_id(evaluate_quests(comeback, [], None))["try_again"]
+    quest = by_id(evaluate_quests(comeback, [], lambda _total: None, rules=RULES))["try_again"]
     assert quest.completed_at == at(2) and quest.where == "i-1"
 
 
 def test_gatekeeper_wants_review_qa_and_merge_on_one_issue() -> None:
     split = Journal([job(3, "pr_merged", issue="i-2")], [run(1, "review", issue="i-1"), run(2, "qa", issue="i-2")])
-    quest = by_id(evaluate_quests(split, [], None))["gatekeeper"]
+    quest = by_id(evaluate_quests(split, [], lambda _total: None, rules=RULES))["gatekeeper"]
     assert quest.state == "in_progress" and quest.where == "i-2", "the issue furthest along"
     together = Journal([job(3, "pr_merged", issue="i-1")], [run(1, "review", issue="i-1"), run(2, "qa", issue="i-1")])
-    quest = by_id(evaluate_quests(together, [], None))["gatekeeper"]
+    quest = by_id(evaluate_quests(together, [], lambda _total: None, rules=RULES))["gatekeeper"]
     assert quest.completed_at == at(3) and quest.points == 2
 
 
 def test_divine_warden_waits_for_its_requirement() -> None:
     merges = [job(h, "pr_merged") for h in range(100)]
     journal = Journal(merges, [])
-    diaries = evaluate_diaries(journal)
-    quest = by_id(evaluate_quests(journal, diaries, None))["divine_warden"]
+    diaries = evaluate_diaries(journal, rules=RULES)
+    quest = by_id(evaluate_quests(journal, diaries, lambda _total: None, rules=RULES))["divine_warden"]
     assert quest.steps[0].done_at == at(99)
     assert quest.state == "in_progress" and quest.to_dict()["requirement_met"] is False
-    quest = by_id(evaluate_quests(journal, diaries, at(200)))["divine_warden"]
+    quest = by_id(evaluate_quests(journal, diaries, lambda _total: at(200), rules=RULES))["divine_warden"]
     assert quest.completed_at is None, "an Elite diary is still missing"
 
 
@@ -105,7 +108,7 @@ def test_a_diary_per_repo_with_four_tiers_of_tasks() -> None:
         ],
         [run(0.5, "triage", repo="o/a", issue="i-1"), run(1.5, "qa", repo="o/a", issue="i-1")],
     )
-    diaries = evaluate_diaries(journal)
+    diaries = evaluate_diaries(journal, rules=RULES)
     assert [d.repo for d in diaries] == ["o/a", "o/b"], "the one furthest along first"
     a = diaries[0]
     assert a.tier("easy").completed_at == at(1.5)
@@ -124,7 +127,7 @@ def test_a_diary_per_repo_with_four_tiers_of_tasks() -> None:
 
 
 def test_an_audit_whose_report_cannot_be_read_is_not_a_clean_one() -> None:
-    diary = evaluate_diaries(Journal([job(1, template="context-audit", report="cut short")], []))[0]
+    diary = evaluate_diaries(Journal([job(1, template="context-audit", report="cut short")], []), rules=RULES)[0]
     assert diary.tier("medium").tasks[2].done_at == at(1)
     assert diary.tier("hard").tasks[1].done_at is None
 
@@ -132,12 +135,12 @@ def test_an_audit_whose_report_cannot_be_read_is_not_a_clean_one() -> None:
 def test_the_quiet_stretch_restarts_at_every_failure() -> None:
     day = 24
     jobs = [job(0), job(10 * day, "failed"), job((10 + QUIET_DAYS - 1) * day), job((10 + QUIET_DAYS + 1) * day)]
-    diary = evaluate_diaries(Journal(jobs, []))[0]
+    diary = evaluate_diaries(Journal(jobs, []), rules=RULES)[0]
     assert diary.tier("elite").tasks[1].done_at == at((10 + QUIET_DAYS + 1) * day)
 
 
 def test_elite_needs_every_tier_below_it() -> None:
     merges = [job(h, "pr_merged") for h in range(50)]
-    diary = evaluate_diaries(Journal(merges, []))[0]
+    diary = evaluate_diaries(Journal(merges, []), rules=RULES)[0]
     assert diary.tier("elite").tasks[0].done_at == at(49)
     assert diary.tier("elite").tasks[2].done_at is None and diary.tier("elite").completed_at is None

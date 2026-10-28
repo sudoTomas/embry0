@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { GEAR_TIERS, ITEMS, type Item } from "../items";
-import { LADDERS, RARES, STYLE, dress, outfitKey, type CombatStyle, type Outfit } from "../outfit";
+import { LADDERS, STYLE, dress, outfitKey, type CombatStyle, type Outfit } from "../outfit";
 import { PRESETS, PRESET_IDS } from "../presets";
 
 const STYLES: CombatStyle[] = ["melee", "ranged", "magic"];
-const bronze: Outfit = { tier: "bronze", capes: [], rares: [] };
+const bronze: Outfit = { tier: "bronze" };
+const CODING = { base: "#4a4a52", trim: "#e07b2a" };
+const QUEST = { base: "#2f4a8f", trim: "#ece6d4" };
 
 function item(id: string): Item {
   const found = ITEMS[id as keyof typeof ITEMS] as Item | undefined;
@@ -54,28 +56,29 @@ describe("outfits (progression spec 2026-10-24)", () => {
     expect(dress(PRESETS.monk, null, { ...bronze, tier: "divine" }).equipment).toEqual(PRESETS.monk.equipment);
   });
 
-  it("swaps the party cape for the best 99's mastery cloak, trimmed for two or more", () => {
-    expect(dress(PRESETS.smith, "melee", { ...bronze, capes: ["coding"] }).equipment.cape).toBe("coding-cloak");
-    expect(dress(PRESETS.smith, "melee", { ...bronze, capes: ["coding", "databases"] }).equipment.cape).toBe("coding-cloak-t");
+  it("swaps the party cape for the best 99's cloak in its colours, trimmed for two or more", () => {
+    expect(dress(PRESETS.smith, "melee", { ...bronze, cloak: CODING }).equipment.cape).toBe("cloak:#4a4a52:#e07b2a");
+    expect(dress(PRESETS.smith, "melee", { ...bronze, cloak: CODING, trimmed: true }).equipment.cape).toBe("cloak:#4a4a52:#e07b2a:t");
   });
 
-  it("wears the quest cloak when no mastery cloak outranks it, and a Divine trim on any cape", () => {
-    expect(dress(PRESETS.smith, "melee", { ...bronze, questCloak: true }).equipment.cape).toBe("quest-cloak");
-    expect(dress(PRESETS.smith, "melee", { ...bronze, questCloak: true, capes: ["coding"] }).equipment.cape).toBe("coding-cloak");
+  it("wears the quest cloak when no skill's cloak outranks it, and a Divine trim on any cape", () => {
+    expect(dress(PRESETS.smith, "melee", { ...bronze, questCloak: QUEST }).equipment.cape).toBe("cloak:#2f4a8f:#ece6d4");
+    expect(dress(PRESETS.smith, "melee", { ...bronze, questCloak: QUEST, cloak: CODING }).equipment.cape).toBe("cloak:#4a4a52:#e07b2a");
     expect(dress(PRESETS.smith, "melee", { ...bronze, tier: "obsidian", divineTrim: true }).equipment.cape).toBe("cape-divine");
-    expect(dress(PRESETS.smith, "melee", { ...bronze, capes: ["coding", "databases"], divineTrim: true }).equipment.cape).toBe("coding-cloak-t-divine");
+    expect(dress(PRESETS.smith, "melee", { ...bronze, cloak: CODING, trimmed: true, divineTrim: true }).equipment.cape).toBe("cloak:#4a4a52:#e07b2a:t:d");
     expect(dress(PRESETS.smith, "melee", { ...bronze, divineTrim: true }).equipment.cape, "no cape at Bronze, nothing to trim").toBeUndefined();
   });
 
-  it("wears the rarest rare on its head", () => {
-    expect(RARES[0]).toBe("golden-paper-crown");
-    expect(dress(PRESETS.warden, "melee", { ...bronze, rares: ["harvest-mask", "paper-crown"] }).equipment.head).toBe("paper-crown");
-    expect(dress(PRESETS.warden, "melee", { ...bronze, rares: ["harvest-mask"] }).equipment.head).toBe("harvest-mask");
+  it("wears the rare it is given on its head", () => {
+    expect(dress(PRESETS.warden, "melee", { ...bronze, head: "paper-crown" }).equipment.head).toBe("paper-crown");
+    expect(dress(PRESETS.warden, "melee", { ...bronze, head: "harvest-mask" }).equipment.head).toBe("harvest-mask");
+    expect(dress(PRESETS.warden, "melee", bronze).equipment.head).toBe("bronze-open-helm");
   });
 
   it("keys an outfit by everything that changes how it looks", () => {
-    expect(outfitKey({ tier: "obsidian", capes: ["coding", "databases"], rares: ["paper-crown"] })).toBe("obsidian|coding,databases|paper-crown|");
-    expect(outfitKey({ ...bronze, questCloak: true, divineTrim: true })).toBe("bronze|||qd");
+    expect(outfitKey({ tier: "obsidian", cloak: CODING, trimmed: true, head: "paper-crown" })).toBe("obsidian|cloak:#4a4a52:#e07b2a:t|paper-crown|");
+    expect(outfitKey({ ...bronze, questCloak: QUEST, divineTrim: true })).toBe("bronze|qcloak:#2f4a8f:#ece6d4||d");
     expect(outfitKey(bronze)).not.toBe(outfitKey({ ...bronze, tier: "silver" }));
+    expect(outfitKey({ ...bronze, cloak: CODING })).not.toBe(outfitKey({ ...bronze, cloak: { ...CODING, base: "#000000" } }));
   });
 });

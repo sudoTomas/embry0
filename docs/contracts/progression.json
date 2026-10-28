@@ -1,0 +1,531 @@
+{
+  "action_keys": [
+    "agent:subagent",
+    "browser:browser",
+    "edit:docs",
+    "edit:infra",
+    "edit:source",
+    "edit:sql",
+    "edit:styles",
+    "edit:tests",
+    "log:log-query",
+    "plan:todo",
+    "read:files",
+    "search:code-search",
+    "shell:build-tool",
+    "shell:database-client",
+    "shell:linter",
+    "shell:ops-tool",
+    "shell:plain",
+    "shell:security-scanner",
+    "shell:test-runner",
+    "shell:vcs",
+    "web:web"
+  ],
+  "art": {
+    "achievement_icons": [
+      "anvil",
+      "sword",
+      "coins",
+      "boots",
+      "map",
+      "flame",
+      "helm",
+      "skull",
+      "shield",
+      "scroll",
+      "crown",
+      "grave",
+      "speech",
+      "quill",
+      "book",
+      "leaf",
+      "gem",
+      "potion",
+      "gate",
+      "target",
+      "hourglass",
+      "heart",
+      "pickaxe",
+      "beard",
+      "cape",
+      "star",
+      "moon",
+      "gift",
+      "eye",
+      "lamp",
+      "paw"
+    ],
+    "gear_steps": [
+      "bronze",
+      "silver",
+      "gold",
+      "platinum",
+      "diamond",
+      "obsidian",
+      "divine"
+    ],
+    "rare_art": [
+      "golden-paper-crown",
+      "paper-crown",
+      "harvest-mask"
+    ]
+  },
+  "default_view": {
+    "achievement_categories": [
+      {
+        "blurb": "Pull requests that merged, and how cleanly they got there.",
+        "id": "shipping",
+        "name": "Shipping"
+      },
+      {
+        "blurb": "Production errors the watcher found, and the fixes that kept them dead.",
+        "id": "hunting",
+        "name": "Hunting"
+      },
+      {
+        "blurb": "Issues finished, and the answers owners gave.",
+        "id": "questing",
+        "name": "Questing"
+      },
+      {
+        "blurb": "Instruction files, area maps and standards kept true.",
+        "id": "lore",
+        "name": "Lore"
+      },
+      {
+        "blurb": "Reviews, QA and the gate that stops a bad merge.",
+        "id": "guarding",
+        "name": "Guarding"
+      },
+      {
+        "blurb": "Work that failed, came back, and landed anyway.",
+        "id": "grit",
+        "name": "Grit"
+      },
+      {
+        "blurb": "What the characters grew into.",
+        "id": "growth",
+        "name": "Growth"
+      },
+      {
+        "blurb": "Strange hours and rare finds. Mostly secret.",
+        "id": "oddities",
+        "name": "Oddities"
+      }
+    ],
+    "cloaks": {
+      "quest": {
+        "base": "#2f4a8f",
+        "trim": "#ece6d4"
+      }
+    },
+    "curve": {
+      "character_max_level": 126,
+      "max_level": 99
+    },
+    "diary_tiers": [
+      {
+        "id": "easy",
+        "name": "Easy"
+      },
+      {
+        "id": "medium",
+        "name": "Medium"
+      },
+      {
+        "id": "hard",
+        "name": "Hard"
+      },
+      {
+        "id": "elite",
+        "name": "Elite"
+      }
+    ],
+    "groups": [
+      {
+        "id": "build",
+        "name": "Build"
+      },
+      {
+        "id": "verify",
+        "name": "Verify"
+      },
+      {
+        "id": "investigate",
+        "name": "Investigate"
+      },
+      {
+        "id": "care",
+        "name": "Care"
+      }
+    ],
+    "labels": {
+      "complete": "Complete",
+      "gear": "{tier} gear",
+      "journal_points": "deed points",
+      "mastery_cloak": "{skill} cape",
+      "quest_cloak": "quest cloak",
+      "quest_journal": "Deeds",
+      "quest_point": "point",
+      "quest_points": "points",
+      "trimmed_cloak": "{skill} cape (trimmed)"
+    },
+    "messages": {
+      "achievement_complete": "Achievement done: {name}.",
+      "achievement_tier": "{name} reached {tier}.",
+      "agent_level": "{character} is now level {level}.",
+      "diary": "The {tier} tasks of the {repo} diary are done.",
+      "level": "{character} reached {skill} level {level}.",
+      "quest": "Quest done: {name}.",
+      "rare": "{character} found a {rare}."
+    },
+    "pack": {
+      "hash": "a017aad14042fc4d8dcb80e01cdb766eebe67d63562f2365e8c635b613a5f9fe",
+      "timezone": "UTC",
+      "version": 1
+    },
+    "rares": [
+      {
+        "art": "golden-paper-crown",
+        "id": "golden-paper-crown",
+        "name": "golden paper crown"
+      },
+      {
+        "art": "paper-crown",
+        "id": "paper-crown",
+        "name": "paper crown"
+      },
+      {
+        "art": "harvest-mask",
+        "id": "harvest-mask",
+        "name": "harvest mask"
+      }
+    ],
+    "skills": [
+      {
+        "cloak": {
+          "base": "#4a4a52",
+          "trim": "#e07b2a"
+        },
+        "group": "build",
+        "id": "coding",
+        "name": "Coding"
+      },
+      {
+        "cloak": {
+          "base": "#3f6b2f",
+          "trim": "#8a5a2b"
+        },
+        "group": "build",
+        "id": "version_control",
+        "name": "Version control"
+      },
+      {
+        "cloak": {
+          "base": "#8a6a4a",
+          "trim": "#d8ccaa"
+        },
+        "group": "build",
+        "id": "building",
+        "name": "Building"
+      },
+      {
+        "cloak": {
+          "base": "#2f6a3a",
+          "trim": "#c0392b"
+        },
+        "group": "build",
+        "id": "shell",
+        "name": "Shell"
+      },
+      {
+        "cloak": {
+          "base": "#3a3f55",
+          "trim": "#6fb7c9"
+        },
+        "group": "build",
+        "id": "databases",
+        "name": "Databases"
+      },
+      {
+        "cloak": {
+          "base": "#e8e2d0",
+          "trim": "#9e2b2b"
+        },
+        "group": "verify",
+        "id": "testing",
+        "name": "Testing"
+      },
+      {
+        "cloak": {
+          "base": "#2f7a4a",
+          "trim": "#d8ccaa"
+        },
+        "group": "verify",
+        "id": "quality_assurance",
+        "name": "Quality assurance"
+      },
+      {
+        "cloak": {
+          "base": "#2a3550",
+          "trim": "#9a9aa2"
+        },
+        "group": "verify",
+        "id": "browsing",
+        "name": "Browsing"
+      },
+      {
+        "cloak": {
+          "base": "#2f4f9e",
+          "trim": "#d8ccaa"
+        },
+        "group": "verify",
+        "id": "reviewing",
+        "name": "Reviewing"
+      },
+      {
+        "cloak": {
+          "base": "#7a5a3a",
+          "trim": "#e3b94b"
+        },
+        "group": "verify",
+        "id": "linting",
+        "name": "Linting"
+      },
+      {
+        "cloak": {
+          "base": "#efe9da",
+          "trim": "#e3b94b"
+        },
+        "group": "verify",
+        "id": "security",
+        "name": "Security"
+      },
+      {
+        "cloak": {
+          "base": "#2f6f9e",
+          "trim": "#d8ccaa"
+        },
+        "group": "investigate",
+        "id": "reading",
+        "name": "Reading"
+      },
+      {
+        "cloak": {
+          "base": "#5c4a2a",
+          "trim": "#3f6e2d"
+        },
+        "group": "investigate",
+        "id": "searching",
+        "name": "Searching"
+      },
+      {
+        "cloak": {
+          "base": "#2b2a30",
+          "trim": "#9e2b2b"
+        },
+        "group": "investigate",
+        "id": "debugging",
+        "name": "Debugging"
+      },
+      {
+        "cloak": {
+          "base": "#3a2f7a",
+          "trim": "#7fb0ff"
+        },
+        "group": "investigate",
+        "id": "research",
+        "name": "Research"
+      },
+      {
+        "cloak": {
+          "base": "#7a2a2a",
+          "trim": "#e3b94b"
+        },
+        "group": "investigate",
+        "id": "triage",
+        "name": "Triage"
+      },
+      {
+        "cloak": {
+          "base": "#2a6a6a",
+          "trim": "#c9a86a"
+        },
+        "group": "care",
+        "id": "documentation",
+        "name": "Documentation"
+      },
+      {
+        "cloak": {
+          "base": "#c9a227",
+          "trim": "#2a2a2e"
+        },
+        "group": "care",
+        "id": "design",
+        "name": "Design"
+      },
+      {
+        "cloak": {
+          "base": "#c8641e",
+          "trim": "#f2c14e"
+        },
+        "group": "care",
+        "id": "operations",
+        "name": "Operations"
+      },
+      {
+        "cloak": {
+          "base": "#4a7a2a",
+          "trim": "#c9a227"
+        },
+        "group": "care",
+        "id": "planning",
+        "name": "Planning"
+      },
+      {
+        "cloak": {
+          "base": "#3a2a4a",
+          "trim": "#9a9aa2"
+        },
+        "group": "care",
+        "id": "delegation",
+        "name": "Delegation"
+      },
+      {
+        "cloak": {
+          "base": "#3a6a2a",
+          "trim": "#c9a86a"
+        },
+        "group": "care",
+        "id": "communication",
+        "name": "Communication"
+      },
+      {
+        "cloak": {
+          "base": "#d8d8d8",
+          "trim": "#c0392b"
+        },
+        "group": "care",
+        "id": "recovery",
+        "name": "Recovery"
+      }
+    ],
+    "tiers": [
+      {
+        "color": "#9c6b2f",
+        "from_level": 1,
+        "gear": "bronze",
+        "id": "bronze",
+        "name": "Bronze"
+      },
+      {
+        "color": "#a9adb6",
+        "from_level": 15,
+        "gear": "silver",
+        "id": "silver",
+        "name": "Silver"
+      },
+      {
+        "color": "#d4a020",
+        "from_level": 30,
+        "gear": "gold",
+        "id": "gold",
+        "name": "Gold"
+      },
+      {
+        "color": "#c7d3dc",
+        "from_level": 45,
+        "gear": "platinum",
+        "id": "platinum",
+        "name": "Platinum"
+      },
+      {
+        "color": "#7cc6dc",
+        "from_level": 60,
+        "gear": "diamond",
+        "id": "diamond",
+        "name": "Diamond"
+      },
+      {
+        "color": "#3b2f52",
+        "from_level": 75,
+        "gear": "obsidian",
+        "id": "obsidian",
+        "name": "Obsidian"
+      },
+      {
+        "color": "#d4af37",
+        "from_level": 90,
+        "gear": "divine",
+        "id": "divine",
+        "name": "Divine"
+      }
+    ]
+  },
+  "template_cases": [
+    {
+      "out": "Forge reached Coding level 42.",
+      "text": "{character} reached {skill} level {level}.",
+      "values": {
+        "character": "Forge",
+        "level": 42,
+        "skill": "Coding"
+      }
+    },
+    {
+      "out": "A character at total level 1,000",
+      "text": "A character at total level {total_level:,}",
+      "values": {
+        "total_level": 1000
+      }
+    },
+    {
+      "out": "1,234,567 and 1234567",
+      "text": "{n:,} and {n}",
+      "values": {
+        "n": 1234567
+      }
+    },
+    {
+      "out": "{braces} stay x",
+      "text": "{{braces}} stay {name}",
+      "values": {
+        "name": "x"
+      }
+    },
+    {
+      "out": "nothing to fill",
+      "text": "nothing to fill",
+      "values": {}
+    },
+    {
+      "out": "{missing} stays",
+      "text": "{missing} stays",
+      "values": {}
+    },
+    {
+      "out": "text",
+      "text": "{label:,}",
+      "values": {
+        "label": "text"
+      }
+    },
+    {
+      "out": "under 1 dollars, 2,400 hours, 2.5",
+      "text": "under {max_usd} dollars, {hours:,} hours, {ratio}",
+      "values": {
+        "hours": 2400.0,
+        "max_usd": 1.0,
+        "ratio": 2.5
+      }
+    },
+    {
+      "out": "true",
+      "text": "{flag}",
+      "values": {
+        "flag": true
+      }
+    }
+  ]
+}
