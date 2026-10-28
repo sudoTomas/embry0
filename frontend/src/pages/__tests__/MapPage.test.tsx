@@ -79,7 +79,29 @@ describe("MapPage (knowledge maps, spec 2026-10-27)", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("probe.mjs")).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "Send 1" }));
-    expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ node_ids: ["script:probe.mjs"], kind: "remove", by: "owner@example.com" }));
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ node_ids: ["script:probe.mjs"], kind: "remove", by: "owner@example.com", together: true }),
+    );
+  });
+
+  it("sends everything a filter picked out in one job per repository, leaving out what cannot go", async () => {
+    const table = { ...GRAPH.nodes[1], id: "table:old_backup", label: "old_backup", kind: "table", path: null, repo: null, removal: "Drop it in a migration." };
+    const host = { ...GRAPH.nodes[1], id: "host:box", label: "box", kind: "host", path: null, repo: null, removal: null };
+    hooks.map = { data: { ...GRAPH, nodes: [...GRAPH.nodes, table, host] }, isLoading: false, isError: false };
+    mutateAsync.mockResolvedValue({ sent: 2, failed: 0, results: [{ node_id: "a", job_id: "job-1", error: null }], jobs: [] });
+    renderAt("/maps/shop");
+    await userEvent.type(screen.getByRole("textbox", { name: "Find a part" }), "o");
+    await userEvent.click(screen.getByRole("button", { name: /picked out$/ }));
+    const dialog = screen.getByTestId("batch-send");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    expect(within(dialog).getByRole("checkbox", { name: "box" })).toBeDisabled();
+    expect(within(dialog).getByText("in no repository")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox", { name: "util.mjs" })).toBeNull();
+    expect(within(dialog).getByText(/2 parts · 1 job$/)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Send 2" }));
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ node_ids: ["script:probe.mjs", "table:old_backup"], kind: "remove", together: true }),
+    );
   });
 
   it("opens a part from the address, with removal picked for a part the viewer marked bloat", async () => {

@@ -31,6 +31,7 @@ A part (`nodes[]`):
 | `repo` | `owner/name` when the part lives in a repository other than the map's (an organization map names one per system). Otherwise a part with a `path` lives in the map's `repo`, and a part with neither (a database table, a host) lives in none. |
 | `x`, `y`, `r` | Its place and size on the plane, in any units; the page fits the whole map to the screen. A part without a place is put on a spiral. |
 | `signals` | Up to 8 short sentences that call for attention. |
+| `removal` | For a part that is not a file but can be removed by a code change, how (at most 600 characters): a database table the repository's migrations own is dropped by a new migration. Such a part lives in the map's `repo` and can be sent for removal. |
 | `bloat` | `{"score": 0-100, "band": "keep" \| "look" \| "bloat"}`: the scanner's reading of how likely the part is not needed. |
 | `age`, `use` | `{"first", "last", "changes", "authors"}` and `{"level": 0-3, "n", "unit"}`, shown as given. |
 
@@ -64,17 +65,19 @@ An open part shows what the map knows about it (its signals, bloat score and rea
 
 A mark is one person's verdict on a part: **bloat**, **keep** or **not sure**, with a note. Pressing your own verdict again takes it back.
 
-A part that is a file or folder in a repository (it has a `path`) and that someone marks bloat becomes a [`weed` lead](leads.md) on that repository, titled **Remove &lt;part&gt;**, with the map's evidence as its details and a link back to the part. It is offered to the repository's owners like every lead, shows on the quest board, and is answered through the [owner proposals](api.md#owner-proposals). When nobody marks it bloat any more, the lead closes. A part with no path (a whole system or repository on an organization map, a database table, a host) keeps its marks on the map only: retiring it is not a code change.
+A part an agent can remove (a file or folder in a repository, or a part with a `removal` note) and that someone marks bloat becomes a [`weed` lead](leads.md) on that repository, titled **Remove &lt;part&gt;**, with the map's evidence as its details and a link back to the part. It is offered to the repository's owners like every lead, shows on the quest board, and is answered through the [owner proposals](api.md#owner-proposals). When nobody marks it bloat any more, the lead closes. A part with neither (a whole system or repository on an organization map, a host, a table no code owns) keeps its marks on the map only: retiring it is not a code change.
 
 ## Sending parts to agents
 
 From a part, an admin picks what the agent does and its [Run with](api.md#run-with):
 
-- **Remove** (a file or folder in a repository only): accepts the part's weed lead, recorded as that person's yes. Sending a removal is the decision, so the sender's bloat mark is recorded first. The agent deletes the part and everything only it uses, drops every mention of it, runs the tests and opens a pull request; it does not re-assess whether to keep it, and it changes code only, never a database or a live system. A removal sent again after its proposal was answered starts a new job on the same lead.
+- **Remove** (a part an agent can remove only): accepts the part's weed lead, recorded as that person's yes. Sending a removal is the decision, so the sender's bloat mark is recorded first. The agent deletes the part and everything only it uses, drops every mention of it, runs the tests and opens a pull request; it does not re-assess whether to keep it, and it changes code only, never a database or a live system. A removal sent again after its proposal was answered starts a new job on the same lead.
 - **Fix**: an issue in embry0 labelled `embry0-map` and `map:<slug>`, dispatched like any issue: the smallest fix the evidence calls for, in a pull request.
 - **Analysis**: a read-only job on the `analysis-default` template: what the part does, whether the evidence holds, what depends on it, and the change it recommends as a diff, not applied.
 
 The part's kind is picked from your mark: bloat sends a removal when the part can be removed, anything else an analysis. A whole system or repository can still go for a fix or an analysis. **Send my bloat marks** sends every part you marked bloat that was never sent for removal, or whose removal failed, as one batch of removals, 50 parts per request.
+
+**Many at once.** Search or filter the map, then **Send N picked out**; or **Send my bloat marks**. Pick what the agents do, untick any part, and send. By default the parts become **one job per repository** (one pull request): a hundred backup tables are one migration, not a hundred pull requests whose migration numbers clash. Each part's lead is accepted with that one job, and each part's agent work shows it. A part that cannot go for the chosen kind is listed with the reason and left out. A batch carries at most 200 parts; a very long one lists each part more briefly, and one that still does not fit one job's task is refused, never cut.
 
 Every send is recorded with the job it started or the reason it did not start (a part in no repository, the budget gate, a key the repository may not use), and the part's agent work shows it.
 

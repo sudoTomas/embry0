@@ -1,21 +1,17 @@
 import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
-import { toast } from "sonner";
-import type { MapGraph } from "@/api/maps";
-import { toastApiError } from "@/api/errorToast";
+import type { SendKind } from "@/api/maps";
 import { isNotFound } from "@/api/errorDetail";
-import { type RunWith, runWithBody } from "@/api/runWith";
 import { PageError } from "@/components/PageError";
+import { BatchSendDialog } from "@/components/maps/BatchSendDialog";
 import { MapCanvas } from "@/components/maps/MapCanvas";
 import { PartPanel } from "@/components/maps/PartPanel";
-import { RunWithControl } from "@/components/runwith/RunWithControl";
 import { Button } from "@/components/ui/Button";
-import { Dialog } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { Select } from "@/components/ui/Select";
-import { useMap, useMapMarks, useMapWork, useSendParts } from "@/hooks/useMaps";
-import { type ColorBy, search, unsentBloat, workState } from "@/lib/mapView";
+import { useMap, useMapMarks, useMapWork } from "@/hooks/useMaps";
+import { type ColorBy, canRemove, search, unsentBloat, workState } from "@/lib/mapView";
 import { formatDateTime } from "@/lib/utils";
 import { useAuthStore, useIsAdmin } from "@/stores/authStore";
 
@@ -29,63 +25,6 @@ const COLOR_BY: { id: ColorBy; label: string }[] = [
 
 type Show = "all" | "bloat" | "marked" | "sent";
 
-/** "Send my bloat marks": every part the viewer marked bloat and has not sent, removed in one batch. */
-function SendMarksDialog({
-  slug,
-  graph,
-  ids,
-  by,
-  onClose,
-}: {
-  slug: string;
-  graph: MapGraph;
-  ids: string[];
-  by: string;
-  onClose: () => void;
-}) {
-  const send = useSendParts(slug);
-  const [runWith, setRunWith] = useState<RunWith>({});
-  const [note, setNote] = useState("");
-  const labels = new Map(graph.nodes.map((n) => [n.id, n.label]));
-  const repos = [...new Set(ids.map((id) => graph.nodes.find((n) => n.id === id)?.repo ?? graph.repo).filter(Boolean))];
-  const go = async () => {
-    let sent = 0;
-    const failed: string[] = [];
-    for (let i = 0; i < ids.length; i += 50) {
-      try {
-        const r = await send.mutateAsync({ node_ids: ids.slice(i, i + 50), kind: "remove", note, by, ...runWithBody(runWith) });
-        sent += r.sent;
-        failed.push(...r.results.filter((x) => !x.job_id).map((x) => `${labels.get(x.node_id) ?? x.node_id}: ${x.error}`));
-      } catch (e) {
-        toastApiError(e as Error, "Not sent");
-        return;
-      }
-    }
-    if (failed.length) toast.error(`${sent} sent, ${failed.length} not: ${failed.slice(0, 3).join("; ")}`);
-    else toast.success(`${sent} sent for removal`);
-    onClose();
-  };
-  return (
-    <Dialog onClose={onClose} title={`Remove ${ids.length} part${ids.length === 1 ? "" : "s"} you marked bloat`} className="max-w-xl">
-      <div className="space-y-3 p-4 text-sm">
-        <p className="text-fg-secondary">
-          Each becomes one job: an agent deletes the part and what only it uses, and opens a pull request. Your marks are
-          the decision; the agents do not re-assess them.
-        </p>
-        <ul className="max-h-48 space-y-0.5 overflow-auto rounded border border-border p-2 text-xs">
-          {ids.map((id) => <li key={id}>{labels.get(id) ?? id}</li>)}
-        </ul>
-        <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} placeholder="A note for the agents (optional)" aria-label="A note for the agents" />
-        <RunWithControl value={runWith} onChange={setRunWith} repo={repos.length === 1 ? (repos[0] as string) : null} />
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Not now</Button>
-          <Button disabled={send.isPending} onClick={() => void go()}>{send.isPending ? "Sending…" : `Send ${ids.length}`}</Button>
-        </div>
-      </div>
-    </Dialog>
-  );
-}
-
 /** Knowledge maps (spec 2026-10-27): one map — the parts on the scanner's layout, a part's panel, sending work. */
 export function MapPage() {
   const { slug = "" } = useParams();
@@ -98,7 +37,7 @@ export function MapPage() {
   const [colorBy, setColorBy] = useState<ColorBy>("bloat");
   const [query, setQuery] = useState("");
   const [show, setShow] = useState<Show>("all");
-  const [batch, setBatch] = useState(false);
+  const [batch, setBatch] = useState<{ ids: string[]; kind: SendKind; title: string } | null>(null);
   const selected = params.get("part");
   const select = (id: string | null) => {
     const next = new URLSearchParams(params);
@@ -119,7 +58,7 @@ export function MapPage() {
   }, [map.data, query, show, marks.data, work.data]);
   const unsent = useMemo(() => {
     // Only a file or folder in a repository can be removed; a whole system's mark stays on the map.
-    const removable = new Set((map.data?.nodes ?? []).filter((n) => n.path && (n.repo ?? map.data?.repo)).map((n) => n.id));
+    const removable = new Set((map.data?.nodes ?? []).filter((n) => canRemove(n, map.data?.repo ?? null)).map((n) => n.id));
     return unsentBloat(marks.data, work.data).filter((id) => removable.has(id));
   }, [map.data, marks.data, work.data]);
   const running = Object.values(work.data ?? {}).filter((w) => workState(w) === "running").length;
@@ -156,9 +95,29 @@ export function MapPage() {
           <Select className="w-36" value={colorBy} onChange={(e) => setColorBy(e.target.value as ColorBy)} aria-label="Colour by">
             {COLOR_BY.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
           </Select>
-          <Button disabled={!isAdmin || unsent.length === 0} onClick={() => setBatch(true)} title={isAdmin ? undefined : "Only an admin sends work"}>
+          <Button
+            disabled={!isAdmin || unsent.length === 0}
+            onClick={() => setBatch({ ids: unsent, kind: "remove", title: `Remove the ${unsent.length} parts you marked bloat` })}
+            title={isAdmin ? undefined : "Only an admin sends work"}
+          >
             Send my bloat marks ({unsent.length})
           </Button>
+          {highlight.size > 0 && (
+            <Button
+              variant="outline"
+              disabled={!isAdmin}
+              onClick={() =>
+                setBatch({
+                  ids: [...highlight],
+                  kind: show === "bloat" || show === "marked" ? "remove" : "analysis",
+                  title: `Send ${highlight.size.toLocaleString()} parts picked out`,
+                })
+              }
+              title={isAdmin ? undefined : "Only an admin sends work"}
+            >
+              Send {highlight.size.toLocaleString()} picked out
+            </Button>
+          )}
         </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
@@ -182,7 +141,17 @@ export function MapPage() {
       {(query || show !== "all") && (
         <p className="text-xs text-fg-muted">{highlight.size.toLocaleString()} parts picked out; the rest are dimmed.</p>
       )}
-      {batch && <SendMarksDialog slug={slug} graph={g} ids={unsent} by={by} onClose={() => setBatch(false)} />}
+      {batch && (
+        <BatchSendDialog
+          slug={slug}
+          graph={g}
+          ids={batch.ids}
+          initialKind={batch.kind}
+          title={batch.title}
+          by={by}
+          onClose={() => setBatch(null)}
+        />
+      )}
     </div>
   );
 }

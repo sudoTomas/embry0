@@ -34,10 +34,13 @@ from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.services.knowledge_maps import (
     MAX_DECODED_BYTES,
+    MAX_SEND,
     SLUG,
     SOURCE_PREFIX,
+    BatchTooLarge,
     MapError,
     Mark,
+    batch_task,
     map_lead,
     mark_counts,
     parse_map,
@@ -54,8 +57,6 @@ from embry0.services.run_with import apply_run_with
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
-#: Parts one send may carry; a bigger batch is sent in several.
-MAX_SEND = 50
 _ACTION_SEND = "send a map part"
 
 
@@ -350,6 +351,8 @@ class SendBody(BaseModel):
     run_with: RunWithRequest | None = None
     note: str = Field(default="", max_length=1000)
     by: str = Field(min_length=1, max_length=100)
+    #: One job for all the parts of each repository and kind (one pull request), instead of one job per part.
+    together: bool = False
 
 
 async def _start_removal(
@@ -397,7 +400,7 @@ async def _start_fix(
     return await _dispatch_issue(request, issue_id, "open", tracker="", by=by, run_with=run_with)
 
 
-async def _start_analysis(request: Request, repo: str, node: dict[str, Any], task: str, by: str, run_with: Any) -> str:
+async def _start_analysis(request: Request, repo: str, title: str, task: str, by: str, run_with: Any) -> str:
     executor = getattr(request.app.state, "issue_executor", None)
     if executor is None:
         raise HTTPException(status_code=503, detail="executor not initialized")
@@ -413,18 +416,86 @@ async def _start_analysis(request: Request, repo: str, node: dict[str, Any], tas
         pipeline_config=apply_run_with(None, run_with),
         dispatched_by=by,
     )
-    executor.submit_job(job_id, repo=repo, title=f"[map] {node.get('label') or node['id']}", body=task, kind="map")
+    executor.submit_job(job_id, repo=repo, title=f"[map] {title}", body=task, kind="map")
     return job_id
+
+
+_VERB = {"remove": "Remove", "fix": "Fix", "analysis": "Analyse"}
+
+
+async def _send_together(
+    request: Request,
+    slug: str,
+    part: dict[str, Any],
+    repo: str,
+    kind: str,
+    members: list[tuple[str, dict[str, Any]]],
+    body: SendBody,
+    run_with: Any,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """One job for several parts of one repository: a removal accepts each part's lead with that one job.
+
+    Returns the job's summary and each part's lead id (removals only).
+    """
+    from embry0.api.v1.leads import _dispatch_issue
+    from embry0.api.v1.proposals import record_lead_accept
+    from embry0.services.proposals import still_open
+
+    maps, now = _maps(request), datetime.now(UTC)
+    leads: dict[str, str] = {}
+    job: dict[str, Any] = {"repo": repo, "kind": kind, "parts": len(members), "job_id": None, "error": None}
+    try:
+        if kind == "remove":
+            mine = {str(m["node_id"]): m for m in await maps.marks(slug) if m["marked_by"] == body.by}
+            for node_id, node in members:
+                if mine.get(node_id, {}).get("verdict") != "bloat":
+                    await maps.set_mark(slug, node_id, body.by, "bloat", body.note.strip()[:500], now=now)
+                lid = await _sync_lead(request, slug, part, node, now)
+                if lid:
+                    leads[node_id] = lid
+        parts = [(node, await maps.detail(slug, node_id)) for node_id, node in members]
+        try:
+            task = batch_task(kind, repo=repo, parts=parts, map_title=part["title"], note=body.note.strip(), by=body.by)
+        except BatchTooLarge as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        only = members[0][1]
+        title = (
+            f"{_VERB[kind]} {only.get('label') or only['id']}"
+            if len(members) == 1
+            else f"{_VERB[kind]} {len(members)} parts of the {part['title']} map"
+        )[:300]
+        if kind == "analysis":
+            job["job_id"] = await _start_analysis(request, repo, title, task, body.by, run_with)
+        else:
+            labels = ["embry0-map", f"map:{slug}", *(["embry0-lead", "lead:weed"] if kind == "remove" else [])]
+            issue_id = await request.app.state.issues_repo.create(
+                title=title, body=task, labels=labels, repo=repo, created_by="map-send"
+            )
+            job["job_id"] = await _dispatch_issue(request, issue_id, "open", tracker="", by=body.by, run_with=run_with)
+        proposals = getattr(request.app.state, "proposals_repo", None)
+        decisions = await proposals.decisions() if proposals is not None and leads else {}
+        for lid in leads.values():
+            if still_open(lid, decisions, now):
+                row = await _leads(request).get(lid)
+                if row is not None:
+                    await record_lead_accept(request, row, by=body.by, reason=body.note, job_id=job["job_id"])
+    except HTTPException as exc:
+        job["error"] = str(exc.detail)
+    return job, leads
 
 
 @router.post("/maps/{slug}/send", status_code=202)
 async def send_parts(slug: str, body: SendBody, request: Request) -> dict[str, Any]:
-    """Send parts to agents, one job each; a part that cannot go says why and the others still go."""
+    """Send parts to agents: one job each, or with ``together`` one job per repository and kind.
+
+    A part that cannot go says why and the others still go.
+    """
     part = await _parts(request, _slug(slug))
     maps = _maps(request)
     mine = {str(m["node_id"]): m["verdict"] for m in await maps.marks(slug) if m["marked_by"] == body.by}
     checked: dict[str, Any] = {}
     results: list[dict[str, Any]] = []
+    groups: dict[tuple[str, str], list[tuple[str, dict[str, Any]]]] = {}
     for node_id in dict.fromkeys(body.node_ids):
         node = part["nodes"].get(node_id)
         can_remove = node is not None and removable(part["repo"], node)
@@ -440,6 +511,14 @@ async def send_parts(slug: str, body: SendBody, request: Request) -> dict[str, A
             if repo not in checked:
                 checked[repo] = await checked_run_with(request, body.run_with, repo)
             run_with = checked[repo]
+            if kind == "remove" and not can_remove:
+                raise HTTPException(
+                    status_code=409,
+                    detail="this part is a whole system or repository, not a file in one: removing it is not a code change",
+                )
+            if body.together:
+                groups.setdefault((repo, kind), []).append((node_id, node))
+                continue
             if kind == "remove":
                 result["lead_id"], result["job_id"] = await _start_removal(request, slug, part, node, body, run_with)
             else:
@@ -448,7 +527,7 @@ async def send_parts(slug: str, body: SendBody, request: Request) -> dict[str, A
                 start = (
                     _start_fix(request, repo, node, task, body.by, slug, run_with)
                     if kind == "fix"
-                    else _start_analysis(request, repo, node, task, body.by, run_with)
+                    else _start_analysis(request, repo, str(node.get("label") or node["id"]), task, body.by, run_with)
                 )
                 result["job_id"] = await start
         except HTTPException as exc:
@@ -475,8 +554,43 @@ async def send_parts(slug: str, body: SendBody, request: Request) -> dict[str, A
             error=result["error"],
         )
         results.append(result)
+    jobs: list[dict[str, Any]] = []
+    for (repo, group_kind), members in groups.items():
+        job, leads = await _send_together(request, slug, part, repo, group_kind, members, body, checked[repo])
+        jobs.append(job)
+        for node_id, _node in members:
+            await maps.add_send(
+                slug=slug,
+                node_id=node_id,
+                kind=group_kind,
+                repo=repo,
+                sent_by=body.by,
+                note=body.note.strip(),
+                lead_id=leads.get(node_id),
+                job_id=job["job_id"],
+                error=job["error"],
+                now=datetime.now(UTC),
+            )
+            results.append(
+                {
+                    "node_id": node_id,
+                    "kind": group_kind,
+                    "lead_id": leads.get(node_id),
+                    "job_id": job["job_id"],
+                    "error": job["error"],
+                }
+            )
+        logger.info(
+            "knowledge_map_parts_sent_together",
+            slug=slug,
+            repo=repo,
+            kind=group_kind,
+            parts=len(members),
+            job_id=job["job_id"],
+            error=job["error"],
+        )
     sent = sum(1 for r in results if r["job_id"])
-    return {"sent": sent, "failed": len(results) - sent, "results": results}
+    return {"sent": sent, "failed": len(results) - sent, "results": results, "jobs": jobs}
 
 
 @router.get("/maps/{slug}/work")

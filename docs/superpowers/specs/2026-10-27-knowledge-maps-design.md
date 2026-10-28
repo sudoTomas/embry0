@@ -20,6 +20,9 @@ embry0 is where agent work starts, is watched and is reviewed. So the map belong
 10. **Uploads ride the LAN.** A large map is several MB gzipped, past nginx's 1 MB default. The LAN vhost takes 32 MB on `/api/v1/maps/`; the public vhost keeps the default. The orchestrator caps the decompressed document at 64 MB and refuses a bigger one rather than cutting it.
 11. **Who may do what.** Reads are any key or session. Uploads, marks and sends are mutations: an `operate` key or an operator session. A key with a repository allowlist uploads only maps of repositories on its list (never an organization map) and marks and sends only parts in them. The page offers sending to an admin, as the world does; a mark is open to every operator.
 
+12. **A scanner can say how a part is removed** (`removal`, added 2026-10-28). A database table is not a file, but where the repository's migrations own the schema, dropping it is a code change: a new migration. The scanner knows which tables those are and how its repository writes migrations; embry0 does not. A part with a `removal` note lives in the map's repository and is removable; the note goes into the task.
+13. **A batch is one job per repository and kind** (`together`, added 2026-10-28). Marked bloat comes in hundreds (a database full of one-off backup tables), and one job per part would mean hundreds of pull requests and, for tables, migration numbers that clash. With `together` the parts of one repository and kind go as one task listing every part (`batch_task`), which says to leave out and list any part something still uses; each part's lead is accepted with that one job. The task lists every part, more briefly as it grows, and a batch that still does not fit one job's task is refused rather than cut, so no part is silently left out.
+
 ## Data
 
 Migration 124:

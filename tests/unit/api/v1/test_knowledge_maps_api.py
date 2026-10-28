@@ -411,3 +411,89 @@ async def test_a_whole_system_keeps_its_mark_on_the_map_and_is_never_sent_for_re
     assert "not a file in one" in removal["results"][0]["error"] and removal["results"][0]["job_id"] is None
     assert default["results"][0]["kind"] == "analysis" and default["results"][0]["job_id"] == "job-analysis"
     assert part["removable"] is False and part["repo"] == "acme/billing"
+
+
+TABLE = {"id": "table:old_backup", "kind": "table", "label": "old_backup", "removal": "Drop it in a new migration."}
+
+
+async def test_together_sends_one_job_per_repository_and_kind_and_accepts_every_lead(app: FastAPI) -> None:
+    system = {"id": "sys:billing", "kind": "system", "label": "billing", "repo": "acme/billing"}
+    async with await _client(app) as client:
+        await _upload(client, _doc(nodes=[*_doc()["nodes"], TABLE, system]))
+        await client.post(
+            "/api/v1/maps/shop/marks",
+            json={"node_id": "script:util.mjs", "verdict": "keep", "by": "ann"},
+            headers=HEADERS,
+        )
+        removal = (
+            await client.post(
+                "/api/v1/maps/shop/send",
+                json={
+                    "node_ids": [PROBE, "table:old_backup", "sys:billing"],
+                    "kind": "remove",
+                    "together": True,
+                    "by": "ann",
+                    "note": "old",
+                },
+                headers=HEADERS,
+            )
+        ).json()
+    assert removal["jobs"] == [
+        {"repo": "acme/shop", "kind": "remove", "parts": 2, "job_id": "job-issue", "error": None}
+    ]
+    by_part = {r["node_id"]: r for r in removal["results"]}
+    assert by_part[PROBE]["job_id"] == by_part["table:old_backup"]["job_id"] == "job-issue"
+    assert by_part[PROBE]["lead_id"] and by_part["table:old_backup"]["lead_id"]
+    assert "not a code change" in by_part["sys:billing"]["error"]
+    app.state.issues_repo.create.assert_awaited_once()
+    created = app.state.issues_repo.create.await_args.kwargs
+    assert created["title"] == "Remove 2 parts of the Shop map"
+    assert created["labels"] == ["embry0-map", "map:shop", "embry0-lead", "lead:weed"]
+    assert created["body"].startswith("Remove these 2 parts from acme/shop, in one pull request.")
+    assert "removed by: Drop it in a new migration." in created["body"]
+    accepted = [r for r in app.state.proposals_repo.recorded if r["decision"] == "accept"]
+    assert {r["job_id"] for r in accepted} == {"job-issue"} and len(accepted) == 2
+    marks = app.state.knowledge_maps_repo.marks_
+    assert marks[("shop", "table:old_backup", "ann")]["verdict"] == "bloat", "the sender's bloat mark is recorded"
+    sends = app.state.knowledge_maps_repo.sends
+    assert sorted(s["node_id"] for s in sends) == sorted([PROBE, "table:old_backup", "sys:billing"])
+    assert {s["job_id"] for s in sends if s["node_id"] != "sys:billing"} == {"job-issue"}
+
+
+async def test_together_without_a_kind_groups_each_part_by_what_its_mark_says(app: FastAPI) -> None:
+    async with await _client(app) as client:
+        await _upload(client, _doc(nodes=[*_doc()["nodes"], TABLE]))
+        for node_id in (PROBE, "table:old_backup"):
+            await client.post(
+                "/api/v1/maps/shop/marks", json={"node_id": node_id, "verdict": "bloat", "by": "ann"}, headers=HEADERS
+            )
+        result = (
+            await client.post(
+                "/api/v1/maps/shop/send",
+                json={"node_ids": [PROBE, "table:old_backup", "script:util.mjs"], "together": True, "by": "ann"},
+                headers=HEADERS,
+            )
+        ).json()
+    assert sorted((j["kind"], j["parts"]) for j in result["jobs"]) == [("analysis", 1), ("remove", 2)]
+    assert result["sent"] == 3 and result["failed"] == 0
+    analysis = app.state.jobs_repo.create.await_args.kwargs
+    assert analysis["pipeline_template"] == "analysis-default" and analysis["task"].startswith(
+        "Investigate these 1 parts"
+    )
+
+
+async def test_a_refused_batch_marks_every_part_of_it_with_the_reason(app: FastAPI) -> None:
+    app.state.issue_executor.dispatch_refusal = AsyncMock(
+        return_value=SimpleNamespace(public_message="the daily budget is spent")
+    )
+    async with await _client(app) as client:
+        await _upload(client)
+        result = (
+            await client.post(
+                "/api/v1/maps/shop/send",
+                json={"node_ids": [PROBE, "script:util.mjs"], "kind": "analysis", "together": True, "by": "ann"},
+                headers=HEADERS,
+            )
+        ).json()
+    assert result["jobs"][0]["error"] == "the daily budget is spent"
+    assert [r["error"] for r in result["results"]] == ["the daily budget is spent"] * 2

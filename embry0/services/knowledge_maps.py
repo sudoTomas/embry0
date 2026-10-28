@@ -32,6 +32,9 @@ _REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 #: Upper bounds on one upload: past these it is refused, not cut.
 MAX_NODES = 20_000
 MAX_EDGES = 100_000
+#: Parts one send may carry, and the size of the task a batch job is given.
+MAX_SEND = 200
+MAX_BATCH_TASK = 45_000
 MAX_DECODED_BYTES = 64 * 1024 * 1024
 #: What a part can be sent for, and the verdicts a mark can carry.
 SEND_KINDS: tuple[str, ...] = ("remove", "fix", "analysis")
@@ -100,6 +103,8 @@ def _node(raw: Any) -> dict[str, Any] | None:
         "y": _number(raw.get("y")),
         "r": _number(raw.get("r")),
         "signals": [s for s in (_text(x, 300) for x in raw.get("signals") or [] if isinstance(x, str)) if s][:8],
+        # How the part is removed when it is not a file (a database table: a migration), in the scanner's words.
+        "removal": _text(raw.get("removal"), 600),
     }
     bloat = raw.get("bloat")
     if isinstance(bloat, Mapping) and _number(bloat.get("score")) is not None and bloat.get("band") in BANDS:
@@ -195,18 +200,21 @@ def part_repo(map_repo: str | None, node: Mapping[str, Any]) -> str | None:
     own = _repo(node.get("repo"))
     if own:
         return own
-    return map_repo if map_repo and node.get("path") else None
+    return map_repo if map_repo and (node.get("path") or node.get("removal")) else None
 
 
 def removable(map_repo: str | None, node: Mapping[str, Any]) -> bool:
-    """Whether an agent can remove the part: a file or folder (``path``) in a repository.
+    """Whether an agent can remove the part with a code change.
 
-    A part without a path is a whole system, repository, host or table: retiring
-    it is not a code change, so a bloat mark on it stays on the map and makes no
-    lead, and it cannot be sent for removal. It can still go for a fix or an
-    analysis when it lives in a repository.
+    A file or folder (``path``) in a repository can be, and so can a part the
+    scanner says how to remove in code (``removal``: a database table the
+    repository's migrations own is dropped by a new migration). Anything else
+    (a whole system or repository, a host, a table nobody's code owns) is not a
+    code change, so a bloat mark on it stays on the map and makes no lead, and
+    it cannot be sent for removal. It can still go for a fix or an analysis
+    when it lives in a repository.
     """
-    return part_repo(map_repo, node) is not None and bool(node.get("path"))
+    return part_repo(map_repo, node) is not None and bool(node.get("path") or node.get("removal"))
 
 
 def source_key(slug: str, node_id: str) -> str:
@@ -225,6 +233,8 @@ def part_text(node: Mapping[str, Any], detail: Mapping[str, Any] | None, map_tit
     lines = [f"Part: {node.get('label')} ({node.get('kind')}) on the {map_title} map, id `{node.get('id')}`."]
     if node.get("path"):
         lines.append(f"File: {node['path']}" + (f":{node['line']}" if node.get("line") else ""))
+    if node.get("removal"):
+        lines.append(f"How it is removed: {node['removal']}")
     for signal in node.get("signals") or []:
         lines.append(f"Signal: {signal}")
     bloat = d.get("bloat") or node.get("bloat")
@@ -358,6 +368,86 @@ def send_task(kind: str, *, repo: str, node: Mapping[str, Any], text: str, note:
     else:
         raise ValueError(f"a part is not sent for {kind!r} this way")
     return "\n".join([*ask, "", asked, "", "What the map knows about it:", "", text]).strip()
+
+
+def part_line(node: Mapping[str, Any], detail: Mapping[str, Any] | None, *, level: int = 0) -> str:
+    """One part in a batch task: what it is, where, and why it was picked.
+
+    ``level`` 0 says all of it, 1 the first reason and signal, 2 only its id, name and kind (the task then lists
+    how parts are removed once, see :func:`batch_task`).
+    """
+    d = detail or {}
+    head = f"- `{node.get('id')}` {node.get('label')} ({node.get('kind')})"
+    if node.get("path") and level < 2:
+        head += f", {node['path']}" + (f":{node['line']}" if node.get("line") else "")
+    if level >= 2:
+        return head
+    bits: list[str] = []
+    bloat = d.get("bloat") or node.get("bloat")
+    if isinstance(bloat, Mapping) and bloat.get("score") is not None:
+        reasons = [str(r.get("text")) for r in bloat.get("against") or [] if isinstance(r, Mapping)][: 3 - 2 * level]
+        bits.append(f"bloat {bloat['score']}/100" + (f": {'; '.join(reasons)}" if reasons else ""))
+    signals = [str(x) for x in node.get("signals") or []][: 3 - 2 * level]
+    if signals:
+        bits.append("signals: " + "; ".join(signals))
+    narrative = d.get("narrative")
+    if level == 0 and isinstance(narrative, Mapping) and narrative.get("does"):
+        bits.append(f"does: {str(narrative['does'])[:240]}")
+    if node.get("removal") and level == 0:
+        bits.append(f"removed by: {node['removal']}")
+    return head + (f". {' | '.join(bits)}" if bits else "")
+
+
+class BatchTooLarge(ValueError):
+    """Even one line per part does not fit one job's task: the batch must be sent in parts."""
+
+
+def batch_task(
+    kind: str,
+    *,
+    repo: str,
+    parts: Sequence[tuple[Mapping[str, Any], Mapping[str, Any] | None]],
+    map_title: str,
+    note: str,
+    by: str,
+) -> str:
+    """The task of one job for many parts of one repository (a batch send): one pull request, or one report."""
+    n = len(parts)
+    asked = f"{by} sent these {n} parts of the {map_title} map together" + (f": {note}" if note else ".")
+    if kind == "remove":
+        ask = [
+            f"Remove these {n} parts from {repo}, in one pull request. A person marked each one as bloat: the marks",
+            "are the decision, so do not re-assess whether to keep them. For each, delete it and everything only it",
+            "uses, and drop every mention of it (package scripts, docs, READMEs, instruction files, config). A part",
+            "that is not a file says how it is removed (removed by); where several are removed the same way (one",
+            "migration for several tables), do them in one change. Run the repository's tests where it has them.",
+            "Leave out any part that something staying still uses, and list each one left out with what uses it.",
+            "Change the code only: never connect to, write to or change a database or any live system.",
+        ]
+    elif kind == "fix":
+        ask = [
+            f"Fix what the evidence below shows about these {n} parts of {repo}, in one pull request: the smallest",
+            "change for each, with a test where the repository has tests. A part that turns out to be dead or a",
+            "leftover is removed with what only it uses. List any part you could not fix and what you would need.",
+            "Change the code only: never connect to, write to or change a database or any live system.",
+        ]
+    elif kind == "analysis":
+        ask = [
+            f"Investigate these {n} parts of {repo}, read-only, and report for each: what it really does today,",
+            "whether the evidence below holds up in the code, what depends on it, and a recommendation (keep, fix",
+            "or remove) with the change you would make as a diff, not applied. Group parts that share an answer.",
+        ]
+    else:
+        raise ValueError(f"no batch task for {kind!r}")
+    head = [*ask, "", asked, ""]
+    for level in (0, 1, 2):
+        lines = [part_line(node, detail, level=level) for node, detail in parts]
+        notes = sorted({str(node["removal"]) for node, _ in parts if node.get("removal")}) if level else []
+        how = ["How the parts that are not files are removed:", *[f"- {x}" for x in notes], ""] if notes else []
+        text = "\n".join([*head, *how, f"The parts ({n}):", "", *lines]).strip()
+        if len(text) <= MAX_BATCH_TASK:
+            return text
+    raise BatchTooLarge(f"{n} parts do not fit one job; send them in smaller batches")
 
 
 def mark_counts(marks: Iterable[Mapping[str, Any]], me: str | None) -> dict[str, dict[str, Any]]:
