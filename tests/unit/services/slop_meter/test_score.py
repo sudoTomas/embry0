@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from embry0.branding import GIT_AUTHOR_EMAIL, GIT_AUTHOR_NAME
 from embry0.services.slop_meter.history import LOG_FORMAT, is_bot, login_of_email, parse_log
 from embry0.services.slop_meter.score import (
     Event,
@@ -51,6 +52,55 @@ def test_bots_and_logins() -> None:
     assert login_of_email("12345+Octo-Cat@users.noreply.github.com") == "octo-cat"
     assert login_of_email("octocat@users.noreply.github.com") == "octocat"
     assert login_of_email("ana@example.com") is None
+
+
+def test_embry0s_own_commits_and_events_add_no_attention() -> None:
+    """embry0 commits as its branding identity (#184): its work is a bot's, not a person's attention."""
+    rows = [
+        (f"h{i}", START + timedelta(hours=2 * i), "Ana", "ana@example.com", "x", [("src/a.py", 10, 0)])
+        for i in range(3)
+    ]
+    rows += [
+        (f"e{i}", START + timedelta(hours=2 * i + 1), GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, "x", [("src/b.py", 50, 0)])
+        for i in range(3)
+    ]
+    commits = parse_log(_log(*sorted(rows, key=lambda c: c[1])))
+    assert {c.sha for c in commits if c.bot} == {"e0", "e1", "e2"}, "embry0's own commits are a bot's"
+    login = login_of_email(GIT_AUTHOR_EMAIL)
+    events = [Event(login, START + timedelta(hours=8))] if login else []
+    assert set(weekly_capacity(commits, events, {})) == {"ana@example.com"}, "embry0 adds no attention"
+
+
+def test_names_addresses_and_logins_an_owner_lists_are_bots() -> None:
+    from embry0.services.slop_meter.history import own_identities
+
+    bots = own_identities(["Release-Bot", " release@acme.example ", "", "  "])
+    assert "" not in bots, "a blank entry matches nothing"
+    assert is_bot("release-bot", "x@example.com", bots), "a listed name"
+    assert is_bot("Rel", "Release@Acme.example", bots), "a listed address, without regard to case"
+    assert is_bot("x", GIT_AUTHOR_EMAIL.upper(), bots), "embry0's own identity is always among them"
+    assert is_bot("dependabot[bot]", "x@example.com", bots), "the known bots still are"
+    assert not is_bot("Ana", "ana@example.com", bots)
+
+
+def test_commits_read_before_an_identity_was_known_are_marked_when_scored() -> None:
+    from embry0.services.slop_meter.history import own_identities, with_bots
+
+    body = "x\n\nCo-authored-by: Release Bot <release@acme.example>\nCo-authored-by: Bo <bo@example.com>\n"
+    rows = [
+        ("h1", START, "Ana", "ana@example.com", body, [("src/a.py", 10, 0)]),
+        ("r1", START + timedelta(hours=1), "Release Bot", "release@acme.example", "x", [("src/b.py", 5, 0)]),
+    ]
+    commits = parse_log(_log(*rows))
+    assert not any(c.bot for c in commits) and commits[0].coauthors == (
+        ("Release Bot", "release@acme.example"),
+        ("Bo", "bo@example.com"),
+    ), "read before the owner listed the bot"
+    human, release = with_bots(commits, own_identities(["release@acme.example"]))
+    assert release.bot, "the listed bot's commit is a bot's"
+    assert not human.bot and human.coauthors == (("Bo", "bo@example.com"),), "it is no human co-author"
+    assert human.ai_coauthor, "it co-wrote as an agent does"
+    assert with_bots(commits, own_identities()) == commits, "nothing listed, nothing changes"
 
 
 def test_lines_weigh_by_their_file() -> None:

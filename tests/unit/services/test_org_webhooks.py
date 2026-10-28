@@ -163,6 +163,7 @@ def test_the_settings_vocabulary_is_closed() -> None:
         "context_audit_budget_usd": float,
         "context_audit_max_jobs_per_tick": int,
         "context_audit_open_prs": bool,
+        "slop_meter_bots": list,
     }
 
 
@@ -183,6 +184,20 @@ def test_validate_settings_accepts_known_keys_with_their_types() -> None:
     assert validate_settings({"context_audit_max_jobs_per_tick": None}) == {"context_audit_max_jobs_per_tick": None}
     assert validate_settings({"context_audit_open_prs": True}) == {"context_audit_open_prs": True}
     assert validate_settings({"context_audit_open_prs": False}) == {"context_audit_open_prs": False}
+
+
+def test_the_owners_bots_are_a_list_of_short_strings() -> None:
+    """#184: the Slop-O-Meter's ``slop_meter_bots``; blanks dropped, everything else refused with a reason."""
+    assert validate_settings({"slop_meter_bots": [" release-bot ", "", "ci@acme.example"]}) == {
+        "slop_meter_bots": ["release-bot", "ci@acme.example"]
+    }
+    assert validate_settings({"slop_meter_bots": []}) == {"slop_meter_bots": []}
+    for bad in ("release-bot", ["ok", 3], None, [["nested"]]):
+        with pytest.raises(ValueError, match="must be a list of strings"):
+            validate_settings({"slop_meter_bots": bad})
+    for bad in (["x"] * 101, ["x" * 201]):
+        with pytest.raises(ValueError, match="at most 100 entries"):
+            validate_settings({"slop_meter_bots": bad})
 
 
 def test_pull_requests_from_audits_are_on_only_when_stored_true() -> None:

@@ -2475,6 +2475,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.api.v1.organizations import org_forge_client as _slop_meter_forge_client
     from embry0.api.v1.organizations import org_token as _slop_meter_token
     from embry0.services.slop_meter.loop import SlopMeterLoop, slop_meter_settings
+    from embry0.services.slop_meter.loop import repo_bots as slop_meter_repo_bots
     from embry0.services.slop_meter.loop import scope as slop_meter_scope
     from embry0.services.slop_meter.mirror import GitMirror
 
@@ -2508,6 +2509,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except HTTPException:
             return None
 
+    async def _slop_meter_bots(repo: str) -> list[str]:
+        return await slop_meter_repo_bots(
+            repo,
+            prefs=app.state.repo_preferences_repo,
+            orgs=app.state.organizations_repo,
+            credentials=app.state.credentials_repo,
+        )
+
     app.state.slop_meter = SlopMeterLoop(
         repos=_slop_meter_repos,
         store=app.state.slop_meter_repo,
@@ -2515,6 +2524,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         token_for=_slop_meter_credential,
         client_for=_slop_meter_client,
         model=job_brief_model,
+        bots=_slop_meter_bots,
         resolver=getattr(app.state, "credential_resolver", None),
         settings=slop_meter_settings(config),
     )

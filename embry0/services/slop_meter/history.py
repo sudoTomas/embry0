@@ -10,9 +10,13 @@ algorithm (https://github.com/slop-o-meter/slop-o-meter).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from functools import cache
 from typing import Any
+
+from embry0.branding import GIT_AUTHOR_EMAIL
 
 #: One record per commit: a record separator, then the fields, then ``--numstat`` lines.
 LOG_FORMAT = "%x1e%H%x1f%aI%x1f%aN%x1f%aE%x1f%B%x1f"
@@ -69,12 +73,53 @@ _CO_AUTHOR = re.compile(r"^co-authored-by:[ \t]*(.*?)[ \t]*<([^>\n]+)>[ \t]*$", 
 _BULLET = re.compile(r"^[ \t]*[*-][ \t]+\S", re.M)
 
 
-def is_bot(name: str, email: str) -> bool:
-    """A bot or an AI coding agent: a known name, a ``[bot]`` name or address, ``noreply@``, or an agent's address."""
+def is_bot(name: str, email: str, bots: frozenset[str] | None = None) -> bool:
+    """A bot or an AI coding agent: a known name, a ``[bot]`` name or address, ``noreply@``, an agent's address,
+    or a name, address or login in ``bots`` (:func:`own_identities`; embry0's own when none is given)."""
     name, email = name.strip().lower(), email.strip().lower()
     if name in KNOWN_BOTS or name.endswith("[bot]"):
         return True
-    return email.endswith("[bot]@users.noreply.github.com") or email.startswith(("noreply@", *_AI_EMAIL_PREFIXES))
+    if email.endswith("[bot]@users.noreply.github.com") or email.startswith(("noreply@", *_AI_EMAIL_PREFIXES)):
+        return True
+    own = _embry0_identities() if bots is None else bots
+    return name in own or email in own
+
+
+def own_identities(extra: Iterable[str] = ()) -> frozenset[str]:
+    """The identities to count as bots beyond the known ones, lower-cased: embry0's own commit address
+    (and its forge login) always, and each of ``extra`` (an owner's bots, a repository's commit author).
+
+    embry0 commits as a person would, so nothing else marks its commits as a bot's (#184).
+    """
+    out: set[str] = set()
+    for value in (GIT_AUTHOR_EMAIL, *extra):
+        v = value.strip().lower()
+        if not v:
+            continue
+        out.add(v)
+        login = login_of_email(v)
+        if login:
+            out.add(login.lower())
+    return frozenset(out)
+
+
+@cache
+def _embry0_identities() -> frozenset[str]:
+    return own_identities()
+
+
+def with_bots(commits: Sequence[Commit], bots: frozenset[str]) -> list[Commit]:
+    """``commits`` as they read with ``bots`` known: a listed author's commit is a bot's, and a listed
+    co-author co-wrote as an agent does, not as a person. Rows read before an identity was listed are
+    corrected here, when scored, without reading the history again."""
+    out: list[Commit] = []
+    for c in commits:
+        bot = c.bot or is_bot(c.author_name, c.author_email, bots)
+        humans = tuple(co for co in c.coauthors if not is_bot(co[0], co[1], bots))
+        ai = c.ai_coauthor or len(humans) != len(c.coauthors)
+        unchanged = (bot, humans, ai) == (c.bot, c.coauthors, c.ai_coauthor)
+        out.append(c if unchanged else replace(c, bot=bot, coauthors=humans, ai_coauthor=ai))
+    return out
 
 
 def login_of_email(email: str) -> str | None:

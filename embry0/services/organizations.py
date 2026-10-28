@@ -50,6 +50,7 @@ SETTINGS: dict[str, type] = {
     "context_audit_budget_usd": float,
     "context_audit_max_jobs_per_tick": int,
     "context_audit_open_prs": bool,
+    "slop_meter_bots": list,
 }
 
 # The settings that take null, meaning off or the deployment's default, the
@@ -64,6 +65,9 @@ SETTING_RANGES: dict[str, tuple[int, int]] = {
     "context_audit_max_jobs_per_tick": (0, 50),
 }
 NUMBER_RANGES: dict[str, tuple[float, float]] = {"context_audit_budget_usd": (0.0, 50.0)}
+# A list setting holds strings: at most this many, each at most this long.
+LIST_MAX_ITEMS = 100
+LIST_MAX_LENGTH = 200
 
 
 def _number(value: Any) -> TypeGuard[int | float]:
@@ -96,6 +100,15 @@ def validate_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
             if not low < value <= high:
                 raise ValueError(f"setting {key!r} must be more than {low:g} and at most {high:g}{or_null}")
             out[key] = float(value)
+            continue
+        if expected is list:
+            if type(value) is not list or not all(type(v) is str for v in value):
+                raise ValueError(f"setting {key!r} must be a list of strings{or_null}")
+            if len(value) > LIST_MAX_ITEMS or any(len(v) > LIST_MAX_LENGTH for v in value):
+                raise ValueError(
+                    f"setting {key!r} holds at most {LIST_MAX_ITEMS} entries of at most {LIST_MAX_LENGTH} characters"
+                )
+            out[key] = [v.strip() for v in value if v.strip()]
             continue
         if type(value) is not expected:
             raise ValueError(f"setting {key!r} must be {expected.__name__}{or_null}")
