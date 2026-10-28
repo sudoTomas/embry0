@@ -423,8 +423,8 @@ Audit actions:
 
   `readable()`, the parchment of a complete objective and the slate of a tierless entry stay, in `lib/gamePack.ts`; they are presentation.
 - **`GET /progression` gains:**
-  - `pack: {version, hash, follows_default}`;
-  - `groups`, `tiers`, `rares`, `diary_tiers`, `messages` and `labels`;
+  - `pack: {hash, version, timezone}` (PR 2 adds the stored revision and whether it follows the default);
+  - `groups`, `tiers`, `rares`, `cloaks`, `diary_tiers`, `messages` and `labels`;
   - `curve: {max_level, character_max_level}`;
   - `skills[].cloak`;
   - `characters[].gear`, the art step of its tier.
