@@ -1,7 +1,7 @@
 """Achievements (spec 2026-10-25, the achievement diary): what the account has achieved, never how busy it was.
 
 An achievement is data: a stable ``id`` (it keys every unlock forever), a
-name in the old-school game's voice that still says what it counts, a
+name in an adventure game's voice that still says what it counts, a
 category, a flavour line, the metric it counts and its thresholds. Most are
 tiered, Bronze to Divine; an objective has one threshold and is simply
 complete. Every metric adds up from rows the database already holds, so like
@@ -31,7 +31,7 @@ from embry0.services.context_audit import report_counts
 from embry0.services.progression import MAX_LEVEL, STATS, AgentLevelUp, LevelUp, RareDrop
 from embry0.storage.repositories.progression import Fact
 
-TIER_NAMES: tuple[str, ...] = ("bronze", "iron", "steel", "mithril", "adamant", "rune", "divine")
+TIER_NAMES: tuple[str, ...] = ("bronze", "silver", "gold", "platinum", "diamond", "obsidian", "divine")
 #: What a reached objective reads as, in place of a tier.
 COMPLETE = "complete"
 
@@ -45,12 +45,12 @@ class Category:
 
 CATEGORIES: tuple[Category, ...] = (
     Category("shipping", "Shipping", "Pull requests that merged, and how cleanly they got there."),
-    Category("slayer", "Slayer", "Production errors the watcher found, and the fixes that kept them dead."),
+    Category("hunting", "Hunting", "Production errors the watcher found, and the fixes that kept them dead."),
     Category("questing", "Questing", "Issues finished, and the answers owners gave."),
     Category("lore", "Lore", "Instruction files, area maps and standards kept true."),
     Category("guarding", "Guarding", "Reviews, QA and the gate that stops a bad merge."),
     Category("grit", "Grit", "Work that failed, came back, and landed anyway."),
-    Category("skilling", "Skilling", "What the characters grew into."),
+    Category("growth", "Growth", "What the characters grew into."),
     Category("oddities", "Oddities", "Strange hours and rare finds. Mostly secret."),
 )
 
@@ -82,10 +82,10 @@ CATALOGUE: tuple[Achievement, ...] = (
     # ---- Shipping ----
     Achievement(
         "forged_in_fire",
-        "Gz on the Merge",
+        "Shipped It",
         "shipping",
         "Pull requests embry0 opened that merged",
-        "Somebody type gz in chat.",
+        "Somebody ring the bell.",
         "merged",
         (1, 5, 15, 30, 60, 120, 250),
         icon="anvil",
@@ -105,14 +105,14 @@ CATALOGUE: tuple[Achievement, ...] = (
         "Flawless Kill",
         "shipping",
         "Merged pull requests whose job never had an agent run end in an error",
-        "Not a single hitsplat taken.",
+        "Not a single scratch.",
         "clean_kill",
         _COUNTS,
         icon="sword",
     ),
     Achievement(
-        "merged_for_1gp",
-        "Merged for 1gp",
+        "merged_for_a_penny",
+        "Merged for a Penny",
         "shipping",
         "Merged pull requests whose job spent under one US dollar",
         "Cheapest upgrade in the game.",
@@ -131,12 +131,12 @@ CATALOGUE: tuple[Achievement, ...] = (
         icon="boots",
     ),
     Achievement(
-        "world_hopper",
-        "World Hopper",
+        "repo_hopper",
+        "Repo Hopper",
         "shipping",
         "Repositories with at least one merged pull request",
-        "Same agent, new world, same result.",
-        "world_hopper",
+        "Same agent, new repository, same result.",
+        "repo_hopper",
         _REPOS,
         icon="map",
     ),
@@ -145,7 +145,7 @@ CATALOGUE: tuple[Achievement, ...] = (
         "Know Your Zones",
         "shipping",
         "Merged pull requests that named the area of the monorepo they changed",
-        "Never lost in the wilderness again.",
+        "Never lost in the codebase again.",
         "area_merged",
         _COUNTS,
         icon="map",
@@ -170,41 +170,41 @@ CATALOGUE: tuple[Achievement, ...] = (
         (1, 3, 5, 10, 20, 40, 80),
         icon="flame",
     ),
-    # ---- Slayer ----
+    # ---- Hunting ----
     Achievement(
-        "slayer_task_complete",
-        "Slayer Task Complete",
-        "slayer",
+        "hunt_complete",
+        "Hunt Complete",
+        "hunting",
         "Production errors whose fix was checked against the logs afterwards and found healed",
-        "Return to a slayer master for a new task.",
+        "Back to the board for the next one.",
         "healed",
         (1, 3, 10, 25, 50, 100, 200),
         icon="skull",
     ),
     Achievement(
-        "safespotted",
-        "Safespotted",
-        "slayer",
+        "out_of_reach",
+        "Out of Reach",
+        "hunting",
         "Production errors the watcher found itself that embry0's pull request then fixed",
         "Killed it before it could hit anyone.",
-        "safespotted",
+        "out_of_reach",
         (1, 3, 10, 25, 50, 100, 200),
         icon="shield",
     ),
     Achievement(
-        "task_assigned",
-        "Task Assigned",
-        "slayer",
+        "on_the_hunt",
+        "On the Hunt",
+        "hunting",
         "Watcher findings a person accepted for fixing",
-        "Your new task is to kill this bug.",
+        "This bug is somebody's job now.",
         "cases_accepted",
         _COUNTS,
         icon="scroll",
     ),
     Achievement(
-        "boss_slayer",
-        "Boss Slayer",
-        "slayer",
+        "boss_hunter",
+        "Boss Hunter",
+        "hunting",
         "High-severity production errors found healed",
         "It had a health bar the size of the screen.",
         "boss_healed",
@@ -212,11 +212,11 @@ CATALOGUE: tuple[Achievement, ...] = (
         icon="crown",
     ),
     Achievement(
-        "superior_slayer",
-        "Superior Slayer",
-        "slayer",
+        "elite_hunter",
+        "Elite Hunter",
+        "hunting",
         "Healed production errors that had been seen ten times or more",
-        "A superior foe has appeared. It is gone now.",
+        "It kept coming back. Not any more.",
         "superior_healed",
         _RARE,
         icon="skull",
@@ -224,7 +224,7 @@ CATALOGUE: tuple[Achievement, ...] = (
     Achievement(
         "never_respawned",
         "Never Respawned",
-        "slayer",
+        "hunting",
         "Healed production errors that never came back after their fix was checked",
         "It stayed down. They usually don't.",
         "never_respawned",
@@ -234,7 +234,7 @@ CATALOGUE: tuple[Achievement, ...] = (
     Achievement(
         "deployed_and_dusted",
         "Deployed and Dusted",
-        "slayer",
+        "hunting",
         "Fixes for production errors that reached a deploy",
         "Loot picked up, teleported home.",
         "deployed_fix",
@@ -244,10 +244,10 @@ CATALOGUE: tuple[Achievement, ...] = (
     # ---- Questing ----
     Achievement(
         "quest_complete",
-        "Quest Complete!",
+        "Quest Complete",
         "questing",
         "Issues finished by a merged pull request",
-        "Congratulations! Quest complete!",
+        "Done, and marked done.",
         "issue_done",
         (1, 5, 15, 30, 60, 120, 250),
         icon="scroll",
@@ -267,7 +267,7 @@ CATALOGUE: tuple[Achievement, ...] = (
         "Talked to the Quest Giver",
         "questing",
         "Answers owners gave to embry0's proposals: start it, not this, or later",
-        "Select an option.",
+        "Yes, no, or later.",
         "owner_answer",
         (1, 5, 10, 25, 50, 100, 250),
         icon="speech",
@@ -287,14 +287,14 @@ CATALOGUE: tuple[Achievement, ...] = (
         "Reward Claimed",
         "questing",
         "Accepted proposals whose job's pull request merged",
-        "The quest giver hands you a lamp.",
+        "The quest giver pays up.",
         "proposal_merged",
         _COUNTS,
         icon="lamp",
     ),
     Achievement(
-        "continue_clicked",
-        "Click Here to Continue",
+        "answer_given",
+        "Answer Given",
         "questing",
         "Questions an agent asked that a person answered",
         "The dialogue box finally moved on.",
@@ -369,7 +369,7 @@ CATALOGUE: tuple[Achievement, ...] = (
         "Second Opinion",
         "guarding",
         "Pull request reviews embry0 posted on a pull request",
-        "A wise old reviewer has left a comment.",
+        "A second pair of eyes has left a comment.",
         "review_posted",
         (1, 10, 25, 50, 100, 250, 500),
         icon="eye",
@@ -389,7 +389,7 @@ CATALOGUE: tuple[Achievement, ...] = (
         "You Shall Not Merge",
         "guarding",
         "Changes the verification gate stopped because they broke tests that passed before",
-        "Prayer flicked just in time.",
+        "Blocked just in time.",
         "gate_blocked",
         _RARE,
         icon="gate",
@@ -406,8 +406,8 @@ CATALOGUE: tuple[Achievement, ...] = (
     ),
     # ---- Grit ----
     Achievement(
-        "oh_dear_you_are_dead",
-        "Oh Dear, You Are Dead",
+        "back_on_your_feet",
+        "Back on Your Feet",
         "grit",
         "Merges on an issue whose earlier job failed",
         "Ran back from the gravestone and finished it.",
@@ -442,7 +442,7 @@ CATALOGUE: tuple[Achievement, ...] = (
         "Second Wind",
         "grit",
         "Follow-up jobs on a pull request whose pull request then merged",
-        "Ate a shark, kept swinging.",
+        "Caught a breath, kept going.",
         "followup_merged",
         _RARE,
         icon="heart",
@@ -457,11 +457,11 @@ CATALOGUE: tuple[Achievement, ...] = (
         (1, 2, 3, 5, 10, 25, 50),
         icon="pickaxe",
     ),
-    # ---- Skilling ----
+    # ---- Growth ----
     Achievement(
-        "wise_old_agent",
-        "Wise Old Agent",
-        "skilling",
+        "elder_agent",
+        "Elder Agent",
+        "growth",
         "The highest total level of any one character",
         "Seen it all, levelled most of it.",
         "best_total",
@@ -469,19 +469,19 @@ CATALOGUE: tuple[Achievement, ...] = (
         icon="beard",
     ),
     Achievement(
-        "skill_cape",
-        "Skill Cape",
-        "skilling",
+        "mastery_cloak",
+        "Mastery Cloak",
+        "growth",
         "Skills at 99 across every character",
-        "A cape that says you did nothing else for weeks.",
+        "A cloak that says you did nothing else for weeks.",
         "capes",
         (1, 2, 5, 10, 23, 50, 100),
         icon="cape",
     ),
     Achievement(
-        "maxed_main",
-        "Maxed Main",
-        "skilling",
+        "fully_trained",
+        "Fully Trained",
+        "growth",
         "The highest level any one character reached",
         "One character, every stat that matters.",
         "best_level",
@@ -489,9 +489,9 @@ CATALOGUE: tuple[Achievement, ...] = (
         icon="sword",
     ),
     Achievement(
-        "half_of_ninety_nine",
-        "92 Is Half of 99",
-        "skilling",
+        "halfway_by_experience",
+        "Halfway by Experience",
+        "growth",
         "Skills that reached level 92, across every character",
         "Halfway there, by the experience table.",
         "level_92",
@@ -501,7 +501,7 @@ CATALOGUE: tuple[Achievement, ...] = (
     Achievement(
         "thousand_club",
         "Thousand Club",
-        "skilling",
+        "growth",
         "Characters whose total level reached 1,000",
         "The roster stopped being a bunch of noobs.",
         "thousand_club",
@@ -509,11 +509,11 @@ CATALOGUE: tuple[Achievement, ...] = (
         icon="star",
     ),
     Achievement(
-        "rare_drop_table",
-        "Rare Drop Table",
-        "skilling",
+        "rare_finds",
+        "Rare Finds",
+        "growth",
         "Rare drops characters earned",
-        "Purple loot beam.",
+        "Worth framing.",
         "rares",
         _REPOS,
         icon="gem",
@@ -575,12 +575,12 @@ CATALOGUE: tuple[Achievement, ...] = (
         icon="hourglass",
     ),
     Achievement(
-        "pet_drop",
-        "Pet Drop",
+        "lucky_find",
+        "Lucky Find",
         "oddities",
         "A pull request that merged from the first job embry0 ever ran on its repository",
-        "You have a funny feeling you are being followed.",
-        "pet_drop",
+        "Beginner's luck.",
+        "lucky_find",
         (1,),
         secret=True,
         icon="paw",

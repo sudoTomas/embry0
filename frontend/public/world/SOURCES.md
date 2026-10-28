@@ -18,7 +18,7 @@ Every image under `frontend/public/world/` was generated for embry0 with the Pix
 | creature_flaky_imp | `/create-image-bitforge` | small mischievous red-skinned imp with tiny horns, bat wings and a pointed tail, grinning, game monster | 52 | 2026-10-25 |
 | creature_quest_giver | `/create-image-bitforge` | old villager in a brown hooded robe with a big yellow exclamation mark floating above the head | 41 | 2026-10-25 |
 | creature_review_ghost | `/create-image-bitforge` | pale blue floating ghost holding a speech bubble with a question mark | 41 | 2026-10-25 |
-| hitsplat | `/create-image-bitforge` | flat bright red rounded splat badge shape with a dark red outline, a hit marker for showing a damage number, centered, no text | 53 | 2026-10-25 |
+| hit_marker | `/create-image-bitforge` | flat bright red rounded splat badge shape with a dark red outline, a hit marker for showing a damage number, centered, no text | 53 | 2026-10-25 |
 | obj_alchemy_table | `/map-objects` | alchemy table with glass flasks and bubbling potions | 31 | 2026-10-25 |
 | obj_anvil | `/map-objects` | blacksmith anvil on a wooden stump | 31 | 2026-10-25 |
 | obj_banner | `/map-objects` | tall wooden pole with a blank cloth banner flag | 31 | 2026-10-25 |
@@ -48,7 +48,7 @@ Every image under `frontend/public/world/` was generated for embry0 with the Pix
 | tileset_path | `/create-tileset` | lush green grass meadow / packed brown dirt path | 7 | 2026-10-25 |
 | tileset_rock | `/create-tileset` | short green grass / grey rocky cliff ground with scattered pebbles | 22 | 2026-10-25 |
 | tileset_shore | `/create-tileset` | clear blue lake water with small ripples / short green grass | 22 | 2026-10-25 |
-| vfx_hitsplat | `/vfx` | small red splat burst hit marker that pops and fades, four frames |  | 2026-10-25 |
+| vfx_hit_marker | `/vfx` | small red splat burst hit marker that pops and fades, four frames |  | 2026-10-25 |
 | vfx_level_up | `/vfx` | burst of gold and multicoloured firework sparks rising and popping above a character, celebratory, eight frames |  | 2026-10-25 |
 | vfx_loot_sparkle | `/vfx` | small white and gold twinkle stars around a treasure, looping, four frames |  | 2026-10-25 |
 | vfx_xp_drop | `/vfx` | small golden sparkle burst rising upward, four quick frames, for an experience-gained popup |  | 2026-10-25 |
@@ -58,4 +58,4 @@ Every image under `frontend/public/world/` was generated for embry0 with the Pix
 - `guild_hall`: the banner over the door came with a letter-like mark; its pixels were painted over with the banner's own colour.
 - Tilesets: the 16 corner tiles are reordered into a 4x4 sheet by corner index (see README.md); which terrain is bit 0 and which is bit 1 is named in the manifest by how the tiles look. The shore, rock, cobbles and forest tilesets took the path tileset's all-grass tile as their grass reference, so every grass on the map is the same.
 - Creatures: the idle loops start from the creature's own frame (frame 0) and add four generated frames; hit and defeat are drawn by the renderer (a flash, a knock-back, a fade), not stored.
-- `hitsplat`: a static badge; the renderer pops it in, writes the number on it and fades it.
+- `hit_marker`: a static badge; the renderer pops it in, writes the number on it and fades it.

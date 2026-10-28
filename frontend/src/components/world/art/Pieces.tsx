@@ -36,7 +36,7 @@ export function CreatureAt({ art, name, x, y, title, faded }: { art: ArtManifest
 
 /**
  * An effect on (x, y): xp_drop rising, level_up fireworks, loot_sparkle
- * looping, hitsplat as a badge with ``label`` written on it (its one frame
+ * looping, hit_marker as a badge with ``label`` written on it (its one frame
  * made to flash by ``className``). A one-shot effect calls ``onEnd`` when it
  * is over.
  */

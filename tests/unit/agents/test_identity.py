@@ -49,7 +49,7 @@ def test_the_adventurer_presets_follow_the_legacy_roster() -> None:
     for expected in (
         "starter",
         "bronze-warrior",
-        "dragon-warrior",
+        "crimson-warrior",
         "champion",
         "apprentice",
         "archmage",
@@ -57,7 +57,7 @@ def test_the_adventurer_presets_follow_the_legacy_roster() -> None:
         "sharpshooter",
     ):
         assert expected in identity.ADVENTURER_AVATARS
-    assert identity.validate_avatar("rune-warrior") == "rune-warrior"
+    assert identity.validate_avatar("obsidian-warrior") == "obsidian-warrior"
 
 
 @pytest.mark.parametrize("bad", ["", "wizard", "Smith"])

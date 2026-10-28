@@ -6,9 +6,9 @@
 
 ## 1. Goal
 
-A second set of agent avatars, defined the way an old-school MMO defines a player rather than drawn one by one: a **body kit** (skin, hair, beard and four colour slots) plus **equipment slots**, rendered by layering the parts. Presets run from a level-3 starter in a plain shirt to maxed-out warriors, mages and archers, each a different person at a glance. The twelve drawn avatars of the first roster stay as they are; the new ids join them in the identity contract, the agent form and the API's validation.
+A second set of agent avatars, defined the way a classic pixel-art RPG defines a player rather than drawn one by one: a **body kit** (skin, hair, beard and four colour slots) plus **equipment slots**, rendered by layering the parts. Presets run from a level-3 starter in a plain shirt to maxed-out warriors, mages and archers, each a different person at a glance. The twelve drawn avatars of the first roster stay as they are; the new ids join them in the identity contract, the agent form and the API's validation.
 
-The characters must read as that kind of player avatar: a tall, slim, slightly stiff figure seen from the front, big hands and feet, chunky gear, a full helm that reads as a full helm, a kiteshield that is a kite, a scimitar that curves, robes that drape, a wizard hat that points, a bow that is a bow. Every tier has its own colour so the progression from starter to maxed reads on the sheet without labels.
+The characters must read as that kind of player avatar: a tall, slim, slightly stiff figure seen from the front, big hands and feet, chunky gear, a full helm that reads as a full helm, a heater-shield that is a kite, a sabre that curves, robes that drape, a wizard hat that points, a bow that is a bow. Every tier has its own colour so the progression from starter to maxed reads on the sheet without labels.
 
 **Non-goals.** Animating anything beyond the six sprite states; an appearance editor in the dashboard (presets are fixed); per-agent tinting of gear (only the cape wears the party colour); any image file or runtime dependency.
 
@@ -46,7 +46,7 @@ interface Appearance {
 
 A **frame** is a cropped text grid placed on the 32 by 32 cell canvas: `{ x, y, rows }`, where `.` is transparent, `x` erases what lower layers drew (a hat's crown clears the spikes under it while the hair at the sides still falls) and any other character is looked up in the layer's colour key. The figure stands about 14 wide and 30 tall, feet on the last row, row 0 free for the bob and the spark: hair on rows 1 to 4, head 2 to 10, torso 11 to 19, belt and legs 20 to 28, feet 29 to 31. Arms are on x 7..10 and 21..24; the weapon hand is the left (viewer's left) one, the shield arm the right.
 
-An **item** is `{ id, slot, layer?, weapon?, shoulders?, colours, over?, sleeves?, hands? }`. Most items draw one `layer`; a weapon draws `rest` (in the down hand) and `raised` (above the up hand); a platebody also draws `shoulders` over the arms; a body item may set the `sleeves` colour of the arms and a hands item sets the `hands` colour (gloves and vambraces recolour rather than draw, because the arms move). `over: "hair"` means the item covers the hair (coifs); `over: "beard"` covers hair and beard both (full helms). Every shape is drawn once over the three-tone key, so one full helm is seven metal tiers and one robe is three orders of mage.
+An **item** is `{ id, slot, layer?, weapon?, shoulders?, colours, over?, sleeves?, hands? }`. Most items draw one `layer`; a weapon draws `rest` (in the down hand) and `raised` (above the up hand); a chestplate also draws `shoulders` over the arms; a body item may set the `sleeves` colour of the arms and a hands item sets the `hands` colour (gloves and bracers recolour rather than draw, because the arms move). `over: "hair"` means the item covers the hair (hoods); `over: "beard"` covers hair and beard both (full helms). Every shape is drawn once over the three-tone key, so one full helm is seven metal tiers and one robe is three orders of mage.
 
 ### 2.2 Composition
 
@@ -70,21 +70,21 @@ Twenty, each an `AvatarId`:
 | id | the look |
 |---|---|
 | `starter` | level 3: brown hair, cream shirt, trousers, no gear |
-| `bronze-warrior` … `dragon-warrior` | one per metal tier (bronze, iron, steel, mithril, adamant, rune, dragon), each the full set: full helm, platebody, platelegs, kiteshield, scimitar; the ladder adds metal boots, a cape and an amulet on the way up |
+| `bronze-warrior` … `crimson-warrior` | one per metal tier (bronze, silver, gold, platinum, diamond, obsidian, crimson), each the full set: full helm, chestplate, greaves, heater-shield, sabre; the ladder adds metal boots, a cape and an amulet on the way up |
 | `champion` | maxed warrior: black plate trimmed in gold, a crested helm, gold gauntlets, a trimmed cape, a two-hander |
 | `apprentice` | blue pointed hat and robes, a plain staff |
 | `mystic` | banded hat, gold-trimmed robes, an orb staff, an amulet |
 | `archmage` | maxed mage: gemmed hat, runed robes, a glowing crystal staff, a cape |
-| `scout` | laced leather jerkin and chaps, vambraces, a shortbow |
-| `ranger` | green coif, hide body with a quiver strap, chaps, vambraces, a longbow |
-| `marksman` | black coif, black hide, a dark bow, a cape |
+| `scout` | laced leather jerkin and leggings, bracers, a shortbow |
+| `ranger` | green hood, hide body with a quiver strap, leggings, bracers, a longbow |
+| `marksman` | black hood, black hide, a dark bow, a cape |
 | `sharpshooter` | maxed archer: red hide trimmed in gold, gold gauntlets, a trimmed cape, a crossbow |
 | `monk` | bald, grey goatee, brown robes, a pendant |
 | `pirate` | tricorne, striped shirt, long hair and a full beard, a cutlass |
-| `skiller` | a woodcutter: curly blonde hair, green shirt, a felling axe |
+| `artisan` | a woodcutter: curly blonde hair, green shirt, a felling axe |
 | `miner` | mining helmet with a lamp, moustache, a pickaxe, metal boots |
 
-Skin, hair style and colour, beard and the cloth under the gear vary across the set, so even the seven tier warriors differ in the hands, the hair that shows under a coif or a hat, and the boots.
+Skin, hair style and colour, beard and the cloth under the gear vary across the set, so even the seven tier warriors differ in the hands, the hair that shows under a hood or a hat, and the boots.
 
 ### 2.4 Wiring
 
@@ -99,11 +99,11 @@ Skin, hair style and colour, beard and the cloth under the gear vary across the 
 
 - `palette.test.ts`: the named tables and their hexes, the tone helpers, the cape token.
 - `parts.test.ts`: rectangular frames inside the grid, every character resolving, the faces, the arm poses and the mirror.
-- `items.test.ts`: every item keyed by its id in a known slot, frames inside the grid with every character resolving, weapons on the left with the raised layer above the resting one, the shield on the right, `over` on helms and coifs, the cape alone wearing the party token, a full set per tier.
-- `compose.test.ts`: draw order; a helm hides hair and beard, a coif the hair, a hat neither; the shield covers the body; tool raises the weapon layer (its box moves up) and its second frame is the rest; done raises both arms, weapon and shield with a smile; failed slumps, frowns and sweats; thinking closes the eyes and moves the spark; the bob; pending as the edge in one tint; the erase cell; `runLength` against `compileFrame` and the merged rectangles.
+- `items.test.ts`: every item keyed by its id in a known slot, frames inside the grid with every character resolving, weapons on the left with the raised layer above the resting one, the shield on the right, `over` on helms and hoods, the cape alone wearing the party token, a full set per tier.
+- `compose.test.ts`: draw order; a helm hides hair and beard, a hood the hair, a hat neither; the shield covers the body; tool raises the weapon layer (its box moves up) and its second frame is the rest; done raises both arms, weapon and shield with a smile; failed slumps, frowns and sweats; thinking closes the eyes and moves the spark; the bob; pending as the edge in one tint; the erase cell; `runLength` against `compileFrame` and the merged rectangles.
 - `presets.test.ts`: at least sixteen presets with the named ones present; every preset composes in every state with the state's frame count, each frame 32 rows of 32 cells; every item in the slot it is for and every layer colour resolving; no two presets compose to the same idle frame; only the cape carries the party colour; the directory under 120 KB of source.
 
-`Sprite.test.tsx` renders a preset at `viewBox="0 0 32 32"` with fixed fills and the cape in `--sprite-fill`, a legacy avatar at 16, every preset's pending frame as the one dim path, and `still`. `AgentIdentityFields.test.tsx` lists the presets after the legacy roster at 32 px. `agentIdentity.contract.test.ts` pins `ADVENTURER_AVATARS` to `PRESET_IDS` and both to the contract. `tests/unit/agents/test_identity.py` pins the Python mirror and the contract file; `tests/unit/api/v1/test_agents.py` creates an agent with `rune-warrior`, updates one to `champion`, and refuses `iron-wizard`. The contact sheet at `../plans/2026-10-20-adventurer-roster-contact-sheet.svg` is the review surface for the art.
+`Sprite.test.tsx` renders a preset at `viewBox="0 0 32 32"` with fixed fills and the cape in `--sprite-fill`, a legacy avatar at 16, every preset's pending frame as the one dim path, and `still`. `AgentIdentityFields.test.tsx` lists the presets after the legacy roster at 32 px. `agentIdentity.contract.test.ts` pins `ADVENTURER_AVATARS` to `PRESET_IDS` and both to the contract. `tests/unit/agents/test_identity.py` pins the Python mirror and the contract file; `tests/unit/api/v1/test_agents.py` creates an agent with `obsidian-warrior`, updates one to `champion`, and refuses `silver-wizard`. The contact sheet at `../plans/2026-10-20-adventurer-roster-contact-sheet.svg` is the review surface for the art.
 
 ## 4. Deploy notes
 

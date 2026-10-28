@@ -33,15 +33,15 @@ LEGACY_AVATARS: Final[tuple[str, ...]] = (
 ADVENTURER_AVATARS: Final[tuple[str, ...]] = (
     "starter",
     "bronze-warrior",
-    "iron-warrior",
-    "steel-warrior",
-    "mithril-warrior",
-    "adamant-warrior",
-    "rune-warrior",
-    "dragon-warrior",
+    "silver-warrior",
+    "gold-warrior",
+    "platinum-warrior",
+    "diamond-warrior",
+    "obsidian-warrior",
+    "crimson-warrior",
     "champion",
     "apprentice",
-    "mystic",
+    "sorcerer",
     "archmage",
     "scout",
     "ranger",
@@ -49,7 +49,7 @@ ADVENTURER_AVATARS: Final[tuple[str, ...]] = (
     "sharpshooter",
     "monk",
     "pirate",
-    "skiller",
+    "artisan",
     "miner",
 )
 AVATARS: Final[tuple[str, ...]] = LEGACY_AVATARS + ADVENTURER_AVATARS
@@ -72,7 +72,7 @@ BUILTIN_IDENTITY: Final[dict[str, dict[str, str]]] = {
     # Slop dungeon (spec 2026-10-25): the cleanup agent on the developer node.
     "slopmaster": {
         "display_name": "Slopmaster",
-        "avatar": "steel-warrior",
+        "avatar": "gold-warrior",
         "color": "emerald",
         "tagline": "Clears the slop, keeps the behavior.",
     },
@@ -106,7 +106,7 @@ BUILTIN_IDENTITY: Final[dict[str, dict[str, str]]] = {
     },
     "gardener": {
         "display_name": "Gardener",
-        "avatar": "skiller",
+        "avatar": "artisan",
         "color": "emerald",
         "tagline": "Pulls one weed per run, provably.",
     },
@@ -118,7 +118,7 @@ BUILTIN_IDENTITY: Final[dict[str, dict[str, str]]] = {
     },
     "why": {
         "display_name": "Why",
-        "avatar": "mystic",
+        "avatar": "sorcerer",
         "color": "violet",
         "tagline": "Finds the forces that shaped the code.",
     },

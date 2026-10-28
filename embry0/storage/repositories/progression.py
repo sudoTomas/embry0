@@ -205,7 +205,7 @@ WHERE m.total_cost_usd > 0 AND m.total_cost_usd < 1
 UNION ALL
 SELECT 'speedrun', m.at, 1, m.label, m.pr_url, NULL FROM merged m WHERE m.at - m.created_at < INTERVAL '1 day'
 UNION ALL
-SELECT 'world_hopper', f.at, 1, f.repo, f.pr_url, NULL
+SELECT 'repo_hopper', f.at, 1, f.repo, f.pr_url, NULL
 FROM (SELECT DISTINCT ON (repo) repo, at, pr_url FROM merged WHERE repo IS NOT NULL ORDER BY repo, at) f
 UNION ALL
 SELECT 'area_merged', m.at, 1, m.label || ' · ' || m.area, m.pr_url, NULL FROM merged m WHERE m.area IS NOT NULL
@@ -216,7 +216,7 @@ UNION ALL
 SELECT 'full_party', m.at, 1, m.label, m.pr_url, NULL FROM merged m
 WHERE EXISTS (SELECT 1 FROM traces t WHERE t.job_id = m.job_id AND t.agent_type = 'review' AND t.result = 'success')
   AND EXISTS (SELECT 1 FROM traces t WHERE t.job_id = m.job_id AND t.agent_type = 'qa' AND t.result = 'success')
--- slayer
+-- hunting
 UNION ALL
 SELECT 'healed', h.healed_at, 1, h.title, h.tracker_url, NULL FROM healed h
 UNION ALL
@@ -229,7 +229,7 @@ WHERE NOT EXISTS (
     SELECT 1 FROM healing_case_events e WHERE e.case_id = h.id AND e.event = 'recurrence' AND e.occurred_at > h.healed_at
 )
 UNION ALL
-SELECT 'safespotted', c.merged_at, 1, c.title, c.tracker_url, NULL FROM healing_cases c
+SELECT 'out_of_reach', c.merged_at, 1, c.title, c.tracker_url, NULL FROM healing_cases c
 WHERE c.origin = 'watcher' AND c.merged_at IS NOT NULL AND COALESCE(c.resolution_path, 'embry0') = 'embry0'
 UNION ALL
 SELECT 'cases_accepted', c.accepted_at, 1, c.title, c.tracker_url, NULL FROM healing_cases c
@@ -318,7 +318,7 @@ UNION ALL
 SELECT 'long_grind', m.at, 1, m.label, m.pr_url, NULL FROM merged m
 WHERE m.finished_at - m.started_at > INTERVAL '2 hours'
 UNION ALL
-SELECT 'pet_drop', m.at, 1, m.label, m.pr_url, NULL FROM merged m
+SELECT 'lucky_find', m.at, 1, m.label, m.pr_url, NULL FROM merged m
 WHERE m.repo IS NOT NULL AND NOT EXISTS (SELECT 1 FROM jobs e WHERE e.repo = m.repo AND e.created_at < m.created_at)
 UNION ALL
 SELECT 'ninety_nine', COALESCE(c.merged_at, c.verified_at), 1, c.title, c.tracker_url, NULL FROM healing_cases c

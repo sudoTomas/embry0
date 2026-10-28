@@ -3,7 +3,7 @@
  * glyphs drawn here, one per kind of deed. Each row is a string: `o` the
  * outline, `#` the tier's colour, `+` a highlight, `-` a shade of the tier
  * colour, `.` nothing. The tier colour comes in as `color`, so a Bronze anvil
- * and a Rune anvil are the same drawing in two metals.
+ * and an Obsidian anvil are the same drawing in two metals.
  */
 import { ICONS, lift } from "@/components/progression/achievementIconData";
 import { OUTLINE } from "@/components/roster/appearance/palette";
@@ -21,7 +21,7 @@ export function AchievementIcon({
   title?: string;
 }) {
   const rows = ICONS[name ?? "secret"] ?? ICONS.star;
-  // The metal, lifted a little: mithril and adamant are dark enough to vanish on the dark panels.
+  // The metal, lifted a little: obsidian and crimson are dark enough to vanish on the dark panels.
   const body = lift(color);
   const pixels: React.ReactNode[] = [];
   rows.forEach((row, y) => {

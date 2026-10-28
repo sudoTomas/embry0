@@ -69,10 +69,10 @@ async def test_create_agent_accepts_an_adventurer_avatar(app):
     async with AsyncClient(transport=transport, base_url="http://test", headers=_CSRF) as client:
         resp = await client.post(
             "/api/v1/agents",
-            json={"type": "vanguard", "description": "d", "model": "claude-sonnet-5", "avatar": "rune-warrior"},
+            json={"type": "vanguard", "description": "d", "model": "claude-sonnet-5", "avatar": "obsidian-warrior"},
         )
     assert resp.status_code == 201, resp.text
-    assert app.state.agent_defs_repo.create.await_args.kwargs["avatar"] == "rune-warrior"
+    assert app.state.agent_defs_repo.create.await_args.kwargs["avatar"] == "obsidian-warrior"
 
 
 @pytest.mark.asyncio
@@ -80,7 +80,7 @@ async def test_update_agent_rejects_an_unknown_avatar_but_takes_an_adventurer(ap
     app.state.agent_defs_repo.update = AsyncMock(return_value={"type": "developer"})
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", headers=_CSRF) as client:
-        bad = await client.put("/api/v1/agents/developer", json={"avatar": "iron-wizard"})
+        bad = await client.put("/api/v1/agents/developer", json={"avatar": "silver-wizard"})
         good = await client.put("/api/v1/agents/developer", json={"avatar": "champion"})
     assert bad.status_code == 422
     assert "avatar must be one of" in bad.text

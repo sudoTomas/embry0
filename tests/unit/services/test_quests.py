@@ -39,12 +39,12 @@ def by_id(quests: list) -> dict:
 
 def test_nothing_done_reads_as_four_quests_not_started() -> None:
     quests = evaluate_quests(Journal([], []), [], None)
-    assert [q.id for q in quests] == ["repos_assistant", "restless_build", "gatekeeper", "divine_slayer"]
+    assert [q.id for q in quests] == ["first_steps", "try_again", "gatekeeper", "divine_warden"]
     assert {q.state for q in quests} == {"not_started"}
     assert quest_rewards(Journal([], [])) == []
 
 
-def test_the_repos_assistant_follows_one_repo_from_onboarding_to_its_first_merge() -> None:
+def test_the_first_steps_follows_one_repo_from_onboarding_to_its_first_merge() -> None:
     journal = Journal(
         [
             job(1, template="onboard", repo="o/new"),
@@ -54,7 +54,7 @@ def test_the_repos_assistant_follows_one_repo_from_onboarding_to_its_first_merge
         ],
         [],
     )
-    quest = by_id(evaluate_quests(journal, [], None))["repos_assistant"]
+    quest = by_id(evaluate_quests(journal, [], None))["first_steps"]
     assert [s.done_at for s in quest.steps] == [at(1), at(2), at(3)]
     assert quest.state == "complete" and quest.completed_at == at(3) and quest.where == "o/new"
     assert [(t, r.agent_type, r.stat) for t, r in quest_rewards(journal)] == [
@@ -63,12 +63,12 @@ def test_the_repos_assistant_follows_one_repo_from_onboarding_to_its_first_merge
     ]
 
 
-def test_the_restless_build_needs_a_merge_after_a_failure_on_the_same_issue() -> None:
+def test_the_try_again_needs_a_merge_after_a_failure_on_the_same_issue() -> None:
     failed_only = Journal([job(1, "failed", issue="i-1"), job(2, "pr_merged", issue="i-2")], [])
-    quest = by_id(evaluate_quests(failed_only, [], None))["restless_build"]
+    quest = by_id(evaluate_quests(failed_only, [], None))["try_again"]
     assert quest.state == "in_progress" and quest.steps[0].done_at == at(1)
     comeback = Journal([job(1, "failed", issue="i-1"), job(2, "pr_merged", issue="i-1")], [])
-    quest = by_id(evaluate_quests(comeback, [], None))["restless_build"]
+    quest = by_id(evaluate_quests(comeback, [], None))["try_again"]
     assert quest.completed_at == at(2) and quest.where == "i-1"
 
 
@@ -81,14 +81,14 @@ def test_gatekeeper_wants_review_qa_and_merge_on_one_issue() -> None:
     assert quest.completed_at == at(3) and quest.points == 2
 
 
-def test_divine_slayer_waits_for_its_requirement() -> None:
+def test_divine_warden_waits_for_its_requirement() -> None:
     merges = [job(h, "pr_merged") for h in range(100)]
     journal = Journal(merges, [])
     diaries = evaluate_diaries(journal)
-    quest = by_id(evaluate_quests(journal, diaries, None))["divine_slayer"]
+    quest = by_id(evaluate_quests(journal, diaries, None))["divine_warden"]
     assert quest.steps[0].done_at == at(99)
     assert quest.state == "in_progress" and quest.to_dict()["requirement_met"] is False
-    quest = by_id(evaluate_quests(journal, diaries, at(200)))["divine_slayer"]
+    quest = by_id(evaluate_quests(journal, diaries, at(200)))["divine_warden"]
     assert quest.completed_at is None, "an Elite diary is still missing"
 
 

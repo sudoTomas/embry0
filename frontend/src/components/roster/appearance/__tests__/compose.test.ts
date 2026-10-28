@@ -9,7 +9,7 @@ const bare: Appearance = {
   colours: { hair: "auburn", torso: "cream", legs: "umber", feet: "brown" },
   equipment: {},
 };
-const armed: Appearance = { ...bare, equipment: { head: "rune-helm", shield: "rune-kiteshield", weapon: "rune-scimitar", body: "rune-platebody" } };
+const armed: Appearance = { ...bare, equipment: { head: "obsidian-helm", shield: "obsidian-heater-shield", weapon: "obsidian-sabre", body: "obsidian-chestplate" } };
 const idle: Pose = POSES.idle[0];
 
 function colours(a: Appearance, pose: Pose): Set<string> {
@@ -32,23 +32,23 @@ describe("compose", () => {
     expect(names.indexOf("shoulders")).toBeGreaterThan(names.indexOf("arm-right"));
   });
 
-  it("hides the hair and beard under a full helm, the hair alone under a coif, neither under a hat", () => {
+  it("hides the hair and beard under a full helm, the hair alone under a hood, neither under a hat", () => {
     const hair = COLOURS.auburn;
     expect(colours(bare, idle).has(hair), "bare head shows the hair").toBe(true);
     expect(colours(armed, idle).has(hair), "a full helm hides hair and beard").toBe(false);
     expect(layersOf(armed, idle).map((l) => l.name)).not.toContain("beard");
-    const coifed = layersOf({ ...bare, equipment: { head: "green-coif" } }, idle).map((l) => l.name);
-    expect(coifed).not.toContain("hair");
-    expect(coifed).toContain("beard");
-    const hatted = layersOf({ ...bare, equipment: { head: "wizard-hat" } }, idle).map((l) => l.name);
+    const hooded = layersOf({ ...bare, equipment: { head: "green-hood" } }, idle).map((l) => l.name);
+    expect(hooded).not.toContain("hair");
+    expect(hooded).toContain("beard");
+    const hatted = layersOf({ ...bare, equipment: { head: "novice-hat" } }, idle).map((l) => l.name);
     expect(hatted).toContain("hair");
     expect(hatted).toContain("beard");
   });
 
   it("draws the shield over the body: the grid there holds the shield's colours, not the plate's", () => {
     const grid = paint(armed, idle);
-    const shield = ITEMS["rune-kiteshield"];
-    const plate = ITEMS["rune-platebody"];
+    const shield = ITEMS["obsidian-heater-shield"];
+    const plate = ITEMS["obsidian-chestplate"];
     const f = shield.layer!;
     let covered = 0;
     f.rows.forEach((row, j) => [...row].forEach((c, i) => {
@@ -120,7 +120,7 @@ describe("compose", () => {
   });
 
   it("erases lower layers under an x cell", () => {
-    const grid = paint({ ...bare, hair: "spiky", equipment: { head: "wizard-hat" } }, idle);
+    const grid = paint({ ...bare, hair: "spiky", equipment: { head: "novice-hat" } }, idle);
     expect(grid[1][12], "the spike under the crown is gone").toBeNull();
   });
 

@@ -14,7 +14,7 @@ describe("identityOf", () => {
     expect(identityOf("release-bot")).toMatchObject({ displayName: "release-bot", avatar: "golem", color: "slate", tagline: "", initial: "R" });
   });
   it("ignores ids outside the roster and palette", () => {
-    expect(identityOf({ type: "x", avatar: "dragon", color: "mauve" })).toMatchObject({ avatar: "golem", color: "slate" });
+    expect(identityOf({ type: "x", avatar: "crimson", color: "mauve" })).toMatchObject({ avatar: "golem", color: "slate" });
   });
   it("shows the slug when display_name is empty", () => {
     expect(identityOf({ type: "qa", display_name: "" }).displayName).toBe("QA");

@@ -29,29 +29,22 @@ export const DIARY_TIER_NAME: Record<DiaryTierName, string> = { easy: "Easy", me
 
 /** How a rare reads in a message. */
 export const RARE_NAMES: Record<string, string> = {
-  "party-hat": "party hat",
-  "white-party-hat": "white party hat",
-  "holiday-mask": "holiday mask",
+  "paper-crown": "paper crown",
+  "golden-paper-crown": "golden paper crown",
+  "harvest-mask": "harvest mask",
 };
 
-/** The message, in the old game's words: a level or a drop names the character that earned it. */
+/** The message: a level or a find names the character that earned it. */
 export function chatMessage(
   event: RecentEvent,
   skillName: (stat: string) => string,
   characterName: (agentType: string) => string,
 ): string {
-  if (event.kind === "level") {
-    const skill = skillName(event.stat);
-    return `Congratulations, ${characterName(event.agent_type)} just advanced a ${skill} level. Its ${skill} level is now ${event.level}.`;
-  }
-  if (event.kind === "agent_level") return `Congratulations, ${characterName(event.agent_type)}'s level is now ${event.level}.`;
-  if (event.kind === "quest") return `Congratulations! Quest complete: ${event.name}.`;
-  if (event.kind === "diary") {
-    return `Well done! You have completed the ${DIARY_TIER_NAME[event.tier]} tasks in the ${event.repo} diary.`;
-  }
-  if (event.kind === "rare") {
-    return `Valuable drop: ${characterName(event.agent_type)} received a ${RARE_NAMES[event.id] ?? event.id}!`;
-  }
-  if (event.tier === "complete") return `Well done! You have completed the ${event.name} achievement.`;
-  return `Well done! You have reached ${TIER_NAME[event.tier]} in ${event.name}.`;
+  if (event.kind === "level") return `${characterName(event.agent_type)} reached ${skillName(event.stat)} level ${event.level}.`;
+  if (event.kind === "agent_level") return `${characterName(event.agent_type)} is now level ${event.level}.`;
+  if (event.kind === "quest") return `Quest done: ${event.name}.`;
+  if (event.kind === "diary") return `The ${DIARY_TIER_NAME[event.tier]} tasks of the ${event.repo} diary are done.`;
+  if (event.kind === "rare") return `${characterName(event.agent_type)} found a ${RARE_NAMES[event.id] ?? event.id}.`;
+  if (event.tier === "complete") return `Achievement done: ${event.name}.`;
+  return `${event.name} reached ${TIER_NAME[event.tier]}.`;
 }

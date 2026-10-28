@@ -23,7 +23,7 @@ describe("AgentIdentityFields", () => {
     const grid = screen.getByRole("radiogroup", { name: "Avatar" });
     const names = [...grid.querySelectorAll('[role="radio"]')].map((b) => b.getAttribute("aria-label"));
     expect(names.slice(12)).toEqual([...ADVENTURER_AVATARS]);
-    const svg = screen.getByRole("radio", { name: "dragon-warrior" }).querySelector("svg")!;
+    const svg = screen.getByRole("radio", { name: "crimson-warrior" }).querySelector("svg")!;
     expect(svg).toHaveAttribute("viewBox", "0 0 32 32");
     expect(svg).toHaveAttribute("data-color", "cyan");
   });

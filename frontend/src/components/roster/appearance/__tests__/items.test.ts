@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ITEMS, type Item } from "../items";
-import { CAPE_FILL, METAL, SKILL_CAPE } from "../palette";
+import { CAPE_FILL, METAL, MASTERY_CLOAK } from "../palette";
 import { GRID, type EquipmentSlot, type Frame } from "../types";
 
 const SLOTS: EquipmentSlot[] = ["head", "cape", "neck", "weapon", "body", "shield", "legs", "hands", "feet"];
@@ -57,44 +57,44 @@ describe("equipment catalogue", () => {
   it("covers the hair under every helm, hood and hat that says so, and the beard only under a full helm", () => {
     for (const [key, item] of items) {
       if (item.over) expect(item.slot, `${key} over= is for the head slot`).toBe("head");
-      if (key.endsWith("-med-helm")) expect(item.over, `${key} shows the face and beard`).toBe("hair");
+      if (key.endsWith("-open-helm")) expect(item.over, `${key} shows the face and beard`).toBe("hair");
       else if (key.endsWith("-helm")) expect(item.over, key).toBe("beard");
-      if (key.endsWith("-coif")) expect(item.over, key).toBe("hair");
+      if (key.endsWith("-hood")) expect(item.over, key).toBe("hair");
     }
-    expect((ITEMS["wizard-hat"] as Item).over, "a hat leaves the hair at the sides").toBeUndefined();
+    expect((ITEMS["novice-hat"] as Item).over, "a hat leaves the hair at the sides").toBeUndefined();
   });
 
-  it("gives the party colour token to the cape and the party hat alone", () => {
+  it("gives the party colour token to the cape and the paper crown alone", () => {
     const wearing = items.filter(([, item]) => Object.values(item.colours).some((c) => c.includes(CAPE_FILL)));
-    expect(wearing.map(([key]) => key).sort()).toEqual(["cape", "cape-divine", "party-hat", "trimmed-cape", "trimmed-cape-divine"]);
+    expect(wearing.map(([key]) => key).sort()).toEqual(["cape", "cape-divine", "paper-crown", "trimmed-cape", "trimmed-cape-divine"]);
   });
 
-  it("draws a plain and a trimmed skill cape for every echoed skill, in its own colours", () => {
-    for (const echo of Object.keys(SKILL_CAPE)) {
-      const plain = ITEMS[`${echo}-cape` as keyof typeof ITEMS] as Item;
-      const trimmed = ITEMS[`${echo}-cape-t` as keyof typeof ITEMS] as Item;
-      expect(plain.slot, echo).toBe("cape");
-      expect(trimmed.slot, echo).toBe("cape");
-      expect(plain.colours.c, echo).toBe(SKILL_CAPE[echo as keyof typeof SKILL_CAPE].base);
-      expect(trimmed.layer, `${echo} trimmed`).not.toEqual(plain.layer);
+  it("draws a plain and a trimmed mastery cloak for every skill, in its own colours", () => {
+    for (const skill of Object.keys(MASTERY_CLOAK)) {
+      const plain = ITEMS[`${skill}-cloak` as keyof typeof ITEMS] as Item;
+      const trimmed = ITEMS[`${skill}-cloak-t` as keyof typeof ITEMS] as Item;
+      expect(plain.slot, skill).toBe("cape");
+      expect(trimmed.slot, skill).toBe("cape");
+      expect(plain.colours.c, skill).toBe(MASTERY_CLOAK[skill as keyof typeof MASTERY_CLOAK].base);
+      expect(trimmed.layer, `${skill} trimmed`).not.toEqual(plain.layer);
     }
   });
 
   it("has a full set per metal tier and the three mage orders", () => {
-    for (const tier of ["bronze", "iron", "steel", "mithril", "adamant", "rune", "dragon", "divine"]) {
-      for (const piece of ["helm", "platebody", "platelegs", "kiteshield", "scimitar"]) expect(ITEMS, `${tier}-${piece}`).toHaveProperty(`${tier}-${piece}`);
+    for (const tier of ["bronze", "silver", "gold", "platinum", "diamond", "obsidian", "crimson", "divine"]) {
+      for (const piece of ["helm", "chestplate", "greaves", "heater-shield", "sabre"]) expect(ITEMS, `${tier}-${piece}`).toHaveProperty(`${tier}-${piece}`);
     }
-    for (const order of ["wizard", "mystic", "archmage"]) {
+    for (const order of ["novice", "violet", "archmage"]) {
       for (const piece of ["hat", "robe", "skirt", "boots"]) expect(ITEMS, `${order}-${piece}`).toHaveProperty(`${order}-${piece}`);
     }
   });
 });
 
-describe("quest cape and Divine trim (progression spec 2026-10-24)", () => {
+describe("quest cloak and Divine trim (progression spec 2026-10-24)", () => {
   it("gives every cape a Divine-trimmed form on the trimmed cape, in the Divine metal", () => {
     const capes = items.filter(([, item]) => item.slot === "cape");
     const plain = capes.filter(([key]) => !key.endsWith("-divine"));
-    expect(plain.map(([key]) => key)).toContain("quest-cape");
+    expect(plain.map(([key]) => key)).toContain("quest-cloak");
     for (const [key, item] of plain) {
       const divine = ITEMS[`${key}-divine` as keyof typeof ITEMS] as Item;
       expect(divine, key).toBeDefined();

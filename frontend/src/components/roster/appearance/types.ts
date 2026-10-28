@@ -2,7 +2,7 @@
  * An adventurer is an appearance, not a drawing: a body kit (skin, hair,
  * beard and four colour slots) plus what is worn in nine equipment slots.
  * compose.ts renders one by layering the body-kit parts (parts.ts) and the
- * worn items (items.ts) on a 32 by 32 cell grid, the way an old-school MMO
+ * worn items (items.ts) on a 32 by 32 cell grid, the way a classic pixel-art RPG
  * draws a player from its appearance record. Every avatar is composed: the
  * twelve original ones were 16-pixel drawings until the progression spec
  * (2026-10-24) gave them a person here, so they can wear what they earn.

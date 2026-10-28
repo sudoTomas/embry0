@@ -1,10 +1,10 @@
 /**
- * The named colours of the adventurer roster. Every hex was picked by eye
- * for how a tier reads in an old-school MMO (bronze warm brown, iron grey,
- * steel light grey, mithril deep blue, adamant green, rune teal-blue, dragon
- * red, divine pale gold); nothing is sampled from any game, wiki or asset.
- * Colours are fixed per part and per item; the cape and the party hat alone
- * wear the party colour token.
+ * The named colours of the adventurer roster. Every hex was picked by eye:
+ * the gear tiers read as a medal ladder (bronze warm brown, silver grey,
+ * gold yellow, platinum pale blue-grey, diamond ice blue, obsidian violet
+ * black, crimson red, divine pale gold); nothing is sampled from any game,
+ * wiki or asset. Colours are fixed per part and per item; the cape and the
+ * paper crown alone wear the party colour token.
  *
  * Imports inside appearance/ carry the .ts extension because
  * scripts/adventurer_sheet.mts runs this module under Node without a
@@ -50,13 +50,13 @@ export const COLOURS: Record<ColourId, Hex> = { ...HAIR, ...CLOTH };
 
 export const METAL = {
   bronze: "#9c6b2f",
-  iron: "#6b6b70",
-  steel: "#b9bcc4",
+  silver: "#a9adb6",
+  gold: "#d4a020",
   black: "#2c2b33",
-  mithril: "#2f4ea0",
-  adamant: "#2f7a4a",
-  rune: "#3f7fa8",
-  dragon: "#b3261e",
+  platinum: "#c7d3dc",
+  diamond: "#7cc6dc",
+  obsidian: "#3b2f52",
+  crimson: "#b3261e",
   divine: "#e2c766",
 } as const;
 export type MetalTier = keyof typeof METAL;
@@ -70,14 +70,14 @@ export const LEATHER = {
 } as const;
 
 export const MAGE = {
-  wizard: "#2b58c8",
-  mystic: "#8a3fb8",
+  novice: "#2b58c8",
+  violet: "#8a3fb8",
   high: "#2a1e4d",
 } as const;
 
 /**
  * The ranged ladder's hides, Bronze to Divine: tanned leather, hardened,
- * studded, then dragonhide in green, blue and red, and blessed white hide.
+ * studded, then scale in green, blue and red, and pale white hide.
  */
 export const HIDE = {
   leather: "#8a5a2b",
@@ -86,16 +86,16 @@ export const HIDE = {
   green: "#3f6e2d",
   blue: "#2f5f8f",
   red: "#8f2f2f",
-  blessed: "#e8e0c8",
+  pale: "#e8e0c8",
 } as const;
 
 /** The magic ladder's robes, Bronze to Divine, each with its trim. */
 export const ROBE = {
-  wizard: { base: "#2b58c8", trim: "#7f9be6" },
+  novice: { base: "#2b58c8", trim: "#7f9be6" },
   dark: { base: "#2b2a30", trim: "#9a9aa2" },
   enchanted: { base: "#24306e", trim: "#c8c8d0" },
-  mystic: { base: "#8a3fb8", trim: "#e3b94b" },
-  astral: { base: "#1f6f8f", trim: "#e6e6ea" },
+  violet: { base: "#8a3fb8", trim: "#e3b94b" },
+  tidal: { base: "#1f6f8f", trim: "#e6e6ea" },
   archmage: { base: "#2a1e4d", trim: "#e3b94b" },
   celestial: { base: "#efe6cf", trim: "#e3b94b" },
 } as const;
@@ -109,40 +109,40 @@ export const CAPE_FILL: Hex = "var(--sprite-fill)";
 export const CAPE_SHADE: Hex = "color-mix(in srgb, var(--sprite-fill) 55%, black)";
 
 /**
- * A skill cape's body and trim, keyed by the classic skill a development
- * skill echoes (progression spec 2026-10-24). Picked by eye for what the
- * skill evokes: forge orange on iron for smithing, a red cross on white for
- * hitpoints; nothing is sampled from any game.
+ * A mastery cloak's body and trim, keyed by the development skill it marks
+ * at 99 (progression spec 2026-10-24). Picked by eye for what the skill
+ * evokes: forge orange on dark iron for coding, a red cross on white for
+ * recovery.
  */
-export const SKILL_CAPE = {
-  attack: { base: "#7a2a2a", trim: "#e3b94b" },
-  strength: { base: "#2f6a3a", trim: "#c0392b" },
-  defence: { base: "#2f4f9e", trim: "#d8ccaa" },
-  ranged: { base: "#3a6a2a", trim: "#c9a86a" },
-  prayer: { base: "#efe9da", trim: "#e3b94b" },
-  magic: { base: "#3a2f7a", trim: "#7fb0ff" },
-  runecraft: { base: "#c9a227", trim: "#2a2a2e" },
-  construction: { base: "#8a6a4a", trim: "#d8ccaa" },
-  hitpoints: { base: "#d8d8d8", trim: "#c0392b" },
-  agility: { base: "#2a3550", trim: "#9a9aa2" },
-  herblore: { base: "#2f7a4a", trim: "#d8ccaa" },
-  thieving: { base: "#3a2a4a", trim: "#9a9aa2" },
-  crafting: { base: "#7a5a3a", trim: "#e3b94b" },
-  fletching: { base: "#2a6a6a", trim: "#c9a86a" },
-  slayer: { base: "#2b2a30", trim: "#9e2b2b" },
-  hunter: { base: "#5c4a2a", trim: "#3f6e2d" },
-  mining: { base: "#3a3f55", trim: "#6fb7c9" },
-  smithing: { base: "#4a4a52", trim: "#e07b2a" },
-  fishing: { base: "#2f6f9e", trim: "#d8ccaa" },
-  cooking: { base: "#e8e2d0", trim: "#9e2b2b" },
-  firemaking: { base: "#c8641e", trim: "#f2c14e" },
-  woodcutting: { base: "#3f6b2f", trim: "#8a5a2b" },
-  farming: { base: "#4a7a2a", trim: "#c9a227" },
+export const MASTERY_CLOAK = {
+  coding: { base: "#4a4a52", trim: "#e07b2a" },
+  version_control: { base: "#3f6b2f", trim: "#8a5a2b" },
+  building: { base: "#8a6a4a", trim: "#d8ccaa" },
+  shell: { base: "#2f6a3a", trim: "#c0392b" },
+  databases: { base: "#3a3f55", trim: "#6fb7c9" },
+  testing: { base: "#e8e2d0", trim: "#9e2b2b" },
+  quality_assurance: { base: "#2f7a4a", trim: "#d8ccaa" },
+  browsing: { base: "#2a3550", trim: "#9a9aa2" },
+  reviewing: { base: "#2f4f9e", trim: "#d8ccaa" },
+  linting: { base: "#7a5a3a", trim: "#e3b94b" },
+  security: { base: "#efe9da", trim: "#e3b94b" },
+  reading: { base: "#2f6f9e", trim: "#d8ccaa" },
+  searching: { base: "#5c4a2a", trim: "#3f6e2d" },
+  debugging: { base: "#2b2a30", trim: "#9e2b2b" },
+  research: { base: "#3a2f7a", trim: "#7fb0ff" },
+  triage: { base: "#7a2a2a", trim: "#e3b94b" },
+  documentation: { base: "#2a6a6a", trim: "#c9a86a" },
+  design: { base: "#c9a227", trim: "#2a2a2e" },
+  operations: { base: "#c8641e", trim: "#f2c14e" },
+  planning: { base: "#4a7a2a", trim: "#c9a227" },
+  delegation: { base: "#3a2a4a", trim: "#9a9aa2" },
+  communication: { base: "#3a6a2a", trim: "#c9a86a" },
+  recovery: { base: "#d8d8d8", trim: "#c0392b" },
 } as const;
-export type Echo = keyof typeof SKILL_CAPE;
+export type SkillId = keyof typeof MASTERY_CLOAK;
 
-/** The quest cape: every quest the account offers, done. */
-export const QUEST_CAPE = { base: "#2f4a8f", trim: "#ece6d4" } as const;
+/** The quest cloak: every quest the account offers, done. */
+export const QUEST_CLOAK = { base: "#2f4a8f", trim: "#ece6d4" } as const;
 
 function channel(hex: Hex, i: number): number {
   return parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16);

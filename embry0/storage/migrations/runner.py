@@ -3550,6 +3550,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'decisions (spec 2026-10-27): one message to one person about one decision, queued to answered or expired.';
         """,
     ),
+    (
+        127,
+        "agent avatars: the adventurer presets renamed with the original progression theme",
+        # The warrior presets now follow the medal tiers (silver to obsidian,
+        # crimson), the mage preset is the sorcerer and the tool-carrier the
+        # artisan. A stored avatar keeps its look under its new name.
+        """
+        UPDATE agent_definitions SET avatar = CASE avatar
+            WHEN 'iron-warrior' THEN 'silver-warrior'
+            WHEN 'steel-warrior' THEN 'gold-warrior'
+            WHEN 'mithril-warrior' THEN 'platinum-warrior'
+            WHEN 'adamant-warrior' THEN 'diamond-warrior'
+            WHEN 'rune-warrior' THEN 'obsidian-warrior'
+            WHEN 'dragon-warrior' THEN 'crimson-warrior'
+            WHEN 'mystic' THEN 'sorcerer'
+            WHEN 'skiller' THEN 'artisan'
+            ELSE avatar END
+        WHERE avatar IN ('iron-warrior', 'steel-warrior', 'mithril-warrior', 'adamant-warrior',
+                         'rune-warrior', 'dragon-warrior', 'mystic', 'skiller');
+        """,
+    ),
 ]
 
 

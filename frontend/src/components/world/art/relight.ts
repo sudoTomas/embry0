@@ -8,7 +8,7 @@
  * The matrix is applied two ways, so both read alike: as an SVG filter
  * (``#nightfall``, drawn once by <NightfallFilter />, Nightfall.tsx) on every sprite of a
  * scene, and as a pixel pass over a scene's terrain canvas once it is
- * painted. Effects (experience, a level up, a hitsplat, loot) are light and
+ * painted. Effects (experience, a level up, a hit marker, loot) are light and
  * stay as drawn.
  */
 

@@ -6,7 +6,7 @@
  * the weapon hand is the left (viewer's left) one, down at x 8..10 rows
  * 19..21 and raised at x 7..9 rows 7..8; the shield arm is the right one.
  */
-import { CAPE_FILL, CAPE_SHADE, GOLD, HIDE, LEATHER, MAGE, METAL, OUTLINE, QUEST_CAPE, ROBE, SKILL_CAPE, STRING, WOOD, dark, light, tones, type Echo, type Hex, type MetalTier } from "./palette.ts";
+import { CAPE_FILL, CAPE_SHADE, GOLD, HIDE, LEATHER, MAGE, METAL, OUTLINE, QUEST_CLOAK, ROBE, MASTERY_CLOAK, STRING, WOOD, dark, light, tones, type SkillId, type Hex, type MetalTier } from "./palette.ts";
 import { FEET, LEGS } from "./parts.ts";
 import type { ColourKey, EquipmentSlot, Frame } from "./types.ts";
 
@@ -19,7 +19,7 @@ export interface Item {
   weapon?: { rest: Frame; raised: Frame };
   /** A body item's pauldrons, drawn over the arms. */
   shoulders?: Frame;
-  /** A skill cape's drape over the shoulders, drawn over the arms, so its colours show from the front. */
+  /** A mastery cloak's drape over the shoulders, drawn over the arms, so its colours show from the front. */
   drape?: Frame;
   colours: ColourKey;
   /** `hair`: the item covers the hair. `beard`: a full helm, covering hair and beard both. */
@@ -86,7 +86,7 @@ const GEMMED_HAT: Frame = { x: 9, y: 1, rows: [
 ] };
 
 /** A hood framing the face, covering the hair. */
-const COIF: Frame = { x: 10, y: 1, rows: [
+const HOOD: Frame = { x: 10, y: 1, rows: [
   "..oooooooo..",
   ".o32222221o.",
   "o3222222221o",
@@ -116,7 +116,7 @@ const MINING_HELMET: Frame = { x: 11, y: 1, rows: [
 ] };
 
 /** An open-faced helm: the crown and cheek guards in metal, the face and beard showing. The ladder's helm (progression spec 2026-10-24), so a character stays recognisable in its gear. */
-const MED_HELM: Frame = { x: 10, y: 1, rows: [
+const OPEN_HELM: Frame = { x: 10, y: 1, rows: [
   "..oooooooo..",
   ".o32222221o.",
   "o3322222211o",
@@ -127,7 +127,7 @@ const MED_HELM: Frame = { x: 10, y: 1, rows: [
 ] };
 
 /** A paper crown with three points: the rare a merge on 25 December earns. */
-const PARTY_HAT: Frame = { x: 11, y: 0, rows: [
+const PAPER_CROWN: Frame = { x: 11, y: 0, rows: [
   ".o..oo..o.",
   "o2oo22oo2o",
   "o32222221o",
@@ -136,7 +136,7 @@ const PARTY_HAT: Frame = { x: 11, y: 0, rows: [
 ] };
 
 /** A grinning mask over the whole head: the rare a merge on 31 October earns. */
-const HOLIDAY_MASK: Frame = { x: 11, y: 2, rows: [
+const HARVEST_MASK: Frame = { x: 11, y: 2, rows: [
   ".oooooooo.",
   "o32222221o",
   "o32222221o",
@@ -150,7 +150,7 @@ const HOLIDAY_MASK: Frame = { x: 11, y: 2, rows: [
 // --- body slot ---------------------------------------------------------------
 
 /** A chest plate with a centre seam, a collar and a belt line. Its pauldrons go over the arms. */
-const PLATEBODY: Frame = { x: 11, y: 11, rows: [
+const CHESTPLATE: Frame = { x: 11, y: 11, rows: [
   "oooooooooo",
   "o33222211o",
   "o32222211o",
@@ -169,7 +169,7 @@ const PAULDRONS: Frame = { x: 7, y: 11, rows: [
 ] };
 
 /** The champion's plate: gold collar, seam and belt. */
-const TRIMMED_PLATEBODY: Frame = { x: 11, y: 11, rows: [
+const TRIMMED_CHESTPLATE: Frame = { x: 11, y: 11, rows: [
   "oooooooooo",
   "o35555551o",
   "o32222211o",
@@ -241,7 +241,7 @@ const STRIPED_SHIRT: Frame = { x: 11, y: 11, rows: [
 
 // --- legs slot ---------------------------------------------------------------
 
-/** Platelegs with a trim belt and knee plates. */
+/** Greaves with a trim belt and knee plates. */
 const TRIMMED_LEGS: Frame = { x: 11, y: 20, rows: [
   "o55555555o",
   "o322oo221o",
@@ -282,7 +282,7 @@ const BANDED_SKIRT: Frame = { x: 10, y: 20, rows: [
   "o3322222211o",
   ".oooooooooo.",
 ] };
-/** The archmage's skirt: trim hem and a rune row. */
+/** The archmage's skirt: trim hem and a glyph row. */
 const RUNED_SKIRT: Frame = { x: 10, y: 20, rows: [
   ".o55555555o.",
   ".o32222221o.",
@@ -299,8 +299,8 @@ const RUNED_SKIRT: Frame = { x: 10, y: 20, rows: [
 
 // --- shield slot -------------------------------------------------------------
 
-/** A kiteshield on the right arm: square shoulders tapering to a point, an emblem in the dark tone. */
-const KITESHIELD: Frame = { x: 20, y: 12, rows: [
+/** A heater shield on the right arm: square shoulders tapering to a point, an emblem in the dark tone. */
+const HEATER_SHIELD: Frame = { x: 20, y: 12, rows: [
   "oooooooo",
   "o322221o",
   "o321121o",
@@ -369,7 +369,7 @@ const TRIMMED_CAPE: Frame = { x: 5, y: 11, rows: [
   "oooooooooooooooooooooo",
 ] };
 
-/** A skill cape over the shoulders, where the pauldrons sit: the colours that say which 99 it is. */
+/** A mastery cloak over the shoulders, where the pauldrons sit: the colours that say which 99 it is. */
 const CAPE_DRAPE: Frame = { x: 7, y: 11, rows: [
   "oooo..........oooo",
   "occ5..........5cco",
@@ -380,7 +380,7 @@ const CAPE_DRAPE: Frame = { x: 7, y: 11, rows: [
 // --- weapons: rest in the down hand, raised above the up hand ----------------
 
 /** A curved single-edged blade, widening toward the tip. */
-const SCIMITAR = {
+const SABRE = {
   rest: { x: 5, y: 18, rows: [
     "...o5o.",
     ".......",
@@ -484,7 +484,7 @@ const ORB_STAFF = {
 };
 
 /** A staff with a crystal that glows: light cells float beside it. */
-const CRYSTAL_STAFF = {
+const GLASS_STAFF = {
   rest: { x: 5, y: 1, rows: [
     "6.ooo.6",
     ".o666o.",
@@ -701,17 +701,17 @@ const LEATHER_TRIM = "#c9a86a";
 const RUBY = "#d23b3b";
 
 const helm = (id: string, tier: MetalTier): Item => ({ id, slot: "head", layer: FULL_HELM, colours: tones(METAL[tier]), over: "beard" });
-const platebody = (id: string, tier: MetalTier): Item => ({ id, slot: "body", layer: PLATEBODY, shoulders: PAULDRONS, colours: tones(METAL[tier]), sleeves: METAL[tier] });
-const platelegs = (id: string, tier: MetalTier): Item => ({ id, slot: "legs", layer: LEGS, colours: tones(METAL[tier]) });
-const kiteshield = (id: string, tier: MetalTier): Item => ({ id, slot: "shield", layer: KITESHIELD, colours: tones(METAL[tier]) });
-const scimitar = (id: string, tier: MetalTier): Item => ({ id, slot: "weapon", weapon: SCIMITAR, colours: tones(METAL[tier], GOLD) });
+const chestplate = (id: string, tier: MetalTier): Item => ({ id, slot: "body", layer: CHESTPLATE, shoulders: PAULDRONS, colours: tones(METAL[tier]), sleeves: METAL[tier] });
+const greaves = (id: string, tier: MetalTier): Item => ({ id, slot: "legs", layer: LEGS, colours: tones(METAL[tier]) });
+const heaterShield = (id: string, tier: MetalTier): Item => ({ id, slot: "shield", layer: HEATER_SHIELD, colours: tones(METAL[tier]) });
+const sabre = (id: string, tier: MetalTier): Item => ({ id, slot: "weapon", weapon: SABRE, colours: tones(METAL[tier], GOLD) });
 const boots = (id: string, base: Hex): Item => ({ id, slot: "feet", layer: FEET, colours: tones(base) });
 const gloves = (id: string, base: Hex): Item => ({ id, slot: "hands", colours: {}, hands: base });
 const staff = (id: string, frames: { rest: Frame; raised: Frame }, orb: Hex): Item => ({ id, slot: "weapon", weapon: frames, colours: tones(WOOD, orb) });
 const bow = (id: string, frames: { rest: Frame; raised: Frame }, wood: Hex): Item => ({ id, slot: "weapon", weapon: frames, colours: { ...tones(wood), "5": STRING } });
 
 /** The ladder tiers (progression spec 2026-10-24): the achievement tiers, Bronze to Divine. */
-export const GEAR_TIERS = ["bronze", "iron", "steel", "mithril", "adamant", "rune", "divine"] as const;
+export const GEAR_TIERS = ["bronze", "silver", "gold", "platinum", "diamond", "obsidian", "divine"] as const;
 export type GearTier = (typeof GEAR_TIERS)[number];
 
 /** One item per gear tier, keyed `<tier>-<piece>`. */
@@ -719,15 +719,15 @@ function perTier<K extends string>(piece: K, make: (id: string, tier: GearTier) 
   return Object.fromEntries(GEAR_TIERS.map((t) => [`${t}-${piece}`, make(`${t}-${piece}`, t)])) as Record<`${GearTier}-${K}`, Item>;
 }
 
-/** A hide set: coif, body, chaps, vambraces and boots of one material. */
+/** A hide set: hood, body, leggings, bracers and boots of one material. */
 function hideSet<M extends string>(m: M, base: Hex, trim: Hex, body: Frame) {
   return {
-    [`${m}-coif`]: { id: `${m}-coif`, slot: "head", layer: COIF, colours: tones(base), over: "hair" },
+    [`${m}-hood`]: { id: `${m}-hood`, slot: "head", layer: HOOD, colours: tones(base), over: "hair" },
     [`${m}-body`]: { id: `${m}-body`, slot: "body", layer: body, colours: tones(base, trim) },
-    [`${m}-chaps`]: { id: `${m}-chaps`, slot: "legs", layer: LEGS, colours: tones(base) },
-    [`${m}-vambraces`]: gloves(`${m}-vambraces`, base),
+    [`${m}-leggings`]: { id: `${m}-leggings`, slot: "legs", layer: LEGS, colours: tones(base) },
+    [`${m}-bracers`]: gloves(`${m}-bracers`, base),
     [`${m}-boots`]: boots(`${m}-boots`, dark(base)),
-  } as Record<`${M}-${"coif" | "body" | "chaps" | "vambraces" | "boots"}`, Item>;
+  } as Record<`${M}-${"hood" | "body" | "leggings" | "bracers" | "boots"}`, Item>;
 }
 
 /** A robe set: hat, robe, skirt and boots of one order. */
@@ -740,156 +740,156 @@ function robeSet<M extends string>(m: M, robe: { base: Hex; trim: Hex }, hat: Fr
   } as Record<`${M}-${"hat" | "robe" | "skirt" | "boots"}`, Item>;
 }
 
-/** A skill cape and its trimmed form (two or more skills at 99), keyed by the classic skill its skill echoes. */
-const SKILL_CAPES = Object.fromEntries(
-  (Object.keys(SKILL_CAPE) as Echo[]).flatMap((e): [string, Item][] => {
-    const { base, trim } = SKILL_CAPE[e];
+/** A mastery cloak and its trimmed form (two or more skills at 99), keyed by the skill it marks. */
+const MASTERY_CLOAKS = Object.fromEntries(
+  (Object.keys(MASTERY_CLOAK) as SkillId[]).flatMap((e): [string, Item][] => {
+    const { base, trim } = MASTERY_CLOAK[e];
     const colours = { o: OUTLINE, c: base, C: dark(base), "5": trim };
     return [
-      [`${e}-cape`, { id: `${e}-cape`, slot: "cape", layer: CAPE, drape: CAPE_DRAPE, colours }],
-      [`${e}-cape-t`, { id: `${e}-cape-t`, slot: "cape", layer: TRIMMED_CAPE, drape: CAPE_DRAPE, colours }],
+      [`${e}-cloak`, { id: `${e}-cloak`, slot: "cape", layer: CAPE, drape: CAPE_DRAPE, colours }],
+      [`${e}-cloak-t`, { id: `${e}-cloak-t`, slot: "cape", layer: TRIMMED_CAPE, drape: CAPE_DRAPE, colours }],
     ];
   }),
-) as Record<`${Echo}-cape` | `${Echo}-cape-t`, Item>;
+) as Record<`${SkillId}-cloak` | `${SkillId}-cloak-t`, Item>;
 
 const BASE_ITEMS = {
   // warriors, one full set per metal tier
   "bronze-helm": helm("bronze-helm", "bronze"),
-  "iron-helm": helm("iron-helm", "iron"),
-  "steel-helm": helm("steel-helm", "steel"),
-  "mithril-helm": helm("mithril-helm", "mithril"),
-  "adamant-helm": helm("adamant-helm", "adamant"),
-  "rune-helm": helm("rune-helm", "rune"),
-  "dragon-helm": helm("dragon-helm", "dragon"),
-  "bronze-platebody": platebody("bronze-platebody", "bronze"),
-  "iron-platebody": platebody("iron-platebody", "iron"),
-  "steel-platebody": platebody("steel-platebody", "steel"),
-  "mithril-platebody": platebody("mithril-platebody", "mithril"),
-  "adamant-platebody": platebody("adamant-platebody", "adamant"),
-  "rune-platebody": platebody("rune-platebody", "rune"),
-  "dragon-platebody": platebody("dragon-platebody", "dragon"),
-  "bronze-platelegs": platelegs("bronze-platelegs", "bronze"),
-  "iron-platelegs": platelegs("iron-platelegs", "iron"),
-  "steel-platelegs": platelegs("steel-platelegs", "steel"),
-  "mithril-platelegs": platelegs("mithril-platelegs", "mithril"),
-  "adamant-platelegs": platelegs("adamant-platelegs", "adamant"),
-  "rune-platelegs": platelegs("rune-platelegs", "rune"),
-  "dragon-platelegs": platelegs("dragon-platelegs", "dragon"),
-  "bronze-kiteshield": kiteshield("bronze-kiteshield", "bronze"),
-  "iron-kiteshield": kiteshield("iron-kiteshield", "iron"),
-  "steel-kiteshield": kiteshield("steel-kiteshield", "steel"),
-  "mithril-kiteshield": kiteshield("mithril-kiteshield", "mithril"),
-  "adamant-kiteshield": kiteshield("adamant-kiteshield", "adamant"),
-  "rune-kiteshield": kiteshield("rune-kiteshield", "rune"),
-  "dragon-kiteshield": kiteshield("dragon-kiteshield", "dragon"),
-  "bronze-scimitar": scimitar("bronze-scimitar", "bronze"),
-  "iron-scimitar": scimitar("iron-scimitar", "iron"),
-  "steel-scimitar": scimitar("steel-scimitar", "steel"),
-  "mithril-scimitar": scimitar("mithril-scimitar", "mithril"),
-  "adamant-scimitar": scimitar("adamant-scimitar", "adamant"),
-  "rune-scimitar": scimitar("rune-scimitar", "rune"),
-  "dragon-scimitar": scimitar("dragon-scimitar", "dragon"),
-  "metal-boots": boots("metal-boots", METAL.iron),
+  "silver-helm": helm("silver-helm", "silver"),
+  "gold-helm": helm("gold-helm", "gold"),
+  "platinum-helm": helm("platinum-helm", "platinum"),
+  "diamond-helm": helm("diamond-helm", "diamond"),
+  "obsidian-helm": helm("obsidian-helm", "obsidian"),
+  "crimson-helm": helm("crimson-helm", "crimson"),
+  "bronze-chestplate": chestplate("bronze-chestplate", "bronze"),
+  "silver-chestplate": chestplate("silver-chestplate", "silver"),
+  "gold-chestplate": chestplate("gold-chestplate", "gold"),
+  "platinum-chestplate": chestplate("platinum-chestplate", "platinum"),
+  "diamond-chestplate": chestplate("diamond-chestplate", "diamond"),
+  "obsidian-chestplate": chestplate("obsidian-chestplate", "obsidian"),
+  "crimson-chestplate": chestplate("crimson-chestplate", "crimson"),
+  "bronze-greaves": greaves("bronze-greaves", "bronze"),
+  "silver-greaves": greaves("silver-greaves", "silver"),
+  "gold-greaves": greaves("gold-greaves", "gold"),
+  "platinum-greaves": greaves("platinum-greaves", "platinum"),
+  "diamond-greaves": greaves("diamond-greaves", "diamond"),
+  "obsidian-greaves": greaves("obsidian-greaves", "obsidian"),
+  "crimson-greaves": greaves("crimson-greaves", "crimson"),
+  "bronze-heater-shield": heaterShield("bronze-heater-shield", "bronze"),
+  "silver-heater-shield": heaterShield("silver-heater-shield", "silver"),
+  "gold-heater-shield": heaterShield("gold-heater-shield", "gold"),
+  "platinum-heater-shield": heaterShield("platinum-heater-shield", "platinum"),
+  "diamond-heater-shield": heaterShield("diamond-heater-shield", "diamond"),
+  "obsidian-heater-shield": heaterShield("obsidian-heater-shield", "obsidian"),
+  "crimson-heater-shield": heaterShield("crimson-heater-shield", "crimson"),
+  "bronze-sabre": sabre("bronze-sabre", "bronze"),
+  "silver-sabre": sabre("silver-sabre", "silver"),
+  "gold-sabre": sabre("gold-sabre", "gold"),
+  "platinum-sabre": sabre("platinum-sabre", "platinum"),
+  "diamond-sabre": sabre("diamond-sabre", "diamond"),
+  "obsidian-sabre": sabre("obsidian-sabre", "obsidian"),
+  "crimson-sabre": sabre("crimson-sabre", "crimson"),
+  "metal-boots": boots("metal-boots", METAL.silver),
   "black-boots": boots("black-boots", METAL.black),
   // the champion: black plate trimmed in gold, a two-hander
   "crested-helm": { id: "crested-helm", slot: "head", layer: CRESTED_HELM, colours: tones(METAL.black, GOLD), over: "beard" } satisfies Item,
-  "trimmed-platebody": { id: "trimmed-platebody", slot: "body", layer: TRIMMED_PLATEBODY, shoulders: TRIMMED_PAULDRONS, colours: tones(METAL.black, GOLD), sleeves: METAL.black } satisfies Item,
-  "trimmed-platelegs": { id: "trimmed-platelegs", slot: "legs", layer: TRIMMED_LEGS, colours: tones(METAL.black, GOLD) } satisfies Item,
-  "greatsword": { id: "greatsword", slot: "weapon", weapon: GREATSWORD, colours: tones(METAL.steel, GOLD) } satisfies Item,
+  "trimmed-chestplate": { id: "trimmed-chestplate", slot: "body", layer: TRIMMED_CHESTPLATE, shoulders: TRIMMED_PAULDRONS, colours: tones(METAL.black, GOLD), sleeves: METAL.black } satisfies Item,
+  "trimmed-greaves": { id: "trimmed-greaves", slot: "legs", layer: TRIMMED_LEGS, colours: tones(METAL.black, GOLD) } satisfies Item,
+  "greatsword": { id: "greatsword", slot: "weapon", weapon: GREATSWORD, colours: tones(METAL.gold, GOLD) } satisfies Item,
   "gold-gauntlets": gloves("gold-gauntlets", GOLD),
   // mages
-  "wizard-hat": { id: "wizard-hat", slot: "head", layer: WIZARD_HAT, colours: tones(MAGE.wizard) } satisfies Item,
-  "wizard-robe": { id: "wizard-robe", slot: "body", layer: ROBE_TOP, colours: tones(MAGE.wizard, light(MAGE.wizard)), sleeves: MAGE.wizard } satisfies Item,
-  "wizard-skirt": { id: "wizard-skirt", slot: "legs", layer: SKIRT, colours: tones(MAGE.wizard) } satisfies Item,
-  "wizard-boots": boots("wizard-boots", dark(MAGE.wizard)),
+  "novice-hat": { id: "novice-hat", slot: "head", layer: WIZARD_HAT, colours: tones(MAGE.novice) } satisfies Item,
+  "novice-robe": { id: "novice-robe", slot: "body", layer: ROBE_TOP, colours: tones(MAGE.novice, light(MAGE.novice)), sleeves: MAGE.novice } satisfies Item,
+  "novice-skirt": { id: "novice-skirt", slot: "legs", layer: SKIRT, colours: tones(MAGE.novice) } satisfies Item,
+  "novice-boots": boots("novice-boots", dark(MAGE.novice)),
   "staff": staff("staff", STAFF, "#9fc5ff"),
-  "mystic-hat": { id: "mystic-hat", slot: "head", layer: BANDED_HAT, colours: tones(MAGE.mystic, GOLD) } satisfies Item,
-  "mystic-robe": { id: "mystic-robe", slot: "body", layer: ROBE_TOP, colours: tones(MAGE.mystic, GOLD), sleeves: MAGE.mystic } satisfies Item,
-  "mystic-skirt": { id: "mystic-skirt", slot: "legs", layer: BANDED_SKIRT, colours: tones(MAGE.mystic, GOLD) } satisfies Item,
-  "mystic-boots": boots("mystic-boots", dark(MAGE.mystic)),
+  "violet-hat": { id: "violet-hat", slot: "head", layer: BANDED_HAT, colours: tones(MAGE.violet, GOLD) } satisfies Item,
+  "violet-robe": { id: "violet-robe", slot: "body", layer: ROBE_TOP, colours: tones(MAGE.violet, GOLD), sleeves: MAGE.violet } satisfies Item,
+  "violet-skirt": { id: "violet-skirt", slot: "legs", layer: BANDED_SKIRT, colours: tones(MAGE.violet, GOLD) } satisfies Item,
+  "violet-boots": boots("violet-boots", dark(MAGE.violet)),
   "orb-staff": staff("orb-staff", ORB_STAFF, "#c58cff"),
   "archmage-hat": { id: "archmage-hat", slot: "head", layer: GEMMED_HAT, colours: { ...tones(MAGE.high, GOLD), "6": RUBY } } satisfies Item,
   "archmage-robe": { id: "archmage-robe", slot: "body", layer: ROBE_TOP, colours: tones(MAGE.high, GOLD), sleeves: MAGE.high } satisfies Item,
   "archmage-skirt": { id: "archmage-skirt", slot: "legs", layer: RUNED_SKIRT, colours: tones(MAGE.high, GOLD) } satisfies Item,
   "archmage-boots": boots("archmage-boots", MAGE.high),
-  "crystal-staff": staff("crystal-staff", CRYSTAL_STAFF, "#7fe3ff"),
+  "glass-staff": staff("glass-staff", GLASS_STAFF, "#7fe3ff"),
   // archers
   "leather-body": { id: "leather-body", slot: "body", layer: JERKIN, colours: tones(LEATHER.plain, LEATHER_TRIM) } satisfies Item,
-  "leather-chaps": { id: "leather-chaps", slot: "legs", layer: LEGS, colours: tones(LEATHER.plain) } satisfies Item,
-  "leather-vambraces": gloves("leather-vambraces", LEATHER.plain),
+  "leather-leggings": { id: "leather-leggings", slot: "legs", layer: LEGS, colours: tones(LEATHER.plain) } satisfies Item,
+  "leather-bracers": gloves("leather-bracers", LEATHER.plain),
   "leather-boots": boots("leather-boots", dark(LEATHER.plain)),
   "shortbow": bow("shortbow", SHORTBOW, WOOD),
-  "green-coif": { id: "green-coif", slot: "head", layer: COIF, colours: tones(LEATHER.green), over: "hair" } satisfies Item,
+  "green-hood": { id: "green-hood", slot: "head", layer: HOOD, colours: tones(LEATHER.green), over: "hair" } satisfies Item,
   "green-body": { id: "green-body", slot: "body", layer: STRAPPED_BODY, colours: tones(LEATHER.green, LEATHER_TRIM) } satisfies Item,
-  "green-chaps": { id: "green-chaps", slot: "legs", layer: LEGS, colours: tones(LEATHER.green) } satisfies Item,
-  "green-vambraces": gloves("green-vambraces", LEATHER.green),
+  "green-leggings": { id: "green-leggings", slot: "legs", layer: LEGS, colours: tones(LEATHER.green) } satisfies Item,
+  "green-bracers": gloves("green-bracers", LEATHER.green),
   "green-boots": boots("green-boots", dark(LEATHER.green)),
   "longbow": bow("longbow", LONGBOW, WOOD),
-  "black-coif": { id: "black-coif", slot: "head", layer: COIF, colours: tones(LEATHER.black), over: "hair" } satisfies Item,
+  "black-hood": { id: "black-hood", slot: "head", layer: HOOD, colours: tones(LEATHER.black), over: "hair" } satisfies Item,
   "black-body": { id: "black-body", slot: "body", layer: STRAPPED_BODY, colours: tones(LEATHER.black, LEATHER.red) } satisfies Item,
-  "black-chaps": { id: "black-chaps", slot: "legs", layer: LEGS, colours: tones(LEATHER.black) } satisfies Item,
-  "black-vambraces": gloves("black-vambraces", LEATHER.black),
-  "dark-bow": bow("dark-bow", LONGBOW, METAL.black),
+  "black-leggings": { id: "black-leggings", slot: "legs", layer: LEGS, colours: tones(LEATHER.black) } satisfies Item,
+  "black-bracers": gloves("black-bracers", LEATHER.black),
+  "night-bow": bow("night-bow", LONGBOW, METAL.black),
   "hunter-body": { id: "hunter-body", slot: "body", layer: STRAPPED_BODY, colours: tones(LEATHER.red, GOLD) } satisfies Item,
-  "hunter-chaps": { id: "hunter-chaps", slot: "legs", layer: TRIMMED_LEGS, colours: tones(LEATHER.red, GOLD) } satisfies Item,
+  "hunter-leggings": { id: "hunter-leggings", slot: "legs", layer: TRIMMED_LEGS, colours: tones(LEATHER.red, GOLD) } satisfies Item,
   "hunter-boots": boots("hunter-boots", dark(LEATHER.red)),
-  "crossbow": { id: "crossbow", slot: "weapon", weapon: CROSSBOW, colours: { ...tones(METAL.steel, STRING), "4": WOOD } } satisfies Item,
+  "crossbow": { id: "crossbow", slot: "weapon", weapon: CROSSBOW, colours: { ...tones(METAL.gold, STRING), "4": WOOD } } satisfies Item,
   // extras
   "monk-robe": { id: "monk-robe", slot: "body", layer: ROBE_TOP, colours: tones("#8a5a2b", "#d9c08a"), sleeves: "#8a5a2b" } satisfies Item,
   "monk-skirt": { id: "monk-skirt", slot: "legs", layer: SKIRT, colours: tones("#8a5a2b") } satisfies Item,
   "pendant": { id: "pendant", slot: "neck", layer: PENDANT, colours: tones(GOLD, "#d9c08a") } satisfies Item,
   "tricorne": { id: "tricorne", slot: "head", layer: TRICORNE, colours: tones(METAL.black, GOLD) } satisfies Item,
   "striped-shirt": { id: "striped-shirt", slot: "body", layer: STRIPED_SHIRT, colours: tones("#9e2b2b", "#e8e2d0"), sleeves: "#9e2b2b" } satisfies Item,
-  "cutlass": { id: "cutlass", slot: "weapon", weapon: SCIMITAR, colours: tones(METAL.steel, "#8a5a2b") } satisfies Item,
-  "axe": { id: "axe", slot: "weapon", weapon: AXE, colours: { ...tones(METAL.steel), "4": WOOD } } satisfies Item,
+  "cutlass": { id: "cutlass", slot: "weapon", weapon: SABRE, colours: tones(METAL.gold, "#8a5a2b") } satisfies Item,
+  "axe": { id: "axe", slot: "weapon", weapon: AXE, colours: { ...tones(METAL.gold), "4": WOOD } } satisfies Item,
   "mining-helmet": { id: "mining-helmet", slot: "head", layer: MINING_HELMET, colours: { ...tones("#c9a227"), "6": "#fff3b0" }, over: "hair" } satisfies Item,
-  "pickaxe": { id: "pickaxe", slot: "weapon", weapon: PICKAXE, colours: { ...tones(METAL.iron), "4": WOOD } } satisfies Item,
+  "pickaxe": { id: "pickaxe", slot: "weapon", weapon: PICKAXE, colours: { ...tones(METAL.silver), "4": WOOD } } satisfies Item,
   // worn by anyone
   "amulet": { id: "amulet", slot: "neck", layer: AMULET, colours: { o: OUTLINE, "5": GOLD, r: RUBY } } satisfies Item,
   "cape": { id: "cape", slot: "cape", layer: CAPE, colours: { o: OUTLINE, c: CAPE_FILL, C: CAPE_SHADE } } satisfies Item,
   "trimmed-cape": { id: "trimmed-cape", slot: "cape", layer: TRIMMED_CAPE, colours: { o: OUTLINE, c: CAPE_FILL, C: CAPE_SHADE, "5": GOLD } } satisfies Item,
-  // every quest done: the account's quest cape, worn by its highest-level character
-  "quest-cape": { id: "quest-cape", slot: "cape", layer: CAPE, drape: CAPE_DRAPE, colours: { o: OUTLINE, c: QUEST_CAPE.base, C: dark(QUEST_CAPE.base), "5": QUEST_CAPE.trim } } satisfies Item,
+  // every quest done: the account's quest cloak, worn by its highest-level character
+  "quest-cloak": { id: "quest-cloak", slot: "cape", layer: CAPE, drape: CAPE_DRAPE, colours: { o: OUTLINE, c: QUEST_CLOAK.base, C: dark(QUEST_CLOAK.base), "5": QUEST_CLOAK.trim } } satisfies Item,
   // the ladders (progression spec 2026-10-24): what a character wears for its tier
   "divine-helm": helm("divine-helm", "divine"),
-  "divine-platebody": platebody("divine-platebody", "divine"),
-  "divine-platelegs": platelegs("divine-platelegs", "divine"),
-  "divine-kiteshield": kiteshield("divine-kiteshield", "divine"),
-  "divine-scimitar": scimitar("divine-scimitar", "divine"),
+  "divine-chestplate": chestplate("divine-chestplate", "divine"),
+  "divine-greaves": greaves("divine-greaves", "divine"),
+  "divine-heater-shield": heaterShield("divine-heater-shield", "divine"),
+  "divine-sabre": sabre("divine-sabre", "divine"),
   "divine-boots": boots("divine-boots", METAL.divine),
-  ...perTier("med-helm", (id, t) => ({ id, slot: "head", layer: MED_HELM, colours: tones(METAL[t]), over: "hair" })),
+  ...perTier("open-helm", (id, t) => ({ id, slot: "head", layer: OPEN_HELM, colours: tones(METAL[t]), over: "hair" })),
   ...perTier("axe", (id, t) => ({ id, slot: "weapon", weapon: AXE, colours: { ...tones(METAL[t]), "4": WOOD } })),
   ...perTier("pickaxe", (id, t) => ({ id, slot: "weapon", weapon: PICKAXE, colours: { ...tones(METAL[t]), "4": WOOD } })),
-  "leather-coif": { id: "leather-coif", slot: "head", layer: COIF, colours: tones(HIDE.leather), over: "hair" } satisfies Item,
+  "leather-hood": { id: "leather-hood", slot: "head", layer: HOOD, colours: tones(HIDE.leather), over: "hair" } satisfies Item,
   ...hideSet("hard", HIDE.hard, LEATHER_TRIM, JERKIN),
-  ...hideSet("studded", HIDE.studded, METAL.steel, JERKIN),
+  ...hideSet("studded", HIDE.studded, METAL.gold, JERKIN),
   ...hideSet("blue", HIDE.blue, LEATHER_TRIM, STRAPPED_BODY),
   ...hideSet("red", HIDE.red, LEATHER_TRIM, STRAPPED_BODY),
-  ...hideSet("blessed", HIDE.blessed, GOLD, STRAPPED_BODY),
-  "oak-shortbow": bow("oak-shortbow", SHORTBOW, "#a8743a"),
-  "willow-longbow": bow("willow-longbow", LONGBOW, "#b89a5a"),
-  "yew-longbow": bow("yew-longbow", LONGBOW, "#5e3218"),
-  "magic-longbow": bow("magic-longbow", LONGBOW, "#3d5a4a"),
-  "crystal-bow": bow("crystal-bow", LONGBOW, "#a9dcf0"),
+  ...hideSet("pale", HIDE.pale, GOLD, STRAPPED_BODY),
+  "ash-shortbow": bow("ash-shortbow", SHORTBOW, "#a8743a"),
+  "hunting-bow": bow("hunting-bow", LONGBOW, "#b89a5a"),
+  "war-bow": bow("war-bow", LONGBOW, "#5e3218"),
+  "composite-bow": bow("composite-bow", LONGBOW, "#3d5a4a"),
+  "radiant-bow": bow("radiant-bow", LONGBOW, "#a9dcf0"),
   ...robeSet("dark", ROBE.dark, WIZARD_HAT, SKIRT),
   ...robeSet("enchanted", ROBE.enchanted, BANDED_HAT, BANDED_SKIRT),
-  ...robeSet("astral", ROBE.astral, BANDED_HAT, BANDED_SKIRT),
+  ...robeSet("tidal", ROBE.tidal, BANDED_HAT, BANDED_SKIRT),
   ...robeSet("celestial", ROBE.celestial, GEMMED_HAT, RUNED_SKIRT),
-  "iron-staff": staff("iron-staff", STAFF, "#e6e6ea"),
-  "steel-staff": staff("steel-staff", STAFF, "#8fe39a"),
-  "adamant-staff": staff("adamant-staff", ORB_STAFF, "#7fe3c0"),
-  "divine-staff": staff("divine-staff", CRYSTAL_STAFF, "#fff3b0"),
-  // a skill cape replaces the party cape at 99
-  ...SKILL_CAPES,
-  // rares: the party hat wears the party colour, like the cape
-  "party-hat": { id: "party-hat", slot: "head", layer: PARTY_HAT, colours: { o: OUTLINE, "1": CAPE_SHADE, "2": CAPE_FILL, "3": "color-mix(in srgb, var(--sprite-fill) 60%, white)" } } satisfies Item,
-  "white-party-hat": { id: "white-party-hat", slot: "head", layer: PARTY_HAT, colours: tones("#f2f0ea") } satisfies Item,
-  "holiday-mask": { id: "holiday-mask", slot: "head", layer: HOLIDAY_MASK, colours: tones("#3d9a3a"), over: "beard" } satisfies Item,
+  "silver-staff": staff("silver-staff", STAFF, "#e6e6ea"),
+  "gold-staff": staff("gold-staff", STAFF, "#8fe39a"),
+  "diamond-staff": staff("diamond-staff", ORB_STAFF, "#7fe3c0"),
+  "divine-staff": staff("divine-staff", GLASS_STAFF, "#fff3b0"),
+  // a mastery cloak replaces the party cape at 99
+  ...MASTERY_CLOAKS,
+  // rares: the paper crown wears the party colour, like the cape
+  "paper-crown": { id: "paper-crown", slot: "head", layer: PAPER_CROWN, colours: { o: OUTLINE, "1": CAPE_SHADE, "2": CAPE_FILL, "3": "color-mix(in srgb, var(--sprite-fill) 60%, white)" } } satisfies Item,
+  "golden-paper-crown": { id: "golden-paper-crown", slot: "head", layer: PAPER_CROWN, colours: tones("#f2f0ea") } satisfies Item,
+  "harvest-mask": { id: "harvest-mask", slot: "head", layer: HARVEST_MASK, colours: tones("#3d9a3a"), over: "beard" } satisfies Item,
 } as const satisfies Record<string, Item>;
 
-type CapeId = "cape" | "trimmed-cape" | "quest-cape" | `${Echo}-cape` | `${Echo}-cape-t`;
+type CapeId = "cape" | "trimmed-cape" | "quest-cloak" | `${SkillId}-cloak` | `${SkillId}-cloak-t`;
 
-/** Divine Slayer's reward (spec 2026-10-24): every cape, trimmed in the Divine metal. */
+/** Divine Warden's reward (spec 2026-10-24): every cape, trimmed in the Divine metal. */
 const DIVINE_CAPES = Object.fromEntries(
   (Object.values(BASE_ITEMS) as Item[])
     .filter((item) => item.slot === "cape")

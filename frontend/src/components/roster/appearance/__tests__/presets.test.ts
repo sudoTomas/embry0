@@ -20,7 +20,7 @@ describe("adventurer presets", () => {
   it("names at least sixteen adventurers, from the starter to a maxed warrior, mage and archer", () => {
     expect(PRESET_IDS.length).toBeGreaterThanOrEqual(16);
     expect(PRESET_IDS).toEqual(Object.keys(PRESETS));
-    for (const id of ["starter", "bronze-warrior", "iron-warrior", "steel-warrior", "mithril-warrior", "adamant-warrior", "rune-warrior", "dragon-warrior", "champion", "apprentice", "mystic", "archmage", "scout", "ranger", "marksman", "sharpshooter"]) {
+    for (const id of ["starter", "bronze-warrior", "silver-warrior", "gold-warrior", "platinum-warrior", "diamond-warrior", "obsidian-warrior", "crimson-warrior", "champion", "apprentice", "sorcerer", "archmage", "scout", "ranger", "marksman", "sharpshooter"]) {
       expect(PRESET_IDS, id).toContain(id);
     }
     for (const id of PRESET_IDS) expect(id).toMatch(/^[a-z]+(-[a-z]+)*$/);

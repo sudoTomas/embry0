@@ -81,7 +81,7 @@ function PartyOnMap({ map, art, party, onPick }: { map: TileMap; art: ArtManifes
     >
       {party.state === "waiting" && <span className="world-bubble absolute -top-4 left-1/2 -translate-x-1/2">?</span>}
       <AgentAvatar identity={identity} size={32} state={STATE_POSE[party.state]} walking={moving} />
-      {party.state === "defeated" && <EffectAt art={art} name="hitsplat" x={16} y={20} label="0" className="world-hitsplat" />}
+      {party.state === "defeated" && <EffectAt art={art} name="hit_marker" x={16} y={20} label="0" className="world-hit-marker" />}
       {party.state === "returning" && party.pr_url && <EffectAt art={art} name="loot_sparkle" x={16} y={36} />}
     </button>
     {party.state !== "defeated" && <Torchlight x={at.x} y={at.y - 14} radius={56} style={{ transition: walk }} />}
@@ -195,7 +195,7 @@ export function WorldMap({ art, regions, quests, parties, characters, dungeons =
                 <button key={q.id} {...label} onClick={() => onPickLead(q)} style={{ ...anchored(spot.x, spot.y, c.anchor), width: c.frames[0][2], height: c.frames[0][3] }}>
                   <ArtSprite image={atlas.image} rect={c.frames[0]} frames={c.frames} animation={`creature-${name}`} fps={c.fps} loop={c.loop} />
                   {fought.has(q.id) && (
-                    <EffectAt art={art} name="hitsplat" x={c.anchor.x} y={c.anchor.y - 8} label={String(1 + (hash(q.id) % 9))} className="world-hitsplat" />
+                    <EffectAt art={art} name="hit_marker" x={c.anchor.x} y={c.anchor.y - 8} label={String(1 + (hash(q.id) % 9))} className="world-hit-marker" />
                   )}
                 </button>
               );

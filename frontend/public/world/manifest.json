@@ -1022,8 +1022,8 @@
         "y": 30
       }
     },
-    "hitsplat": {
-      "image": "vfx/hitsplat.png",
+    "hit_marker": {
+      "image": "vfx/hit-marker.png",
       "frames": [
         [
           0,
