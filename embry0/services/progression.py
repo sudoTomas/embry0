@@ -62,11 +62,11 @@ def level_for_xp(xp: int) -> int:
 #: active deployment reach the 80s, so Divine is kept for 90.
 TIERS: tuple[tuple[int, str], ...] = (
     (90, "divine"),
-    (75, "rune"),
-    (60, "adamant"),
-    (45, "mithril"),
-    (30, "steel"),
-    (15, "iron"),
+    (75, "obsidian"),
+    (60, "diamond"),
+    (45, "platinum"),
+    (30, "gold"),
+    (15, "silver"),
     (1, "bronze"),
 )
 
@@ -81,34 +81,32 @@ class Stat:
     name: str
     #: Build, Verify, Investigate or Care: where its tile sits on a skill sheet.
     group: str
-    #: The classic skill it echoes, which gives it its icon and cape colours.
-    echo: str
 
 
 STATS: tuple[Stat, ...] = (
-    Stat("coding", "Coding", "build", "smithing"),
-    Stat("version_control", "Version control", "build", "woodcutting"),
-    Stat("building", "Building", "build", "construction"),
-    Stat("shell", "Shell", "build", "strength"),
-    Stat("databases", "Databases", "build", "mining"),
-    Stat("testing", "Testing", "verify", "cooking"),
-    Stat("quality_assurance", "Quality assurance", "verify", "herblore"),
-    Stat("browsing", "Browsing", "verify", "agility"),
-    Stat("reviewing", "Reviewing", "verify", "defence"),
-    Stat("linting", "Linting", "verify", "crafting"),
-    Stat("security", "Security", "verify", "prayer"),
-    Stat("reading", "Reading", "investigate", "fishing"),
-    Stat("searching", "Searching", "investigate", "hunter"),
-    Stat("debugging", "Debugging", "investigate", "slayer"),
-    Stat("research", "Research", "investigate", "magic"),
-    Stat("triage", "Triage", "investigate", "attack"),
-    Stat("documentation", "Documentation", "care", "fletching"),
-    Stat("design", "Design", "care", "runecraft"),
-    Stat("operations", "Operations", "care", "firemaking"),
-    Stat("planning", "Planning", "care", "farming"),
-    Stat("delegation", "Delegation", "care", "thieving"),
-    Stat("communication", "Communication", "care", "ranged"),
-    Stat("recovery", "Recovery", "care", "hitpoints"),
+    Stat("coding", "Coding", "build"),
+    Stat("version_control", "Version control", "build"),
+    Stat("building", "Building", "build"),
+    Stat("shell", "Shell", "build"),
+    Stat("databases", "Databases", "build"),
+    Stat("testing", "Testing", "verify"),
+    Stat("quality_assurance", "Quality assurance", "verify"),
+    Stat("browsing", "Browsing", "verify"),
+    Stat("reviewing", "Reviewing", "verify"),
+    Stat("linting", "Linting", "verify"),
+    Stat("security", "Security", "verify"),
+    Stat("reading", "Reading", "investigate"),
+    Stat("searching", "Searching", "investigate"),
+    Stat("debugging", "Debugging", "investigate"),
+    Stat("research", "Research", "investigate"),
+    Stat("triage", "Triage", "investigate"),
+    Stat("documentation", "Documentation", "care"),
+    Stat("design", "Design", "care"),
+    Stat("operations", "Operations", "care"),
+    Stat("planning", "Planning", "care"),
+    Stat("delegation", "Delegation", "care"),
+    Stat("communication", "Communication", "care"),
+    Stat("recovery", "Recovery", "care"),
 )
 
 STAT_IDS = frozenset(s.id for s in STATS)
@@ -149,8 +147,8 @@ OUTCOME_XP: dict[str, tuple[str, int]] = {
     "resumed": ("recovery", 90_000),
 }
 
-#: The total level a character needs before Divine Slayer can complete.
-DIVINE_SLAYER_TOTAL = 1_000
+#: The total level a character needs before Divine Warden can complete.
+DIVINE_WARDEN_TOTAL = 1_000
 
 #: A context audit's bonus per outdated claim its report counted.
 XP_PER_STALE_CLAIM = 1_000
@@ -218,10 +216,10 @@ class LevelUp:
 
 
 #: The rares (spec 2026-10-24) a merge earns on a day of the year (UTC), by (month, day).
-RARE_DAYS: dict[tuple[int, int], str] = {(12, 25): "party-hat", (10, 31): "holiday-mask"}
+RARE_DAYS: dict[tuple[int, int], str] = {(12, 25): "paper-crown", (10, 31): "harvest-mask"}
 
 #: The rare the first run of a new year earns.
-NEW_YEAR_RARE = "white-party-hat"
+NEW_YEAR_RARE = "golden-paper-crown"
 
 
 @dataclass(frozen=True)
@@ -260,11 +258,11 @@ class Character:
 
     @property
     def agent_level(self) -> int:
-        """Its one level, 1 to 126: the combat-level formula with its best skills in the combat slots.
+        """Its one level, 1 to 126, from its five best skills.
 
-        The two best stand where Attack and Strength do, the next three where
-        Defence, Hitpoints and Prayer do (Prayer counting half), so depth and
-        breadth both count and every skill at 99 makes 126.
+        The two best weigh 0.325 each and the next three 0.25 each, the fifth
+        counting half, so depth and breadth both count and every skill at 99
+        makes 126.
         """
         top = sorted((self.level(s.id) for s in STATS), reverse=True)
         return math.floor(0.25 * (top[2] + top[3] + top[4] // 2) + 0.325 * (top[0] + top[1]))
@@ -284,7 +282,7 @@ class Character:
         maxed = [s.id for s in STATS if self.level(s.id) >= MAX_LEVEL]
         return sorted(maxed, key=lambda stat: -self.stat_xp.get(stat, 0))
 
-    def to_dict(self, *, quest_cape: bool = False) -> dict[str, Any]:
+    def to_dict(self, *, quest_cloak: bool = False) -> dict[str, Any]:
         return {
             "agent_type": self.agent_type,
             "level": self.agent_level,
@@ -293,7 +291,7 @@ class Character:
             "best_skill": self.best_skill,
             "tier": self.tier,
             "capes": self.capes,
-            "quest_cape": quest_cape,
+            "quest_cloak": quest_cloak,
             "rares": [{"id": rare, "at": _iso(at)} for rare, at in sorted(self.rares.items(), key=lambda r: r[1])],
             "skills": [{"stat": s.id, **_progress(self.stat_xp.get(s.id, 0))} for s in STATS],
         }
@@ -319,12 +317,12 @@ class Progression:
 
     @property
     def divine_trim(self) -> bool:
-        """Divine Slayer's reward: a Divine trim on every cape."""
-        return any(q.id == "divine_slayer" and q.completed_at for q in self.quests)
+        """Divine Warden's reward: a Divine trim on every cape."""
+        return any(q.id == "divine_warden" and q.completed_at for q in self.quests)
 
     @property
-    def quest_cape_owner(self) -> str | None:
-        """Every quest done: the quest cape, worn by the highest total level."""
+    def quest_cloak_owner(self) -> str | None:
+        """Every quest done: the quest cloak, worn by the highest total level."""
         if not self.quests or not all(q.completed_at for q in self.quests) or not self.characters:
             return None
         return min(self.characters.values(), key=lambda c: (-c.total_level, c.agent_type)).agent_type
@@ -348,9 +346,9 @@ class Progression:
                 "quest_points": self.quest_points,
                 "divine_trim": self.divine_trim,
             },
-            "skills": [{"id": s.id, "name": s.name, "group": s.group, "echo": s.echo} for s in STATS],
+            "skills": [{"id": s.id, "name": s.name, "group": s.group} for s in STATS],
             "characters": [
-                self.characters[a].to_dict(quest_cape=a == self.quest_cape_owner) for a in sorted(self.characters)
+                self.characters[a].to_dict(quest_cloak=a == self.quest_cloak_owner) for a in sorted(self.characters)
             ],
             "achievements": [a.to_dict() for a in self.achievements],
             "achievement_categories": _achievement_categories(),
@@ -413,8 +411,8 @@ def compute(
     Every agent in ``agent_types`` is a character, at level 1 in every skill
     when it earned nothing; an agent that earned something but is no longer
     defined is one too, since its work happened. A merge on 25 December earns
-    a party hat and on 31 October a holiday mask; the first run of a new year
-    earns a white party hat. A character holds each rare once. ``rewards``
+    a paper crown and on 31 October a harvest mask; the first run of a new year
+    earns a golden paper crown. A character holds each rare once. ``rewards``
     are completed quests' XP, each added at its quest's completion.
     """
     characters = {agent: Character(agent) for agent in agent_types}
@@ -520,7 +518,7 @@ class ProgressionService:
             )
             progression.diaries = evaluate_diaries(journal)
             progression.quests = evaluate_quests(
-                journal, progression.diaries, first_total(progression.level_ups, DIVINE_SLAYER_TOTAL)
+                journal, progression.diaries, first_total(progression.level_ups, DIVINE_WARDEN_TOTAL)
             )
             self._cached = (now, progression)
             return progression

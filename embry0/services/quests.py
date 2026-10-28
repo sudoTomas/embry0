@@ -232,7 +232,7 @@ def _best(candidates: Iterable[tuple[str, list[datetime | None]]]) -> tuple[str 
     return best
 
 
-def _repos_assistant(journal: Journal) -> QuestState:
+def _first_steps(journal: Journal) -> QuestState:
     by_repo: dict[str, list[JobRow]] = defaultdict(list)
     for job in journal.jobs:
         by_repo[job.repo].append(job)
@@ -248,8 +248,8 @@ def _repos_assistant(journal: Journal) -> QuestState:
     where, times = _best(candidates)
     times = times or [None, None, None]
     return QuestState(
-        "repos_assistant",
-        "The Repo's Assistant",
+        "first_steps",
+        "First Steps",
         1,
         "1 quest point; Operations and Coding XP",
         [
@@ -262,7 +262,7 @@ def _repos_assistant(journal: Journal) -> QuestState:
     )
 
 
-def _restless_build(journal: Journal) -> QuestState:
+def _try_again(journal: Journal) -> QuestState:
     failed: dict[str, datetime] = {}
     for job in sorted(journal.jobs, key=lambda j: j.at):
         if job.issue_id and job.status == "failed":
@@ -274,8 +274,8 @@ def _restless_build(journal: Journal) -> QuestState:
     ]
     first = min(comebacks, key=lambda c: c[1]) if comebacks else None
     return QuestState(
-        "restless_build",
-        "The Restless Build",
+        "try_again",
+        "Try, Try Again",
         1,
         "1 quest point; Recovery XP",
         [
@@ -317,11 +317,11 @@ def _gatekeeper(journal: Journal) -> QuestState:
     )
 
 
-def _divine_slayer(journal: Journal, diaries: Sequence[Diary], total_reached: datetime | None) -> QuestState:
+def _divine_warden(journal: Journal, diaries: Sequence[Diary], total_reached: datetime | None) -> QuestState:
     elite = _first(t for d in diaries if (t := d.tier("elite").completed_at) is not None)
     return QuestState(
-        "divine_slayer",
-        "Divine Slayer",
+        "divine_warden",
+        "Divine Warden",
         5,
         "5 quest points; a Divine trim on every cape",
         [
@@ -336,7 +336,7 @@ def _divine_slayer(journal: Journal, diaries: Sequence[Diary], total_reached: da
 def quest_rewards(journal: Journal) -> list[tuple[datetime, Reward]]:
     """Each XP reward of a completed quest, at its completion: computed before levels, which they feed."""
     out: list[tuple[datetime, Reward]] = []
-    for quest in (_repos_assistant(journal), _restless_build(journal), _gatekeeper(journal)):
+    for quest in (_first_steps(journal), _try_again(journal), _gatekeeper(journal)):
         if quest.completed_at is not None:
             out.extend((quest.completed_at, reward) for reward in quest.xp)
     return out
@@ -345,8 +345,8 @@ def quest_rewards(journal: Journal) -> list[tuple[datetime, Reward]]:
 def evaluate_quests(journal: Journal, diaries: Sequence[Diary], total_reached: datetime | None) -> list[QuestState]:
     """Every quest's state. ``total_reached`` is when a character first reached total level 1,000."""
     return [
-        _repos_assistant(journal),
-        _restless_build(journal),
+        _first_steps(journal),
+        _try_again(journal),
         _gatekeeper(journal),
-        _divine_slayer(journal, diaries, total_reached),
+        _divine_warden(journal, diaries, total_reached),
     ]

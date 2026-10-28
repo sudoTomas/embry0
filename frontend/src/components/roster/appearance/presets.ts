@@ -21,79 +21,79 @@ export const PRESETS = {
   "bronze-warrior": {
     skin: "tan", hair: "short", beard: null,
     colours: { hair: "black", torso: "cream", legs: "umber", feet: "brown" },
-    equipment: { head: "bronze-helm", body: "bronze-platebody", legs: "bronze-platelegs", shield: "bronze-kiteshield", weapon: "bronze-scimitar" },
+    equipment: { head: "bronze-helm", body: "bronze-chestplate", legs: "bronze-greaves", shield: "bronze-heater-shield", weapon: "bronze-sabre" },
   },
-  "iron-warrior": {
+  "silver-warrior": {
     skin: "light", hair: "spiky", beard: null,
     colours: { hair: "blonde", torso: "red", legs: "charcoal", feet: "black" },
-    equipment: { head: "iron-helm", body: "iron-platebody", legs: "iron-platelegs", shield: "iron-kiteshield", weapon: "iron-scimitar", feet: "metal-boots" },
+    equipment: { head: "silver-helm", body: "silver-chestplate", legs: "silver-greaves", shield: "silver-heater-shield", weapon: "silver-sabre", feet: "metal-boots" },
   },
-  "steel-warrior": {
+  "gold-warrior": {
     skin: "brown", hair: "short", beard: "goatee",
     colours: { hair: "black", torso: "blue", legs: "charcoal", feet: "black" },
-    equipment: { head: "steel-helm", body: "steel-platebody", legs: "steel-platelegs", shield: "steel-kiteshield", weapon: "steel-scimitar", feet: "metal-boots", cape: "cape" },
+    equipment: { head: "gold-helm", body: "gold-chestplate", legs: "gold-greaves", shield: "gold-heater-shield", weapon: "gold-sabre", feet: "metal-boots", cape: "cape" },
   },
-  "mithril-warrior": {
+  "platinum-warrior": {
     skin: "dark", hair: "mohawk", beard: null,
     colours: { hair: "black", torso: "teal", legs: "charcoal", feet: "black" },
-    equipment: { head: "mithril-helm", body: "mithril-platebody", legs: "mithril-platelegs", shield: "mithril-kiteshield", weapon: "mithril-scimitar", feet: "metal-boots", cape: "cape", neck: "amulet" },
+    equipment: { head: "platinum-helm", body: "platinum-chestplate", legs: "platinum-greaves", shield: "platinum-heater-shield", weapon: "platinum-sabre", feet: "metal-boots", cape: "cape", neck: "amulet" },
   },
-  "adamant-warrior": {
+  "diamond-warrior": {
     skin: "light", hair: "long", beard: "full",
     colours: { hair: "auburn", torso: "green", legs: "charcoal", feet: "black" },
-    equipment: { head: "adamant-helm", body: "adamant-platebody", legs: "adamant-platelegs", shield: "adamant-kiteshield", weapon: "adamant-scimitar", feet: "metal-boots", cape: "cape", neck: "amulet" },
+    equipment: { head: "diamond-helm", body: "diamond-chestplate", legs: "diamond-greaves", shield: "diamond-heater-shield", weapon: "diamond-sabre", feet: "metal-boots", cape: "cape", neck: "amulet" },
   },
-  "rune-warrior": {
+  "obsidian-warrior": {
     skin: "tan", hair: "short", beard: "moustache",
     colours: { hair: "brown", torso: "blue", legs: "charcoal", feet: "black" },
-    equipment: { head: "rune-helm", body: "rune-platebody", legs: "rune-platelegs", shield: "rune-kiteshield", weapon: "rune-scimitar", feet: "black-boots", cape: "cape", neck: "amulet" },
+    equipment: { head: "obsidian-helm", body: "obsidian-chestplate", legs: "obsidian-greaves", shield: "obsidian-heater-shield", weapon: "obsidian-sabre", feet: "black-boots", cape: "cape", neck: "amulet" },
   },
-  "dragon-warrior": {
+  "crimson-warrior": {
     skin: "brown", hair: "curly", beard: "goatee",
     colours: { hair: "black", torso: "red", legs: "charcoal", feet: "black" },
-    equipment: { head: "dragon-helm", body: "dragon-platebody", legs: "dragon-platelegs", shield: "dragon-kiteshield", weapon: "dragon-scimitar", feet: "black-boots", cape: "cape", neck: "amulet" },
+    equipment: { head: "crimson-helm", body: "crimson-chestplate", legs: "crimson-greaves", shield: "crimson-heater-shield", weapon: "crimson-sabre", feet: "black-boots", cape: "cape", neck: "amulet" },
   },
   champion: {
     skin: "light", hair: "short", beard: "full",
     colours: { hair: "grey", torso: "charcoal", legs: "charcoal", feet: "black" },
-    equipment: { head: "crested-helm", body: "trimmed-platebody", legs: "trimmed-platelegs", weapon: "greatsword", hands: "gold-gauntlets", feet: "black-boots", cape: "trimmed-cape", neck: "amulet" },
+    equipment: { head: "crested-helm", body: "trimmed-chestplate", legs: "trimmed-greaves", weapon: "greatsword", hands: "gold-gauntlets", feet: "black-boots", cape: "trimmed-cape", neck: "amulet" },
   },
   // mages
   apprentice: {
     skin: "light", hair: "long", beard: null,
     colours: { hair: "blonde", torso: "blue", legs: "blue", feet: "charcoal" },
-    equipment: { head: "wizard-hat", body: "wizard-robe", legs: "wizard-skirt", weapon: "staff", feet: "wizard-boots" },
+    equipment: { head: "novice-hat", body: "novice-robe", legs: "novice-skirt", weapon: "staff", feet: "novice-boots" },
   },
-  mystic: {
+  sorcerer: {
     skin: "tan", hair: "short", beard: "goatee",
     colours: { hair: "black", torso: "purple", legs: "purple", feet: "charcoal" },
-    equipment: { head: "mystic-hat", body: "mystic-robe", legs: "mystic-skirt", weapon: "orb-staff", feet: "mystic-boots", neck: "amulet" },
+    equipment: { head: "violet-hat", body: "violet-robe", legs: "violet-skirt", weapon: "orb-staff", feet: "violet-boots", neck: "amulet" },
   },
   archmage: {
     skin: "dark", hair: "long", beard: "long",
     colours: { hair: "white", torso: "purple", legs: "purple", feet: "charcoal" },
-    equipment: { head: "archmage-hat", body: "archmage-robe", legs: "archmage-skirt", weapon: "crystal-staff", feet: "archmage-boots", neck: "amulet", cape: "cape" },
+    equipment: { head: "archmage-hat", body: "archmage-robe", legs: "archmage-skirt", weapon: "glass-staff", feet: "archmage-boots", neck: "amulet", cape: "cape" },
   },
   // archers
   scout: {
     skin: "light", hair: "spiky", beard: null,
     colours: { hair: "auburn", torso: "green", legs: "umber", feet: "brown" },
-    equipment: { body: "leather-body", legs: "leather-chaps", hands: "leather-vambraces", weapon: "shortbow", feet: "leather-boots" },
+    equipment: { body: "leather-body", legs: "leather-leggings", hands: "leather-bracers", weapon: "shortbow", feet: "leather-boots" },
   },
   ranger: {
     skin: "brown", hair: "short", beard: null,
     colours: { hair: "black", torso: "cream", legs: "green", feet: "brown" },
-    equipment: { head: "green-coif", body: "green-body", legs: "green-chaps", hands: "green-vambraces", weapon: "longbow", feet: "green-boots" },
+    equipment: { head: "green-hood", body: "green-body", legs: "green-leggings", hands: "green-bracers", weapon: "longbow", feet: "green-boots" },
   },
   marksman: {
     skin: "tan", hair: "short", beard: "goatee",
     colours: { hair: "black", torso: "charcoal", legs: "charcoal", feet: "black" },
-    equipment: { head: "black-coif", body: "black-body", legs: "black-chaps", hands: "black-vambraces", weapon: "dark-bow", feet: "black-boots", cape: "cape" },
+    equipment: { head: "black-hood", body: "black-body", legs: "black-leggings", hands: "black-bracers", weapon: "night-bow", feet: "black-boots", cape: "cape" },
   },
   sharpshooter: {
     skin: "light", hair: "long", beard: null,
     colours: { hair: "black", torso: "red", legs: "red", feet: "black" },
-    equipment: { body: "hunter-body", legs: "hunter-chaps", hands: "gold-gauntlets", weapon: "crossbow", feet: "hunter-boots", cape: "trimmed-cape", neck: "amulet" },
+    equipment: { body: "hunter-body", legs: "hunter-leggings", hands: "gold-gauntlets", weapon: "crossbow", feet: "hunter-boots", cape: "trimmed-cape", neck: "amulet" },
   },
   // extras
   monk: {
@@ -106,7 +106,7 @@ export const PRESETS = {
     colours: { hair: "black", torso: "red", legs: "charcoal", feet: "black" },
     equipment: { head: "tricorne", body: "striped-shirt", weapon: "cutlass", feet: "black-boots" },
   },
-  skiller: {
+  artisan: {
     skin: "light", hair: "curly", beard: null,
     colours: { hair: "blonde", torso: "green", legs: "umber", feet: "brown" },
     equipment: { weapon: "axe", feet: "leather-boots" },
@@ -120,62 +120,62 @@ export const PRESETS = {
   smith: {
     skin: "brown", hair: "short", beard: "full",
     colours: { hair: "black", torso: "umber", legs: "charcoal", feet: "black" },
-    equipment: { head: "bronze-med-helm", body: "bronze-platebody", legs: "bronze-platelegs", shield: "bronze-kiteshield", weapon: "bronze-scimitar" },
+    equipment: { head: "bronze-open-helm", body: "bronze-chestplate", legs: "bronze-greaves", shield: "bronze-heater-shield", weapon: "bronze-sabre" },
   },
   warden: {
     skin: "dark", hair: "short", beard: "goatee",
     colours: { hair: "black", torso: "red", legs: "charcoal", feet: "black" },
-    equipment: { head: "bronze-med-helm", body: "bronze-platebody", legs: "bronze-platelegs", shield: "bronze-kiteshield", weapon: "bronze-scimitar" },
+    equipment: { head: "bronze-open-helm", body: "bronze-chestplate", legs: "bronze-greaves", shield: "bronze-heater-shield", weapon: "bronze-sabre" },
   },
   arbiter: {
     skin: "light", hair: "bald", beard: "long",
     colours: { hair: "grey", torso: "teal", legs: "charcoal", feet: "black" },
-    equipment: { head: "bronze-med-helm", body: "bronze-platebody", legs: "bronze-platelegs", shield: "bronze-kiteshield", weapon: "bronze-scimitar" },
+    equipment: { head: "bronze-open-helm", body: "bronze-chestplate", legs: "bronze-greaves", shield: "bronze-heater-shield", weapon: "bronze-sabre" },
   },
   golem: {
     skin: "stone", hair: "bald", beard: null,
     colours: { hair: "grey", torso: "charcoal", legs: "charcoal", feet: "charcoal" },
-    equipment: { head: "bronze-med-helm", body: "bronze-platebody", legs: "bronze-platelegs", shield: "bronze-kiteshield", weapon: "bronze-scimitar" },
+    equipment: { head: "bronze-open-helm", body: "bronze-chestplate", legs: "bronze-greaves", shield: "bronze-heater-shield", weapon: "bronze-sabre" },
   },
   seer: {
     skin: "light", hair: "long", beard: null,
     colours: { hair: "white", torso: "purple", legs: "purple", feet: "charcoal" },
-    equipment: { head: "wizard-hat", body: "wizard-robe", legs: "wizard-skirt", feet: "wizard-boots", weapon: "staff", neck: "amulet" },
+    equipment: { head: "novice-hat", body: "novice-robe", legs: "novice-skirt", feet: "novice-boots", weapon: "staff", neck: "amulet" },
   },
   oracle: {
     skin: "brown", hair: "fringe", beard: null,
     colours: { hair: "black", torso: "purple", legs: "charcoal", feet: "charcoal" },
-    equipment: { head: "wizard-hat", body: "wizard-robe", legs: "wizard-skirt", feet: "wizard-boots", weapon: "staff" },
+    equipment: { head: "novice-hat", body: "novice-robe", legs: "novice-skirt", feet: "novice-boots", weapon: "staff" },
   },
   scholar: {
     skin: "dark", hair: "short", beard: "moustache",
     colours: { hair: "grey", torso: "cream", legs: "umber", feet: "brown" },
-    equipment: { head: "wizard-hat", body: "wizard-robe", legs: "wizard-skirt", feet: "wizard-boots", weapon: "staff", neck: "pendant" },
+    equipment: { head: "novice-hat", body: "novice-robe", legs: "novice-skirt", feet: "novice-boots", weapon: "staff", neck: "pendant" },
   },
   alchemist: {
     skin: "light", hair: "curly", beard: null,
     colours: { hair: "auburn", torso: "green", legs: "green", feet: "brown" },
-    equipment: { head: "wizard-hat", body: "wizard-robe", legs: "wizard-skirt", feet: "wizard-boots", weapon: "staff" },
+    equipment: { head: "novice-hat", body: "novice-robe", legs: "novice-skirt", feet: "novice-boots", weapon: "staff" },
   },
   herald: {
     skin: "tan", hair: "long", beard: null,
     colours: { hair: "blonde", torso: "blue", legs: "cream", feet: "brown" },
-    equipment: { body: "leather-body", legs: "leather-chaps", hands: "leather-vambraces", feet: "leather-boots", weapon: "shortbow" },
+    equipment: { body: "leather-body", legs: "leather-leggings", hands: "leather-bracers", feet: "leather-boots", weapon: "shortbow" },
   },
   engineer: {
     skin: "light", hair: "spiky", beard: "goatee",
     colours: { hair: "brown", torso: "charcoal", legs: "blue", feet: "black" },
-    equipment: { body: "leather-body", legs: "leather-chaps", hands: "leather-vambraces", feet: "leather-boots", weapon: "shortbow" },
+    equipment: { body: "leather-body", legs: "leather-leggings", hands: "leather-bracers", feet: "leather-boots", weapon: "shortbow" },
   },
   rogue: {
     skin: "tan", hair: "fringe", beard: null,
     colours: { hair: "auburn", torso: "charcoal", legs: "charcoal", feet: "black" },
-    equipment: { body: "leather-body", legs: "leather-chaps", hands: "leather-vambraces", feet: "leather-boots", weapon: "shortbow" },
+    equipment: { body: "leather-body", legs: "leather-leggings", hands: "leather-bracers", feet: "leather-boots", weapon: "shortbow" },
   },
   bard: {
     skin: "brown", hair: "curly", beard: "moustache",
     colours: { hair: "blonde", torso: "red", legs: "cream", feet: "brown" },
-    equipment: { body: "leather-body", legs: "leather-chaps", hands: "leather-vambraces", feet: "leather-boots", weapon: "shortbow" },
+    equipment: { body: "leather-body", legs: "leather-leggings", hands: "leather-bracers", feet: "leather-boots", weapon: "shortbow" },
   },
 } as const satisfies Record<AvatarId, Appearance>;
 

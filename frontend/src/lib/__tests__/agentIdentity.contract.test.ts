@@ -40,7 +40,7 @@ describe("identity contract mirror (docs/contracts/identity.json)", () => {
     expect([...PRESET_IDS].sort(), "a preset per avatar (progression spec 2026-10-24)").toEqual([...AVATARS].sort());
     expect([...AVATARS]).toEqual([...LEGACY_AVATARS, ...ADVENTURER_AVATARS]);
     expect(contract.avatars.slice(12)).toEqual([...ADVENTURER_AVATARS]);
-    expect(isAdventurerId("rune-warrior") && isAvatarId("rune-warrior") && !isLegacyAvatarId("rune-warrior")).toBe(true);
+    expect(isAdventurerId("obsidian-warrior") && isAvatarId("obsidian-warrior") && !isLegacyAvatarId("obsidian-warrior")).toBe(true);
     expect(isLegacyAvatarId("golem") && !isAdventurerId("golem")).toBe(true);
   });
 });

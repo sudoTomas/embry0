@@ -182,11 +182,11 @@ async def test_the_facts_count_outcomes_with_their_evidence(db_with_migrations) 
         "clean_kill": 1,
         "bargain": 1,
         "speedrun": 2,
-        "world_hopper": 1,
+        "repo_hopper": 1,
         "issue_done": 1,
         "comeback": 1,
         "long_grind": 1,
-        "pet_drop": 1,
+        "lucky_find": 1,
         "audit": 1,
         "reviews": 1,
     }, counted

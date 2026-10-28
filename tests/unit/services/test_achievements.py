@@ -22,11 +22,11 @@ KEPT_IDS = {
     "forged_in_fire",
     "guardian_of_the_gate",
     "potion_master",
-    "slayer_task_complete",
+    "hunt_complete",
     "lines_straightened",
-    "wise_old_agent",
-    "skill_cape",
-    "oh_dear_you_are_dead",
+    "elder_agent",
+    "mastery_cloak",
+    "back_on_your_feet",
 }
 #: Metrics that counted activity, not outcomes: nothing may count them again.
 NOISE = {"spent", "watched", "scheduled", "completed", "quick", "asked"}
@@ -51,7 +51,7 @@ def test_the_catalogue_is_fifty_outcomes_in_eight_categories_with_stable_ids() -
         assert len(a.thresholds) in (1, len(TIER_NAMES)), a.id
         assert list(a.thresholds) == sorted(set(a.thresholds)), f"{a.id}: thresholds must rise"
         assert a.name and a.what_counts and a.flavour and a.icon, a.id
-    assert TIER_NAMES == ("bronze", "iron", "steel", "mithril", "adamant", "rune", "divine")
+    assert TIER_NAMES == ("bronze", "silver", "gold", "platinum", "diamond", "obsidian", "divine")
     assert sum(a.secret for a in CATALOGUE) >= 5
 
 
@@ -59,17 +59,17 @@ def test_each_tier_unlocks_at_the_step_that_crossed_it_and_the_last_step_is_the_
     facts = [Fact("merged", at(i), 1, f"o/r #{i}", f"https://forge/o/r/pull/{i}") for i in range(16)]
     states, unlocks = evaluate(facts)
     forged = by_id(states)["forged_in_fire"]
-    assert forged.value == 16 and forged.tier == 3, "1, 5 and 15 merges: Bronze, Iron, Steel"
+    assert forged.value == 16 and forged.tier == 3, "1, 5 and 15 merges: Bronze, Silver, Gold"
     assert forged.tier_at == [at(0), at(4), at(14)]
     body = forged.to_dict()
-    assert body["state"] == "unlocked" and body["tier"] == "steel" and body["next_threshold"] == 30
+    assert body["state"] == "unlocked" and body["tier"] == "gold" and body["next_threshold"] == 30
     assert body["category"] == "shipping" and body["kind"] == "tiered" and body["icon"] == "anvil"
     assert body["unlocked_at"] == at(0).isoformat() and body["latest_at"] == at(14).isoformat()
     assert body["evidence"] == {"label": "o/r #15", "url": "https://forge/o/r/pull/15", "at": at(15).isoformat()}
     assert [(u.tier, u.at) for u in unlocks if u.achievement_id == "forged_in_fire"] == [
         ("bronze", at(0)),
-        ("iron", at(4)),
-        ("steel", at(14)),
+        ("silver", at(4)),
+        ("gold", at(14)),
     ]
 
 
@@ -94,12 +94,12 @@ def test_an_objective_is_complete_once_and_has_no_tier() -> None:
 
 
 def test_a_secret_shows_its_category_and_nothing_else_until_its_first_signal() -> None:
-    hidden = by_id(evaluate([])[0])["oh_dear_you_are_dead"].to_dict()
+    hidden = by_id(evaluate([])[0])["back_on_your_feet"].to_dict()
     assert hidden["name"] == "???" and hidden["state"] == "secret" and hidden["category"] == "grit"
     assert hidden["what_counts"] is None and hidden["flavour"] is None and hidden["icon"] is None
     assert hidden["evidence"] is None and hidden["thresholds"] is None
-    seen = by_id(evaluate([Fact("comeback", at(9), 1, "o/r #2")])[0])["oh_dear_you_are_dead"].to_dict()
-    assert seen["name"] == "Oh Dear, You Are Dead" and seen["state"] == "unlocked" and seen["secret"] is True
+    seen = by_id(evaluate([Fact("comeback", at(9), 1, "o/r #2")])[0])["back_on_your_feet"].to_dict()
+    assert seen["name"] == "Back on Your Feet" and seen["state"] == "unlocked" and seen["secret"] is True
 
 
 def test_progress_metrics_come_from_levels_capes_agent_levels_and_rares() -> None:
@@ -114,13 +114,13 @@ def test_progress_metrics_come_from_levels_capes_agent_levels_and_rares() -> Non
     # developer: 23 + 98 = 121 at minute 2; review overtakes at minute 5 with 23 + 29 + 98 + 49 = 199.
     assert sum(step.value for step in steps["best_total"]) == (23 + 29 + 98 + 49) - len(STATS)
     agent_ups = [AgentLevelUp(at(1), "developer", 12), AgentLevelUp(at(2), "review", 8)]
-    drops = [RareDrop(at(6), "developer", "party_hat")]
+    drops = [RareDrop(at(6), "developer", "paper-crown")]
     s = by_id(evaluate([], ups, agent_ups, drops)[0])
-    assert s["wise_old_agent"].value == 199, "the highest total of any one character, not the sum"
-    assert s["skill_cape"].value == 2 and s["skill_cape"].tier_at == [at(2), at(4)]
-    assert s["half_of_ninety_nine"].value == 2, "each skill counts once at 92, on its way to 99"
-    assert s["maxed_main"].value == 12 and s["maxed_main"].tier == 1
-    assert s["rare_drop_table"].value == 1 and s["rare_drop_table"].evidence.label == "developer · party_hat"
+    assert s["elder_agent"].value == 199, "the highest total of any one character, not the sum"
+    assert s["mastery_cloak"].value == 2 and s["mastery_cloak"].tier_at == [at(2), at(4)]
+    assert s["halfway_by_experience"].value == 2, "each skill counts once at 92, on its way to 99"
+    assert s["fully_trained"].value == 12 and s["fully_trained"].tier == 1
+    assert s["rare_finds"].value == 1 and s["rare_finds"].evidence.label == "developer · paper-crown"
 
 
 def test_the_thousand_club_counts_each_character_once() -> None:
@@ -145,6 +145,6 @@ def test_recent_mixes_levels_and_unlocks_newest_first() -> None:
         "kind": "achievement",
         "at": at(0).isoformat(),
         "id": "forged_in_fire",
-        "name": "Gz on the Merge",
+        "name": "Shipped It",
         "tier": "bronze",
     }

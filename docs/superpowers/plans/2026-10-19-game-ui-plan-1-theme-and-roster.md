@@ -571,7 +571,7 @@ describe("Sprite", () => {
   });
 
   it("falls back to golem and slate for ids it does not know", () => {
-    const { container } = render(<Sprite avatar="dragon" color="mauve" state="idle" />);
+    const { container } = render(<Sprite avatar="crimson" color="mauve" state="idle" />);
     const svg = container.querySelector("svg")!;
     expect(svg).toHaveAttribute("data-avatar", "golem");
     expect(svg).toHaveAttribute("data-color", "slate");

@@ -18,7 +18,7 @@ import { AgentsPage } from "../AgentsPage";
 
 const PROGRESSION = {
   account: { xp: 2_100_000, total_level: 105, characters: 1 },
-  skills: [{ id: "coding", name: "Coding", group: "build", echo: "smithing" }],
+  skills: [{ id: "coding", name: "Coding", group: "build" }],
   characters: [
     {
       agent_type: "developer",
@@ -26,7 +26,7 @@ const PROGRESSION = {
       xp: 2_100_000,
       total_level: 105,
       best_skill: "coding",
-      tier: "rune",
+      tier: "obsidian",
       skills: [{ stat: "coding", xp: 2_100_000, level: 83, level_xp: 2_000_000, xp_to_next: 50_000 }],
     },
   ],
@@ -283,7 +283,7 @@ describe("AgentsPage identity", () => {
     const badges = screen.getAllByTestId("level-badge");
     expect(badges).toHaveLength(1);
     expect(badges[0]).toHaveTextContent("Level 34");
-    expect(badges[0]).toHaveAttribute("title", "Total level 105 · Rune tier from Coding 83 · open the skill sheet");
-    expect(badges[0]).toHaveAttribute("data-tier", "rune");
+    expect(badges[0]).toHaveAttribute("title", "Total level 105 · Obsidian tier from Coding 83 · open the skill sheet");
+    expect(badges[0]).toHaveAttribute("data-tier", "obsidian");
   });
 });

@@ -68,8 +68,8 @@ describe("AchievementsPage", () => {
     mockUseProgression.mockReturnValue({
       data: progression({
         recent: [
-          { kind: "achievement", at: "2026-10-05T00:00:00+00:00", id: "forged_in_fire", name: "Gz on the Merge", tier: "steel" },
-          { kind: "achievement", at: "2026-10-04T00:00:00+00:00", id: "forged_in_fire", name: "Gz on the Merge", tier: "iron" },
+          { kind: "achievement", at: "2026-10-05T00:00:00+00:00", id: "forged_in_fire", name: "Shipped It", tier: "gold" },
+          { kind: "achievement", at: "2026-10-04T00:00:00+00:00", id: "forged_in_fire", name: "Shipped It", tier: "silver" },
           { kind: "achievement", at: "2026-10-03T00:00:00+00:00", id: "long_grind", name: "Long Grind", tier: "complete" },
         ],
       }),
@@ -79,13 +79,13 @@ describe("AchievementsPage", () => {
     const tiles = screen.getAllByTestId("diary-tile").map((t) => t.textContent);
     expect(tiles[0]).toContain("2 / 4");
     expect(tiles[1]).toContain("1");
-    expect(tiles[3]).toContain("Steel");
-    expect(tiles[4]).toContain("Gz on the Merge");
+    expect(tiles[3]).toContain("Gold");
+    expect(tiles[4]).toContain("Shipped It");
     expect(within(screen.getByTestId("tier-legend")).getAllByRole("listitem").map((li) => li.textContent?.replace("→", "").trim())).toEqual([
-      "Bronze", "Iron", "Steel", "Mithril", "Adamant", "Rune", "Divine",
+      "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Obsidian", "Divine",
     ]);
     const recent = within(screen.getByTestId("recent-unlocks")).getAllByTitle(/·/);
-    expect(recent.map((r) => r.textContent)).toEqual(["Gz on the Merge", "Long Grind"]);
+    expect(recent.map((r) => r.textContent)).toEqual(["Shipped It", "Long Grind"]);
   });
 
   it("names each card's state and tier in words, with evidence, what counts, and progress to the next tier", async () => {
@@ -93,14 +93,14 @@ describe("AchievementsPage", () => {
     renderPage();
     const [forged, cape, grind, secret] = screen.getAllByTestId("achievement");
     expect(within(forged).getByTestId("state-chip")).toHaveTextContent("unlocked");
-    expect(within(forged).getByTestId("tier-chip")).toHaveTextContent("Steel");
-    expect(forged).toHaveTextContent("Somebody type gz in chat.");
+    expect(within(forged).getByTestId("tier-chip")).toHaveTextContent("Gold");
+    expect(forged).toHaveTextContent("Somebody ring the bell.");
     expect(within(forged).getByRole("link", { name: "o/app #42" })).toHaveAttribute("href", "https://forge/o/app/pull/42");
     expect(within(forged).getByTestId("achievement-progress")).toHaveTextContent("16 / 30");
-    expect(within(forged).getByRole("progressbar")).toHaveAttribute("aria-label", "Progress to Mithril");
+    expect(within(forged).getByRole("progressbar")).toHaveAttribute("aria-label", "Progress to Platinum");
     expect(within(forged).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "7");
     await userEvent.click(within(forged).getByText("What counts"));
-    expect(within(forged).getByTestId("what-counts")).toHaveTextContent("Bronze 1 · Iron 5 · Steel 15 · Mithril 30");
+    expect(within(forged).getByTestId("what-counts")).toHaveTextContent("Bronze 1 · Silver 5 · Gold 15 · Platinum 30");
     expect(within(cape).getByTestId("tier-chip")).toHaveTextContent("target Bronze");
     expect(within(grind).getByTestId("tier-chip")).toHaveTextContent("Complete");
     expect(within(grind).getByTestId("achievement-progress")).toHaveTextContent(/^done$/);

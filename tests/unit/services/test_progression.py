@@ -61,12 +61,12 @@ def test_tiers_spread_over_the_top_of_the_curve() -> None:
     assert [tier_for_level(n) for n in (1, 14, 15, 30, 45, 60, 75, 89, 90, 99)] == [
         "bronze",
         "bronze",
-        "iron",
-        "steel",
-        "mithril",
-        "adamant",
-        "rune",
-        "rune",
+        "silver",
+        "gold",
+        "platinum",
+        "diamond",
+        "obsidian",
+        "obsidian",
         "divine",
         "divine",
     ]
@@ -75,9 +75,8 @@ def test_tiers_spread_over_the_top_of_the_curve() -> None:
 # ---- skills ----
 
 
-def test_twenty_three_skills_in_four_groups_each_echoing_a_different_classic_skill() -> None:
+def test_twenty_three_skills_in_four_groups() -> None:
     assert len(STATS) == len({s.id for s in STATS}) == 23
-    assert len({s.echo for s in STATS}) == 23, "every classic skill is echoed exactly once"
     assert {s.group for s in STATS} == {"build", "verify", "investigate", "care"}
 
 
@@ -141,7 +140,7 @@ def test_a_character_totals_its_skills_and_wears_the_tier_of_its_best() -> None:
     character = Character("developer", {"coding": xp_for_level(80), "testing": xp_for_level(80) + 5, "shell": 500})
     assert character.total_level == 80 + 80 + level_for_xp(500) + 20
     assert character.best_skill == "testing", "a level tie goes to the most experience"
-    assert character.tier == "rune"
+    assert character.tier == "obsidian"
 
 
 def test_levels_add_up_per_character_with_every_level_crossed_recorded() -> None:
@@ -221,7 +220,7 @@ async def test_the_service_computes_at_most_once_per_minute() -> None:
     now = [100.0]
     service = ProgressionService(Repo(), ttl_seconds=60, clock=lambda: now[0])
     first = await service.read()
-    assert [q.id for q in first.quests if q.completed_at] == ["restless_build"]
+    assert [q.id for q in first.quests if q.completed_at] == ["try_again"]
     assert first.characters["developer"].stat_xp["recovery"] == 60_000, "the quest's XP reached the levels"
     assert [d.repo for d in first.diaries] == ["o/app"]
     now[0] += 59
@@ -249,27 +248,27 @@ def test_a_merge_on_the_holidays_drops_a_rare_once() -> None:
         ProgressEvent("merged", "developer", datetime(2026, 11, 1, 0, 1, tzinfo=UTC)),  # a day late in UTC
     ]
     result = compute(events, ["developer"])
-    assert set(result.characters["developer"].rares) == {"party-hat", "holiday-mask"}
+    assert set(result.characters["developer"].rares) == {"paper-crown", "harvest-mask"}
     assert [(d.rare, d.at) for d in result.drops] == [
-        ("holiday-mask", datetime(2026, 10, 31, 23, 59, tzinfo=UTC)),
-        ("party-hat", christmas),
+        ("harvest-mask", datetime(2026, 10, 31, 23, 59, tzinfo=UTC)),
+        ("paper-crown", christmas),
     ], "each rare once, when first earned"
     body = result.to_dict()["characters"][0]
-    assert [r["id"] for r in body["rares"]] == ["holiday-mask", "party-hat"]
+    assert [r["id"] for r in body["rares"]] == ["harvest-mask", "paper-crown"]
     assert body["capes"] == []
 
 
-def test_the_first_run_of_a_new_year_drops_a_white_party_hat() -> None:
+def test_the_first_run_of_a_new_year_drops_a_golden_paper_crown() -> None:
     events = [
         ProgressEvent("run", "triage", datetime(2026, 12, 31, 23, tzinfo=UTC)),
         ProgressEvent("run", "qa", datetime(2027, 1, 1, 0, 30, tzinfo=UTC)),
         ProgressEvent("run", "triage", datetime(2027, 1, 1, 1, tzinfo=UTC)),
     ]
     result = compute(events, [])
-    assert result.characters["qa"].rares == {"white-party-hat": datetime(2027, 1, 1, 0, 30, tzinfo=UTC)}
+    assert result.characters["qa"].rares == {"golden-paper-crown": datetime(2027, 1, 1, 0, 30, tzinfo=UTC)}
     assert result.characters["triage"].rares == {}, "the year's first run only, and never the very first run"
     recent = result.to_dict()["recent"]
-    assert {"kind": "rare", "at": "2027-01-01T00:30:00+00:00", "agent_type": "qa", "id": "white-party-hat"} in recent
+    assert {"kind": "rare", "at": "2027-01-01T00:30:00+00:00", "agent_type": "qa", "id": "golden-paper-crown"} in recent
 
 
 # ---- quests feed the levels ----
@@ -292,18 +291,18 @@ def test_first_total_is_when_a_character_reached_it() -> None:
     assert first_total(result.level_ups, 2_000) is None
 
 
-def test_every_quest_done_gives_the_highest_character_the_quest_cape() -> None:
+def test_every_quest_done_gives_the_highest_character_the_quest_cloak() -> None:
     from embry0.services.quests import evaluate_quests
 
     result = compute([ev("merged", "developer")], ["developer", "review"])
     result.quests = evaluate_quests(Journal([], []), [], None)
-    assert result.quest_cape_owner is None
+    assert result.quest_cloak_owner is None
     for q in result.quests:
         q.steps = [type(s)(s.text, T0) for s in q.steps]
         q.requirement_met_at = T0
-    assert result.quest_cape_owner == "developer" and result.quest_points == 9 and result.divine_trim
+    assert result.quest_cloak_owner == "developer" and result.quest_points == 9 and result.divine_trim
     body = result.to_dict()
-    assert {c["agent_type"]: c["quest_cape"] for c in body["characters"]} == {"developer": True, "review": False}
+    assert {c["agent_type"]: c["quest_cloak"] for c in body["characters"]} == {"developer": True, "review": False}
     assert {r["kind"] for r in body["recent"]} >= {"quest", "level"}
 
 

@@ -134,7 +134,7 @@ const character = (agent_type: string, over: Record<string, unknown> = {}) => ({
   level: 40,
   total_level: 600,
   xp: 1000,
-  tier: "steel",
+  tier: "gold",
   best_skill: "coding",
   capes: [],
   skills: [{ stat: "coding", level: 40, xp: 1000 }],

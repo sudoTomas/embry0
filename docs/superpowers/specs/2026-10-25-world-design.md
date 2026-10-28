@@ -54,7 +54,7 @@ A character is in one of these states, read from the jobs it is on:
 |---|---|---|
 | idle | no live job | at its station in the hall |
 | travelling | the job started, its first agent has not | walks the path from the hall to the lead |
-| working | an agent run of the job is live | the work animation at the lead; tool calls tick; a failing check shows a hitsplat |
+| working | an agent run of the job is live | the work animation at the lead; tool calls tick; a failing check shows a hit marker |
 | waiting for you | the job is `awaiting_input` | a speech bubble: the question, click to answer |
 | returning | the job finished | walks home carrying its loot |
 | defeated | the job failed | falls, respawns at the hall; the chatbox says why |
@@ -97,7 +97,7 @@ Per region, off by default: a switch on the region's banner lets idle characters
 
 ## Rendering (as built)
 
-**Instrument outside, game inside.** Everything around the pictures is embry0's normal interface: the page header, the review inbox, the agents' cards, the leads and their filters, the agent panel, New task, the lead dialog, the job report and the live panel are built from `components/ui` (Card, Button, Badge, Select, Dialog, Tabs) on the theme's tokens and fonts, in embry0's operator words (agents, jobs, leads, review, start, cancel). Kinds, levels, states and outcomes are Badges in the existing status tones. The pixel face appears only where the theme allows it: `.title-pixel` for the page title, `.sprite-nameplate` for the names over sprites, `.hud` for levels and XP numbers. The game's words (quest, loot, XP drops, attack, defeated) stay inside the pictures, the creatures' captions on the leads and the activity box. `world.css` holds only what the scenes need: the speech bubble, the XP drop and the hitsplat, and holding the art still under reduced motion.
+**Instrument outside, game inside.** Everything around the pictures is embry0's normal interface: the page header, the review inbox, the agents' cards, the leads and their filters, the agent panel, New task, the lead dialog, the job report and the live panel are built from `components/ui` (Card, Button, Badge, Select, Dialog, Tabs) on the theme's tokens and fonts, in embry0's operator words (agents, jobs, leads, review, start, cancel). Kinds, levels, states and outcomes are Badges in the existing status tones. The pixel face appears only where the theme allows it: `.title-pixel` for the page title, `.sprite-nameplate` for the names over sprites, `.hud` for levels and XP numbers. The game's words (quest, loot, XP drops, attack, defeated) stay inside the pictures, the creatures' captions on the leads and the activity box. `world.css` holds only what the scenes need: the speech bubble, the XP drop and the hit marker, and holding the art still under reduced motion.
 
 **Closing.** Every dialog and panel is the app's Dialog: a Close button, Escape and a click outside close it, and focus goes back to what opened it. The activity box folds to a tab and closes; the page header opens it again; the choice is kept per browser (`localStorage`), and a phone starts it folded. Each of its lines copies as a debug block: the time (UTC), the line, the job's title, the agent, repository and area, the job id, a failure's `error_code` and exact `error_message`, and `/jobs/<id>`.
 
@@ -109,7 +109,7 @@ The hall's inside and the overworld are drawn from the art, with no canvas engin
 - **Depth**: an element is placed by its anchor (where its feet are) and drawn in front by that point's height on the map.
 - **Animation**: a creature's or an effect's frames step with CSS `steps()` keyframes generated from the manifest's frame rectangles. A party walks from the hall's door to its quest (and back) as a CSS transition, stepping on a two-frame walk composed from its own parts, each frame lifting one leg. Reduced motion stops every loop.
 - **The hall's inside**: the hall tileset's floor walled on every side; each character standing at its station (the developer at the anvil, the readers at lecterns, QA and Kintsugi at the alchemy table, the analysts at the map table, everyone else at a desk), its station empty while it is out, with a `?` when it waits for you; torches, bookshelves, the quest board (a click goes to the board), and the loot chest: closed, open once a pull request came back, gold and sparkling once one merged (a click opens that quest's scroll). As many stations to a row as fit, never more than three rows; past that it scrolls sideways. It is drawn at 1×, or 2× when the room is wide.
-- **Effects**: an XP drop with the amount over a character's station when its experience rises between two reads, level-up fireworks with a line in the chat box, a flashing hitsplat over a creature a party is fighting and over a defeated party, a sparkle over a party coming back with a pull request.
+- **Effects**: an XP drop with the amount over a character's station when its experience rises between two reads, level-up fireworks with a line in the chat box, a flashing hit marker over a creature a party is fighting and over a defeated party, a sparkle over a party coming back with a pull request.
 
 ## Art (phase 2, built)
 
@@ -118,7 +118,7 @@ Original pixel art made with PixelLab, constrained by embry0's palette and a sty
 - Terrain: corner tilesets of grass with dirt, water, rock, cobbles and forest, and the hall's floor with its wall.
 - Objects: trees, bushes, flowers, rocks, a fence, signposts, houses, a well, a banner; the guild hall's outside; the stations, the quest board, torches, bookshelves and the chest closed, open and full of gold.
 - Creatures, each a five-frame idle loop: `case_bug` (watcher case), `ci_golem` (failing CI), `alert_wyrm` (security or dependency alert), `flaky_imp` (flaky test), `review_ghost` (unanswered review comment), `quest_giver` (open issue, backlog ticket), `audit_signpost` (context-audit finding). The renderer draws hits itself.
-- Effects: XP drop, level-up, loot sparkle, hitsplat.
+- Effects: XP drop, level-up, loot sparkle, hit marker.
 
 ## Phases
 

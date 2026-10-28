@@ -154,7 +154,7 @@ def test_a_party_held_by_a_spent_account_waits_and_says_until_when():
 
 
 def _character(agent):
-    return {"agent_type": agent, "level": 40, "tier": "steel"}
+    return {"agent_type": agent, "level": 40, "tier": "gold"}
 
 
 def test_each_character_is_where_its_newest_quest_is():

@@ -61,7 +61,6 @@ async def test_the_read_answers_the_account_its_characters_and_achievements() ->
         "id": "coding",
         "name": "Coding",
         "group": "build",
-        "echo": "smithing",
     }
     developer = body["characters"][0]
     assert developer["agent_type"] == "developer" and developer["best_skill"] == "coding"
@@ -70,7 +69,7 @@ async def test_the_read_answers_the_account_its_characters_and_achievements() ->
     assert developer["level"] >= 1
     assert len(body["achievements"]) == 50 and body["achievements"][0]["id"] == "forged_in_fire"
     assert body["achievements"][0]["evidence"]["label"] == "o/r #1"
-    assert [c["id"] for c in body["achievement_categories"]][:2] == ["shipping", "slayer"]
+    assert [c["id"] for c in body["achievement_categories"]][:2] == ["shipping", "hunting"]
 
 
 @pytest.mark.asyncio

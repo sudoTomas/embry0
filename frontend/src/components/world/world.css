@@ -1,7 +1,7 @@
 /*
  * What the world's pixel scenes need beyond the art itself (spec
  * 2026-10-25, Rendering): the speech bubble over a sprite that waits for
- * an answer, experience floating up from a sprite, the hitsplat flashing over
+ * an answer, experience floating up from a sprite, the hit marker flashing over
  * a fight. Everything around the scenes is the app's own UI; nothing here
  * styles it. Under reduced motion every one holds still, the art's own frame
  * steps too (ArtSprite sets those inline, hence !important).
@@ -36,8 +36,8 @@
     animation: world-bob 1.2s steps(2) infinite;
   }
 
-  /* A hit landing: the hitsplat flashes up and fades, again and again while the fight goes on. */
-  @keyframes world-hitsplat {
+  /* A hit landing: the hit marker flashes up and fades, again and again while the fight goes on. */
+  @keyframes world-hit-marker {
     0% {
       opacity: 0;
       transform: translateY(4px);
@@ -51,8 +51,8 @@
       opacity: 0;
     }
   }
-  .world-hitsplat {
-    animation: world-hitsplat 1.4s steps(7) infinite;
+  .world-hit-marker {
+    animation: world-hit-marker 1.4s steps(7) infinite;
   }
 }
 

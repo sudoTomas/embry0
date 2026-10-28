@@ -18,7 +18,7 @@ export interface SpriteProps {
   decorative?: boolean;
   /** Draw frame 0 only, never stepping: for a sprite repeated down a list, like a transcript marker. */
   still?: boolean;
-  /** What the character earned (progression spec 2026-10-24): its tier's gear, a skill cape, a rare. None draws the avatar as it is. */
+  /** What the character earned (progression spec 2026-10-24): its tier's gear, a mastery cloak, a rare. None draws the avatar as it is. */
   outfit?: Outfit | null;
   /** Walking (the world, spec 2026-10-25): its two walk frames in place of the state's. */
   walking?: boolean;

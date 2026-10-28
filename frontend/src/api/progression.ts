@@ -1,7 +1,7 @@
 import { api } from "./client";
 
 /** A character's gear tier from its best skill (spec 2026-10-24): Bronze from 1 to Divine from 90. */
-export type Tier = "bronze" | "iron" | "steel" | "mithril" | "adamant" | "rune" | "divine";
+export type Tier = "bronze" | "silver" | "gold" | "platinum" | "diamond" | "obsidian" | "divine";
 
 /** Where a skill's tile sits on a skill sheet. */
 export type SkillGroup = "build" | "verify" | "investigate" | "care";
@@ -13,8 +13,6 @@ export interface Skill {
   /** Its name, such as `Version control`. */
   name: string;
   group: SkillGroup;
-  /** The classic skill it echoes, which gives it its icon and cape colours. */
-  echo: string;
 }
 
 /** A character's progress in one skill. */
@@ -38,12 +36,12 @@ export interface Character {
   total_level: number;
   best_skill: string;
   tier: Tier;
-  /** Its skills at 99, the most experience first: the first is the skill cape it wears. */
+  /** Its skills at 99, the most experience first: the first is the mastery cloak it wears. */
   capes: string[];
-  /** The rares its work earned (`party-hat`, `holiday-mask`, `white-party-hat`), first earned first. */
+  /** The rares its work earned (`paper-crown`, `harvest-mask`, `golden-paper-crown`), first earned first. */
   rares: { id: string; at: string }[];
-  /** Every quest done: the highest total level wears the quest cape. */
-  quest_cape: boolean;
+  /** Every quest done: the highest total level wears the quest cloak. */
+  quest_cloak: boolean;
   /** Every skill, in sheet order. */
   skills: SkillProgress[];
 }
@@ -57,7 +55,7 @@ export interface Account {
   characters: number;
   /** The points of every quest completed. */
   quest_points: number;
-  /** Divine Slayer's reward: a Divine trim on every cape. */
+  /** Divine Warden's reward: a Divine trim on every cape. */
   divine_trim: boolean;
 }
 

@@ -11,10 +11,10 @@ export const LEGACY_AVATARS = [
 /** The adventurer presets, composed from an appearance (components/roster/appearance/presets.ts, which this list types). */
 export const ADVENTURER_AVATARS = [
   "starter",
-  "bronze-warrior", "iron-warrior", "steel-warrior", "mithril-warrior", "adamant-warrior", "rune-warrior", "dragon-warrior", "champion",
-  "apprentice", "mystic", "archmage",
+  "bronze-warrior", "silver-warrior", "gold-warrior", "platinum-warrior", "diamond-warrior", "obsidian-warrior", "crimson-warrior", "champion",
+  "apprentice", "sorcerer", "archmage",
   "scout", "ranger", "marksman", "sharpshooter",
-  "monk", "pirate", "skiller", "miner",
+  "monk", "pirate", "artisan", "miner",
 ] as const;
 export const AVATARS = [...LEGACY_AVATARS, ...ADVENTURER_AVATARS] as const;
 export type LegacyAvatarId = (typeof LEGACY_AVATARS)[number];
@@ -39,7 +39,7 @@ export const BUILTIN_IDENTITY: Record<string, BuiltinIdentity> = {
   "area-mapper": { avatar: "miner", color: "emerald", display_name: "Cartographer", tagline: "Maps the parts of a monorepo." },
   "design-auditor": { avatar: "archmage", color: "gold", display_name: "Design Auditor", tagline: "Measures a frontend against its standard." },
   developer: { avatar: "smith", color: "amber", display_name: "Developer", tagline: "Forges the change." },
-  gardener: { avatar: "skiller", color: "emerald", display_name: "Gardener", tagline: "Pulls one weed per run, provably." },
+  gardener: { avatar: "artisan", color: "emerald", display_name: "Gardener", tagline: "Pulls one weed per run, provably." },
   how: { avatar: "bard", color: "sky", display_name: "How", tagline: "Explains a subsystem before you change it." },
   interrogator: { avatar: "rogue", color: "rose", display_name: "Interrogator", tagline: "Four angles on a diff, then a verdict." },
   kintsugi: { avatar: "monk", color: "gold", display_name: "Kintsugi", tagline: "Finds every crack, proves it, writes the seal." },
@@ -49,9 +49,9 @@ export const BUILTIN_IDENTITY: Record<string, BuiltinIdentity> = {
   qa: { avatar: "alchemist", color: "emerald", display_name: "QA", tagline: "Proves it in the vessel." },
   research: { avatar: "scholar", color: "gold", display_name: "Research", tagline: "Reads everything first." },
   review: { avatar: "warden", color: "rose", display_name: "Reviewer", tagline: "Guards the gate." },
-  slopmaster: { avatar: "steel-warrior", color: "emerald", display_name: "Slopmaster", tagline: "Clears the slop, keeps the behavior." },
+  slopmaster: { avatar: "gold-warrior", color: "emerald", display_name: "Slopmaster", tagline: "Clears the slop, keeps the behavior." },
   triage: { avatar: "seer", color: "violet", display_name: "Triage", tagline: "Reads the issue, sets the course." },
-  why: { avatar: "mystic", color: "violet", display_name: "Why", tagline: "Finds the forces that shaped the code." },
+  why: { avatar: "sorcerer", color: "violet", display_name: "Why", tagline: "Finds the forces that shaped the code." },
 };
 
 /** gold is --color-primary; the rest are the Tailwind 400 shades (index.css theme). */

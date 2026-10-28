@@ -3,26 +3,26 @@ import type { RecentEvent } from "@/api/progression";
 import { SEEN_KEY, chatMessage, freshEvents, readSeen, writeSeen } from "../chatbox";
 
 const LEVEL: RecentEvent = { kind: "level", at: "2026-10-24T10:00:00+00:00", stat: "coding", level: 42, agent_type: "developer" };
-const UNLOCK: RecentEvent = { kind: "achievement", at: "2026-10-24T11:00:00+00:00", id: "forged_in_fire", name: "Forged in Fire", tier: "steel" };
+const UNLOCK: RecentEvent = { kind: "achievement", at: "2026-10-24T11:00:00+00:00", id: "forged_in_fire", name: "Forged in Fire", tier: "gold" };
 
 afterEach(() => window.localStorage.clear());
 
 describe("chat box messages", () => {
   it("says a character's level and the account's unlock in the old game's words", () => {
     expect(chatMessage(LEVEL, () => "Coding", (type) => (type === "developer" ? "Forge" : type))).toBe(
-      "Congratulations, Forge just advanced a Coding level. Its Coding level is now 42.",
+      "Forge reached Coding level 42.",
     );
-    expect(chatMessage(UNLOCK, () => "", () => "")).toBe("Well done! You have reached Steel in Forged in Fire.");
+    expect(chatMessage(UNLOCK, () => "", () => "")).toBe("Forged in Fire reached Gold.");
     const objective: RecentEvent = { kind: "achievement", at: "2026-10-24T12:00:00+00:00", id: "long_grind", name: "Long Grind", tier: "complete" };
-    expect(chatMessage(objective, () => "", () => "")).toBe("Well done! You have completed the Long Grind achievement.");
-    const drop: RecentEvent = { kind: "rare", at: "2026-12-25T10:00:00+00:00", agent_type: "developer", id: "party-hat" };
-    expect(chatMessage(drop, () => "", () => "Forge")).toBe("Valuable drop: Forge received a party hat!");
+    expect(chatMessage(objective, () => "", () => "")).toBe("Achievement done: Long Grind.");
+    const drop: RecentEvent = { kind: "rare", at: "2026-12-25T10:00:00+00:00", agent_type: "developer", id: "paper-crown" };
+    expect(chatMessage(drop, () => "", () => "Forge")).toBe("Forge found a paper crown.");
     const up: RecentEvent = { kind: "agent_level", at: "2026-10-24T10:00:00+00:00", agent_type: "developer", level: 96 };
-    expect(chatMessage(up, () => "", () => "Forge")).toBe("Congratulations, Forge's level is now 96.");
+    expect(chatMessage(up, () => "", () => "Forge")).toBe("Forge is now level 96.");
     const quest: RecentEvent = { kind: "quest", at: "2026-10-24T10:00:00+00:00", id: "gatekeeper", name: "Gatekeeper" };
-    expect(chatMessage(quest, () => "", () => "")).toBe("Congratulations! Quest complete: Gatekeeper.");
+    expect(chatMessage(quest, () => "", () => "")).toBe("Quest done: Gatekeeper.");
     const diary: RecentEvent = { kind: "diary", at: "2026-10-24T10:00:00+00:00", repo: "o/app", tier: "medium" };
-    expect(chatMessage(diary, () => "", () => "")).toBe("Well done! You have completed the Medium tasks in the o/app diary.");
+    expect(chatMessage(diary, () => "", () => "")).toBe("The Medium tasks of the o/app diary are done.");
   });
 
   it("keeps only what is newer than the last one shown, oldest first", () => {

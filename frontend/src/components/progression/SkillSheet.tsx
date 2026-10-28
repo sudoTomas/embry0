@@ -56,7 +56,7 @@ export function SkillSheet({ character, skills, identity }: { character: Charact
   // What it wears for what it earned: the best 99's cape (trimmed for two or more) and its rares.
   const earned = [
     ...character.capes.slice(0, 1).map((stat) => `${skillName.get(stat) ?? stat} cape${character.capes.length > 1 ? " (trimmed)" : ""}`),
-    ...(character.quest_cape && character.capes.length === 0 ? ["quest cape"] : []),
+    ...(character.quest_cloak && character.capes.length === 0 ? ["quest cloak"] : []),
     ...character.rares.map((r) => RARE_NAMES[r.id] ?? r.id),
   ];
   return (

@@ -37,6 +37,12 @@ def _specialists_identity() -> dict[str, dict[str, str]]:
     return {agent_type: BUILTIN_IDENTITY[agent_type] for agent_type in SPECIALISTS}
 
 
+def _as_106_wrote_it() -> dict[str, dict[str, str]]:
+    """The specialists' identity with each avatar named as it was before migration 127 renamed it."""
+    back = {new: old for old, new in re.findall(r"WHEN '([\w-]+)' THEN '([\w-]+)'", _sql_for(127))}
+    return {t: {**v, "avatar": back.get(v["avatar"], v["avatar"])} for t, v in _specialists_identity().items()}
+
+
 def test_migration_106_present_and_gapless() -> None:
     versions = [v for v, _, _ in MIGRATIONS]
     assert versions.count(106) == 1, "migration 106 (specialist agent identities) must exist exactly once"
@@ -62,7 +68,7 @@ def test_migration_106_writes_the_identity_that_identity_py_carries() -> None:
         }
         for agent_type, display_name, avatar, color, tagline in rows
     }
-    assert written == _specialists_identity(), "migration 106 and BUILTIN_IDENTITY disagree"
+    assert written == _as_106_wrote_it(), "migration 106 and BUILTIN_IDENTITY (before 127's renames) disagree"
 
 
 async def _specialists_at_the_defaults(db: DatabasePool) -> None:
@@ -100,7 +106,7 @@ async def test_it_writes_the_specialists_identity_on_a_schema_at_105(db_with_mig
 
     await run_migrations(db)
 
-    assert await _identity_rows(db) == _specialists_identity(), "migration 106 left specialists at the defaults"
+    assert await _identity_rows(db) == _as_106_wrote_it(), "migration 106 left specialists at the defaults"
     assert await db.fetchval("SELECT 1 FROM embry0_migrations WHERE version = 106") == 1
 
 
@@ -116,7 +122,7 @@ async def test_it_leaves_an_edited_specialist_alone(db_with_migrations: Database
 
     rows = await _identity_rows(db)
     assert rows["kintsugi"] == {"display_name": "Renamed", "avatar": "golem", "color": "sky", "tagline": ""}
-    assert rows["gardener"] == BUILTIN_IDENTITY["gardener"], "the other rows at the defaults are still written"
+    assert rows["gardener"] == _as_106_wrote_it()["gardener"], "the other rows at the defaults are still written"
 
 
 @pytest.mark.requires_postgres
@@ -127,5 +133,5 @@ async def test_migration_106_is_idempotent(db_with_migrations: DatabasePool) -> 
     await db.execute(_sql_for(106))
     before = await _identity_rows(db)
     await db.execute(_sql_for(106))
-    assert await _identity_rows(db) == before == _specialists_identity()
+    assert await _identity_rows(db) == before == _as_106_wrote_it()
     assert await db.fetchval("SELECT count(*) FROM embry0_migrations WHERE version = 106") == 1

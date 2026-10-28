@@ -34,15 +34,15 @@ describe("Chatbox", () => {
     window.localStorage.setItem(SEEN_KEY, "2026-10-24T09:00:00+00:00");
     mockUseProgression.mockReturnValue(
       withRecent([
-        { kind: "achievement", at: "2026-10-24T11:00:00+00:00", id: "forged_in_fire", name: "Forged in Fire", tier: "steel" },
+        { kind: "achievement", at: "2026-10-24T11:00:00+00:00", id: "forged_in_fire", name: "Forged in Fire", tier: "gold" },
         { kind: "level", at: "2026-10-24T10:00:00+00:00", stat: "coding", level: 84, agent_type: "developer" },
       ]),
     );
     const view = render(<Chatbox />);
-    expect(screen.getByTestId("chatbox-message")).toHaveTextContent("Congratulations, Forge just advanced a Coding level. Its Coding level is now 84.");
+    expect(screen.getByTestId("chatbox-message")).toHaveTextContent("Forge reached Coding level 84.");
     expect(screen.getByRole("status")).toBeInTheDocument();
     act(() => vi.advanceTimersByTime(MESSAGE_MS));
-    expect(screen.getByTestId("chatbox-message")).toHaveTextContent("You have reached Steel in Forged in Fire.");
+    expect(screen.getByTestId("chatbox-message")).toHaveTextContent("Forged in Fire reached Gold.");
     act(() => vi.advanceTimersByTime(MESSAGE_MS));
     expect(screen.queryByTestId("chatbox-message")).toBeNull();
     expect(window.localStorage.getItem(SEEN_KEY)).toBe("2026-10-24T11:00:00+00:00");

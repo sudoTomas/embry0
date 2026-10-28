@@ -14,15 +14,15 @@
     "golem",
     "starter",
     "bronze-warrior",
-    "iron-warrior",
-    "steel-warrior",
-    "mithril-warrior",
-    "adamant-warrior",
-    "rune-warrior",
-    "dragon-warrior",
+    "silver-warrior",
+    "gold-warrior",
+    "platinum-warrior",
+    "diamond-warrior",
+    "obsidian-warrior",
+    "crimson-warrior",
     "champion",
     "apprentice",
-    "mystic",
+    "sorcerer",
     "archmage",
     "scout",
     "ranger",
@@ -30,7 +30,7 @@
     "sharpshooter",
     "monk",
     "pirate",
-    "skiller",
+    "artisan",
     "miner"
   ],
   "builtin": {
@@ -77,7 +77,7 @@
       "tagline": "Forges the change."
     },
     "gardener": {
-      "avatar": "skiller",
+      "avatar": "artisan",
       "color": "emerald",
       "display_name": "Gardener",
       "tagline": "Pulls one weed per run, provably."
@@ -137,7 +137,7 @@
       "tagline": "Guards the gate."
     },
     "slopmaster": {
-      "avatar": "steel-warrior",
+      "avatar": "gold-warrior",
       "color": "emerald",
       "display_name": "Slopmaster",
       "tagline": "Clears the slop, keeps the behavior."
@@ -149,7 +149,7 @@
       "tagline": "Reads the issue, sets the course."
     },
     "why": {
-      "avatar": "mystic",
+      "avatar": "sorcerer",
       "color": "violet",
       "display_name": "Why",
       "tagline": "Finds the forces that shaped the code."
