@@ -29,6 +29,17 @@ from embry0.storage.repositories.progression import JobRow, Journal, RunRow
 #: The job statuses that mean the job did its work.
 FINISHED = ("completed", "pr_merged")
 
+#: The parameters, of a quest kind or a diary task kind, that name the agents whose runs it reads.
+#: Every kind that reads ``Journal.runs`` keeps only the runs of the agents these name.
+RUN_AGENT_PARAMS = ("agents", "review_agents", "qa_agents")
+
+
+def run_agents(rules: Rules) -> frozenset[str]:
+    """Every agent whose runs the pack's quests and diary tasks read: the journal needs no other run."""
+    params: list[dict[str, Any]] = [quest.params for quest in rules.pack.quests]
+    params += [task.params for tier in rules.pack.diaries.tiers for task in tier.tasks]
+    return frozenset(agent for p in params for name in RUN_AGENT_PARAMS for agent in p.get(name, ()))
+
 
 def _iso(value: datetime | None) -> str | None:
     if value is None:

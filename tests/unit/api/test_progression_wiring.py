@@ -1,4 +1,4 @@
-"""Production builds the progression service over the database and the stored pack, and mounts its routes behind auth.
+"""Production builds the progression service over the database, the stored pack and the rollup, and mounts its routes behind auth.
 
 Read from the AST of ``app.py`` because that wiring needs Docker and a
 database; see test_merge_approvals_wiring.py for the same approach.
@@ -25,8 +25,14 @@ def _assigned(target: str) -> set[str]:
 
 def test_the_service_reads_the_database_through_its_repository() -> None:
     assert _assigned("app.state.progression") == {
-        "ProgressionService(ProgressionRepository(db), packs=app.state.progression_packs)"
-    }, "production reads the database and the stored content pack (#176)"
+        "ProgressionService(ProgressionRepository(db), packs=app.state.progression_packs, "
+        "rollups=ProgressionRollupRepository(db))"
+    }, "production reads the database, the stored content pack and the rollup tables (#176)"
+
+
+def test_shutdown_stops_a_rollup_write_still_running() -> None:
+    """A rollup write left running would hold a pool connection while the pool closes."""
+    assert "await progression_service.aclose()" in SOURCE, "the lifespan's shutdown no longer stops the rollup write"
 
 
 def test_the_active_pack_is_the_stored_one_not_the_shipped_default() -> None:

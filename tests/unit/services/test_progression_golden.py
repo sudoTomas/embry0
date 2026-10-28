@@ -112,10 +112,44 @@ def _check(name: str, actual: Any) -> None:
 @pytest.mark.asyncio
 async def test_progression_reads_the_seeded_history_as_recorded(db_with_migrations) -> None:
     await seed_history(db_with_migrations)
-    progression = await ProgressionService(ProgressionRepository(db_with_migrations), packs=ShippedPack()).read()
+    progression = await ProgressionService(
+        ProgressionRepository(db_with_migrations), packs=ShippedPack(), rollups=None
+    ).read()
     body = json.loads(json.dumps(progression.to_dict()))
     body.pop("computed_at")
     assert body["achievements"] and body["characters"] and body["diaries"], "the history must reach every part"
+    _check("progression", body)
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "clock",
+    [
+        datetime(2025, 10, 20, tzinfo=UTC),  # a few days folded, the rest raw
+        datetime(2025, 12, 28, 6, tzinfo=UTC),  # the Christmas merge folded
+        datetime(2026, 1, 3, 1, tzinfo=UTC),  # the year's last run folded, the new year's first run after it
+        datetime(2026, 3, 1, tzinfo=UTC),  # everything folded
+    ],
+    ids=["october", "christmas", "new-year", "all"],
+)
+async def test_the_rollup_reads_the_seeded_history_as_recorded(db_with_migrations, clock: datetime) -> None:
+    """#176: the same history read from the rollup and the raw events after it answers the recorded output."""
+    from embry0.storage.repositories.progression_rollup import ProgressionRollupRepository
+
+    await seed_history(db_with_migrations)
+    service = ProgressionService(
+        ProgressionRepository(db_with_migrations),
+        packs=ShippedPack(),
+        rollups=ProgressionRollupRepository(db_with_migrations),
+        now=lambda: clock,
+    )
+    await service.read()
+    await service.settle()
+    progression = await service.read()
+    assert progression.rollup is not None, "the second read is the rollup's"
+    body = json.loads(json.dumps(progression.to_dict()))
+    body.pop("computed_at")
     _check("progression", body)
 
 
@@ -125,8 +159,14 @@ def test_a_quest_scroll_prices_its_runs_as_recorded() -> None:
 
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
-async def test_the_same_history_on_todays_category_keys_reads_the_same(db_with_migrations) -> None:
-    """Runs written since #176 store categories (shell:test-runner), not skills: priced the same, field for field."""
+@pytest.mark.parametrize("through_rollup", [False, True], ids=["raw", "rollup"])
+async def test_the_same_history_on_todays_category_keys_reads_the_same(
+    db_with_migrations, through_rollup: bool
+) -> None:
+    """Runs written since #176 store categories (shell:test-runner), not skills: priced the same, field for field.
+
+    Through the rollup too, split across the new year: its stored days were priced from the same keys.
+    """
     db = db_with_migrations
     await seed_history(db)
     rows = await db.fetch("SELECT trace_id, skill_actions FROM traces WHERE skill_actions <> '{}'::jsonb")
@@ -140,7 +180,19 @@ async def test_the_same_history_on_todays_category_keys_reads_the_same(db_with_m
     assert not {k for r in await db.fetch("SELECT skill_actions FROM traces") for k in r["skill_actions"]} & set(
         LEGACY_ACTION_KEYS
     ), "every run now holds categories"
-    progression = await ProgressionService(ProgressionRepository(db), packs=ShippedPack()).read()
+    if through_rollup:
+        from embry0.storage.repositories.progression_rollup import ProgressionRollupRepository
+
+        clock = datetime(2026, 1, 3, 1, tzinfo=UTC)
+        service = ProgressionService(
+            ProgressionRepository(db), packs=ShippedPack(), rollups=ProgressionRollupRepository(db), now=lambda: clock
+        )
+        await service.read()
+        await service.settle()
+        progression = await service.read()
+        assert progression.rollup is not None, "the second read is the rollup's"
+    else:
+        progression = await ProgressionService(ProgressionRepository(db), packs=ShippedPack(), rollups=None).read()
     body = json.loads(json.dumps(progression.to_dict()))
     body.pop("computed_at")
     _check("progression", body)

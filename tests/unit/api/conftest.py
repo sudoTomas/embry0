@@ -66,7 +66,8 @@ async def api_client() -> AsyncIterator[AsyncClient]:
     await boot_db.connect()
     await run_migrations(boot_db)
     await boot_db.execute(
-        "TRUNCATE TABLE sandbox_profiles, global_environment, repo_environment, repos, repo_qa_configs RESTART IDENTITY CASCADE"
+        "TRUNCATE TABLE sandbox_profiles, global_environment, repo_environment, repos, repo_qa_configs, "
+        "progression_rollups RESTART IDENTITY CASCADE"
     )
     await boot_db.close()
 

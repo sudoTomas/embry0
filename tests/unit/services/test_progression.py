@@ -224,7 +224,7 @@ async def test_the_service_computes_at_most_once_per_minute() -> None:
     class Repo:
         calls = 0
 
-        async def events(self) -> list[ProgressEvent]:
+        async def events(self, **bounds: object) -> list[ProgressEvent]:
             Repo.calls += 1
             return [ev("merged", "developer")]
 
@@ -234,7 +234,7 @@ async def test_the_service_computes_at_most_once_per_minute() -> None:
         async def facts(self, queries: object, timezone: str) -> list:
             return []
 
-        async def journal(self) -> Journal:
+        async def journal(self, agents: object = None) -> Journal:
             return Journal(
                 [
                     JobRow("o/app", "i-1", None, "failed", T0, T0),
@@ -244,7 +244,7 @@ async def test_the_service_computes_at_most_once_per_minute() -> None:
             )
 
     now = [100.0]
-    service = ProgressionService(Repo(), packs=ShippedPack(), ttl_seconds=60, clock=lambda: now[0])
+    service = ProgressionService(Repo(), packs=ShippedPack(), rollups=None, ttl_seconds=60, clock=lambda: now[0])
     first = await service.read()
     assert [q.id for q in first.quests if q.completed_at] == ["try_again"]
     assert first.characters["developer"].stat_xp["recovery"] == 60_000, "the quest's XP reached the levels"
@@ -458,7 +458,7 @@ def test_tier_names_and_gear_come_from_the_pack() -> None:
 @pytest.mark.asyncio
 async def test_the_service_recomputes_at_once_when_the_pack_changes() -> None:
     class Repo:
-        async def events(self) -> list[ProgressEvent]:
+        async def events(self, **bounds: object) -> list[ProgressEvent]:
             return [ev("merged", "developer")]
 
         async def agent_types(self) -> list[str]:
@@ -467,7 +467,7 @@ async def test_the_service_recomputes_at_once_when_the_pack_changes() -> None:
         async def facts(self, queries: object, timezone: str) -> list:
             return []
 
-        async def journal(self) -> Journal:
+        async def journal(self, agents: object = None) -> Journal:
             return Journal([], [])
 
     class Packs:
@@ -476,7 +476,7 @@ async def test_the_service_recomputes_at_once_when_the_pack_changes() -> None:
         async def active(self) -> Any:
             return Packs.pack
 
-    service = ProgressionService(Repo(), packs=Packs(), ttl_seconds=600, clock=lambda: 0.0)
+    service = ProgressionService(Repo(), packs=Packs(), rollups=None, ttl_seconds=600, clock=lambda: 0.0)
     first = await service.read()
     assert first.characters["developer"].stat_xp == {"coding": 60_000}
     data = yaml.safe_load(default_text())
@@ -497,7 +497,7 @@ async def test_a_timezone_the_database_refuses_falls_back_to_utc_and_a_real_fail
         asked: list[str] = []
         broken = False
 
-        async def events(self) -> list[ProgressEvent]:
+        async def events(self, **bounds: object) -> list[ProgressEvent]:
             return [ev("merged", "developer")]
 
         async def agent_types(self) -> list[str]:
@@ -511,7 +511,7 @@ async def test_a_timezone_the_database_refuses_falls_back_to_utc_and_a_real_fail
                 raise asyncpg.InvalidParameterValueError(f'time zone "{timezone}" not recognized')
             return []
 
-        async def journal(self) -> Journal:
+        async def journal(self, agents: object = None) -> Journal:
             return Journal([], [])
 
     class Packs:
@@ -520,7 +520,7 @@ async def test_a_timezone_the_database_refuses_falls_back_to_utc_and_a_real_fail
             data["timezone"] = "Europe/Berlin"
             return parse(data)
 
-    service = ProgressionService(Repo(), packs=Packs(), ttl_seconds=0)
+    service = ProgressionService(Repo(), packs=Packs(), rollups=None, ttl_seconds=0)
     try:
         progression = await service.read()
     except RuntimeError as exc:
@@ -533,7 +533,7 @@ async def test_a_timezone_the_database_refuses_falls_back_to_utc_and_a_real_fail
     )
     Repo.broken = True
     with pytest.raises(RuntimeError, match="TimeZone"):
-        await ProgressionService(Repo(), packs=ShippedPack(), ttl_seconds=0).read()
+        await ProgressionService(Repo(), packs=ShippedPack(), rollups=None, ttl_seconds=0).read()
 
 
 async def test_only_a_timezone_postgres_refuses_falls_back_and_any_other_failure_is_raised() -> None:
@@ -547,7 +547,7 @@ async def test_only_a_timezone_postgres_refuses_falls_back_and_any_other_failure
     class Repo:
         asked: list[str] = []
 
-        async def events(self) -> list[ProgressEvent]:
+        async def events(self, **bounds: object) -> list[ProgressEvent]:
             return [ev("merged", "developer")]
 
         async def agent_types(self) -> list[str]:
@@ -557,7 +557,7 @@ async def test_only_a_timezone_postgres_refuses_falls_back_and_any_other_failure
             Repo.asked.append(timezone)
             raise asyncpg.QueryCanceledError("canceling statement due to statement timeout")
 
-        async def journal(self) -> Journal:
+        async def journal(self, agents: object = None) -> Journal:
             return Journal([], [])
 
     class Packs:
@@ -567,13 +567,13 @@ async def test_only_a_timezone_postgres_refuses_falls_back_and_any_other_failure
             return parse(data)
 
     with pytest.raises(asyncpg.QueryCanceledError):
-        await ProgressionService(Repo(), packs=Packs(), ttl_seconds=0).read()
+        await ProgressionService(Repo(), packs=Packs(), rollups=None, ttl_seconds=0).read()
     assert Repo.asked == ["Europe/Berlin"], "a failure that is not the time zone must not be retried on UTC"
 
 
 async def test_the_answer_names_the_pack_timezone_when_it_applied() -> None:
     class Repo:
-        async def events(self) -> list[ProgressEvent]:
+        async def events(self, **bounds: object) -> list[ProgressEvent]:
             return []
 
         async def agent_types(self) -> list[str]:
@@ -582,7 +582,7 @@ async def test_the_answer_names_the_pack_timezone_when_it_applied() -> None:
         async def facts(self, queries: object, timezone: str) -> list:
             return []
 
-        async def journal(self) -> Journal:
+        async def journal(self, agents: object = None) -> Journal:
             return Journal([], [])
 
     class Packs:
@@ -591,5 +591,5 @@ async def test_the_answer_names_the_pack_timezone_when_it_applied() -> None:
             data["timezone"] = "Europe/Berlin"
             return parse(data)
 
-    pack = (await ProgressionService(Repo(), packs=Packs(), ttl_seconds=0).read()).to_dict()["pack"]
+    pack = (await ProgressionService(Repo(), packs=Packs(), rollups=None, ttl_seconds=0).read()).to_dict()["pack"]
     assert pack.get("timezone_applied") == "Europe/Berlin", "with no fallback the pack's own calendar applied"

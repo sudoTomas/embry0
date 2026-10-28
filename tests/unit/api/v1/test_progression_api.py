@@ -51,6 +51,8 @@ async def test_the_read_answers_the_account_its_characters_and_achievements() ->
         "diaries",
         "recent",
         "computed_at",
+        # the rollup the experience was folded from, null when from every raw row
+        "rollup",
         # the pack's own names, colours, words and art (#176)
         "pack",
         "groups",
