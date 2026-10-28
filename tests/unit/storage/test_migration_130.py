@@ -9,11 +9,9 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import MIGRATIONS
 
 
-def test_migration_130_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_129.py)."""
-    assert MIGRATIONS[-1][0] == 130, "migration 130 must create progression_packs"
-    assert [v for v, _, _ in MIGRATIONS].count(130) == 1, "migration 130 must be listed once"
+def test_migration_130_is_present_once() -> None:
+    """The last-entry assertion moved to tests/unit/storage/test_migration_131.py."""
+    assert [v for v, _, _ in MIGRATIONS].count(130) == 1, "migration 130 must create progression_packs, once"
 
 
 _INSERT = (
