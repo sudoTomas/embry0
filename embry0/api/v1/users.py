@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from embry0.api.deps import bust_user_gate_cache, request_actor
+from embry0.api.v1.handoffs import LoginBody, set_login
 from embry0.audit.helpers import emit_audit
 
 router = APIRouter()
@@ -74,3 +75,9 @@ async def force_logout(user_id: str, request: Request) -> dict[str, Any]:
         audit_log_path=config.audit_log_path,
     )
     return _serialize(row)
+
+
+@router.put("/users/{user_id}/github-login")
+async def set_github_login(user_id: str, body: LoginBody, request: Request) -> dict[str, Any]:
+    """Name another person's GitHub login (hand-offs, spec 2026-10-27): the quests that login owns become theirs to decide."""
+    return await set_login(request, user_id, body.login)

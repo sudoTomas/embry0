@@ -3486,6 +3486,36 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'knowledge maps: every part sent to an agent, with the lead and the job it started or the error it met.';
         """,
     ),
+    (
+        125,
+        "decisions: a person's GitHub login, and hand-offs (a decision sent to a teammate)",
+        # spec 2026-10-27. Owners are GitHub logins and people sign in with an
+        # email: github_login links the two, so a viewer's owned quests are known.
+        """
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS github_login TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_users_github_login_lower
+            ON users (LOWER(github_login)) WHERE github_login IS NOT NULL AND github_login <> '';
+        CREATE TABLE IF NOT EXISTS handoffs (
+            id          TEXT PRIMARY KEY,
+            decision_id TEXT NOT NULL,
+            repo        TEXT NOT NULL DEFAULT '',
+            title       TEXT NOT NULL DEFAULT '',
+            from_actor  TEXT NOT NULL,
+            to_email    TEXT NOT NULL,
+            note        TEXT NOT NULL DEFAULT '',
+            state       TEXT NOT NULL DEFAULT 'open'
+                        CHECK (state IN ('open', 'decided', 'returned', 'passed', 'cancelled')),
+            outcome     TEXT,
+            closed_by   TEXT,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+            closed_at   TIMESTAMPTZ
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_handoffs_one_open ON handoffs (decision_id) WHERE state = 'open';
+        CREATE INDEX IF NOT EXISTS idx_handoffs_open_to ON handoffs (LOWER(to_email)) WHERE state = 'open';
+        COMMENT ON TABLE handoffs IS
+            'decisions (spec 2026-10-27): a decision one person sent another; at most one open per decision.';
+        """,
+    ),
 ]
 
 

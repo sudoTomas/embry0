@@ -8,26 +8,63 @@ import { RunWithControl } from "@/components/runwith/RunWithControl";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Skeleton } from "@/components/ui/PageSkeleton";
-import { useDecisions } from "@/hooks/useDecisions";
+import { useDecisions, usePeople, useSetMyGithubLogin } from "@/hooks/useDecisions";
+import { toastApiError } from "@/api/errorToast";
+import { toast } from "sonner";
 import { useAuthStore, useIsAdmin } from "@/stores/authStore";
 
-type Stage = "done" | "offered";
+type Stage = "mine" | "done" | "offered";
 
 const STAGES: { stage: Stage; label: string; empty: string }[] = [
+  { stage: "mine", label: "Waiting for me", empty: "Nothing waits for you: nothing was sent to you, and no quest on offer is owned by your GitHub login." },
   { stage: "done", label: "Quests to review", empty: "Nothing waits for a review." },
   { stage: "offered", label: "Quests on offer", empty: "No quest on offer right now." },
 ];
 
-/** Hand-offs come with the next step of the design; until then the cards do not offer them. */
-const NOT_YET = ["send_to"] as const;
+/** Name your GitHub login once, so the quests your login owns wait for you here. */
+function LinkLogin() {
+  const set = useSetMyGithubLogin();
+  const [login, setLogin] = useState("");
+  return (
+    <form
+      className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-white/[0.02] p-2 text-sm"
+      data-testid="link-github-login"
+      onSubmit={(e) => {
+        e.preventDefault();
+        set.mutate(login.trim(), {
+          onSuccess: (me) => toast.success(`You are @${me.github_login}`),
+          onError: (err: Error) => toastApiError(err, "Not linked"),
+        });
+      }}
+    >
+      <span className="text-fg-secondary">Owners are named by GitHub login. Which one is yours?</span>
+      <Input aria-label="Your GitHub login" className="h-8 w-44" placeholder="octocat" value={login} onChange={(e) => setLogin(e.target.value)} />
+      <Button size="sm" type="submit" disabled={!login.trim() || set.isPending}>
+        Link
+      </Button>
+    </form>
+  );
+}
 
-function CardList({ decisions, canAnswer, by, runWith }: { decisions: Decision[]; canAnswer: boolean; by: string; runWith: RunWith }) {
+function CardList({
+  decisions,
+  canAnswer,
+  by,
+  runWith,
+  me,
+}: {
+  decisions: Decision[];
+  canAnswer: boolean;
+  by: string;
+  runWith: RunWith;
+  me: string;
+}) {
   const asked = decisions.filter((d) => !d.held);
   const held = decisions.filter((d) => d.held);
   return (
     <div className="space-y-2">
       {asked.map((d) => (
-        <DecisionCard key={d.id} decision={d} canAnswer={canAnswer} by={by} runWith={runWith} hide={NOT_YET} />
+        <DecisionCard key={d.id} decision={d} canAnswer={canAnswer} by={by} runWith={runWith} me={me} />
       ))}
       {held.length > 0 && (
         <details className="rounded-md border border-border p-2" data-testid="decisions-held">
@@ -36,7 +73,7 @@ function CardList({ decisions, canAnswer, by, runWith }: { decisions: Decision[]
           </summary>
           <div className="mt-2 space-y-2">
             {held.map((d) => (
-              <DecisionCard key={d.id} decision={d} canAnswer={canAnswer} by={by} runWith={runWith} hide={NOT_YET} />
+              <DecisionCard key={d.id} decision={d} canAnswer={canAnswer} by={by} runWith={runWith} me={me} />
             ))}
           </div>
         </details>
@@ -53,12 +90,17 @@ function CardList({ decisions, canAnswer, by, runWith }: { decisions: Decision[]
  */
 export function DecisionsPage() {
   const [params, setParams] = useSearchParams();
-  const stage: Stage = params.get("stage") === "offered" ? "offered" : "done";
+  const raw = params.get("stage");
+  const stage: Stage = raw === "offered" || raw === "done" ? raw : "mine";
   const owner = params.get("owner") ?? "";
   const kind = params.get("kind") ?? "";
   const decisions = useDecisions({ stage: "all", ...(owner ? { owner } : {}) });
+  const waiting = useDecisions({ stage: "all", for: "me" });
+  const people = usePeople();
   const isAdmin = useIsAdmin();
   const by = useAuthStore((s) => s.user?.email) ?? "dashboard";
+  const me = (useAuthStore((s) => s.user?.email) ?? "").toLowerCase();
+  const myLogin = (people.data ?? []).find((p) => p.email.toLowerCase() === me)?.github_login;
   const [runWith, setRunWith] = useState<RunWith>({});
   const setParam = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -69,7 +111,8 @@ export function DecisionsPage() {
   };
 
   const all = decisions.data ?? [];
-  const inStage = all.filter((d) => d.stage === stage);
+  const source = stage === "mine" ? waiting : decisions;
+  const inStage = stage === "mine" ? (waiting.data ?? []) : all.filter((d) => d.stage === stage);
   // Finished work all reads "Quest done": the kinds filter quests on offer only.
   const kinds = stage === "offered" ? [...new Map(inStage.map((d) => [d.kind, d.kind_label])).entries()] : [];
   const shown = kind ? inStage.filter((d) => d.kind === kind) : inStage;
@@ -92,10 +135,12 @@ export function DecisionsPage() {
             aria-selected={stage === s.stage}
             size="sm"
             variant={stage === s.stage ? "default" : "ghost"}
-            onClick={() => setParam("stage", s.stage === "done" ? "" : s.stage)}
+            onClick={() => setParam("stage", s.stage === "mine" ? "" : s.stage)}
           >
             {s.label}
-            {decisions.data && <span className="ml-1.5 opacity-70">{all.filter((d) => d.stage === s.stage).length}</span>}
+            {s.stage === "mine"
+              ? waiting.data && <span className="ml-1.5 opacity-70">{waiting.data.length}</span>
+              : decisions.data && <span className="ml-1.5 opacity-70">{all.filter((d) => d.stage === s.stage).length}</span>}
           </Button>
         ))}
         {stage === "offered" && (
@@ -120,15 +165,16 @@ export function DecisionsPage() {
           ))}
         </div>
       )}
+      {stage === "mine" && me && people.data && !myLogin && <LinkLogin />}
       {isAdmin && <RunWithControl value={runWith} onChange={setRunWith} repo={repos.length === 1 ? repos[0] : null} />}
-      {decisions.isError ? (
-        <PageError message="Decisions did not load" onRetry={() => void decisions.refetch()} />
-      ) : !decisions.data ? (
+      {source.isError ? (
+        <PageError message="Decisions did not load" onRetry={() => void source.refetch()} />
+      ) : !source.data ? (
         <Skeleton className="h-40 w-full" />
       ) : shown.length === 0 ? (
         <p className="text-sm text-muted-foreground">{current.empty}</p>
       ) : (
-        <CardList decisions={shown} canAnswer={isAdmin} by={by} runWith={runWith} />
+        <CardList decisions={shown} canAnswer={isAdmin} by={by} runWith={runWith} me={me} />
       )}
     </div>
   );

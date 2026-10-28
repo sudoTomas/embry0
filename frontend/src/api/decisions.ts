@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { Assignee } from "./handoffs";
 
 /** How a verdict or a fact leans the decision (decisions, spec 2026-10-27). */
 export type DecisionTone = "good" | "warn" | "bad" | "info";
@@ -48,7 +49,8 @@ export interface Decision {
   owners: string[];
   /** Shown on the page but not asked in a chat. */
   held: boolean;
-  assigned_to: unknown | null;
+  /** The open hand-off: who has it to decide, from whom, and the note. */
+  assigned_to: Assignee | null;
   links: { proposal?: string; url?: string; job?: string; pr?: string; merge_approval?: string };
   details: string;
 }
@@ -58,6 +60,8 @@ export interface DecisionFilters {
   owner?: string;
   repo?: string;
   include_held?: boolean;
+  /** me: handed to the viewer, or on offer and owned by their GitHub login. */
+  for?: "me" | "all";
 }
 
 export async function fetchDecisions(params: DecisionFilters): Promise<Decision[]> {

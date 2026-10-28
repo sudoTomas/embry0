@@ -6,9 +6,17 @@ import type { Decision } from "@/api/decisions";
 
 const mockUseDecisions = vi.fn();
 const mutate = vi.fn();
+const send = vi.fn();
+const giveBack = vi.fn();
+const link = vi.fn();
+const people = { current: [] as { email: string; name: string; github_login: string | null }[] };
 vi.mock("@/hooks/useDecisions", () => ({
   useDecisions: (filters: unknown) => mockUseDecisions(filters),
   useAnswerDecision: () => ({ mutate, isPending: false }),
+  usePeople: () => ({ data: people.current }),
+  useSendDecision: () => ({ mutate: send, isPending: false }),
+  useReturnHandoff: () => ({ mutate: giveBack, isPending: false }),
+  useSetMyGithubLogin: () => ({ mutate: link, isPending: false }),
 }));
 const admin = { current: true };
 vi.mock("@/stores/authStore", () => ({
@@ -72,13 +80,20 @@ function renderPage(path = "/decisions") {
 
 beforeEach(() => {
   mutate.mockReset();
+  send.mockReset();
   admin.current = true;
-  mockUseDecisions.mockReturnValue({ data: [CRACK, REVIEW, WEED] });
+  people.current = [
+    { email: "owner@example.com", name: "Owner", github_login: "owner" },
+    { email: "bo@example.com", name: "Bo", github_login: "bo" },
+  ];
+  mockUseDecisions.mockImplementation((filters: { for?: string }) =>
+    filters.for === "me" ? { data: [] } : { data: [CRACK, REVIEW, WEED] },
+  );
 });
 
 describe("DecisionsPage (decisions, spec 2026-10-27)", () => {
   it("opens on the quests to review, each card reading its verdict, facts and why before anything else", () => {
-    renderPage();
+    renderPage("/decisions?stage=done");
     const cards = screen.getAllByTestId("decision-card");
     expect(cards).toHaveLength(1);
     const card = within(cards[0]);
@@ -89,15 +104,52 @@ describe("DecisionsPage (decisions, spec 2026-10-27)", () => {
     expect(screen.getByRole("tab", { name: /Quests on offer/ })).toHaveTextContent("2");
   });
 
-  it("offers the likely answer first and keeps hand-offs back until they exist", () => {
-    renderPage();
+  it("offers the likely answer first, then sending it to someone better placed", () => {
+    renderPage("/decisions?stage=done");
     const buttons = within(screen.getByTestId("decision-card")).getAllByRole("button").map((b) => b.textContent);
-    expect(buttons.slice(0, 4)).toEqual(["Merge", "Send back", "Reject", "Run again"]);
-    expect(buttons).not.toContain("Send to…");
+    expect(buttons.slice(0, 5)).toEqual(["Merge", "Send back", "Reject", "Run again", "Send to…"]);
+  });
+
+  it("sends a decision to a teammate with a note, never to yourself", async () => {
+    renderPage("/decisions?stage=done");
+    await userEvent.click(screen.getByRole("button", { name: "Send to…" }));
+    const form = within(screen.getByTestId("decision-send-to"));
+    expect(form.getAllByRole("option").map((o) => o.textContent)).toEqual(["Who should decide this?", "Bo (@bo)"]);
+    expect(form.getByRole("button", { name: "Send" })).toBeDisabled();
+    await userEvent.selectOptions(form.getByRole("combobox"), "bo@example.com");
+    await userEvent.type(form.getByRole("textbox"), "Your area");
+    await userEvent.click(form.getByRole("button", { name: "Send" }));
+    expect(send).toHaveBeenCalledWith({ id: "done:job-1", to: "bo@example.com", note: "Your area" }, expect.anything());
+  });
+
+  it("opens on what waits for you; a quest sent to you is yours to answer, or to give back", async () => {
+    admin.current = false;
+    const sent = {
+      ...REVIEW,
+      assigned_to: { handoff_id: "ho-1", email: "owner@example.com", name: "Owner", github_login: "owner", from: "bo@example.com", note: "Yours", at: "2026-10-27T12:00:00+00:00" },
+    };
+    mockUseDecisions.mockImplementation((filters: { for?: string }) =>
+      filters.for === "me" ? { data: [sent] } : { data: [CRACK, REVIEW, WEED] },
+    );
+    renderPage();
+    expect(screen.getByRole("tab", { name: /Waiting for me/ })).toHaveAttribute("aria-selected", "true");
+    const card = within(screen.getByTestId("decision-card"));
+    expect(card.getByTestId("decision-assigned")).toHaveTextContent("Sent to you by bo@example.com: “Yours”");
+    expect(card.getByRole("button", { name: "Merge" })).toBeInTheDocument();
+    await userEvent.click(card.getByRole("button", { name: "Not mine" }));
+    expect(giveBack).toHaveBeenCalledWith({ handoffId: "ho-1", note: "" }, expect.anything());
+  });
+
+  it("asks once for your GitHub login, so the quests your login owns wait for you", async () => {
+    people.current = [{ email: "owner@example.com", name: "Owner", github_login: null }];
+    renderPage();
+    await userEvent.type(screen.getByRole("textbox", { name: "Your GitHub login" }), "octo");
+    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    expect(link).toHaveBeenCalledWith("octo", expect.anything());
   });
 
   it("answers in one click, and asks for words before a send-back", async () => {
-    renderPage();
+    renderPage("/decisions?stage=done");
     await userEvent.click(screen.getByRole("button", { name: "Merge" }));
     expect(mutate).toHaveBeenCalledWith(
       expect.objectContaining({ action: "merge", decision: REVIEW, by: "owner@example.com" }),
@@ -123,7 +175,7 @@ describe("DecisionsPage (decisions, spec 2026-10-27)", () => {
 
   it("lets someone who may not answer read the cards without their buttons", () => {
     admin.current = false;
-    renderPage();
+    renderPage("/decisions?stage=done");
     expect(within(screen.getByTestId("decision-card")).queryByRole("button", { name: "Merge" })).toBeNull();
   });
 });

@@ -115,8 +115,13 @@ async def decide_merge_approval(approval_id: str, body: DecideBody, request: Req
     decided_by: str
     chat_id: str
     if body.decided_by is None or body.chat_id is None:
-        # The dashboard's form: an admin, named by the route, with no chat in the loop.
-        await ensure_admin(request)
+        # The dashboard's form: an admin, or the person the quest was handed to (spec
+        # 2026-10-27), named by the route, with no chat in the loop.
+        try:
+            await ensure_admin(request)
+        except HTTPException:
+            if not await _holds_handoff(request, service, approval_id):
+                raise
         via, decided_by, chat_id = "dashboard", request_actor(request), DASHBOARD_CHANNEL
     else:
         # The relay's form: the relay's key, or an admin standing in for it.
@@ -155,4 +160,25 @@ async def decide_merge_approval(approval_id: str, body: DecideBody, request: Req
         },
         audit_log_path=getattr(config, "audit_log_path", None),
     )
+    decided = await service.get(approval_id)
+    if decided is not None and decided.get("job_id"):
+        from embry0.services.handoffs import settle
+
+        await settle(
+            request.app.state,
+            f"done:{decided['job_id']}",
+            "merge" if body.decision == "approve" else "reject",
+            decided_by,
+        )
     return result
+
+
+async def _holds_handoff(request: Request, service: Any, approval_id: str) -> bool:
+    """Whether the caller is the recipient of the open hand-off of this approval's quest."""
+    repo = getattr(request.app.state, "handoffs_repo", None)
+    row = await service.get(approval_id)
+    if repo is None or row is None or not row.get("job_id"):
+        return False
+    decision_id = f"done:{row['job_id']}"
+    held = (await repo.open_for([decision_id])).get(decision_id)
+    return held is not None and str(held.get("to_email") or "").lower() == request_actor(request).lower()

@@ -401,10 +401,25 @@ class EvaluationBody(BaseModel):
     note: str = Field(default="", max_length=4_000)
 
 
+#: A world answer as a decision's outcome (decisions, spec 2026-10-27).
+_OUTCOMES: dict[str, str] = {
+    "quest.sent_back": "send_back",
+    "quest.rejected": "reject",
+    "quest.restarted": "run_again",
+    "quest.dismissed": "dismiss",
+}
+
+
 async def _audit(request: Request, action: AuditAction, job_id: str, **fields: Any) -> dict[str, Any]:
     """Record the player's evaluation of ``job_id`` and its audit row; the evaluation as it now stands."""
+    from embry0.services.handoffs import settle
+
     actor = request_actor(request)
     row = await _state(request, "world_repo").rate(job_id, rated_by=actor, **fields)
+    outcome = _OUTCOMES.get(action) or (
+        "merged" if fields.get("verdict") == "merged" else str(fields.get("rating") or "rated")
+    )
+    await settle(request.app.state, f"done:{job_id}", outcome, actor)
     await emit_audit(
         getattr(request.app.state, "db", None),
         action,

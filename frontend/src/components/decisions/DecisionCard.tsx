@@ -7,7 +7,7 @@ import type { RunWith } from "@/api/runWith";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
-import { useAnswerDecision } from "@/hooks/useDecisions";
+import { useAnswerDecision, usePeople, useReturnHandoff, useSendDecision } from "@/hooks/useDecisions";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 
 const VERDICT_TONE: Record<DecisionTone, BadgeTone> = { good: "success", warn: "warning", bad: "error", info: "info" };
@@ -53,6 +53,65 @@ export interface DecisionCardProps {
   runWith?: RunWith;
   /** Actions this screen does not offer yet. */
   hide?: readonly DecisionAction[];
+  /** The viewer's email: the person a hand-off is sent to may answer it whatever their tier. */
+  me?: string;
+}
+
+/** Send to…: pick a teammate who signs in, add a note; the decision is theirs (spec 2026-10-27). */
+function SendTo({ decision, me, onDone }: { decision: Decision; me: string; onDone: () => void }) {
+  const people = usePeople();
+  const send = useSendDecision();
+  const [to, setTo] = useState("");
+  const [note, setNote] = useState("");
+  const choices = (people.data ?? []).filter(
+    (p) => p.email.toLowerCase() !== me.toLowerCase() && p.email.toLowerCase() !== decision.assigned_to?.email,
+  );
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    send.mutate(
+      { id: decision.id, to, note: note.trim() },
+      {
+        onSuccess: () => {
+          toast.success(`Sent to ${choices.find((p) => p.email === to)?.name ?? to}`);
+          onDone();
+        },
+        onError: (err: Error) => toastApiError(err, "Not sent"),
+      },
+    );
+  };
+  return (
+    <form className="mt-2 space-y-2" onSubmit={submit} data-testid="decision-send-to">
+      <select
+        aria-label="Send to"
+        className="h-8 w-full rounded-md border border-border bg-canvas px-2 text-sm"
+        value={to}
+        onChange={(e) => setTo(e.target.value)}
+      >
+        <option value="">Who should decide this?</option>
+        {choices.map((p) => (
+          <option key={p.email} value={p.email}>
+            {p.name}
+            {p.github_login ? ` (@${p.github_login})` : ""}
+          </option>
+        ))}
+      </select>
+      <Textarea
+        aria-label="A note for them"
+        placeholder="A note for them: why you think it is theirs (optional)"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        rows={2}
+      />
+      <div className="flex gap-2">
+        <Button size="sm" type="submit" disabled={!to || send.isPending}>
+          Send
+        </Button>
+        <Button size="sm" type="button" variant="ghost" onClick={onDone}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
 }
 
 /**
@@ -61,8 +120,13 @@ export interface DecisionCardProps {
  * yes starts, and the answers. The report or evidence folds underneath. The
  * first action is the likely answer.
  */
-export function DecisionCard({ decision, canAnswer, by, runWith, hide = [] }: DecisionCardProps) {
+export function DecisionCard({ decision, canAnswer, by, runWith, hide = [], me = "" }: DecisionCardProps) {
   const answer = useAnswerDecision();
+  const giveBack = useReturnHandoff();
+  const held = decision.assigned_to;
+  const mine = !!held && !!me && held.email === me.toLowerCase();
+  // The person a hand-off was sent to decides it, whatever their tier.
+  const mayAnswer = canAnswer || mine;
   const [open, setOpen] = useState(false);
   const [asking, setAsking] = useState<DecisionAction | null>(null);
   const [words, setWords] = useState("");
@@ -81,7 +145,9 @@ export function DecisionCard({ decision, canAnswer, by, runWith, hide = [] }: De
       },
     );
   const click = (action: DecisionAction) => {
-    if (NEEDS_WORDS[action]) {
+    if (action === "send_to") {
+      setAsking(action);
+    } else if (NEEDS_WORDS[action]) {
       setAsking(action);
       setWords("");
     } else run(action);
@@ -121,6 +187,12 @@ export function DecisionCard({ decision, canAnswer, by, runWith, hide = [] }: De
         )}
       </div>
       <h3 className="mt-1.5 text-sm font-semibold text-white/95">{decision.title}</h3>
+      {held && (
+        <p className="mt-1 text-xs text-info" data-testid="decision-assigned">
+          {mine ? "Sent to you" : `With ${held.name}`} by {held.from}
+          {held.note ? `: “${held.note}”` : ""}
+        </p>
+      )}
       {decision.facts.length > 0 && (
         <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs" data-testid="decision-facts">
           {decision.facts.map((f) => (
@@ -139,7 +211,7 @@ export function DecisionCard({ decision, canAnswer, by, runWith, hide = [] }: De
         </p>
       )}
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        {canAnswer &&
+        {mayAnswer &&
           actions.map((a, i) => (
             <Button
               key={a}
@@ -151,6 +223,24 @@ export function DecisionCard({ decision, canAnswer, by, runWith, hide = [] }: De
               {ACTION_LABEL[a]}
             </Button>
           ))}
+        {mine && held && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={giveBack.isPending}
+            onClick={() =>
+              giveBack.mutate(
+                { handoffId: held.handoff_id, note: "" },
+                {
+                  onSuccess: () => toast.success(`Back with ${held.from}`),
+                  onError: (e: Error) => toastApiError(e, "Not sent back"),
+                },
+              )
+            }
+          >
+            Not mine
+          </Button>
+        )}
         <span className="ml-auto flex items-center gap-3 text-xs text-white/55">
           {links.pr && (
             <a className="underline hover:text-white" href={links.pr} target="_blank" rel="noreferrer">
@@ -174,7 +264,8 @@ export function DecisionCard({ decision, canAnswer, by, runWith, hide = [] }: De
           )}
         </span>
       </div>
-      {asking && (
+      {asking === "send_to" && <SendTo decision={decision} me={me} onDone={() => setAsking(null)} />}
+      {asking && asking !== "send_to" && (
         <form className="mt-2 space-y-2" onSubmit={submit} data-testid="decision-words">
           <Textarea
             aria-label={NEEDS_WORDS[asking]?.ask}
