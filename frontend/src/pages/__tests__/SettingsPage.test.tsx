@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation } from "react-router";
 // The tabs' own panels fetch their settings; this test is about which tab
 // is open and where that is kept.
 vi.mock("../settings/GeneralTab", () => ({ default: () => <p>general panel</p> }));
+vi.mock("../settings/PolicyTab", () => ({ default: () => <p>policy panel</p> }));
 vi.mock("../settings/ContextTab", () => ({ default: () => <p>context panel</p> }));
 vi.mock("../settings/IntegrationsTab", () => ({ default: () => <p>integrations panel</p> }));
 vi.mock("../settings/ApiKeysTab", () => ({ default: () => <p>api keys panel</p> }));
@@ -39,5 +40,20 @@ describe("SettingsPage", () => {
     expect(screen.getByTestId("search")).toHaveTextContent("?tab=apikeys");
     await userEvent.click(screen.getByRole("tab", { name: "General" }));
     expect(screen.getByTestId("search")).toBeEmptyDOMElement();
+  });
+
+  it("has a Policy tab, second, for the settings document", async () => {
+    renderAt("/settings?tab=policy");
+    expect(screen.getByText("policy panel")).toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "General",
+      "Policy",
+      "Context",
+      "Integrations",
+      "API keys",
+    ]);
+    await userEvent.click(screen.getByRole("tab", { name: "General" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Policy" }));
+    expect(screen.getByTestId("search")).toHaveTextContent("?tab=policy");
   });
 });

@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { SETTINGS_TABS, settingsTab } from "@/lib/settingsTabs";
 import GeneralTab from "./settings/GeneralTab";
+import PolicyTab from "./settings/PolicyTab";
 import ContextTab from "./settings/ContextTab";
 import IntegrationsTab from "./settings/IntegrationsTab";
 import ApiKeysTab from "./settings/ApiKeysTab";
@@ -25,6 +26,7 @@ export function SettingsPage() {
           ))}
         </TabsList>
         <TabsContent value="general"><GeneralTab /></TabsContent>
+        <TabsContent value="policy"><PolicyTab /></TabsContent>
         <TabsContent value="context"><ContextTab /></TabsContent>
         <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
         <TabsContent value="apikeys"><ApiKeysTab /></TabsContent>

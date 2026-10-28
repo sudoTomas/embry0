@@ -79,3 +79,8 @@ export function apiErrorMessage(error: unknown, fallback = "The request failed")
 export function isNotFound(error: unknown): boolean {
   return (error as { response?: { status?: unknown } } | null)?.response?.status === 404;
 }
+
+/** Whether a write was refused because what it changes moved since it was read (HTTP 409). */
+export function isConflict(error: unknown): boolean {
+  return (error as { response?: { status?: unknown } } | null)?.response?.status === 409;
+}
