@@ -13,7 +13,6 @@ A repository is read when it is registered and active and someone answers for it
 | `alert` | Alerts | Open Dependabot alerts and open code-scanning alerts | The alert's, small for a dependency with a fixed version | An upgrade or fix job |
 | `flaky` | Flaky checks | Every run of every check on the newest `LEADS_FLAKY_COMMITS` commits of the default branch | medium, high from 3 commits; medium | A job that finds and fixes the cause |
 | `review` | Unanswered reviews | Open, non-draft pull requests from the repository itself with review threads a reviewer started, neither resolved nor outdated, and unanswered for `LEADS_REVIEW_STALE_DAYS` | low, medium from 3 threads; small | A follow-up job on the pull request's branch |
-
 | `crack` | The scout (below) | A finished `kintsugi-trace` job's ledger: one lead per row | break high, fracture medium, hairline low; the seal's size | A job that checks the evidence still holds, then fixes the cause |
 | `weed` | The scout (below) | A finished `garden` job's weed card | low, small | A job that removes it with the checked diff and changes no behavior |
 | `weed` | A [knowledge map](maps.md) | A part someone marked bloat on a map, while anyone does | low, small | A job that removes the part and what only it uses, without re-assessing the mark |

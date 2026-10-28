@@ -24,7 +24,7 @@ definitions at startup. Edit one on the Agents page; **Reset** there, `POST
 | `blast-radius` | `blast-radius` | claude-sonnet-5 | 40 | 20 min |
 | `comment-sicko` | `comment-pass` | claude-sonnet-5 | 25 | 10 min |
 | `design-auditor` | `design-audit` | claude-sonnet-5 | 40 | 15 min |
-| `context-auditor` | `context-audit` | claude-sonnet-5 | 40 | 20 min |
+| `context-auditor` | `context-audit` | claude-sonnet-5 | 40 | 20 min (80 turns, 40 min on a `custom/` model) |
 | `area-mapper` | `map-areas` | claude-sonnet-5 | 40 | 15 min |
 
 The turn caps are defaults (`pipeline_config.agent_max_turns` overrides them
@@ -141,7 +141,9 @@ Each template is `triage → agent → output`. A job reaches a specialist only
 by naming its template in the job's `pipeline_template`. No job kind defaults
 to one, triage is not offered the ten when it picks a template for a job
 that names none, and if triage names one anyway the job takes its kind's
-default route. Triage still runs first and can ask for missing information.
+default route. A job that names one of them skips triage: its route is
+fixed, so nothing is asked first. Triage still decides a re-entry with
+something to weigh, a failed QA run or a person's answers.
 The job is recorded as an analysis job, and the agent's report is its
 deliverable. The repository must be registered.
 

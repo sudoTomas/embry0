@@ -53,3 +53,6 @@ If your work contradicts a record here, say so explicitly rather than silently o
 | [0020](0020-context-audit-schedule.md) | The files that steer a coding agent are audited on a schedule an organization turns on, anchored on the recorded jobs, and only when they changed or the code moved under them | accepted (2026-10-23) |
 | [0021](0021-context-audit-caps-per-organization.md) | An organization sets its own context audit caps per job and per tick, and the deployment's variables are the defaults; corrects ADR 0020's cap clause | accepted (2026-10-23) |
 | [0022](0022-context-audit-pull-requests.md) | A context audit opens a pull request from the patch it checked, inside the job, one at a time per repository, when its organization turns that on | accepted (2026-10-24) |
+| [0023](0023-local-llm-proxy.md) | A sandbox reaches the operator's own model server through a proxy, not an egress exception | accepted (2026-10-25) |
+| [0024](0024-provider-fallback.md) | An agent whose provider is paused runs on the next ready model of an operator's fallback order | accepted (2026-10-25) |
+| [0025](0025-spent-account-waits.md) | A spent account parks the job until its reset; it never fails it | accepted (2026-10-25) |

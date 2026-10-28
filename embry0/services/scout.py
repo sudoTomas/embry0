@@ -1,4 +1,4 @@
-"""Scout (spec 2026-10-27): a local model that keeps finding work, around the clock.
+"""Scout (docs/leads.md, "The scout"): a local model that keeps finding work, around the clock.
 
 The loop rotates through the repositories the world map shows, and each area of
 one that declares areas, starting a read-only scouting job on each in turn:

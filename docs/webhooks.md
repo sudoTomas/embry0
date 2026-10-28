@@ -206,6 +206,29 @@ Both look at every tracked PR in every state and every page of each repo's PR li
 
 Exit codes: **0** the database matches GitHub · **1** (`check` only) it does not, and the differing rows are listed · **3** everything readable matched, but some PRs could not be read at all. **Exit 3 is not a failure.** It is the normal answer whenever history contains a PR whose repo was deleted or is outside the token's reach — for example `acme/retired` — so a healthy production `check` can exit 3 with an empty change list. Each unreadable PR is printed with its reason; treat a non-empty change list, not the exit code, as the signal.
 
+## Outbound notifications
+
+embry0 can POST its own events to a receiver you run: `job.completed`,
+`job.failed` and the other final statuses as `job.<status>`, `watcher.proposed`
+and `agent.question`. Set the receiver's URL and a shared secret in the
+dashboard's integration settings, or with `WEBHOOK_NOTIFY_URL` and
+`WEBHOOK_NOTIFY_SECRET` (the environment is the fallback until a value is
+saved there). Delivery is best effort: each attempt is logged, and a failed
+delivery never changes a job.
+
+Each POST is JSON, `{"event", "ts", "data"}`. With a secret set it carries
+`X-Webhook-Timestamp` (unix seconds, stamped again on every retry),
+`X-Webhook-Signature-V2`, the HMAC-SHA256 hex digest of `"{timestamp}.{body}"`,
+and `X-Webhook-Signature`, the HMAC-SHA256 hex digest of the body alone.
+
+A `job.<status>` event's `data` holds `job_id`, `issue_id`, `title`, `kind`,
+`repo`, `pr_url`, `summary` (a one-line summary), `result_summary` (the raw
+result, at most 1,000 characters), `deliverable_count`, `total_cost_usd`,
+`error_code` and `error_message`. `title` is the job's brief title once a
+model has written its [brief](configuration.md) (`JOB_BRIEF_MODEL`), else the
+first line of the task; the task's own first line is not sent separately. The
+watcher's hourly analysis jobs send nothing; the daily digest counts them.
+
 ## Without webhooks
 
 You can trigger jobs manually via the dashboard — open the Issues page, find your issue, and click **Send to Triage**. No webhook setup required.
