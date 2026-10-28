@@ -171,6 +171,20 @@ async def test_a_yes_to_a_review_lead_follows_up_on_the_pull_request_branch(app:
     assert app.state.issue_executor.submit_job.call_args.kwargs["kind"] == "lead"
 
 
+@pytest.mark.parametrize("name", ["embry0:scout", " Embry0:watcher"])
+async def test_an_answer_may_not_name_an_embry0_actor(app: FastAPI, name: str) -> None:
+    """``by`` is the job's dispatcher; an embry0 actor's name would be counted as that actor (and skip its limits)."""
+    async with await _client(app) as client:
+        accept = await client.post("/api/v1/proposals/review:1/accept", json={"by": name}, headers=HEADERS)
+        decline = await client.post("/api/v1/proposals/ci:1/decline", json={"by": name}, headers=HEADERS)
+    assert (accept.status_code, decline.status_code) == (422, 422), (
+        f"an answer naming an embry0 actor is refused: {accept.status_code} {decline.status_code}"
+    )
+    app.state.jobs_repo.create.assert_not_awaited()
+    app.state.issue_executor.dispatch_refusal.assert_not_awaited()
+    assert app.state.proposals_repo.recorded == [], "nothing is recorded under an embry0 actor's name"
+
+
 async def test_a_yes_to_a_github_ticket_brings_it_in_and_runs_it(app: FastAPI) -> None:
     async with await _client(app) as client:
         response = await client.post("/api/v1/proposals/ticket:1/accept", json={"by": "octo"}, headers=HEADERS)

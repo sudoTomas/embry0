@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
+from embry0.api.schemas.person_name import PersonName
 from embry0.api.v1.run_with import checked_run_with
 from embry0.services.knowledge_maps import (
     MAX_DECODED_BYTES,
@@ -307,7 +308,7 @@ class MarkBody(BaseModel):
     verdict: Literal["bloat", "keep", "unsure", "clear"]
     note: str = Field(default="", max_length=500)
     #: Who marked it: the signed-in person, or whom a scanner's key acts for.
-    by: str = Field(min_length=1, max_length=100)
+    by: PersonName = Field(min_length=1, max_length=100)
 
 
 @router.get("/maps/{slug}/marks")
@@ -350,7 +351,7 @@ class SendBody(BaseModel):
     kind: Literal["remove", "fix", "analysis"] | None = None
     run_with: RunWithRequest | None = None
     note: str = Field(default="", max_length=1000)
-    by: str = Field(min_length=1, max_length=100)
+    by: PersonName = Field(min_length=1, max_length=100)
     #: One job for all the parts of each repository and kind (one pull request), instead of one job per part.
     together: bool = False
 

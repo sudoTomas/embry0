@@ -20,6 +20,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from embry0.api.schemas.person_name import PersonName
 from embry0.services.asks import ask_settings, next_working_time, release
 
 logger = structlog.get_logger(__name__)
@@ -132,7 +133,8 @@ class AnswerBody(BaseModel):
     code: str = Field(min_length=4, max_length=16)
     action: Literal["start", "decline", "later", "send_to", "merge"]
     #: The email of the person who pressed the button (the assistant checked who they are).
-    person: str = Field(min_length=3, max_length=320)
+    #: Never an ``embry0:`` actor's name.
+    person: PersonName = Field(min_length=3, max_length=320)
     reason: str = Field(default="", max_length=2000)
     #: For send_to: the email of the teammate, and a note.
     to: str = Field(default="", max_length=320)

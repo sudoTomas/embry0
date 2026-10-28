@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from embry0.api.deps import get_healing_cases_repo, get_issue_executor, get_issues_repo, request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
+from embry0.api.schemas.person_name import PersonName
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.services.leads import LEAD_KINDS
@@ -54,8 +55,9 @@ _CODEOWNERS_READS = 8
 class AnswerBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    #: The GitHub login of the person who answered.
-    by: str = Field(min_length=1, max_length=100)
+    #: The GitHub login of the person who answered: the job's dispatcher and
+    #: the answer's ``decided_by``. Never an ``embry0:`` actor's name.
+    by: PersonName = Field(min_length=1, max_length=100)
     reason: str = Field(default="", max_length=2000)
 
 

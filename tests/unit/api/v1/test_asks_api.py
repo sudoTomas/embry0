@@ -246,6 +246,15 @@ async def test_only_an_owner_the_hand_off_s_person_or_an_admin_may_answer(app: A
 
 
 @pytest.mark.asyncio
+async def test_a_press_may_not_name_an_embry0_actor(app: Any) -> None:
+    """The person is who the answer is recorded as and who starts the work; an embry0 actor's name is not a person's."""
+    resp = await call(
+        app, "POST", "/api/v1/asks/answer", json={"code": "ABCD", "action": "start", "person": "embry0:scout"}
+    )
+    assert resp.status_code == 422, f"a press naming an embry0 actor is refused, got {resp.status_code}: {resp.text}"
+
+
+@pytest.mark.asyncio
 async def test_a_chat_cannot_take_an_action_the_dashboard_keeps(app: Any) -> None:
     resp = await call(
         app, "POST", "/api/v1/asks/answer", json={"code": "WXYZ", "action": "merge", "person": "ada@example.com"}
