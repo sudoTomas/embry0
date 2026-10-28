@@ -108,11 +108,6 @@ embry0 uses environment variables for infrastructure config and API endpoints fo
 | `LEADS_TICKET_MIN_SCORE` | `40` | Lowest readiness (0 to 100) a backlog ticket must score to be offered ([how it is scored](leads.md#backlog-tickets)) |
 | `LEADS_REVIEW_STALE_DAYS` | `3` | Days a review thread waits for an answer before it counts |
 | `LEADS_FLAKY_COMMITS` | `10` | Newest commits of the default branch the flaky-check finder reads |
-| `ASKS_ENABLED` | `false` | Keeps one ask per person a decision waits on, for a chat assistant to send from `GET /asks/due` ([api.md](api.md#asks)) |
-| `ASK_HOURS` / `ASK_WEEKDAYS` / `ASK_TIMEZONE` | `09-18` / `mon-fri` / `UTC` | When asks are due: working hours (`HH-HH`), days (`mon-fri` or `mon,wed`) and the zone they are read in |
-| `ASK_REMIND_HOURS` / `ASK_EXPIRE_DAYS` | `24` / `7` | One reminder after this long unanswered; expired after this long, which answers nothing |
-| `ASK_MAX_OPEN_PER_PERSON` | `3` | Unanswered asks one person holds at once; the next, worst first, is released as one is answered or expires |
-| `ASK_TICK_SECONDS` | `120` | How often the ask loop runs (at least 30): it expires asks past `ASK_EXPIRE_DAYS`, withdraws those whose decision was answered or moved on, and queues an ask for each person a decision now waits on |
 | `SCOUT_MODEL` | (empty) | The model the scout pins its read-only `garden` and `kintsugi-trace` jobs to, a model on the operator's own server (`custom/<model>`); their cracks and weeds become leads ([leads.md](leads.md#the-scout-cracks-and-weeds)). Empty turns the scout off |
 | `SCOUT_TEMPLATES` | `garden,kintsugi-trace` | The templates the scout runs; names it does not know are ignored, and a list naming none falls back to both |
 | `SCOUT_MAX_IN_FLIGHT` | `2` | Most scouting jobs out at once; `0` starts none. Keep it below the local server's slots so the watcher and briefs still get one |
@@ -243,8 +238,11 @@ Operator policy moves out of environment variables into one settings document pe
 ```yaml
 # Every key is optional; an absent key takes its default (the reference below).
 version: 1
-<section>:
-  <key>: <value>
+asks:
+  enabled: true
+  hours: "08-17"
+  weekdays: mon-fri
+  timezone: Europe/Berlin
 ```
 
 - **Read** it with `GET /api/v1/config/settings` (`?format=yaml` for the text alone), every setting's effective value and where it came from with `GET /api/v1/config/settings/effective`, and the JSON Schema with `GET /api/v1/config/settings/schema`. Any key can read: the document holds no secrets.
@@ -252,6 +250,7 @@ version: 1
 - **History.** Every write that changes the text is a revision with its actor and source: `GET /api/v1/config/settings/revisions`, and `POST /api/v1/config/settings/revisions/{id}/undo` for the newest one. The newest 100 are kept.
 - **From the environment.** When a release moves a feature's policy into a section, the first start of that release imports each of its variables you set, when the value differs from the default, once per key (source `bootstrap`); a key a later release adds to the section is imported at that release's first start. A value the section refuses is skipped with a `settings_bootstrap_value_refused` warning: set it in the document instead. A value refused only together with the section's other stored values is held (`settings_bootstrap_value_held`) and tried again at the next start. After that the variable is ignored: startup logs `settings_env_ignored` and `embry0 config` says the document governs it. The variable is removed one release later. The reference below names the variable each key was imported from.
 - **After a rollback.** A section or a key that a newer release wrote and this one does not know is kept as long as it is sent back exactly as stored (as the stored text has it, or as GET's `data` does), and is listed in `unknown_sections` or `unknown_keys`.
+- **Moved so far.** The asks policy (`asks`, from `ASKS_ENABLED` and the `ASK_*` variables): the ask loop reads it every tick and `GET /api/v1/asks/due` on every request, so turning asks on or changing their hours needs no restart.
 
 ### Settings reference
 
@@ -259,7 +258,20 @@ Generated from the sections by `python -m embry0.settings.reference --write docs
 
 <!-- settings-reference:start -->
 
-No section is registered yet.
+#### `asks`
+
+When and how often embry0 asks a person about a decision that waits on them.
+
+| Key | Type | Default | Allowed | Overridable by | Imported from | Description |
+|---|---|---|---|---|---|---|
+| `enabled` | true or false | `false` |  |  | `ASKS_ENABLED` | Keep one ask per person a decision waits on, for a chat assistant to send from GET /asks/due. While false the ask loop does nothing and the feed is empty; asks already stored wait. |
+| `hours` | text | `"09-18"` | at most 16 characters | organization | `ASK_HOURS` | Working hours in `timezone`, HH-HH from 00 to 24, start first. An ask is due, and a reminder goes, only within them. |
+| `weekdays` | text | `"mon-fri"` | at most 64 characters | organization | `ASK_WEEKDAYS` | The days asks go out: a day name (mon to sun), a range such as mon-fri or sun-thu, or a list such as mon,wed,fri. |
+| `timezone` | text | `"UTC"` | at most 64 characters | organization | `ASK_TIMEZONE` | The IANA time zone `hours` and `weekdays` are read in, such as Europe/Berlin. |
+| `remind_hours` | number | `24.0` | > 0, ≤ 8760 | organization | `ASK_REMIND_HOURS` | Hours an ask waits unanswered before its one reminder. |
+| `expire_days` | number | `7.0` | > 0, ≤ 365 | organization | `ASK_EXPIRE_DAYS` | Days after which an unanswered ask expires. That answers nothing, and the person is not asked about that decision again. |
+| `max_open_per_person` | whole number | `3` | ≥ 1 | organization | `ASK_MAX_OPEN_PER_PERSON` | Unanswered asks one person holds at once; the next, worst first, is released as one is answered or expires. |
+| `tick_seconds` | number | `120.0` | ≥ 30, ≤ 86400 |  | `ASK_TICK_SECONDS` | How often the ask loop runs: it expires asks past `expire_days`, withdraws those whose decision was answered or moved on, and queues one for each person a decision now waits on. |
 
 <!-- settings-reference:end -->
 

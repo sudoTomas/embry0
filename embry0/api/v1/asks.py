@@ -2,6 +2,8 @@
 
 - ``GET /asks/due``: the asks to send now, each with its decision rendered,
   its code and the actions a chat may offer; a reminder is marked as one.
+  Empty while ``asks.enabled`` is false in the settings document, which is
+  read on every request.
 - ``POST /asks/{id}/sent``: the assistant sent it (``message_ref`` names the message).
 - ``POST /asks/answer``: a button was pressed: the code, the action and the
   person who pressed it. The answer goes through the paths the dashboard
@@ -22,6 +24,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.schemas.person_name import PersonName
 from embry0.services.asks import ask_settings, next_working_time, release
+from embry0.settings.sections.asks import ASKS, AsksSettings
+from embry0.settings.store import SettingsStore
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -37,6 +41,14 @@ def _repo(request: Request, name: str) -> Any:
     if repo is None:
         raise HTTPException(status_code=503, detail=f"{name} is not initialized")
     return repo
+
+
+async def ask_policy(request: Request) -> AsksSettings:
+    """The ``asks`` section of the settings document as it stands now."""
+    store: SettingsStore | None = getattr(request.app.state, "settings", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="settings storage not initialized")
+    return (await store.snapshot()).get(ASKS)
 
 
 def _iso(value: Any) -> Any:
@@ -81,8 +93,12 @@ async def open_decisions(request: Request) -> list[dict[str, Any]]:
 @router.get("/asks/due")
 async def asks_due(request: Request, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
     """The asks to send now: due reminders, then queued ones, worst first, while their person holds
-    fewer than ``ASK_MAX_OPEN_PER_PERSON`` unanswered asks."""
-    settings = ask_settings(request.app.state.config)
+    fewer than ``asks.max_open_per_person`` unanswered asks. An empty list while ``asks.enabled`` is
+    false in the settings document, whatever is stored; ``enabled`` says which."""
+    policy = await ask_policy(request)
+    if not policy.enabled:
+        return {"asks": [], "count": 0, "enabled": False}
+    settings = ask_settings(policy)
     asks = _repo(request, "asks_repo")
     now = datetime.now(UTC)
     decisions = await open_decisions(request)
@@ -109,7 +125,7 @@ async def asks_due(request: Request, limit: int = Query(default=50, ge=1, le=200
         )
         if len(out) >= limit:
             break
-    return {"asks": out, "count": len(out)}
+    return {"asks": out, "count": len(out), "enabled": True}
 
 
 class SentBody(BaseModel):

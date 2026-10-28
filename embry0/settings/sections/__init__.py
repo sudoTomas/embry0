@@ -10,5 +10,6 @@ imported: validation, the reference docs and the API all read this list.
 from __future__ import annotations
 
 from embry0.settings.registry import Catalog
+from embry0.settings.sections.asks import ASKS
 
-CATALOG: Catalog = Catalog(())
+CATALOG: Catalog = Catalog((ASKS,))

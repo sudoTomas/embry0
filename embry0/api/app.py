@@ -2642,10 +2642,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scout_task.add_done_callback(app.state.background_tasks.discard)
 
     # Asks (spec 2026-10-27, decisions): keeps one ask per person a decision
-    # waits on, for a chat assistant to send. Off until ASKS_ENABLED.
+    # waits on, for a chat assistant to send. The loop always runs and reads
+    # the settings document's `asks` section every tick (spec 2026-10-28), so
+    # turning asks on, or changing their hours, needs no restart; it does
+    # nothing while `asks.enabled` is false.
     from embry0.api.v1.decisions import list_decisions as _ask_decisions
     from embry0.services.ask_loop import AskLoop
-    from embry0.services.asks import ask_settings
+    from embry0.settings.sections.asks import ASKS as _ASKS
+    from embry0.settings.store import section_reader as _section_reader
 
     async def _asked_decisions() -> list[dict[str, Any]]:
         listed = await _ask_decisions(
@@ -2666,7 +2670,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         return {str(u.github_login).lower(): u.email.lower() for u in await users.people() if u.github_login}
 
     app.state.ask_loop = AskLoop(
-        settings=ask_settings(config), asks=app.state.asks_repo, decisions=_asked_decisions, people=_ask_people
+        settings=_section_reader(app.state.settings, _ASKS),
+        asks=app.state.asks_repo,
+        decisions=_asked_decisions,
+        people=_ask_people,
     )
     ask_task = asyncio.create_task(app.state.ask_loop.start())
     app.state.background_tasks.add(ask_task)
