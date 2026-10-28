@@ -60,6 +60,9 @@ EXPECTED_TOOLS = {
     "standard_get",
     "standard_set",
     "standard_audit",
+    "progression_pack_get",
+    "progression_pack_set",
+    "progression_pack_reset",
     "org_webhook_install",
     "org_act",
     "qa_config_get",
@@ -107,6 +110,8 @@ CONFIRM_GATED = {
     "host_import_tailnet",
     "standard_set",
     "standard_audit",
+    "progression_pack_set",
+    "progression_pack_reset",
     "org_webhook_install",
     "org_act",
     "qa_config_set",
@@ -174,6 +179,8 @@ async def test_confirm_gated_tools_refuse_without_confirm(fake_client):
         await server.host_import_tailnet(),
         await server.standard_set("acme", "design", {"roles": {}}, {}),
         await server.standard_audit("acme", "design", "acme/widgets"),
+        await server.progression_pack_set("version: 1\n"),
+        await server.progression_pack_reset(),
         await server.credential_bind("acme/widgets", "cred-000000000009"),
     ]
     for refusal in refusals:
@@ -205,6 +212,8 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
     assert await server.host_import_tailnet(confirm=True) == {"called": "host_import_tailnet"}
     assert await server.standard_set("acme", "design", {"roles": {}}, {}, confirm=True) == {"called": "standard_set"}
     assert await server.standard_audit("acme", "design", "acme/widgets", confirm=True) == {"called": "standard_audit"}
+    assert await server.progression_pack_set("version: 1\n", confirm=True) == {"called": "progression_pack_set"}
+    assert await server.progression_pack_reset(confirm=True) == {"called": "progression_pack_reset"}
     assert await server.credential_bind(
         "acme/widgets", "cred-000000000009", role="forge", pinned=True, confirm=True
     ) == {"called": "credential_bind"}
@@ -233,6 +242,8 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
         "host_import_tailnet",
         "standard_set",
         "standard_audit",
+        "progression_pack_set",
+        "progression_pack_reset",
         "credential_bind",
     ]
 
@@ -601,3 +612,23 @@ async def test_proposal_tools_relay_the_owner_and_refuse_without_confirm(fake_cl
         ("proposal_answer", ("finding:ab", "decline"), {"by": "octo", "reason": "it says what I want"}),
         ("proposal_answer", ("case:hc-1", "snooze"), {"by": "octo", "reason": "", "until": "2026-11-01T00:00:00Z"}),
     ]
+
+
+async def test_progression_pack_dry_run_needs_no_confirm_and_stores_nothing(fake_client):
+    """A dry run only reports what a write would change, so it runs without confirm; a real write does not."""
+    assert await server.progression_pack_get() == {"called": "progression_pack_get"}
+    assert await server.progression_pack_set("version: 1\n", dry_run=True) == {"called": "progression_pack_set"}
+    refusal = await server.progression_pack_set("version: 1\n")
+    assert refusal["error"] == "confirmation_required", "a real write must still require confirm"
+    assert fake_client.calls == [
+        ("progression_pack_get", (), {}),
+        ("progression_pack_set", ("version: 1\n",), {"dry_run": True, "expected_version": None}),
+    ]
+
+
+async def test_progression_pack_set_names_the_version_it_read(fake_client):
+    """The version the caller read goes along, so a pack someone activated in between is not overwritten."""
+    await server.progression_pack_set("version: 1\n", expected_version=4, confirm=True)
+    assert fake_client.calls == [("progression_pack_set", ("version: 1\n",), {"expected_version": 4})], (
+        "progression_pack_set must pass the version the caller read on to the API"
+    )
