@@ -15,7 +15,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from embry0.api.deps import get_audit_repo, unidentified_caller_tier
+from embry0.api.actor_visibility import caller_scope
+from embry0.api.deps import get_audit_repo
 from embry0.api.session import TIER_ADMIN
 from embry0.audit.actions import AUDIT_ACTION_LABELS
 from embry0.storage.repositories.audit import AuditRepository
@@ -66,24 +67,8 @@ def _redact(details: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-async def _caller_scope(request: Request) -> tuple[str, list[str]]:
-    """Resolve ``(tier, own_actor_strings)`` for row filtering.
-
-    Mirrors the api_keys ``_caller`` pattern: session state wins, then key
-    principal, then the AUTH_DEV_MODE fallback (full access, no identity —
-    the unit-test conftest relies on it). Outside AUTH_DEV_MODE a caller with
-    neither is refused (#518).
-    """
-    session = getattr(request.state, "session", None)
-    if session is not None:
-        return session.tier, [session.email]
-    principal = getattr(request.state, "principal", None)
-    if principal is not None:
-        if principal.kind == "master":
-            return TIER_ADMIN, []
-        own = [principal.email] if principal.email else [f"key:{principal.key_name}"]
-        return principal.tier, own
-    return unidentified_caller_tier(request), []
+#: The caller's tier and its own actor strings; shared with every route that names an actor.
+_caller_scope = caller_scope
 
 
 @router.get("/audit/actions")

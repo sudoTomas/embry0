@@ -443,3 +443,51 @@ async def test_an_undo_of_a_text_too_large_is_a_422_not_a_500(app, db_with_migra
     async with AsyncClient(transport=transport, base_url="http://test", headers=_as(ADMIN)) as raw:
         resp = await raw.post(f"{URL}/revisions/{revision_id}/undo")
     assert resp.status_code == 422, f"undoing to a text over the size limit answered {resp.status_code}"
+
+
+# ---- review of #211: shared body reader, JSON keys, who changed it ----
+
+
+async def test_a_chunked_body_past_the_limit_is_refused_while_it_streams(client) -> None:
+    """No Content-Length: the body is read in pieces and refused once it passes 256 KiB, never held whole."""
+
+    sent: list[int] = []
+
+    async def chunks() -> AsyncIterator[bytes]:
+        for _ in range(64):  # 64 x 16 KiB = 1 MiB
+            sent.append(1)
+            yield b"#" * (16 * 1024)
+
+    resp = await client.put(URL, content=chunks(), headers=YAML)
+    assert resp.status_code == 413, f"a chunked body past the limit must be a 413: {resp.status_code} {resp.text}"
+    assert "content-length" not in {k.lower() for k in resp.request.headers}, "the body must go without a length"
+    assert len(sent) < 64, f"the body was read whole ({len(sent)} of 64 pieces) before it was refused"
+
+
+async def test_a_json_key_written_twice_is_a_422(client) -> None:
+    resp = await client.put(
+        URL,
+        content=b'{"sample": {"per_tick": 1}, "sample": {"per_tick": 2}}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422, f"JSON would keep only the second 'sample' silently: {resp.text}"
+    assert [item["type"] for item in resp.json()["detail"]] == ["duplicate_key"]
+
+
+async def test_who_changed_the_document_is_shown_as_the_audit_log_shows_actors(client) -> None:
+    """An admin sees every actor; anyone else sees their own, and null for anyone else's (as ``GET /audit``)."""
+    await _put(client, V1)  # written with the admin key, by alex@example.com
+    revision_id = (await client.get(f"{URL}/revisions")).json()["revisions"][0]["id"]
+
+    reader = _as(READER)  # a read key with no owner: its own actor is key:read-key
+    listed = (await client.get(f"{URL}/revisions", headers=reader)).json()["revisions"]
+    assert [r["actor"] for r in listed] == [None], "a read key must not learn who changed the document"
+    assert (await client.get(f"{URL}/revisions/{revision_id}", headers=reader)).json()["actor"] is None
+    assert (await client.get(URL, headers=reader)).json()["updated_by"] is None
+    effective = (await client.get(f"{URL}/effective", headers=reader)).json()
+    assert {k["set_by"] for s in effective["sections"] for k in s["keys"]} == {None}
+
+    own = (await client.get(f"{URL}/revisions", headers=_as(OPERATOR))).json()["revisions"]
+    assert [r["actor"] for r in own] == ["alex@example.com"], "anyone sees their own changes"
+    admin = (await client.get(f"{URL}/revisions/{revision_id}")).json()
+    assert admin["actor"] == "alex@example.com", "an admin sees every actor"

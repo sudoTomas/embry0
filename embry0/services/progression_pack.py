@@ -43,6 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 
 from embry0.services import progression_templates as templates
 from embry0.services import progression_vocabulary as vocab
+from embry0.text_documents import structure_problems
 
 #: The schema version this release reads and writes.
 SCHEMA_VERSION = 1
@@ -323,21 +324,37 @@ def _too_deep(data: Any) -> bool:
     return False
 
 
+def _yaml_problem(exc: yaml.YAMLError) -> Problem:
+    mark = getattr(exc, "problem_mark", None)
+    where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
+    problem = getattr(exc, "problem", None) or str(exc)
+    return Problem((), "yaml_syntax", f"{where}{problem}")
+
+
 def load_text(text: str) -> Any:
-    """The document a YAML or JSON text holds; raises :class:`PackInvalid` when it cannot be read."""
+    """The document a YAML or JSON text holds; raises :class:`PackInvalid` when it cannot be read.
+
+    Besides YAML's own errors it refuses what every operator-written
+    document refuses (:mod:`embry0.text_documents`): an alias, a merge key,
+    a key that is not text and a key written twice, which YAML would keep
+    silently. So the shipped default, ``--check``, ``embry0
+    progression-pack check`` and every write meet the same rules.
+    """
     if len(text.encode()) > MAX_TEXT_BYTES:
         raise PackInvalid([Problem((), "too_large", f"the document is larger than {MAX_TEXT_BYTES // 1024} KiB")])
+    too_deep = Problem((), "too_deep", f"the document nests deeper than {MAX_DEPTH} levels")
     try:
+        root = yaml.compose(text, Loader=_NoAliasLoader)  # noqa: S506 - a SafeLoader subclass
+        structure = structure_problems(root, what="a content pack")
+        if structure:
+            raise PackInvalid([Problem(p.loc, p.type, p.msg) for p in structure])
         data = yaml.load(text, Loader=_NoAliasLoader)  # noqa: S506 - a SafeLoader subclass
     except yaml.YAMLError as exc:
-        mark = getattr(exc, "problem_mark", None)
-        where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
-        problem = getattr(exc, "problem", None) or str(exc)
-        raise PackInvalid([Problem((), "yaml_syntax", f"{where}{problem}")]) from None
+        raise PackInvalid([_yaml_problem(exc)]) from None
     except RecursionError:
-        raise PackInvalid([Problem((), "too_deep", f"the document nests deeper than {MAX_DEPTH} levels")]) from None
+        raise PackInvalid([too_deep]) from None
     if _too_deep(data):
-        raise PackInvalid([Problem((), "too_deep", f"the document nests deeper than {MAX_DEPTH} levels")])
+        raise PackInvalid([too_deep])
     return data
 
 

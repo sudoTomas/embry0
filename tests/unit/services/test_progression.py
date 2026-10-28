@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import asyncpg
 import pytest
 import yaml
 
@@ -434,7 +435,7 @@ def test_a_short_pack_still_has_a_level_and_a_tier() -> None:
 
 def test_the_answer_carries_the_packs_names_colours_words_and_art() -> None:
     body = compute([], ["developer"], rules=RULES).to_dict()
-    assert body["pack"] == {"hash": RULES.hash, "version": 1, "timezone": "UTC"}
+    assert body["pack"] == {"hash": RULES.hash, "version": 1, "timezone": "UTC", "timezone_applied": "UTC"}
     assert [t["id"] for t in body["tiers"]] == ["bronze", "silver", "gold", "platinum", "diamond", "obsidian", "divine"]
     assert body["tiers"][0] == {"id": "bronze", "name": "Bronze", "from_level": 1, "color": "#9c6b2f", "gear": "bronze"}
     assert [r["id"] for r in body["rares"]] == ["golden-paper-crown", "paper-crown", "harvest-mask"], "in wear order"
@@ -504,8 +505,10 @@ async def test_a_timezone_the_database_refuses_falls_back_to_utc_and_a_real_fail
 
         async def facts(self, queries: object, timezone: str) -> list:
             Repo.asked.append(timezone)
-            if Repo.broken or timezone != "UTC":
+            if Repo.broken:
                 raise RuntimeError("invalid value for parameter TimeZone")
+            if timezone != "UTC":
+                raise asyncpg.InvalidParameterValueError(f'time zone "{timezone}" not recognized')
             return []
 
         async def journal(self) -> Journal:
@@ -524,6 +527,69 @@ async def test_a_timezone_the_database_refuses_falls_back_to_utc_and_a_real_fail
         raise AssertionError(f"a timezone Postgres refuses took down every read of the progression: {exc}") from exc
     assert Repo.asked == ["Europe/Berlin", "UTC"], "the facts are read again on UTC's calendar"
     assert progression.achievements, "the progression still answers"
+    pack = progression.to_dict()["pack"]
+    assert (pack["timezone"], pack.get("timezone_applied")) == ("Europe/Berlin", "UTC"), (
+        "the answer must say its achievements were counted on UTC's calendar, not the pack's"
+    )
     Repo.broken = True
     with pytest.raises(RuntimeError, match="TimeZone"):
         await ProgressionService(Repo(), packs=ShippedPack(), ttl_seconds=0).read()
+
+
+async def test_only_a_timezone_postgres_refuses_falls_back_and_any_other_failure_is_raised() -> None:
+    """A statement timeout under a non-UTC pack must fail the read, not be retried on UTC (review of #207).
+
+    A silent retry would count the hot streak and the oddities on UTC's
+    days for the next minute of cached answers, while the rares and
+    ``pack.timezone`` say the pack's zone.
+    """
+
+    class Repo:
+        asked: list[str] = []
+
+        async def events(self) -> list[ProgressEvent]:
+            return [ev("merged", "developer")]
+
+        async def agent_types(self) -> list[str]:
+            return ["developer"]
+
+        async def facts(self, queries: object, timezone: str) -> list:
+            Repo.asked.append(timezone)
+            raise asyncpg.QueryCanceledError("canceling statement due to statement timeout")
+
+        async def journal(self) -> Journal:
+            return Journal([], [])
+
+    class Packs:
+        async def active(self) -> Any:
+            data = yaml.safe_load(default_text())
+            data["timezone"] = "Europe/Berlin"
+            return parse(data)
+
+    with pytest.raises(asyncpg.QueryCanceledError):
+        await ProgressionService(Repo(), packs=Packs(), ttl_seconds=0).read()
+    assert Repo.asked == ["Europe/Berlin"], "a failure that is not the time zone must not be retried on UTC"
+
+
+async def test_the_answer_names_the_pack_timezone_when_it_applied() -> None:
+    class Repo:
+        async def events(self) -> list[ProgressEvent]:
+            return []
+
+        async def agent_types(self) -> list[str]:
+            return ["developer"]
+
+        async def facts(self, queries: object, timezone: str) -> list:
+            return []
+
+        async def journal(self) -> Journal:
+            return Journal([], [])
+
+    class Packs:
+        async def active(self) -> Any:
+            data = yaml.safe_load(default_text())
+            data["timezone"] = "Europe/Berlin"
+            return parse(data)
+
+    pack = (await ProgressionService(Repo(), packs=Packs(), ttl_seconds=0).read()).to_dict()["pack"]
+    assert pack.get("timezone_applied") == "Europe/Berlin", "with no fallback the pack's own calendar applied"

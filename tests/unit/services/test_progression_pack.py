@@ -306,6 +306,26 @@ def test_an_alias_a_syntax_error_and_a_huge_text_are_refused() -> None:
         parse_text("- just a list\n")
 
 
+def test_a_key_written_twice_and_a_merge_key_are_refused_by_the_loader(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """YAML keeps only the second of two equal keys, silently; the loader every path reads with refuses it.
+
+    So the shipped default, ``--check``, ``embry0 progression-pack check``
+    and every write meet one rule (review of #211).
+    """
+    twice = default_text() + "\ntimezone: Europe/Berlin\n"
+    merged = default_text().replace("cloaks:\n", "cloaks:\n  <<: {quest: {base: '#000000', trim: '#000000'}}\n", 1)
+    for text, kind in ((twice, "duplicate_key"), (merged, "yaml_merge")):
+        with pytest.raises(PackInvalid) as refused:
+            load_text(text)
+        assert [p.type for p in refused.value.problems] == [kind], f"{kind}: {refused.value.problems}"
+    target = tmp_path / "pack.yaml"
+    target.write_text(twice)
+    assert _main(["--check", str(target)]) == 1, "--check must refuse a key written twice"
+    assert "timezone: 'timezone' is written twice" in capsys.readouterr().err
+
+
 # ---- metrics and their facts ----
 
 

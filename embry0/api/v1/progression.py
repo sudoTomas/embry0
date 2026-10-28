@@ -23,4 +23,9 @@ async def read_progression(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="progression is not initialized")
     progression = await service.read()
     result: dict[str, Any] = progression.to_dict()
+    packs = getattr(request.app.state, "progression_packs", None)
+    if packs is not None:
+        # The stored version it comes from (0: nothing stored) and whether it is the shipped default's.
+        effective = await packs.effective()
+        result["pack"] = {**result["pack"], "revision": effective.version, "follows_default": effective.follows_default}
     return result
