@@ -11,10 +11,12 @@ router = APIRouter()
 
 @router.get("/progression")
 async def read_progression(request: Request) -> dict[str, Any]:
-    """The account's experience and totals, each character's 23 skills, the achievements and the latest unlocks.
+    """The account's experience and totals, each character's skills, the achievements and the latest unlocks.
 
-    Recomputed from the jobs, traces, healing cases and watcher runs at most
-    once a minute; read-only.
+    Recomputed under the active content pack (#176) from the jobs, traces,
+    healing cases and answers at most once a minute; read-only. The answer
+    carries the pack's names, colours, words and art too, so the dashboard
+    keeps no copy of them.
     """
     service = getattr(request.app.state, "progression", None)
     if service is None:

@@ -811,12 +811,14 @@ async def _init_app_state(
     # sync, the PR webhook or the healing ledger normalise a URL through them.
     configure_repo_renames(app_config.repo_renames)
     app.state.repos_repo = ReposRepository(db, default_forge=app_config.default_forge)
-    # Progression (spec 2026-10-24): levels recomputed from the recorded work,
-    # read by GET /progression.
+    # Progression (spec 2026-10-24): levels recomputed from the recorded work
+    # under the active content pack (#176), read by GET /progression. The
+    # shipped default is the only pack until a stored one can be activated.
     from embry0.services.progression import ProgressionService
+    from embry0.services.progression_pack import ShippedPack
     from embry0.storage.repositories.progression import ProgressionRepository
 
-    app.state.progression = ProgressionService(ProgressionRepository(db))
+    app.state.progression = ProgressionService(ProgressionRepository(db), packs=ShippedPack())
     from embry0.storage.repositories.organizations import OrganizationsRepository
 
     app.state.organizations_repo = OrganizationsRepository(db)

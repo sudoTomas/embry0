@@ -5,10 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from embry0.services.slop import (
-    CLEANED_XP,
     MAX_EVIDENCE,
-    XP_PER_LINE_REMOVED,
-    cleaned_xp,
     dungeon_score,
     dungeons,
     parse_contract_lines,
@@ -140,9 +137,3 @@ def test_a_dungeon_carries_its_meter_and_a_sloppy_area_has_one_without_findings(
         "computed_at": at.isoformat(),
     }
     assert found[("acme/api", None)]["open"] == 0 and found[("acme/api", None)]["meter"]["name"] == "Lasagna"
-
-
-def test_a_cleanup_earns_for_its_net_lines_removed() -> None:
-    assert cleaned_xp(10, 110) == CLEANED_XP + 100 * XP_PER_LINE_REMOVED
-    assert cleaned_xp(50, 10) == CLEANED_XP, "a cleanup that grew the code earns the base only"
-    assert cleaned_xp(0, 50_000) == CLEANED_XP + 1_000 * XP_PER_LINE_REMOVED

@@ -873,7 +873,7 @@ async def test_run_agent_node_counts_each_tool_call_by_the_skill_it_trains() -> 
 
     assert len(seen) == 5, "every event still reaches the caller's callback"
     assert traces_repo.finish.call_args.kwargs["skill_actions"] == {
-        "shell:version_control": 1,
-        "shell:testing": 1,
-        "edit:documentation": 1,
-    }
+        "shell:vcs": 1,
+        "shell:test-runner": 1,
+        "edit:docs": 1,
+    }, "a trace stores what each call was (#176), never the skill a pack maps it to"

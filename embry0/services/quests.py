@@ -2,26 +2,31 @@
 
 A quest is a few steps the account completes once, for quest points and an
 XP reward to the characters who did the work; a repo diary is a checklist
-per repository in four tiers, Easy to Elite. Like experience and
-achievements they are read from rows other features already write, never
-stored: each step and task is done at the time of the row that first met it.
+per repository in tiers. Both are the active content pack's (#176): a quest
+is one of the kinds below with the pack's name, texts, parameters and
+rewards, and a diary tier is a list of tasks, each a task kind with its
+parameters. Like experience and achievements they are read from rows other
+features already write, never stored: each step and task is done at the
+time of the row that first met it.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from embry0.services.context_audit import report_counts
+from embry0.services.progression_pack import DiaryTier as DiaryTierEntry
+from embry0.services.progression_pack import Quest as QuestEntry
+from embry0.services.progression_pack import Rules
+from embry0.services.progression_pack import Task as TaskEntry
 from embry0.storage.repositories.progression import JobRow, Journal, RunRow
 
+#: The job statuses that mean the job did its work.
 FINISHED = ("completed", "pr_merged")
-DIARY_TIERS: tuple[str, ...] = ("easy", "medium", "hard", "elite")
-#: The quiet stretch an Elite diary asks for.
-QUIET_DAYS = 30
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -88,7 +93,7 @@ class Diary:
         return {"repo": self.repo, "tiers": [t.to_dict() for t in self.tiers]}
 
 
-def _quiet_stretch(jobs: Sequence[JobRow]) -> datetime | None:
+def _quiet_stretch(jobs: Sequence[JobRow], days: int) -> datetime | None:
     """The first finished job a full quiet stretch after the repo's last failure, or after its first job."""
     since: datetime | None = None
     for job in sorted(jobs, key=lambda j: j.at):
@@ -96,57 +101,58 @@ def _quiet_stretch(jobs: Sequence[JobRow]) -> datetime | None:
             since = job.created_at
         if job.status == "failed":
             since = job.at
-        elif job.status in FINISHED and job.at - since >= timedelta(days=QUIET_DAYS):
+        elif job.status in FINISHED and job.at - since >= timedelta(days=days):
             return job.at
     return None
 
 
-def _diary(repo: str, jobs: Sequence[JobRow], runs: Sequence[RunRow]) -> Diary:
+def _task_done(
+    task: TaskEntry, jobs: Sequence[JobRow], runs: Sequence[RunRow], below: datetime | None
+) -> datetime | None:
+    """When a diary task was first done for one repository, or None."""
+    params: dict[str, Any] = task.params
+    agents = set(params.get("agents", ()))
     merges = [j.at for j in jobs if j.status == "pr_merged"]
-    qa_runs = [r.at for r in runs if r.agent_type == "qa"]
-    qa_issues = {r.issue_id for r in runs if r.agent_type == "qa" and r.issue_id}
     audits = [j for j in jobs if j.template == "context-audit" and j.status == "completed"]
-    clean_audits = [j.at for j in audits if report_counts(j.report)[0] == 0]
-    passes = [j.at for j in jobs if j.template == "qa" and j.status == "completed"]
-    passes += [j.at for j in jobs if j.status == "pr_merged" and j.issue_id in qa_issues]
-
-    easy = DiaryTier(
-        "easy",
-        [
-            Task("Triage an issue", _first(r.at for r in runs if r.agent_type == "triage" and r.issue_id)),
-            Task("Finish a job", _first(j.at for j in jobs if j.status in FINISHED)),
-            Task("Run QA", _first(qa_runs + [j.at for j in jobs if j.template == "qa" and j.status in FINISHED])),
-        ],
-    )
-    medium = DiaryTier(
-        "medium",
-        [
-            Task("Merge a pull request", _first(merges)),
-            Task("Pass QA", _first(passes)),
-            Task("Audit its context", _first(j.at for j in audits)),
-        ],
-    )
-    hard = DiaryTier(
-        "hard",
-        [
-            Task("Merge 10 pull requests", _nth(merges, 10)),
-            Task("Audit its context and find no outdated claim", _first(clean_audits)),
-            Task("Review 10 times", _nth((r.at for r in runs if r.agent_type in ("review", "pr-reviewer")), 10)),
-        ],
-    )
-    below = _when_all([easy.completed_at, medium.completed_at, hard.completed_at])
-    elite = DiaryTier(
-        "elite",
-        [
-            Task("Merge 50 pull requests", _nth(merges, 50)),
-            Task(f"Go {QUIET_DAYS} days without a failed job", _quiet_stretch(jobs)),
-            Task("Complete every task above", below),
-        ],
-    )
-    return Diary(repo, [easy, medium, hard, elite])
+    if task.kind == "triage":
+        return _first(r.at for r in runs if r.agent_type in agents and r.issue_id)
+    if task.kind == "finish_job":
+        return _first(j.at for j in jobs if j.status in FINISHED)
+    if task.kind == "run_qa":
+        return _first(
+            [r.at for r in runs if r.agent_type in agents]
+            + [j.at for j in jobs if j.template == "qa" and j.status in FINISHED]
+        )
+    if task.kind == "merges":
+        return _nth(merges, int(params["count"]))
+    if task.kind == "pass_qa":
+        qa_issues = {r.issue_id for r in runs if r.agent_type in agents and r.issue_id}
+        passes = [j.at for j in jobs if j.template == "qa" and j.status == "completed"]
+        passes += [j.at for j in jobs if j.status == "pr_merged" and j.issue_id in qa_issues]
+        return _first(passes)
+    if task.kind == "audit":
+        return _first(j.at for j in audits)
+    if task.kind == "clean_audit":
+        return _first(j.at for j in audits if report_counts(j.report)[0] == 0)
+    if task.kind == "reviews":
+        return _nth((r.at for r in runs if r.agent_type in agents), int(params["count"]))
+    if task.kind == "quiet_stretch":
+        return _quiet_stretch(jobs, int(params["days"]))
+    if task.kind == "all_above":
+        return below
+    raise ValueError(f"no diary task kind {task.kind!r}")
 
 
-def evaluate_diaries(journal: Journal) -> list[Diary]:
+def _diary(repo: str, jobs: Sequence[JobRow], runs: Sequence[RunRow], tiers: Sequence[DiaryTierEntry]) -> Diary:
+    done: list[DiaryTier] = []
+    for entry in tiers:
+        below = _when_all([t.completed_at for t in done]) if done else None
+        tasks = [Task(task.text.format(**task.params), _task_done(task, jobs, runs, below)) for task in entry.tasks]
+        done.append(DiaryTier(entry.id, tasks))
+    return Diary(repo, done)
+
+
+def evaluate_diaries(journal: Journal, *, rules: Rules) -> list[Diary]:
     """A diary for every repository with a job, those with the most tiers done first."""
     jobs: dict[str, list[JobRow]] = defaultdict(list)
     runs: dict[str, list[RunRow]] = defaultdict(list)
@@ -154,7 +160,8 @@ def evaluate_diaries(journal: Journal) -> list[Diary]:
         jobs[job.repo].append(job)
     for run in journal.runs:
         runs[run.repo].append(run)
-    diaries = [_diary(repo, jobs[repo], runs[repo]) for repo in sorted(jobs)]
+    tiers = rules.pack.diaries.tiers
+    diaries = [_diary(repo, jobs[repo], runs[repo], tiers) for repo in sorted(jobs)]
 
     def done(d: Diary) -> int:
         return sum(1 for t in d.tiers if t.completed_at) * 100 + sum(
@@ -189,6 +196,8 @@ class QuestState:
     #: Where the steps happened, when they belong to one repository or issue.
     where: str | None = None
     xp: list[Reward] = field(default_factory=list)
+    #: Done, this quest trims every cloak (a capstone's reward).
+    cloak_trim: bool = False
 
     @property
     def completed_at(self) -> datetime | None:
@@ -232,7 +241,7 @@ def _best(candidates: Iterable[tuple[str, list[datetime | None]]]) -> tuple[str 
     return best
 
 
-def _first_steps(journal: Journal) -> QuestState:
+def _onboard_to_merge(journal: Journal, params: dict[str, Any]) -> tuple[str | None, list[datetime | None]]:
     by_repo: dict[str, list[JobRow]] = defaultdict(list)
     for job in journal.jobs:
         by_repo[job.repo].append(job)
@@ -246,23 +255,10 @@ def _first_steps(journal: Journal) -> QuestState:
         merged = _first(j.at for j in after if j.status == "pr_merged")
         candidates.append((repo, [onboarded, finished, merged]))
     where, times = _best(candidates)
-    times = times or [None, None, None]
-    return QuestState(
-        "first_steps",
-        "First Steps",
-        1,
-        "1 quest point; Operations and Coding XP",
-        [
-            Task("Onboard a repository", times[0]),
-            Task("Finish its first job", times[1]),
-            Task("Merge its first pull request", times[2]),
-        ],
-        where=where,
-        xp=[Reward("onboarding", "operations", 40_000), Reward("developer", "coding", 40_000)],
-    )
+    return where, times or [None, None, None]
 
 
-def _try_again(journal: Journal) -> QuestState:
+def _merge_after_failure(journal: Journal, params: dict[str, Any]) -> tuple[str | None, list[datetime | None]]:
     failed: dict[str, datetime] = {}
     for job in sorted(journal.jobs, key=lambda j: j.at):
         if job.issue_id and job.status == "failed":
@@ -273,80 +269,92 @@ def _try_again(journal: Journal) -> QuestState:
         if job.issue_id and job.status == "pr_merged" and job.issue_id in failed and failed[job.issue_id] < job.at
     ]
     first = min(comebacks, key=lambda c: c[1]) if comebacks else None
-    return QuestState(
-        "try_again",
-        "Try, Try Again",
-        1,
-        "1 quest point; Recovery XP",
-        [
-            Task("Watch a job on an issue fail", failed[first[0]] if first else _first(failed.values())),
-            Task("Merge a later job on that issue", first[1] if first else None),
-        ],
-        where=first[0] if first else None,
-        xp=[Reward("developer", "recovery", 60_000)],
+    return (
+        first[0] if first else None,
+        [failed[first[0]] if first else _first(failed.values()), first[1] if first else None],
     )
 
 
-def _gatekeeper(journal: Journal) -> QuestState:
+def _review_qa_merge(journal: Journal, params: dict[str, Any]) -> tuple[str | None, list[datetime | None]]:
+    review_agents, qa_agents = set(params["review_agents"]), set(params["qa_agents"])
     reviewed: dict[str, datetime] = {}
     tested: dict[str, datetime] = {}
     merged: dict[str, datetime] = {}
     for run in sorted(journal.runs, key=lambda r: r.at):
-        if run.issue_id and run.agent_type in ("review", "pr-reviewer"):
+        if run.issue_id and run.agent_type in review_agents:
             reviewed.setdefault(run.issue_id, run.at)
-        if run.issue_id and run.agent_type == "qa":
+        if run.issue_id and run.agent_type in qa_agents:
             tested.setdefault(run.issue_id, run.at)
     for job in sorted(journal.jobs, key=lambda j: j.at):
         if job.issue_id and job.status == "pr_merged":
             merged.setdefault(job.issue_id, job.at)
     issues = set(reviewed) | set(tested) | set(merged)
     where, times = _best((i, [reviewed.get(i), tested.get(i), merged.get(i)]) for i in issues)
-    times = times or [None, None, None]
+    return where, times or [None, None, None]
+
+
+_KINDS: dict[str, Callable[[Journal, dict[str, Any]], tuple[str | None, list[datetime | None]]]] = {
+    "onboard_to_merge": _onboard_to_merge,
+    "merge_after_failure": _merge_after_failure,
+    "review_qa_merge": _review_qa_merge,
+}
+
+
+def _quest(entry: QuestEntry, where: str | None, times: Sequence[datetime | None]) -> QuestState:
     return QuestState(
-        "gatekeeper",
-        "Gatekeeper",
-        2,
-        "2 quest points; Reviewing and Quality assurance XP",
-        [
-            Task("Review an issue's pull request", times[0]),
-            Task("Pass QA on it", times[1]),
-            Task("Merge it", times[2]),
-        ],
+        entry.id,
+        entry.name,
+        entry.points,
+        entry.reward.format(**entry.params),
+        [Task(text.format(**entry.params), done_at) for text, done_at in zip(entry.steps, times, strict=True)],
         where=where,
-        xp=[Reward("review", "reviewing", 50_000), Reward("qa", "quality_assurance", 50_000)],
+        xp=[Reward(r.agent, r.skill, r.xp) for r in entry.xp],
+        cloak_trim=entry.cloak_trim,
     )
 
 
-def _divine_warden(journal: Journal, diaries: Sequence[Diary], total_reached: datetime | None) -> QuestState:
-    elite = _first(t for d in diaries if (t := d.tier("elite").completed_at) is not None)
-    return QuestState(
-        "divine_warden",
-        "Divine Warden",
-        5,
-        "5 quest points; a Divine trim on every cape",
-        [
-            Task("Merge 100 pull requests", _nth((j.at for j in journal.jobs if j.status == "pr_merged"), 100)),
-            Task("Complete a repo diary at Elite", elite),
-        ],
-        requirement="A character at total level 1,000",
-        requirement_met_at=total_reached,
-    )
+def _capstone(
+    entry: QuestEntry,
+    journal: Journal,
+    diaries: Sequence[Diary],
+    total_reached: Callable[[int], datetime | None],
+) -> QuestState:
+    params = entry.params
+    tier = str(params["diary_tier"])
+    completed = _first(t for d in diaries if (t := d.tier(tier).completed_at) is not None)
+    merges = _nth((j.at for j in journal.jobs if j.status == "pr_merged"), int(params["merges"]))
+    quest = _quest(entry, None, [merges, completed])
+    quest.requirement = (entry.requirement or "").format(**params)
+    quest.requirement_met_at = total_reached(int(params["total_level"]))
+    return quest
 
 
-def quest_rewards(journal: Journal) -> list[tuple[datetime, Reward]]:
+def _rewarding(journal: Journal, rules: Rules) -> list[QuestState]:
+    """Every quest whose kind gives XP, in the pack's order."""
+    return [_quest(e, *_KINDS[e.kind](journal, e.params)) for e in rules.pack.quests if e.kind in _KINDS]
+
+
+def quest_rewards(journal: Journal, *, rules: Rules) -> list[tuple[datetime, Reward]]:
     """Each XP reward of a completed quest, at its completion: computed before levels, which they feed."""
     out: list[tuple[datetime, Reward]] = []
-    for quest in (_first_steps(journal), _try_again(journal), _gatekeeper(journal)):
+    for quest in _rewarding(journal, rules):
         if quest.completed_at is not None:
             out.extend((quest.completed_at, reward) for reward in quest.xp)
     return out
 
 
-def evaluate_quests(journal: Journal, diaries: Sequence[Diary], total_reached: datetime | None) -> list[QuestState]:
-    """Every quest's state. ``total_reached`` is when a character first reached total level 1,000."""
-    return [
-        _first_steps(journal),
-        _try_again(journal),
-        _gatekeeper(journal),
-        _divine_warden(journal, diaries, total_reached),
-    ]
+def evaluate_quests(
+    journal: Journal,
+    diaries: Sequence[Diary],
+    total_reached: Callable[[int], datetime | None],
+    *,
+    rules: Rules,
+) -> list[QuestState]:
+    """Every quest's state, in the pack's order. ``total_reached(n)`` is when a character first reached total level n."""
+    out: list[QuestState] = []
+    for entry in rules.pack.quests:
+        if entry.kind in _KINDS:
+            out.append(_quest(entry, *_KINDS[entry.kind](journal, entry.params)))
+        else:
+            out.append(_capstone(entry, journal, diaries, total_reached))
+    return out

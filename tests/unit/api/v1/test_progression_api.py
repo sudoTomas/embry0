@@ -12,16 +12,18 @@ from httpx import ASGITransport, AsyncClient
 from embry0.api.v1 import progression as progression_api
 from embry0.services.achievements import evaluate
 from embry0.services.progression import compute
+from embry0.services.progression_pack import default_rules
 from embry0.storage.repositories.progression import Fact, ProgressEvent
 
 
 class FakeService:
     async def read(self) -> Any:
         events = [ProgressEvent("merged", "developer", datetime(2026, 10, 1, tzinfo=UTC))]
-        progression = compute(events, ["developer"])
+        rules = default_rules()
+        progression = compute(events, ["developer"], rules=rules)
         facts = [Fact("merged", datetime(2026, 10, 1, tzinfo=UTC), 1, "o/r #1")]
         progression.achievements, progression.unlocks = evaluate(
-            facts, progression.level_ups, progression.agent_level_ups
+            facts, progression.level_ups, progression.agent_level_ups, rules=rules
         )
         return progression
 
@@ -49,18 +51,30 @@ async def test_the_read_answers_the_account_its_characters_and_achievements() ->
         "diaries",
         "recent",
         "computed_at",
+        # the pack's own names, colours, words and art (#176)
+        "pack",
+        "groups",
+        "tiers",
+        "rares",
+        "cloaks",
+        "diary_tiers",
+        "messages",
+        "labels",
+        "curve",
     }
     assert body["account"] == {
         "xp": 60_000,
         "total_level": body["characters"][0]["total_level"],
         "characters": 1,
         "quest_points": 0,
+        "cloak_trim": False,
         "divine_trim": False,
     }
     assert len(body["skills"]) == 23 and body["skills"][0] == {
         "id": "coding",
         "name": "Coding",
         "group": "build",
+        "cloak": {"base": "#4a4a52", "trim": "#e07b2a"},
     }
     developer = body["characters"][0]
     assert developer["agent_type"] == "developer" and developer["best_skill"] == "coding"

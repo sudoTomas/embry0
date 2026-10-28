@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from embry0.services.progression import ProgressionService
+from embry0.services.progression_pack import ShippedPack, default_rules
 from embry0.services.world import quest_xp
 from embry0.storage.repositories.progression import ProgressionRepository
 from tests.fixtures.progression_history import MIXED, OLD_TOOLS, seed_history
@@ -25,6 +26,7 @@ from tests.fixtures.progression_history import MIXED, OLD_TOOLS, seed_history
 GOLDEN = Path(__file__).resolve().parents[2] / "fixtures" / "progression_golden.json"
 RECORD = os.environ.get("EMBRY0_RECORD_GOLDEN") == "1"
 NOW = datetime(2026, 1, 2, tzinfo=UTC)
+RULES = default_rules()
 
 
 def _contained(golden: Any, actual: Any, path: str = "$") -> list[str]:
@@ -76,8 +78,10 @@ def _quest_xp_cases() -> dict[str, Any]:
         },
     ]
     return {
-        "plain": quest_xp({"status": "completed", "finished_at": NOW}, runs),
-        "merged": quest_xp({"status": "pr_merged", "pr_url": "https://forge/pull/1", "finished_at": NOW}, runs),
+        "plain": quest_xp({"status": "completed", "finished_at": NOW}, runs, rules=RULES),
+        "merged": quest_xp(
+            {"status": "pr_merged", "pr_url": "https://forge/pull/1", "finished_at": NOW}, runs, rules=RULES
+        ),
         "cleanup": quest_xp(
             {
                 "status": "pr_merged",
@@ -87,6 +91,7 @@ def _quest_xp_cases() -> dict[str, Any]:
                 "finished_at": NOW,
             },
             [],
+            rules=RULES,
         ),
     }
 
@@ -106,7 +111,7 @@ def _check(name: str, actual: Any) -> None:
 @pytest.mark.asyncio
 async def test_progression_reads_the_seeded_history_as_recorded(db_with_migrations) -> None:
     await seed_history(db_with_migrations)
-    progression = await ProgressionService(ProgressionRepository(db_with_migrations)).read()
+    progression = await ProgressionService(ProgressionRepository(db_with_migrations), packs=ShippedPack()).read()
     body = json.loads(json.dumps(progression.to_dict()))
     body.pop("computed_at")
     assert body["achievements"] and body["characters"] and body["diaries"], "the history must reach every part"

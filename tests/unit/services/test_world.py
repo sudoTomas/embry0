@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from embry0.services.progression_pack import default_rules
 from embry0.services.world import (
     IDLE_DAYS,
     QUEST_TEMPLATE_BY_AGENT,
@@ -210,7 +211,9 @@ def test_a_quest_earns_its_party_experience_and_the_merge_its_developer():
             "created_at": NOW,
         },
     ]
-    plain = quest_xp({"status": "completed", "finished_at": NOW}, runs)
+    plain = quest_xp({"status": "completed", "finished_at": NOW}, runs, rules=default_rules())
     assert plain and all(g["agent_type"] == "developer" for g in plain), "a failed run earns nothing"
-    merged = quest_xp({"status": "pr_merged", "pr_url": "https://forge/pull/1", "finished_at": NOW}, runs)
+    merged = quest_xp(
+        {"status": "pr_merged", "pr_url": "https://forge/pull/1", "finished_at": NOW}, runs, rules=default_rules()
+    )
     assert sum(g["xp"] for g in merged) > sum(g["xp"] for g in plain)

@@ -1,14 +1,21 @@
-"""What each tool call trains (progression spec 2026-10-24): an action key ``kind:skill``.
+"""What each tool call was (#176): an action key ``kind:category``, never a skill.
 
 The agent node counts a run's tool calls into these keys as the events
-stream in and stores them on the trace (``traces.skill_actions``); the
-progression service prices each key by its kind and credits its skill.
-Traces from before the column keep only tool names, which read through the
-same function with no input: a shell call trains Shell, an edit Coding.
+stream past and stores them on the trace (``traces.skill_actions``). The
+active content pack maps each category to the skill it trains and prices
+each key by its kind, so a pack that renames, merges or removes skills
+re-prices every stored run.
 
-A shell command trains the skill of the first program in it that is not
-plain shell (``cd x && pytest`` is a test run); a file edit trains the skill
-of the file's path (docs, tests, migrations, styles, infra, else Coding).
+A shell command is the category of the first program in it that is not
+plain shell (``cd x && pytest`` is a test run); a file edit is the category
+of the file's path (docs, tests, SQL, styles, infra, else source). Traces
+written between migration 107 and #176 hold the older ``kind:skill`` keys,
+which :func:`current_actions` translates through :data:`LEGACY_ACTION_KEYS`;
+traces from before 107 keep only tool names, which read through
+:func:`actions_from_tools` with no input: a shell call is plain shell, an
+edit is source.
+
+This module runs in the orchestrator, never in a sandbox image.
 """
 
 from __future__ import annotations
@@ -18,6 +25,47 @@ import shlex
 from collections.abc import Mapping
 from pathlib import PurePosixPath
 from typing import Any
+
+#: Every category the classifier emits, by kind. Stable: a category is never renamed or reused.
+ACTION_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "edit": ("docs", "tests", "sql", "styles", "infra", "source"),
+    "shell": ("vcs", "test-runner", "linter", "security-scanner", "database-client", "build-tool", "ops-tool", "plain"),
+    "read": ("files",),
+    "search": ("code-search",),
+    "browser": ("browser",),
+    "log": ("log-query",),
+    "web": ("web",),
+    "agent": ("subagent",),
+    "plan": ("todo",),
+}
+
+#: Every action key, ``kind:category``.
+ACTION_KEYS: frozenset[str] = frozenset(f"{kind}:{c}" for kind, cats in ACTION_CATEGORIES.items() for c in cats)
+
+#: The ``kind:skill`` keys traces held between migration 107 and #176, each to the category it was.
+LEGACY_ACTION_KEYS: dict[str, str] = {
+    "edit:coding": "edit:source",
+    "edit:testing": "edit:tests",
+    "edit:documentation": "edit:docs",
+    "edit:databases": "edit:sql",
+    "edit:design": "edit:styles",
+    "edit:operations": "edit:infra",
+    "shell:version_control": "shell:vcs",
+    "shell:testing": "shell:test-runner",
+    "shell:linting": "shell:linter",
+    "shell:security": "shell:security-scanner",
+    "shell:databases": "shell:database-client",
+    "shell:building": "shell:build-tool",
+    "shell:operations": "shell:ops-tool",
+    "shell:shell": "shell:plain",
+    "read:reading": "read:files",
+    "search:searching": "search:code-search",
+    "web:research": "web:web",
+    "agent:delegation": "agent:subagent",
+    "plan:planning": "plan:todo",
+    "browser:browsing": "browser:browser",
+    "log:debugging": "log:log-query",
+}
 
 EDIT_TOOLS = frozenset({"Edit", "MultiEdit", "Write", "NotebookEdit"})
 _READ_TOOLS = frozenset({"Read", "Glob", "LS"})
@@ -101,13 +149,13 @@ _OPS_DIRS = ("/.github/", "/infra/", "/deploy/", "/k8s/", "/helm/", "/charts/")
 _TEST_DIRS = ("/tests/", "/test/", "/__tests__/", "/e2e/")
 
 
-def skill_of_path(path: str) -> str:
-    """The skill an edit of ``path`` trains."""
+def category_of_path(path: str) -> str:
+    """The category of an edit of ``path``."""
     p = "/" + path.replace("\\", "/").lstrip("/").lower()
     name = PurePosixPath(p).name
     suffix = PurePosixPath(p).suffix
     if suffix in _DOC_SUFFIXES or "/docs/" in p:
-        return "documentation"
+        return "docs"
     if (
         name.startswith("test_")
         or name.endswith(("_test.py", "_test.go"))
@@ -115,19 +163,19 @@ def skill_of_path(path: str) -> str:
         or ".spec." in name
         or any(d in p for d in _TEST_DIRS)
     ):
-        return "testing"
+        return "tests"
     if suffix == ".sql" or "/migrations/" in p:
-        return "databases"
+        return "sql"
     if suffix in _DESIGN_SUFFIXES:
-        return "design"
+        return "styles"
     if (
         name.startswith("dockerfile")
         or name in {"compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"}
         or suffix in _OPS_SUFFIXES
         or any(d in p for d in _OPS_DIRS)
     ):
-        return "operations"
-    return "coding"
+        return "infra"
+    return "source"
 
 
 def _words(segment: str) -> list[str]:
@@ -150,81 +198,81 @@ def _words(segment: str) -> list[str]:
             return words
 
 
-def _skill_of_segment(words: list[str]) -> str | None:
-    """The skill one command trains, or None for plain shell."""
+def _category_of_segment(words: list[str]) -> str | None:
+    """The category of one command, or None for plain shell."""
     if not words:
         return None
     program = PurePosixPath(words[0]).name
     args = [w for w in words[1:] if not w.startswith("-")]
     sub = args[0] if args else ""
     if program in _VERSION_CONTROL:
-        return "version_control"
+        return "vcs"
     if program in _TESTING or program == "unittest" or (program == "playwright" and sub == "test"):
-        return "testing"
+        return "test-runner"
     if program in _LINTING:
-        return "linting"
+        return "linter"
     if program in _SECURITY:
-        return "security"
+        return "security-scanner"
     if program in _DATABASES or (program == "prisma" and sub in {"migrate", "db"}):
-        return "databases"
+        return "database-client"
     if program in {"docker", "podman"} and sub in {"build", "buildx"}:
-        return "building"
+        return "build-tool"
     if program in _OPERATIONS:
-        return "operations"
+        return "ops-tool"
     if program in _PACKAGE_MANAGERS or program == "make":
         # The subcommand, script or target decides: ``npm run test:unit``
         # tests, ``make lint`` lints, ``npm ci`` builds.
         script = args[1] if sub == "run" and len(args) > 1 else sub
         if "test" in script:
-            return "testing"
+            return "test-runner"
         if any(word in script for word in ("lint", "typecheck", "type-check", "format", "fmt", "vet", "clippy")):
-            return "linting"
+            return "linter"
         if script == "audit":
-            return "security"
+            return "security-scanner"
         if program == "make" or script in _BUILD_SUBCOMMANDS or "build" in script:
-            return "building"
+            return "build-tool"
         return None
     if program in _BUILDING or (program == "uv" and sub in {"sync", "pip", "add", "lock", "build"}):
-        return "building"
+        return "build-tool"
     return None
 
 
-def skill_of_command(command: str) -> str:
-    """The skill a shell command trains: its first program that is not plain shell, else Shell."""
+def category_of_command(command: str) -> str:
+    """The category of a shell command: its first program that is not plain shell, else ``plain``."""
     for segment in _SEGMENT_SPLIT.split(command):
-        skill = _skill_of_segment(_words(segment.strip()))
-        if skill is not None:
-            return skill
-    return "shell"
+        category = _category_of_segment(_words(segment.strip()))
+        if category is not None:
+            return category
+    return "plain"
 
 
 def action_of(tool_name: str, tool_input: Mapping[str, Any] | None = None) -> str | None:
-    """The action key ``kind:skill`` of one tool call, or None for a call that trains nothing.
+    """The action key ``kind:category`` of one tool call, or None for a call the game does not count.
 
     Without ``tool_input`` (a trace from before ``skill_actions``) a shell
-    call trains Shell and an edit trains Coding.
+    call is plain shell and an edit is source.
     """
     data = tool_input or {}
     if tool_name == "Bash":
         command = data.get("command")
-        return f"shell:{skill_of_command(command) if isinstance(command, str) else 'shell'}"
+        return f"shell:{category_of_command(command) if isinstance(command, str) else 'plain'}"
     if tool_name in EDIT_TOOLS:
         path = data.get("file_path") or data.get("notebook_path")
-        return f"edit:{skill_of_path(path) if isinstance(path, str) and path else 'coding'}"
+        return f"edit:{category_of_path(path) if isinstance(path, str) and path else 'source'}"
     if tool_name in _READ_TOOLS:
-        return "read:reading"
+        return "read:files"
     if tool_name in _SEARCH_TOOLS:
-        return "search:searching"
+        return "search:code-search"
     if tool_name in _WEB_TOOLS:
-        return "web:research"
+        return "web:web"
     if tool_name in _AGENT_TOOLS:
-        return "agent:delegation"
+        return "agent:subagent"
     if tool_name in _PLAN_TOOLS:
-        return "plan:planning"
+        return "plan:todo"
     if tool_name.startswith("mcp__") and "__browser_" in tool_name:
-        return "browser:browsing"
+        return "browser:browser"
     if tool_name.startswith("mcp__") and tool_name.endswith("logs_query"):
-        return "log:debugging"
+        return "log:log-query"
     return None
 
 
@@ -242,4 +290,18 @@ def actions_from_tools(tools_called: Mapping[str, int]) -> dict[str, int]:
         key = action_of(name)
         if key is not None and isinstance(calls, int) and calls > 0:
             counts[key] = counts.get(key, 0) + calls
+    return counts
+
+
+def current_actions(stored: Mapping[str, int]) -> dict[str, int]:
+    """A trace's stored counts in today's keys: an older ``kind:skill`` key becomes its category.
+
+    A key that is neither (written by a later release, or by hand) is kept as
+    it is; the pack's map decides whether it earns anything.
+    """
+    counts: dict[str, int] = {}
+    for key, calls in stored.items():
+        current = LEGACY_ACTION_KEYS.get(key, key)
+        if isinstance(calls, int):
+            counts[current] = counts.get(current, 0) + calls
     return counts

@@ -1,0 +1,746 @@
+# embry0's shipped progression content pack (#176): every skill, rate, tier,
+# rare, achievement, quest, diary task and chat-box message the progression
+# layer uses, in embry0's own original theme. A deployment reads this pack
+# until an operator activates another; docs/progression.md explains how.
+#
+# The schema is embry0/services/progression_pack.py, and what a pack may name
+# (metrics, quest and diary task kinds, action categories, art) is
+# embry0/services/progression_vocabulary.py. Validate a copy with:
+#
+#   python -m embry0.services.progression_pack --check my-pack.yaml
+version: 1
+
+# The game's calendar: the day a rare drops on, the hour a merge counts as
+# late, the day a hot streak counts in.
+timezone: UTC
+
+# Level L starts at floor(sum over n < L of floor(n + points * 2^(n / doubling)) / divisor):
+# level 2 at 83 XP, level 92 at half of level 99's 13,034,431.
+curve:
+  max_level: 99
+  points: 300
+  doubling: 7
+  divisor: 4
+
+# Where a skill's tile sits on a skill sheet.
+groups:
+  - {id: build, name: Build}
+  - {id: verify, name: Verify}
+  - {id: investigate, name: Investigate}
+  - {id: care, name: Care}
+
+# Each skill, the action categories its tool calls are (a category trains one
+# skill at most), and the colours of the cloak it wears at the top level.
+skills:
+  - id: coding
+    name: Coding
+    group: build
+    trained_by: [edit:source]
+    cloak: {base: "#4a4a52", trim: "#e07b2a"}
+  - id: version_control
+    name: Version control
+    group: build
+    trained_by: [shell:vcs]
+    cloak: {base: "#3f6b2f", trim: "#8a5a2b"}
+  - id: building
+    name: Building
+    group: build
+    trained_by: [shell:build-tool]
+    cloak: {base: "#8a6a4a", trim: "#d8ccaa"}
+  - id: shell
+    name: Shell
+    group: build
+    trained_by: [shell:plain]
+    cloak: {base: "#2f6a3a", trim: "#c0392b"}
+  - id: databases
+    name: Databases
+    group: build
+    trained_by: [edit:sql, shell:database-client]
+    cloak: {base: "#3a3f55", trim: "#6fb7c9"}
+  - id: testing
+    name: Testing
+    group: verify
+    trained_by: [edit:tests, shell:test-runner]
+    cloak: {base: "#e8e2d0", trim: "#9e2b2b"}
+  - id: quality_assurance
+    name: Quality assurance
+    group: verify
+    cloak: {base: "#2f7a4a", trim: "#d8ccaa"}
+  - id: browsing
+    name: Browsing
+    group: verify
+    trained_by: [browser:browser]
+    cloak: {base: "#2a3550", trim: "#9a9aa2"}
+  - id: reviewing
+    name: Reviewing
+    group: verify
+    cloak: {base: "#2f4f9e", trim: "#d8ccaa"}
+  - id: linting
+    name: Linting
+    group: verify
+    trained_by: [shell:linter]
+    cloak: {base: "#7a5a3a", trim: "#e3b94b"}
+  - id: security
+    name: Security
+    group: verify
+    trained_by: [shell:security-scanner]
+    cloak: {base: "#efe9da", trim: "#e3b94b"}
+  - id: reading
+    name: Reading
+    group: investigate
+    trained_by: [read:files]
+    cloak: {base: "#2f6f9e", trim: "#d8ccaa"}
+  - id: searching
+    name: Searching
+    group: investigate
+    trained_by: [search:code-search]
+    cloak: {base: "#5c4a2a", trim: "#3f6e2d"}
+  - id: debugging
+    name: Debugging
+    group: investigate
+    trained_by: [log:log-query]
+    cloak: {base: "#2b2a30", trim: "#9e2b2b"}
+  - id: research
+    name: Research
+    group: investigate
+    trained_by: [web:web]
+    cloak: {base: "#3a2f7a", trim: "#7fb0ff"}
+  - id: triage
+    name: Triage
+    group: investigate
+    cloak: {base: "#7a2a2a", trim: "#e3b94b"}
+  - id: documentation
+    name: Documentation
+    group: care
+    trained_by: [edit:docs]
+    cloak: {base: "#2a6a6a", trim: "#c9a86a"}
+  - id: design
+    name: Design
+    group: care
+    trained_by: [edit:styles]
+    cloak: {base: "#c9a227", trim: "#2a2a2e"}
+  - id: operations
+    name: Operations
+    group: care
+    trained_by: [edit:infra, shell:ops-tool]
+    cloak: {base: "#c8641e", trim: "#f2c14e"}
+  - id: planning
+    name: Planning
+    group: care
+    trained_by: [plan:todo]
+    cloak: {base: "#4a7a2a", trim: "#c9a227"}
+  - id: delegation
+    name: Delegation
+    group: care
+    trained_by: [agent:subagent]
+    cloak: {base: "#3a2a4a", trim: "#9a9aa2"}
+  - id: communication
+    name: Communication
+    group: care
+    cloak: {base: "#3a6a2a", trim: "#c9a86a"}
+  - id: recovery
+    name: Recovery
+    group: care
+    cloak: {base: "#d8d8d8", trim: "#c0392b"}
+
+# The experience each thing is worth. A run that ended without an error earns
+# each tool call by its kind, in the skill its category trains; an outcome
+# earns a lot more. Chosen so the busiest character's main skill reaches the
+# top in about a year and its first levels come in its first week.
+rates:
+  actions: {edit: 1400, shell: 600, read: 1000, search: 800, browser: 1000, log: 400, web: 2000, agent: 2000, plan: 2000}
+  outcomes:
+    merged: {skill: coding, xp: 60000}
+    opened: {skill: version_control, xp: 20000}
+    qa_passed: {skill: quality_assurance, xp: 50000}
+    audited: {skill: documentation, xp: 40000, per_stale_claim: 1000}
+    asked: {skill: communication, xp: 20000}
+    comeback: {skill: recovery, xp: 90000}
+    resumed: {skill: recovery, xp: 90000}
+    # a merged slop cleanup: the base, plus this much per net line removed, up to max_lines
+    cleaned: {skill: coding, xp: 20000, per_line_removed: 300, max_lines: 1000}
+  # A finished run of these agents is an outcome of its own, on top of its calls.
+  runs:
+    - {agent: review, skill: reviewing, xp: 30000}
+    - {agent: pr-reviewer, skill: reviewing, xp: 30000}
+    - {agent: triage, skill: triage, xp: 2000}
+    - {agent: research, skill: research, xp: 40000}
+    - {agent: ops, skill: operations, xp: 40000}
+    - {agent: onboarding, skill: operations, xp: 40000}
+    - {agent: design-auditor, skill: design, xp: 40000}
+    - {agent: blast-radius, skill: security, xp: 40000}
+
+# A medal ladder. A character wears the tier of its best skill's level, in the
+# gear art step named; an achievement climbs the same ladder, one threshold per
+# tier. Spread over the curve's top, where experience piles up.
+tiers:
+  - {id: bronze, name: Bronze, from_level: 1, color: "#9c6b2f", gear: bronze}
+  - {id: silver, name: Silver, from_level: 15, color: "#a9adb6", gear: silver}
+  - {id: gold, name: Gold, from_level: 30, color: "#d4a020", gear: gold}
+  - {id: platinum, name: Platinum, from_level: 45, color: "#c7d3dc", gear: platinum}
+  - {id: diamond, name: Diamond, from_level: 60, color: "#7cc6dc", gear: diamond}
+  - {id: obsidian, name: Obsidian, from_level: 75, color: "#3b2f52", gear: obsidian}
+  - {id: divine, name: Divine, from_level: 90, color: "#d4af37", gear: divine}
+
+# Every quest done: the quest cloak, worn by the character with the highest total level.
+cloaks:
+  quest: {base: "#2f4a8f", trim: "#ece6d4"}
+
+# In wear order: a character wears the first one it holds, on its head.
+rares:
+  - id: golden-paper-crown
+    name: golden paper crown
+    art: golden-paper-crown
+    when: {first_run_of_year: true}
+  - id: paper-crown
+    name: paper crown
+    art: paper-crown
+    when: {merge_on: "12-25"}
+  - id: harvest-mask
+    name: harvest mask
+    art: harvest-mask
+    when: {merge_on: "10-31"}
+
+achievement_categories:
+  - {id: shipping, name: Shipping, blurb: "Pull requests that merged, and how cleanly they got there."}
+  - {id: hunting, name: Hunting, blurb: "Production errors the watcher found, and the fixes that kept them dead."}
+  - {id: questing, name: Questing, blurb: "Issues finished, and the answers owners gave."}
+  - {id: lore, name: Lore, blurb: "Instruction files, area maps and standards kept true."}
+  - {id: guarding, name: Guarding, blurb: "Reviews, QA and the gate that stops a bad merge."}
+  - {id: grit, name: Grit, blurb: "Work that failed, came back, and landed anyway."}
+  - {id: growth, name: Growth, blurb: "What the characters grew into."}
+  - {id: oddities, name: Oddities, blurb: "Strange hours and rare finds. Mostly secret."}
+
+# What the account achieved, never how busy it was: every metric is an
+# outcome. An id is stable: it keys the achievement for good. One threshold
+# makes an objective; one per tier makes a tiered achievement.
+achievements:
+  # ---- Shipping ----
+  - id: forged_in_fire
+    name: Shipped It
+    category: shipping
+    what_counts: "Pull requests embry0 opened that merged"
+    flavour: "Somebody ring the bell."
+    icon: anvil
+    metric: merged
+    thresholds: [1, 5, 15, 30, 60, 120, 250]
+  - id: no_death_run
+    name: No-Death Run
+    category: shipping
+    what_counts: "Merged pull requests whose issue or pull request had no earlier attempt"
+    flavour: "First try. No grave to run back to."
+    icon: sword
+    metric: first_try
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: clean_kill
+    name: Flawless Kill
+    category: shipping
+    what_counts: "Merged pull requests whose job never had an agent run end in an error"
+    flavour: "Not a single scratch."
+    icon: sword
+    metric: clean_kill
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: merged_for_a_penny
+    name: Merged for a Penny
+    category: shipping
+    what_counts: "Merged pull requests whose job spent under one US dollar"
+    flavour: "Cheapest upgrade in the game."
+    icon: coins
+    metric: merged_under_cost
+    params: {max_usd: 1}
+    thresholds: [1, 3, 10, 25, 50, 100, 200]
+  - id: speedrun_any_percent
+    name: "Speedrun Any%"
+    category: shipping
+    what_counts: "Pull requests merged within a day of their job starting"
+    flavour: "Skipped every cutscene."
+    icon: boots
+    metric: merged_within
+    params: {hours: 24}
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: repo_hopper
+    name: Repo Hopper
+    category: shipping
+    what_counts: "Repositories with at least one merged pull request"
+    flavour: "Same agent, new repository, same result."
+    icon: map
+    metric: repo_hopper
+    thresholds: [1, 2, 3, 5, 8, 13, 21]
+  - id: know_your_zones
+    name: Know Your Zones
+    category: shipping
+    what_counts: "Merged pull requests that named the area of the monorepo they changed"
+    flavour: "Never lost in the codebase again."
+    icon: map
+    metric: area_merged
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: full_raid_party
+    name: Full Raid Party
+    category: shipping
+    what_counts: "Merged pull requests whose job passed both a review and a QA run"
+    flavour: "Tank, healer and damage all showed up."
+    icon: helm
+    metric: merged_reviewed_and_tested
+    params: {review_agents: [review], qa_agents: [qa]}
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: hot_streak
+    name: Hot Streak
+    category: shipping
+    what_counts: "Days with three merged pull requests or more"
+    flavour: "The XP drops would not stop."
+    icon: flame
+    metric: merges_in_a_day
+    params: {count: 3}
+    thresholds: [1, 3, 5, 10, 20, 40, 80]
+  # ---- Hunting ----
+  - id: hunt_complete
+    name: Hunt Complete
+    category: hunting
+    what_counts: "Production errors whose fix was checked against the logs afterwards and found healed"
+    flavour: "Back to the board for the next one."
+    icon: skull
+    metric: healed
+    thresholds: [1, 3, 10, 25, 50, 100, 200]
+  - id: out_of_reach
+    name: Out of Reach
+    category: hunting
+    what_counts: "Production errors the watcher found itself that embry0's pull request then fixed"
+    flavour: "Killed it before it could hit anyone."
+    icon: shield
+    metric: out_of_reach
+    thresholds: [1, 3, 10, 25, 50, 100, 200]
+  - id: on_the_hunt
+    name: On the Hunt
+    category: hunting
+    what_counts: "Watcher findings a person accepted for fixing"
+    flavour: "This bug is somebody's job now."
+    icon: scroll
+    metric: cases_accepted
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: boss_hunter
+    name: Boss Hunter
+    category: hunting
+    what_counts: "High-severity production errors found healed"
+    flavour: "It had a health bar the size of the screen."
+    icon: crown
+    metric: healed
+    params: {severity: high}
+    thresholds: [1, 2, 5, 10, 25, 50, 100]
+  - id: elite_hunter
+    name: Elite Hunter
+    category: hunting
+    what_counts: "Healed production errors that had been seen ten times or more"
+    flavour: "It kept coming back. Not any more."
+    icon: skull
+    metric: healed
+    params: {min_seen: 10}
+    thresholds: [1, 2, 5, 10, 25, 50, 100]
+  - id: never_respawned
+    name: Never Respawned
+    category: hunting
+    what_counts: "Healed production errors that never came back after their fix was checked"
+    flavour: "It stayed down. They usually don't."
+    icon: grave
+    metric: never_respawned
+    thresholds: [1, 3, 10, 25, 50, 100, 200]
+  - id: deployed_and_dusted
+    name: Deployed and Dusted
+    category: hunting
+    what_counts: "Fixes for production errors that reached a deploy"
+    flavour: "Loot picked up, teleported home."
+    icon: coins
+    metric: deployed_fix
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  # ---- Questing ----
+  - id: quest_complete
+    name: Quest Complete
+    category: questing
+    what_counts: "Issues finished by a merged pull request"
+    flavour: "Done, and marked done."
+    icon: scroll
+    metric: issue_done
+    thresholds: [1, 5, 15, 30, 60, 120, 250]
+  - id: side_quest
+    name: Side Quest
+    category: questing
+    what_counts: "Sub-issues triage split off a bigger issue that a merged pull request finished"
+    flavour: "You were only meant to deliver a letter."
+    icon: scroll
+    metric: side_quest
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: talked_to_the_quest_giver
+    name: Talked to the Quest Giver
+    category: questing
+    what_counts: "Answers owners gave to embry0's proposals: start it, not this, or later"
+    flavour: "Yes, no, or later."
+    icon: speech
+    metric: owner_answer
+    thresholds: [1, 5, 10, 25, 50, 100, 250]
+  - id: quest_accepted
+    name: Quest Accepted
+    category: questing
+    what_counts: "Proposals an owner said yes to"
+    flavour: "Yes, I will help you."
+    icon: quill
+    metric: proposal_accepted
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: reward_claimed
+    name: Reward Claimed
+    category: questing
+    what_counts: "Accepted proposals whose job's pull request merged"
+    flavour: "The quest giver pays up."
+    icon: lamp
+    metric: proposal_merged
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: answer_given
+    name: Answer Given
+    category: questing
+    what_counts: "Questions an agent asked that a person answered"
+    flavour: "The dialogue box finally moved on."
+    icon: speech
+    metric: question_answered
+    thresholds: [1, 5, 10, 25, 50, 100, 250]
+  # ---- Lore ----
+  - id: lines_straightened
+    name: Lines Straightened
+    category: lore
+    what_counts: "Outdated claims the context audit found in the files that steer coding agents"
+    flavour: "The tutor was lying the whole time."
+    icon: quill
+    metric: stale_claims
+    thresholds: [10, 50, 100, 250, 500, 1000, 2500]
+  - id: lore_corrected
+    name: Lore Corrected
+    category: lore
+    what_counts: "Context-audit pull requests that merged"
+    flavour: "The library books are true again."
+    icon: book
+    metric: audit_merged
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: weeded_garden
+    name: Weeded Garden
+    category: lore
+    what_counts: "Context audits that found every instruction file already true"
+    flavour: "Not a single weed in the patch."
+    icon: leaf
+    metric: clean_audit
+    thresholds: [1, 5, 10, 25, 50, 100, 200]
+  - id: cartographer
+    name: Cartographer
+    category: lore
+    what_counts: "Repositories whose areas map merged"
+    flavour: "You can see the whole world map now."
+    icon: map
+    metric: areas_mapped
+    thresholds: [1, 2, 3, 5, 8, 13, 21]
+  - id: fashion_inspector
+    name: Fashion Inspector
+    category: lore
+    what_counts: "Repositories whose design audit scored 90 or more against their standard"
+    flavour: "Matching outfit, full set bonus."
+    icon: gem
+    metric: design_score
+    params: {min_score: 90}
+    thresholds: [1, 2, 3, 5, 8, 13, 21]
+  # ---- Guarding ----
+  - id: guardian_of_the_gate
+    name: Guardian of the Gate
+    category: guarding
+    what_counts: "Reviews a reviewer agent finished"
+    flavour: "None shall pass unread."
+    icon: shield
+    metric: reviews
+    params: {agents: [review, pr-reviewer]}
+    thresholds: [1, 10, 25, 50, 100, 250, 500]
+  - id: second_opinion
+    name: Second Opinion
+    category: guarding
+    what_counts: "Pull request reviews embry0 posted on a pull request"
+    flavour: "A second pair of eyes has left a comment."
+    icon: eye
+    metric: review_posted
+    thresholds: [1, 10, 25, 50, 100, 250, 500]
+  - id: potion_master
+    name: Potion Master
+    category: guarding
+    what_counts: "QA runs that completed"
+    flavour: "Every dose checked before it was drunk."
+    icon: potion
+    metric: qa_passed
+    thresholds: [1, 5, 15, 30, 60, 120, 250]
+  - id: you_shall_not_merge
+    name: You Shall Not Merge
+    category: guarding
+    what_counts: "Changes the verification gate stopped because they broke tests that passed before"
+    flavour: "Blocked just in time."
+    icon: gate
+    metric: gate_blocked
+    thresholds: [1, 2, 5, 10, 25, 50, 100]
+  - id: training_grounds
+    name: Training Grounds
+    category: guarding
+    what_counts: "Test setups embry0 proposed that a person applied to a repository"
+    flavour: "Somewhere safe to practise."
+    icon: target
+    metric: setup_applied
+    thresholds: [1, 2, 3, 5, 8, 13, 21]
+  # ---- Grit ----
+  - id: back_on_your_feet
+    name: Back on Your Feet
+    category: grit
+    what_counts: "Merges on an issue whose earlier job failed"
+    flavour: "Ran back from the gravestone and finished it."
+    icon: grave
+    secret: true
+    metric: comeback
+    thresholds: [1, 3, 5, 10, 25, 50, 100]
+  - id: back_from_the_respawn
+    name: Back from the Respawn
+    category: grit
+    what_counts: "Jobs a restart interrupted that resumed and finished their work"
+    flavour: "Logged back in mid-fight and won."
+    icon: hourglass
+    metric: resumed
+    params: {min_resumes: 1}
+    thresholds: [1, 3, 5, 10, 25, 50, 100]
+  - id: lag_survivor
+    name: Lag Survivor
+    category: grit
+    what_counts: "A job interrupted twice or more that still finished its work"
+    flavour: "The server restarted. Twice. You lived."
+    icon: hourglass
+    secret: true
+    metric: resumed
+    params: {min_resumes: 2}
+    thresholds: [1]
+  - id: second_wind
+    name: Second Wind
+    category: grit
+    what_counts: "Follow-up jobs on a pull request whose pull request then merged"
+    flavour: "Caught a breath, kept going."
+    icon: heart
+    metric: followup_merged
+    thresholds: [1, 2, 5, 10, 25, 50, 100]
+  - id: iron_will
+    name: Iron Will
+    category: grit
+    what_counts: "Issues that merged on their third attempt or later"
+    flavour: "Third time is the charm, apparently."
+    icon: pickaxe
+    metric: merged_on_attempt
+    params: {min_attempts: 3}
+    thresholds: [1, 2, 3, 5, 10, 25, 50]
+  # ---- Growth ----
+  - id: elder_agent
+    name: Elder Agent
+    category: growth
+    what_counts: "The highest total level of any one character"
+    flavour: "Seen it all, levelled most of it."
+    icon: beard
+    metric: best_total
+    thresholds: [100, 250, 500, 750, 1000, 1500, 2000]
+  - id: mastery_cloak
+    name: Mastery Cloak
+    category: growth
+    what_counts: "Skills at 99 across every character"
+    flavour: "A cloak that says you did nothing else for weeks."
+    icon: cape
+    metric: capes
+    thresholds: [1, 2, 5, 10, 23, 50, 100]
+  - id: fully_trained
+    name: Fully Trained
+    category: growth
+    what_counts: "The highest level any one character reached"
+    flavour: "One character, every stat that matters."
+    icon: sword
+    metric: best_level
+    thresholds: [10, 25, 50, 75, 100, 115, 126]
+  - id: halfway_by_experience
+    name: Halfway by Experience
+    category: growth
+    what_counts: "Skills that reached level 92, across every character"
+    flavour: "Halfway there, by the experience table."
+    icon: star
+    metric: skills_at_level
+    params: {level: 92}
+    thresholds: [1, 2, 5, 10, 23, 50, 100]
+  - id: thousand_club
+    name: Thousand Club
+    category: growth
+    what_counts: "Characters whose total level reached 1,000"
+    flavour: "The roster stopped being a bunch of noobs."
+    icon: star
+    metric: characters_at_total
+    params: {total: 1000}
+    thresholds: [1, 2, 3, 5, 8, 12, 18]
+  - id: rare_finds
+    name: Rare Finds
+    category: growth
+    what_counts: "Rare drops characters earned"
+    flavour: "Worth framing."
+    icon: gem
+    metric: rares
+    thresholds: [1, 2, 3, 5, 8, 13, 21]
+  # ---- Oddities ----
+  - id: afk_weekend
+    name: AFK Weekend
+    category: oddities
+    what_counts: "A pull request that merged on a Saturday or Sunday (UTC)"
+    flavour: "The agents grind while you touch grass."
+    icon: moon
+    secret: true
+    metric: merged_at_local_time
+    params: {weekdays: [6, 7], from_hour: 0, to_hour: 24}
+    thresholds: [1]
+  - id: night_shift
+    name: Night Shift
+    category: oddities
+    what_counts: "A pull request that merged between midnight and four in the morning (UTC)"
+    flavour: "Nobody else was online."
+    icon: moon
+    secret: true
+    metric: merged_at_local_time
+    params: {weekdays: [1, 2, 3, 4, 5, 6, 7], from_hour: 0, to_hour: 4}
+    thresholds: [1]
+  - id: friday_night_merge
+    name: Friday Night Merge
+    category: oddities
+    what_counts: "A pull request that merged on a Friday after eight in the evening (UTC)"
+    flavour: "Bold. Very bold."
+    icon: flame
+    secret: true
+    metric: merged_at_local_time
+    params: {weekdays: [5], from_hour: 20, to_hour: 24}
+    thresholds: [1]
+  # Counts 1 January as well, while the new-year rare drops on the year's
+  # first run, not on a merge that day: two rules, kept apart on purpose.
+  - id: holiday_event
+    name: Holiday Event
+    category: oddities
+    what_counts: "A pull request that merged on 25 December, 31 October or 1 January (UTC)"
+    flavour: "Limited-time event. Log in to claim."
+    icon: gift
+    secret: true
+    metric: merged_on_dates
+    params: {dates: ["12-25", "10-31", "01-01"]}
+    thresholds: [1]
+  - id: long_grind
+    name: Long Grind
+    category: oddities
+    what_counts: "A pull request that merged from a job that ran for more than two hours"
+    flavour: "This was supposed to be a quick fix."
+    icon: hourglass
+    secret: true
+    metric: merged_running_over
+    params: {hours: 2}
+    thresholds: [1]
+  - id: lucky_find
+    name: Lucky Find
+    category: oddities
+    what_counts: "A pull request that merged from the first job embry0 ever ran on its repository"
+    flavour: "Beginner's luck."
+    icon: paw
+    secret: true
+    metric: lucky_find
+    thresholds: [1]
+  - id: ninety_nine_problems
+    name: 99 Problems
+    category: oddities
+    what_counts: "A production error seen 99 times or more that a merged fix killed"
+    flavour: "But a bug ain't one."
+    icon: skull
+    secret: true
+    metric: fixed_recurring
+    params: {min_seen: 99}
+    thresholds: [1]
+
+# Short goals the account completes once, for points and XP to the characters
+# that did the work. A quest's steps are its kind's; its texts may use its
+# params as {name} placeholders.
+quests:
+  - id: first_steps
+    kind: onboard_to_merge
+    name: First Steps
+    points: 1
+    reward: "1 quest point; Operations and Coding XP"
+    steps: ["Onboard a repository", "Finish its first job", "Merge its first pull request"]
+    xp:
+      - {agent: onboarding, skill: operations, xp: 40000}
+      - {agent: developer, skill: coding, xp: 40000}
+  - id: try_again
+    kind: merge_after_failure
+    name: "Try, Try Again"
+    points: 1
+    reward: "1 quest point; Recovery XP"
+    steps: ["Watch a job on an issue fail", "Merge a later job on that issue"]
+    xp:
+      - {agent: developer, skill: recovery, xp: 60000}
+  - id: gatekeeper
+    kind: review_qa_merge
+    name: Gatekeeper
+    points: 2
+    reward: "2 quest points; Reviewing and Quality assurance XP"
+    steps: ["Review an issue's pull request", "Pass QA on it", "Merge it"]
+    params: {review_agents: [review, pr-reviewer], qa_agents: [qa]}
+    xp:
+      - {agent: review, skill: reviewing, xp: 50000}
+      - {agent: qa, skill: quality_assurance, xp: 50000}
+  - id: divine_warden
+    kind: capstone
+    name: Divine Warden
+    points: 5
+    reward: "5 quest points; a Divine trim on every cape"
+    steps: ["Merge {merges} pull requests", "Complete a repo diary at Elite"]
+    requirement: "A character at total level {total_level:,}"
+    params: {merges: 100, diary_tier: elite, total_level: 1000}
+    cloak_trim: true
+
+# One diary per repository, in tiers; a tier is done when its last task is.
+diaries:
+  tiers:
+    - id: easy
+      name: Easy
+      tasks:
+        - {kind: triage, params: {agents: [triage]}, text: "Triage an issue"}
+        - {kind: finish_job, text: "Finish a job"}
+        - {kind: run_qa, params: {agents: [qa]}, text: "Run QA"}
+    - id: medium
+      name: Medium
+      tasks:
+        - {kind: merges, params: {count: 1}, text: "Merge a pull request"}
+        - {kind: pass_qa, params: {agents: [qa]}, text: "Pass QA"}
+        - {kind: audit, text: "Audit its context"}
+    - id: hard
+      name: Hard
+      tasks:
+        - {kind: merges, params: {count: 10}, text: "Merge {count} pull requests"}
+        - {kind: clean_audit, text: "Audit its context and find no outdated claim"}
+        - {kind: reviews, params: {count: 10, agents: [review, pr-reviewer]}, text: "Review {count} times"}
+    - id: elite
+      name: Elite
+      tasks:
+        - {kind: merges, params: {count: 50}, text: "Merge {count} pull requests"}
+        - {kind: quiet_stretch, params: {days: 30}, text: "Go {days} days without a failed job"}
+        - {kind: all_above, text: "Complete every task above"}
+
+# The chat box, bottom left: one message per thing that happened.
+messages:
+  level: "{character} reached {skill} level {level}."
+  agent_level: "{character} is now level {level}."
+  rare: "{character} found a {rare}."
+  quest: "Quest done: {name}."
+  diary: "The {tier} tasks of the {repo} diary are done."
+  achievement_tier: "{name} reached {tier}."
+  achievement_complete: "Achievement done: {name}."
+
+# The game's nouns the pages print.
+labels:
+  complete: Complete
+  quest_journal: Deeds
+  journal_points: deed points
+  quest_point: point
+  quest_points: points
+  gear: "{tier} gear"
+  mastery_cloak: "{skill} cape"
+  trimmed_cloak: "{skill} cape (trimmed)"
+  quest_cloak: quest cloak
