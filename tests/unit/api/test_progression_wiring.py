@@ -1,4 +1,4 @@
-"""Production builds the progression service over the database and mounts its read behind auth.
+"""Production builds the progression service over the database and the active pack, and mounts its read behind auth.
 
 Read from the AST of ``lifespan`` because that wiring needs Docker and a
 database; see test_merge_approvals_wiring.py for the same approach.
@@ -20,7 +20,9 @@ def test_the_service_reads_the_database_through_its_repository() -> None:
         for node in ast.walk(ast.parse(SOURCE))
         if isinstance(node, ast.Assign) and any(ast.unparse(t) == "app.state.progression" for t in node.targets)
     }
-    assert assigned == {"ProgressionService(ProgressionRepository(db))"}, assigned
+    assert assigned == {"ProgressionService(ProgressionRepository(db), packs=ShippedPack())"}, (
+        f"production reads the database and the active content pack (#176): {assigned}"
+    )
 
 
 def test_the_router_is_mounted_behind_auth() -> None:
