@@ -570,3 +570,45 @@ async def test_a_repositorys_bots_are_embry0s_authors_there_and_the_owners_list(
     assert got == ["agent@acme.example", "bot@acme.example", "release-bot"]
     nothing = await loop_mod.repo_bots(REPO, prefs=Store({}), orgs=Store({}), credentials=Store({}))
     assert nothing == []
+
+
+async def test_each_credential_keeps_its_own_budget() -> None:
+    """#185: two owners on two tokens. One token near its reserve stops only its own repository,
+    and the per-tick calls are counted per token, not shared between them."""
+    low, high = "lowco/app", "highco/app"
+    forges = {low: FakeForge(remaining=10, repo=low), high: FakeForge(comment_pages=50, repo=high)}
+    records, order = _history(2)
+    store = FakeStore()
+
+    async def repos() -> list[str]:
+        return [low, high]
+
+    async def token_for(repo: str) -> tuple[str, str, str]:
+        return ("github", f"token-of-{repo.split('/')[0]}", "")
+
+    async def client_for(repo: str) -> Any:
+        return forges[repo]
+
+    async def no_model() -> str:
+        return ""
+
+    async def no_bots(repo: str) -> tuple[str, ...]:
+        return ()
+
+    loop = SlopMeterLoop(
+        repos=repos,
+        store=store,
+        mirror=FakeMirror(records, order),
+        token_for=token_for,
+        client_for=client_for,
+        model=no_model,
+        bots=no_bots,
+        resolver=None,
+        settings=SlopMeterSettings(commits_per_tick=10, event_pages=100, api_calls_per_tick=8, rate_reserve=100),
+        clock=lambda: START + timedelta(days=60),
+    )
+    assert await loop.tick() is True
+    assert len(forges[low].calls) == 1, "the low token stops at its reserve after one call"
+    assert len(forges[high].calls) == 8, (
+        f"the other token reads its whole budget, not what the low one left: {len(forges[high].calls)} calls"
+    )

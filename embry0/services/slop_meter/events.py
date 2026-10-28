@@ -1,11 +1,11 @@
-"""The forge events that show human attention, read a call at a time under a shared budget (spec 2026-10-26, slop-o-meter).
+"""The forge events that show human attention, read a call at a time under a budget (spec 2026-10-26, slop-o-meter).
 
 Issue and pull request comments, review comments and reviews, from GitHub
 through the organization's forge client, each from a stored cursor. The
 credential is the one jobs clone, push and open pull requests with, so every
-API call is counted against a per-tick budget shared by all repositories, and
-the tick stops calling the forge when the credential's remaining rate limit
-drops below a reserve. An :class:`EventReader` makes one call per ``step``, so
+API call is counted against a per-tick budget of that credential, shared by the
+repositories it reads, and the tick stops calling the forge with it when its
+remaining rate limit drops below a reserve. An :class:`EventReader` makes one call per ``step``, so
 the loop deals calls round-robin and one repository's backlog cannot starve the
 others. Logins become commit emails from the login's own commits.
 """
@@ -43,7 +43,8 @@ class BudgetSpent(Exception):
 
 
 class ApiBudget:
-    """The forge API calls one tick may make, shared by every repository, and the rate-limit reserve it keeps.
+    """The forge API calls one tick may make with one credential, shared by the repositories it reads, and the
+    rate-limit reserve it keeps.
 
     Each response's ``X-RateLimit-Remaining`` is read; once it is below
     ``reserve`` no further call is made this tick (jobs need the rest).
