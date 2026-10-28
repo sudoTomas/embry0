@@ -57,3 +57,4 @@ If your work contradicts a record here, say so explicitly rather than silently o
 | [0024](0024-provider-fallback.md) | An agent whose provider is paused runs on the next ready model of an operator's fallback order | accepted (2026-10-25) |
 | [0025](0025-spent-account-waits.md) | A spent account parks the job until its reset; it never fails it | accepted (2026-10-25) |
 | [0026](0026-settings-document.md) | Operator policy lives in one settings document per deployment, a section per feature, validated, versioned with undo and read every tick; a policy variable it replaces is imported once | accepted (2026-10-28) |
+| [0027](0027-progression-content-pack.md) | The progression layer's content is a pack: a schema embry0 ships and values a deployment holds; an admin edits it through a draft, a preview and versions, and a reset returns to the shipped default | accepted (2026-10-28) |

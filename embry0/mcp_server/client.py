@@ -776,6 +776,34 @@ class Embry0Client:
         path = f"/api/v1/standards/{_owner(owner)}/{_kind(kind)}/audit/{_repo_path(repo)}"
         return _as_dict(await self._request("POST", path))
 
+    # ------------------------------------------------- the progression content pack (#176)
+
+    async def progression_pack_get(self) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", "/api/v1/progression/pack"))
+
+    async def progression_pack_set(
+        self, text: str, *, dry_run: bool = False, expected_version: int | None = None
+    ) -> dict[str, Any]:
+        """Validate the whole pack and activate it (raw-YAML PUT); ``dry_run`` only reports what it would change.
+
+        ``expected_version`` is the active version the caller read; it goes in
+        ``If-Match``, so a pack someone else activated since is not overwritten (409).
+        """
+        params: dict[str, Any] = {"source": "person"}
+        if dry_run:
+            params["dry_run"] = 1
+        headers = {"Content-Type": "application/yaml"}
+        if expected_version is not None:
+            headers["If-Match"] = f'"{expected_version}"'
+        return _as_dict(
+            await self._request(
+                "PUT", "/api/v1/progression/pack", params=params, content=text.encode("utf-8"), headers=headers
+            )
+        )
+
+    async def progression_pack_reset(self) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", "/api/v1/progression/pack/reset"))
+
     async def org_webhook_install(self, owner: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/webhook"))
 

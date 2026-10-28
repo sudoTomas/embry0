@@ -1,6 +1,6 @@
-"""Production builds the progression service over the database and the active pack, and mounts its read behind auth.
+"""Production builds the progression service over the database and the stored pack, and mounts its routes behind auth.
 
-Read from the AST of ``lifespan`` because that wiring needs Docker and a
+Read from the AST of ``app.py`` because that wiring needs Docker and a
 database; see test_merge_approvals_wiring.py for the same approach.
 """
 
@@ -12,21 +12,48 @@ import pathlib
 import embry0.api.app as app_module
 
 SOURCE = pathlib.Path(app_module.__file__).read_text()
+TREE = ast.parse(SOURCE)
+
+
+def _assigned(target: str) -> set[str]:
+    return {
+        ast.unparse(node.value)
+        for node in ast.walk(TREE)
+        if isinstance(node, ast.Assign) and any(ast.unparse(t) == target for t in node.targets)
+    }
 
 
 def test_the_service_reads_the_database_through_its_repository() -> None:
-    assigned = {
-        ast.unparse(node.value)
-        for node in ast.walk(ast.parse(SOURCE))
-        if isinstance(node, ast.Assign) and any(ast.unparse(t) == "app.state.progression" for t in node.targets)
-    }
-    assert assigned == {"ProgressionService(ProgressionRepository(db), packs=ShippedPack())"}, (
-        f"production reads the database and the active content pack (#176): {assigned}"
-    )
+    assert _assigned("app.state.progression") == {
+        "ProgressionService(ProgressionRepository(db), packs=app.state.progression_packs)"
+    }, "production reads the database and the stored content pack (#176)"
 
 
-def test_the_router_is_mounted_behind_auth() -> None:
-    assert (
-        'app.include_router(progression.router, prefix="/api/v1", tags=["progression"], dependencies=auth_deps)'
-        in SOURCE
+def test_the_active_pack_is_the_stored_one_not_the_shipped_default() -> None:
+    """``packs`` is required, so a missing source fails at once; a wrong one (``ShippedPack()``) would not.
+
+    With the shipped source wired, every write of the pack API would succeed
+    and nothing anyone sees would ever change.
+    """
+    assert _assigned("app.state.progression_packs") == {"PackStore(ProgressionPacksRepository(db))"}, (
+        "production must read the active pack from the database (#176)"
     )
+    assert "ShippedPack()" not in SOURCE, "the shipped-only source is for tests; production reads the stored pack"
+
+
+def test_the_lifespan_upgrades_a_stored_pack_after_the_migrations() -> None:
+    lifespan = next(
+        node for node in ast.walk(TREE) if isinstance(node, ast.AsyncFunctionDef) and node.name == "lifespan"
+    )
+    calls = [ast.unparse(node) for node in ast.walk(lifespan) if isinstance(node, ast.Call)]
+    assert "upgrade_stored_packs(ProgressionPacksRepository(db))" in calls, "a stored older pack is upgraded at boot"
+    body = ast.unparse(lifespan)
+    assert body.index("run_migrations(db)") < body.index("upgrade_stored_packs("), "after the tables exist"
+
+
+def test_the_routers_are_mounted_behind_auth() -> None:
+    for router in ("progression", "progression_pack"):
+        assert (
+            f'app.include_router({router}.router, prefix="/api/v1", tags=["progression"], dependencies=auth_deps)'
+            in SOURCE
+        ), router

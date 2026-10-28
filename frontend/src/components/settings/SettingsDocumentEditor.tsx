@@ -10,12 +10,13 @@ import { Textarea } from "@/components/ui/Textarea";
 import { apiErrorMessage, isConflict } from "@/api/errorDetail";
 import { toastApiError } from "@/api/errorToast";
 import { usePreviewSettings, useSaveSettings, useSettingsDocument } from "@/hooks/useSettingsDocument";
-import { documentProblems, parseUnifiedDiff, unknownParts, type DocumentProblem } from "@/lib/settingsDocument";
+import { documentProblems, unknownParts, type DocumentProblem } from "@/lib/settingsDocument";
+import { parseUnifiedDiff } from "@/lib/textDiff";
+import { TextDiff } from "@/components/documents/TextDiff";
 import type { SettingsPreview } from "@/lib/types/settings";
 import { formatDateTime } from "@/lib/utils";
 import { useIsAdmin } from "@/stores/authStore";
 import { SettingsChangeList } from "./SettingsChangeList";
-import { TextDiff } from "./TextDiff";
 
 const PLACEHOLDER = "# Every key is optional; a key you leave out takes its default.\nversion: 1\n";
 

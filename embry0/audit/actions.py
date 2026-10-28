@@ -79,6 +79,11 @@ AuditAction = Literal[
     "standard.updated",
     "standard.repo_mode_set",
     "standard.audit_started",
+    # The progression content pack
+    "progression.pack_activated",
+    "progression.pack_draft_saved",
+    "progression.pack_draft_deleted",
+    "progression.pack_reset",
     # Agents and skills
     "agent.skill_added",
     "agent.skill_removed",
@@ -188,6 +193,10 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "standard.updated": "Standard updated",
     "standard.repo_mode_set": "Standard mode set for a repository",
     "standard.audit_started": "Standard audit started",
+    "progression.pack_activated": "Game content pack activated",
+    "progression.pack_draft_saved": "Game content draft saved",
+    "progression.pack_draft_deleted": "Game content draft discarded",
+    "progression.pack_reset": "Game content reset to the shipped default",
     "agent.skill_added": "Skill added to an agent",
     "agent.skill_removed": "Skill removed from an agent",
     "skill_source.created": "Skill source added",

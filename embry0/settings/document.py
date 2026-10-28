@@ -19,7 +19,6 @@ import datetime as _dt
 import difflib
 import json
 import math
-from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
@@ -35,6 +34,9 @@ from embry0.settings.registry import (
     SectionModel,
     SectionRefused,
 )
+from embry0.text_documents import NO_NEWLINE as NO_NEWLINE  # re-exported: the settings tests and API name it here
+from embry0.text_documents import DuplicateKey, refuse_duplicate_keys, structure_problems
+from embry0.text_documents import text_diff as shared_text_diff
 
 logger = structlog.get_logger(__name__)
 
@@ -42,8 +44,6 @@ logger = structlog.get_logger(__name__)
 MAX_TEXT_BYTES: Final = 256 * 1024
 
 Loc = tuple[str | int, ...]
-
-_MERGE_TAG: Final = "tag:yaml.org,2002:merge"
 
 
 @dataclass(frozen=True)
@@ -93,54 +93,13 @@ def _compose(text: str) -> yaml.Node | None:
     return node
 
 
-def _line(node: yaml.Node) -> int:
-    return int(getattr(node.start_mark, "line", -1)) + 1
-
-
 def _structure_problems(root: yaml.Node | None) -> list[Problem]:
     """What a settings document may not use: aliases, merge keys, non-text keys, a key written twice.
 
-    An alias is refused because a few of them can expand a small text into
-    a very large value. A key written twice is refused because YAML keeps
-    only the last one, silently.
+    The checks are shared with every document an operator writes
+    (:mod:`embry0.text_documents`).
     """
-    problems: list[Problem] = []
-    seen: set[int] = set()
-    # In document order, so an alias is reported where it is used, not where its anchor is.
-    queue: deque[tuple[yaml.Node, Loc]] = deque() if root is None else deque([(root, ())])
-    while queue:
-        node, loc = queue.popleft()
-        if id(node) in seen:
-            problems.append(Problem(loc, "yaml_alias", "Aliases (*name) are not supported in a settings document."))
-            continue
-        seen.add(id(node))
-        if isinstance(node, yaml.MappingNode):
-            first: dict[str, int] = {}
-            for key, value in node.value:
-                if key.tag == _MERGE_TAG:
-                    problems.append(
-                        Problem(loc, "yaml_merge", f"Line {_line(key)}: merge keys (<<) are not supported.")
-                    )
-                    continue
-                if not isinstance(key, yaml.ScalarNode):
-                    problems.append(Problem(loc, "key_type", f"Line {_line(key)}: a key must be text."))
-                    continue
-                name = str(key.value)
-                if name in first:
-                    problems.append(
-                        Problem(
-                            (*loc, name),
-                            "duplicate_key",
-                            f"'{name}' is written twice, on lines {first[name]} and {_line(key)}; YAML would keep "
-                            "only the second. Keep one.",
-                        )
-                    )
-                else:
-                    first[name] = _line(key)
-                queue.append((value, (*loc, name)))
-        elif isinstance(node, yaml.SequenceNode):
-            queue.extend((item, (*loc, index)) for index, item in enumerate(node.value))
-    return problems
+    return [Problem(p.loc, p.type, p.msg) for p in structure_problems(root, what="a settings document")]
 
 
 def load_yaml(text: str) -> dict[str, Any]:
@@ -182,7 +141,9 @@ def parse_body(body: bytes, content_type: str) -> tuple[str | None, dict[str, An
         raise DocumentInvalid([Problem((), "encoding", "The document must be UTF-8 text.")]) from None
     if content_type.split(";", 1)[0].strip().lower() == "application/json":
         try:
-            values = json.loads(text) if text.strip() else {}
+            values = json.loads(text, object_pairs_hook=refuse_duplicate_keys) if text.strip() else {}
+        except DuplicateKey as exc:
+            raise DocumentInvalid([Problem((), "duplicate_key", str(exc))]) from None
         except json.JSONDecodeError as exc:
             raise DocumentInvalid(
                 [Problem((), "json_syntax", f"The JSON cannot be read: line {exc.lineno}, column {exc.colno}")]
@@ -640,36 +601,12 @@ def with_section(text: str, values: Mapping[str, Any], name: str, add: Mapping[s
     return _lines(header, "", newline) + _comment(comment, "", newline) + _lines(dump_yaml(merged), "", newline)
 
 
-#: The line git writes after a text's last line when the text has no final newline.
-NO_NEWLINE: Final = "\\ No newline at end of file"
-#: Marks, inside the diff, a last line with no final newline; the NUL character, which no
-#: stored or accepted text holds.
-_UNTERMINATED: Final = "\x00"
-
-
-def _diff_lines(text: str) -> list[str]:
-    lines = text.splitlines()
-    if lines and not text.endswith(("\n", "\r")):
-        lines[-1] += _UNTERMINATED
-    return lines
-
-
 def text_diff(before: str, after: str) -> str:
     """A unified diff of two texts, ``stored`` to ``proposed``, one line per line, as git writes it.
 
-    A text with no final newline (text typed into a form often has none) is
-    followed, after its last line, by git's own line ``\\ No newline at end of
-    file``, with no prefix. A last line that differs only by its final
-    newline shows as removed and added, as in git, and the hunk counts do not
-    count the marker.
+    Shared with every document an operator writes (:func:`embry0.text_documents.text_diff`).
     """
-    out: list[str] = []
-    for line in difflib.unified_diff(_diff_lines(before), _diff_lines(after), "stored", "proposed", n=2, lineterm=""):
-        if line.endswith(_UNTERMINATED):
-            out += [line[: -len(_UNTERMINATED)], NO_NEWLINE]
-        else:
-            out.append(line)
-    return "\n".join(out) + "\n" if out else ""
+    return shared_text_diff(before, after, before_name="stored", after_name="proposed")
 
 
 _MISSING: Final = object()

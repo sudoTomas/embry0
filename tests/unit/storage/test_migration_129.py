@@ -9,10 +9,8 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import MIGRATIONS
 
 
-def test_migration_129_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_127.py)."""
-    assert MIGRATIONS[-1][0] == 129, "migration 129 must create settings_documents"
+def test_migration_129_is_present_once() -> None:
+    assert [v for v, _, _ in MIGRATIONS].count(129) == 1, "migration 129 must create settings_documents"
 
 
 @pytest.mark.requires_postgres

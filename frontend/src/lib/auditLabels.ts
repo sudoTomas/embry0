@@ -60,6 +60,10 @@ export const ACTION_ICONS: Record<string, LucideIcon> = {
   "settings.updated": Settings,
   "settings.change_undone": Undo2,
   "settings.bootstrapped": Settings,
+  "progression.pack_activated": Check,
+  "progression.pack_draft_saved": Pencil,
+  "progression.pack_draft_deleted": X,
+  "progression.pack_reset": ArrowLeftRight,
 };
 
 /** The icon for an audit action; an action the map does not know yet gets a dot. */
@@ -97,6 +101,10 @@ export const ACTION_LABELS: Record<string, string> = {
   "settings.updated": "Settings document changed",
   "settings.change_undone": "Settings change undone",
   "settings.bootstrapped": "Settings imported from the environment",
+  "progression.pack_activated": "Game content pack activated",
+  "progression.pack_draft_saved": "Game content draft saved",
+  "progression.pack_draft_deleted": "Game content draft discarded",
+  "progression.pack_reset": "Game content reset to the shipped default",
 };
 
 /** The words for an audit action; an action this map does not know yet reads

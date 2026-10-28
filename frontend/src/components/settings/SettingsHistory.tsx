@@ -5,11 +5,12 @@ import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { toastApiError } from "@/api/errorToast";
 import { useSettingsRevision, useSettingsRevisions, useUndoSettingsChange } from "@/hooks/useSettingsDocument";
-import { REVISION_SOURCE_LABELS, diffLines } from "@/lib/settingsDocument";
+import { REVISION_SOURCE_LABELS } from "@/lib/settingsDocument";
+import { diffLines } from "@/lib/textDiff";
+import { TextDiff } from "@/components/documents/TextDiff";
 import type { SettingsRevision } from "@/lib/types/settings";
 import { formatDateTime } from "@/lib/utils";
 import { SettingsChangeList } from "./SettingsChangeList";
-import { TextDiff } from "./TextDiff";
 
 const UNDO_CONFIRM = "Put back how it was before this change? This is recorded too, so you can undo it again.";
 

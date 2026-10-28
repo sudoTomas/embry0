@@ -1,0 +1,11 @@
+# ADR 0027: The progression layer's content is a pack: a schema embry0 ships and values a deployment holds
+
+Status: accepted (2026-10-28)
+
+Everything the progression layer names, counts and says (the skills and the action categories that train them, the curve and rates, the tiers and the gear art each wears, the rares, the achievements, quests and diary tasks, the words of the chat box and the calendar) is one content pack: a document whose schema and vocabulary are code (`embry0/services/progression_pack.py`, `progression_vocabulary.py`) and whose values are data, the split ADR 0014 made for standards. embry0 ships a neutral default as one file in the tree, and a deployment follows it until an admin activates another. A pack can only fill the vocabulary: it names metrics, quest and task kinds and art the code defines, with their parameters, and never carries SQL. One pack is active per deployment, because characters and the account are deployment-wide. A customised pack is a whole document, stored as written with its comments; it is changed through a stored draft, a preview of the history re-priced under it, and an activation, or in one checked step from a file. Every activation is a version that can be restored, and a reset returns to the shipped default.
+
+The pack is its own document, not a section of the settings document ([ADR 0026](0026-settings-document.md)): it is edited at length, previewed before it goes live because it re-prices history, reset to a default that moves with each release, and undone apart from policy. It copies that document's conventions: YAML kept with its comments, a 422 naming every bad key without echoing a value, `?dry_run=1`, revision sources, `If-Match`, admin-only writes.
+
+Consequences: a release that changes the shipped default reaches every deployment that follows it; one that customised its pack keeps it, and is told the default moved, with the diff. A stored pack the running release refuses is never served: the shipped default is, and the dashboard says why. A pack written in an older schema is upgraded at startup, losing its comments.
+
+Evidence: migration 130; `embry0/services/progression_pack_store.py`; `embry0/api/v1/progression_pack.py`; [progression.md](../progression.md#changing-the-content); [the design](../superpowers/specs/2026-10-28-progression-pack-design.md); issue #176.

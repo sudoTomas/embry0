@@ -7,18 +7,24 @@ in FastAPI's own error shape (``loc``, ``type``, ``msg``, never the rejected
 value). ``?dry_run=1`` answers what would change and stores nothing. Undo
 puts back what the newest change replaced.
 
-Reads take any key: the document holds no secrets. Writes take the admin
+Reads take any key: the document holds no secrets. Who changed it is shown
+as ``GET /audit`` shows actors (:mod:`embry0.api.actor_visibility`): an
+admin sees everyone, anyone else only themselves. Writes take the admin
 tier and a key without a repository allowlist, since the document governs
-every repository.
+every repository. A body past 256 KiB is refused before it is read in
+full, with or without a ``Content-Length``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 
+from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.document_requests import if_match_versions, read_capped_body
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
@@ -57,34 +63,6 @@ def _unprocessable(exc: DocumentInvalid) -> HTTPException:
     return HTTPException(status_code=422, detail=[problem.to_dict() for problem in exc.problems])
 
 
-def _if_match(value: str | None) -> set[int] | None:
-    """The generations ``If-Match`` accepts; None for any (no header, or ``*``).
-
-    Strong comparison, as RFC 9110 has it for ``If-Match``: a weak tag
-    (``W/"3"``) never matches, so a header of weak tags only is a 409.
-    """
-    if value is None or not value.strip():
-        return None
-    accepted: set[int] = set()
-    for tag in (part.strip() for part in value.split(",")):
-        if tag == "*":
-            return None
-        weak = tag.startswith("W/")
-        text = tag.removeprefix("W/")
-        if not (len(text) >= 3 and text[0] == text[-1] == '"' and text[1:-1].isdigit()):
-            raise HTTPException(status_code=422, detail='If-Match must be the ETag GET returned, e.g. "3"')
-        if not weak:
-            accepted.add(int(text[1:-1]))
-    return accepted
-
-
-def _too_large(request: Request) -> None:
-    """413 before the body is read, when its declared length is already too much."""
-    declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > MAX_TEXT_BYTES:
-        raise HTTPException(status_code=413, detail=f"the settings document is larger than {MAX_TEXT_BYTES} bytes")
-
-
 async def _audit(request: Request, action: AuditAction, details: dict[str, Any]) -> None:
     config = getattr(request.app.state, "config", None)
     await emit_audit(
@@ -111,13 +89,15 @@ async def get_settings(
     if format == "yaml":
         return Response(content=row["yaml_text"], media_type="application/yaml", headers={"ETag": etag})
     response.headers["ETag"] = etag
+    shown = await actor_shown(request)
     unknown_sections, unknown_keys = unknown_parts(store.catalog, row["data"])
     return {
         "yaml_text": row["yaml_text"],
         "data": row["data"],
         "schema_version": row["schema_version"],
         "generation": row["generation"],
-        "updated_by": row["updated_by"],
+        # Who wrote it, as /audit shows actors: an admin sees anyone, anyone else only themselves.
+        "updated_by": shown(row["updated_by"]) if row["updated_by"] else row["updated_by"],
         "updated_at": iso(row["updated_at"]),
         "sections": list(store.catalog.names),
         "unknown_sections": list(unknown_sections),
@@ -145,10 +125,12 @@ async def put_settings(
     """
     await enforce_repo_allowlist(request, None, action=_WRITE_ACTION)
     store = _store(request)
-    expected = _if_match(if_match)
-    _too_large(request)
+    expected = if_match_versions(if_match)
+    body = await read_capped_body(
+        request, MAX_TEXT_BYTES, f"the settings document is larger than {MAX_TEXT_BYTES} bytes"
+    )
     try:
-        text, values = parse_body(await request.body(), request.headers.get("content-type", ""))
+        text, values = parse_body(body, request.headers.get("content-type", ""))
         if dry_run:
             preview = await store.preview(text, values, if_generation=expected)
             return {
@@ -198,7 +180,12 @@ async def get_effective_settings(request: Request) -> dict[str, Any]:
     store = _store(request)
     snapshot = await store.snapshot()
     revisions = await store.revisions(limit=100)
-    return effective_view(store.catalog, snapshot, revisions, request.app.state.config)
+    view = effective_view(store.catalog, snapshot, revisions, request.app.state.config)
+    shown = await actor_shown(request)
+    for section in view["sections"]:
+        for key in section["keys"]:
+            key["set_by"] = shown(key["set_by"])
+    return view
 
 
 @router.get("/config/settings/schema")
@@ -228,12 +215,14 @@ def _what(revision: dict[str, Any]) -> str:
     return f"{verb}: {', '.join(keys)}"
 
 
-def _revision_entry(revision: dict[str, Any], newest_id: int | None, current_text: str) -> dict[str, Any]:
+def _revision_entry(
+    revision: dict[str, Any], newest_id: int | None, current_text: str, shown: Callable[[str | None], str | None]
+) -> dict[str, Any]:
     undoable = revision["id"] == newest_id and (revision.get("after") or {}).get("yaml_text") == current_text
     return {
         "id": revision["id"],
         "what": _what(revision),
-        "actor": revision["actor"],
+        "actor": shown(revision["actor"]),
         "source": revision["source"],
         "reason": revision["reason"],
         "created_at": iso(revision["created_at"]),
@@ -249,7 +238,8 @@ async def list_settings_revisions(request: Request, limit: int = Query(50, ge=1,
     rows = await store.revisions(limit=limit)
     current = (await store.document())["yaml_text"]
     newest = rows[0]["id"] if rows else None
-    return {"revisions": [_revision_entry(row, newest, current) for row in rows]}
+    shown = await actor_shown(request)
+    return {"revisions": [_revision_entry(row, newest, current, shown) for row in rows]}
 
 
 @router.get("/config/settings/revisions/{revision_id}")
@@ -261,7 +251,7 @@ async def get_settings_revision(revision_id: int, request: Request) -> dict[str,
         raise HTTPException(status_code=404, detail="That change was not found.")
     newest = await store.revisions(limit=1)
     current = (await store.document())["yaml_text"]
-    entry = _revision_entry(revision, newest[0]["id"] if newest else None, current)
+    entry = _revision_entry(revision, newest[0]["id"] if newest else None, current, await actor_shown(request))
     before = revision.get("before") or {}
     after = revision.get("after") or {}
     return {

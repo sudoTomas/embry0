@@ -6,7 +6,7 @@ In the same change the service stops re-reading all history every minute. It dro
 
 Issue #176, part of epic #159. Line numbers in sections 1 to 8 are at `e1e0567d`, before PR 1.
 
-**Status.** The four open decisions were answered on 2026-10-28, each as recommended (see [Decisions](#decisions)). PR 1 is built to this spec; section 11 records what it settled and what PR 2 and PR 3 build on.
+**Status.** The four open decisions were answered on 2026-10-28, each as recommended (see [Decisions](#decisions)). PR 1 is built to this spec; section 11 records what it settled and what PR 2 and PR 3 build on. Section 12 records what PR 2 settled.
 
 **Non-goals.**
 
@@ -802,3 +802,22 @@ PR 1 reads everything from the shipped pack, with no visible change and no migra
 - **Quest rewards feed the levels:** `quest_rewards(journal, rules=)`, each at its quest's completion, which a late merge can move into the past.
 - **The growth achievements and the capstone read the level-ups,** so stored milestones must keep their exact times; `test_progression_golden` and an equivalence test are the guards.
 - **`Character` and `Progression` take `rules=`;** `Progression.rules` is the pack it was computed under.
+
+## 12. What PR 2 settled
+
+PR 2 stores the pack and lets an admin change it, as section 3 describes. Where it is more specific:
+
+- **Versions are never reused.** `progression_packs.version` is an identity column. Saving a draft replaces the old draft row with a new one under the next number, so an `If-Match` naming a replaced draft never matches the new one. A version that follows the default holds no text (a second CHECK).
+- **The active version is always the newest, and a draft knows what it was saved over.** Activating a draft copies it into a new active row under the next number and deletes the draft, so the history and the `ETag` only rise. Every row records `parent_version`, the active version it was written over. A draft whose parent is no longer the active version is a 409 at activation, so it cannot undo a newer activation unseen; the dashboard previews it again, and saving it again over the pack in effect clears it.
+- **Reads after a database error.** The stored source keeps the last pack it read. With none read yet (just after a boot), it raises like any other database read, rather than serve the shipped default to a deployment that customised its pack.
+- **Shared with the settings document.** One module, `embry0/text_documents.py`, refuses aliases, merge keys, keys that are not text and keys written twice for both documents (the pack's `load_text` included, so the shipped default and both `--check` commands agree with every write), and a JSON body that names a key twice. One, `embry0/api/document_requests.py`, parses `If-Match` and reads a body with a cap, refusing one past 256 KiB as it streams, `Content-Length` or not. Who changed either document is shown as `GET /audit` shows actors (`embry0/api/actor_visibility.py`).
+- **The defaults a pack was based on are kept.** `progression_pack_defaults (hash, text)` keeps the text of each shipped default a stored pack was based on, written when the pack is saved, so a later release can show the diff between the two defaults (`GET /progression/pack/default/diff`). `based_on` is this release's default when the text is the default or the write says `?rebase=1`; otherwise it stays what the active customised pack was based on. A rebase is how an operator clears the notice after taking in the new default.
+- **`If-Match` per route.** The draft's version for the draft routes and the activation; the active version for the one-shot `PUT`, restore and reset. `"0"` means nothing stored.
+- **Two more routes and one more audit action.** `GET /progression/pack/versions/{version}` serves one version's text for the history, and `GET /progression/pack/default/diff` the diff above. Discarding a draft writes `progression.pack_draft_deleted`.
+- **More refusals on a write.** A key written twice and a YAML merge key are 422s (`structure_problems` in `progression_pack_store.py`), as for the settings document. So is a `timezone` Postgres does not know: Python's `zoneinfo` and Postgres read different tz databases (Python knows `localtime`, Postgres does not), and the facts query binds the timezone.
+- **A refused stored pack falls back.** A stored version the running release refuses is never served. The shipped default is, the orchestrator logs `progression_pack_stored_invalid` once per version, and `GET /progression/pack` lists the problems in `fallback`. A database error keeps the last pack read.
+- **The upgrade chain is empty.** `UPGRADES` maps a schema version to its step. It holds none while the schema is at version 1; the startup upgrade is tested with an injected step.
+- **The preview** answers `GET /progression`'s shape under the draft, plus `changes` (`characters[]` with `before` and `after` of `level`, `total_level` and `xp`; the account's totals; `achievements_unlocked`). One runs at a time; another gets a 429.
+- **`GET /progression`'s `pack`** gains `revision`, the stored version in effect (0 while nothing is stored), and `follows_default`.
+- **The UTC fallback is narrow and visible.** PR 1 read the facts again on UTC after any failure under the pack's zone. Now only Postgres's refusal of the zone (SQLSTATE 22023, `invalid time zone`) falls back, and any other failure, such as a statement timeout, fails the read. `pack.timezone_applied` names the calendar the facts were read on, and the Game content tab and the Achievements page say when it is not the pack's.
+- **The timezone on the Achievements page** is named once, in the note on secret achievements, rather than beside a category: a pack can rename or drop the oddities category, and every oddity in the shipped pack is secret.

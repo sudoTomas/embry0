@@ -7,6 +7,7 @@ export const SETTINGS_TABS = [
   { value: "context", label: "Context" },
   { value: "integrations", label: "Integrations" },
   { value: "apikeys", label: "API keys" },
+  { value: "game", label: "Game content" },
 ] as const;
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number];

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+import asyncpg
 import structlog
 
 from embry0.execution.skill_actions import actions_from_tools, current_actions
@@ -188,6 +189,8 @@ class Progression:
     #: Each quest's state and every repo diary (``services.quests``), set by the service.
     quests: list[Any] = field(default_factory=list)
     diaries: list[Any] = field(default_factory=list)
+    #: The calendar the achievements' facts were read on: the pack's timezone, or UTC when Postgres refused it.
+    timezone_applied: str | None = None
     #: The pack it was computed under.
     rules: Rules = field(kw_only=True, repr=False)
 
@@ -219,6 +222,8 @@ class Progression:
 
     def to_dict(self, *, recent: int = 20) -> dict[str, Any]:
         view = self.rules.view()
+        # The calendar the facts were read on; another than the pack's means Postgres refused the pack's.
+        view["pack"] = {**view["pack"], "timezone_applied": self.timezone_applied or self.rules.pack.timezone}
         return {
             "account": {
                 "xp": self.xp,
@@ -359,6 +364,37 @@ def first_total(level_ups: Iterable[LevelUp], total: int, *, rules: Rules) -> da
     return None
 
 
+def pack_changes(before: Progression, after: Progression) -> dict[str, Any]:
+    """What another pack would change, for its preview (#176): before and after, under each pack.
+
+    Each character's level, total level and experience (null on the side
+    where it is not a character), the account's totals, and how many
+    achievements have at least one tier unlocked.
+    """
+
+    def character(progression: Progression, agent: str) -> dict[str, int] | None:
+        found = progression.characters.get(agent)
+        if found is None:
+            return None
+        return {"level": found.agent_level, "total_level": found.total_level, "xp": found.xp}
+
+    def unlocked(progression: Progression) -> int:
+        return sum(1 for state in progression.achievements if state.tier > 0)
+
+    agents = sorted(set(before.characters) | set(after.characters))
+    return {
+        "characters": [
+            {"agent_type": agent, "before": character(before, agent), "after": character(after, agent)}
+            for agent in agents
+        ],
+        "account": {
+            "before": {"total_level": before.total_level, "xp": before.xp},
+            "after": {"total_level": after.total_level, "xp": after.xp},
+        },
+        "achievements_unlocked": {"before": unlocked(before), "after": unlocked(after)},
+    }
+
+
 class _Repository(Protocol):
     async def facts(self, queries: Iterable[FactFragment], timezone: str) -> list[Fact]: ...
 
@@ -395,22 +431,27 @@ class ProgressionService:
         """The active pack's rules."""
         return rules_for(await self._packs.active())
 
-    async def _facts(self, rules: Rules) -> list[Fact]:
-        """The achievements' facts on the pack's calendar; on UTC's, with a warning, when the database refuses it.
+    async def _facts(self, rules: Rules) -> tuple[list[Fact], str]:
+        """The achievements' facts and the calendar they were read on: the pack's, or UTC's when Postgres refuses it.
 
         The pack's timezone is checked against Python's timezone database,
         and Postgres applies it from its own: a name one knows and the other
         does not would fail the whole query, and with it every read of the
-        progression. A failure under UTC is a real one and is raised.
+        progression. A write checks the name against Postgres too (#176),
+        so this covers a pack stored before that check, or a database whose
+        tz data changed since. Only Postgres's refusal of the time zone
+        falls back; any other failure (a statement timeout, a dropped
+        connection) is raised, since a retry on UTC would count the
+        oddities on the wrong days for the next minute without a word.
         """
         timezone = rules.pack.timezone
         try:
-            return await self._repository.facts(rules.fact_queries, timezone)
-        except Exception:
-            if timezone == "UTC":
+            return await self._repository.facts(rules.fact_queries, timezone), timezone
+        except asyncpg.InvalidParameterValueError as exc:
+            if timezone == "UTC" or "time zone" not in str(exc):
                 raise
-            logger.warning("progression_facts_timezone_fallback", timezone=timezone, exc_info=True)
-            return await self._repository.facts(rules.fact_queries, "UTC")
+            logger.warning("progression_facts_timezone_fallback", timezone=timezone, applied="UTC")
+            return await self._repository.facts(rules.fact_queries, "UTC"), "UTC"
 
     async def read(self) -> Progression:
         async with self._lock:
@@ -419,27 +460,37 @@ class ProgressionService:
             cached = self._cached
             if cached is not None and now - cached[0] < self._ttl and cached[1].rules.hash == rules.hash:
                 return cached[1]
-            from embry0.services.achievements import evaluate
-
-            events = await self._repository.events()
-            journal = await self._repository.journal()
-            # Quest XP feeds the levels, so the quests that give it are read first.
-            progression = compute(
-                events, await self._repository.agent_types(), quest_rewards(journal, rules=rules), rules=rules
-            )
-            progression.achievements, progression.unlocks = evaluate(
-                await self._facts(rules),
-                progression.level_ups,
-                progression.agent_level_ups,
-                progression.drops,
-                rules=rules,
-            )
-            progression.diaries = evaluate_diaries(journal, rules=rules)
-            progression.quests = evaluate_quests(
-                journal,
-                progression.diaries,
-                lambda total: first_total(progression.level_ups, total, rules=rules),
-                rules=rules,
-            )
+            progression = await self.compute(rules)
             self._cached = (now, progression)
             return progression
+
+    async def compute(self, rules: Rules) -> Progression:
+        """The progression under ``rules``, computed now from the rows: never cached, and the cache left as it was.
+
+        What a draft pack's preview reads (#176): the same history, priced
+        under a pack nobody sees yet.
+        """
+        from embry0.services.achievements import evaluate
+
+        events = await self._repository.events()
+        journal = await self._repository.journal()
+        # Quest XP feeds the levels, so the quests that give it are read first.
+        progression = compute(
+            events, await self._repository.agent_types(), quest_rewards(journal, rules=rules), rules=rules
+        )
+        facts, progression.timezone_applied = await self._facts(rules)
+        progression.achievements, progression.unlocks = evaluate(
+            facts,
+            progression.level_ups,
+            progression.agent_level_ups,
+            progression.drops,
+            rules=rules,
+        )
+        progression.diaries = evaluate_diaries(journal, rules=rules)
+        progression.quests = evaluate_quests(
+            journal,
+            progression.diaries,
+            lambda total: first_total(progression.level_ups, total, rules=rules),
+            rules=rules,
+        )
+        return progression

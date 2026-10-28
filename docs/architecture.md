@@ -1375,6 +1375,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 127 | agent avatars: the adventurer presets renamed with the original progression theme (silver to obsidian and crimson warriors, the sorcerer, the artisan); a stored avatar keeps its look under its new name | `agent_definitions.avatar` |
 | 128 | config revisions: every change to a settings document, before and after, with its actor, source and reason; the newest 100 per scope and surface ([ADR 0026](adr/0026-settings-document.md)) | `config_revisions` |
 | 129 | settings documents: the deployment's operator policy as one YAML document, its validated values, its write counter (`generation`) and the keys whose environment values were imported (`bootstrapped_keys`) ([ADR 0026](adr/0026-settings-document.md)) | `settings_documents` |
+| 130 | progression: the content pack an operator edits (#176), one active version and one draft at most, every activation a version (the newest 100 superseded kept); no row means the shipped default. `progression_pack_defaults` keeps the text of each shipped default a stored pack was based on | `progression_packs`, `progression_pack_defaults` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

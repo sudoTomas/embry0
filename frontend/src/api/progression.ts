@@ -240,8 +240,21 @@ export interface PackLabels {
  * and the active content pack's names, colours, words and art (#176). */
 export interface Progression {
   account: Account;
-  /** The active pack: its identity, schema version and calendar. */
-  pack: { hash: string; version: number; timezone: string };
+  /**
+   * The active pack: its identity, schema version and calendar. `revision` is
+   * the stored version in effect (0 while nothing is stored) and
+   * `follows_default` whether it is the shipped default. `timezone_applied`
+   * is the calendar the achievements were counted on: the pack's, or UTC
+   * when the database does not know the pack's (older backends leave these out).
+   */
+  pack: {
+    hash: string;
+    version: number;
+    timezone: string;
+    revision?: number;
+    follows_default?: boolean;
+    timezone_applied?: string;
+  };
   groups: { id: string; name: string }[];
   skills: Skill[];
   /** The tier ladder, lowest first. */

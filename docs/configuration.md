@@ -225,6 +225,8 @@ Budget controls, context injection, and sandbox profiles are configurable via th
 
 - **Hosts**: `GET/POST /api/v1/hosts`, `GET/PATCH/DELETE /api/v1/hosts/{id}`, `POST /api/v1/hosts/{id}/probe` and `POST /api/v1/hosts/import/tailnet`. The machines that run the code, how embry0 reaches each one, where its logs come from, and which repositories it serves. A tailnet import and a tailnet probe read devices with a `tailnet_api_key` credential bound at global scope with role `tailnet`; no environment variable configures it. See [hosts.md](hosts.md).
 
+- **Progression content pack**: `GET/PUT /api/v1/progression/pack`, the draft (`GET/PUT/DELETE /api/v1/progression/pack/draft`, `GET /api/v1/progression/preview`, `POST /api/v1/progression/pack/draft/activate`), the versions with restore, and `POST /api/v1/progression/pack/reset`. The skills, rates, tiers, rares, achievements, quests, diaries, words and timezone of the progression layer; one pack per deployment, the shipped default until an admin activates another. No environment variable configures it. See [progression.md](progression.md#changing-the-content).
+
 - **Standards**: `GET /api/v1/standards/{owner}`, `GET/PUT /api/v1/standards/{owner}/{kind}`, `GET /api/v1/standards/{owner}/{kind}/versions`, `GET/PUT /api/v1/standards/{owner}/{kind}/repos/{repo}` and `POST /api/v1/standards/{owner}/{kind}/audit/{repo}`. An owner's versioned standards (schema and values), each repository's mode under them, and audits against them. An organization's values are configuration stored here; no environment variable configures them. See [standards.md](standards.md).
 
 - **Context audit**: `PATCH /api/v1/orgs/{owner}` with `{"settings": {"context_audit_days": N}}` (1 to 365, `null` for off, the default) audits the files that steer a coding agent in each of the owner's registered repositories on a schedule, and `GET /api/v1/orgs/{owner}/context-audit` reads what it sees. The settings live on the organization row: the interval and its two caps, `context_audit_budget_usd` and `context_audit_max_jobs_per_tick`. The two `CONTEXT_AUDIT_*` variables above are the caps of an organization that sets none. See [context-audit.md](context-audit.md).
@@ -330,3 +332,14 @@ embry0 config             # Validate and display config (secrets masked)
 embry0 purge              # Remove all Docker artifacts
 embry0 purge --volumes    # Remove only volumes
 ```
+
+### Progression content pack (`embry0 progression-pack`)
+
+```bash
+embry0 progression-pack check my-pack.yaml     # Validate offline, every problem by key; exit 1 on one
+embry0 progression-pack diff my-pack.yaml      # What applying it would change (a dry run)
+embry0 progression-pack apply my-pack.yaml     # Show the diff, then activate it (--yes without a terminal)
+embry0 progression-pack export --default       # The shipped default as YAML (-o FILE to write it)
+```
+
+See [progression.md](progression.md#changing-the-content).

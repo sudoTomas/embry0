@@ -12,8 +12,10 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``skill_source_add``, ``skill_source_update``, ``skill_source_sync``,
 ``skill_source_remove``, ``inline_skill_put``, ``inline_skill_remove``,
 ``agent_skill_add``, ``agent_skill_remove``, ``standard_set``,
-``standard_audit``) require ``confirm=true``; without it they return an
-instructive refusal instead of acting.
+``standard_audit``, ``progression_pack_set``, ``progression_pack_reset``)
+require ``confirm=true``; without it they return an instructive refusal
+instead of acting. ``progression_pack_set`` with ``dry_run=true`` stores
+nothing and runs without it.
 """
 
 from __future__ import annotations
@@ -46,7 +48,10 @@ mcp = MCPServer(
         "caps are organization settings set with org_update, context_audit_status reads it, and "
         "context_audit_run starts the due audits now, "
         "skills (catalog, sources, inline skills, per-agent add/remove), the tool catalog, "
-        "and an owner's standards (get, set, audit a repository against one). "
+        "an owner's standards (get, set, audit a repository against one), "
+        "and the progression content pack: every skill, rate, tier, achievement, quest and chat-box message the "
+        "game layer shows, one YAML document per deployment (get it, set it with a dry run first, reset it to "
+        "the shipped default). "
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '
@@ -1143,6 +1148,51 @@ async def standard_set(
     return await _get_client().standard_set(
         owner, kind, schema=schema, values=values, prose=prose, references=list(references or [])
     )
+
+
+@_tool
+async def progression_pack_get() -> dict[str, Any]:
+    """The progression content pack in effect (#176): every skill, rate, tier, rare, achievement, quest,
+    diary task and chat-box message the game layer shows, as one YAML document per deployment. ``text``
+    is the YAML (comments included), ``document`` its values, ``version`` the stored version (0 while the
+    deployment follows the shipped default, ``follows_default``), and ``fallback`` the problems of a
+    stored pack this release refuses (the shipped default is then in effect). ``default_moved`` says the
+    shipped default changed since the stored pack was taken from it. Read-only."""
+    return await _get_client().progression_pack_get()
+
+
+@_tool
+async def progression_pack_set(
+    text: str, expected_version: int | None = None, dry_run: bool = False, confirm: bool = False
+) -> dict[str, Any]:
+    """Replace the progression content pack with ``text`` and activate it at once (#176). The text is the
+    WHOLE pack as YAML: read it with progression_pack_get, edit its ``text``, and send all of it back with
+    ``expected_version`` set to the ``version`` that read returned, so a pack someone else activated in
+    between is refused (409) instead of overwritten; read it again then. A pack that does not validate is
+    refused with a 422 listing every problem by key (``loc``, ``msg``); nothing is stored then. With
+    ``dry_run=true`` nothing is stored and no confirm is needed: the answer says whether it would change,
+    the sections it changes, the text diff and the warnings. Activating re-prices the whole history (every
+    level, achievement and quest), and a text equal to the one in effect records nothing. Undo is restoring
+    an earlier version on the dashboard or the API. Needs an admin-scope key. Requires confirm=true for a
+    real write."""
+    if dry_run:
+        return await _get_client().progression_pack_set(text, dry_run=True, expected_version=expected_version)
+    if not confirm:
+        return _confirmation_refusal("progression_pack_set", "replace and activate the progression content pack")
+    return await _get_client().progression_pack_set(text, expected_version=expected_version)
+
+
+@_tool
+async def progression_pack_reset(confirm: bool = False) -> dict[str, Any]:
+    """Make the deployment follow the shipped default progression content pack again (#176), recorded as a
+    new version (source ``reset``) that can be undone by restoring the earlier one. Re-prices the whole
+    history; nothing is recorded when the deployment already follows the default. Needs an admin-scope
+    key. Requires confirm=true."""
+    if not confirm:
+        return _confirmation_refusal(
+            "progression_pack_reset", "reset the progression content pack to the shipped default"
+        )
+    return await _get_client().progression_pack_reset()
 
 
 @_tool

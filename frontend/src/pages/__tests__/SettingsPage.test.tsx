@@ -10,6 +10,7 @@ vi.mock("../settings/PolicyTab", () => ({ default: () => <p>policy panel</p> }))
 vi.mock("../settings/ContextTab", () => ({ default: () => <p>context panel</p> }));
 vi.mock("../settings/IntegrationsTab", () => ({ default: () => <p>integrations panel</p> }));
 vi.mock("../settings/ApiKeysTab", () => ({ default: () => <p>api keys panel</p> }));
+vi.mock("../settings/GameContentTab", () => ({ default: () => <p>game content panel</p> }));
 
 import { SettingsPage } from "../SettingsPage";
 
@@ -51,9 +52,16 @@ describe("SettingsPage", () => {
       "Context",
       "Integrations",
       "API keys",
+      "Game content",
     ]);
     await userEvent.click(screen.getByRole("tab", { name: "General" }));
     await userEvent.click(screen.getByRole("tab", { name: "Policy" }));
     expect(screen.getByTestId("search")).toHaveTextContent("?tab=policy");
+  });
+
+  it("has a Game content tab for the progression content pack (#176)", async () => {
+    renderAt("/settings?tab=game");
+    expect(screen.queryByRole("tab", { name: "Game content" }), "the tab is listed").not.toBeNull();
+    expect(screen.queryByText("game content panel"), "?tab=game opens it").not.toBeNull();
   });
 });

@@ -11,11 +11,15 @@
 # (metrics, quest and diary task kinds, action categories, art) is
 # embry0/services/progression_vocabulary.py. Validate a copy with:
 #
-#   python -m embry0.services.progression_pack --check my-pack.yaml
+#   embry0 progression-pack check my-pack.yaml
+#
+# and activate it on the dashboard (Settings, Game content) or with
+# `embry0 progression-pack apply my-pack.yaml`.
 version: 1
 
 # The game's calendar: the day a rare drops on, the hour a merge counts as
-# late, the day a hot streak counts in.
+# late, the day a hot streak counts in. The oddities' days and hours are on
+# it; their texts leave it out, and the achievements page names it once.
 timezone: UTC
 
 # Level L starts at floor(sum over n < L of floor(n + points * 2^(n / doubling)) / divisor):
@@ -589,7 +593,7 @@ achievements:
   - id: afk_weekend
     name: AFK Weekend
     category: oddities
-    what_counts: "A pull request that merged on a Saturday or Sunday (UTC)"
+    what_counts: "A pull request that merged on a Saturday or Sunday"
     flavour: "The agents grind while you touch grass."
     icon: moon
     secret: true
@@ -599,7 +603,7 @@ achievements:
   - id: night_shift
     name: Night Shift
     category: oddities
-    what_counts: "A pull request that merged between midnight and four in the morning (UTC)"
+    what_counts: "A pull request that merged between midnight and four in the morning"
     flavour: "Nobody else was online."
     icon: moon
     secret: true
@@ -609,7 +613,7 @@ achievements:
   - id: friday_night_merge
     name: Friday Night Merge
     category: oddities
-    what_counts: "A pull request that merged on a Friday after eight in the evening (UTC)"
+    what_counts: "A pull request that merged on a Friday after eight in the evening"
     flavour: "Bold. Very bold."
     icon: flame
     secret: true
@@ -621,7 +625,7 @@ achievements:
   - id: holiday_event
     name: Holiday Event
     category: oddities
-    what_counts: "A pull request that merged on 25 December, 31 October or 1 January (UTC)"
+    what_counts: "A pull request that merged on 25 December, 31 October or 1 January"
     flavour: "Limited-time event. Log in to claim."
     icon: gift
     secret: true

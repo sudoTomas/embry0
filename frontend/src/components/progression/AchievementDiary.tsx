@@ -159,6 +159,19 @@ function AchievementCard({ entry, categoryName, pack }: { entry: AchievementEntr
   );
 }
 
+/**
+ * Which calendar an achievement's day or hour is on: the pack's timezone, or
+ * UTC when the database does not know the pack's and the server counted on
+ * UTC instead (#176).
+ */
+function calendarNote(timezone: string, applied: string | undefined): string {
+  const counted = "A day or an hour an achievement counts, such as a weekend, a night or a holiday,";
+  if (applied && applied !== timezone) {
+    return `${counted} is on the ${applied} calendar for now: the database does not know the pack's timezone, ${timezone}.`;
+  }
+  return `${counted} is on the ${timezone} calendar.`;
+}
+
 function Tile({ label, value, sub, color }: { label: string; value: string; sub: string; color?: string }) {
   return (
     <div className="border border-border bg-white/[0.02] p-3" data-testid="diary-tile">
@@ -278,6 +291,13 @@ export function AchievementDiary({
             A secret hides its name and what it counts. The first time embry0 sees a matching deed, the card turns into
             a normal one and shows its requirement.
           </p>
+          {data.pack?.timezone && (
+            // The oddities' days and hours, the rares' dates and a hot streak's day are all on the pack's calendar;
+            // their texts leave the zone out, so it is named once, here.
+            <p className="mt-2 text-[11px] text-muted-foreground [overflow-wrap:anywhere]" data-testid="pack-timezone">
+              {calendarNote(data.pack.timezone, data.pack.timezone_applied)}
+            </p>
+          )}
         </div>
       </div>
 

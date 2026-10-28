@@ -836,12 +836,15 @@ async def _init_app_state(
     app.state.repos_repo = ReposRepository(db, default_forge=app_config.default_forge)
     # Progression (spec 2026-10-24): levels recomputed from the recorded work
     # under the active content pack (#176), read by GET /progression. The
-    # shipped default is the only pack until a stored one can be activated.
+    # pack is the stored one an operator activated, else the shipped default;
+    # a stored pack this release refuses is never served (the default is).
     from embry0.services.progression import ProgressionService
-    from embry0.services.progression_pack import ShippedPack
+    from embry0.services.progression_pack_store import PackStore
     from embry0.storage.repositories.progression import ProgressionRepository
+    from embry0.storage.repositories.progression_packs import ProgressionPacksRepository
 
-    app.state.progression = ProgressionService(ProgressionRepository(db), packs=ShippedPack())
+    app.state.progression_packs = PackStore(ProgressionPacksRepository(db))
+    app.state.progression = ProgressionService(ProgressionRepository(db), packs=app.state.progression_packs)
     from embry0.storage.repositories.organizations import OrganizationsRepository
 
     app.state.organizations_repo = OrganizationsRepository(db)
@@ -1079,6 +1082,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         # A loop's own snapshot() reads the document again on its first tick.
         logger.critical("settings_first_read_failed", exc_info=True)
+
+    # The progression content pack (#176): a stored pack written in an older
+    # schema is upgraded here, once, before anything reads it. One that cannot
+    # be is left as it is, and reads serve the shipped default and say why.
+    from embry0.services.progression_pack_store import upgrade_stored_packs
+    from embry0.storage.repositories.progression_packs import ProgressionPacksRepository
+
+    try:
+        await upgrade_stored_packs(ProgressionPacksRepository(db))
+    except Exception:
+        logger.warning("progression_pack_upgrade_failed", exc_info=True)
 
     # Seed canonical builtin sandbox profiles. Runs after migrations so the
     # sandbox_profiles schema (incl. QA columns from migration 18) is present.
@@ -2879,6 +2893,7 @@ def _register_routers(app: FastAPI) -> None:
         organizations,
         pipeline_templates,
         progression,
+        progression_pack,
         proposals,
         qa_artifacts,
         qa_config,
@@ -2958,6 +2973,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(settings.router, prefix="/api/v1", tags=["settings"], dependencies=auth_deps)
     app.include_router(stats.router, prefix="/api/v1", tags=["stats"], dependencies=auth_deps)
     app.include_router(progression.router, prefix="/api/v1", tags=["progression"], dependencies=auth_deps)
+    app.include_router(progression_pack.router, prefix="/api/v1", tags=["progression"], dependencies=auth_deps)
     app.include_router(traces.router, prefix="/api/v1", tags=["traces"], dependencies=auth_deps)
     # #278: healing-case lifecycle ledger (read-only).
     app.include_router(cases.router, prefix="/api/v1", tags=["cases"], dependencies=auth_deps)
