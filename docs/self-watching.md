@@ -182,7 +182,13 @@ deployment's fork or clone of this repository.
    Writes are admin-tier and, like every state-changing call, need the
    `X-Requested-With` header (the CSRF guard answers 403 "Missing
    X-Requested-With header" without it). Unknown `settings` keys are dropped
-   and echoed back under `ignored_settings` — read the response.
+   and echoed back under `ignored_settings` — read the response. A known key
+   with the wrong type or a value out of range is refused with a 422 that
+   names it (`settings.auto_accept_max_per_day: Input should be a valid
+   integer`): numbers are JSON numbers, switches JSON booleans, modes and
+   severities one of their words. A value stored before these checks that no
+   longer passes is ignored with a `watcher_stack_setting_invalid` warning,
+   and the deployment's value applies.
 4. **Restart the orchestrator.** Stacks are read once at startup
    (`watcher_stacks_loaded`); a new or re-enabled row starts ticking after
    the next restart. `GET /api/v1/health/ready` then lists it under
@@ -219,8 +225,8 @@ clear its bar, so a finding does not wait days for someone to say yes (spec
 takes the stack's tracked drafts oldest first and accepts each that has
 waited `auto_accept_after_hours` (24), is at least `auto_accept_min_severity`
 (`high`) and whose signature was seen at least `auto_accept_min_occurrences`
-(10) times, until `auto_accept_max_per_day` (2) were accepted in the last 24
-hours. A retry after a `not_healed` verdict, and a draft an owner declined or
+(10) times, until `auto_accept_max_per_day` (2) were accepted for this
+stack's repository in the last 24 hours; each stack's cap is its own. A retry after a `not_healed` verdict, and a draft an owner declined or
 snoozed as a proposal, are left for a person. The acceptance is the one below,
 recorded as `embry0:auto-accept` with a `case_auto_accepted` audit row; the
 actor is rate-limited and the spend caps apply. Off by default, per stack:

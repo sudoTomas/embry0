@@ -85,6 +85,51 @@ def test_every_overridable_key_maps_to_a_real_global() -> None:
     assert unknown == [], f"OVERRIDABLE names settings Embry0Config does not have: {unknown}"
 
 
+def test_every_overridable_key_has_a_type_matching_its_global() -> None:
+    """#172: each key is checked, and its global's own default passes the check (else the schema and
+    the config disagree about what the setting is)."""
+    from embry0.config import Embry0Config
+    from embry0.services.watcher_stacks import check_setting
+
+    config = Embry0Config(_env_file=None)
+    for key, name in OVERRIDABLE.items():
+        default = getattr(config, name)
+        assert check_setting(key, default) == default, f"{key}: its default {default!r} does not pass its own check"
+
+
+@pytest.mark.parametrize(
+    ("settings", "named"),
+    [
+        ({"auto_accept_max_per_day": "x"}, "auto_accept_max_per_day"),
+        ({"auto_accept_max_per_day": -1}, "auto_accept_max_per_day"),
+        ({"auto_accept_min_severity": "hgh"}, "auto_accept_min_severity"),
+        ({"auto_accept": "true"}, "auto_accept"),
+        ({"interval_seconds": 0}, "interval_seconds"),
+        ({"skip_unchanged_mode": "maybe"}, "skip_unchanged_mode"),
+    ],
+)
+def test_a_bad_value_is_refused_naming_its_key(settings: dict[str, Any], named: str) -> None:
+    from embry0.services.watcher_stacks import check_settings
+
+    with pytest.raises(ValueError, match=f"settings.{named}"):
+        check_settings(settings)
+
+
+def test_good_values_are_kept_and_unknown_keys_dropped() -> None:
+    from embry0.services.watcher_stacks import check_settings
+
+    assert check_settings(
+        {"auto_accept_min_severity": " High ", "job_budget_usd": 2, "auto_accept": True, "intervul_seconds": 1}
+    ) == {"auto_accept_min_severity": "high", "job_budget_usd": 2.0, "auto_accept": True}
+
+
+def test_a_stored_bad_value_reads_as_the_global_and_never_raises() -> None:
+    """#172: a row written before values were checked; the tick reads the deployment's value for that key."""
+    view = StackConfig(GLOBALS, _stack(settings={"interval_seconds": "soon", "max_open_proposals": 1}))
+    assert view.watcher_interval_seconds == GLOBALS.watcher_interval_seconds, "the bad override is left out"
+    assert view.watcher_max_open_proposals == 1, "a good neighbour still applies"
+
+
 # -- seeding --------------------------------------------------------------------
 
 
