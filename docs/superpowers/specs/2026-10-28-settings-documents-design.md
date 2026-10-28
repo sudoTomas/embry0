@@ -1,6 +1,6 @@
 # Settings documents: operator policy in the database, one section per feature
 
-Status: design, waiting on the open decisions at the end. Refs #159, #160. Line numbers are at `e1e0567d`.
+Status: decided (2026-10-28; section 14). Pull request A implements sections 2 to 9, C the dashboard tab and B the pilot (section 11). Refs #159, #160. Line numbers are at `e1e0567d`.
 
 **Why.** Most policy added since #112 is an environment variable, read once at startup into a frozen settings object (`ask_settings`, `embry0/services/asks.py:46-63`; `scout_settings`, `embry0/services/scout.py:68-82`; `leads_settings`, `embry0/services/leads/loop.py:52-66`), so every change means editing `.env` and restarting the orchestrator, which interrupts running jobs. The policy that does live in the database is spread over four mechanisms, each with its own precedence and its own validation (section 1). Every later issue of the epic (#164 to #182) needs one place to put a feature's policy.
 
@@ -72,15 +72,15 @@ ASKS = Section(
 - `Section` is generic over its model, so `snapshot.get(ASKS)` is typed `AsksSettings`.
 - **The model is the only home of defaults and bounds** (`Field(ge=..., le=...)`, validators). No feature repeats a default in code, as the scout defaults are repeated today (`embry0/config.py:787`, `embry0/services/scout.py:62`, `:79`).
 - **`org_keys` and `repo_keys`** name the fields an organization or a repository may override. They are declared and checked now, and served in the schema and the effective view, but nothing resolves them until #161, which then needs no change to the registry or the document.
-- **`register()` refuses**, at import time: a duplicate section name, the reserved name `version`, an `org_keys`, `repo_keys` or `env` entry that names no field, a field without a `description`, a field whose name looks secret, and a model that is not a `SectionModel`.
+- **A `Section` refuses to be built**, at import time, with a `SectionError` naming every problem: a malformed or reserved name (`version`), an empty summary, a model that is not a `SectionModel` or loosens its `extra="forbid"` or `strict`, a field without a default or a `description`, a field whose name looks secret, and an `org_keys`, `repo_keys` or `env` entry that names no field. A `Catalog` refuses a section named twice.
 - **Where sections live.** `embry0/settings/sections/<name>.py`, one module per section, and `embry0/settings/sections/__init__.py` lists them in one tuple, `CATALOG`. A test fails when a module in that directory is not in `CATALOG`, so the set of sections never depends on which feature modules happen to be imported, and a feature cannot be missing from validation or from the generated docs.
-- **No import cycles.** `embry0/settings/registry.py` imports nothing from embry0. Section modules import only the registry. The store (section 6) imports the catalog. Features import their section module (for the type) and receive the store or a reader callable by injection. A test walks the imports of every module under `embry0/settings/sections/` with `ast` and fails on anything else.
+- **No import cycles.** `embry0/settings/registry.py` imports only pydantic, the standard library and `embry0.config_redaction` (a leaf, for the secret-name pattern). Section modules import only the registry. The store (section 6) imports the catalog. Features import their section module (for the type) and receive the store or a reader callable by injection. A test walks the imports of every module under `embry0/settings/sections/` with `ast` and fails on anything else.
 
 ## 4. Storage
 
 Two migrations, 128 and 129. Both create tables only; the application layer writes the content, as for qa.yaml (`runner.py:1233-1235`), because SQL cannot validate it.
 
-**Migration 128: revision history.** Shape depends on open decision D1. The recommended shape is a new table:
+**Migration 128: revision history**, a new table (decision D1):
 
 ```sql
 CREATE TABLE IF NOT EXISTS config_revisions (
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS config_revisions (
 CREATE INDEX IF NOT EXISTS idx_config_revisions_scope ON config_revisions (scope, surface, id DESC);
 ```
 
-`file` is listed now so #162's `apply` needs no migration. The append and trim logic of `RepoConfigRevisionsRepository.append` (`repo_config_revisions.py:34-76`) moves into a shared helper both tables use; `repo_config_revisions` itself is not changed.
+`file` is listed now so #162's `apply` needs no migration. `ConfigRevisionsRepository` (`embry0/storage/repositories/config_revisions.py`) appends and trims with the same logic as `RepoConfigRevisionsRepository.append` (`repo_config_revisions.py:34-76`); `repo_config_revisions` and its repository are not changed.
 
 **Migration 129: the document.**
 
@@ -131,13 +131,13 @@ All under `/api/v1`, in `embry0/api/v1/settings.py`, mounted with `auth_deps` li
 
 | Route | Tier | What it does |
 |---|---|---|
-| `GET /config/settings` | any key | `{yaml_text, data, schema_version, generation, updated_by, updated_at, sections}`; `?format=yaml` answers the text alone (`application/yaml`) |
-| `PUT /config/settings` | admin, unrestricted key | Replace the document. Body: YAML (`application/yaml`, `text/yaml`, `text/plain`) or a JSON object. Optional `If-Match: <generation>` (409 when it moved), `?reason=`, `?source=person\|file`. Answers `{generation, revision_id, unknown_sections}`; `revision_id` is null when the text was unchanged |
-| `PUT /config/settings?dry_run=1` | admin | Validate and compare; store nothing. Answers `{would_change, text_diff, changes: [{key, before, after, effective_before, effective_after}]}`, or the same 422 as a real `PUT` |
-| `GET /config/settings/effective` | any key | Every field of every section: `{value, default, source, set_by, set_at, env, env_still_set, overridable}` (below) |
+| `GET /config/settings` | any key | `{yaml_text, data, schema_version, generation, updated_by, updated_at, sections, unknown_sections}` with `ETag: "<generation>"`; `?format=yaml` answers the text alone (`application/yaml`) |
+| `PUT /config/settings` | admin, unrestricted key | Replace the document. Body: YAML (`application/yaml`, `text/yaml`, `text/plain`) or a JSON object. Optional `If-Match: <generation>` (409 when it moved), `?reason=`, `?source=person\|file`. Answers `{generation, revision_id, changes, unknown_sections}`; `revision_id` is null when the text was unchanged. 413 past 256 KiB |
+| `PUT /config/settings?dry_run=1` | admin | Validate and compare; store nothing. Answers `{would_change, text_diff, changes: [{key, before, after, set_before, set_after, effective_before, effective_after}], unknown_sections}`, or the same 422 as a real `PUT` |
+| `GET /config/settings/effective` | any key | Every field of every section: `{key, value, default, source, set_by, set_at, env, env_still_set, overridable, refused, description}` (below) |
 | `GET /config/settings/schema` | any key | The JSON Schema of the whole document, as the generator reads it (editors, #162's offline `check`) |
 | `GET /config/settings/revisions` | any key | Newest first: `{id, what, actor, source, reason, created_at, undoable, why_not}`; `what` names the keys that changed |
-| `GET /config/settings/revisions/{id}` | any key | One revision with its before and after text |
+| `GET /config/settings/revisions/{id}` | any key | One revision with `before_text`, `after_text` and its `changes` |
 | `POST /config/settings/revisions/{id}/undo` | admin, unrestricted key | ADR 0019's rule: the newest revision only, while the stored document still equals its `after`, else 409 with the same `why_not` text (`repo_history.py:32`). The old text is validated against today's schema first (422 "That earlier version is no longer valid", as `repo_history.py:140-141`). Recorded with source `restore` |
 
 **The 422.** One response lists every problem, in FastAPI's own shape, so the dashboard's existing parser renders each as `asks.remind_hours: Input should be greater than 0` (`frontend/src/api/errorDetail.ts:9-42`):
@@ -150,14 +150,15 @@ All under `/api/v1`, in `embry0/api/v1/settings.py`, mounted with `auth_deps` li
 ]}
 ```
 
-- The document is validated as one model built from the catalog, `extra="forbid"` and strict, which collects every error of every section in one pass (checked under pydantic 2.13). `loc` is the path from the document root; `input` is never returned.
+- Each section is validated through JSON, strictly, by its model (`extra="forbid"`), and every error of every section is collected before anything is refused. Through JSON, so a value parsed from YAML, sent as JSON, or read back from the database meets the same rules. `loc` is the path from the document root; `input` is never returned.
+- YAML reads a bare `on`, `off`, `yes` or `no` as a boolean; a field that wanted one of a few words and got a boolean says to put the word in quotes.
 - An unknown key gets a near-miss hint the way `qa_yaml_errors._pydantic_error` does (`qa_yaml_errors.py:46-55`).
 - A YAML syntax error is one entry with `loc: []`, `type: "yaml_syntax"` and the line and column.
 - Strict means `"5"` is not a number and `"true"` is not a boolean, as for watcher stacks (`watcher_stacks.py:69-71`); an integer is still a valid float.
 
-**Effective view.** `source` is `default` (no stored value), `document` (stored), or `bootstrap` (stored by the env import and not changed since). `set_by`, `set_at` and the `bootstrap` source come from the newest kept revision that changed that key; a key last changed before the kept history says so. A stored value the current code refuses shows `source: default` with `refused: "<msg>"`. `env` is the variable the field was imported from and `env_still_set` whether it is still in the process environment; the value itself is not repeated. `overridable` lists `organization` and `repository` as the section declares them.
+**Effective view.** `source` is `default` (no stored value), `document` (stored), or `bootstrap` (stored by the env import and not changed since). `set_by`, `set_at` and the `bootstrap` source come from the newest kept revision that changed that key; a key last changed before the kept history has them null. A stored value the current code refuses shows `source: default` with `refused: "<msg>"`. `env` is the variable the field was imported from and `env_still_set` whether it is still in the process environment; the value itself is not repeated. `overridable` lists `organization` and `repository` as the section declares them.
 
-**Auth.** Reads take any authenticated key, as `GET /config/budget` and `GET /config/provider` do: the document holds no secrets. Writes take the admin tier (open decision D4) and an unrestricted key: `enforce_repo_allowlist(request, None, ...)` refuses a key with a repository allowlist, since the document governs every repository (`embry0/api/repo_allowlist.py:44-55`, `:81-92`).
+**Auth.** Reads take any authenticated key, as `GET /config/budget` and `GET /config/provider` do: the document holds no secrets. Writes take the admin tier (decision D4) and an unrestricted key: `enforce_repo_allowlist(request, None, ...)` refuses a key with a repository allowlist, since the document governs every repository (`embry0/api/repo_allowlist.py:44-55`, `:81-92`).
 
 **Audit.** `settings.updated` (keys changed, revision id), `settings.change_undone`, `settings.bootstrapped` (section and keys, no values), added to `embry0/audit/actions.py` with labels; `tests/unit/audit/test_action_registry.py` already checks both directions.
 
@@ -170,14 +171,18 @@ class SettingsStore:                       # embry0/settings/store.py, app.state
     async def snapshot(self) -> Snapshot   # one SELECT generation; reload data when it moved
     async def save(...) -> SaveResult      # the PUT path; replaces the cached snapshot at once
     async def preview(...) -> Preview      # the dry-run path
+    async def undo(revision_id, *, actor) -> SaveResult
+    def edit(*, actor, source, reason) -> AsyncContextManager[Draft]   # the locked row, for the env import
 
 class Snapshot:                            # immutable
     generation: int
     def get(self, section: Section[M]) -> M   # the section's model, defaults filled in
+
+def section_reader(store, section) -> Callable[[], Awaitable[M]]   # what a one-section loop is built with
 ```
 
 - **Once per tick.** A loop calls `await settings.snapshot()` at the top of its tick and uses that snapshot for the whole tick, so one tick never mixes two versions. The check is one primary-key query, `SELECT generation, data` only when the generation moved. An API handler that needs policy calls it once per request.
-- **Features stay testable without a database.** A loop receives a callable that returns its section (`Callable[[], Awaitable[AsksSettings]]`), wired in `app.py` to `store.snapshot()` + `get`. Unit tests pass a lambda.
+- **Features stay testable without a database.** A loop receives a callable that returns its section (`Callable[[], Awaitable[AsksSettings]]`), wired in `app.py` with `section_reader(app.state.settings, ASKS)`. Unit tests pass a lambda.
 - **A refused stored value** (stored under an older, looser schema) is dropped key by key: the section is validated, the keys named by its errors are removed and it is validated again, so every other key keeps its value. Each is logged once per generation as `settings_stored_value_invalid` (section, key, reason), and the effective view marks it.
 - **Database errors.** If the generation check fails, the last snapshot is used and `settings_refresh_failed` is logged; a tick never fails because of it. The first load happens at boot, right after migrations and the env import, and a boot that cannot read the row fails as it would without migrations.
 - **More than one process.** The orchestrator is one uvicorn process (`infra/Dockerfile.orchestrator:98-103` passes no `--workers`). The MCP container has no database connection and reaches settings only through the API (`infra/docker-compose.yml:494-512`, `EMBRY0_API_URL`), so it needs nothing. A CLI subcommand that runs as its own process reads the current generation when it starts. A second orchestrator replica, which the migration runner already allows for (`runner.py:3-12`), sees a write by the other within one tick, because the counter is in the row, not in memory. No `LISTEN`/`NOTIFY` is used anywhere today, and none is needed.
@@ -194,9 +199,9 @@ class Snapshot:                            # immutable
 4. append the accepted values to `yaml_text` as a block under a comment naming the variables and the date, merge them into `data`, record a revision with source `bootstrap` and actor `embry0:bootstrap`, and write a `settings.bootstrapped` audit row, all only when something was imported;
 5. add the section to `bootstrapped_sections` whether or not anything was imported, so it never runs again for that section.
 
-Only variables an operator set are imported, never code defaults: a section that changes a default on purpose (#165 wants background readers off on a new deployment) must not have the old default frozen into every existing document. If the stored text is not a block mapping (flow style), the block cannot be appended; the whole document is dumped again, and the revision's reason says its comments were lost.
+Only variables an operator set are imported, never code defaults: a section that changes a default on purpose (#165 wants background readers off on a new deployment) must not have the old default frozen into every existing document. If the stored text is not block-style YAML (a flow-style mapping), the block cannot be appended; the whole document is written again from its values, and the new text's first line says its comments were lost. Each imported value is checked as its section when it is read, and the rest of the document is left as stored: a value an older release stored and this one refuses never blocks the import.
 
-**After the import.** At every boot, each variable that a bootstrapped section declares and that is still set is logged once as `settings_env_ignored` (variable, key, and whether it equals the document's effective value), and `env_still_set` is true in the effective view. `embry0 config` (`embry0/cli/__main__.py:310-353`), which runs without a database, adds a line for each such variable set in its environment: `ASK_HOURS is governed by the settings document (asks.hours); it is read once, at the first start of the release that added the section`.
+**After the import.** At every boot, each variable that a bootstrapped section declares and that is still set is logged once as `settings_env_ignored` (variable, key, and whether it equals the document's effective value), and `env_still_set` is true in the effective view. `embry0 config` (`embry0/cli/__main__.py:310-353`), which runs without a database, adds a line for each such variable set in its environment: `ASK_HOURS is governed by the settings document (asks.hours); it is read once, at the first start of the release that added the section, and ignored after that`.
 
 **One release later** the `Embry0Config` fields go. The `env` entries stay, with the attribute replaced by the variable's name, for two reasons: the import still reads it from the process environment, so a deployment that skipped the deprecation release keeps its value; and `config_lint` reports the retired name with its new key (`ASK_HOURS is no longer read; set asks.hours in the settings document`). The near-miss detector alone would not catch it, since it only looks under prefixes that declared fields still use (`config_lint.py:1-21`).
 
@@ -217,9 +222,9 @@ Tests:
 | API | every route in section 5 | none new |
 | CLI | `embry0 config` names the variables the document governs (section 7) | `embry0 settings check`, `diff`, `apply`, `export`, `import-env`; a generated `docs/examples/settings.yaml` |
 | MCP | none | `settings_get`, `settings_set` (`confirm=true`) |
-| Dashboard | open decision D3 | `managed_by: file` makes the editor read-only |
+| Dashboard | the Policy tab below, in its own pull request (decision D3) | `managed_by: file` makes the editor read-only |
 
-**A minimal dashboard editor**, if D3 keeps it in scope: a "Policy" tab on the Settings page (`frontend/src/pages/SettingsPage.tsx:9-33`) holding the YAML text in a textarea with Preview (the dry run's changes), Save (with `If-Match`), the problems of a 422 next to the text, the effective values with their source, and the revisions with Undo. It reuses the patterns of `QaConfigEditor` (`frontend/src/components/qa/QaConfigEditor.tsx`, 276 lines) and `HistoryPanel` (`frontend/src/components/repos/HistoryPanel.tsx`). A form generated from the schema is left out: the text editor covers every section the day it is registered.
+**A minimal dashboard editor** (decision D3): a "Policy" tab on the Settings page (`frontend/src/pages/SettingsPage.tsx:9-33`) holding the YAML text in a textarea with Preview (the dry run's changes), Save (with `If-Match`), the problems of a 422 next to the text, the effective values with their source, and the revisions with Undo. It reuses the patterns of `QaConfigEditor` (`frontend/src/components/qa/QaConfigEditor.tsx`, 276 lines) and `HistoryPanel` (`frontend/src/components/repos/HistoryPanel.tsx`). A form generated from the schema is left out: the text editor covers every section the day it is registered.
 
 ## 10. The pilot section
 
@@ -227,11 +232,11 @@ Tests:
 
 | Candidate | Variables | Readers | For | Against |
 |---|---|---|---|---|
-| **Asks** (recommended) | `ASKS_ENABLED`, `ASK_HOURS`, `ASK_WEEKDAYS`, `ASK_TIMEZONE`, `ASK_REMIND_HOURS`, `ASK_EXPIRE_DAYS`, `ASK_MAX_OPEN_PER_PERSON`, `ASK_TICK_SECONDS` (`embry0/config.py:799-808`) | `AskLoop` (`embry0/services/ask_loop.py:33-76`), `GET /asks/due` (`embry0/api/v1/asks.py:80-85`) | Off by default, so the smallest blast radius. Two readers. Every variable moves; none waits on #164 or #165. The section fixes real gaps: a bad `ASK_HOURS` silently becomes 9 to 18 (`asks.py:47-52`), an unknown weekday is dropped (`:66-77`), and a bad `ASK_TIMEZONE` raises in every tick (`asks.py:82`). #179 already asks for an `asks` section overridable per organization | #179 may later move working hours and timezone to a person; they stay as organization-level defaults then |
+| **Asks** (decided, D2) | `ASKS_ENABLED`, `ASK_HOURS`, `ASK_WEEKDAYS`, `ASK_TIMEZONE`, `ASK_REMIND_HOURS`, `ASK_EXPIRE_DAYS`, `ASK_MAX_OPEN_PER_PERSON`, `ASK_TICK_SECONDS` (`embry0/config.py:799-808`) | `AskLoop` (`embry0/services/ask_loop.py:33-76`), `GET /asks/due` (`embry0/api/v1/asks.py:80-85`) | Off by default, so the smallest blast radius. Two readers. Every variable moves; none waits on #164 or #165. The section fixes real gaps: a bad `ASK_HOURS` silently becomes 9 to 18 (`asks.py:47-52`), an unknown weekday is dropped (`:66-77`), and a bad `ASK_TIMEZONE` raises in every tick (`asks.py:82`). #179 already asks for an `asks` section overridable per organization | #179 may later move working hours and timezone to a person; they stay as organization-level defaults then |
 | Scout, four keys | `SCOUT_TEMPLATES`, `SCOUT_MAX_IN_FLIGHT`, `SCOUT_REVISIT_HOURS`, `SCOUT_MAX_LEADS_PER_JOB` (`embry0/config.py:785-792`) | `ScoutLoop` (`embry0/services/scout.py:422-432`) | #168's acceptance "a change to the scout's templates applies on the next tick" is the same proof | Only half the scout moves: `SCOUT_MODEL` waits on #164 and the repository lists on #165, and the loop stays off without a model, so the section cannot hold `enabled`. Splits #168 |
 | Leads core | `LEADS_ENABLED`, `LEADS_FINDERS`, the two intervals, the per-day cap, `LEADS_REVIEW_STALE_DAYS`, `LEADS_FLAKY_COMMITS`, `LEADS_TICKET_MIN_SCORE` (`embry0/config.py:765-775`) | `LeadsLoop` (`embry0/services/leads/loop.py:52-66`, `:242-249`), the backlog finder | Highest value: on by default, the most-used of the new loops | On by default, so the riskiest place to prove a new mechanism; the minimum score is repeated in three places (#168) and the readiness work belongs with it |
 
-**The asks section** as recommended:
+**The asks section:**
 
 | Key | Default | Bounds | Organization override | Was |
 |---|---|---|---|---|
@@ -248,11 +253,11 @@ What changes in the feature: `AskLoop.start` no longer returns when asks are off
 
 ## 11. Delivery
 
-Recommended as three pull requests (open decision D3), landing in this order:
+Three pull requests (decision D3). A lands first; C and B branch from it:
 
 - **A. `feat(config): store operator policy in a settings document`.** The registry and an empty catalog, migrations 128 and 129, the store and snapshot, every route of section 5, the env import (generic), the reference generator with an empty block, the `embry0 config` addition, audit actions, ADR 0026 ("operator policy lives in a settings document"), `docs/api.md` and the new section of `docs/configuration.md`. Proven with a section registered only in tests. No behaviour changes for any feature. Closes acceptance criteria 1 and 2.
-- **C. `feat(frontend): edit the settings document on the Settings page`.** The Policy tab of section 9. It lands before B so that the moment `.env` stops governing asks, an operator has a way to change them other than raw API calls.
-- **B. `feat(asks): read the ask policy from the settings document`.** The asks section, the loop and route changes, the generated reference for it, removal of the hand-written `ASK*` rows, a line in the decisions spec, and upgrade notes ("`ASK*` values are imported once; after that edit the settings document; the variables are removed in the next minor release"). Closes acceptance criteria 3 and 4, and #160.
+- **C. `feat(frontend): edit the settings document on the Settings page`.** The Policy tab of section 9. It lands no later than B, so that the moment `.env` stops governing asks, an operator has a way to change them other than raw API calls.
+- **B. `feat(asks): read the ask policy from the settings document`.** The asks section, the loop and route changes, the generated reference for it, removal of the hand-written `ASK*` rows, a line in the decisions spec, and upgrade notes ("`ASK*` values are imported once; after that edit the settings document; the variables are removed in the next minor release"). Closes acceptance criteria 3 and 4, #160, and #202 (`GET /asks/due` ignores `ASKS_ENABLED`; the silent `ASK_HOURS`, `ASK_WEEKDAYS` and `ASK_TIMEZONE` handling).
 
 No PR rebuilds a sandbox or proxy image: nothing under `embry0/sandbox/`, `embry0/safety/`, `embry0/agents/` or `embry0/execution/` changes. Each deploys with the usual deploy.
 
@@ -270,7 +275,7 @@ Each new test is shown failing on a clean tree of `origin/main` before the chang
 
 Also, in A:
 
-- **Registry:** each refusal of `register()` in section 3; every module under `embry0/settings/sections/` is in `CATALOG`; those modules import only the registry, pydantic and the standard library.
+- **Registry:** each refusal of `Section` and `Catalog` in section 3; every module under `embry0/settings/sections/` is in `CATALOG`; those modules import only the registry, pydantic and the standard library.
 - **Store:** a refused stored value reads as its default and keeps its sibling keys; a failing generation check keeps the last snapshot; the reload reads generation and data in one statement.
 - **Auth:** a read key, an operate key and a restricted admin key are each refused on PUT and undo; a read key can GET.
 - **Unknown sections:** a stored unknown section survives an unchanged PUT and is reported; changing it is a 422.
@@ -296,31 +301,15 @@ These are cheap to change later, or follow from the issue:
 - No draft state; a dry run answers what a change would do.
 - `config_revisions.source` lists `file` now, for #162.
 
-## 14. Open decisions
+## 14. Decisions
 
-**D1. Where revisions are stored.**
-- (a, recommended) A new `config_revisions` table keyed by scope and surface, leaving `repo_config_revisions` as it is. Clean meaning, and the table serves the organization layer of #161. Costs a second table, and repository history and settings history are read from two tables.
-- (b) Widen `repo_config_revisions`: surface `settings`, with `repo = ''` for the deployment. No new table, but a deployment-wide document is filed under an empty repository name, and #161's organization rows would need another sentinel.
-- (c) Rename it to `config_revisions`, add a scope, and keep a view under the old name. One table for everything, but a rollback to code that predates the rename depends on the view accepting every write.
+Taken by the maintainer on 2026-10-28, each the option this spec recommended.
 
-**D2. The pilot section.**
-- (a, recommended) Asks: off by default, two readers, all eight variables move, and it fixes three silent-fallback bugs.
-- (b) Scout's four keys: matches #168's acceptance criterion, but only half the scout moves and #168 is split.
-- (c) Leads core: the most value, but on by default, so the riskiest place to prove the mechanism.
-
-**D3. Dashboard scope and how the work is split.**
-- (a, recommended) Three PRs: A (foundation), then C (a minimal Policy tab), then B (asks). Asks always have a write path an operator can use. Costs one more PR, about 400 lines of frontend with tests.
-- (b) A and B only, with the dashboard and CLI left to #162 and a new issue. Smaller now, but from B until #162 lands, the asks policy can only be changed with a raw API call.
-- (c) One PR with all of it. One review, but about 4,000 lines.
-
-**D4. Who may write.**
-- (a, recommended) Admin for every section, as for provider, integration, standards and watcher stacks. When #171 moves the budget policy in, writing it tightens from any non-read key (`config.py:160-178`) to admin.
-- (b) Operator tier, as `PUT /config/budget` is today. Looser than every other policy write.
-- (c) A write tier declared per section. Flexible, but every section becomes a security decision, and the document is written as a whole.
-
-**D5. One document, or one row per section.**
-- (a, recommended) One document, as #160 proposes. One file for #162 to check, diff and apply, and one revision list. The cost: undo reverses only the newest change, so undoing an older change to one feature waits until a later change to another feature is undone first.
-- (b) One row per section, each with its own text, history and undo. Undo stays independent per feature. Costs a split and a join on every file import and export, and comments between sections have to be assigned to one of them.
+- **D1. Where revisions are stored:** a new `config_revisions` table keyed by scope and surface; `repo_config_revisions` stays as it is. The table serves the organization layer of #161 too. Rejected: widening `repo_config_revisions` with an empty repository name for the deployment, and renaming it behind a compatibility view, whose rollback depends on the view accepting every write.
+- **D2. The pilot section:** asks, all eight `ASK*` settings. Off by default, two readers, nothing waits on #164 or #165, and it fixes the silent fallbacks filed as #202. Rejected: scout's four keys (half the scout, and it splits #168) and leads core (on by default).
+- **D3. Delivery:** three pull requests. A is the foundation, proven with a section that exists only in tests; C is the minimal Policy tab (YAML editor with preview, history and undo); B is the asks pilot. Rejected: leaving the dashboard to a later issue (asks editable only by raw API meanwhile), and one pull request of about 4,000 lines.
+- **D4. Who may write:** admin for every section, as for provider, integration, standards and watcher stacks. When #171 moves the budget policy in, writing it tightens from any non-read key (`config.py:160-178`) to admin.
+- **D5. Granularity:** one document per deployment, as #160 proposes: one file for #162 to check, diff and apply, and one revision list. The cost accepted: undo reverses only the newest change, so undoing an older change to one feature waits until a later change to another is undone first.
 
 ## Out of scope
 
