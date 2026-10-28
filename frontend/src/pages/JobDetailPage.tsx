@@ -215,7 +215,7 @@ export function JobDetailPage() {
         </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="title-pixel text-base truncate">{job.repo}</span>
+            <span className="font-mono text-sm truncate">{job.repo}</span>
             {job.area && (
               <Badge tone="purple" title="The part of the repository its pull request changes">
                 {job.area}

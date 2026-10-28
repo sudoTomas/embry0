@@ -15,7 +15,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <h1 className="title-pixel text-xl font-bold">Settings</h1>
+      <h1 className="title-page text-xl font-bold">Settings</h1>
       <Tabs defaultValue={SETTINGS_TABS[0].value} value={tab} onValueChange={openTab}>
         <TabsList>
           {SETTINGS_TABS.map((t) => (

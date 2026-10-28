@@ -56,7 +56,7 @@ export function AuditPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <ScrollText size={18} className="text-fg-muted" />
-        <h1 className="title-pixel text-xl font-bold">Audit</h1>
+        <h1 className="title-page text-xl font-bold">Audit</h1>
         {audit.data && <span className="text-sm text-muted-foreground">{audit.data.total}</span>}
       </div>
       <p className="text-sm text-muted-foreground">

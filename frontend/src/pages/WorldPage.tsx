@@ -140,7 +140,7 @@ export function WorldPage() {
       <div className="space-y-4" data-testid="world-page">
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
-            <h1 className="title-pixel text-xl font-bold">Guild</h1>
+            <h1 className="title-page text-xl font-bold">Guild</h1>
             <p
               className="text-sm text-fg-secondary"
               data-testid="world-summary"

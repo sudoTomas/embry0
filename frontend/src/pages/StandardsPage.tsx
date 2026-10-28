@@ -100,7 +100,7 @@ export function StandardsPage() {
           </Link>
         )}
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="title-pixel text-xl font-bold">{standardTitle(KIND)}</h1>
+          <h1 className="title-page text-xl font-bold">{standardTitle(KIND)}</h1>
           {active && (
             <>
               <Badge tone="neutral">{`Version ${active.version}`}</Badge>

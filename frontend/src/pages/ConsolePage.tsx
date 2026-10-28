@@ -172,7 +172,7 @@ export function ConsolePage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="title-pixel text-xl font-bold">Console</h1>
+          <h1 className="title-page text-xl font-bold">Console</h1>
           <HeartbeatBadge lastUpdatedAt={dataUpdatedAt || null} connecting={!hasAnswered(jobs)} />
         </div>
         {/* While an agent waits on someone, answering it is the page's one

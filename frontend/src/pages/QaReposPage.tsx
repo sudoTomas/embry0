@@ -30,7 +30,7 @@ export function QaReposPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="title-pixel text-xl font-bold">QA</h1>
+        <h1 className="title-page text-xl font-bold">QA</h1>
         {reposCta}
       </div>
       {data.length === 0 ? (

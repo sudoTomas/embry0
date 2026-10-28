@@ -57,7 +57,7 @@ export function AchievementsPage() {
       />
 
       <header className="space-y-1 border-t border-border pt-6">
-        <h2 className="title-pixel text-xl font-bold">The account</h2>
+        <h2 className="title-page text-xl">The account</h2>
         <p className="text-sm text-fg-secondary" data-testid="account-summary">
           Account {number(data.account.xp)} XP · account total {number(data.account.total_level)} ·{" "}
           {number(data.account.characters)} characters · {unlocked} of {data.achievements.length} achievements unlocked ·{" "}

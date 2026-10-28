@@ -22,7 +22,7 @@ export function QaRepoDetailPage() {
         ← all repos
       </Link>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="title-pixel text-xl font-bold">{repo}</h1>
+        <h1 className="title-page text-xl font-bold">{repo}</h1>
         <BuildImageButton repo={repo} />
       </div>
       <p className="text-sm text-white/60">

@@ -67,7 +67,7 @@ export function MapCanvas({ graph, colorBy, marks, work, selected, highlight, on
     const v = current;
     const dim = highlight.size > 0;
 
-    ctx.font = "11px Outfit, sans-serif";
+    ctx.font = "11px D-DIN, Arial, sans-serif";
     ctx.textAlign = "center";
     for (const a of graph.areas) {
       if (a.x == null || a.y == null || !a.r) continue;

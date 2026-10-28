@@ -13,8 +13,8 @@
   opacity: 0;
 }
 
-/* The nameplate under a sprite: the third and last use of the pixel face
-   (index.css owns .hud and .title-pixel). */
+/* The nameplate under a sprite: a character's name, one of the game's nouns
+   and the second and last use of the pixel face (index.css owns .title-pixel). */
 .sprite-nameplate {
   font-family: var(--font-pixel);
   font-size: 10px;

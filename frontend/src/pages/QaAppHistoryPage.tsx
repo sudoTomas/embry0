@@ -32,7 +32,7 @@ export function QaAppHistoryPage() {
       >
         ← {repo}
       </Link>
-      <h1 className="title-pixel text-xl font-bold">{app}</h1>
+      <h1 className="title-page text-xl font-bold">{app}</h1>
       <p className="text-sm text-white/60">
         Last {data.length} runs · {passing} passed · {data.length - passing} failed
       </p>

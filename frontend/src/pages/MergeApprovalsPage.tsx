@@ -106,7 +106,7 @@ export function MergeApprovalsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="title-pixel text-xl font-bold">Merge approvals</h1>
+          <h1 className="title-page text-xl font-bold">Merge approvals</h1>
           <p className="text-sm text-muted-foreground">
             Reviewed pull requests waiting for a person to approve the merge, and how each was answered.
           </p>

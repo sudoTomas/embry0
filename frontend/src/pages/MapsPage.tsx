@@ -12,7 +12,7 @@ export function MapsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="title-pixel text-xl font-bold">Maps</h1>
+        <h1 className="title-page text-xl font-bold">Maps</h1>
         <p className="text-sm text-fg-secondary">
           A scanner's map of a codebase or an organization: its parts, how they link, and what each costs to keep. Mark
           a part bloat and an agent can remove it.

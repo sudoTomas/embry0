@@ -121,7 +121,7 @@ export function RepoDetailPage() {
           ← Repositories
         </Link>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h1 className="title-pixel text-xl font-bold">{full}</h1>
+          <h1 className="title-page text-xl font-bold">{full}</h1>
           <Badge tone="neutral" data-testid="repo-detail-forge">
             {providerLabel(repo.forge)}
           </Badge>

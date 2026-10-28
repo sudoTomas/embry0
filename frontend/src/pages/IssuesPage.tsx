@@ -95,7 +95,7 @@ export function IssuesPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="title-pixel text-xl font-bold">Issues</h1>
+          <h1 className="title-page text-xl font-bold">Issues</h1>
           {data && (
             <span className="inline-flex items-center rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
               {data.total}

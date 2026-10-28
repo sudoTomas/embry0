@@ -79,7 +79,7 @@ function LandingView({
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="title-pixel text-xl font-bold">Pipelines</h1>
+          <h1 className="title-page text-xl font-bold">Pipelines</h1>
           <p className="text-sm text-muted-foreground">Design and manage agent pipeline templates</p>
         </div>
         <Button type="button" onClick={onNewPipeline} data-testid="new-pipeline">

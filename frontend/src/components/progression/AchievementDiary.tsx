@@ -161,7 +161,7 @@ function Tile({ label, value, sub, color }: { label: string; value: string; sub:
   return (
     <div className="border border-border bg-white/[0.02] p-3" data-testid="diary-tile">
       <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{label}</p>
-      <p className="title-pixel mt-1 truncate text-lg" style={color ? { color: readable(color) } : undefined}>
+      <p className="title-page mt-1 truncate text-lg" style={color ? { color: readable(color) } : undefined}>
         {value}
       </p>
       <p className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-muted-foreground">{sub}</p>
@@ -216,8 +216,8 @@ export function AchievementDiary({
         }}
       >
         <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Achievement diary</p>
-        <h1 id="diary-title" className="title-pixel mt-1 text-3xl font-bold text-white sm:text-4xl">
-          embry0 Achievements
+        <h1 id="diary-title" className="title-page mt-1 text-3xl font-bold text-white sm:text-4xl">
+          <span className="normal-case">embry0</span> Achievements
         </h1>
         <p className="mt-2 max-w-3xl text-sm text-fg-secondary">
           Badges your agents earn from what actually happened: merges that landed, errors that stayed dead, issues
@@ -314,7 +314,7 @@ export function AchievementDiary({
 
       {recentChips.length > 0 && (
         <div className="space-y-1.5" data-testid="recent-unlocks">
-          <h2 className="title-pixel text-sm text-white/80">Recent unlocks</h2>
+          <h2 className="title-page text-sm text-white/80">Recent unlocks</h2>
           <div className="flex flex-wrap gap-1.5">
             {recentChips.map((u) => {
               const color = achievementColor(u.tier);

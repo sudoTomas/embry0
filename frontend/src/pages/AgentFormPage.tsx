@@ -326,7 +326,7 @@ export function AgentFormPage() {
             ) : null;
           })()}
           <div className="flex flex-col">
-            <h1 className="title-pixel text-xl font-bold leading-tight">
+            <h1 className="title-page text-xl font-bold leading-tight">
               {isEdit ? `Edit agent: ${typeParam}` : "New agent"}
             </h1>
             {(() => {

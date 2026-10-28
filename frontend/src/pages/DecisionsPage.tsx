@@ -122,7 +122,7 @@ export function DecisionsPage() {
   return (
     <div className="space-y-4" data-testid="decisions-page">
       <header className="space-y-1">
-        <h1 className="title-pixel text-xl font-bold">Decisions</h1>
+        <h1 className="title-page text-xl font-bold">Decisions</h1>
         <p className="text-sm text-fg-secondary">
           Every quest waiting on someone: finished work to review, and work embry0 found that its owners could start. The worst come first.
         </p>

@@ -77,7 +77,7 @@ export function MapPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs text-fg-muted"><Link className="hover:text-fg" to="/maps">Maps</Link> /</p>
-          <h1 className="title-pixel text-xl font-bold">{g.title}</h1>
+          <h1 className="title-page text-xl font-bold">{g.title}</h1>
           <p className="text-xs text-fg-muted">
             {g.repo ?? "organization map"} · {g.nodes.length.toLocaleString()} parts
             {g.generated_at ? ` · scanned ${formatDateTime(g.generated_at)}` : ""}

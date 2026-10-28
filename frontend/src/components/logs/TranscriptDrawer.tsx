@@ -33,7 +33,7 @@ export function TranscriptDrawer({ open, onClose, jobId, agentType, displayName 
       label={title}
       title={
         <>
-          <span className="title-pixel text-lg">Stored session</span>
+          <span className="title-page text-lg">Stored session</span>
           <span className="ml-2 text-sm font-normal text-muted-foreground">of {displayName} for this job</span>
         </>
       }
