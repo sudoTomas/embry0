@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
-from embry0.services.watcher_stacks import OVERRIDABLE, WatcherStack
+from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack
 
 STACK = WatcherStack(
     repo="acme/backend",
@@ -38,7 +38,7 @@ class FakeStacksRepo:
             logql=stack.logql,
             tracker=stack.tracker,
             tracker_target=stack.tracker_target,
-            settings={k: v for k, v in stack.settings.items() if k in OVERRIDABLE},
+            settings={k: v for k, v in stack.settings.items() if k in SETTING_KEYS},
             enabled=stack.enabled,
         )
         self.stacks[stack.repo] = kept

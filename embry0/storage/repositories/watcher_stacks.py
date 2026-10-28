@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from embry0.services.watcher_stacks import OVERRIDABLE, WatcherStack
+from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack
 from embry0.storage.database import DatabasePool
 
 _COLUMNS = "repo, enabled, logql, tracker, tracker_target, settings, created_at, updated_at"
@@ -43,12 +43,12 @@ class WatcherStacksRepository:
 
     async def upsert(self, stack: WatcherStack) -> WatcherStack:
         """Create or replace one stack. Unknown setting keys are dropped —
-        a typo must not become a setting nothing reads (OVERRIDABLE)."""
+        a typo must not become a setting nothing reads (SETTING_KEYS)."""
         if stack.tracker not in VALID_TRACKERS:
             raise ValueError(f"unknown tracker {stack.tracker!r}")
         if not stack.repo.strip() or not stack.logql.strip():
             raise ValueError("a stack needs a repo and a LogQL selector")
-        settings = {k: v for k, v in (stack.settings or {}).items() if k in OVERRIDABLE}
+        settings = {k: v for k, v in (stack.settings or {}).items() if k in SETTING_KEYS}
         row = await self._db.fetchrow(
             f"""
             INSERT INTO watcher_stacks (repo, enabled, logql, tracker, tracker_target, settings)

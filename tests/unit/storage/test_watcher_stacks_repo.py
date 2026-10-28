@@ -58,6 +58,16 @@ async def test_unknown_setting_keys_are_dropped_on_write(db_with_migrations: Dat
     assert stored.settings == {"interval_seconds": 60}
 
 
+async def test_a_stacks_own_signature_masks_are_kept_on_write(db_with_migrations: DatabasePool) -> None:
+    """#172: a setting with no global default is still a setting, not a typo to drop."""
+    masks = [{"pattern": r"\brec_[a-z0-9]{7}\b", "replacement": "<record>"}]
+    repo = WatcherStacksRepository(db_with_migrations)
+    await repo.upsert(WatcherStack(repo="o/r", logql="{x=1}", settings={"signature_masks": masks}))
+    stored = await repo.get("o/r")
+    assert stored is not None
+    assert stored.settings == {"signature_masks": masks}, f"the masks were dropped on write: {stored.settings}"
+
+
 async def test_a_stack_needs_a_repo_a_selector_and_a_known_tracker(db_with_migrations: DatabasePool) -> None:
     repo = WatcherStacksRepository(db_with_migrations)
     for bad in (

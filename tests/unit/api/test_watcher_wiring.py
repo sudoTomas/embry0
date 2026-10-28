@@ -39,6 +39,8 @@ REQUIRED_IN_PRODUCTION = (
     "filer",
     # Spec 2026-10-25 — without this a stack's auto_accept setting does nothing.
     "auto_acceptor",
+    # #172 — without this a mask stored after startup never reaches a tick.
+    "signature_masks",
 )
 
 
@@ -195,3 +197,49 @@ async def test_the_auto_acceptor_accepts_through_the_case_route_as_its_own_actor
     assert audits == [("case_auto_accepted", AUTO_ACCEPT)]
     assert db.fetchval.await_args.args[1] == AUTO_ACCEPT, "the day's cap counts the auto-accept actor's jobs"
     assert db.fetchval.await_args.args[4] == "owner/repo", "#172: and only this stack's repository's"
+
+
+# ---- #172: a stack's signature masks, read every tick ----------------------
+
+
+def test_each_watcher_reads_its_own_stacks_masks() -> None:
+    """Pinned separately: another stack's reader, or one built once at startup, would
+    satisfy the test above and still read the wrong masks or none after a PUT."""
+    passed = {kw.arg: ast.unparse(kw.value) for kw in _watcher_service_call().keywords if kw.arg}
+    assert passed.get("signature_masks") == "_watcher_signature_masks(app, stack.repo)", (
+        f"each watcher must read its own stack's masks every tick, not {passed.get('signature_masks')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_mask_reader_reads_the_stacks_row_now() -> None:
+    from types import SimpleNamespace
+
+    import structlog
+
+    from embry0.services.watcher_stacks import WatcherStack
+
+    reader_for = getattr(app_module, "_watcher_signature_masks", None)
+    assert reader_for is not None, "app.py has no reader for a stack's signature masks"
+    mask = {"pattern": r"\brec_[a-z0-9]{7}\b", "replacement": "<record>"}
+    rows = {
+        "acme/widgets": WatcherStack(repo="acme/widgets", logql="{x=1}", settings={"signature_masks": [mask]}),
+        "acme/legacy": WatcherStack(
+            repo="acme/legacy", logql="{x=1}", settings={"signature_masks": [{"pattern": "("}]}
+        ),
+    }
+
+    class Stacks:
+        async def get(self, repo: str) -> WatcherStack | None:
+            return rows.get(repo)
+
+    app = SimpleNamespace(state=SimpleNamespace(watcher_stacks_repo=Stacks()))
+    assert await reader_for(app, "acme/widgets")() == [mask]
+    assert await reader_for(app, "acme/gone")() is None, "no row is not the same as no masks"
+
+    with structlog.testing.capture_logs() as logs:
+        assert await reader_for(app, "acme/legacy")() == [], "a stored value that no longer checks reads as none"
+    assert any(e["event"] == "watcher_stack_setting_invalid" and e.get("key") == "signature_masks" for e in logs)
+
+    rows["acme/widgets"] = WatcherStack(repo="acme/widgets", logql="{x=1}")
+    assert await reader_for(app, "acme/widgets")() == [], "the reader read the row once, not every call"

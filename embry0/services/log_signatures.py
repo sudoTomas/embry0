@@ -28,13 +28,19 @@ Design notes worth keeping:
   the cluster's own first/last timestamps rather than the tick window, so a
   burst that lasted 90 seconds does not read as a low hourly rate just because
   the window was an hour wide.
+* **A stack can add masks of its own** (#172): a record-id format only its logs
+  carry. They run on the raw line, before the built-in rules, so a pattern is
+  written against the line as it reads in Loki and sees the whole id before
+  the number and hex rules cut it into pieces. Every place that turns one of
+  that stack's lines into a signature must pass the same masks, or one line
+  gets two signatures.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -137,13 +143,41 @@ TEMPLATE_MAX_CHARS = 320
 DEFAULT_SAMPLES_PER_CLUSTER = 2
 
 
-def normalize_line(line: str) -> str:
+#: A stack's own masks (#172), compiled: each a pattern and the placeholder
+#: that replaces whatever it matches. Applied before :data:`_RULES`.
+SignatureMasks = tuple[tuple[re.Pattern[str], str], ...]
+
+
+def _literal(placeholder: str) -> Callable[[re.Match[str]], str]:
+    """A replacement that is ``placeholder`` as written: never read for ``\\1`` or ``\\g<name>``."""
+
+    def replace(_match: re.Match[str]) -> str:
+        return placeholder
+
+    return replace
+
+
+def compile_masks(masks: Iterable[Mapping[str, str]] | None) -> SignatureMasks:
+    """``[{pattern, replacement}]`` as a stack stores them, compiled in order.
+
+    Raises :class:`re.error` for a pattern that does not compile. A stored
+    set was checked when it was written (``services/watcher_stacks.py``).
+    """
+    return tuple((re.compile(str(mask["pattern"])), str(mask["replacement"])) for mask in masks or ())
+
+
+def normalize_line(line: str, masks: SignatureMasks = ()) -> str:
     """One raw log line -> its template, with variable parts masked.
 
     Deterministic and side-effect free: the same line always yields the same
     template, which is what makes the signature id stable across ticks.
+    ``masks`` are the stack's own (:func:`compile_masks`), applied to the raw
+    line first. Each replacement is literal: a placeholder, never a template
+    with group references.
     """
     out = line if isinstance(line, str) else ""
+    for pattern, placeholder in masks:
+        out = pattern.sub(_literal(placeholder), out)
     for pattern, replacement in _RULES:
         out = pattern.sub(replacement, out)
     out = out.strip()
@@ -213,19 +247,21 @@ def cluster_entries(
     entries: Iterable[LogEntry | str],
     *,
     samples_per_cluster: int = DEFAULT_SAMPLES_PER_CLUSTER,
+    masks: SignatureMasks = (),
 ) -> list[LogCluster]:
     """Cluster log entries by signature, ranked by count (descending).
 
     Ties break on the template so the ordering is total and therefore
     reproducible — an unstable order would make the shadow comparison in #289
-    look like disagreement when nothing had changed.
+    look like disagreement when nothing had changed. ``masks`` are the
+    stack's own (:func:`normalize_line`).
     """
     buckets: dict[str, LogCluster] = {}
     for raw in entries:
         entry = LogEntry(line=raw) if isinstance(raw, str) else raw
         if not entry.line or not entry.line.strip():
             continue
-        template = normalize_line(entry.line)
+        template = normalize_line(entry.line, masks)
         if not template:
             continue
         sig = signature_id(template)
