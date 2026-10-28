@@ -46,12 +46,48 @@ Every name, number and word above comes from one document, the content pack. Its
 - **One pack per deployment.** Characters are agent types, which are deployment-wide, and the account is the deployment.
 - **A pack re-prices the whole history.** A trace stores what each tool call was, an *action category* such as `shell:test-runner` or `edit:docs`, never a skill; the pack maps each category to the skill it trains and prices it by its kind. Runs recorded before the categories (since migration 107) are translated when read; older runs keep only their tool names, so a shell call is plain shell and an edit is source.
 - **Achievements are a metric and its parameters.** The facts query runs one SQL fragment per metric the pack uses, with the pack's parameters and timezone bound as values; a pack never carries SQL.
-- **The calendar is the pack's `timezone`** (UTC in the shipped pack): the day a rare drops on, the hour a merge counts as late, the day a hot streak counts in.
+- **The calendar is the pack's `timezone`** (UTC in the shipped pack): the day a rare drops on, the hour a merge counts as late, the day a hot streak counts in. The texts leave it out; the Achievements page names it once, beside the note on secret achievements, where the oddities are.
 - **The dashboard keeps no copy.** `GET /api/v1/progression` carries the pack's tiers, rares, skill groups and cloak colours, diary tiers, messages and nouns, and the pages read them from there. `docs/contracts/progression.json` pins the art a pack may name on both sides.
 
 - **Texts take one small grammar.** `{name}` is a value, `{name:,}` a number with thousands separators, and `{{` and `}}` are literal braces. Anything else in braces is refused, so a text can never break or slow a read. Each text may name only its own values: an achievement's or a quest's parameters, a diary task's, or a message's (`{character}`, `{skill}`, `{level}`...).
 
-Check a pack file with `python -m embry0.services.progression_pack --check <file>`: it prints every problem with its key, then any warning, such as a category no skill is trained by. Today every deployment reads the shipped pack; storing and activating another (with a draft, a preview and a reset to the shipped default) is #176's next step.
+Check a pack file with `embry0 progression-pack check <file>` (or `python -m embry0.services.progression_pack --check <file>`): it prints every problem with its key, then any warning, such as a category no skill is trained by.
+
+## Changing the content
+
+An admin changes the pack on the dashboard (**Settings → Game content**), with `embry0 progression-pack`, through the MCP tools or through the API ([api.md](api.md#progression-content-pack)). Anyone can read it; the tab is read-only for everyone else. A deployment that never changes it follows the shipped default, so a release that changes the default reaches it as code would.
+
+- **A whole document.** A customised pack is the full pack, stored as written with its comments, beside its parsed values. Start from the shipped default (`embry0 progression-pack export --default`, or the editor as it opens) and change what you want: rename or retune skills, tiers, rares, achievements, quests and diaries, translate the messages and nouns, set the `timezone`.
+- **Draft, preview, activate.** *Save draft* stores one draft; nothing anyone sees changes. *Preview* computes the progression under the draft from the whole history, now, and shows each character's level, total level and experience and the account's achievements unlocked, before and after. *Activate* makes the draft the pack in effect; every page re-prices the history at its next read. One preview runs at a time, since it reads the whole history.
+- **One step, for files and tools.** `embry0 progression-pack apply <file>` (and `PUT /api/v1/progression/pack`, and the MCP tool `progression_pack_set`) checks and activates in one call, showing the diff first; `diff` and `?dry_run=1` show the problems, the warnings and the diff without storing anything, and a file equal to the pack in effect records nothing. `check <file>` validates offline with the same checks.
+- **History and undo.** Every activation is a version, recording who, why and how (`person` for the dashboard and API, `file` for `apply`, `restore`, `reset`, `upgrade`); the newest 100 earlier versions are kept. *Restore* puts an earlier version back as a new version, so it is undone the same way.
+- **Reset to default.** A new version that follows the shipped default: the pack in effect becomes whatever the running release ships.
+- **When the shipped default moves on.** A customised pack records the default it was taken from. When a release ships another, the tab says so and shows the diff between the two defaults, so you can carry over what you want. Saving with *I have taken in the new default* (`?rebase=1`) records that the pack is now based on this release's default, and the notice goes.
+- **Two people at once.** Every write names the version it replaces (`If-Match`, the `ETag` a read returned): a write over someone else's newer change is refused (409) instead of overwriting it, and *Activate* names the draft its preview showed. A draft also records the version in effect when it was saved: if someone activates another pack in the meantime, the draft cannot be activated over it unseen. The tab says so and previews the draft again against the new pack; save the draft again, carrying over what you want to keep, then activate it.
+- **Who changed it.** The history names who made each version as the audit log does: an admin sees everyone, anyone else only their own changes.
+
+**What a write refuses.** A 422 lists every problem by its key, such as `achievements[3].thresholds`, never echoing a value: an unknown key or a wrong type, a reference to a skill, tier, category, metric, kind or art that does not exist, thresholds that do not match the tiers, a placeholder a text may not use, a timezone the database does not know (Python and Postgres read different tz databases; the name must be known to both. Should a stored pack's zone still be unknown to the database, the achievements that count a day or an hour are counted on UTC, and both the Game content tab and the Achievements page say so), a key written twice, YAML aliases and merge keys, and a document over 256 KiB (413). Warnings never block: an action category no skill is trained by, or an agent named in a rate that is not defined (yet).
+
+### From the command line and MCP
+
+`embry0 progression-pack` works on a pack file:
+
+| Command | What it does |
+|---|---|
+| `check <file>` | Validates offline, with the API's own checks, and prints every problem as `key: msg`. Only the database's timezone check waits for a write |
+| `diff <file>` | A dry run through the API: whether it would change, the sections, the warnings and the text diff. Stores nothing |
+| `apply <file> [--reason TEXT] [--yes]` | Shows the diff, asks, then activates it with source `file`. A file equal to the pack in effect records nothing; without a terminal it needs `--yes`; a pack changed since the diff is refused (409) |
+| `export [--default] [-o FILE]` | Writes the pack in effect, or the shipped default, as YAML. When the stored version is refused, that is the shipped default, and it says so |
+
+`check` exits 1 on a problem. `diff` and `apply` exit 1 on a refusal (422 or 409), and 2 when the orchestrator cannot be reached or refuses the key. Like `embry0 onboard`, they read `EMBRY0_API_URL` and the API key (`--api-url`, `--api-key`).
+
+| MCP tool | Effect |
+|---|---|
+| `progression_pack_get()` | The pack in effect, with its text |
+| `progression_pack_set(text, expected_version=None, dry_run=False, confirm=False)` | Checks and activates the whole pack. Pass the `version` `progression_pack_get` returned as `expected_version`, so a pack someone activated in between is refused (409) rather than overwritten. A dry run needs no `confirm` and stores nothing; a write without `confirm=true` returns `confirmation_required` and changes nothing. Needs an admin key |
+| `progression_pack_reset(confirm=False)` | Follows the shipped default; without `confirm=true` it returns `confirmation_required` |
+
+**A stored pack the release refuses.** A pack stored under an older schema is upgraded when the orchestrator starts, as a new version with source `upgrade`; its text is written again from its values, so its comments are lost, and the version's reason says so. A stored pack the running release still refuses (one it cannot upgrade, or one a newer release wrote before a rollback) is never served: the shipped default is, the orchestrator logs `progression_pack_stored_invalid` once, and the tab lists the problems. Save a corrected pack, restore another version, or reset.
 
 ## Turning it off
 

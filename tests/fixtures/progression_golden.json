@@ -1396,7 +1396,7 @@
     "tiers_reached": 1,
     "unlocked_at": "2025-10-04T14:35:00+00:00",
     "value": 5,
-    "what_counts": "A pull request that merged on a Saturday or Sunday (UTC)"
+    "what_counts": "A pull request that merged on a Saturday or Sunday"
    },
    {
     "category": "oddities",
@@ -1421,7 +1421,7 @@
     "tiers_reached": 1,
     "unlocked_at": "2025-10-07T02:35:00+00:00",
     "value": 1,
-    "what_counts": "A pull request that merged between midnight and four in the morning (UTC)"
+    "what_counts": "A pull request that merged between midnight and four in the morning"
    },
    {
     "category": "oddities",
@@ -1446,7 +1446,7 @@
     "tiers_reached": 1,
     "unlocked_at": "2025-10-03T21:35:00+00:00",
     "value": 2,
-    "what_counts": "A pull request that merged on a Friday after eight in the evening (UTC)"
+    "what_counts": "A pull request that merged on a Friday after eight in the evening"
    },
    {
     "category": "oddities",
@@ -1471,7 +1471,7 @@
     "tiers_reached": 1,
     "unlocked_at": "2025-10-31T12:35:00+00:00",
     "value": 4,
-    "what_counts": "A pull request that merged on 25 December, 31 October or 1 January (UTC)"
+    "what_counts": "A pull request that merged on 25 December, 31 October or 1 January"
    },
    {
     "category": "oddities",
