@@ -236,6 +236,17 @@ export interface PackLabels {
   quest_cloak: string;
 }
 
+/** The closed days the experience was folded from once (#176). Work recorded more than 48 hours late for a day
+ * before `boundary` counts from the next full rebuild, at most a day later; `rebuilt_at` is the last one. */
+export interface ProgressionRollup {
+  /** The newest day of the pack's calendar folded in. */
+  through_day: string;
+  /** When that day ended: every event from here on counts at once. */
+  boundary: string;
+  built_at: string;
+  rebuilt_at: string;
+}
+
 /** GET /progression: the account, its characters and its achievements, recomputed from the work embry0 recorded,
  * and the active content pack's names, colours, words and art (#176). */
 export interface Progression {
@@ -274,6 +285,8 @@ export interface Progression {
   /** Levels reached, rares dropped, tiers unlocked, quests and diary tiers completed, newest first. */
   recent: RecentEvent[];
   computed_at: string;
+  /** The rollup the experience came from; null when every raw row was read (no rollup yet for this pack). */
+  rollup: ProgressionRollup | null;
 }
 
 export async function fetchProgression(): Promise<Progression> {

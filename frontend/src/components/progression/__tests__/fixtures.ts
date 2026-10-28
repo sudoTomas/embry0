@@ -117,6 +117,7 @@ export function progression(overrides: Partial<Progression> = {}): Progression {
     ],
     recent: [],
     computed_at: "2026-10-24T00:00:00+00:00",
+    rollup: null,
     ...overrides,
   };
 }
