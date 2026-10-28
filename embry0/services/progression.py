@@ -25,11 +25,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+import structlog
+
 from embry0.execution.skill_actions import actions_from_tools, current_actions
 from embry0.services.context_audit import report_counts
 from embry0.services.progression_pack import PackSource, Rules, rules_for
 from embry0.services.quests import Reward, evaluate_diaries, evaluate_quests, quest_rewards
 from embry0.storage.repositories.progression import Fact, FactFragment, Journal, ProgressEvent
+
+logger = structlog.get_logger(__name__)
 
 
 def run_actions(event: ProgressEvent) -> dict[str, int]:
@@ -391,6 +395,23 @@ class ProgressionService:
         """The active pack's rules."""
         return rules_for(await self._packs.active())
 
+    async def _facts(self, rules: Rules) -> list[Fact]:
+        """The achievements' facts on the pack's calendar; on UTC's, with a warning, when the database refuses it.
+
+        The pack's timezone is checked against Python's timezone database,
+        and Postgres applies it from its own: a name one knows and the other
+        does not would fail the whole query, and with it every read of the
+        progression. A failure under UTC is a real one and is raised.
+        """
+        timezone = rules.pack.timezone
+        try:
+            return await self._repository.facts(rules.fact_queries, timezone)
+        except Exception:
+            if timezone == "UTC":
+                raise
+            logger.warning("progression_facts_timezone_fallback", timezone=timezone, exc_info=True)
+            return await self._repository.facts(rules.fact_queries, "UTC")
+
     async def read(self) -> Progression:
         async with self._lock:
             rules = await self.rules()
@@ -407,7 +428,7 @@ class ProgressionService:
                 events, await self._repository.agent_types(), quest_rewards(journal, rules=rules), rules=rules
             )
             progression.achievements, progression.unlocks = evaluate(
-                await self._repository.facts(rules.fact_queries, rules.pack.timezone),
+                await self._facts(rules),
                 progression.level_ups,
                 progression.agent_level_ups,
                 progression.drops,

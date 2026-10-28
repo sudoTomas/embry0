@@ -462,5 +462,70 @@
         "name": "Divine"
       }
     ]
-  }
+  },
+  "template_cases": [
+    {
+      "out": "Forge reached Coding level 42.",
+      "text": "{character} reached {skill} level {level}.",
+      "values": {
+        "character": "Forge",
+        "level": 42,
+        "skill": "Coding"
+      }
+    },
+    {
+      "out": "A character at total level 1,000",
+      "text": "A character at total level {total_level:,}",
+      "values": {
+        "total_level": 1000
+      }
+    },
+    {
+      "out": "1,234,567 and 1234567",
+      "text": "{n:,} and {n}",
+      "values": {
+        "n": 1234567
+      }
+    },
+    {
+      "out": "{braces} stay x",
+      "text": "{{braces}} stay {name}",
+      "values": {
+        "name": "x"
+      }
+    },
+    {
+      "out": "nothing to fill",
+      "text": "nothing to fill",
+      "values": {}
+    },
+    {
+      "out": "{missing} stays",
+      "text": "{missing} stays",
+      "values": {}
+    },
+    {
+      "out": "text",
+      "text": "{label:,}",
+      "values": {
+        "label": "text"
+      }
+    },
+    {
+      "out": "under 1 dollars, 2,400 hours, 2.5",
+      "text": "under {max_usd} dollars, {hours:,} hours, {ratio}",
+      "values": {
+        "hours": 2400.0,
+        "max_usd": 1.0,
+        "ratio": 2.5
+      }
+    },
+    {
+      "out": "true",
+      "text": "{flag}",
+      "values": {
+        "flag": true
+      }
+    }
+  ]
 }

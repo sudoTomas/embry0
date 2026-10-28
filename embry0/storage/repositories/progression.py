@@ -83,7 +83,7 @@ class ProgressEvent:
     agent_type: str | None
     at: datetime
     report: str | None = None
-    #: A run's tool calls by name, and by action key (``kind:skill``); None for other sources.
+    #: A run's tool calls by name, and by action key (``kind:category``; older rows ``kind:skill``); None for other sources.
     tools_called: dict[str, int] | None = None
     skill_actions: dict[str, int] | None = None
 
@@ -354,7 +354,10 @@ def facts_sql(queries: Iterable[FactFragment], timezone: str) -> tuple[str, list
                 args.append(timezone)
                 slots[name] = f"${len(args)}::text"
             else:
-                value = query.params.get(name)
+                if name not in query.params:
+                    # A parameter left out would be compared with NULL and count nothing, silently.
+                    raise KeyError(f"the {query.fragment} fragment needs the parameter {name!r}")
+                value = query.params[name]
                 args.append(list(value) if isinstance(value, (list, tuple)) else value)
                 slots[name] = f"${len(args)}"
         body = template.format(**slots)

@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from embry0.services import progression_templates as templates
 from embry0.services.context_audit import report_counts
 from embry0.services.progression import AgentLevelUp, LevelUp, RareDrop
 from embry0.services.progression_pack import AchievementRule, Rules, fact_key
@@ -37,6 +38,9 @@ from embry0.storage.repositories.progression import Fact
 
 #: What a reached objective reads as, in place of a tier: a value of the API, not a word people read.
 COMPLETE = "complete"
+
+#: The metrics with no SQL fragment, which :func:`metric_steps` reads from the level-ups and drops.
+DERIVED_METRICS = frozenset({"best_total", "capes", "best_level", "rares", "skills_at_level", "characters_at_total"})
 
 
 def _base(metric: str, rules: Rules) -> float:
@@ -185,7 +189,7 @@ class AchievementState:
             "category": a.category,
             "kind": kind,
             "icon": a.icon,
-            "what_counts": a.what_counts.format(**a.params),
+            "what_counts": templates.render(a.what_counts, a.params),
             "flavour": a.flavour,
             "secret": a.secret,
             "state": "unlocked" if self.tier else "discovered",

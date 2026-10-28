@@ -486,3 +486,44 @@ async def test_the_service_recomputes_at_once_when_the_pack_changes() -> None:
         "a changed pack is read at once, whatever the time to live"
     )
     assert (await service.rules()).hash == pack_hash(Packs.pack)
+
+
+@pytest.mark.asyncio
+async def test_a_timezone_the_database_refuses_falls_back_to_utc_and_a_real_failure_still_raises() -> None:
+    """The pack's timezone is checked by Python and applied by Postgres (review of #207, finding 1d)."""
+
+    class Repo:
+        asked: list[str] = []
+        broken = False
+
+        async def events(self) -> list[ProgressEvent]:
+            return [ev("merged", "developer")]
+
+        async def agent_types(self) -> list[str]:
+            return ["developer"]
+
+        async def facts(self, queries: object, timezone: str) -> list:
+            Repo.asked.append(timezone)
+            if Repo.broken or timezone != "UTC":
+                raise RuntimeError("invalid value for parameter TimeZone")
+            return []
+
+        async def journal(self) -> Journal:
+            return Journal([], [])
+
+    class Packs:
+        async def active(self) -> Any:
+            data = yaml.safe_load(default_text())
+            data["timezone"] = "Europe/Berlin"
+            return parse(data)
+
+    service = ProgressionService(Repo(), packs=Packs(), ttl_seconds=0)
+    try:
+        progression = await service.read()
+    except RuntimeError as exc:
+        raise AssertionError(f"a timezone Postgres refuses took down every read of the progression: {exc}") from exc
+    assert Repo.asked == ["Europe/Berlin", "UTC"], "the facts are read again on UTC's calendar"
+    assert progression.achievements, "the progression still answers"
+    Repo.broken = True
+    with pytest.raises(RuntimeError, match="TimeZone"):
+        await ProgressionService(Repo(), packs=ShippedPack(), ttl_seconds=0).read()

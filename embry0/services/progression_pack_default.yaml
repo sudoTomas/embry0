@@ -1,7 +1,11 @@
 # embry0's shipped progression content pack (#176): every skill, rate, tier,
 # rare, achievement, quest, diary task and chat-box message the progression
-# layer uses, in embry0's own original theme. A deployment reads this pack
-# until an operator activates another; docs/progression.md explains how.
+# layer uses, in embry0's own original theme. Every deployment reads this
+# pack; docs/progression.md describes it, section by section.
+#
+# Texts may name values in braces, and only in this grammar: {name} is a
+# value, {name:,} a number with thousands separators, {{ and }} a literal
+# brace. Anything else in braces is refused when the pack is checked.
 #
 # The schema is embry0/services/progression_pack.py, and what a pack may name
 # (metrics, quest and diary task kinds, action categories, art) is

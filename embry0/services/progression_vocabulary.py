@@ -14,11 +14,11 @@ import it without a cycle.
 
 from __future__ import annotations
 
-import string
+import calendar
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from embry0.execution.skill_actions import ACTION_CATEGORIES, ACTION_KEYS
 
@@ -39,7 +39,6 @@ __all__ = [
     "Metric",
     "Params",
     "QuestKind",
-    "placeholders",
 ]
 
 #: The kinds of tool call, each priced by the pack's ``rates.actions``.
@@ -125,22 +124,22 @@ LABEL_PLACEHOLDERS: dict[str, frozenset[str]] = {
 }
 
 
-def placeholders(text: str) -> set[str]:
-    """The ``{name}`` fields of a format string; raises ValueError when it cannot be parsed."""
-    names: set[str] = set()
-    for _literal, field, _spec, _conversion in string.Formatter().parse(text):
-        if field is None:
-            continue
-        if not field.isidentifier():
-            raise ValueError(f"{{{field}}} is not a placeholder name")
-        names.add(field)
-    return names
-
-
 # ---- parameters ----
 
 AgentName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]*$", max_length=64)]
-MonthDay = Annotated[str, StringConstraints(pattern=r"^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")]
+
+
+def _real_date(value: str) -> str:
+    """A month and day that occur in some year: 29 February does, 30 February does not."""
+    month, day = (int(part) for part in value.split("-"))
+    if day > calendar.monthrange(2024, month)[1]:  # 2024 is a leap year
+        raise ValueError("no such day in that month")
+    return value
+
+
+MonthDay = Annotated[
+    str, StringConstraints(pattern=r"^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"), AfterValidator(_real_date)
+]
 Agents = Annotated[list[AgentName], Field(min_length=1, max_length=20)]
 
 
@@ -173,7 +172,9 @@ class ReviewAndQa(Params):
 
 class Healed(Params):
     severity: str | None = Field(default=None, max_length=40, description="only cases of this severity")
-    min_seen: int | None = Field(default=None, ge=1, description="only cases seen at least this many times")
+    min_seen: int | None = Field(
+        default=None, ge=1, le=1_000_000, description="only cases seen at least this many times"
+    )
 
 
 class MinScore(Params):

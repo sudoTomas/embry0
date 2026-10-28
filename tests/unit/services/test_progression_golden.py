@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from embry0.execution.skill_actions import LEGACY_ACTION_KEYS, current_actions
 from embry0.services.progression import ProgressionService
 from embry0.services.progression_pack import ShippedPack, default_rules
 from embry0.services.world import quest_xp
@@ -120,3 +121,26 @@ async def test_progression_reads_the_seeded_history_as_recorded(db_with_migratio
 
 def test_a_quest_scroll_prices_its_runs_as_recorded() -> None:
     _check("quest_xp", json.loads(json.dumps(_quest_xp_cases())))
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_the_same_history_on_todays_category_keys_reads_the_same(db_with_migrations) -> None:
+    """Runs written since #176 store categories (shell:test-runner), not skills: priced the same, field for field."""
+    db = db_with_migrations
+    await seed_history(db)
+    rows = await db.fetch("SELECT trace_id, skill_actions FROM traces WHERE skill_actions <> '{}'::jsonb")
+    assert rows and all(set(r["skill_actions"]) <= set(LEGACY_ACTION_KEYS) for r in rows), "the seed holds older keys"
+    for row in rows:
+        await db.execute(
+            "UPDATE traces SET skill_actions = $2 WHERE trace_id = $1",
+            row["trace_id"],
+            current_actions(row["skill_actions"]),
+        )
+    assert not {k for r in await db.fetch("SELECT skill_actions FROM traces") for k in r["skill_actions"]} & set(
+        LEGACY_ACTION_KEYS
+    ), "every run now holds categories"
+    progression = await ProgressionService(ProgressionRepository(db), packs=ShippedPack()).read()
+    body = json.loads(json.dumps(progression.to_dict()))
+    body.pop("computed_at")
+    _check("progression", body)

@@ -41,12 +41,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
+from embry0.services import progression_templates as templates
 from embry0.services import progression_vocabulary as vocab
 
 #: The schema version this release reads and writes.
 SCHEMA_VERSION = 1
 #: The largest document the loader parses.
 MAX_TEXT_BYTES = 256 * 1024
+#: The deepest a document nests; the shipped pack nests six deep.
+MAX_DEPTH = 32
+#: The most experience the curve's top may hold: past it, the dashboard cannot read a number exactly.
+MAX_CURVE_XP = 2**53 - 1
 #: The shipped default, beside this module.
 DEFAULT_PACK_FILE = "progression_pack_default.yaml"
 #: The cloak a skill wears at 99 when the pack gives it no colours.
@@ -70,8 +75,8 @@ class Curve(_Model):
 
     max_level: int = Field(ge=2, le=200)
     points: float = Field(gt=0, le=100_000)
-    doubling: float = Field(gt=0, le=1_000)
-    divisor: float = Field(gt=0, le=1_000)
+    doubling: float = Field(ge=1, le=1_000)
+    divisor: float = Field(ge=1, le=1_000)
 
 
 class Group(_Model):
@@ -299,10 +304,23 @@ class _NoAliasLoader(yaml.SafeLoader):
 
     def compose_node(self, parent: Any, index: Any) -> Any:
         if self.check_event(yaml.AliasEvent):
-            event = self.peek_event()
-            mark = event.start_mark
+            mark = self.peek_event().start_mark  # type: ignore[no-untyped-call]  # the stubs leave it untyped
             raise yaml.YAMLError(f"line {mark.line + 1}, column {mark.column + 1}: aliases are not allowed")
         return super().compose_node(parent, index)
+
+
+def _too_deep(data: Any) -> bool:
+    """Whether ``data`` nests deeper than :data:`MAX_DEPTH`, found without recursion."""
+    stack: list[tuple[Any, int]] = [(data, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > MAX_DEPTH:
+            return True
+        if isinstance(node, dict):
+            stack.extend((value, depth + 1) for value in node.values())
+        elif isinstance(node, list):
+            stack.extend((value, depth + 1) for value in node)
+    return False
 
 
 def load_text(text: str) -> Any:
@@ -310,22 +328,34 @@ def load_text(text: str) -> Any:
     if len(text.encode()) > MAX_TEXT_BYTES:
         raise PackInvalid([Problem((), "too_large", f"the document is larger than {MAX_TEXT_BYTES // 1024} KiB")])
     try:
-        return yaml.load(text, Loader=_NoAliasLoader)  # noqa: S506 - a SafeLoader subclass
+        data = yaml.load(text, Loader=_NoAliasLoader)  # noqa: S506 - a SafeLoader subclass
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
         problem = getattr(exc, "problem", None) or str(exc)
-        return_problem = Problem((), "yaml_syntax", f"{where}{problem}")
-        raise PackInvalid([return_problem]) from None
+        raise PackInvalid([Problem((), "yaml_syntax", f"{where}{problem}")]) from None
+    except RecursionError:
+        raise PackInvalid([Problem((), "too_deep", f"the document nests deeper than {MAX_DEPTH} levels")]) from None
+    if _too_deep(data):
+        raise PackInvalid([Problem((), "too_deep", f"the document nests deeper than {MAX_DEPTH} levels")])
+    return data
 
 
 def parse(data: Any) -> Pack:
     """The pack ``data`` is, checked in full; raises :class:`PackInvalid` naming every problem."""
     if not isinstance(data, dict):
         raise PackInvalid([Problem((), "dict_type", "a pack is a mapping of sections")])
+    if _too_deep(data):
+        raise PackInvalid([Problem((), "too_deep", f"the document nests deeper than {MAX_DEPTH} levels")])
     if "version" in data and data["version"] != SCHEMA_VERSION:
         raise PackInvalid(
-            [Problem(("version",), "version", f"this release reads version {SCHEMA_VERSION}, not {data['version']!r}")]
+            [
+                Problem(
+                    ("version",),
+                    "version",
+                    f"this release reads version {SCHEMA_VERSION}; the shipped pack is at GET /progression/pack/default",
+                )
+            ]
         )
     try:
         pack = Pack.model_validate(data)
@@ -349,7 +379,7 @@ def _duplicates(items: list[Any], section: str) -> list[Problem]:
     out: list[Problem] = []
     for i, item in enumerate(items):
         if item.id in seen:
-            out.append(Problem((section, i, "id"), "duplicate", f"{item.id!r} is used twice in {section}"))
+            out.append(Problem((section, i, "id"), "duplicate", f"this id is already used in {section}"))
         seen.add(item.id)
     return out
 
@@ -362,20 +392,28 @@ def _check_params(model: type[vocab.Params], params: dict[str, Any], loc: tuple[
     return []
 
 
-def _check_text(text: str, allowed: set[str] | frozenset[str], loc: tuple[str | int, ...]) -> list[Problem]:
+def _check_text(
+    text: str, allowed: set[str] | frozenset[str], loc: tuple[str | int, ...], values: dict[str, Any] | None = None
+) -> list[Problem]:
+    """A text in the template grammar (``progression_templates``) that names only ``allowed`` fields.
+
+    ``values``, when given, are the parameters the text is filled from: a
+    list or a mapping cannot be written into a text.
+    """
     try:
-        names = vocab.placeholders(text)
-    except ValueError as exc:
-        return [Problem(loc, "placeholder", f"cannot be read as a template: {exc}")]
-    unknown = sorted(names - set(allowed))
-    if unknown:
-        known = ", ".join(f"{{{n}}}" for n in sorted(allowed)) or "none"
-        return [Problem(loc, "placeholder", f"unknown placeholder {{{unknown[0]}}}; this text may use {known}")]
+        names = templates.fields(text)
+    except templates.TemplateError as exc:
+        return [Problem(loc, "template", f"not a template: {exc}")]
+    known = ", ".join(f"{{{n}}}" for n in sorted(allowed)) or "none"
+    if names - set(allowed):
+        return [Problem(loc, "placeholder", f"names a value this text does not have; it may use {known}")]
+    if values is not None and any(isinstance(values.get(n), list | dict) for n in names):
+        return [Problem(loc, "placeholder", "a list cannot be written into a text")]
     return []
 
 
 def _xp_table(curve: Curve) -> tuple[int, ...]:
-    """The experience each level starts at, 1 to ``max_level``."""
+    """The experience each level starts at, 1 to ``max_level``; raises OverflowError past what a float holds."""
     table, points = [0], 0
     for n in range(1, curve.max_level):
         points += math.floor(n + curve.points * 2 ** (n / curve.doubling))
@@ -389,13 +427,22 @@ def cross_check(pack: Pack) -> list[Problem]:
     try:
         ZoneInfo(pack.timezone)
     except (ZoneInfoNotFoundError, ValueError):
-        problems.append(
-            Problem(("timezone",), "timezone", f"{pack.timezone!r} is not a timezone name (IANA, such as UTC)")
-        )
-    table = _xp_table(pack.curve)
+        problems.append(Problem(("timezone",), "timezone", "not a timezone name (IANA, such as UTC)"))
+    try:
+        table = _xp_table(pack.curve)
+    except OverflowError:
+        table = (0, MAX_CURVE_XP + 1)
     if any(b <= a for a, b in zip(table, table[1:], strict=False)):
         problems.append(
             Problem(("curve",), "curve", "the curve must give every level more experience than the one below")
+        )
+    if table[-1] > MAX_CURVE_XP:
+        problems.append(
+            Problem(
+                ("curve",),
+                "curve",
+                f"the curve's top must stay under {MAX_CURVE_XP:,} XP, which the dashboard reads exactly",
+            )
         )
 
     for section in ("groups", "skills", "tiers", "rares", "achievement_categories", "achievements", "quests"):
@@ -406,7 +453,7 @@ def cross_check(pack: Pack) -> list[Problem]:
         if value in names:
             return True
         listed = ", ".join(sorted(names))
-        problems.append(Problem(loc, "unknown", f"{value!r} is not {what}; one of: {listed}"))
+        problems.append(Problem(loc, "unknown", f"not {what}; one of: {listed}"))
         return False
 
     for kind in pack.rates.actions:
@@ -422,7 +469,7 @@ def cross_check(pack: Pack) -> list[Problem]:
     trained: dict[str, str] = {}
     for i, skill in enumerate(pack.skills):
         if skill.group not in groups:
-            problems.append(Problem(("skills", i, "group"), "unknown", f"no group {skill.group!r}"))
+            problems.append(Problem(("skills", i, "group"), "unknown", "no group has this id"))
         for j, key in enumerate(skill.trained_by):
             if not known(key, vocab.ACTION_KEYS, "an action category", ("skills", i, "trained_by", j)):
                 continue
@@ -431,14 +478,14 @@ def cross_check(pack: Pack) -> list[Problem]:
                     Problem(
                         ("skills", i, "trained_by", j),
                         "duplicate",
-                        f"{key} already trains {trained[key]!r}; a category trains one skill",
+                        f"this category already trains skills[{[s.id for s in pack.skills].index(trained[key])}]; a category trains one skill",
                     )
                 )
             trained.setdefault(key, skill.id)
 
     def need_skill(skill: str, loc: tuple[str | int, ...]) -> None:
         if skill not in skills:
-            problems.append(Problem(loc, "unknown", f"no skill {skill!r}"))
+            problems.append(Problem(loc, "unknown", "no skill has this id"))
 
     for source in vocab.OUTCOME_SOURCES:
         outcome = getattr(pack.rates.outcomes, source)
@@ -448,7 +495,7 @@ def cross_check(pack: Pack) -> list[Problem]:
     for i, run in enumerate(pack.rates.runs):
         need_skill(run.skill, ("rates", "runs", i, "skill"))
         if run.agent in agents_seen:
-            problems.append(Problem(("rates", "runs", i, "agent"), "duplicate", f"{run.agent!r} has two run rates"))
+            problems.append(Problem(("rates", "runs", i, "agent"), "duplicate", "this agent already has a run rate"))
         agents_seen.add(run.agent)
 
     for i, tier in enumerate(pack.tiers):
@@ -472,7 +519,7 @@ def cross_check(pack: Pack) -> list[Problem]:
         if when.merge_on is not None:
             if when.merge_on in dates:
                 problems.append(
-                    Problem(("rares", i, "when", "merge_on"), "duplicate", f"another rare drops on {when.merge_on}")
+                    Problem(("rares", i, "when", "merge_on"), "duplicate", "another rare already drops on this date")
                 )
             dates.add(when.merge_on)
         yearly += when.first_run_of_year
@@ -484,7 +531,7 @@ def cross_check(pack: Pack) -> list[Problem]:
     for i, achievement in enumerate(pack.achievements):
         loc: tuple[str | int, ...] = ("achievements", i)
         if achievement.category not in categories:
-            problems.append(Problem((*loc, "category"), "unknown", f"no achievement category {achievement.category!r}"))
+            problems.append(Problem((*loc, "category"), "unknown", "no achievement category has this id"))
         known(achievement.icon, vocab.ACHIEVEMENT_ICONS, "an icon the dashboard draws", (*loc, "icon"))
         if not known(achievement.metric, vocab.METRICS, "a metric", (*loc, "metric")):
             continue
@@ -502,7 +549,9 @@ def cross_check(pack: Pack) -> list[Problem]:
             )
         if any(b <= a for a, b in zip(thresholds, thresholds[1:], strict=False)) or thresholds[0] < 1:
             problems.append(Problem((*loc, "thresholds"), "order", "thresholds start at 1 or more and rise"))
-        problems += _check_text(achievement.what_counts, set(achievement.params), (*loc, "what_counts"))
+        problems += _check_text(
+            achievement.what_counts, set(achievement.params), (*loc, "what_counts"), achievement.params
+        )
         if achievement.metric == "skills_at_level" and not param_problems:
             if achievement.params["level"] > pack.curve.max_level:
                 problems.append(
@@ -516,49 +565,47 @@ def cross_check(pack: Pack) -> list[Problem]:
             need_skill(reward.skill, (*loc, "xp", j, "skill"))
         if not known(quest.kind, vocab.QUEST_KINDS, "a quest kind", (*loc, "kind")):
             continue
-        kind = vocab.QUEST_KINDS[quest.kind]
-        if len(quest.steps) != kind.steps:
+        quest_kind = vocab.QUEST_KINDS[quest.kind]
+        if len(quest.steps) != quest_kind.steps:
             problems.append(
                 Problem(
-                    (*loc, "steps"), "steps", f"a {quest.kind} quest has {kind.steps} steps, not {len(quest.steps)}"
+                    (*loc, "steps"), "steps", f"this kind of quest has {quest_kind.steps} steps, not {len(quest.steps)}"
                 )
             )
-        param_problems = _check_params(kind.params, quest.params, (*loc, "params"))
+        param_problems = _check_params(quest_kind.params, quest.params, (*loc, "params"))
         problems += param_problems
         names = set(quest.params)
         for j, step in enumerate(quest.steps):
-            problems += _check_text(step, names, (*loc, "steps", j))
-        problems += _check_text(quest.reward, names, (*loc, "reward"))
-        if kind.capstone:
+            problems += _check_text(step, names, (*loc, "steps", j), quest.params)
+        problems += _check_text(quest.reward, names, (*loc, "reward"), quest.params)
+        if quest_kind.capstone:
             if quest.requirement is None:
                 problems.append(
                     Problem((*loc, "requirement"), "missing", "a capstone states its total-level requirement")
                 )
             else:
-                problems += _check_text(quest.requirement, names, (*loc, "requirement"))
+                problems += _check_text(quest.requirement, names, (*loc, "requirement"), quest.params)
             if quest.xp:
                 problems.append(
                     Problem((*loc, "xp"), "capstone", "a capstone gives no XP: its requirement is read from the levels")
                 )
             if not param_problems and quest.params["diary_tier"] not in diary_tiers:
-                problems.append(
-                    Problem((*loc, "params", "diary_tier"), "unknown", f"no diary tier {quest.params['diary_tier']!r}")
-                )
+                problems.append(Problem((*loc, "params", "diary_tier"), "unknown", "no diary tier has this id"))
         else:
             if quest.requirement is not None:
                 problems.append(Problem((*loc, "requirement"), "capstone", "only a capstone has a requirement"))
             if quest.cloak_trim:
                 problems.append(Problem((*loc, "cloak_trim"), "capstone", "only a capstone trims the cloaks"))
 
-    for i, tier in enumerate(pack.diaries.tiers):
-        for j, task in enumerate(tier.tasks):
+    for i, diary_tier in enumerate(pack.diaries.tiers):
+        for j, task in enumerate(diary_tier.tasks):
             loc = ("diaries", "tiers", i, "tasks", j)
             if not known(task.kind, vocab.TASK_KINDS, "a diary task kind", (*loc, "kind")):
                 continue
             if task.kind == "all_above" and i == 0:
                 problems.append(Problem((*loc, "kind"), "all_above", "the first tier has no tier above it"))
             problems += _check_params(vocab.TASK_KINDS[task.kind], task.params, (*loc, "params"))
-            problems += _check_text(task.text, set(task.params), (*loc, "text"))
+            problems += _check_text(task.text, set(task.params), (*loc, "text"), task.params)
 
     for name, allowed in vocab.MESSAGE_PLACEHOLDERS.items():
         problems += _check_text(getattr(pack.messages, name), allowed, ("messages", name))
@@ -742,7 +789,8 @@ def _rules(pack: Pack) -> Rules:
         if metric.fragment is not None:
             # A context audit is one fact, split into its claims or a clean audit when it is read.
             query_key = "audit" if metric.fragment == "audit" else key
-            queries.setdefault(query_key, FactQuery(query_key, metric.fragment, vocab.dump_params(params)))
+            # Every parameter, its defaults included: the fragment binds each one by name.
+            queries.setdefault(query_key, FactQuery(query_key, metric.fragment, params.model_dump(mode="json")))
     outcomes: dict[str, OutcomeRule] = {}
     for source in vocab.OUTCOME_SOURCES:
         outcome = getattr(pack.rates.outcomes, source)
@@ -812,6 +860,8 @@ def contract() -> dict[str, Any]:
         },
         "action_keys": sorted(vocab.ACTION_KEYS),
         "default_view": default_rules().view(),
+        # The template grammar's cases: the server's render and the dashboard's fill must both give `out`.
+        "template_cases": [{"text": t, "values": v, "out": o} for t, v, o in templates.CASES],
     }
 
 
@@ -825,11 +875,13 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
     if args.check:
         try:
-            parse_text(Path(args.check).read_text(encoding="utf-8"))
+            pack = parse_text(Path(args.check).read_text(encoding="utf-8"))
         except PackInvalid as exc:
             for problem in exc.problems:
                 print(problem, file=sys.stderr)
             return 1
+        for warning in warnings(pack):
+            print(f"warning: {warning}", file=sys.stderr)
         print("the pack is valid")
         return 0
     parser.print_help()

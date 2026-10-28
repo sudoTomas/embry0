@@ -18,11 +18,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from embry0.services import progression_templates as templates
 from embry0.services.context_audit import report_counts
 from embry0.services.progression_pack import DiaryTier as DiaryTierEntry
 from embry0.services.progression_pack import Quest as QuestEntry
 from embry0.services.progression_pack import Rules
-from embry0.services.progression_pack import Task as TaskEntry
+from embry0.services.progression_vocabulary import QUEST_KINDS
 from embry0.storage.repositories.progression import JobRow, Journal, RunRow
 
 #: The job statuses that mean the job did its work.
@@ -106,48 +107,63 @@ def _quiet_stretch(jobs: Sequence[JobRow], days: int) -> datetime | None:
     return None
 
 
-def _task_done(
-    task: TaskEntry, jobs: Sequence[JobRow], runs: Sequence[RunRow], below: datetime | None
-) -> datetime | None:
-    """When a diary task was first done for one repository, or None."""
-    params: dict[str, Any] = task.params
-    agents = set(params.get("agents", ()))
-    merges = [j.at for j in jobs if j.status == "pr_merged"]
-    audits = [j for j in jobs if j.template == "context-audit" and j.status == "completed"]
-    if task.kind == "triage":
-        return _first(r.at for r in runs if r.agent_type in agents and r.issue_id)
-    if task.kind == "finish_job":
-        return _first(j.at for j in jobs if j.status in FINISHED)
-    if task.kind == "run_qa":
-        return _first(
-            [r.at for r in runs if r.agent_type in agents]
-            + [j.at for j in jobs if j.template == "qa" and j.status in FINISHED]
-        )
-    if task.kind == "merges":
-        return _nth(merges, int(params["count"]))
-    if task.kind == "pass_qa":
-        qa_issues = {r.issue_id for r in runs if r.agent_type in agents and r.issue_id}
-        passes = [j.at for j in jobs if j.template == "qa" and j.status == "completed"]
-        passes += [j.at for j in jobs if j.status == "pr_merged" and j.issue_id in qa_issues]
-        return _first(passes)
-    if task.kind == "audit":
-        return _first(j.at for j in audits)
-    if task.kind == "clean_audit":
-        return _first(j.at for j in audits if report_counts(j.report)[0] == 0)
-    if task.kind == "reviews":
-        return _nth((r.at for r in runs if r.agent_type in agents), int(params["count"]))
-    if task.kind == "quiet_stretch":
-        return _quiet_stretch(jobs, int(params["days"]))
-    if task.kind == "all_above":
-        return below
-    raise ValueError(f"no diary task kind {task.kind!r}")
+@dataclass(frozen=True)
+class _RepoRows:
+    """One repository's jobs and successful runs, what its diary tasks read."""
+
+    jobs: Sequence[JobRow]
+    runs: Sequence[RunRow]
+
+    @property
+    def merges(self) -> list[datetime]:
+        return [j.at for j in self.jobs if j.status == "pr_merged"]
+
+    @property
+    def audits(self) -> list[JobRow]:
+        return [j for j in self.jobs if j.template == "context-audit" and j.status == "completed"]
+
+    def agent_runs(self, params: dict[str, Any]) -> list[RunRow]:
+        agents = set(params["agents"])
+        return [r for r in self.runs if r.agent_type in agents]
+
+
+def _pass_qa(rows: _RepoRows, params: dict[str, Any], below: datetime | None) -> datetime | None:
+    qa_issues = {r.issue_id for r in rows.agent_runs(params) if r.issue_id}
+    passes = [j.at for j in rows.jobs if j.template == "qa" and j.status == "completed"]
+    passes += [j.at for j in rows.jobs if j.status == "pr_merged" and j.issue_id in qa_issues]
+    return _first(passes)
+
+
+_TaskEvaluator = Callable[[_RepoRows, dict[str, Any], datetime | None], datetime | None]
+
+#: Each diary task kind (``progression_vocabulary.TASK_KINDS``): when it was first done for one repository.
+#: ``below`` is when every tier above the task's own was done.
+_TASKS: dict[str, _TaskEvaluator] = {
+    "triage": lambda rows, params, below: _first(r.at for r in rows.agent_runs(params) if r.issue_id),
+    "finish_job": lambda rows, params, below: _first(j.at for j in rows.jobs if j.status in FINISHED),
+    "run_qa": lambda rows, params, below: _first(
+        [r.at for r in rows.agent_runs(params)]
+        + [j.at for j in rows.jobs if j.template == "qa" and j.status in FINISHED]
+    ),
+    "merges": lambda rows, params, below: _nth(rows.merges, int(params["count"])),
+    "pass_qa": _pass_qa,
+    "audit": lambda rows, params, below: _first(j.at for j in rows.audits),
+    "clean_audit": lambda rows, params, below: _first(j.at for j in rows.audits if report_counts(j.report)[0] == 0),
+    "reviews": lambda rows, params, below: _nth((r.at for r in rows.agent_runs(params)), int(params["count"])),
+    "quiet_stretch": lambda rows, params, below: _quiet_stretch(rows.jobs, int(params["days"])),
+    "all_above": lambda rows, params, below: below,
+}
 
 
 def _diary(repo: str, jobs: Sequence[JobRow], runs: Sequence[RunRow], tiers: Sequence[DiaryTierEntry]) -> Diary:
+    rows = _RepoRows(jobs, runs)
     done: list[DiaryTier] = []
     for entry in tiers:
         below = _when_all([t.completed_at for t in done]) if done else None
-        tasks = [Task(task.text.format(**task.params), _task_done(task, jobs, runs, below)) for task in entry.tasks]
+        tasks = [
+            Task(templates.render(task.text, task.params), _TASKS[task.kind](rows, task.params, below))
+            for task in entry.tasks
+        ]
         done.append(DiaryTier(entry.id, tasks))
     return Diary(repo, done)
 
@@ -293,6 +309,7 @@ def _review_qa_merge(journal: Journal, params: dict[str, Any]) -> tuple[str | No
     return where, times or [None, None, None]
 
 
+#: Each quest kind's evaluator but the capstone's, which reads the diaries and the levels (``_capstone``).
 _KINDS: dict[str, Callable[[Journal, dict[str, Any]], tuple[str | None, list[datetime | None]]]] = {
     "onboard_to_merge": _onboard_to_merge,
     "merge_after_failure": _merge_after_failure,
@@ -305,8 +322,8 @@ def _quest(entry: QuestEntry, where: str | None, times: Sequence[datetime | None
         entry.id,
         entry.name,
         entry.points,
-        entry.reward.format(**entry.params),
-        [Task(text.format(**entry.params), done_at) for text, done_at in zip(entry.steps, times, strict=True)],
+        templates.render(entry.reward, entry.params),
+        [Task(templates.render(text, entry.params), done_at) for text, done_at in zip(entry.steps, times, strict=True)],
         where=where,
         xp=[Reward(r.agent, r.skill, r.xp) for r in entry.xp],
         cloak_trim=entry.cloak_trim,
@@ -324,14 +341,16 @@ def _capstone(
     completed = _first(t for d in diaries if (t := d.tier(tier).completed_at) is not None)
     merges = _nth((j.at for j in journal.jobs if j.status == "pr_merged"), int(params["merges"]))
     quest = _quest(entry, None, [merges, completed])
-    quest.requirement = (entry.requirement or "").format(**params)
+    quest.requirement = templates.render(entry.requirement or "", params)
     quest.requirement_met_at = total_reached(int(params["total_level"]))
     return quest
 
 
 def _rewarding(journal: Journal, rules: Rules) -> list[QuestState]:
     """Every quest whose kind gives XP, in the pack's order."""
-    return [_quest(e, *_KINDS[e.kind](journal, e.params)) for e in rules.pack.quests if e.kind in _KINDS]
+    return [
+        _quest(e, *_KINDS[e.kind](journal, e.params)) for e in rules.pack.quests if not QUEST_KINDS[e.kind].capstone
+    ]
 
 
 def quest_rewards(journal: Journal, *, rules: Rules) -> list[tuple[datetime, Reward]]:
@@ -353,8 +372,8 @@ def evaluate_quests(
     """Every quest's state, in the pack's order. ``total_reached(n)`` is when a character first reached total level n."""
     out: list[QuestState] = []
     for entry in rules.pack.quests:
-        if entry.kind in _KINDS:
-            out.append(_quest(entry, *_KINDS[entry.kind](journal, entry.params)))
-        else:
+        if QUEST_KINDS[entry.kind].capstone:
             out.append(_capstone(entry, journal, diaries, total_reached))
+        else:
+            out.append(_quest(entry, *_KINDS[entry.kind](journal, entry.params)))
     return out
