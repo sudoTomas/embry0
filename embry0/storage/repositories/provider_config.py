@@ -105,8 +105,19 @@ class ProviderConfigRepository:
         if not valid:
             return await self.get()
 
+        # Seed the tiers and the default model from what get() reported without
+        # a row, not from the column defaults. The row is created by the first
+        # save of any field, such as the fallback order, and from then on the
+        # row wins; the column defaults (migration 2) name models the catalog
+        # no longer lists, and would silently replace MODEL_* (#183).
+        seed = _env_derived_defaults()
         await self._db.execute(
-            "INSERT INTO provider_config (id) VALUES ('default') ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO provider_config (id, model_heavy, model_medium, model_light, default_model) "
+            "VALUES ('default', $1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
+            seed["model_heavy"],
+            seed["model_medium"],
+            seed["model_light"],
+            seed["default_model"],
         )
         sets: list[str] = []
         args: list[Any] = []

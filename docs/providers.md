@@ -303,6 +303,11 @@ Rules on the setting itself:
   `default_model_unknown_ignored`.
 - `TRIAGE_MODEL` and `DEFAULT_MODEL` in the environment set the model of the
   triage agent's *definition* (level 1), so the default model outranks them.
+- The first save of any provider setting (the fallback order, the local model
+  card, a model's toggle) stores the tiers and the default model as they were
+  in force: `MODEL_HEAVY`, `MODEL_MEDIUM`, `MODEL_LIGHT` and `DEFAULT_MODEL`,
+  else the built-in defaults. From then on the saved row wins over those
+  variables.
 - The default model's provider is resolved before the sandbox is created,
   like the models named by agent definitions and tiers.
 
