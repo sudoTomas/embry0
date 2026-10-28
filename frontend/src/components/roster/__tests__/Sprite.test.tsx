@@ -149,7 +149,7 @@ describe("Sprite", () => {
 
     it("dresses the avatar for its tier and says the tier", () => {
       const plain = render(<Sprite avatar="smith" color="amber" state="idle" />);
-      const obsidian = render(<Sprite avatar="smith" color="amber" state="idle" outfit={{ tier: "obsidian", capes: [], rares: [] }} />);
+      const obsidian = render(<Sprite avatar="smith" color="amber" state="idle" outfit={{ tier: "obsidian" }} />);
       expect(obsidian.container.querySelector("svg")).toHaveAttribute("data-tier", "obsidian");
       expect(paths(obsidian.container)).not.toBe(paths(plain.container));
       const fills = [...obsidian.container.querySelectorAll('g[data-frame="0"] path')].map((p) => p.getAttribute("fill"));
@@ -157,7 +157,7 @@ describe("Sprite", () => {
     });
 
     it("draws the same outfit the same way twice, and a mastery cloak instead of the party cape", () => {
-      const outfit = { tier: "obsidian" as const, capes: ["coding" as const], rares: [] };
+      const outfit = { tier: "obsidian" as const, cloak: { base: "#4a4a52", trim: "#e07b2a" } };
       const a = render(<Sprite avatar="smith" color="amber" state="idle" outfit={outfit} />);
       const b = render(<Sprite avatar="smith" color="amber" state="idle" outfit={{ ...outfit }} />);
       expect(paths(a.container)).toBe(paths(b.container));
@@ -166,7 +166,7 @@ describe("Sprite", () => {
     });
 
     it("puts a paper crown in the party colour on the head", () => {
-      const { container } = render(<Sprite avatar="seer" color="violet" state="idle" outfit={{ tier: "bronze", capes: [], rares: ["paper-crown"] }} />);
+      const { container } = render(<Sprite avatar="seer" color="violet" state="idle" outfit={{ tier: "bronze", head: "paper-crown" }} />);
       const fills = [...container.querySelectorAll('g[data-frame="0"] path')].map((p) => p.getAttribute("fill"));
       expect(fills).toContain("var(--sprite-fill)");
     });

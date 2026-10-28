@@ -3,7 +3,8 @@ import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
-import { TIER_COLOR, TIER_NAME } from "@/lib/tiers";
+import { useGamePack } from "@/hooks/useGamePack";
+import { tierColor, tierName } from "@/lib/gamePack";
 import { STATE_POSE, STATE_WORDS, bestSkills, formatPercent, placeOf, stateTone } from "@/lib/world";
 import { cn } from "@/lib/utils";
 import type { Tier } from "@/api/progression";
@@ -23,6 +24,7 @@ interface CharacterCardProps {
 export function CharacterCard({ character, party, skillName, xpDrop, selected, onSelect }: CharacterCardProps) {
   const lookup = useIdentityLookup();
   const identity = lookup(character.agent_type);
+  const pack = useGamePack();
   const tier = character.tier as Tier;
   const ratings = character.stats.ratings;
   const rated = ratings.good + ratings.needs_work + ratings.bad;
@@ -55,8 +57,8 @@ export function CharacterCard({ character, party, skillName, xpDrop, selected, o
           </span>
         </span>
         <span className="flex items-center gap-1.5 text-2xs text-fg-muted">
-          <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-[2px]" style={{ backgroundColor: TIER_COLOR[tier] }} />
-          <span className="shrink-0">{TIER_NAME[tier] ?? character.tier}</span>
+          <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-[2px]" style={{ backgroundColor: tierColor(pack, tier) }} />
+          <span className="shrink-0">{tierName(pack, tier)}</span>
           <span className="truncate">
             ·{" "}
             {bestSkills(character)

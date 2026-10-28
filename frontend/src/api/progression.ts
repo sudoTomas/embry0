@@ -1,18 +1,43 @@
 import { api } from "./client";
 
-/** A character's gear tier from its best skill (spec 2026-10-24): Bronze from 1 to Divine from 90. */
-export type Tier = "bronze" | "silver" | "gold" | "platinum" | "diamond" | "obsidian" | "divine";
+/** A tier's id in the active content pack (#176), such as `bronze`; its name and colour are in `Progression.tiers`. */
+export type Tier = string;
 
-/** Where a skill's tile sits on a skill sheet. */
-export type SkillGroup = "build" | "verify" | "investigate" | "care";
+/** A skill group's id in the active content pack, such as `build`. */
+export type SkillGroup = string;
 
-/** One of the 23 skills every character has. */
+/** The two colours of a cloak, `#rrggbb`. */
+export interface Cloak {
+  base: string;
+  trim: string;
+}
+
+/** One of the skills every character has, from the active content pack. */
 export interface Skill {
   /** Its id, such as `version_control`. */
   id: string;
   /** Its name, such as `Version control`. */
   name: string;
   group: SkillGroup;
+  /** The cloak a character wears with this skill at the top level. */
+  cloak: Cloak;
+}
+
+/** A rung of the pack's tier ladder: gear from a level, and an achievement's step. */
+export interface PackTier {
+  id: string;
+  name: string;
+  from_level: number;
+  color: string;
+  /** The gear art step the dashboard draws for it (docs/contracts/progression.json). */
+  gear: string;
+}
+
+/** A rare the pack can drop, in wear order; `art` is the head item it wears, or null for none. */
+export interface PackRare {
+  id: string;
+  name: string;
+  art: string | null;
 }
 
 /** A character's progress in one skill. */
@@ -26,19 +51,21 @@ export interface SkillProgress {
   xp_to_next: number | null;
 }
 
-/** An agent type as a character: its 23 skills, their total, and the gear its best skill wears. */
+/** An agent type as a character: its skills, their total, and the gear its best skill wears. */
 export interface Character {
   agent_type: string;
-  /** Its one level, 1 to 126: the combat-level formula with its best skills in the combat slots. */
+  /** Its one level, from its five best skills (1 to 126 with the shipped pack). */
   level: number;
   xp: number;
-  /** Its 23 levels added up, 23 to 2,277. */
+  /** Its levels added up. */
   total_level: number;
   best_skill: string;
   tier: Tier;
+  /** The gear art step its tier wears. */
+  gear: string;
   /** Its skills at 99, the most experience first: the first is the mastery cloak it wears. */
   capes: string[];
-  /** The rares its work earned (`paper-crown`, `harvest-mask`, `golden-paper-crown`), first earned first. */
+  /** The rares its work earned, by id, first earned first. */
   rares: { id: string; at: string }[];
   /** Every quest done: the highest total level wears the quest cloak. */
   quest_cloak: boolean;
@@ -55,7 +82,9 @@ export interface Account {
   characters: number;
   /** The points of every quest completed. */
   quest_points: number;
-  /** Divine Warden's reward: a Divine trim on every cape. */
+  /** A completed quest that trims every cloak in the Divine metal. */
+  cloak_trim: boolean;
+  /** The same, under its name before the content pack; kept for one release. */
   divine_trim: boolean;
 }
 
@@ -91,12 +120,12 @@ export interface AchievementEntry {
   name: string;
   /** Its category's id; a secret shows its category too. */
   category: string;
-  /** Tiered: Bronze to Divine. Objective: one threshold, then complete. */
+  /** Tiered: one threshold per tier. Objective: one threshold, then complete. */
   kind: "tiered" | "objective";
   /** The pixel icon to draw; null while secret. */
   icon: string | null;
   what_counts: string | null;
-  /** One line in the old game's voice. */
+  /** One line in the game's voice. */
   flavour: string | null;
   secret: boolean;
   state: "unlocked" | "discovered" | "secret";
@@ -105,7 +134,7 @@ export interface AchievementEntry {
   tiers_reached: number;
   value: number;
   next_threshold: number | null;
-  /** The value of each tier, Bronze to Divine, or the one value of an objective. */
+  /** The value of each tier, lowest first, or the one value of an objective. */
   thresholds: number[] | null;
   unlocked_at: string | null;
   /** When its highest tier was reached. */
@@ -142,9 +171,10 @@ export interface Quest {
   completed_at: string | null;
 }
 
-export type DiaryTierName = "easy" | "medium" | "hard" | "elite";
+/** A diary tier's id in the active content pack, such as `easy`; its name is in `Progression.diary_tiers`. */
+export type DiaryTierName = string;
 
-/** A repository's achievement diary, Easy to Elite. */
+/** A repository's achievement diary, its tiers lowest first. */
 export interface Diary {
   repo: string;
   tiers: { tier: DiaryTierName; tasks: Task[]; completed_at: string | null }[];
@@ -182,10 +212,46 @@ export interface RareDrop {
 
 export type RecentEvent = LevelUp | AgentLevelUp | RareDrop | AchievementUnlock | QuestComplete | DiaryComplete;
 
-/** GET /progression: the account, its characters and its achievements, recomputed from the work embry0 recorded. */
+/** The chat box's templates, one per kind of event, with `{name}` placeholders. */
+export interface PackMessages {
+  level: string;
+  agent_level: string;
+  rare: string;
+  quest: string;
+  diary: string;
+  achievement_tier: string;
+  achievement_complete: string;
+}
+
+/** The game's nouns the pages print; `gear`, `mastery_cloak` and `trimmed_cloak` take a placeholder. */
+export interface PackLabels {
+  complete: string;
+  quest_journal: string;
+  journal_points: string;
+  quest_point: string;
+  quest_points: string;
+  gear: string;
+  mastery_cloak: string;
+  trimmed_cloak: string;
+  quest_cloak: string;
+}
+
+/** GET /progression: the account, its characters and its achievements, recomputed from the work embry0 recorded,
+ * and the active content pack's names, colours, words and art (#176). */
 export interface Progression {
   account: Account;
+  /** The active pack: its identity, schema version and calendar. */
+  pack: { hash: string; version: number; timezone: string };
+  groups: { id: string; name: string }[];
   skills: Skill[];
+  /** The tier ladder, lowest first. */
+  tiers: PackTier[];
+  rares: PackRare[];
+  cloaks: { quest: Cloak };
+  diary_tiers: { id: string; name: string }[];
+  messages: PackMessages;
+  labels: PackLabels;
+  curve: { max_level: number; character_max_level: number };
   characters: Character[];
   achievements: AchievementEntry[];
   achievement_categories: AchievementCategory[];

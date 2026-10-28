@@ -57,6 +57,19 @@ describe("AchievementsPage", () => {
     expect(screen.getAllByTestId("character")[1]).toHaveAttribute("aria-current", "true");
   });
 
+  it("speaks the content pack's words, with no copy of its own (#176)", () => {
+    const base = progression();
+    const tiers = base.tiers.map((t) => (t.id === "divine" ? { ...t, name: "Radiant" } : t));
+    const groups = base.groups.map((g) => (g.id === "build" ? { ...g, name: "Craft" } : g));
+    const labels = { ...base.labels, gear: "{tier} kit", mastery_cloak: "{skill} mantle" };
+    mockUseProgression.mockReturnValue({ data: { ...base, tiers, groups, labels } });
+    renderPage();
+    const sheet = screen.getByTestId("skill-sheet");
+    expect(within(sheet).getByTestId("worn")).toHaveTextContent("Radiant kit · Coding mantle");
+    expect(within(sheet).getAllByRole("heading", { level: 3 })[0]).toHaveTextContent("Craft");
+    expect(screen.getByTestId("tier-legend")).toHaveTextContent("Radiant");
+  });
+
   it("opens the character the link names", () => {
     mockUseProgression.mockReturnValue({ data: progression() });
     renderPage("/achievements?character=review");

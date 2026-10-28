@@ -1,6 +1,6 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { character, progression } from "./fixtures";
+import { PACK, character, progression } from "./fixtures";
 
 const mockUseProgression = vi.fn();
 vi.mock("@/hooks/useProgression", () => ({ useProgression: () => mockUseProgression() }));
@@ -13,16 +13,32 @@ function Probe({ type }: { type: string }) {
 }
 
 describe("outfits (progression spec 2026-10-24)", () => {
-  it("reads a character's tier, its 99s as mastery cloaks and its known rares", () => {
-    const c = character({ capes: ["coding", "reading", "no-such-skill"], rares: [{ id: "paper-crown", at: "x" }, { id: "top-hat", at: "y" }] });
-    expect(outfitOf(c)).toEqual({ tier: "divine", capes: ["coding", "reading"], rares: ["paper-crown"], questCloak: false, divineTrim: false });
-    expect(outfitOf({ ...c, quest_cloak: true }, true)).toMatchObject({ questCloak: true, divineTrim: true });
+  it("reads a character's gear, its best 99's cloak colours and the first rare it holds in the pack's wear order", () => {
+    const c = character({ capes: ["coding", "reading"], rares: [{ id: "harvest-mask", at: "x" }, { id: "paper-crown", at: "y" }, { id: "top-hat", at: "z" }] });
+    expect(outfitOf(c, PACK)).toEqual({
+      tier: "divine",
+      cloak: { base: "#4a4a52", trim: "#e07b2a" },
+      trimmed: true,
+      questCloak: null,
+      head: "paper-crown",
+      divineTrim: false,
+    });
+    expect(outfitOf({ ...c, quest_cloak: true }, PACK, true)).toMatchObject({ questCloak: PACK.questCloak, divineTrim: true });
+    // gear the dashboard cannot draw falls back to the first step
+    expect(outfitOf(character({ gear: "tin", capes: [] }), PACK)).toMatchObject({ tier: "bronze", cloak: null });
   });
 
   it("dresses every sprite under the provider, and none without progression", () => {
     mockUseProgression.mockReturnValue({ data: progression() });
     const { getByTestId, rerender } = render(<OutfitProvider><Probe type="developer" /></OutfitProvider>);
-    expect(JSON.parse(getByTestId("probe").textContent!)).toEqual({ tier: "divine", capes: ["coding"], rares: [], questCloak: false, divineTrim: false });
+    expect(JSON.parse(getByTestId("probe").textContent!)).toEqual({
+      tier: "divine",
+      cloak: { base: "#4a4a52", trim: "#e07b2a" },
+      trimmed: false,
+      questCloak: null,
+      head: null,
+      divineTrim: false,
+    });
     rerender(<OutfitProvider><Probe type="nobody" /></OutfitProvider>);
     expect(getByTestId("probe")).toHaveTextContent("null");
     mockUseProgression.mockReturnValue({ data: undefined });

@@ -8,7 +8,10 @@
  *   node scripts/outfit_sheet.mts > docs/superpowers/plans/2026-10-24-outfits-contact-sheet.svg
  *
  * The party-colour tokens resolve to gold, since an SVG file has no --sprite-fill.
+ * The cloak colours are the shipped content pack's, read from
+ * docs/contracts/progression.json, which the backend generates.
  */
+import { readFileSync } from "node:fs";
 import { POSES, compose } from "../frontend/src/components/roster/appearance/compose.ts";
 import { GEAR_TIERS } from "../frontend/src/components/roster/appearance/items.ts";
 import { STYLE, dress, type Outfit } from "../frontend/src/components/roster/appearance/outfit.ts";
@@ -27,7 +30,9 @@ const PARTY = "#d4af37";
 
 /** Every colour over the party token, as the sheet's one gold. */
 const fillOf = (colour: string) => (colour.includes("var(--sprite-fill)") ? (colour.includes("black") ? "#7a6520" : PARTY) : colour);
-const none: Outfit = { tier: "bronze", capes: [], rares: [] };
+const contract = JSON.parse(readFileSync(new URL("../docs/contracts/progression.json", import.meta.url), "utf8"));
+const cloakOf = (skill: string) => contract.default_view.skills.find((s: { id: string }) => s.id === skill).cloak;
+const none: Outfit = { tier: "bronze" };
 const worn = (id: PresetId, outfit: Partial<Outfit>) => dress(PRESETS[id], STYLE[id], { ...none, ...outfit });
 
 const rows: { name: string; cells: [string, Appearance][] }[] = [
@@ -38,20 +43,20 @@ const rows: { name: string; cells: [string, Appearance][] }[] = [
   {
     name: "mastery cloaks",
     cells: [
-      ["coding", worn("smith", { tier: "obsidian", capes: ["coding"] })],
-      ["coding (t)", worn("smith", { tier: "obsidian", capes: ["coding", "databases"] })],
-      ["reviewing", worn("warden", { tier: "obsidian", capes: ["reviewing"] })],
-      ["debugging", worn("oracle", { tier: "obsidian", capes: ["debugging"] })],
-      ["quality_assurance", worn("alchemist", { tier: "obsidian", capes: ["quality_assurance"] })],
-      ["operations (t)", worn("engineer", { tier: "obsidian", capes: ["operations", "shell"] })],
+      ["coding", worn("smith", { tier: "obsidian", cloak: cloakOf("coding") })],
+      ["coding (t)", worn("smith", { tier: "obsidian", cloak: cloakOf("coding"), trimmed: true })],
+      ["reviewing", worn("warden", { tier: "obsidian", cloak: cloakOf("reviewing") })],
+      ["debugging", worn("oracle", { tier: "obsidian", cloak: cloakOf("debugging") })],
+      ["quality_assurance", worn("alchemist", { tier: "obsidian", cloak: cloakOf("quality_assurance") })],
+      ["operations (t)", worn("engineer", { tier: "obsidian", cloak: cloakOf("operations"), trimmed: true })],
     ],
   },
   {
     name: "rares",
     cells: [
-      ["paper crown", worn("smith", { tier: "diamond", rares: ["paper-crown"] })],
-      ["golden paper crown", worn("seer", { tier: "diamond", rares: ["golden-paper-crown"] })],
-      ["harvest mask", worn("herald", { tier: "diamond", rares: ["harvest-mask"] })],
+      ["paper crown", worn("smith", { tier: "diamond", head: "paper-crown" })],
+      ["golden paper crown", worn("seer", { tier: "diamond", head: "golden-paper-crown" })],
+      ["harvest mask", worn("herald", { tier: "diamond", head: "harvest-mask" })],
     ],
   },
 ];

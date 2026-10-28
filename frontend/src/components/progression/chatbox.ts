@@ -1,5 +1,5 @@
-import type { DiaryTierName, RecentEvent } from "@/api/progression";
-import { TIER_NAME } from "@/lib/tiers";
+import type { RecentEvent } from "@/api/progression";
+import { achievementTierName, diaryTierName, fill, rareName, type GamePack } from "@/lib/gamePack";
 
 /** Where a browser keeps the time of the newest event it showed. */
 export const SEEN_KEY = "embry0.chatbox.seen";
@@ -25,26 +25,25 @@ export function freshEvents(recent: readonly RecentEvent[], seen: string): Recen
   return recent.filter((e) => Date.parse(e.at) > Date.parse(seen)).reverse();
 }
 
-export const DIARY_TIER_NAME: Record<DiaryTierName, string> = { easy: "Easy", medium: "Medium", hard: "Hard", elite: "Elite" };
-
-/** How a rare reads in a message. */
-export const RARE_NAMES: Record<string, string> = {
-  "paper-crown": "paper crown",
-  "golden-paper-crown": "golden paper crown",
-  "harvest-mask": "harvest mask",
-};
-
-/** The message: a level or a find names the character that earned it. */
+/**
+ * The message, in the content pack's words (#176): a level or a find names the
+ * character that earned it. Before the pack answers, there is no message.
+ */
 export function chatMessage(
   event: RecentEvent,
+  pack: GamePack | null,
   skillName: (stat: string) => string,
   characterName: (agentType: string) => string,
 ): string {
-  if (event.kind === "level") return `${characterName(event.agent_type)} reached ${skillName(event.stat)} level ${event.level}.`;
-  if (event.kind === "agent_level") return `${characterName(event.agent_type)} is now level ${event.level}.`;
-  if (event.kind === "quest") return `Quest done: ${event.name}.`;
-  if (event.kind === "diary") return `The ${DIARY_TIER_NAME[event.tier]} tasks of the ${event.repo} diary are done.`;
-  if (event.kind === "rare") return `${characterName(event.agent_type)} found a ${RARE_NAMES[event.id] ?? event.id}.`;
-  if (event.tier === "complete") return `Achievement done: ${event.name}.`;
-  return `${event.name} reached ${TIER_NAME[event.tier]}.`;
+  const messages = pack?.messages;
+  if (!messages) return "";
+  if (event.kind === "level") {
+    return fill(messages.level, { character: characterName(event.agent_type), skill: skillName(event.stat), level: event.level });
+  }
+  if (event.kind === "agent_level") return fill(messages.agent_level, { character: characterName(event.agent_type), level: event.level });
+  if (event.kind === "quest") return fill(messages.quest, { name: event.name });
+  if (event.kind === "diary") return fill(messages.diary, { tier: diaryTierName(pack, event.tier), repo: event.repo });
+  if (event.kind === "rare") return fill(messages.rare, { character: characterName(event.agent_type), rare: rareName(pack, event.id) });
+  if (event.tier === "complete") return fill(messages.achievement_complete, { name: event.name });
+  return fill(messages.achievement_tier, { name: event.name, tier: achievementTierName(pack, event.tier) });
 }

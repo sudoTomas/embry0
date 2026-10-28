@@ -19,6 +19,7 @@ import { agentTypeToOperation } from "@/components/divine/operations";
 import { toastApiError } from "@/api/errorToast";
 import { useProgression } from "@/hooks/useProgression";
 import { LevelBadge } from "@/components/progression/LevelBadge";
+import { gamePackOf } from "@/lib/gamePack";
 
 type Filter = "all" | "builtin" | "custom";
 
@@ -35,6 +36,7 @@ export function AgentsPage() {
   const progression = useProgression();
   const skillName = new Map((progression.data?.skills ?? []).map((s) => [s.id, s.name]));
   const characterOf = new Map((progression.data?.characters ?? []).map((c) => [c.agent_type, c]));
+  const pack = progression.data ? gamePackOf(progression.data) : null;
 
   const [filter, setFilter] = useState<Filter>("all");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -162,6 +164,7 @@ export function AgentsPage() {
                                     bestSkill={skillName.get(character.best_skill) ?? character.best_skill}
                                     bestLevel={best?.level ?? 1}
                                     tier={character.tier}
+                                    pack={pack}
                                   />
                                 )}
                                 {agent.is_builtin && <Badge tone="neutral">Built-in</Badge>}

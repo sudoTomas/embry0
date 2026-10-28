@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CAPE_FILL, CAPE_SHADE, CLOTH, COLOURS, GOLD, HAIR, HIDE, LEATHER, MAGE, METAL, OUTLINE, ROBE, MASTERY_CLOAK, SKIN, dark, light, mix, tones,
+  CAPE_FILL, CAPE_SHADE, CLOTH, COLOURS, GOLD, HAIR, HIDE, LEATHER, MAGE, METAL, OUTLINE, ROBE, SKIN, dark, light, mix, tones,
 } from "../palette";
 
 const HEX = /^#[0-9a-f]{6}$/;
@@ -44,11 +44,10 @@ describe("appearance palette", () => {
     expect(Object.keys(tones("#9c6b2f")).sort()).toEqual(["1", "2", "3", "o"]);
   });
 
-  it("gives the two ladders seven steps each and every mastery cloak a body and a trim (progression spec 2026-10-24)", () => {
+  it("gives the two ladders seven steps each, every robe a body and a trim (progression spec 2026-10-24)", () => {
     expect(Object.keys(HIDE)).toHaveLength(7);
     expect(Object.keys(ROBE)).toHaveLength(7);
-    expect(Object.keys(MASTERY_CLOAK)).toHaveLength(23);
-    for (const table of [ROBE, MASTERY_CLOAK]) {
+    for (const table of [ROBE]) {
       for (const [name, { base, trim }] of Object.entries(table)) {
         expect(base, name).toMatch(HEX);
         expect(trim, name).toMatch(HEX);

@@ -6,7 +6,7 @@
  * the weapon hand is the left (viewer's left) one, down at x 8..10 rows
  * 19..21 and raised at x 7..9 rows 7..8; the shield arm is the right one.
  */
-import { CAPE_FILL, CAPE_SHADE, GOLD, HIDE, LEATHER, MAGE, METAL, OUTLINE, QUEST_CLOAK, ROBE, MASTERY_CLOAK, STRING, WOOD, dark, light, tones, type SkillId, type Hex, type MetalTier } from "./palette.ts";
+import { CAPE_FILL, CAPE_SHADE, GOLD, HIDE, LEATHER, MAGE, METAL, OUTLINE, ROBE, STRING, WOOD, dark, light, tones, type Hex, type MetalTier } from "./palette.ts";
 import { FEET, LEGS } from "./parts.ts";
 import type { ColourKey, EquipmentSlot, Frame } from "./types.ts";
 
@@ -126,7 +126,7 @@ const OPEN_HELM: Frame = { x: 10, y: 1, rows: [
   ".o........o.",
 ] };
 
-/** A paper crown with three points: the rare a merge on 25 December earns. */
+/** A paper crown with three points: a head item a rare can wear. */
 const PAPER_CROWN: Frame = { x: 11, y: 0, rows: [
   ".o..oo..o.",
   "o2oo22oo2o",
@@ -741,17 +741,6 @@ function robeSet<M extends string>(m: M, robe: { base: Hex; trim: Hex }, hat: Fr
 }
 
 /** A mastery cloak and its trimmed form (two or more skills at 99), keyed by the skill it marks. */
-const MASTERY_CLOAKS = Object.fromEntries(
-  (Object.keys(MASTERY_CLOAK) as SkillId[]).flatMap((e): [string, Item][] => {
-    const { base, trim } = MASTERY_CLOAK[e];
-    const colours = { o: OUTLINE, c: base, C: dark(base), "5": trim };
-    return [
-      [`${e}-cloak`, { id: `${e}-cloak`, slot: "cape", layer: CAPE, drape: CAPE_DRAPE, colours }],
-      [`${e}-cloak-t`, { id: `${e}-cloak-t`, slot: "cape", layer: TRIMMED_CAPE, drape: CAPE_DRAPE, colours }],
-    ];
-  }),
-) as Record<`${SkillId}-cloak` | `${SkillId}-cloak-t`, Item>;
-
 const BASE_ITEMS = {
   // warriors, one full set per metal tier
   "bronze-helm": helm("bronze-helm", "bronze"),
@@ -848,8 +837,6 @@ const BASE_ITEMS = {
   "amulet": { id: "amulet", slot: "neck", layer: AMULET, colours: { o: OUTLINE, "5": GOLD, r: RUBY } } satisfies Item,
   "cape": { id: "cape", slot: "cape", layer: CAPE, colours: { o: OUTLINE, c: CAPE_FILL, C: CAPE_SHADE } } satisfies Item,
   "trimmed-cape": { id: "trimmed-cape", slot: "cape", layer: TRIMMED_CAPE, colours: { o: OUTLINE, c: CAPE_FILL, C: CAPE_SHADE, "5": GOLD } } satisfies Item,
-  // every quest done: the account's quest cloak, worn by its highest-level character
-  "quest-cloak": { id: "quest-cloak", slot: "cape", layer: CAPE, drape: CAPE_DRAPE, colours: { o: OUTLINE, c: QUEST_CLOAK.base, C: dark(QUEST_CLOAK.base), "5": QUEST_CLOAK.trim } } satisfies Item,
   // the ladders (progression spec 2026-10-24): what a character wears for its tier
   "divine-helm": helm("divine-helm", "divine"),
   "divine-chestplate": chestplate("divine-chestplate", "divine"),
@@ -879,15 +866,13 @@ const BASE_ITEMS = {
   "gold-staff": staff("gold-staff", STAFF, "#8fe39a"),
   "diamond-staff": staff("diamond-staff", ORB_STAFF, "#7fe3c0"),
   "divine-staff": staff("divine-staff", GLASS_STAFF, "#fff3b0"),
-  // a mastery cloak replaces the party cape at 99
-  ...MASTERY_CLOAKS,
   // rares: the paper crown wears the party colour, like the cape
   "paper-crown": { id: "paper-crown", slot: "head", layer: PAPER_CROWN, colours: { o: OUTLINE, "1": CAPE_SHADE, "2": CAPE_FILL, "3": "color-mix(in srgb, var(--sprite-fill) 60%, white)" } } satisfies Item,
   "golden-paper-crown": { id: "golden-paper-crown", slot: "head", layer: PAPER_CROWN, colours: tones("#f2f0ea") } satisfies Item,
   "harvest-mask": { id: "harvest-mask", slot: "head", layer: HARVEST_MASK, colours: tones("#3d9a3a"), over: "beard" } satisfies Item,
 } as const satisfies Record<string, Item>;
 
-type CapeId = "cape" | "trimmed-cape" | "quest-cloak" | `${SkillId}-cloak` | `${SkillId}-cloak-t`;
+type CapeId = "cape" | "trimmed-cape";
 
 /** Divine Warden's reward (spec 2026-10-24): every cape, trimmed in the Divine metal. */
 const DIVINE_CAPES = Object.fromEntries(
@@ -901,4 +886,41 @@ const DIVINE_CAPES = Object.fromEntries(
 
 export const ITEMS = { ...BASE_ITEMS, ...DIVINE_CAPES } as const satisfies Record<string, Item>;
 
-export type ItemId = keyof typeof ITEMS;
+/**
+ * A cloak the content pack colours (#176): a skill's mastery cloak or the
+ * quest cloak, drawn over the one cloak shape with a drape. Its id carries
+ * its colours, `cloak:#base:#trim`, then `:t` for the trimmed shape (two
+ * skills or more at the top level) and `:d` for a trim in the Divine metal.
+ */
+export type CloakId = `cloak:${string}`;
+
+export type ItemId = keyof typeof ITEMS | CloakId;
+
+export function cloakId(cloak: { base: Hex; trim: Hex }, trimmed = false, divine = false): CloakId {
+  return `cloak:${cloak.base}:${cloak.trim}${trimmed ? ":t" : ""}${divine ? ":d" : ""}`;
+}
+
+const HEX = /^#[0-9a-fA-F]{6}$/;
+const cloaks = new Map<string, Item>();
+
+function cloakItem(id: string): Item | undefined {
+  const cached = cloaks.get(id);
+  if (cached) return cached;
+  const [, base, trim, ...flags] = id.split(":");
+  if (!HEX.test(base ?? "") || !HEX.test(trim ?? "")) return undefined;
+  const divine = flags.includes("d");
+  const item: Item = {
+    id,
+    slot: "cape",
+    layer: flags.includes("t") || divine ? TRIMMED_CAPE : CAPE,
+    drape: CAPE_DRAPE,
+    colours: { o: OUTLINE, c: base, C: dark(base), "5": divine ? METAL.divine : trim },
+  };
+  cloaks.set(id, item);
+  return item;
+}
+
+/** The item an id names: one of the catalogue, or a cloak composed from the colours in its id. */
+export function itemOf(id: ItemId): Item | undefined {
+  return id.startsWith("cloak:") ? cloakItem(id) : (ITEMS as Record<string, Item>)[id];
+}

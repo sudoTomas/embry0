@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Diary } from "@/api/progression";
 import { cn } from "@/lib/utils";
-import { DIARY_TIER_NAME } from "./chatbox";
+import { diaryTierName, type GamePack } from "@/lib/gamePack";
 
 /** How many diaries show before "Show all". */
 const DIARIES_SHOWN = 8;
@@ -11,7 +11,7 @@ const DIARIES_SHOWN = 8;
  * row per repo with each tier's tasks done, a tier lit when all its tasks
  * are, and the row opening onto the tasks themselves.
  */
-export function RepoDiaries({ diaries }: { diaries: Diary[] }) {
+export function RepoDiaries({ diaries, pack }: { diaries: Diary[]; pack: GamePack | null }) {
   const [open, setOpen] = useState<string | null>(null);
   const [all, setAll] = useState(false);
   const shown = all ? diaries : diaries.slice(0, DIARIES_SHOWN);
@@ -48,7 +48,7 @@ export function RepoDiaries({ diaries }: { diaries: Diary[] }) {
                             tier.completed_at ? "bg-[#5fc95a]/20 text-[#7fdc7a]" : "bg-white/[0.05] text-white/50",
                           )}
                         >
-                          {DIARY_TIER_NAME[tier.tier]} {done}/{tier.tasks.length}
+                          {diaryTierName(pack, tier.tier)} {done}/{tier.tasks.length}
                         </span>
                       );
                     })}
@@ -58,7 +58,7 @@ export function RepoDiaries({ diaries }: { diaries: Diary[] }) {
                   <div className="grid grid-cols-1 gap-3 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-4" data-testid="diary-tasks">
                     {diary.tiers.map((tier) => (
                       <div key={tier.tier}>
-                        <h3 className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">{DIARY_TIER_NAME[tier.tier]}</h3>
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">{diaryTierName(pack, tier.tier)}</h3>
                         <ul className="mt-1 space-y-0.5 text-xs">
                           {tier.tasks.map((task) => (
                             <li key={task.text} className={task.done_at ? "text-white/40 line-through" : "text-white/80"}>

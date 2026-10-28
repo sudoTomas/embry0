@@ -9,7 +9,7 @@
  * else stays put. POSES gives every sprite state its frames.
  */
 import type { SpriteState } from "../sprites.ts";
-import { ITEMS, type Item } from "./items.ts";
+import { itemOf, type Item } from "./items.ts";
 import { COLOURS, SKIN, type Hex } from "./palette.ts";
 import { arm, beard, feet, hair, head, legs, torso } from "./parts.ts";
 import { GRID, type Appearance, type ArmPose, type EquipmentSlot, type Face, type Frame, type Layer } from "./types.ts";
@@ -59,7 +59,7 @@ export const POSES: Record<SpriteState, Pose[]> = {
 
 function worn(a: Appearance, slot: EquipmentSlot): Item | undefined {
   const id = a.equipment[slot];
-  return id === undefined ? undefined : ITEMS[id];
+  return id === undefined ? undefined : itemOf(id);
 }
 
 function shifted(f: Frame, dy: number): Frame {

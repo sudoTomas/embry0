@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import type { RecentEvent } from "@/api/progression";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useProgression } from "@/hooks/useProgression";
+import { gamePackOf } from "@/lib/gamePack";
 import { chatMessage, freshEvents, readSeen, writeSeen } from "./chatbox";
 
 /** How long one message stays before the next. */
 export const MESSAGE_MS = 6_000;
 
 /**
- * Levels reached and achievements unlocked, as one-line messages in the old
- * game's chat box, bottom left, one at a time. A browser's first visit marks
+ * Levels reached and achievements unlocked, as one-line messages in the
+ * content pack's words in the chat box, bottom left, one at a time. A browser's first visit marks
  * everything so far as seen, so an operator is told what happens from then
  * on, not the whole history.
  */
@@ -53,6 +54,7 @@ export function Chatbox() {
     >
       {chatMessage(
         current,
+        gamePackOf(data),
         (stat) => names.get(stat) ?? stat,
         (agentType) => lookup(agentType).displayName,
       )}

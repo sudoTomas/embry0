@@ -9,7 +9,7 @@ import { PageError } from "@/components/PageError";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useProgression } from "@/hooks/useProgression";
-import { TIER_COLOR } from "@/lib/tiers";
+import { gamePackOf, tierColor } from "@/lib/gamePack";
 import { cn } from "@/lib/utils";
 
 const number = (n: number) => n.toLocaleString("en-US");
@@ -31,6 +31,7 @@ export function AchievementsPage() {
   }
   if (!progression.data) return <Skeleton className="h-64 w-full" />;
   const { data } = progression;
+  const pack = gamePackOf(data);
   const unlocked = data.achievements.filter((a) => a.state === "unlocked").length;
   const roster = [...data.characters].sort((a, b) => b.level - a.level || b.total_level - a.total_level || a.agent_type.localeCompare(b.agent_type));
   const skillName = new Map(data.skills.map((s) => [s.id, s.name]));
@@ -65,9 +66,9 @@ export function AchievementsPage() {
         </p>
       </header>
 
-      <QuestJournal quests={data.quests} points={data.account.quest_points} />
+      <QuestJournal quests={data.quests} points={data.account.quest_points} pack={pack} />
 
-      <RepoDiaries diaries={data.diaries} />
+      <RepoDiaries diaries={data.diaries} pack={pack} />
 
       <section className="space-y-2">
         <h2 className="text-section font-semibold">Characters</h2>
@@ -95,7 +96,7 @@ export function AchievementsPage() {
                       <span
                         aria-hidden="true"
                         className="h-2 w-2 rounded-[1px]"
-                        style={{ backgroundColor: TIER_COLOR[character.tier] }}
+                        style={{ backgroundColor: tierColor(pack, character.tier) }}
                       />
                       {skillName.get(character.best_skill) ?? character.best_skill} {best?.level ?? 1}
                     </span>
@@ -110,7 +111,7 @@ export function AchievementsPage() {
         </ul>
       </section>
 
-      {selected && <SkillSheet character={selected} skills={data.skills} identity={lookup(selected.agent_type)} />}
+      {selected && <SkillSheet character={selected} skills={data.skills} identity={lookup(selected.agent_type)} pack={pack} />}
     </div>
   );
 }

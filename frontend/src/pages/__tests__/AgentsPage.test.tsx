@@ -15,8 +15,11 @@ vi.mock("@/hooks/useAgents", () => ({
 vi.mock("@/hooks/useProgression", () => ({ useProgression: () => mockUseProgression() }));
 
 import { AgentsPage } from "../AgentsPage";
+import { PACK_VIEW } from "@/components/progression/__tests__/fixtures";
 
 const PROGRESSION = {
+  // the tier names come from the pack, in the answer (#176)
+  ...PACK_VIEW,
   account: { xp: 2_100_000, total_level: 105, characters: 1 },
   skills: [{ id: "coding", name: "Coding", group: "build" }],
   characters: [

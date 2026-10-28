@@ -3,36 +3,46 @@
  * An avatar picks the person (skin, hair, beard, cloth) and a combat style;
  * progression picks the step of that style's ladder, Bronze to Divine:
  * melee climbs plate, ranged climbs leather to scale to pale hide,
- * magic climbs robes. A skill at 99 replaces the party cape with that
- * skill's cape (trimmed for two or more), and a rare replaces the head
- * item. An avatar with no style (the monk, the pirate, the artisans) keeps
- * its look and only its tool takes the tier's metal.
+ * magic climbs robes. Which step a tier wears, the colours of each cloak and
+ * which rare goes on the head are the content pack's (#176), resolved before
+ * an outfit reaches here: this module draws art, it names nothing. A skill at
+ * the top level replaces the party cape with that skill's cloak (trimmed for
+ * two or more), and a rare replaces the head item. An avatar with no style
+ * (the monk, the pirate, the artisans) keeps its look and only its tool takes
+ * the step's metal.
  */
 import type { PresetId } from "./presets.ts";
-import type { GearTier, ItemId } from "./items.ts";
-import type { SkillId } from "./palette.ts";
+import { cloakId, type GearTier, type ItemId } from "./items.ts";
+import type { Hex } from "./palette.ts";
 import type { Appearance, EquipmentSlot } from "./types.ts";
 
 export type CombatStyle = "melee" | "ranged" | "magic";
 
-/** The rares, rarest first: the first one a character has is the one it wears. */
-export const RARES = ["golden-paper-crown", "paper-crown", "harvest-mask"] as const;
-export type Rare = (typeof RARES)[number];
+/** The head items a rare can wear (docs/contracts/progression.json pins the list). */
+export const RARE_ART = ["golden-paper-crown", "paper-crown", "harvest-mask"] as const;
+export type RareArt = (typeof RARE_ART)[number];
+
+export interface Cloak {
+  base: Hex;
+  trim: Hex;
+}
 
 export interface Outfit {
+  /** The gear art step its tier wears. */
   tier: GearTier;
-  /** Its skills at 99, best first: the first one's mastery cloak is worn, two or more trim it. */
-  capes: SkillId[];
-  rares: Rare[];
-  /** Every quest done and this the highest total level: the quest cloak, unless a mastery cloak outranks it. */
-  questCloak?: boolean;
-  /** Divine Warden done: every cape trimmed in the Divine metal. */
+  /** The cloak of its best skill at the top level, if any. */
+  cloak?: Cloak | null;
+  /** Two skills or more at the top level: the cloak is trimmed. */
+  trimmed?: boolean;
+  /** Every quest done and this the highest total level: the quest cloak's colours, unless a skill's cloak outranks it. */
+  questCloak?: Cloak | null;
+  /** The rare it wears on its head. */
+  head?: RareArt | null;
+  /** The account's cloak trim: every cape trimmed in the Divine metal. */
   divineTrim?: boolean;
 }
 
 type Kit = Partial<Record<EquipmentSlot, ItemId>>;
-/** A cape a Divine trim can go on: every cape but one already trimmed in it. */
-type CapeItem = Exclude<Extract<ItemId, "cape" | "trimmed-cape" | "quest-cloak" | `${SkillId}-cloak` | `${SkillId}-cloak-t`>, `${string}-divine`>;
 
 /** From platinum up a character carries the party cape and an amulet, as the warrior presets do. */
 function finery(tier: GearTier): Kit {
@@ -97,16 +107,16 @@ export function dress(base: Appearance, style: CombatStyle | null, outfit: Outfi
   const equipment: Kit = style
     ? { ...(base.equipment.neck ? { neck: base.equipment.neck } : {}), ...LADDERS[style](outfit.tier) }
     : retooled(base.equipment, outfit.tier);
-  const [cape] = outfit.capes;
-  if (cape) equipment.cape = outfit.capes.length > 1 ? `${cape}-cloak-t` : `${cape}-cloak`;
-  else if (outfit.questCloak) equipment.cape = "quest-cloak";
-  if (outfit.divineTrim && equipment.cape) equipment.cape = `${equipment.cape as CapeItem}-divine`;
-  const rare = RARES.find((r) => outfit.rares.includes(r));
-  if (rare) equipment.head = rare;
+  const divine = Boolean(outfit.divineTrim);
+  if (outfit.cloak) equipment.cape = cloakId(outfit.cloak, Boolean(outfit.trimmed), divine);
+  else if (outfit.questCloak) equipment.cape = cloakId(outfit.questCloak, false, divine);
+  else if (divine && (equipment.cape === "cape" || equipment.cape === "trimmed-cape")) equipment.cape = `${equipment.cape}-divine`;
+  if (outfit.head) equipment.head = outfit.head;
   return { ...base, equipment };
 }
 
 /** One string per outfit, for caching what it composes to. */
 export function outfitKey(o: Outfit): string {
-  return `${o.tier}|${o.capes.join(",")}|${o.rares.join(",")}|${o.questCloak ? "q" : ""}${o.divineTrim ? "d" : ""}`;
+  const cape = o.cloak ? cloakId(o.cloak, Boolean(o.trimmed)) : o.questCloak ? `q${cloakId(o.questCloak)}` : "";
+  return `${o.tier}|${cape}|${o.head ?? ""}|${o.divineTrim ? "d" : ""}`;
 }

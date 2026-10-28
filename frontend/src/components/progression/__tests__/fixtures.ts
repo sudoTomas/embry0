@@ -1,13 +1,23 @@
 import type { AchievementEntry, Character, Progression, Skill, SkillProgress } from "@/api/progression";
+import { gamePackOf, type GamePack } from "@/lib/gamePack";
+import contractText from "../../../../../docs/contracts/progression.json?raw";
 
-/** A slice of the 23-skill catalogue: enough for each group to have a tile. */
-export const SKILLS: Skill[] = [
-  { id: "coding", name: "Coding", group: "build" },
-  { id: "version_control", name: "Version control", group: "build" },
-  { id: "testing", name: "Testing", group: "verify" },
-  { id: "reading", name: "Reading", group: "investigate" },
-  { id: "recovery", name: "Recovery", group: "care" },
-];
+/**
+ * The shipped content pack as GET /progression answers it (#176): generated
+ * by the backend into docs/contracts/progression.json, never copied by hand.
+ */
+export const PACK_VIEW: Pick<
+  Progression,
+  "pack" | "groups" | "skills" | "tiers" | "rares" | "cloaks" | "achievement_categories" | "diary_tiers" | "messages" | "labels" | "curve"
+> = JSON.parse(contractText).default_view;
+
+/** The shipped pack as the components read it. */
+export const PACK: GamePack = gamePackOf(PACK_VIEW);
+
+/** A slice of the shipped skills: enough for each group to have a tile. */
+export const SKILLS: Skill[] = ["coding", "version_control", "testing", "reading", "recovery"].map(
+  (id) => PACK_VIEW.skills.find((s) => s.id === id)!,
+);
 
 export function skill(stat: string, overrides: Partial<SkillProgress> = {}): SkillProgress {
   return { stat, xp: 0, level: 1, level_xp: 0, xp_to_next: 83, ...overrides };
@@ -21,6 +31,7 @@ export function character(overrides: Partial<Character> = {}): Character {
     total_level: 187,
     best_skill: "coding",
     tier: "divine",
+    gear: "divine",
     capes: ["coding"],
     rares: [],
     quest_cloak: false,
@@ -60,10 +71,11 @@ export function entry(overrides: Partial<AchievementEntry> = {}): AchievementEnt
 
 export function progression(overrides: Partial<Progression> = {}): Progression {
   return {
-    account: { xp: 15_134_431, total_level: 192, characters: 2, quest_points: 2, divine_trim: false },
+    ...PACK_VIEW,
+    account: { xp: 15_134_431, total_level: 192, characters: 2, quest_points: 2, cloak_trim: false, divine_trim: false },
     skills: SKILLS,
     characters: [
-      character({ agent_type: "review", level: 1, xp: 0, total_level: 5, best_skill: "coding", tier: "bronze", capes: [], rares: [], skills: SKILLS.map((s) => skill(s.id)) }),
+      character({ agent_type: "review", level: 1, xp: 0, total_level: 5, best_skill: "coding", tier: "bronze", gear: "bronze", capes: [], rares: [], skills: SKILLS.map((s) => skill(s.id)) }),
       character(),
     ],
     achievements: [
