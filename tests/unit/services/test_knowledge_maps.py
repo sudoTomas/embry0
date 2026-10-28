@@ -185,3 +185,62 @@ def test_only_a_file_in_a_repository_can_be_removed_or_become_a_lead() -> None:
     assert removable(None, {"id": "f", "path": "scripts/a.py"}) is False, "a path with no repository"
     lead = map_lead(slug="org", map_title="Org", map_repo=None, node=system, detail=None, marks=marks, url=None)
     assert lead is None
+
+
+def test_a_part_the_scanner_says_how_to_remove_is_removable_without_a_file() -> None:
+    from embry0.services.knowledge_maps import removable
+
+    table = {"id": "table:old_backup", "label": "old_backup", "kind": "table", "removal": "Drop it in a new migration."}
+    assert part_repo("acme/shop", table) == "acme/shop"
+    assert removable("acme/shop", table) is True
+    assert removable("acme/shop", {**table, "removal": None}) is False
+    assert "How it is removed: Drop it in a new migration." in part_text(table, None, "Shop")
+    parsed = parse_map(_doc(nodes=[{"id": "t", "removal": "x" * 900}]), "shop")
+    assert len(parsed.graph["nodes"][0]["removal"]) == 600
+
+
+def test_a_batch_is_one_task_for_one_pull_request_that_lists_every_part() -> None:
+    from embry0.services.knowledge_maps import MAX_BATCH_TASK, batch_task
+
+    parts = [
+        (
+            {
+                "id": f"table:t{i}",
+                "label": f"t{i}",
+                "kind": "table",
+                "removal": "Drop it in a migration.",
+                "signals": ["empty"],
+            },
+            {"bloat": {"score": 70, "band": "bloat", "against": [{"text": "a backup table", "w": 70}]}},
+        )
+        for i in range(3)
+    ]
+    task = batch_task("remove", repo="acme/shop", parts=parts, map_title="Shop", note="old backups", by="ann")
+    assert task.startswith("Remove these 3 parts from acme/shop, in one pull request.")
+    flat = " ".join(task.split())
+    assert "do not re-assess" in flat and "one migration for several tables" in flat
+    assert "ann sent these 3 parts of the Shop map together: old backups" in task
+    assert task.count("- `table:t") == 3 and "removed by: Drop it in a migration." in task
+    assert "never connect to, write to or change a database" in task
+    big = [
+        (
+            {"id": f"f{i}", "label": "x" * 150, "kind": "script", "path": "a/" + "b" * 150, "signals": ["s" * 290] * 3},
+            None,
+        )
+        for i in range(200)
+    ]
+    long = batch_task("fix", repo="acme/shop", parts=big, map_title="Shop", note="", by="ann")
+    assert len(long) <= MAX_BATCH_TASK and long.count("- `f") == 200, "a long batch drops detail, never parts"
+    from embry0.services.knowledge_maps import BatchTooLarge
+
+    huge = [({"id": "x" * 300 + str(i), "label": "y" * 200, "kind": "k"}, None) for i in range(200)]
+    with pytest.raises(BatchTooLarge):
+        batch_task("fix", repo="acme/shop", parts=huge, map_title="Shop", note="", by="ann")
+    tables = [
+        ({"id": f"table:t{i}", "label": f"t{i}", "kind": "table", "removal": "Drop it."}, None) for i in range(150)
+    ]
+    short = batch_task("remove", repo="acme/shop", parts=tables * 1, map_title="Shop", note="", by="ann")
+    assert short.count("- `table:t") == 150
+    assert "read-only" in batch_task("analysis", repo="acme/shop", parts=parts, map_title="Shop", note="", by="ann")
+    with pytest.raises(ValueError):
+        batch_task("delete", repo="acme/shop", parts=parts, map_title="Shop", note="", by="ann")

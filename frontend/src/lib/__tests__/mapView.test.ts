@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MapNode, WorkView } from "@/api/maps";
-import { categoryColor, fit, hit, nodeColor, placed, search, toScreen, toWorld, unsentBloat, workState, zoomAt } from "../mapView";
+import { canRemove, cannotSend, categoryColor, fit, hit, nodeColor, partRepo, placed, search, toScreen, toWorld, unsentBloat, workState, zoomAt } from "../mapView";
 
 const node = (id: string, over: Partial<MapNode> = {}): MapNode => ({
   id, kind: "script", area: null, label: id, sub: null, path: null, line: null, url: null, repo: null,
@@ -74,5 +74,19 @@ describe("the map's view (knowledge maps, spec 2026-10-27)", () => {
     const nodes = [node("script:probe.mjs", { label: "probe.mjs", path: "scripts/probe.mjs" }), node("table:orders", { label: "orders" })];
     expect([...search(nodes, "scripts probe")]).toEqual(["script:probe.mjs"]);
     expect(search(nodes, "  ").size).toBe(0);
+  });
+
+  it("knows which parts an agent can remove: a file, or a part the scanner says how to remove", () => {
+    const file = node("script:a", { path: "scripts/a.mjs" });
+    const table = node("table:t", { removal: "Drop it in a migration." });
+    const system = node("sys:b", { repo: "acme/billing" });
+    expect(partRepo(file, "acme/shop")).toBe("acme/shop");
+    expect(partRepo(table, "acme/shop")).toBe("acme/shop");
+    expect(partRepo(node("host:x"), "acme/shop")).toBeNull();
+    expect(canRemove(table, "acme/shop")).toBe(true);
+    expect(canRemove(system, null)).toBe(false);
+    expect(cannotSend(system, null, "remove")).toMatch(/not a code change/);
+    expect(cannotSend(system, null, "fix")).toBeNull();
+    expect(cannotSend(node("host:x"), null, "analysis")).toBe("in no repository");
   });
 });

@@ -182,3 +182,21 @@ export function search(nodes: readonly MapNode[], query: string): Set<string> {
       .map((n) => n.id),
   );
 }
+
+/** The repository a part lives in: its own, else the map's when it is a file of it or says how it is removed. */
+export function partRepo(n: MapNode, mapRepo: string | null): string | null {
+  if (n.repo) return n.repo;
+  return mapRepo && (n.path || n.removal) ? mapRepo : null;
+}
+
+/** Whether an agent can remove the part with a code change: a file in a repository, or one the scanner says how. */
+export function canRemove(n: MapNode, mapRepo: string | null): boolean {
+  return !!partRepo(n, mapRepo) && !!(n.path || n.removal);
+}
+
+/** Why a part cannot go for ``kind``, or null when it can. */
+export function cannotSend(n: MapNode, mapRepo: string | null, kind: "remove" | "fix" | "analysis"): string | null {
+  if (!partRepo(n, mapRepo)) return "in no repository";
+  if (kind === "remove" && !canRemove(n, mapRepo)) return "a whole system or repository: not a code change";
+  return null;
+}

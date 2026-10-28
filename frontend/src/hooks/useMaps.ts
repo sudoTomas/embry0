@@ -69,7 +69,14 @@ export function useMarkPart(slug: string) {
 export function useSendParts(slug: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { node_ids: string[]; kind?: SendKind; note?: string; by: string; run_with?: RunWith }) =>
+    mutationFn: (body: {
+      node_ids: string[];
+      kind?: SendKind;
+      note?: string;
+      by: string;
+      run_with?: RunWith;
+      together?: boolean;
+    }) =>
       sendParts(slug, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [...KEY, slug, "work"] });

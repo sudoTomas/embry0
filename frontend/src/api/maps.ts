@@ -31,6 +31,8 @@ export interface MapNode {
   y: number | null;
   r: number | null;
   signals: string[];
+  /** How the part is removed when it is not a file (a table: a migration), in the scanner's words. */
+  removal?: string | null;
   bloat?: { score: number; band: BloatBand };
   age?: { first?: string | null; last?: string | null; changes?: number | null; authors?: number | null };
   use?: { level?: number | null; n?: number | null; unit?: string | null };
@@ -129,6 +131,15 @@ export interface SendResult {
   error: string | null;
 }
 
+/** One job a batch send started: all the parts of one repository and kind. */
+export interface BatchJob {
+  repo: string;
+  kind: SendKind;
+  parts: number;
+  job_id: string | null;
+  error: string | null;
+}
+
 export async function fetchMaps(): Promise<MapSummary[]> {
   const { data } = await api.get<{ maps: MapSummary[] }>("/maps");
   return data.maps;
@@ -166,8 +177,8 @@ export async function markPart(
 
 export async function sendParts(
   slug: string,
-  body: { node_ids: string[]; kind?: SendKind; note?: string; by: string; run_with?: RunWith },
-): Promise<{ sent: number; failed: number; results: SendResult[] }> {
+  body: { node_ids: string[]; kind?: SendKind; note?: string; by: string; run_with?: RunWith; together?: boolean },
+): Promise<{ sent: number; failed: number; results: SendResult[]; jobs?: BatchJob[] }> {
   const { data } = await api.post(`/maps/${encodeURIComponent(slug)}/send`, body, { timeout: 120_000 });
   return data;
 }
