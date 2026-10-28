@@ -1,4 +1,4 @@
-import type { DiffLine, DiffLineKind } from "@/lib/settingsDocument";
+import type { DiffLine, DiffLineKind } from "@/lib/textDiff";
 import { cn } from "@/lib/utils";
 
 const LINE_CLASS: Record<DiffLineKind, string> = {
@@ -13,8 +13,10 @@ const LINE_CLASS: Record<DiffLineKind, string> = {
 const MARK: Record<DiffLineKind, string> = { add: "+", remove: "-", same: " ", gap: "…", note: " " };
 
 /**
- * A line diff, old lines in red and new ones in green. Long lines wrap
- * rather than scroll, so a phone never scrolls sideways.
+ * A line diff, old lines in red and new ones in green, git's "no newline"
+ * note in italics. Long lines wrap rather than scroll, so a phone never
+ * scrolls sideways. Every line is text, never markup: a document's words
+ * are whatever an operator wrote. Shared by the Policy and Game content tabs.
  */
 export function TextDiff({ lines, label }: { lines: DiffLine[]; label: string }) {
   if (lines.length === 0) return <p className="text-sm text-fg-muted">The text is the same.</p>;

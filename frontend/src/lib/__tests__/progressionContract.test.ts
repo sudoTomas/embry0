@@ -35,6 +35,13 @@ describe("the template grammar (embry0/services/progression_templates.py)", () =
     for (const { text, values, out } of contract.template_cases) expect(fill(text, values), text).toBe(out);
   });
 
+  it("fills a field only from a value it was given, never from the object's prototype", () => {
+    for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+      expect(fill(`a {${name}} b`, { n: 5 }), name).toBe(`a {${name}} b`);
+    }
+    expect(fill("{constructor}", { constructor: "given" })).toBe("given");
+  });
+
   it("shows a text outside the grammar as written, never half-filled", () => {
     for (const text of ["{n:>9}", "{n!r}", "{0}", "{}", "a lone {", "a lone }", "{n:{n}}"]) {
       expect(fill(text, { n: 5 }), text).toBe(text);

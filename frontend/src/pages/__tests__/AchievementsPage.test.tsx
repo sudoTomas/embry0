@@ -70,6 +70,26 @@ describe("AchievementsPage", () => {
     expect(screen.getByTestId("tier-legend")).toHaveTextContent("Radiant");
   });
 
+  it("names the pack's calendar once, beside the secrets the oddities hide (#176)", () => {
+    const base = progression();
+    mockUseProgression.mockReturnValue({ data: { ...base, pack: { ...base.pack, timezone: "Europe/Berlin" } } });
+    renderPage();
+    const named = screen.queryAllByTestId("pack-timezone");
+    expect(named, "the timezone is named once on the page").toHaveLength(1);
+    expect(named[0]).toHaveTextContent("on the Europe/Berlin calendar");
+  });
+
+  it("says when the achievements were counted on UTC because the database does not know the pack's timezone", () => {
+    const base = progression();
+    mockUseProgression.mockReturnValue({
+      data: { ...base, pack: { ...base.pack, timezone: "Europe/Berlin", timezone_applied: "UTC" } },
+    });
+    renderPage();
+    const note = screen.queryByTestId("pack-timezone")?.textContent ?? "";
+    expect(note, "the fallback calendar is named, not the pack's").toContain("on the UTC calendar for now");
+    expect(note).toContain("does not know the pack's timezone, Europe/Berlin");
+  });
+
   it("opens the character the link names", () => {
     mockUseProgression.mockReturnValue({ data: progression() });
     renderPage("/achievements?character=review");

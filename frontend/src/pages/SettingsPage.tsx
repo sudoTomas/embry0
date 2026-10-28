@@ -6,6 +6,7 @@ import PolicyTab from "./settings/PolicyTab";
 import ContextTab from "./settings/ContextTab";
 import IntegrationsTab from "./settings/IntegrationsTab";
 import ApiKeysTab from "./settings/ApiKeysTab";
+import GameContentTab from "./settings/GameContentTab";
 
 export function SettingsPage() {
   // The open tab lives in the URL so the breadcrumb line names it.
@@ -30,6 +31,7 @@ export function SettingsPage() {
         <TabsContent value="context"><ContextTab /></TabsContent>
         <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
         <TabsContent value="apikeys"><ApiKeysTab /></TabsContent>
+        <TabsContent value="game"><GameContentTab /></TabsContent>
       </Tabs>
     </div>
   );

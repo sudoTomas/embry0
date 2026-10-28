@@ -90,7 +90,8 @@ export function fill(template: string, values: Record<string, Value>): string {
     if (token === "{{") out.push("{");
     else if (token === "}}") out.push("}");
     else if (name === undefined) out.push(token);
-    else if (name in values) out.push(written(values[name], grouped !== undefined));
+    // Own keys only: `in` would also find `constructor` or `toString` on the object's prototype.
+    else if (Object.hasOwn(values, name)) out.push(written(values[name], grouped !== undefined));
     else out.push(token);
   }
   return out.join("");
