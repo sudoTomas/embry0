@@ -17,7 +17,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from embry0.api.deps import request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import refusal_detail
 from embry0.services.decisions import Decision, done, offered, ordered
 
 logger = structlog.get_logger(__name__)
@@ -54,12 +54,10 @@ async def _offers(request: Request, *, owner: str | None, repo: str | None) -> l
     return [offered(p) for p in await _shown(request, proposals)]
 
 
-async def _allowed(request: Request, repo: str | None) -> bool:
-    try:
-        await enforce_repo_allowlist(request, repo, action="read a decision")
-    except HTTPException:
-        return False
-    return True
+def _allowed(request: Request, repo: str | None) -> bool:
+    """Whether the caller's key may read ``repo``'s decisions. A list hides the rest without a refusal:
+    nothing was refused, so nothing is logged or audited (a chat reads the feed every minute)."""
+    return refusal_detail(request, repo, action="read a decision") is None
 
 
 async def done_inputs(request: Request, rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -151,7 +149,7 @@ async def _reviews(request: Request, *, repo: str | None) -> list[Decision]:
     rows = await world.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS))
     if repo:
         rows = [r for r in rows if str(r.get("repo") or "").lower() == repo.lower()]
-    rows = [r for r in rows if await _allowed(request, r.get("repo"))]
+    rows = [r for r in rows if _allowed(request, r.get("repo"))]
     inputs, owners = await asyncio.gather(done_inputs(request, rows), owners_of(request, rows))
     return [done({**q, "owners": owners.get(str(q["job_id"]), [])}) for q in inputs]
 

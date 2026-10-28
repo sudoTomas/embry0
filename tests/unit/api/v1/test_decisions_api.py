@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import structlog
 from httpx import ASGITransport, AsyncClient
 
 from embry0.api.app import create_app
+from embry0.api.v1 import decisions as decisions_api
 from embry0.api.v1 import proposals as proposals_api
 from embry0.api.v1 import world as world_api
 from embry0.config import Embry0Config
@@ -143,3 +146,23 @@ async def test_one_decision_is_read_by_its_id(app: Any) -> None:
     assert review["id"] == "done:job-1" and review["actions"][0] == "merge"
     assert (await get(app, "/api/v1/decisions/done:job-9")).status_code == 404
     assert (await get(app, "/api/v1/decisions/bogus")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_key_limited_to_some_repos_lists_only_theirs_and_refuses_nothing(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audited: list[Any] = []
+
+    async def audit(*args: Any, **kwargs: Any) -> None:
+        audited.append(args)
+
+    monkeypatch.setattr("embry0.api.repo_allowlist.emit_audit", audit)
+    request = SimpleNamespace(
+        state=SimpleNamespace(principal=SimpleNamespace(allowed_repos=("acme/web",), key_name="chat", key_id="k-1")),
+        app=app,
+    )
+    with structlog.testing.capture_logs() as logs:
+        assert decisions_api._allowed(request, "acme/web") is True
+        assert decisions_api._allowed(request, "acme/other") is False
+    assert not logs and not audited, "a list read every minute hides another repo's decisions without a refusal"
