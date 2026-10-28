@@ -17,3 +17,4 @@ export type { AgentDefinition, AgentCreateRequest, AgentUpdateRequest } from "./
 export * from "./qaDashboard";
 export * from "./credentials";
 export * from "./skills";
+export * from "./settings";

@@ -20,6 +20,7 @@ import {
   Plus,
   Search,
   Settings,
+  Undo2,
   X,
   Zap,
   type LucideIcon,
@@ -56,6 +57,9 @@ export const ACTION_ICONS: Record<string, LucideIcon> = {
   provider_catalog_refreshed: Settings,
   watcher_stack_updated: Settings,
   watcher_stack_deleted: X,
+  "settings.updated": Settings,
+  "settings.change_undone": Undo2,
+  "settings.bootstrapped": Settings,
 };
 
 /** The icon for an audit action; an action the map does not know yet gets a dot. */
@@ -90,6 +94,9 @@ export const ACTION_LABELS: Record<string, string> = {
   provider_catalog_refreshed: "Provider model list read",
   watcher_stack_updated: "Watcher stack updated",
   watcher_stack_deleted: "Watcher stack deleted",
+  "settings.updated": "Settings document changed",
+  "settings.change_undone": "Settings change undone",
+  "settings.bootstrapped": "Settings imported from the environment",
 };
 
 /** The words for an audit action; an action this map does not know yet reads
@@ -138,6 +145,15 @@ export function formatDetails(action: string, details: Record<string, unknown>):
   }
   if (action === "provider_config_tested" && details.status) {
     return String(details.status);
+  }
+  // The settings document's rows name the keys a change touched, never their values.
+  if (action === "settings.updated" && Array.isArray(details.keys)) {
+    return details.keys.length > 0 ? details.keys.join(", ") : "comments only";
+  }
+  if (action === "settings.bootstrapped" && details.sections && typeof details.sections === "object") {
+    return Object.entries(details.sections as Record<string, unknown>)
+      .flatMap(([section, keys]) => (Array.isArray(keys) ? keys.map((key) => `${section}.${key}`) : [section]))
+      .join(", ");
   }
   // Config-update rows carry the changed-field payload — show field names only.
   if (action.endsWith("_config_updated")) {

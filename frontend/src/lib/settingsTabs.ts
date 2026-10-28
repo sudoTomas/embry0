@@ -3,6 +3,7 @@
  * be linked to. */
 export const SETTINGS_TABS = [
   { value: "general", label: "General" },
+  { value: "policy", label: "Policy" },
   { value: "context", label: "Context" },
   { value: "integrations", label: "Integrations" },
   { value: "apikeys", label: "API keys" },

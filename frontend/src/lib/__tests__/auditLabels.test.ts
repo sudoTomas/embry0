@@ -53,6 +53,19 @@ describe("auditLabels", () => {
     expect(out).not.toContain("sk-x");
   });
 
+  it("labels the settings document's actions and names the keys a change touched, never a value", () => {
+    expect(ACTION_LABELS["settings.updated"]).toBe("Settings document changed");
+    expect(ACTION_LABELS["settings.change_undone"]).toBe("Settings change undone");
+    expect(ACTION_LABELS["settings.bootstrapped"]).toBe("Settings imported from the environment");
+    expect(
+      formatDetails("settings.updated", { keys: ["sample.per_tick", "sample.enabled"], reason: "r", revision_id: 9 }),
+    ).toBe("sample.per_tick, sample.enabled");
+    expect(formatDetails("settings.updated", { keys: [], revision_id: 9 })).toBe("comments only");
+    expect(formatDetails("settings.bootstrapped", { sections: { sample: ["enabled", "per_tick"] }, revision_id: 1 })).toBe(
+      "sample.enabled, sample.per_tick",
+    );
+  });
+
   it("falls back to empty detail for unknown actions", () => {
     expect(formatDetails("something.new", { a: 1 })).toBe("");
   });
