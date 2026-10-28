@@ -153,7 +153,7 @@ def _cut_window() -> list[LogCluster]:
 
 def test_a_quote_cut_short_maps_when_every_word_it_has_is_the_templates() -> None:
     clusters = _cut_window()
-    vocabulary = _Vocabulary(clusters)
+    vocabulary = _Vocabulary(clusters, ())
     line = words(CUT_QUOTE)
     coverage, precision = vocabulary.coverage(_sig(REJECTED), line), vocabulary.precision(_sig(REJECTED), line)
     assert CUT_LINE_COVERAGE <= coverage < SIMILARITY_THRESHOLD, (
@@ -169,7 +169,7 @@ def test_prose_carrying_as_much_of_the_template_is_not_a_cut_quote() -> None:
         "every enrichment call to /organizations/enrich was rejected: the request failed with HTTP 401 and an "
         "invalid API key error, see the provider documentation; nothing was retried and every company stayed unenriched"
     )
-    vocabulary = _Vocabulary(clusters)
+    vocabulary = _Vocabulary(clusters, ())
     line = words(prose)
     assert vocabulary.coverage(_sig(REJECTED), line) >= CUT_LINE_COVERAGE, "fixture: coverage must not refuse it"
     assert map_evidence(_body(f"- {prose}"), clusters) == {}

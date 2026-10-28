@@ -61,8 +61,10 @@ from embry0.services.log_levels import is_noise_line
 from embry0.services.log_signatures import (
     LogCluster,
     LogEntry,
+    SignatureMasks,
     cluster_entries,
     cluster_stats,
+    compile_masks,
     format_cluster_table,
     normalize_line,
     signature_id,
@@ -431,22 +433,37 @@ def _invalid_logql_hint(logql: str) -> str:
     return "fix the query in the root .env and recreate the orchestrator"
 
 
-def _fresh_entries(entries: Sequence[LogEntry], prior: dict[str, Any]) -> list[LogEntry]:
+def _fresh_entries(entries: Sequence[LogEntry], prior: dict[str, Any], masks: SignatureMasks) -> list[LogEntry]:
     """Entries not yet counted against their signature (#369 follow-up).
 
     Keyed per signature on the stored ``last_seen_at`` rather than on a window
     watermark, so it needs no new state and holds however the query window
     moved. An entry with no timestamp cannot be placed, so it is kept — that
     is the pre-existing behaviour, and record_window already refuses to
-    invent a time for it.
+    invent a time for it. ``masks`` are the ones the window was clustered
+    with, or an entry is looked up under a signature it does not have.
     """
     fresh: list[LogEntry] = []
     for entry in entries:
-        row = prior.get(signature_id(normalize_line(entry.line)))
+        row = prior.get(signature_id(normalize_line(entry.line, masks)))
         seen = getattr(row, "last_seen_at", None) if row is not None else None
         if seen is None or entry.timestamp is None or entry.timestamp > seen:
             fresh.append(entry)
     return fresh
+
+
+def _compiled_masks(stored: Any, *, stack: str) -> SignatureMasks:
+    """A stack's stored signature masks, compiled; none, with a warning, when they cannot be.
+
+    A stored set was checked when it was written and again when it was read
+    (``services/watcher_stacks.py``), so this is not expected to fail. It still
+    must not cost a tick its clustering.
+    """
+    try:
+        return compile_masks(stored or ())
+    except Exception:  # noqa: BLE001 - the built-in masks still apply
+        logger.warning("watcher_signature_masks_unusable", stack=stack, exc_info=True)
+        return ()
 
 
 def _truthy(value: Any) -> bool:
@@ -512,8 +529,19 @@ class WatcherService:
         # a change on the LLM Providers page applies to the next tick. None:
         # every analysis runs on its own model.
         local_first_model: Callable[[], Awaitable[str]] | None = None,
+        # #172: ``() -> masks``, the stack's own signature masks as its row
+        # holds them now (None when the row is gone). Read every tick, so a
+        # PUT applies to the next one without a restart. None: the masks the
+        # stack had when this watcher was built (``config``), for good.
+        signature_masks: Callable[[], Awaitable[Any]] | None = None,
     ) -> None:
         self._config = config
+        self._signature_masks = signature_masks
+        # The masks the last tick clustered with; until one has, the stack's
+        # masks at startup.
+        self._masks: SignatureMasks = _compiled_masks(
+            getattr(config, "watcher_signature_masks", ()), stack=str(getattr(config, "watcher_repo", "") or "")
+        )
         self._local_first_model = local_first_model
         self._auto_acceptor = auto_acceptor
         self._credential_resolver = credential_resolver
@@ -832,11 +860,31 @@ class WatcherService:
         if accepted:
             logger.info("watcher_auto_accepted", stack=self._repo, accepted=accepted)
 
+    async def _read_signature_masks(self) -> SignatureMasks:
+        """The stack's own signature masks for this tick (#172), read from its row.
+
+        Every signature this tick computes uses them: the clustering, the
+        signature memory and the attribution of a finding, or one line would
+        get two signatures. A row that cannot be read keeps the last tick's
+        masks: a database blip must not re-key every masked line for a tick.
+        """
+        if self._signature_masks is None:
+            return self._masks
+        try:
+            stored = await self._signature_masks()
+        except Exception:  # noqa: BLE001 - the last tick's masks still apply
+            logger.warning("watcher_signature_masks_unreadable", stack=self._repo, exc_info=True)
+            return self._masks
+        if stored is not None:
+            self._masks = _compiled_masks(stored, stack=self._repo)
+        return self._masks
+
     async def _record_log_signatures(
         self,
         entries: Sequence[LogEntry],
         *,
         window_start: datetime,
+        masks: SignatureMasks,
     ) -> tuple[list[LogCluster], WindowDelta | None]:
         """Cluster the window, persist it, and classify what changed.
 
@@ -848,12 +896,13 @@ class WatcherService:
         Every failure here is swallowed: clustering is an observation, and a
         broken observation must never cost a tick its analysis — the one paid
         step it has. A tick with no delta falls back to the old behaviour
-        rather than refusing to work.
+        rather than refusing to work. ``masks`` are the stack's own
+        (:meth:`_read_signature_masks`).
         """
         if self._clustering_mode() == "off" or not entries:
             return [], None
         try:
-            clusters = cluster_entries(entries)
+            clusters = cluster_entries(entries, masks=masks)
         except Exception:
             logger.warning("log_clustering_failed", exc_info=True)
             return [], None
@@ -890,9 +939,11 @@ class WatcherService:
                 # would inflate occurrence_count for lines already counted.
                 # A line older than or equal to its signature's stored
                 # last_seen_at has been counted; anything later has not.
-                fresh = _fresh_entries(entries, prior)
+                fresh = _fresh_entries(entries, prior, masks)
                 if fresh:
-                    await self._signatures.record_window(cluster_entries(fresh), repo=repo, observed_at=window_start)
+                    await self._signatures.record_window(
+                        cluster_entries(fresh, masks=masks), repo=repo, observed_at=window_start
+                    )
             except Exception:
                 logger.warning("log_signatures_persist_failed", exc_info=True)
                 delta = None
@@ -1800,7 +1851,10 @@ class WatcherService:
                 # 8+ hours ended skipped_analysis_cap and log_signatures stayed
                 # at 0 rows. Also ahead of the briefing (#291), which costs a
                 # Linear, a GitHub and a second Loki round trip.
-                clusters, delta = await self._record_log_signatures(entries, window_start=window_start)
+                # #172: the stack's own masks, read once for the tick; the
+                # attribution below must use the same ones.
+                masks = await self._read_signature_masks()
+                clusters, delta = await self._record_log_signatures(entries, window_start=window_start, masks=masks)
 
                 # The analysis is the tick's one paid step. With no slot AND no
                 # room to keep a finding for later, nothing it proposes could
@@ -1936,7 +1990,7 @@ class WatcherService:
                 # clustering is off or nothing has been recorded yet, and then
                 # this degrades to exactly the old behaviour.
                 try:
-                    anchor = anchor_signature(proposal["title"], proposal["body"], clusters, delta)
+                    anchor = anchor_signature(proposal["title"], proposal["body"], clusters, delta, masks=masks)
                 except Exception:
                     # Reading the evidence is an observation like the
                     # clustering itself: it must never cost the tick its

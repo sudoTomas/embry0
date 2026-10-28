@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.audit.helpers import emit_audit
-from embry0.services.watcher_stacks import OVERRIDABLE, WatcherStack, check_settings
+from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack, check_settings
 from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
 
 router = APIRouter()
@@ -75,7 +75,7 @@ async def save_stack(
 @router.get("/watcher/stacks")
 async def list_stacks(request: Request, enabled_only: bool = False) -> dict[str, Any]:
     stacks = await _repo(request).list_all(enabled_only=enabled_only)
-    return {"stacks": [s.to_dict() for s in stacks], "overridable_settings": sorted(OVERRIDABLE)}
+    return {"stacks": [s.to_dict() for s in stacks], "overridable_settings": sorted(SETTING_KEYS)}
 
 
 @router.get("/watcher/stacks/{owner}/{name}")
@@ -93,7 +93,7 @@ async def put_stack(owner: str, name: str, body: StackBody, request: Request) ->
     with a wrong type or a value out of range is a 422 naming it (#172): the
     stored value is what every tick reads."""
     repo = f"{owner}/{name}"
-    unknown = sorted(set(body.settings) - set(OVERRIDABLE))
+    unknown = sorted(set(body.settings) - SETTING_KEYS)
     try:
         settings = check_settings(body.settings)
     except ValueError as exc:

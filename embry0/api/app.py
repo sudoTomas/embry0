@@ -649,6 +649,22 @@ def _watcher_local_first_model(app: FastAPI) -> Any:
     return read
 
 
+def _watcher_signature_masks(app: FastAPI, repo: str) -> Any:
+    """``() -> masks``: the stack's own signature masks as its row holds them now, None when it has no row (#172).
+
+    The watcher reads them every tick, so a PUT applies to the next tick
+    without a restart. A stored set that no longer checks reads as none.
+    """
+
+    async def read() -> list[dict[str, str]] | None:
+        from embry0.services.watcher_stacks import signature_masks_of
+
+        stack = await app.state.watcher_stacks_repo.get(repo)
+        return None if stack is None else signature_masks_of(stack)
+
+    return read
+
+
 def _watcher_auto_acceptor(app: FastAPI) -> Any:
     """``(repo, bar) -> accepted``: accepts a stack's tracked drafts that clear its bar (spec 2026-10-25).
 
@@ -2014,6 +2030,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         return WatcherService(
             auto_acceptor=auto_acceptor,
             local_first_model=_watcher_local_first_model(app),
+            signature_masks=_watcher_signature_masks(app, stack.repo),
             cases_repo=app.state.healing_cases_repo,
             case_recorder=app.state.case_recorder,
             # #278: a deploy marker is reported on a case only after the forge

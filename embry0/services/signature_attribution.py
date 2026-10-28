@@ -17,8 +17,8 @@ evidence. A quoted line maps to a cluster in any of three ways:
 * **Signature id.** With ``LOG_CLUSTERING_MODE=on`` the model reads a ranked
   table naming each cluster's ``sig=`` id; an id quoted back points at it.
 * **Line.** A quoted line is normalized with the same :func:`normalize_line`
-  and :func:`signature_id` the clustering uses, so a verbatim quote lands on
-  its own cluster. The proposal reaches the watcher redacted (#294) — a UUID
+  and :func:`signature_id` the clustering uses, with the stack's own masks
+  (#172), so a verbatim quote lands on its own cluster. The proposal reaches the watcher redacted (#294) — a UUID
   or a long token in a quote has become ``***REDACTED***`` — so each
   cluster's sample lines are redacted the same way and compared as well.
 * **Similarity.** Models reformat what they quote: they drop the logger
@@ -57,7 +57,7 @@ from enum import StrEnum
 
 from embry0.safety.redaction import redact_log_text
 from embry0.services.healing.lifecycle import SignatureSource
-from embry0.services.log_signatures import LogCluster, normalize_line, signature_id
+from embry0.services.log_signatures import LogCluster, SignatureMasks, normalize_line, signature_id
 from embry0.services.signature_delta import WindowDelta
 
 #: Weighted share of a template's words one quoted line must carry before the
@@ -177,9 +177,16 @@ _MASKS = re.compile(r"<(?:n|hex|uuid|ip|id|email|thread)>|\*\*\*REDACTED\*\*\*")
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 
 
-def words(text: str) -> frozenset[str]:
-    """The words of ``text`` once normalized like a log line, masks removed."""
-    return frozenset(word.lower() for word in _WORD.findall(_MASKS.sub(" ", normalize_line(text))))
+def words(text: str, masks: SignatureMasks = ()) -> frozenset[str]:
+    """The words of ``text`` once normalized like a log line, masks removed.
+
+    ``masks`` are the stack's own (#172). Their placeholders are removed like
+    the built-in ones, so a stack's ``<record>`` is no more a word than ``<id>``.
+    """
+    normalized = _MASKS.sub(" ", normalize_line(text, masks))
+    for placeholder in {placeholder for _pattern, placeholder in masks}:
+        normalized = normalized.replace(placeholder, " ")
+    return frozenset(word.lower() for word in _WORD.findall(normalized))
 
 
 class _Vocabulary:
@@ -189,8 +196,8 @@ class _Vocabulary:
     template still weighs something, a word in one template weighs the most.
     """
 
-    def __init__(self, clusters: Sequence[LogCluster]) -> None:
-        self.words = {cluster.signature_id: words(cluster.template) for cluster in clusters}
+    def __init__(self, clusters: Sequence[LogCluster], masks: SignatureMasks) -> None:
+        self.words = {cluster.signature_id: words(cluster.template, masks) for cluster in clusters}
         frequency: dict[str, int] = {}
         for template_words in self.words.values():
             for word in template_words:
@@ -235,14 +242,16 @@ def map_evidence(
     clusters: Sequence[LogCluster],
     *,
     redact: Callable[[str], str] | None = redact_log_text,
+    masks: SignatureMasks = (),
 ) -> dict[str, AnchorMatch]:
     """Every cluster the proposal's evidence quotes, with the strongest way it did.
 
     ``redact`` must be the redactor the proposal went through; ``None`` skips
     the redacted-sample comparison (for text that was never redacted). An
     empty dict means nothing the proposal quotes is a line of this window.
+    ``masks`` must be the ones the clusters were built with.
     """
-    return _map_evidence(body, clusters, redact, _Vocabulary(clusters))
+    return _map_evidence(body, clusters, redact, _Vocabulary(clusters, masks), masks)
 
 
 def _map_evidence(
@@ -250,6 +259,7 @@ def _map_evidence(
     clusters: Sequence[LogCluster],
     redact: Callable[[str], str] | None,
     vocabulary: _Vocabulary,
+    masks: SignatureMasks,
 ) -> dict[str, AnchorMatch]:
     text = evidence_text(body or "")
     if not text.strip() or not clusters:
@@ -272,12 +282,12 @@ def _map_evidence(
     if redact is not None:
         for cluster in clusters:
             for sample in cluster.samples:
-                by_id.setdefault(signature_id(normalize_line(redact(sample))), set()).add(cluster.signature_id)
+                by_id.setdefault(signature_id(normalize_line(redact(sample), masks)), set()).add(cluster.signature_id)
 
     for candidate in quoted_lines(text):
-        for sig in by_id.get(signature_id(normalize_line(candidate)), ()):
+        for sig in by_id.get(signature_id(normalize_line(candidate, masks)), ()):
             note(sig, AnchorMatch.LINE)
-        line_words = words(candidate)
+        line_words = words(candidate, masks)
         if len(line_words) < MIN_SHARED_WORDS:
             continue
         for sig in vocabulary.words:
@@ -308,6 +318,7 @@ def anchor_signature(
     delta: WindowDelta | None,
     *,
     redact: Callable[[str], str] | None = redact_log_text,
+    masks: SignatureMasks = (),
 ) -> SignatureAnchor | None:
     """The signature a proposal from this window is filed under.
 
@@ -316,18 +327,19 @@ def anchor_signature(
     loudest). With none, the window's ``primary``, marked
     :attr:`SignatureSource.FALLBACK`. ``None`` when there is no delta to rank —
     clustering off, or no signature memory — which the caller already handles
-    as the pre-#290 behaviour.
+    as the pre-#290 behaviour. ``masks`` must be the ones the clusters were
+    built with, or a verbatim quote normalizes to another signature.
     """
     if delta is None or delta.primary is None:
         return None
     known = {change.signature_id for change in delta.changes}
     window = [cluster for cluster in clusters if cluster.signature_id in known]
-    vocabulary = _Vocabulary(window)
-    mapped = _map_evidence(body or "", window, redact, vocabulary)
+    vocabulary = _Vocabulary(window, masks)
+    mapped = _map_evidence(body or "", window, redact, vocabulary, masks)
     if not mapped:
         return fallback_anchor(delta)
 
-    title_words = words(title or "")
+    title_words = words(title or "", masks)
     # Rounded so two equal word sets can never differ by float noise.
     relevance = {sig: round(vocabulary.shared_weight(sig, title_words), 6) for sig in mapped}
     best = max(relevance.values())

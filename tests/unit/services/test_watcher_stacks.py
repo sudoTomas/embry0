@@ -130,6 +130,70 @@ def test_a_stored_bad_value_reads_as_the_global_and_never_raises() -> None:
     assert view.watcher_max_open_proposals == 1, "a good neighbour still applies"
 
 
+# -- signature masks (#172) -------------------------------------------------------
+
+MASK = {"pattern": r"\brec_[a-z0-9]{7}\b", "replacement": "<record>"}
+
+
+def test_signature_masks_are_the_stacks_own_with_no_global_to_inherit() -> None:
+    """There is no WATCHER_* default for them (the built-in masks live in code), so a stack
+    without the key reads none, and one with it reads its own."""
+    without = getattr(StackConfig(GLOBALS, _stack()), "watcher_signature_masks", None)
+    assert without is not None and list(without) == [], f"a stack with no masks reads {without!r}"
+    view = StackConfig(GLOBALS, _stack(settings={"signature_masks": [MASK]}))
+    assert getattr(view, "watcher_signature_masks", None) == [MASK], "the stack's own masks did not reach its view"
+
+
+def test_every_key_a_stack_may_hold_is_typed() -> None:
+    from embry0.services import watcher_stacks
+
+    keys = set(watcher_stacks.OVERRIDABLE) | set(getattr(watcher_stacks, "STACK_ONLY", {}))
+    assert "signature_masks" in keys, "signature_masks is not a setting a stack may hold"
+    assert keys == set(watcher_stacks._SETTING_TYPES), "a key a stack may hold has no type, or a type has no key"
+
+
+def test_a_mask_without_a_replacement_leaves_the_built_in_id_placeholder() -> None:
+    from embry0.services.watcher_stacks import check_settings
+
+    assert check_settings({"signature_masks": [{"pattern": "rec_[a-z0-9]{7}"}]}) == {
+        "signature_masks": [{"pattern": "rec_[a-z0-9]{7}", "replacement": "<id>"}]
+    }
+
+
+@pytest.mark.parametrize(
+    ("masks", "why"),
+    [
+        ([{"pattern": "rec_[", "replacement": "<record>"}], "not a Python regular expression"),
+        ([{"pattern": "rec_\\d+", "replacement": "<record>"}] * 51, "at most 50"),
+        ([{"pattern": "x" * 501, "replacement": "<record>"}], "at most 500"),
+        ([{"pattern": "", "replacement": "<record>"}], "at least 1"),
+        ([{"pattern": "(rec_[a-z0-9]+)?", "replacement": "<record>"}], "matches an empty string"),
+        ([{"pattern": "rec_\\d+", "replacement": "record"}], "placeholder"),
+        ([{"pattern": "rec_\\d+", "replacement": "<deadbeef>"}], "rewritten by the built-in masks"),
+        ([{"pattern": "rec_\\d+", "replacement": "<" + "r" * 40 + ">"}], "placeholder"),
+        ([{"pattern": "rec_\\d+", "replace": "<record>"}], "Extra inputs"),
+        ([{"pattern": 5}], "valid string"),
+        ({"pattern": "rec_\\d+"}, "valid list"),
+        ("rec_\\d+", "valid list"),
+    ],
+)
+def test_a_bad_mask_is_refused_naming_the_key_and_the_entry(masks: Any, why: str) -> None:
+    from embry0.services.watcher_stacks import check_settings
+
+    with pytest.raises(ValueError, match="settings.signature_masks") as refused:
+        check_settings({"signature_masks": masks})
+    assert why in str(refused.value), str(refused.value)
+
+
+def test_the_refusal_says_which_mask() -> None:
+    from embry0.services.watcher_stacks import check_settings
+
+    with pytest.raises(ValueError) as refused:
+        check_settings({"signature_masks": [MASK, {"pattern": "rec_(", "replacement": "<record>"}]})
+    assert "settings.signature_masks.1.pattern" in str(refused.value), str(refused.value)
+    assert "'rec_('" in str(refused.value), "the refusal does not quote the pattern it refused"
+
+
 # -- seeding --------------------------------------------------------------------
 
 

@@ -139,6 +139,58 @@ overrides; every key is in `OVERRIDABLE`
 The `skip_unchanged` comparator (#291) and signature dedupe (#290) apply as
 on any stack, so the same fault firing every hour is analysed once.
 
+## Signature masks
+
+A finding is keyed on its log signature: the line with its variable parts
+masked (`embry0/services/log_signatures.py`). The built-in masks cover
+timestamps, pids, e-mail addresses, UUIDs, IP addresses, hex, long opaque
+tokens, upper-case record numbers such as `ORD00000000001`, and numbers. A
+record id in a format of the stack's own passes through them, so one
+recurring fault becomes a new signature on every line: always new, never
+deduplicated, counted once per id. A stack adds masks for its own formats
+in its `signature_masks` setting (#172):
+
+```
+PUT /api/v1/watcher/stacks/{owner}/{name}
+{"logql": "...", "settings": {"signature_masks": [
+  {"pattern": "\\brec_[a-z0-9]{7}\\b", "replacement": "<record>"}
+]}}
+```
+
+`WARN invoice sync failed for record rec_7hq2kx9: upstream timeout` and the
+same line for `rec_m4p8zt1` are then one signature, `WARN invoice sync
+failed for record <record>: upstream timeout`.
+
+- **In addition to the built-in masks, and first.** The stack's masks run on
+  the raw line, in order, before the built-in ones, so a pattern is written
+  against the line as Loki shows it. After the built-in masks
+  `rec-000123-a7` would already read `rec-<n>-a7`, and a pattern for the
+  whole id would match nothing.
+- **This stack's lines only, everywhere.** The clustering, the signature
+  memory (`log_signatures`) and the attribution of a finding to the line
+  its evidence quotes all use the same masks, so a line has one signature.
+- **Read every tick.** A PUT applies to the next tick without a restart (the
+  other overrides are still read at startup). A row that cannot be read
+  keeps the masks of the tick before.
+- **Checked at write.** `pattern` is a Python regular expression of 1 to 500
+  characters that compiles and does not match the empty string.
+  `replacement` is a placeholder like the built-in ones: a lower-case word
+  in angle brackets, at most 32 characters with them, that the built-in
+  masks leave as it is (`<deadbeef>` is hex to them); `<id>` when left out.
+  At most 50 masks. Anything else is a 422 naming the entry, such as
+  `settings.signature_masks.0.pattern: Value error, 'rec_[' is not a Python
+  regular expression: unterminated character set at position 4`. A value
+  stored before these checks that no longer passes is ignored with a
+  `watcher_stack_setting_invalid` warning, and the built-in masks alone apply.
+- **They run on every line of every tick**, with Python's `re`, which has no
+  time limit. Avoid patterns that backtrack catastrophically, such as nested
+  quantifiers (`(\w+\s?)+$`); start with a literal such as `rec_`. The length
+  limit is the guard.
+- **A new or changed mask re-keys the lines it matches.** Their folded
+  signature is new to the signature memory, so the next tick reads it as new
+  and analyses it; the per-id signatures it replaces go quiet. A case
+  already open on one of those keeps its signature.
+
 ## What the analysis job carries
 
 Since #378 an analysis job carries its stack's `repo` (before, `NULL`). That
@@ -191,7 +243,8 @@ deployment's fork or clone of this repository.
    and the deployment's value applies.
 4. **Restart the orchestrator.** Stacks are read once at startup
    (`watcher_stacks_loaded`); a new or re-enabled row starts ticking after
-   the next restart. `GET /api/v1/health/ready` then lists it under
+   the next restart, and a changed setting applies from then on, except
+   `signature_masks`, which every tick reads. `GET /api/v1/health/ready` then lists it under
    `checks.watcher_stacks`, and the per-stack metrics
    (`embry0_watcher_ticks_total{stack="<owner>/embry0"}`) appear after its
    first tick.
