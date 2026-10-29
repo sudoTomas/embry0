@@ -10,19 +10,19 @@ sandbox. The proxy forwards to the base URL enrolled for that sandbox, which
 
 from __future__ import annotations
 
-import re
+import shlex
 from typing import Any
 
 import structlog
 
 from embry0.execution import events
+from embry0.git_refs import valid_ref
 from embry0.workspace_init.base import InitContext, WorkspaceInitError
 
 logger = structlog.get_logger(__name__)
 
-# Branch/sha names are passed into a shell line; keep the vocabulary strict
-# (same defensive posture as the git-proxy URL regex).
-_REF_RE = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
+# Branch/sha names are passed into a shell line, so a ref is checked with
+# embry0.git_refs.valid_ref (same defensive posture as the git-proxy URL regex).
 
 
 # Clone origins per forge (#166). The git-proxy's enrolled upstream is this
@@ -65,14 +65,14 @@ def build_clone_shell(
     ``base_branch`` (Spec 1A §3.7) is the repo's integration branch — the
     same ref the review diff and the MR/PR target use. It used to be the
     literal ``main``, which left a ``dev``-based repo with no local base to
-    diff against. A value that fails ``_REF_RE`` never reaches the shell
+    diff against. A value that fails ``valid_ref`` never reaches the shell
     line: ``main`` is fetched in its place and the rejection is logged.
     The fallback does not raise — this fetch is best-effort and a bad
     preference must not fail the clone — so that warning is the only trace
     of a job quietly diffing against the wrong branch.
     """
-    if _REF_RE.match(base_branch or ""):
-        base = base_branch
+    if valid_ref(base_branch or ""):
+        base = shlex.quote(base_branch)
     else:
         base = "main"
         logger.warning(
@@ -80,11 +80,15 @@ def build_clone_shell(
             base_branch=base_branch,
             msg="base_branch is not a usable branch name; fetching main instead",
         )
+    # Each value is quoted, so it reaches git as one word even when a caller
+    # skipped validate(); shlex.quote leaves a valid ref, branch or repo as it is.
+    url = shlex.quote(f"{clone_origin(forge, gitlab_url)}/{repo}.git")
     shell = (
-        f"git clone --depth=50 {clone_origin(forge, gitlab_url)}/{repo}.git /workspace"
+        f"git clone --depth=50 {url} /workspace"
         f" && {{ git -C /workspace fetch origin {base}:{base} --depth=50 || true; }}"
     )
     if ref:
+        r = shlex.quote(ref)
         # JobContext.ref: check out a specific branch/sha after the clone.
         # A --depth clone is single-branch, so other refs must be fetched
         # explicitly — and a bare `fetch origin <branch>` lands only in
@@ -93,12 +97,13 @@ def build_clone_shell(
         # Branch path: fetch into a remote-tracking ref and check out a LOCAL
         # branch of the same name (follow-up jobs must push back to it).
         # Fallback path (SHAs, tags): fetch the raw ref and detach onto
-        # FETCH_HEAD.
+        # FETCH_HEAD. Each fetch takes the ref after `--`, so git reads it as
+        # a ref even if a caller skipped validate().
         shell += (
-            f" && {{ {{ git -C /workspace fetch origin"
-            f" +refs/heads/{ref}:refs/remotes/origin/{ref} --depth=50"
-            f" && git -C /workspace checkout -B {ref} refs/remotes/origin/{ref}; }}"
-            f" || {{ git -C /workspace fetch origin {ref} --depth=50"
+            f" && {{ {{ git -C /workspace fetch --depth=50 origin --"
+            f" +refs/heads/{r}:refs/remotes/origin/{r}"
+            f" && git -C /workspace checkout -B {r} refs/remotes/origin/{r}; }}"
+            f" || {{ git -C /workspace fetch --depth=50 origin -- {r}"
             f" && git -C /workspace checkout --detach FETCH_HEAD; }}; }}"
         )
     return shell
@@ -113,7 +118,7 @@ class GitWorkspaceInitializer:
         if not context.get("repo"):
             raise WorkspaceInitError("git context requires 'repo'")
         ref = context.get("ref")
-        if ref and not _REF_RE.match(str(ref)):
+        if ref and not valid_ref(str(ref)):
             raise WorkspaceInitError(f"git context ref {ref!r} contains disallowed characters")
 
     async def initialize(self, ctx: InitContext) -> dict[str, Any]:

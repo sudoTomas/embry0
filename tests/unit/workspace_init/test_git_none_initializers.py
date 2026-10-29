@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from embry0.git_refs import valid_ref
 from embry0.workspace_init.base import InitContext, WorkspaceInitError
 from embry0.workspace_init.git import GitWorkspaceInitializer, build_clone_shell
 from embry0.workspace_init.none import NoneWorkspaceInitializer
@@ -112,3 +113,24 @@ async def test_none_initializer_creates_workspace_dir():
     assert update == {}
     cmd = " ".join(str(p) for p in docker.run_cmd.await_args.args[0])
     assert "mkdir -p /workspace" in cmd
+
+
+def test_validate_refuses_a_ref_ending_in_a_newline():
+    """``$`` matches before a final newline, so ``match`` took ``main\\n``."""
+    try:
+        GitWorkspaceInitializer().validate({"repo": "o/r", "ref": "main\n"}, None)
+    except WorkspaceInitError as exc:
+        assert "disallowed characters" in str(exc), f"the refusal must name the ref: {exc}"
+    else:
+        raise AssertionError("a ref ending in a newline must be refused before the clone line is built")
+
+
+@pytest.mark.parametrize("ref", ["-x", "--depth", "-"])
+def test_valid_ref_refuses_a_ref_git_would_not_accept(ref):
+    """git takes no branch or tag name that starts with ``-``."""
+    assert not valid_ref(ref), f"a ref starting with '-' must not be valid: {ref!r}"
+
+
+@pytest.mark.parametrize("ref", ["main", "fix-x", "release/v1-2", "a" * 40, "x" * 255])
+def test_valid_ref_keeps_a_dash_inside_a_ref(ref):
+    assert valid_ref(ref), f"a ref with a '-' after its first character is valid: {ref!r}"

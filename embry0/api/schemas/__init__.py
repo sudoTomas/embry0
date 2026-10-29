@@ -12,6 +12,7 @@ from embry0.agents.identity import DISPLAY_NAME_MAX, TAGLINE_MAX, validate_avata
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.execution.auth_provider import env_override_refusal
 from embry0.execution.profile_isolation import ISOLATION_FIELDS, field_problem
+from embry0.git_refs import REF_RULE, valid_ref
 from embry0.workflows._validation import FIXED_NODE_TYPES
 
 # Slash-separated alnum + . _ - : segments. Colon allowed for ISO timestamps in
@@ -93,6 +94,15 @@ class JobContext(BaseModel):
     @classmethod
     def _validate_repo(cls, v: str | None) -> str | None:
         return None if v is None else validate_repo_path(v)
+
+    @field_validator("ref")
+    @classmethod
+    def _validate_ref(cls, v: str | None) -> str | None:
+        # The git initializer's own check, so a ref accepted here is one the
+        # clone accepts; empty means no ref, as it does there.
+        if v and not valid_ref(v):
+            raise ValueError(f"context.ref must be a branch, tag or sha: {REF_RULE}")
+        return v
 
     @model_validator(mode="after")
     def _validate_per_type(self) -> "JobContext":
@@ -345,7 +355,7 @@ class SandboxProfileRequest(BaseModel):
     @classmethod
     def _validate_extra_hosts(cls, v: dict[str, str]) -> dict[str, str]:
         for host, ip in v.items():
-            if not _HOSTNAME_PATTERN.match(host):
+            if not _HOSTNAME_PATTERN.fullmatch(host):
                 raise ValueError(f"extra_hosts: invalid hostname {host!r}")
             if host == "dind":
                 raise ValueError("extra_hosts: 'dind' is reserved for the orchestrator")
@@ -424,7 +434,7 @@ class AgentCreateRequest(BaseModel):
     @field_validator("type")
     @classmethod
     def validate_agent_type(cls, v: str) -> str:
-        if not _AGENT_TYPE_PATTERN.match(v):
+        if not _AGENT_TYPE_PATTERN.fullmatch(v):
             msg = "type must be lowercase alphanumeric with hyphens/underscores"
             raise ValueError(msg)
         # A row named after a fixed node is placeable in a template but runs
@@ -633,7 +643,7 @@ class QAPresignBatchRequest(BaseModel):
     @classmethod
     def _paths_are_safe(cls, paths: list[str]) -> list[str]:
         for p in paths:
-            if not _SAFE_QA_PATH.match(p):
+            if not _SAFE_QA_PATH.fullmatch(p):
                 raise ValueError(
                     f"Unsafe path {p!r}: must be slash-separated alnum/._:- "
                     f"segments, no leading/trailing slash, no '..'."

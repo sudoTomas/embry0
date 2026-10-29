@@ -257,7 +257,7 @@ def _model_problems(model: type[BaseModel], where: str) -> list[str]:
 
 def _section_problems(section: Section[Any]) -> list[str]:
     problems: list[str] = []
-    if not _NAME.match(section.name):
+    if not _NAME.fullmatch(section.name):
         problems.append("its name must be lowercase letters, digits and '_', starting with a letter")
     if section.name in RESERVED_NAMES or section.name in YAML_WORDS:
         problems.append(f"{section.name!r} is a reserved name, not a section")

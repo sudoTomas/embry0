@@ -1,14 +1,20 @@
+from collections.abc import Callable
+
 import pytest
 from pydantic import ValidationError
 
 from embry0.api.schemas import (
+    AgentCreateRequest,
     BudgetConfigResponse,
     ContextType,
     JobContext,
     JobCreateRequest,
     JobResponse,
+    QAPresignBatchRequest,
     SandboxProfileRequest,
 )
+from embry0.api.schemas.credentials import CredentialCreate
+from embry0.api.v1.bootstrap import BootstrapRequest
 
 
 def test_job_create_request_valid():
@@ -172,3 +178,31 @@ def test_every_repo_schema_still_rejects_a_single_segment():
     ):
         with pytest.raises(ValidationError):
             factory()
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(lambda: AgentCreateRequest(type="developer\n", description="d", model="m"), id="agent type"),
+        pytest.param(lambda: QAPresignBatchRequest(sandbox_token="t" * 32, paths=["result.json\n"]), id="qa path"),
+        pytest.param(lambda: SandboxProfileRequest(name="p", extra_hosts={"app.example.com\n": "10.0.0.1"}), id="host"),
+        pytest.param(
+            lambda: CredentialCreate(
+                kind="tailnet_api_key",
+                provider="tailscale",
+                label="tailnet",
+                secret="key-000000000001",
+                metadata={"tailnet": "example.com\n"},
+            ),
+            id="tailnet",
+        ),
+        pytest.param(lambda: BootstrapRequest(repo="acme/widgets", app="web\n"), id="bootstrap app"),
+    ],
+)
+def test_a_request_value_ending_in_a_newline_is_refused(build: Callable[[], object]) -> None:
+    """Python's ``$`` also matches just before a final newline, so ``match`` took ``name\\n`` for ``name``."""
+    try:
+        accepted = build()
+    except ValidationError:
+        return
+    raise AssertionError(f"a value ending in a newline must be refused: {accepted!r}")

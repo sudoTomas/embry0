@@ -98,7 +98,7 @@ def bridge_interface(network: dict[str, Any]) -> str:
     if not name:
         network_id = str(network.get("Id") or "")
         name = f"br-{network_id[:12]}" if len(network_id) >= 12 else ""
-    if not _IFNAME.match(name):
+    if not _IFNAME.fullmatch(name):
         raise IsolationError(f"cannot tell the bridge interface of network {network.get('Name')!r} (got {name!r})")
     return name
 
@@ -141,9 +141,9 @@ def build_ensure_script(bridge: str, proxy_ips: Iterable[str], chain: str = CHAI
     Every interpolated value is validated here, and the rules travel in a
     quoted heredoc, so the shell expands nothing in them.
     """
-    if not _IFNAME.match(bridge):
+    if not _IFNAME.fullmatch(bridge):
         raise IsolationError(f"invalid bridge interface name {bridge!r}")
-    if not _CHAIN_NAME.match(chain):
+    if not _CHAIN_NAME.fullmatch(chain):
         raise IsolationError(f"invalid chain name {chain!r}")
     jump = f"DOCKER-USER -i {bridge} -o {bridge} -j {chain}"
     rules = "\n".join(chain_rules(proxy_ips, chain))

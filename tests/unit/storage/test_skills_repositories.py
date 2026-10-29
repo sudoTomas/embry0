@@ -10,6 +10,8 @@ from embry0.storage.repositories.skills import (
     InlineSkillsRepository,
     SkillSourceRefused,
     SkillSourcesRepository,
+    _check_id,
+    _check_ref,
     validate_source_url,
 )
 
@@ -150,3 +152,40 @@ async def test_inline_upsert_validates_name_and_size(db_with_migrations: Any) ->
     assert await repo.get("house-style") is None
     with pytest.raises(ValueError, match="not found"):
         await repo.delete("house-style")
+
+
+class _NoDb:
+    """Records any query: a refused value must be refused before one is sent."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    async def fetchrow(self, query: str, *args: Any) -> dict[str, Any]:
+        self.queries.append(query)
+        return {"name": args[0] if args else ""}
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        pytest.param(lambda: _check_id("superpowers\n"), id="source id"),
+        pytest.param(lambda: _check_ref("git", "main\n"), id="ref"),
+    ],
+)
+def test_a_skill_source_value_ending_in_a_newline_is_refused(check: Any) -> None:
+    """Python's ``$`` also matches just before a final newline, so ``match`` took ``main\\n``."""
+    try:
+        accepted = check()
+    except SkillSourceRefused:
+        return
+    raise AssertionError(f"a value ending in a newline must be refused: {accepted!r}")
+
+
+async def test_an_inline_skill_name_ending_in_a_newline_is_refused() -> None:
+    db = _NoDb()
+    try:
+        await InlineSkillsRepository(db).upsert(name="house\n", description="d", body="b")
+    except SkillSourceRefused as exc:
+        assert "name must match" in str(exc), f"the refusal must say what a name is: {exc}"
+    else:
+        raise AssertionError(f"an inline skill name ending in a newline must be refused, not stored: {db.queries}")

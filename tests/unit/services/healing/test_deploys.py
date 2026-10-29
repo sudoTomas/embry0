@@ -134,7 +134,7 @@ async def test_a_forge_error_is_undetermined_never_raised():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("sha", ["main", "../../user", "abc", "65f0a0257ee1;x", ""])
+@pytest.mark.parametrize("sha", ["main", "../../user", "abc", "65f0a0257ee1;x", "", "65f0a0257ee1\n"])
 async def test_only_plain_shas_reach_the_url(sha):
     client = _client(200, _fixture("deployed_contains_merge"))
     assert await GitHubAncestry(client).contains(REPO, descendant=sha, ancestor=OLD) is None

@@ -54,7 +54,7 @@ class TestTarget(BaseModel):
     @classmethod
     def _name_shape(cls, v: str) -> str:
         # The name becomes a log file name inside the sandbox.
-        if not _NAME_RE.match(v):
+        if not _NAME_RE.fullmatch(v):
             raise ValueError("name must match [A-Za-z0-9][A-Za-z0-9._-]{0,59}")
         return v
 

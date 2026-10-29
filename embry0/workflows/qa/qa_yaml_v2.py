@@ -396,7 +396,7 @@ class ConditionalCriteriaGroup(BaseModel):
     @field_validator("name")
     @classmethod
     def _name_shape(cls, v: str) -> str:
-        if not _CONDITIONAL_GROUP_NAME_RE.match(v):
+        if not _CONDITIONAL_GROUP_NAME_RE.fullmatch(v):
             raise ValueError(f"conditional group name {v!r} must match [A-Za-z0-9][A-Za-z0-9._- ]{{0,99}}")
         return v
 

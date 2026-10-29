@@ -95,7 +95,7 @@ class GitHubAncestry:
     async def contains(self, repo: str, *, descendant: str, ancestor: str) -> bool | None:
         descendant, ancestor = descendant.lower(), ancestor.lower()
         # Both go into a URL path: refuse anything that is not a plain sha.
-        if not (_SHA_RE.match(descendant) and _SHA_RE.match(ancestor)):
+        if not (_SHA_RE.fullmatch(descendant) and _SHA_RE.fullmatch(ancestor)):
             return None
         key = (repo, descendant, ancestor)
         if key in self._known:

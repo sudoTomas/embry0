@@ -41,6 +41,7 @@ from aiohttp import web
 
 from embry0.execution.proxy.enrollment import EnrollRejected, guard_admin
 from embry0.execution.proxy.forge_scope import SCOPE_FIELD, normalize_gitlab_project, parse_allowed_repos
+from embry0.git_refs import valid_ref
 
 __all__ = [
     "GIT_ROUTE_PREFIX",
@@ -75,9 +76,6 @@ _SERVICES = (UPLOAD_PACK, RECEIVE_PACK)
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]{1,255}$")
 _HOST_RE = re.compile(r"^[a-z0-9.-]{1,253}$")
 _UPSTREAM_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.~-]{1,255}$")
-# The characters workspace init accepts for a job's ref (context.ref), which
-# every branch embry0 derives also stays within.
-_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
 _JOB_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 _MAX_PUSH_BRANCHES = 16
 
@@ -122,14 +120,15 @@ def normalize_git_repo(value: str) -> str | None:
 def normalize_push_branch(value: object) -> str | None:
     """A branch name a push may update, or None if git or the proxy would not take it as one.
 
-    Stricter than ``git check-ref-format``: the characters workspace init
-    accepts for a job's ref, no ``..``, no empty or dot-led component, no
-    ``.lock`` component, and no leading ``-``. A ``refs/`` prefix is refused
+    Stricter than ``git check-ref-format``: embry0's ref rule
+    (:func:`embry0.git_refs.valid_ref`, which workspace init applies to a job's
+    ref and every branch embry0 derives stays within), no ``..``, no empty or
+    dot-led component, no ``.lock`` component. A ``refs/`` prefix is refused
     rather than stripped, so ``refs/heads/x`` cannot be read two ways.
     """
-    if not isinstance(value, str) or not _BRANCH_RE.fullmatch(value):
+    if not isinstance(value, str) or not valid_ref(value):
         return None
-    if value.startswith(("-", "refs/")) or ".." in value:
+    if value.startswith("refs/") or ".." in value:
         return None
     for part in value.split("/"):
         if not part or part.startswith(".") or part.endswith(".lock"):

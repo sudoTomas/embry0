@@ -37,7 +37,7 @@ class BootstrapRequest(BaseModel):
     @field_validator("app")
     @classmethod
     def _app_shape(cls, v: str | None) -> str | None:
-        if v is not None and not _APP_NAME_PATTERN.match(v):
+        if v is not None and not _APP_NAME_PATTERN.fullmatch(v):
             raise ValueError("app must be a lowercase slug (a-z, 0-9, -, _)")
         return v
 

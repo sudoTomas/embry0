@@ -265,7 +265,7 @@ def register_redacted_fields(names: Iterable[str] | str) -> list[str]:
     than compiled into a pattern. Returns the names in effect."""
     global _fields_pattern
     raw = names.split(",") if isinstance(names, str) else names
-    clean = sorted({n.strip() for n in raw if isinstance(n, str) and _FIELD_NAME_OK.match(n.strip())})
+    clean = sorted({n.strip() for n in raw if isinstance(n, str) and _FIELD_NAME_OK.fullmatch(n.strip())})
     _fields_pattern = (
         re.compile(
             rf"(?i)([\"']?(?<![A-Za-z0-9_.\-])(?:{'|'.join(re.escape(n) for n in clean)})[\"']?\s*[:=]\s*)"

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from embry0.execution.workspace_diff import compute_changed_files_via_diff, resolve_base_branch
+from embry0.execution.workspace_diff import compute_changed_files_via_diff, diff_line_counts, resolve_base_branch
 
 
 def _docker(run_output: str | Exception = "") -> Mock:
@@ -143,3 +143,11 @@ async def test_non_strict_diff_still_returns_empty_on_either_failure() -> None:
     docker = _diff_docker()
     await compute_changed_files_via_diff(docker=docker, container_id="c1", base_branch="main")
     assert "|| true" in docker.run_cmd.await_args_list[1].args[0][-1], "non-strict diff must keep `|| true`"
+
+
+async def test_line_counts_refuse_a_base_ending_in_a_newline() -> None:
+    """Python's ``$`` also matches just before a final newline, so ``match`` took ``main\\n``."""
+    docker = _docker("1\t2\tsrc/a.py\n")
+    counts = await diff_line_counts(docker=docker, container_id="c1", base_branch="main\n")
+    assert counts is None, f"a base ending in a newline must not be diffed: {counts}"
+    docker.run_cmd.assert_not_awaited()

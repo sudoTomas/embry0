@@ -8,12 +8,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
+from embry0.git_refs import REF_RULE, valid_ref
 from embry0.workflows.verification.config import VerificationConfig
 
-# Spec 1A §3.7. Same vocabulary as embry0/workspace_init/git.py::_REF_RE and
-# embry0/execution/workspace_diff.py::_BRANCH_RE — the value is interpolated
-# into sandbox shell lines, so the API is where the vocabulary is enforced.
-BASE_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
+# Spec 1A §3.7. base_branch is checked with embry0.git_refs.valid_ref, the
+# rule the clone and the diff apply: the value is interpolated into sandbox
+# shell lines, so the API is where the rule is enforced.
 
 
 def validate_git_author_email(v: str | None) -> str | None:
@@ -136,7 +136,7 @@ class RepoPreferencesUpdateRequest(BaseModel):
         logins: list[str] = []
         for raw in v:
             login = raw.strip().removeprefix("@")
-            if not GITHUB_LOGIN_RE.match(login):
+            if not GITHUB_LOGIN_RE.fullmatch(login):
                 raise ValueError(f"{raw!r} is not a GitHub login (letters, digits and single hyphens, up to 39)")
             if login.lower() not in (seen.lower() for seen in logins):
                 logins.append(login)
@@ -152,10 +152,8 @@ class RepoPreferencesUpdateRequest(BaseModel):
         v = v.strip()
         if not v:
             return None
-        if not BASE_BRANCH_RE.match(v):
-            raise ValueError(
-                "base_branch must be 1-255 characters from [A-Za-z0-9._/-] (e.g. 'dev', 'release/2026.09')"
-            )
+        if not valid_ref(v):
+            raise ValueError(f"base_branch must be {REF_RULE} (e.g. 'dev', 'release/2026.09')")
         return v
 
     @field_validator("git_author_email")

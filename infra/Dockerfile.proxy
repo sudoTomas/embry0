@@ -28,6 +28,8 @@ RUN pip install --no-cache-dir \
 # Make the embry0 namespace importable.
 RUN mkdir -p /app/embry0/execution/proxy
 COPY embry0/__init__.py                           /app/embry0/__init__.py
+# git_scope checks push branches with embry0/git_refs.py, the rule workspace init applies to a ref.
+COPY embry0/git_refs.py                           /app/embry0/git_refs.py
 COPY embry0/execution/__init__.py                 /app/embry0/execution/__init__.py
 # gitlab_proxy imports embry0.execution.tls for the private-CA context (spec 1A 3.2).
 COPY embry0/execution/tls.py                      /app/embry0/execution/tls.py

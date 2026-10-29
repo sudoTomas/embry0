@@ -69,7 +69,7 @@ def parse_answer_directives(body: str) -> list[tuple[str, str, str]]:
             action = m.group(1).lower()
             ref = m.group(2)
             value = (m.group(3) or "").strip()
-            if _INTEGER_RE.match(ref) and int(ref) <= 0:
+            if _INTEGER_RE.fullmatch(ref) and int(ref) <= 0:
                 current = None
                 continue
             out.append((ref, action, value))

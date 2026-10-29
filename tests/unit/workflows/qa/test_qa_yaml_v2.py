@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from embry0.workflows.qa.qa_yaml_v2 import (
     AppLocalConfig,
+    ConditionalCriteriaGroup,
     parse_qa_yaml_v2,
 )
 
@@ -646,3 +647,14 @@ def test_browser_backend_unknown_rejected_at_every_layer(snippet):
         base += "apps:\n  web:\n    boot_command: x\n    frontend_url: http://localhost:1\n"
     with pytest.raises(Exception, match="unknown browser backend 'netscape'"):
         parse_qa_yaml_v2(base + snippet)
+
+
+def test_a_conditional_group_name_ending_in_a_newline_is_refused():
+    """Python's ``$`` also matches just before a final newline, so ``match`` took ``pricing\\n``."""
+    group = {"name": "pricing\n", "when": {"labels": ["pricing"]}, "criteria": ["Exercise checkout"]}
+    try:
+        ConditionalCriteriaGroup.model_validate(group)
+    except ValidationError as exc:
+        assert "conditional group name" in str(exc), f"the refusal must name the group name: {exc}"
+    else:
+        raise AssertionError("a conditional group name ending in a newline must be refused")

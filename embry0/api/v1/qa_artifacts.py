@@ -112,7 +112,7 @@ def _check_safe(path: str) -> None:
     for seg in path.split("/"):
         if not seg or set(seg) == {"."}:
             raise HTTPException(status_code=404, detail="not found")
-    if not _SAFE_ARTIFACT_PATH.match(path):
+    if not _SAFE_ARTIFACT_PATH.fullmatch(path):
         raise HTTPException(status_code=404, detail="not found")
 
 
@@ -120,7 +120,7 @@ def _check_safe_job_id(job_id: str) -> None:
     # Defense-in-depth: job_id is concatenated into the MinIO prefix, so reject
     # anything that isn't a plain identifier even though FastAPI's path-param
     # decoding already strips slashes.
-    if not job_id or not _SAFE_JOB_ID.match(job_id):
+    if not job_id or not _SAFE_JOB_ID.fullmatch(job_id):
         raise HTTPException(status_code=404, detail="not found")
 
 
@@ -241,7 +241,7 @@ async def get_log(
     # FastAPI's router rather than reaching this handler — but defend in depth
     # anyway in case of future refactors.
     _check_safe_job_id(job_id)
-    if "/" in service or not _SAFE_SERVICE.match(service):
+    if "/" in service or not _SAFE_SERVICE.fullmatch(service):
         raise HTTPException(status_code=404, detail="not found")
 
     if not follow:
@@ -354,7 +354,7 @@ async def list_qa_services(
         names = await runtime.compose_services(f"qa_{job_id}", timeout=10)
     except (OSError, RuntimeError, TimeoutError):
         return {"services": []}
-    services = sorted(name for name in names if _SAFE_SERVICE.match(name))
+    services = sorted(name for name in names if _SAFE_SERVICE.fullmatch(name))
     return {"services": services}
 
 
@@ -557,7 +557,7 @@ def _check_safe_app(app: str) -> None:
     `<run_id>__<app>/...`. Disallow anything that could break out of that
     segment (slashes, leading dots) or look like a CLI flag (leading `-`).
     """
-    if not app or "/" in app or not _SAFE_APP.match(app):
+    if not app or "/" in app or not _SAFE_APP.fullmatch(app):
         raise HTTPException(status_code=400, detail="bad app name")
 
 
@@ -571,7 +571,7 @@ def _check_safe_filename(filename: str) -> None:
     if not filename or "/" in filename or filename.startswith(".") or ".." in filename:
         raise HTTPException(status_code=400, detail="bad artifact filename")
     # Defense-in-depth: reject anything outside the artifact charset.
-    if not re.match(r"^[A-Za-z0-9._:\-]+$", filename):
+    if not re.fullmatch(r"^[A-Za-z0-9._:\-]+$", filename):
         raise HTTPException(status_code=400, detail="bad artifact filename")
 
 

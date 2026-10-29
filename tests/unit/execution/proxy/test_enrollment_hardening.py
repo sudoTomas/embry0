@@ -195,3 +195,14 @@ async def test_registry_full_maps_to_429(client):
         headers={"X-Admin-Token": ADMIN},
     )
     assert second.status == 429
+
+
+async def test_a_sandbox_id_ending_in_a_newline_is_refused(client):
+    """Python's ``$`` also matches just before a final newline, so ``match`` took ``sbx-1\\n``."""
+    enroll = await client.post(
+        "/admin/enroll", json={"sandbox_id": "sbx-1\n", "sandbox_token": TOK}, headers={"X-Admin-Token": ADMIN}
+    )
+    unenroll = await client.delete("/admin/enroll/sbx-1%0A", headers={"X-Admin-Token": ADMIN})
+    assert enroll.status == 400, f"enrolling a sandbox id ending in a newline must be refused: {enroll.status}"
+    assert unenroll.status == 400, f"unenrolling a sandbox id ending in a newline must be refused: {unenroll.status}"
+    assert len(client.server.app["enrollment"]) == 0, "nothing may be enrolled under a sandbox id ending in a newline"

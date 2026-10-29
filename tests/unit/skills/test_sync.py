@@ -694,3 +694,12 @@ def test_curl_resolve_brackets_ipv6_and_drops_duplicates() -> None:
     assert _curl_resolve("h.example.com", 8443, ["93.184.216.34", "2606:2800::1", "93.184.216.34"]) == (
         "h.example.com:8443:93.184.216.34,[2606:2800::1]"
     )
+
+
+async def test_a_skill_name_ending_in_a_newline_is_refused(tmp_path: Path) -> None:
+    """Python's ``$`` also matches just before a final newline, so ``match`` took ``house\\n``."""
+    src = _path_source(tmp_path)
+    (src / "skills" / "house" / "SKILL.md").write_text('---\nname: "house\\n"\n---\n', encoding="utf-8")
+    out, _, _ = await _sync_path(tmp_path, str(src), path_root=tmp_path / "root")
+    assert out["status"] == "error", f"a skill name ending in a newline must fail the sync: {out}"
+    assert out["error"].startswith("skill name 'house\\n' in skills/house/SKILL.md must match"), out["error"]

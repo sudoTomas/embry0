@@ -7,17 +7,18 @@ longer QA-only. The QA module re-exports it for its existing callers.
 
 from __future__ import annotations
 
-import re
 import shlex
 from typing import Any
 
 import structlog
 
+from embry0.git_refs import valid_ref
+
 logger = structlog.get_logger(__name__)
 
-# Same defensive vocabulary as workspace_init/git.py: the resolved name is
-# interpolated into shell lines (shlex-quoted) and agent prompts downstream.
-_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
+# A branch is checked with embry0.git_refs.valid_ref, the rule the clone
+# applies: the resolved name is interpolated into shell lines (shlex-quoted)
+# and agent prompts downstream.
 
 
 class WorkspaceDiffUnavailable(RuntimeError):
@@ -64,7 +65,7 @@ async def resolve_base_branch(
         return "main"
     name = (raw or "").strip().splitlines()[0] if (raw or "").strip() else ""
     name = name.removeprefix("origin/")
-    if name and _BRANCH_RE.match(name):
+    if valid_ref(name):
         return name
     return "main"
 
@@ -173,7 +174,7 @@ async def diff_line_counts(*, docker: Any, container_id: str, base_branch: str) 
     the code it removed (spec 2026-10-25, slop dungeon). Best-effort: any
     failure is None, logged at WARNING.
     """
-    if not _BRANCH_RE.match(base_branch or ""):
+    if not valid_ref(base_branch):
         return None
     base = shlex.quote(base_branch)
     shell = (

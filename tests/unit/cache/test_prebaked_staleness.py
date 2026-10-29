@@ -484,3 +484,22 @@ async def test_a_stale_legacy_image_is_not_called_unpinned(qa_pinned):
     with structlog.testing.capture_logs() as logs:
         assert await mod.usable_image_tag(row, _resolver(D2)) is None
     assert not [e for e in logs if e["event"] == "qa_prebuilt_image_unpinned"], logs
+
+
+@pytest.mark.asyncio
+async def test_a_digest_ending_in_a_newline_is_not_trusted():
+    """Python's ``$`` also matches just before a final newline, so ``match`` took ``sha256:…\\n``
+    from a runtime that does not strip its output."""
+    runtime = MagicMock()
+    runtime.container_image = AsyncMock(return_value=(QUALIFIED, D1 + "\n"))
+    runtime.image_digests = AsyncMock(return_value=(["registry:5000/embry0-sandbox-qa@" + D1 + "\n"], D1 + "\n"))
+    try:
+        await container_base_image(runtime, "cid-1")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a container image ID ending in a newline must be refused")
+    assert await image_digest(runtime, "img", repo_name=QUALIFIED) is None, "a registry digest must be refused"
+    assert await image_digest(runtime, "img", repo_name="embry0-sandbox-qa:latest") is None, (
+        "a local ID must be refused"
+    )

@@ -288,6 +288,8 @@ def test_an_unreachable_forge_is_a_fetch_failure_not_a_rewritten_branch(repo: Si
         {"fetch_ref": "refs/heads/x", "head_sha": "a" * 40, "base_ref": "main", "previous_sha": "nope"},
         {"fetch_ref": "", "head_sha": "a" * 40, "base_ref": "main"},
         {"fetch_ref": "refs/heads/x", "head_sha": "a" * 40, "base_ref": ""},
+        {"fetch_ref": "refs/heads/x", "head_sha": "a" * 40 + "\n", "base_ref": "main"},
+        {"fetch_ref": "refs/heads/x", "head_sha": "a" * 40, "base_ref": "main", "previous_sha": "b" * 40 + "\n"},
     ],
 )
 def test_malformed_input_is_refused_before_any_shell_runs(kwargs: dict[str, str]) -> None:

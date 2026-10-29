@@ -64,6 +64,7 @@ def test_a_network_that_names_its_bridge_keeps_that_name() -> None:
         {"Name": "sandbox-restricted", "Id": "short", "Options": {}},
         {"Name": "sandbox-restricted", "Id": _NETWORK_ID, "Options": {"com.docker.network.bridge.name": "br0; reboot"}},
         {"Name": "sandbox-restricted", "Id": _NETWORK_ID, "Options": {"com.docker.network.bridge.name": "x" * 16}},
+        {"Name": "sandbox-restricted", "Id": _NETWORK_ID, "Options": {"com.docker.network.bridge.name": "br0\n"}},
     ],
 )
 def test_an_unusable_bridge_name_is_refused(net: dict[str, Any]) -> None:
@@ -147,7 +148,15 @@ def test_the_script_verifies_the_jump_is_evaluated_and_the_chain_ends_in_drop() 
     assert f'!= "-A {CHAIN} -j DROP"' in after
 
 
-@pytest.mark.parametrize(("bridge", "chain"), [("br-x; reboot", CHAIN), ("br-0123456789ab", "chain; reboot")])
+@pytest.mark.parametrize(
+    ("bridge", "chain"),
+    [
+        ("br-x; reboot", CHAIN),
+        ("br-0123456789ab", "chain; reboot"),
+        ("br-0123456789ab\n", CHAIN),
+        ("br-0123456789ab", CHAIN + "\n"),
+    ],
+)
 def test_the_script_refuses_names_that_are_not_names(bridge: str, chain: str) -> None:
     with pytest.raises(IsolationError):
         build_ensure_script(bridge, ["10.88.0.2"], chain)
