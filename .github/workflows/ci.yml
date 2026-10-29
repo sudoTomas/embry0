@@ -34,7 +34,9 @@ jobs:
   backend:
     name: Backend Lint & Test
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The unit suite alone takes 36-41 minutes on a hosted runner; 45 left
+    # too little room, and a slow run was cancelled part-way (#250).
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
