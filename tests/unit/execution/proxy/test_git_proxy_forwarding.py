@@ -7,7 +7,9 @@ token's full scope on every repository it could reach.
 These tests run real git, configured as a sandbox is (ADR 0007: the job's
 repository rewritten to the proxy, the bearer sent to the proxy), against the
 proxy, which forwards to ``git http-backend`` serving bare repositories. The
-fake forge accepts only the forge credential and records every request.
+fake forge accepts only the forge credential. It records every request for its
+repositories or carrying its credential; what other processes on the host send
+to its port is not counted.
 """
 
 from __future__ import annotations
@@ -245,7 +247,46 @@ async def test_an_unknown_bearer_is_refused_before_the_forge(proxy, forge, tmp_p
     home = await _sandbox(tmp_path, proxy, forge, bearer="not-enrolled-" + "x" * 40)
     rc, out = await _clone(forge, home, tmp_path / "workspace")
     assert rc != 0 and "not enrolled" in out, f"an unknown bearer was served:\n{out}"
-    assert forge.seen == []
+    assert forge.seen == [], f"an unknown bearer's request reached the forge: {forge.seen}"
+
+
+async def _get_from_forge(forge: FakeForge, path: str, headers: dict[str, str] | None = None) -> int:
+    """GET ``path`` from the forge's port directly, not through the proxy."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{forge.origin}{path}", headers=headers) as resp:  # type: ignore[attr-defined]
+            await resp.read()
+            return resp.status
+
+
+async def test_a_stray_request_to_the_forge_changes_no_result(proxy, forge, tmp_path):
+    """Any process on the host can reach the forge's port. A ``GET /`` from an
+    unrelated client once failed the unknown-bearer test above while three
+    re-runs passed (#214). Counted, such a request fails a test that expects
+    nothing to reach the forge, or passes one that expects something to."""
+    await _enroll_job(proxy, forge, push=True)
+    home = await _sandbox(tmp_path, proxy, forge, bearer="not-enrolled-" + "x" * 40)
+    assert await _get_from_forge(forge, "/") == 401, "the stray request did not reach the forge"
+    rc, out = await _clone(forge, home, tmp_path / "workspace")
+    assert await _get_from_forge(forge, "/favicon.ico") == 401, "the stray request did not reach the forge"
+
+    assert rc != 0 and "not enrolled" in out, f"an unknown bearer was served:\n{out}"
+    assert forge.seen == [], f"only the stray requests should reach the forge, and they must not count: {forge.seen}"
+    # A subset: a real stray from another process lands here too.
+    strays = {(s.method, s.path) for s in forge.ignored}
+    assert {("GET", "/"), ("GET", "/favicon.ico")} <= strays, f"the strays were not kept aside: {strays}"
+
+
+async def test_a_request_with_the_forge_credential_counts_on_any_path(forge):
+    """A proxy that leaks need not use the repository's path. Forwarding the
+    sandbox's ``/git/<repo>.git/info/refs`` as it came, with the credential, is
+    a leak too, and the unknown-bearer and refused-push tests must see it. No
+    other process has the credential, so a request that carries it counts
+    wherever it goes."""
+    leaked = f"/git/{REPO}.git/info/refs"
+    await _get_from_forge(forge, f"{leaked}?service=git-upload-pack", {"Authorization": FORGE_AUTH})
+    assert [(s.method, s.path) for s in forge.seen] == [("GET", leaked)], (
+        f"a request carrying the forge credential to {leaked} was not counted: a proxy leaking there passes every test"
+    )
 
 
 async def test_the_credential_goes_only_to_the_host_it_was_enrolled_for(proxy, forge, tmp_path):

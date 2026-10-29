@@ -3,8 +3,10 @@
 ``FakeForge`` serves bare repositories with the real ``git http-backend`` and
 accepts only the forge credential, so a clone, fetch or push that succeeds
 through the proxy proves the proxy added it. ``RecordingUpstream`` answers
-anything and records what reached it. Both record every request, which is how
-the tests show what the proxy did and did not forward.
+anything and records what reached it. What they record is how the tests show
+what the proxy did and did not forward. ``FakeForge`` records only the
+requests for its own repositories or carrying its credential, since any
+process on the host can reach its port (#214).
 """
 
 from __future__ import annotations
@@ -69,12 +71,24 @@ class RecordingUpstream:
 
 
 class FakeForge:
-    """Bare repositories under ``root`` served by ``git http-backend``; only ``expected_auth`` gets in."""
+    """Bare repositories under ``root`` served by ``git http-backend``; only ``expected_auth`` gets in.
+
+    ``seen`` holds the requests for the repositories :meth:`create_repo` made,
+    which are the paths the tests' git and the proxy use, and every request
+    that carries the forge credential, wherever it goes: a proxy that leaks
+    may send it to another path, and no unrelated process has it. Any other
+    request that reaches the port, such as a ``GET /`` from an unrelated
+    client on the host, is answered the same way but kept in ``ignored``, so
+    it can neither fail a test that expects nothing to reach the forge nor
+    pass one that expects something to (#214).
+    """
 
     def __init__(self, root: Path, expected_auth: str) -> None:
         self.root = root
         self.expected_auth = expected_auth
         self.seen: list[Seen] = []
+        self.ignored: list[Seen] = []
+        self._repos: set[str] = set()
 
     def app(self) -> web.Application:
         app = web.Application(client_max_size=1024**3)
@@ -86,6 +100,7 @@ class FakeForge:
         bare = self.root / f"{path}.git"
         bare.parent.mkdir(parents=True, exist_ok=True)
         _git_sync("init", "--bare", "--initial-branch=main", str(bare))
+        self._repos.add(path)
         work = self.root / f"_seed_{path.replace('/', '_')}"
         _git_sync("init", "--initial-branch=main", str(work))
         for name, content in files.items():
@@ -107,9 +122,16 @@ class FakeForge:
     def refs(self, path: str) -> str:
         return _git_sync("--git-dir", str(self.root / f"{path}.git"), "show-ref")
 
+    def _counts(self, request: web.Request) -> bool:
+        """Whether a request is the tests' or the proxy's, not another process's."""
+        if request.headers.get("Authorization") == self.expected_auth:
+            return True
+        return any(request.path.startswith(f"/{repo}.git/") for repo in self._repos)
+
     async def _handle(self, request: web.Request) -> web.Response:
         body = await request.read()
-        self.seen.append(Seen(request.method, request.path, request.query_string, dict(request.headers), body))
+        seen = Seen(request.method, request.path, request.query_string, dict(request.headers), body)
+        (self.seen if self._counts(request) else self.ignored).append(seen)
         if request.headers.get("Authorization", "") != self.expected_auth:
             return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="forge"'})
         env = {
