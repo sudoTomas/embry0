@@ -2,6 +2,7 @@ import type {
   CharacterState,
   InboxQuest,
   Lead,
+  LeadKind,
   Outcome,
   Party,
   QuestScroll,
@@ -325,31 +326,27 @@ export function filterLeads(leads: readonly Lead[], f: LeadFilters): Lead[] {
   );
 }
 
-/** What each kind of quest is called on the board's filter chips. */
-export const KIND_WORDS: Record<string, string> = {
-  case: "Production errors",
-  issue: "Open issues",
-  finding: "Outdated instructions",
-  ticket: "Backlog tickets",
-  ci: "Broken builds",
-  alert: "Security alerts",
-  flaky: "Flaky tests",
-  review: "Unanswered reviews",
-  slop: "Slop",
-};
+/** GET /world's lead-kind catalogue by id; empty on an older backend that serves none. */
+export function kindsById(kinds: readonly LeadKind[] | undefined): ReadonlyMap<string, LeadKind> {
+  return new Map((kinds ?? []).map((k) => [k.id, k]));
+}
 
-/** One quest of each kind, as its badge says it. */
-export const KIND_WORD: Record<string, string> = {
-  case: "Production error",
-  issue: "Open issue",
-  finding: "Outdated instruction",
-  ticket: "Backlog ticket",
-  ci: "Broken build",
-  alert: "Security alert",
-  flaky: "Flaky test",
-  review: "Unanswered review",
-  slop: "Slop, not a bug",
-};
+/** One quest of a kind, as its badge says it; the kind's own id when the catalogue does not name it. */
+export function kindLabel(kinds: ReadonlyMap<string, LeadKind>, kind: string): string {
+  return kinds.get(kind)?.label ?? kind;
+}
+
+/** Quests of a kind, as the board's filter says them; the kind's own id when the catalogue does not name it. */
+export function kindPlural(kinds: ReadonlyMap<string, LeadKind>, kind: string): string {
+  return kinds.get(kind)?.plural ?? kind;
+}
+
+/** A kind's hover: what it is and what found it; undefined when the catalogue does not name it. */
+export function kindHint(kinds: ReadonlyMap<string, LeadKind>, kind: string): string | undefined {
+  const k = kinds.get(kind);
+  if (!k) return undefined;
+  return `${k.about.charAt(0).toUpperCase()}${k.about.slice(1)}. Found by ${k.found_by}.`;
+}
 
 /** The level's colour band, as a monster's level reads against yours: green below, yellow near, red above. */
 export function levelBand(

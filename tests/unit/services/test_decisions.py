@@ -40,7 +40,7 @@ def test_a_quest_on_offer_reads_its_severity_first_and_its_facts_in_order() -> N
         ("Owners", "octocat, hubot +1"),
     ]
     assert d["why"] == "A high crack the scout found in web: a committed service key."
-    assert d["yes_starts"].startswith("a job that fixes what the crack names")
+    assert d["yes_starts"].startswith("the agents fix what the crack names")
     assert d["actions"] == ["start", "decline", "later", "send_to"]
     assert d["at"] == T0.isoformat() and d["links"]["proposal"] == "crack:1a2b"
 
@@ -54,7 +54,7 @@ def test_a_brief_s_plain_words_win_and_a_kind_without_severity_reads_as_its_kind
     }
     d = offered(crack(kind="finding", severity=None, brief=brief, path="CLAUDE.md", line=12, paths=[])).to_dict()
     assert d["title"] == "Fix the guide" and d["why"] == "The guide lies." and d["yes_starts"] == "Edit one line."
-    assert d["verdict"] == {"label": "Context finding", "tone": "info"}
+    assert d["verdict"] == {"label": "Outdated instruction", "tone": "info"}
     assert d["facts"][0] == {"label": "Evidence", "value": "CLAUDE.md:12", "tone": ""}
 
 

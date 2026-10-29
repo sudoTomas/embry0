@@ -103,6 +103,22 @@ export interface Lead {
   slop_kinds?: string[];
 }
 
+/**
+ * One kind a quest on offer can be, as the backend's lead-kind catalogue
+ * (embry0/services/lead_kinds.py), the one place its names live, serves it.
+ */
+export interface LeadKind {
+  id: string;
+  /** One of it, as a badge says it. */
+  label: string;
+  /** Several of it, as a filter says them. */
+  plural: string;
+  /** What it is, in a phrase. */
+  about: string;
+  /** What brings it in. */
+  found_by: string;
+}
+
 /** The slopometer's verdict (spec 2026-10-25, slop dungeon): a bug, slop or noise, and why. */
 export interface WorkNature {
   nature: "bug" | "slop" | "noise";
@@ -164,6 +180,8 @@ export interface World {
   characters: WorldCharacter[];
   parties: Party[];
   quests: Lead[];
+  /** Every kind a quest can be, with its names. Absent on an older backend. */
+  lead_kinds?: LeadKind[];
   inbox: InboxQuest[];
   loot: Loot[];
   recent: RecentEvent[];

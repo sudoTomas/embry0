@@ -17,32 +17,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-#: What each kind of quest on offer is called where a person reads it.
-KIND_WORDS: dict[str, str] = {
-    "case": "Production error",
-    "issue": "Open issue",
-    "finding": "Context finding",
-    "ticket": "Backlog ticket",
-    "ci": "Failing check",
-    "alert": "Alert",
-    "flaky": "Flaky check",
-    "review": "Unanswered review",
-    "crack": "Crack",
-    "weed": "Weed",
-}
-#: What a yes starts, per kind, when the quest has no brief of its own.
-YES_WORDS: dict[str, str] = {
-    "case": "a job that investigates the problem, fixes it and opens a pull request",
-    "issue": "triage, which plans the issue and starts its work",
-    "finding": "a pull request that changes that one claim in the file",
-    "ticket": "a job that works the ticket, usually ending in a pull request",
-    "ci": "a job that finds why the check fails and opens a pull request that fixes it",
-    "alert": "a job that fixes what the alert names and opens a pull request",
-    "flaky": "a job that finds why the check is unreliable and opens a pull request",
-    "review": "a job that answers the open review comments on the pull request's branch",
-    "crack": "a job that fixes what the crack names and opens a pull request",
-    "weed": "a job that removes the dead code, changes no behavior, and opens a pull request",
-}
+from embry0.services.lead_kinds import KINDS
+
 _SEVERITY_TONE = {"critical": "bad", "high": "bad", "medium": "warn", "low": "info"}
 _TONE_RANK = {"bad": 0, "warn": 1, "good": 2, "info": 3}
 OFFER_ACTIONS: tuple[str, ...] = ("start", "decline", "later", "send_to")
@@ -148,7 +124,8 @@ def offered(p: Mapping[str, Any]) -> Decision:
     kind = str(p.get("kind") or "")
     brief = p.get("brief") if isinstance(p.get("brief"), Mapping) else None
     severity = str(p.get("severity") or "").lower()
-    kind_label = KIND_WORDS.get(kind, kind.title())
+    known = KINDS.get(kind)
+    kind_label = known.label if known else kind.title()
     if severity in _SEVERITY_TONE:
         verdict, tone = severity.title(), _SEVERITY_TONE[severity]
     else:
@@ -180,7 +157,7 @@ def offered(p: Mapping[str, Any]) -> Decision:
             ]
         ),
         why=_first_sentence((brief or {}).get("problem") or p.get("summary")),
-        yes_starts=_first_sentence((brief or {}).get("fix")) or YES_WORDS.get(kind) or str(p.get("action") or ""),
+        yes_starts=_first_sentence((brief or {}).get("fix")) or (known and known.starts) or str(p.get("action") or ""),
         actions=OFFER_ACTIONS,
         owners=tuple(str(o) for o in p.get("owners") or []),
         held=bool(p.get("held")),

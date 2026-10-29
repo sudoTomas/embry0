@@ -6,7 +6,7 @@ import json
 import struct
 from pathlib import Path
 
-from embry0.services.world import GLYPH_CREATURES, LEAD_KINDS, LeadKind
+from embry0.services.lead_kinds import GLYPH_CREATURES, KINDS
 
 REPO = Path(__file__).resolve().parents[3]
 WORLD = REPO / "frontend" / "public" / "world"
@@ -55,27 +55,53 @@ def test_every_frame_lies_inside_its_sheet_and_every_anchor_inside_its_frame() -
             assert _inside(rect, size), name
 
 
-def _drawn_by_art() -> dict[str, LeadKind]:
-    """The lead kinds the art draws; the rest are drawn as their original glyph (GLYPH_CREATURES)."""
-    return {kind: drawn for kind, drawn in LEAD_KINDS.items() if drawn.creature not in GLYPH_CREATURES}
+#: What the manifest's ``interaction`` may say (frontend art/manifest.ts types it so).
+INTERACTIONS = {"attack", "talk", "start_quest", "repair"}
 
 
-def test_every_lead_kind_has_a_creature_and_one_only() -> None:
-    kinds = [kind for creature in MANIFEST["creatures"].values() for kind in creature["leadKinds"]]
-    assert set(kinds) >= set(_drawn_by_art()) and len(kinds) == len(set(kinds))
-    assert {c["interaction"] for c in MANIFEST["creatures"].values()} <= {"attack", "talk", "start_quest", "repair"}
+def _interaction(verb: str) -> str:
+    """The manifest's word for a verb: ``Start quest`` is ``start_quest``."""
+    return verb.lower().replace(" ", "_")
 
 
-def test_the_backend_draws_each_kind_as_the_creature_the_art_lists_it_under() -> None:
-    for kind, drawn in _drawn_by_art().items():
-        assert kind in MANIFEST["creatures"][drawn.creature]["leadKinds"], kind
+def test_the_manifest_says_what_the_lead_kind_catalogue_says() -> None:
+    """The manifest names the creature each lead kind stands as on its own, because it is an art
+    file the frontend reads; the catalogue (embry0.services.lead_kinds) is the source of truth.
+    Every kind the art draws must be listed once, under the catalogue's creature, with the
+    catalogue's verb, and the art must list no kind the catalogue does not know."""
+    problems: list[str] = []
+    listed: dict[str, str] = {}
+    for name, creature in MANIFEST["creatures"].items():
+        if creature["interaction"] not in INTERACTIONS:
+            problems.append(f"{name}'s interaction {creature['interaction']!r} is not one of {sorted(INTERACTIONS)}")
+        for kind in creature["leadKinds"]:
+            if kind in listed:
+                problems.append(f"{kind} is listed under both {listed[kind]} and {name}")
+            listed[kind] = name
+            known = KINDS.get(kind)
+            if known is None:
+                problems.append(f"{name} lists {kind!r}, which the lead-kind catalogue does not know")
+                continue
+            if known.creature != name:
+                problems.append(f"{kind} stands as {known.creature} in the catalogue but under {name} in the manifest")
+            if creature["interaction"] != _interaction(known.verb):
+                problems.append(
+                    f"{name}'s interaction is {creature['interaction']!r}, "
+                    f"but {kind}'s verb {known.verb!r} says {_interaction(known.verb)!r}"
+                )
+    for kind in KINDS.values():
+        if kind.creature not in GLYPH_CREATURES and kind.id not in listed:
+            problems.append(
+                f"{kind.id} is drawn by the art ({kind.creature}), but no creature in the manifest lists it"
+            )
+    assert not problems, "the art manifest and the lead-kind catalogue disagree:\n" + "\n".join(problems)
 
 
 def test_a_creature_with_no_sheet_has_its_glyph_and_no_art_claims_its_kind() -> None:
     """The Slop Dungeon's ooze (spec 2026-10-25) is an original 12x12 glyph until the art draws it."""
     glyphs = (REPO / "frontend" / "src" / "components" / "world" / "CreatureIcon.tsx").read_text()
     listed = {kind for creature in MANIFEST["creatures"].values() for kind in creature["leadKinds"]}
-    for kind, drawn in LEAD_KINDS.items():
+    for kind, drawn in KINDS.items():
         if drawn.creature in GLYPH_CREATURES:
             assert f"  {drawn.creature}: {{" in glyphs, f"{drawn.creature} has no glyph in CreatureIcon"
             assert kind not in listed, f"{kind} is drawn by the art; drop {drawn.creature} from GLYPH_CREATURES"

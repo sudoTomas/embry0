@@ -2,7 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { toastApiError } from "@/api/errorToast";
 import type { RunWith } from "@/api/runWith";
-import type { Lead, WorldCharacter } from "@/api/world";
+import type { Lead, LeadKind, WorldCharacter } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { RunWithControl } from "@/components/runwith/RunWithControl";
 import { Badge } from "@/components/ui/Badge";
@@ -10,11 +10,13 @@ import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import { useSendParty } from "@/hooks/useWorld";
-import { BAND_TONE, KIND_WORD, levelBand, placeOf } from "@/lib/world";
+import { BAND_TONE, kindHint, kindLabel, levelBand, placeOf } from "@/lib/world";
 import { CreatureIcon } from "./CreatureIcon";
 
 interface SendPartyDialogProps {
   lead: Lead;
+  /** GET /world's lead-kind catalogue by id (lib/world kindsById): what each kind is called. */
+  kinds: ReadonlyMap<string, LeadKind>;
   characters: readonly WorldCharacter[];
   /** Who the answer is recorded as: the signed-in player. */
   by: string;
@@ -28,7 +30,7 @@ interface SendPartyDialogProps {
  * runs, which agent leads, and the model and key it runs with. Start is the
  * owner proposal's yes.
  */
-export function SendPartyDialog({ lead, characters, by, canSend, onClose, onSent }: SendPartyDialogProps) {
+export function SendPartyDialog({ lead, kinds, characters, by, canSend, onClose, onSent }: SendPartyDialogProps) {
   const lookup = useIdentityLookup();
   const [runWith, setRunWith] = useState<RunWith>({});
   const send = useSendParty();
@@ -50,9 +52,11 @@ export function SendPartyDialog({ lead, characters, by, canSend, onClose, onSent
     <Dialog onClose={onClose} title={lead.title} className="max-w-xl">
       <div className="space-y-4 p-5" data-testid="send-party">
         <div className="flex items-start gap-3">
-          <CreatureIcon kind={lead.kind} creature={lead.creature} size={48} label={KIND_WORD[lead.kind] ?? lead.kind} />
+          <CreatureIcon kind={lead.kind} creature={lead.creature} size={48} label={kindLabel(kinds, lead.kind)} />
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-            <Badge tone="neutral">{KIND_WORD[lead.kind] ?? lead.kind}</Badge>
+            <Badge tone="neutral" title={kindHint(kinds, lead.kind)}>
+              {kindLabel(kinds, lead.kind)}
+            </Badge>
             <Badge tone={BAND_TONE[levelBand(lead.level, leader?.level ?? lead.level)]} className="hud">
               Lvl {lead.level}
             </Badge>

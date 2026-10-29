@@ -17,6 +17,8 @@ A repository is read when it is registered and active and someone answers for it
 | `weed` | The scout (below) | A finished `garden` job's weed card | low, small | A job that removes it with the checked diff and changes no behavior |
 | `weed` | A [knowledge map](maps.md) | A part someone marked bloat on a map, while anyone does | low, small | A job that removes the part and what only it uses, without re-assessing the mark |
 
+Every kind, these and the ones read from other features (a watcher case, an open issue, a context audit finding, slop), is one entry in `embry0/services/lead_kinds.py`: its names, what a yes starts, its verb, creature, leader and starting level, and which severities are asked in chat. The leads loop, the proposals feed, the world, decision cards and briefs read it, and the dashboard gets it from `GET /world`; the world's art manifest names each kind's creature on its own, and a test holds the two equal.
+
 A ticket that already carries the trigger label, or that embry0 already tracks, is left to the path that has it. A source the credential cannot read (alerts without the scope, a forge other than GitHub) is skipped quietly, one log line per reason.
 
 ## The scout: cracks and weeds

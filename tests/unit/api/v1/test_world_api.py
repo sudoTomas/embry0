@@ -202,6 +202,39 @@ async def test_the_guild_hall_shows_every_character_the_board_and_the_inbox(app:
     assert world["loot"][0]["merged"] is False
 
 
+async def test_the_world_names_every_kind_a_quest_can_be(app: Any) -> None:
+    """The dashboard's names for each kind come from the backend's catalogue (#166), not a copy of its own."""
+    async with await _client(app) as client:
+        world = (await client.get("/api/v1/world")).json()
+    assert "lead_kinds" in world, "GET /world must serve the lead-kind catalogue"
+    kinds = {k["id"]: k for k in world["lead_kinds"]}
+    assert list(kinds) == [
+        "case",
+        "issue",
+        "finding",
+        "ticket",
+        "ci",
+        "alert",
+        "flaky",
+        "review",
+        "crack",
+        "weed",
+        "slop",
+    ]
+    assert kinds["crack"] == {
+        "id": "crack",
+        "label": "Crack",
+        "plural": "Cracks",
+        "about": "a crack the scout found in the code",
+        "found_by": "the scout",
+    }, "only what the dashboard reads is served: every served field is API to keep"
+    assert kinds["slop"]["label"] == "Slop, not a bug" and kinds["slop"]["plural"] == "Slop"
+    quest = world["quests"][0]
+    assert (quest["verb"], quest["creature"]) == ("Attack", "case_bug"), (
+        "a quest still carries its own verb and creature"
+    )
+
+
 async def test_a_character_has_its_quest_log_and_an_unknown_one_is_404(app: Any) -> None:
     async with await _client(app) as client:
         dev = (await client.get("/api/v1/world/characters/developer")).json()

@@ -360,10 +360,10 @@ def test_a_yes_on_a_crack_or_a_weed_starts_work_with_its_evidence() -> None:
 
 
 def test_the_world_map_knows_both_kinds() -> None:
+    from embry0.services.lead_kinds import KINDS
     from embry0.services.leads import LEAD_KINDS
-    from embry0.services.world import LEAD_KINDS as WORLD_KINDS
 
-    assert {"crack", "weed"} <= set(LEAD_KINDS) and {"crack", "weed"} <= set(WORLD_KINDS)
+    assert {"crack", "weed"} <= set(LEAD_KINDS) and {"crack", "weed"} <= set(KINDS)
 
 
 def test_the_scout_is_exempt_from_the_hourly_limit_its_in_flight_cap_is_its_brake() -> None:

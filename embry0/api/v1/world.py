@@ -1,8 +1,8 @@
 """The world (spec 2026-10-25): where the player manages their characters and sends them on quests.
 
-- ``GET /world``: the characters and where each is, the quest board, the
-  parties out now, the finished quests waiting for the player's evaluation,
-  the loot and the regions.
+- ``GET /world``: the characters and where each is, the quest board and the
+  kinds a quest can be, the parties out now, the finished quests waiting for
+  the player's evaluation, the loot and the regions.
 - ``GET /world/characters/{agent_type}``: one character's quest log and totals.
 - ``GET /world/quests/{job_id}``: one quest as its scroll: what it did, the
   loot, the experience, the cost and time, and the player's evaluation.
@@ -34,6 +34,7 @@ from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
+from embry0.services.lead_kinds import catalogue as lead_kind_catalogue
 from embry0.services.run_with import apply_run_with, models_with
 from embry0.services.slop import dungeons
 from embry0.services.world import (
@@ -204,6 +205,8 @@ async def read_world(request: Request) -> dict[str, Any]:
         "characters": character_entries(snapshot["characters"], parties, stats, now),
         "parties": parties,
         "quests": quests,
+        # Every kind a quest can be, with its names (embry0.services.lead_kinds).
+        "lead_kinds": lead_kind_catalogue(),
         # Slop dungeon (spec 2026-10-25): each repository's and area's open
         # slop, its score, and the cleanups merged lately.
         "dungeons": dungeons(quests, cleaned, meter_rows),
