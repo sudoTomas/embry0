@@ -23,7 +23,7 @@ def _iso(value: Any) -> Any:
     return value.isoformat() if isinstance(value, date | datetime) else value
 
 
-@router.get("/repos/{full_repo:path}/slop-meter")
+@router.get("/repos/{full_repo:repo}/slop-meter")
 async def read_slop_meter(full_repo: str, request: Request, area: str = Query(default="")) -> dict[str, Any]:
     """The repository's Slop-O-Meter: its score, its areas', and the weekly series of ``area`` ('' the repository)."""
     registry = getattr(request.app.state, "repos_repo", None)

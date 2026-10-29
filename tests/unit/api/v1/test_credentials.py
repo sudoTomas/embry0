@@ -389,7 +389,7 @@ def test_mutations_are_admin_tier_reads_are_not(app):
         ("POST", "/api/v1/credentials/{credential_id}/rotate"),
         ("DELETE", "/api/v1/credentials/{credential_id}"),
         ("POST", "/api/v1/credentials/{credential_id}/verify"),
-        ("PUT", "/api/v1/repos/{full_repo:path}/credentials"),
+        ("PUT", "/api/v1/repos/{full_repo:repo}/credentials"),
         ("PUT", "/api/v1/credentials/bindings"),
         ("POST", "/api/v1/credentials/import-env"),
         ("POST", "/api/v1/credentials/xai/device-login"),
@@ -398,7 +398,7 @@ def test_mutations_are_admin_tier_reads_are_not(app):
     operate = {
         ("GET", "/api/v1/credentials"),
         ("GET", "/api/v1/credentials/resolve"),
-        ("GET", "/api/v1/repos/{full_repo:path}/credentials"),
+        ("GET", "/api/v1/repos/{full_repo:repo}/credentials"),
         ("GET", "/api/v1/credentials/bindings"),
     }
     seen: dict[tuple[str, str], bool] = {}

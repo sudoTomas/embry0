@@ -598,7 +598,7 @@ async def delete_credential(credential_id: str, request: Request) -> Response:
     return Response(status_code=204)
 
 
-@router.get("/repos/{full_repo:path}/credentials")
+@router.get("/repos/{full_repo:repo}/credentials")
 async def get_repo_credentials(full_repo: str, request: Request) -> dict[str, Any]:
     st = _state(request)
     full_repo = _repo_path(full_repo)
@@ -638,7 +638,7 @@ async def get_repo_credentials(full_repo: str, request: Request) -> dict[str, An
     return {"repo": scope_value, "bindings": await _bindings_view(request, bindings), "effective": effective}
 
 
-@router.put("/repos/{full_repo:path}/credentials", dependencies=[require_admin])
+@router.put("/repos/{full_repo:repo}/credentials", dependencies=[require_admin])
 async def set_repo_credentials(full_repo: str, req: BindingsSet, request: Request) -> dict[str, Any]:
     st = _state(request)
     full_repo = _repo_path(full_repo)

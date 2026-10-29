@@ -88,7 +88,7 @@ export async function setScopedBindings(
 }
 
 export async function fetchRepoCredentials(fullRepo: string): Promise<RepoCredentials> {
-  // Slash stays in the path (`acme/widgets`); the route is `{full_repo:path}`.
+  // Slash stays in the path (`acme/widgets`); the route is `{full_repo:repo}`.
   const { data } = await api.get<RepoCredentials>(`/repos/${fullRepo}/credentials`);
   return data;
 }

@@ -64,7 +64,7 @@ def _seg(value: str) -> str:
     return quote(value, safe="")
 
 
-_REPO_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9_.-]*"
+_REPO_SEGMENT = r"(?!\.\.?(?![A-Za-z0-9_.-]))[A-Za-z0-9.][A-Za-z0-9_.-]*"
 _REPO_PATH_RE = re.compile(rf"^{_REPO_SEGMENT}(?:/{_REPO_SEGMENT})+\Z")
 _REPO_PATH_ERROR = "repo must be 'group/name' or 'group/subgroup/name'"
 
@@ -103,9 +103,10 @@ def _repo_path(repo: str) -> str:
     embry0.mcp_server is a thin HTTP client that imports nothing else from
     embry0, so the rule of embry0/api/schemas/repo_path.py — the source of truth — is restated here
     verbatim, ``\Z`` anchor included, so a trailing newline cannot slip into a
-    URL. Two or more segments: the orchestrator's /repos routes are
-    ``{full_repo:path}`` catch-alls, so a GitLab subgroup path goes through
-    whole instead of being split into owner+name and rejected.
+    URL. Two or more segments: the orchestrator's /repos routes read the
+    repository with ``{full_repo:repo}`` (two or more segments), so a GitLab
+    subgroup path goes through whole instead of being split into owner+name
+    and rejected.
     """
     if not _REPO_PATH_RE.match(repo):
         raise Embry0APIError(422, f"{_REPO_PATH_ERROR}, got {repo!r}")

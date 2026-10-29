@@ -21,7 +21,7 @@ from tests.fixtures.routes import ServedRoute, app_routes
 
 
 def _without_convertors(path: str) -> str:
-    """``{full_repo:path}`` as the OpenAPI schema spells it: ``{full_repo}``."""
+    """``{full_repo:repo}`` as the OpenAPI schema spells it: ``{full_repo}``."""
     return re.sub(r"\{(\w+):[^}]+\}", r"{\1}", path)
 
 

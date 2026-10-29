@@ -650,6 +650,14 @@ async def test_repo_methods_reject_a_single_segment():
             await coro
 
 
+async def test_a_repository_whose_name_starts_with_a_dot_goes_through():
+    """An organization's ``.github`` repository is a repository: only ``.`` and ``..`` are refused."""
+    handler = capture({("GET", "/api/v1/repos/acme/.github"): {"repo": "acme/.github"}})
+    client = make_client(handler)
+    assert (await client.repo_get("acme/.github"))["repo"] == "acme/.github"
+    assert handler.seen[-1].url.path == "/api/v1/repos/acme/.github"
+
+
 @pytest.mark.parametrize(
     "bad",
     [
@@ -660,6 +668,8 @@ async def test_repo_methods_reject_a_single_segment():
         "a//b",
         "a/../b",
         "../a/b",
+        "a/.",
+        "a/..",
         "a/b\n",
     ],
 )

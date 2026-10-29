@@ -104,7 +104,7 @@ async def register_repo(req: RepoRegisterRequest, request: Request) -> dict[str,
     return row
 
 
-@router.get("/repos/{full_repo:path}")
+@router.get("/repos/{full_repo:repo}")
 async def get_repo(full_repo: str, request: Request) -> dict[str, Any]:
     """Unified per-repo view: registry row + which repo-scoped config
     surfaces hold state for it (values live behind their own endpoints)."""
@@ -139,7 +139,7 @@ async def get_repo(full_repo: str, request: Request) -> dict[str, Any]:
     }
 
 
-@router.put("/repos/{full_repo:path}/active")
+@router.put("/repos/{full_repo:repo}/active")
 async def set_repo_active(full_repo: str, req: RepoActiveRequest, request: Request) -> dict[str, Any]:
     repos_repo = request.app.state.repos_repo
     row: dict[str, Any] | None = await repos_repo.set_active(full_repo, req.active)
@@ -148,7 +148,7 @@ async def set_repo_active(full_repo: str, req: RepoActiveRequest, request: Reque
     return row
 
 
-@router.put("/repos/{full_repo:path}/docker-access", dependencies=[require_admin])
+@router.put("/repos/{full_repo:repo}/docker-access", dependencies=[require_admin])
 async def set_repo_docker_access(full_repo: str, req: RepoDockerAccessRequest, request: Request) -> dict[str, Any]:
     """Grant or revoke the shared Docker daemon for one repo (#522).
 
@@ -174,7 +174,7 @@ async def set_repo_docker_access(full_repo: str, req: RepoDockerAccessRequest, r
     return row
 
 
-@router.delete("/repos/{full_repo:path}", status_code=204, response_model=None)
+@router.delete("/repos/{full_repo:repo}", status_code=204, response_model=None)
 async def delete_repo(full_repo: str, request: Request) -> None:
     """Hard delete: registry row + QA config (CASCADE). Env vars and
     preferences are deliberately untouched — they predate the registry and

@@ -24,6 +24,11 @@ _JOB_B = "0a1b2c3d-0000-4000-8000-00000000000b"
 _JOB_C = "0a1b2c3d-0000-4000-8000-00000000000c"
 
 
+def _filled(path: str, token: str) -> str:
+    """``path`` with every parameter set to ``token``; a repository is ``token/token``, two segments (#243)."""
+    return re.sub(r"\{[^}]+\}", lambda m: f"{token}/{token}" if m.group(0).endswith(":repo}") else token, path)
+
+
 @asynccontextmanager
 async def _no_lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
@@ -126,7 +131,7 @@ async def test_no_parametrised_route_leaks_a_literal_value_through_its_slash_red
         for n, route in enumerate(r for r in app_routes(app) if r.is_api_route and "{" in r.path):
             token = f"lit{n}x"
             tokens.append(token)
-            path = re.sub(r"\{[^}]+\}", token, route.path) + "/"
+            path = _filled(route.path, token) + "/"
             method = sorted((route.methods or set()) - {"HEAD"})[0]
             response = await client.request(method, path)
             redirected += response.status_code == 307
@@ -150,7 +155,7 @@ async def test_every_route_is_counted_under_its_full_template() -> None:
         for n, route in enumerate(r for r in app_routes(app) if r.is_api_route and r.path != "/metrics"):
             for method in sorted((route.methods or set()) - {"HEAD"}):
                 expected.add((route.path, method))
-                await client.request(method, re.sub(r"\{[^}]+\}", f"lit{n}x", route.path))
+                await client.request(method, _filled(route.path, f"lit{n}x"))
         samples = await _request_samples(client)
 
     missing = sorted(expected - {(s["handler"], s["method"]) for s in samples})

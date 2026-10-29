@@ -174,12 +174,12 @@ def test_security_md_describes_the_reserved_env_mechanism() -> None:
 
 # (method, route, tier SECURITY.md assigns it, section, what the section must say about it)
 _TIER_CLAIMS = [
-    ("PUT", "/api/v1/repos/{full_repo:path}/docker-access", "admin", HOLDS, "docker-access"),
-    ("GET", "/api/v1/repos/{full_repo:path}/environment/{key}/reveal", "admin", DOES_NOT_HOLD, "admin-only reveal"),
+    ("PUT", "/api/v1/repos/{full_repo:repo}/docker-access", "admin", HOLDS, "docker-access"),
+    ("GET", "/api/v1/repos/{full_repo:repo}/environment/{key}/reveal", "admin", DOES_NOT_HOLD, "admin-only reveal"),
     ("POST", "/api/v1/sandbox-profiles", "operator", HOLDS, "Sandbox profiles are operator tier"),
     ("PUT", "/api/v1/sandbox-profiles/{name}", "operator", HOLDS, "Sandbox profiles are operator tier"),
-    ("PUT", "/api/v1/repos/{full_repo:path}/qa-config", "operator", DOES_NOT_HOLD, "`boot_command`"),
-    ("PUT", "/api/v1/repos/{full_repo:path}/environment", "operator", DOES_NOT_HOLD, "`npm_config_registry`"),
+    ("PUT", "/api/v1/repos/{full_repo:repo}/qa-config", "operator", DOES_NOT_HOLD, "`boot_command`"),
+    ("PUT", "/api/v1/repos/{full_repo:repo}/environment", "operator", DOES_NOT_HOLD, "`npm_config_registry`"),
     ("GET", "/api/v1/admin/retention/preview", "admin", RETENTION, "admin tier"),
 ]
 
