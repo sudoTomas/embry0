@@ -25,11 +25,25 @@ A ticket that already carries the trigger label, or that embry0 already tracks, 
 
 The scout keeps a model on the operator's own server busy finding work around the clock. It is off until `SCOUT_MODEL` names that model (`custom/<model>`, see [providers.md](providers.md)).
 
-- **What it runs.** Every `SCOUT_TICK_SECONDS` it starts read-only jobs while fewer than `SCOUT_MAX_IN_FLIGHT` are out: `garden` (one provable weed) and `kintsugi-trace` (a ledger of graded cracks), the templates `SCOUT_TEMPLATES` names. Each job is pinned to `SCOUT_MODEL`: a pinned run waits for a free local slot and never moves to a hosted model, so the scout spends nothing.
-- **Where.** The repositories the world map shows, plus `SCOUT_REPOS` and minus `SCOUT_EXCLUDE`, and each area of one that declares [areas](areas.md) (the job is told to look only under the area's paths). A unit, one repository or area and one template, is scouted again after `SCOUT_REVISIT_HOURS`; never-scouted units go first, then the longest ago. A model reads the same code differently run to run, and the lead id of what it found before keeps a repeat from becoming a second lead.
-- **What becomes a lead.** When a job finishes, its deliverable is read once: each ledger row a `crack`, a weed card a `weed`, at most `SCOUT_MAX_LEADS_PER_JOB` a job, the worst first. A failed job yields nothing.
+Its policy is the `scout` section of the [settings document](configuration.md#settings-document), which the scout reads every tick, so a change applies within 5 minutes with no restart:
+
+```yaml
+scout:
+  templates: [garden, kintsugi-trace]
+  max_in_flight: 2
+  revisit_hours: 24
+  max_leads_per_job: 5
+  job_budget_usd: 1.0
+  max_jobs_per_day: null
+```
+
+Those are the defaults. `SCOUT_MODEL`, `SCOUT_REPOS` and `SCOUT_EXCLUDE` stay environment variables, read at startup, until the one map of background models (#164) and the one repository scope rule (#165) move them.
+
+- **What it runs.** Every 5 minutes it starts read-only jobs while fewer than `scout.max_in_flight` are out: `garden` (one provable weed) and `kintsugi-trace` (a ledger of graded cracks), the templates `scout.templates` names. Each job is pinned to `SCOUT_MODEL`: a pinned run waits for a free local slot and never moves to a hosted model, so the scout spends nothing.
+- **Where.** The repositories the world map shows, plus `SCOUT_REPOS` and minus `SCOUT_EXCLUDE`, and each area of one that declares [areas](areas.md) (the job is told to look only under the area's paths). A unit, one repository or area and one template, is scouted again after `scout.revisit_hours`; never-scouted units go first, then the longest ago. A model reads the same code differently run to run, and the lead id of what it found before keeps a repeat from becoming a second lead.
+- **What becomes a lead.** When a job finishes, its deliverable is read once: each ledger row a `crack`, a weed card a `weed`, at most `scout.max_leads_per_job` a job, the worst first. A failed job yields nothing.
 - **What reaches chat.** Only a crack graded `break` (high) is asked in chat; every other crack and every weed stays on the page, so a scout running all day does not fill the chat.
-- **Brakes.** `SCOUT_MAX_IN_FLIGHT` is the one that counts: never more jobs out at once. Its jobs are dispatched by `embry0:scout`, which is exempt from `RATE_LIMIT_PER_AUTHOR_PER_HOUR` (that limit would hold it to a few jobs an hour), and each has a hard budget in case its pin is ever lost. The fleet's daily and monthly budget gates still apply.
+- **Brakes.** `scout.max_in_flight` is the one that counts: never more jobs out at once. `0` starts none, while the jobs already out are still read into leads. `scout.max_jobs_per_day`, off by default, caps the jobs started in any 24 hours. Its jobs are dispatched by `embry0:scout`, which is exempt from `RATE_LIMIT_PER_AUTHOR_PER_HOUR` (that limit would hold it to a few jobs an hour), and each has a hard budget, `scout.job_budget_usd`, in case its pin is ever lost. The fleet's daily and monthly budget gates still apply.
 
 ## Backlog tickets
 

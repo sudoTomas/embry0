@@ -7,14 +7,20 @@ cracks). Every job is pinned to the operator's local model (``SCOUT_MODEL``),
 so the loop never spends on a hosted model: a pinned run waits for a free local
 slot instead of moving to one.
 
+Its policy is the settings document's ``scout`` section
+(:mod:`embry0.settings.sections.scout`), read at the top of every tick, so a
+change applies on the next one: which templates run, how many jobs are out at
+once and start in a day, each job's hard cap, how often a unit comes back and
+how many leads a job adds.
+
 When a job finishes, its deliverable becomes leads: one ``weed`` per weed card
 and one ``crack`` per ledger row, the worst first and at most
-``SCOUT_MAX_LEADS_PER_JOB``. The owner proposals feed offers them like every
+``scout.max_leads_per_job``. The owner proposals feed offers them like every
 other lead; a crack below ``break`` and every weed stay on the page instead of
 being asked in chat (``embry0.services.proposal_briefs.held``).
 
 A unit (repository, area, template) is scouted again after
-``SCOUT_REVISIT_HOURS``: a model's reading differs run to run, and the lead id
+``scout.revisit_hours``: a model's reading differs run to run, and the lead id
 of what it found before keeps a repeat from becoming a second lead.
 """
 
@@ -33,13 +39,16 @@ import structlog
 from embry0.orchestration import dispatch_actors
 from embry0.services.areas import Area
 from embry0.services.leads import Lead, by_severity
+from embry0.settings.sections.scout import ScoutSettings
 
 logger = structlog.get_logger(__name__)
 
 #: The actor of every job the loop starts, in ``jobs.dispatched_by`` and the per-actor rate limit.
 ACTOR = dispatch_actors.SCOUT
-#: The templates a scout may run: read-only, each with a deliverable this module reads.
-TEMPLATES: tuple[str, ...] = ("garden", "kintsugi-trace")
+#: Seconds between ticks. Not a setting: what the scout starts is bounded by the
+#: section's caps, and a tick only says how soon it looks again, and so how soon
+#: a change to the section applies.
+TICK_SECONDS = 300.0
 #: Statuses after which a job's deliverable is final.
 _DONE = frozenset({"completed", "failed", "partial", "cancelled", "expired", "skipped"})
 #: Kintsugi grades to lead severities (embry0/workflows/issue_to_pr/specialist_agents.py, Grades).
@@ -54,33 +63,31 @@ _FILE_EXTENSIONS = frozenset(
 )
 
 
-@dataclass(frozen=True)
-class ScoutSettings:
-    #: The model every scouting job runs on; empty turns the loop off.
-    model: str = ""
-    templates: tuple[str, ...] = TEMPLATES
-    max_in_flight: int = 2
-    revisit_hours: float = 24.0
-    tick_seconds: float = 300.0
-    max_leads_per_job: int = 5
-    #: The hard cap of a job, in case its pin is ever lost: a local model bills nothing.
-    budget_usd: float = 1.0
+def scout_model(config: Any) -> str:
+    """The model every scouting job is pinned to (``SCOUT_MODEL``); empty turns the loop off."""
+    return str(getattr(config, "scout_model", "") or "").strip()
 
 
-def scout_settings(config: Any) -> ScoutSettings:
-    names = [t.strip() for t in str(getattr(config, "scout_templates", "") or "").split(",") if t.strip()]
-    unknown = sorted(set(names) - set(TEMPLATES))
-    if unknown:
-        logger.warning("scout_unknown_templates", unknown=unknown, known=list(TEMPLATES))
-    templates = tuple(t for t in TEMPLATES if t in names) if names else TEMPLATES
-    return ScoutSettings(
-        model=str(getattr(config, "scout_model", "") or "").strip(),
-        templates=templates or TEMPLATES,
-        max_in_flight=max(0, int(getattr(config, "scout_max_in_flight", 2))),
-        revisit_hours=float(getattr(config, "scout_revisit_hours", 24)),
-        tick_seconds=max(30.0, float(getattr(config, "scout_tick_seconds", 300))),
-        max_leads_per_job=max(1, int(getattr(config, "scout_max_leads_per_job", 5))),
+def warn_retired_tick(config: Any) -> bool:
+    """Warn once, at startup, while ``SCOUT_TICK_SECONDS`` is set: it is no longer read.
+
+    In the shape of ``settings_env_ignored``: the variable, whether its value
+    is what runs now (``matches``), and what to do. The value itself is not
+    logged. Whether the variable is set, from the environment or ``.env``.
+    """
+    if "scout_tick_seconds" not in (getattr(config, "model_fields_set", None) or set()):
+        return False
+    try:
+        matches = float(str(getattr(config, "scout_tick_seconds", "")).strip()) == TICK_SECONDS
+    except ValueError:
+        matches = False
+    logger.warning(
+        "settings_env_retired",
+        variable="SCOUT_TICK_SECONDS",
+        matches=matches,
+        hint=f"no longer read: the scout ticks every {TICK_SECONDS:g} s, a constant; remove the variable",
     )
+    return True
 
 
 # ---- what one unit is asked ----
@@ -300,6 +307,7 @@ def leads_of(template: str, repo: str, area: str, job_id: str, report: str | Non
 class _Runs(Protocol):
     async def record(self, *, job_id: str, repo: str, area: str, template: str, now: datetime) -> None: ...
     async def last_dispatched(self) -> dict[tuple[str, str, str], datetime]: ...
+    async def dispatched_since(self, since: datetime) -> int: ...
     async def unharvested(self) -> list[dict[str, Any]]: ...
     async def harvested(self, job_id: str, *, leads: int, now: datetime) -> None: ...
 
@@ -318,7 +326,10 @@ class _Leads(Protocol):
 
 @dataclass
 class ScoutLoop:
-    settings: ScoutSettings
+    #: The model every scouting job is pinned to: ``scout_model(config)``. Empty turns the loop off.
+    model: str
+    #: The ``scout`` section, read at the top of every tick: ``section_reader(store, SCOUT)`` in production.
+    settings: Callable[[], Awaitable[ScoutSettings]]
     runs: _Runs
     jobs: _Jobs
     leads: _Leads
@@ -331,13 +342,13 @@ class ScoutLoop:
     #: Starts a created job on the executor (and writes its audit row).
     submit: Callable[[str, Unit, str], Awaitable[None]]
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    #: Whether the last tick could start jobs (``max_in_flight`` above 0); None before the first.
+    _starting: bool | None = field(default=None, init=False, repr=False)
 
-    @property
-    def enabled(self) -> bool:
-        return bool(self.settings.model) and self.settings.max_in_flight > 0
-
-    async def harvest(self) -> int:
+    async def harvest(self, policy: ScoutSettings | None = None) -> int:
         """Turn every finished scouting job into leads, once; how many leads were stored."""
+        if policy is None:
+            policy = await self.settings()
         stored = 0
         now = self.clock()
         for run in await self.runs.unharvested():
@@ -353,7 +364,7 @@ class ScoutLoop:
                     str(run.get("area") or ""),
                     str(run["job_id"]),
                     job.get("result_summary"),
-                    self.settings.max_leads_per_job,
+                    policy.max_leads_per_job,
                 )
             if found:
                 area = str(run.get("area") or "") or None
@@ -363,35 +374,40 @@ class ScoutLoop:
             logger.info("scout_harvested", job_id=run["job_id"], status=status or "gone", leads=len(found))
         return stored
 
-    async def dispatch(self) -> list[str]:
-        """Start the most overdue units while fewer than ``max_in_flight`` scouting jobs are out."""
+    async def dispatch(self, policy: ScoutSettings | None = None) -> list[str]:
+        """Start the most overdue units while fewer than ``max_in_flight`` scouting jobs are out,
+        and fewer than ``max_jobs_per_day`` started in the last 24 hours."""
+        if policy is None:
+            policy = await self.settings()
         in_flight = len(await self.runs.unharvested())
-        room = self.settings.max_in_flight - in_flight
+        room = policy.max_in_flight - in_flight
         if room <= 0:
             return []
         now = self.clock()
+        if policy.max_jobs_per_day is not None:
+            room = min(room, policy.max_jobs_per_day - await self.runs.dispatched_since(now - timedelta(days=1)))
+            if room <= 0:
+                return []
         candidates: list[Unit] = []
         for repo in await self.repos():
             try:
                 areas = await self.areas_for(repo)
             except Exception:  # noqa: BLE001 - a repository we cannot read is scouted whole
                 areas = []
-            candidates += units(repo, areas, self.settings.templates)
+            candidates += units(repo, areas, policy.templates)
         started: list[str] = []
-        for unit in due(
-            candidates, await self.runs.last_dispatched(), now, timedelta(hours=self.settings.revisit_hours)
-        ):
+        for unit in due(candidates, await self.runs.last_dispatched(), now, timedelta(hours=policy.revisit_hours)):
             if len(started) >= room:
                 break
             refusal = await self.ask_gate()
             if refusal is not None:
                 logger.info("scout_gate_refused", reason=getattr(refusal, "message", str(refusal))[:200])
                 break
-            job_id = await self._start(unit, now)
+            job_id = await self._start(unit, now, policy)
             started.append(job_id)
         return started
 
-    async def _start(self, unit: Unit, now: datetime) -> str:
+    async def _start(self, unit: Unit, now: datetime, policy: ScoutSettings) -> str:
         text = task(unit)
         job_id = await self.jobs.create(
             repo=unit.repo,
@@ -400,8 +416,8 @@ class ScoutLoop:
             pipeline_template=unit.template,
             pipeline_config={
                 # A pin, not a preference: with every local slot taken the run waits for one.
-                "agent_models_override": {"*": self.settings.model},
-                "max_budget_usd": self.settings.budget_usd,
+                "agent_models_override": {"*": self.model},
+                "max_budget_usd": policy.job_budget_usd,
                 "budget_overrun_mode": "hard",
                 "actor": ACTOR,
             },
@@ -414,19 +430,33 @@ class ScoutLoop:
         logger.info("scout_started", job_id=job_id, repo=unit.repo, area=unit.area, template=unit.template)
         return job_id
 
-    async def tick(self) -> dict[str, Any]:
-        harvested = await self.harvest()
-        started = await self.dispatch() if self.enabled else []
+    async def tick(self, policy: ScoutSettings | None = None) -> dict[str, Any]:
+        """One pass with the policy read now (or ``policy``, read by the caller this tick).
+
+        Finished jobs are read into leads whatever the policy; new jobs start
+        only with a model and ``max_in_flight`` above 0.
+        """
+        if policy is None:
+            policy = await self.settings()
+        starting = policy.max_in_flight > 0
+        if starting != self._starting:
+            # The first tick says only a pause: start() has said the scout is on.
+            if self._starting is not None or not starting:
+                logger.info("scout_starting" if starting else "scout_paused", reason="scout.max_in_flight")
+            self._starting = starting
+        harvested = await self.harvest(policy)
+        started = await self.dispatch(policy) if self.model and starting else []
         return {"harvested_leads": harvested, "started": started}
 
     async def start(self) -> None:  # pragma: no cover - exercised by the app
-        if not self.enabled:
-            logger.info("scout_off", reason="SCOUT_MODEL is empty" if not self.settings.model else "max_in_flight 0")
+        """Tick for ever while a model is set; the section is read every tick, so its changes need no restart."""
+        if not self.model:
+            logger.info("scout_off", reason="SCOUT_MODEL is empty")
             return
-        logger.info("scout_on", model=self.settings.model, templates=list(self.settings.templates))
+        logger.info("scout_on", model=self.model)
         while True:
             try:
                 await self.tick()
             except Exception:  # noqa: BLE001 - the loop goes on
                 logger.warning("scout_tick_failed", exc_info=True)
-            await asyncio.sleep(self.settings.tick_seconds)
+            await asyncio.sleep(TICK_SECONDS)

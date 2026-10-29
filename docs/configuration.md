@@ -123,15 +123,17 @@ embry0 uses environment variables for infrastructure config and API endpoints fo
 
 ### Scout
 
+The scout's policy is the `scout` section of the [settings document](#settings-document) now ([its keys](#settings-reference)): which templates run, how many jobs are out at once and start in a day, each job's hard cap, how often a repository is scouted again and how many leads a job adds. The model and the repository lists stay variables until the one map of background models (#164) and the one repository scope rule (#165) take them.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SCOUT_MODEL` | (empty) | The model the scout pins its read-only `garden` and `kintsugi-trace` jobs to, a model on the operator's own server (`custom/<model>`); their cracks and weeds become leads ([leads.md](leads.md#the-scout-cracks-and-weeds)). Empty turns the scout off |
-| `SCOUT_TEMPLATES` | `garden,kintsugi-trace` | The templates the scout runs; names it does not know are ignored, and a list naming none falls back to both |
-| `SCOUT_MAX_IN_FLIGHT` | `2` | Most scouting jobs out at once; `0` starts none. Keep it below the local server's slots so the watcher and briefs still get one |
-| `SCOUT_REVISIT_HOURS` | `24` | Hours before a repository or area is scouted again with the same template |
-| `SCOUT_TICK_SECONDS` | `300` | How often the scout harvests finished jobs and starts new ones (at least 30) |
-| `SCOUT_MAX_LEADS_PER_JOB` | `5` | Most leads one scouting job adds, the worst first |
-| `SCOUT_REPOS` / `SCOUT_EXCLUDE` | (empty) | Comma-separated repositories added to, or taken from, the world map's for the scout |
+| `SCOUT_MODEL` | (empty) | The model the scout pins its read-only `garden` and `kintsugi-trace` jobs to, a model on the operator's own server (`custom/<model>`); their cracks and weeds become leads ([leads.md](leads.md#the-scout-cracks-and-weeds)). Empty turns the scout off. Read at startup |
+| `SCOUT_REPOS` / `SCOUT_EXCLUDE` | (empty) | Comma-separated repositories added to, or taken from, the world map's for the scout. Read at startup |
+| `SCOUT_TEMPLATES` | `garden,kintsugi-trace` | Governed by the settings document (`scout.templates`). Read once, at the first start of the release that added the section, as the scout ran it (an unknown name dropped, none known meaning both), and ignored after that |
+| `SCOUT_MAX_IN_FLIGHT` | `2` | Governed by the settings document (`scout.max_in_flight`). Read once, at the first start of the release that added the section, and ignored after that |
+| `SCOUT_REVISIT_HOURS` | `24` | Governed by the settings document (`scout.revisit_hours`). Read once, at the first start of the release that added the section, and ignored after that |
+| `SCOUT_MAX_LEADS_PER_JOB` | `5` | Governed by the settings document (`scout.max_leads_per_job`). Read once, at the first start of the release that added the section, and ignored after that |
+| `SCOUT_TICK_SECONDS` | — | No longer read: the scout looks every 5 minutes (300 s), which is also how soon a change to its section applies. While it is still set, startup logs `settings_env_retired` naming it; remove it. The next release stops reading it at all |
 
 ### Proposal and job briefs
 
@@ -280,6 +282,7 @@ asks:
 - **After a rollback.** A section or a key that a newer release wrote and this one does not know is kept as long as it is sent back exactly as stored (as the stored text has it, or as GET's `data` does), and is listed in `unknown_sections` or `unknown_keys`.
 - **Moved so far**, one section per bullet, in name order:
   - The asks policy (`asks`, from `ASKS_ENABLED` and the `ASK_*` variables): the ask loop reads it every tick and `GET /api/v1/asks/due` on every request, so turning asks on or changing their hours needs no restart.
+  - The scout's policy (`scout`, from `SCOUT_TEMPLATES`, `SCOUT_MAX_IN_FLIGHT`, `SCOUT_REVISIT_HOURS` and `SCOUT_MAX_LEADS_PER_JOB`, plus each job's hard cap, until now fixed at 1 USD, and a daily cap, off by default): the scout reads it every tick, so a change applies within 5 minutes with no restart. `SCOUT_MODEL`, `SCOUT_REPOS` and `SCOUT_EXCLUDE` stay variables (#164, #165).
 
 ### Settings reference
 
@@ -301,6 +304,19 @@ When and how often embry0 asks a person about a decision that waits on them.
 | `expire_days` | number | `7.0` | > 0, ≤ 365 | organization | `ASK_EXPIRE_DAYS` | Days after which an unanswered ask expires. That answers nothing, and the person is not asked about that decision again. |
 | `max_open_per_person` | whole number | `3` | ≥ 1 | organization | `ASK_MAX_OPEN_PER_PERSON` | Unanswered asks one person holds at once; the next, worst first, is released as one is answered or expires. |
 | `tick_seconds` | number | `120.0` | ≥ 30, ≤ 86400 |  | `ASK_TICK_SECONDS` | How often the ask loop runs: it expires asks past `expire_days`, withdraws those whose decision was answered or moved on, and queues one for each person a decision now waits on. |
+
+#### `scout`
+
+What the scout runs, how often it comes back to a repository, and how much it may start and spend.
+
+| Key | Type | Default | Allowed | Overridable by | Imported from | Description |
+|---|---|---|---|---|---|---|
+| `templates` | list of text | `["garden", "kintsugi-trace"]` | each one of `"garden"`, `"kintsugi-trace"` | organization | `SCOUT_TEMPLATES` | The templates the scout runs on each repository and area, at least one and each named once: garden (one provable weed) and kintsugi-trace (a ledger of graded cracks). |
+| `max_in_flight` | whole number | `2` | ≥ 0, ≤ 64 |  | `SCOUT_MAX_IN_FLIGHT` | Most scouting jobs out at once; 0 starts none, and the jobs already out are still read into leads. Keep it below the local model server's slots so the watcher and briefs still get one. |
+| `revisit_hours` | number | `24.0` | > 0, ≤ 8760 | organization | `SCOUT_REVISIT_HOURS` | Hours before a repository or area is scouted again with the same template. |
+| `max_leads_per_job` | whole number | `5` | ≥ 1, ≤ 100 | organization | `SCOUT_MAX_LEADS_PER_JOB` | Most leads one scouting job adds, the worst first. |
+| `job_budget_usd` | number | `1.0` | > 0, ≤ 1000 |  |  | The hard cap of one scouting job, in US dollars. A job pinned to the local model bills nothing; this stops one whose pin is ever lost. |
+| `max_jobs_per_day` | whole number or null | `null` | ≥ 0, ≤ 10000 |  |  | Most scouting jobs started in any 24 hours; null sets no cap, and 0 starts none. |
 
 <!-- settings-reference:end -->
 

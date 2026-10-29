@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from embry0.settings.registry import Catalog
 from embry0.settings.sections.asks import ASKS
+from embry0.settings.sections.scout import SCOUT
 
 CATALOG: Catalog = Catalog(
     [
         ASKS,
+        SCOUT,
     ]
 )

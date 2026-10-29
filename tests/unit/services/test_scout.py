@@ -2,28 +2,33 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
+from structlog.testing import capture_logs
 
+from embry0.config import Embry0Config
 from embry0.orchestration import dispatch_actors
 from embry0.services.areas import Area
 from embry0.services.scout import (
     ACTOR,
     ScoutLoop,
-    ScoutSettings,
     Unit,
     crack_leads,
     due,
     parse_ledger,
     parse_weed,
-    scout_settings,
+    scout_model,
     task,
     units,
+    warn_retired_tick,
     weed_leads,
 )
+from embry0.settings.sections.scout import ScoutSettings
 
 T0 = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
 LOCAL = "custom/qwen3-27b"
@@ -115,15 +120,35 @@ def test_never_scouted_units_go_first_then_the_longest_ago_and_a_recent_one_wait
     assert due([a, b, c], last, T0, timedelta(hours=24)) == [b, a]
 
 
-def test_settings_turn_the_loop_off_without_a_model_and_drop_unknown_templates() -> None:
-    off = scout_settings(SimpleNamespace(scout_model="", scout_templates="garden"))
-    assert off.model == ""
-    on = scout_settings(SimpleNamespace(scout_model=f" {LOCAL} ", scout_templates="garden,bogus"))
-    assert on.model == LOCAL and on.templates == ("garden",)
-    assert scout_settings(SimpleNamespace(scout_model=LOCAL, scout_templates="bogus")).templates == (
-        "garden",
-        "kintsugi-trace",
-    ), "a list naming no known template falls back to both"
+def test_the_model_comes_from_the_environment_and_none_turns_the_loop_off() -> None:
+    assert scout_model(SimpleNamespace(scout_model="")) == ""
+    assert scout_model(SimpleNamespace(scout_model=f" {LOCAL} ")) == LOCAL
+    assert scout_model(SimpleNamespace()) == ""
+
+
+def _retired_tick_warnings(**env: str) -> tuple[bool, list[dict[str, Any]]]:
+    with patch.dict(os.environ, env, clear=True):
+        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
+    with capture_logs() as logs:
+        warned = warn_retired_tick(config)
+    return warned, [e for e in logs if e["event"] == "settings_env_retired"]
+
+
+@pytest.mark.parametrize(("value", "matches"), [("60", False), ("300", True), ("soon", False)])
+def test_a_tick_variable_still_set_is_named_in_one_warning_saying_the_tick_is_fixed(value: str, matches: bool) -> None:
+    """SCOUT_TICK_SECONDS is no longer read; the config ignores what it does not read, so only this says so."""
+    warned, events = _retired_tick_warnings(SCOUT_TICK_SECONDS=value)
+    assert warned and len(events) == 1, (
+        f"SCOUT_TICK_SECONDS={value!r} is set and no longer read: startup says so once, not silently: {events}"
+    )
+    (event,) = events
+    assert (event["log_level"], event["variable"], event["matches"]) == ("warning", "SCOUT_TICK_SECONDS", matches)
+    assert "300 s" in event["hint"], "the warning says the tick is fixed at 300 s"
+    assert set(event) == {"event", "log_level", "variable", "matches", "hint"}, "the value itself is not logged"
+
+
+def test_an_unset_tick_variable_warns_nothing() -> None:
+    assert _retired_tick_warnings() == (False, []), "nothing set, nothing to say"
 
 
 # ---- reading deliverables ----
@@ -193,6 +218,9 @@ class FakeRuns:
             out[key] = max(out.get(key, r["dispatched_at"]), r["dispatched_at"])
         return out
 
+    async def dispatched_since(self, since: datetime) -> int:
+        return sum(1 for r in self.rows if r["dispatched_at"] >= since)
+
     async def unharvested(self) -> list[dict[str, Any]]:
         return [r for r in self.rows if "harvested" not in r]
 
@@ -224,6 +252,21 @@ class FakeLeads:
         self.stored.append((list(leads), areas))
 
 
+class Policy:
+    """The ``scout`` section as a test hands it to the loop: ``set`` replaces it before the next tick."""
+
+    def __init__(self, **values: Any) -> None:
+        self.set(**values)
+        self.reads = 0
+
+    def set(self, **values: Any) -> None:
+        self.current = ScoutSettings(**values)
+
+    async def __call__(self) -> ScoutSettings:
+        self.reads += 1
+        return self.current
+
+
 def make_loop(*, repos: list[str], areas: dict[str, list[Area]] | None = None, refuse: Any = None, **settings: Any):
     runs, jobs, leads = FakeRuns(), FakeJobs(), FakeLeads()
     submitted: list[tuple[str, Unit, str]] = []
@@ -241,7 +284,8 @@ def make_loop(*, repos: list[str], areas: dict[str, list[Area]] | None = None, r
         submitted.append((job_id, unit, text))
 
     loop = ScoutLoop(
-        settings=ScoutSettings(model=LOCAL, **settings),
+        model=LOCAL,
+        settings=Policy(**settings),
         runs=runs,
         jobs=jobs,
         leads=leads,
@@ -308,10 +352,61 @@ async def test_a_job_s_leads_are_capped_the_worst_first() -> None:
 @pytest.mark.asyncio
 async def test_without_a_model_the_loop_harvests_but_starts_nothing() -> None:
     loop, runs, jobs, _, submitted = make_loop(repos=["acme/a"])
-    loop.settings = ScoutSettings(model="")
-    assert loop.enabled is False
+    loop.model = ""
     assert await loop.tick() == {"harvested_leads": 0, "started": []}
     assert submitted == []
+
+
+# ---- the policy, read from the settings document's scout section every tick ----
+
+
+@pytest.mark.asyncio
+async def test_a_tick_reads_the_section_once_and_the_next_tick_reads_it_again() -> None:
+    loop, _, jobs, _, _ = make_loop(repos=["acme/a"], templates=("garden",), max_in_flight=1)
+    policy = loop.settings
+    first = await loop.tick()
+    assert policy.reads == 1, "harvest and dispatch read one snapshot of the section per tick"
+    assert [jobs.rows[j]["created_with"]["pipeline_template"] for j in first["started"]] == ["garden"]
+
+    policy.set(templates=("kintsugi-trace",), max_in_flight=2)
+    second = await loop.tick()
+    assert policy.reads == 2, "the next tick reads the section again"
+    assert [jobs.rows[j]["created_with"]["pipeline_template"] for j in second["started"]] == ["kintsugi-trace"], (
+        "the next tick runs the templates and the in-flight cap the section holds now, with no restart"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_job_s_hard_cap_is_the_section_s_job_budget() -> None:
+    loop, _, jobs, _, _ = make_loop(repos=["acme/a"], job_budget_usd=0.25, max_in_flight=1)
+    (job_id,) = await loop.dispatch()
+    config = jobs.rows[job_id]["created_with"]["pipeline_config"]
+    assert (config["max_budget_usd"], config["budget_overrun_mode"]) == (0.25, "hard"), (
+        "each scouting job's hard cap is scout.job_budget_usd, not a literal"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_daily_cap_counts_the_jobs_started_in_the_last_24_hours() -> None:
+    loop, runs, _, _, _ = make_loop(repos=["acme/a", "acme/b", "acme/c"], max_in_flight=5, max_jobs_per_day=2)
+    for job_id, hours_ago in (("old", 25), ("recent", 3)):
+        await runs.record(job_id=job_id, repo="acme/z", area="", template="garden", now=T0 - timedelta(hours=hours_ago))
+        await runs.harvested(job_id, leads=0, now=T0)
+    assert len(await loop.dispatch()) == 1, "one started 3 hours ago, so one more fits under 2 a day"
+    assert await loop.dispatch() == [], "two in the last 24 hours: none more, though the in-flight cap has room"
+    loop.settings.set(max_in_flight=5, max_jobs_per_day=None)
+    assert len(await loop.dispatch()) == 4, "no daily cap: only the in-flight cap holds it, five out with one out"
+
+
+@pytest.mark.asyncio
+async def test_with_none_in_flight_allowed_the_loop_still_harvests_and_starts_again_when_raised() -> None:
+    loop, runs, jobs, leads, submitted = make_loop(repos=["acme/a"], max_in_flight=0)
+    await runs.record(job_id="job-1", repo="acme/a", area="", template="kintsugi-trace", now=T0)
+    jobs.rows["job-1"] = {"status": "completed", "result_summary": LEDGER}
+    assert await loop.tick() == {"harvested_leads": 3, "started": []}, "0 in flight starts none, and still harvests"
+    assert submitted == []
+    loop.settings.set(max_in_flight=1)
+    assert len((await loop.tick())["started"]) == 1, "raised in the section: the same loop starts on its next tick"
 
 
 # ---- where the leads go ----
