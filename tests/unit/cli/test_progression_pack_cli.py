@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 import pytest
 
+from embry0.cli.exit_codes import CONFLICT, REFUSED, UNAVAILABLE, USAGE
 from embry0.cli.progression_pack import run
 from embry0.services.progression_pack import PackInvalid, default_text
 from embry0.services.progression_pack_store import read_text
@@ -64,15 +65,15 @@ def test_check_exits_1_with_the_messages_a_write_is_refused_with(
     with pytest.raises(PackInvalid) as refused:  # the API's own validator, as a write meets it
         read_text(text)
     expected = [str(p) for p in refused.value.problems]
-    assert run(_args("check", file=_file(tmp_path, text))) == 1
+    assert run(_args("check", file=_file(tmp_path, text))) == REFUSED
     printed = capsys.readouterr().err.splitlines()
     assert printed == expected, "check prints exactly the API's problems, one per line, as key: message"
     assert [line.split(":", 1)[0] for line in printed] == keys
 
 
-def test_check_refuses_a_missing_or_oversized_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert run(_args("check", file=str(tmp_path / "nope.yaml"))) == 1
-    assert run(_args("check", file=_file(tmp_path, "#" * (256 * 1024 + 1)))) == 1
+def test_check_of_a_missing_or_oversized_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert run(_args("check", file=str(tmp_path / "nope.yaml"))) == USAGE
+    assert run(_args("check", file=_file(tmp_path, "#" * (256 * 1024 + 1)))) == REFUSED
     assert "larger than 256 KiB" in capsys.readouterr().err
 
 
@@ -112,7 +113,7 @@ def test_diff_prints_each_problem_of_a_422_and_exits_1(tmp_path: Path, capsys: p
         {"loc": ["achievements", 3, "thresholds"], "type": "thresholds", "msg": "3 values"},
     ]
     api = _Api(httpx.Response(422, json={"detail": detail}))
-    assert run(_args("diff", file=_file(tmp_path, BAD)), transport=api.transport) == 1
+    assert run(_args("diff", file=_file(tmp_path, BAD)), transport=api.transport) == REFUSED
     err = capsys.readouterr().err
     assert "curve.max_level: Input should be less than or equal to 200" in err
     assert "achievements[3].thresholds: 3 values" in err
@@ -148,14 +149,14 @@ def test_apply_shows_the_diff_then_activates_against_the_version_it_diffed(
 def test_apply_refuses_without_a_terminal_or_yes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     api = _Api(_preview(True))
-    assert run(_args("apply", file=_file(tmp_path, COPPER)), transport=api.transport) == 2
+    assert run(_args("apply", file=_file(tmp_path, COPPER)), transport=api.transport) == USAGE
     assert len(api.seen) == 1, "only the dry run went out"
 
 
 def test_apply_reports_a_pack_changed_since_the_diff(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     conflict = httpx.Response(409, json={"detail": "The active pack changed since you read it (now version 6)."})
     api = _Api(_preview(True), conflict)
-    assert run(_args("apply", file=_file(tmp_path, COPPER), yes=True), transport=api.transport) == 1
+    assert run(_args("apply", file=_file(tmp_path, COPPER), yes=True), transport=api.transport) == CONFLICT
     assert "now version 6" in capsys.readouterr().err
 
 
@@ -185,13 +186,13 @@ def test_export_says_when_the_stored_pack_is_refused(capsys: pytest.CaptureFixtu
     assert "the stored version 4 is refused" in captured.err, "the export must say it is not the stored text"
 
 
-def test_an_unreachable_orchestrator_or_a_bad_key_exits_2(tmp_path: Path) -> None:
+def test_an_unreachable_orchestrator_or_a_bad_key_is_unavailable(tmp_path: Path) -> None:
     def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
 
-    assert run(_args("export"), transport=httpx.MockTransport(down)) == 2
+    assert run(_args("export"), transport=httpx.MockTransport(down)) == UNAVAILABLE
     api = _Api(httpx.Response(401, json={"detail": "bad key"}))
-    assert run(_args("diff", file=_file(tmp_path, COPPER)), transport=api.transport) == 2
+    assert run(_args("diff", file=_file(tmp_path, COPPER)), transport=api.transport) == UNAVAILABLE
 
 
 def test_the_subcommand_is_wired(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -834,7 +834,8 @@ def cmd_progression_pack(args: argparse.Namespace) -> None:
     """Handle ``embry0 progression-pack check|diff|apply|export`` (#176).
 
     ``check`` runs offline; the other verbs are thin clients of
-    ``/api/v1/progression/pack`` on the running orchestrator.
+    ``/api/v1/progression/pack`` on the running orchestrator. The exit codes
+    are in :mod:`embry0.cli.exit_codes`, shared with ``embry0 settings``.
     """
     from embry0.cli import progression_pack
 
@@ -849,7 +850,7 @@ def cmd_settings(args: argparse.Namespace) -> None:
 
     ``check``, ``import-env`` and ``export --default`` run offline; the other
     verbs are thin clients of ``/api/v1/config/settings`` on the running
-    orchestrator. The exit codes are in :mod:`embry0.cli.settings`.
+    orchestrator. The exit codes are in :mod:`embry0.cli.exit_codes`.
     """
     from embry0.cli import settings
 

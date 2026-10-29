@@ -14,10 +14,17 @@ sends nothing more when the file is the pack already in effect (so it makes
 no version), and names the version it diffed against in ``If-Match``, so a
 pack someone changed in between is refused rather than overwritten.
 
-Exit codes: 0 done (or valid, or nothing to change); 1 the pack has
-problems, the pack changed since the diff, or the confirmation was declined;
-2 the orchestrator could not be reached or refused the key, or ``apply`` ran
-without a terminal and without ``--yes``.
+Exit codes, for scripts, the same as ``embry0 settings``'s
+(:mod:`embry0.cli.exit_codes`):
+
+    0  done: valid, activated, nothing to change, written
+    1  refused: the pack has problems (the API's 422, or ``check``), is
+       larger than 256 KiB (413) or is not UTF-8 text, or the answer was no
+    2  usage: a bad argument, a file that cannot be read or written, or
+       ``apply`` without a terminal to confirm on and without ``--yes``
+    3  conflict: the pack in effect changed since the diff (409)
+    4  unavailable: the orchestrator cannot be reached, refused the key
+       (401, 403), or failed
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ from typing import Any
 
 import httpx
 
+from embry0.cli.exit_codes import CONFLICT, OK, REFUSED, SUMMARY, UNAVAILABLE, USAGE
 from embry0.services.progression_pack import MAX_TEXT_BYTES, Problem
 from embry0.services.progression_pack_store import pack_warnings, validate_text
 
@@ -46,20 +54,20 @@ def _err(message: str) -> None:
 
 
 def _read(path: str) -> str:
-    """The file's text; exit 1 when it cannot be read or is past the pack's limit."""
+    """The file's text. A file that cannot be read is a usage error; one the API would refuse is refused."""
     file = Path(path)
     try:
         size = file.stat().st_size
         if size > MAX_TEXT_BYTES:
             _err(f"{path}: the pack is larger than {MAX_TEXT_BYTES // 1024} KiB")
-            raise _Exit(1)
+            raise _Exit(REFUSED)
         return file.read_text(encoding="utf-8")
     except OSError as exc:
         _err(f"{path}: cannot be read ({exc.strerror or exc})")
-        raise _Exit(1) from None
+        raise _Exit(USAGE) from None
     except UnicodeDecodeError:
         _err(f"{path}: the pack must be UTF-8 text")
-        raise _Exit(1) from None
+        raise _Exit(REFUSED) from None
 
 
 def _problems(detail: Any) -> list[str]:
@@ -77,29 +85,32 @@ def _problems(detail: Any) -> list[str]:
 
 
 def _send(client: httpx.Client, method: str, path: str, **kwargs: Any) -> httpx.Response:
-    """One request; a 401, any refusal but a 422 or 409, and an unreachable orchestrator end the command."""
+    """One request. Every answer but a success ends the command with its exit code."""
     try:
         response = client.request(method, path, **kwargs)
     except httpx.TransportError:
         _err(f"cannot reach the orchestrator at {client.base_url} — is the stack running? (embry0 start)")
-        raise _Exit(2) from None
+        raise _Exit(UNAVAILABLE) from None
     if response.status_code == 401:
         _err("the orchestrator rejected the request (401) — set EMBRY0_API_KEY or pass --api-key")
-        raise _Exit(2)
+        raise _Exit(UNAVAILABLE)
     if response.status_code == 403:
         _err(f"refused (403): {_detail(response)} — writing the pack needs an admin key without a repository allowlist")
-        raise _Exit(2)
+        raise _Exit(UNAVAILABLE)
     if response.status_code == 422:
         _err("the pack has problems:")
         for line in _problems(_json(response).get("detail")):
             _err(f"  {line}")
-        raise _Exit(1)
+        raise _Exit(REFUSED)
+    if response.status_code == 413:
+        _err(f"refused (413): {_detail(response)}")
+        raise _Exit(REFUSED)
     if response.status_code == 409:
         _err(f"{_detail(response)}")
-        raise _Exit(1)
+        raise _Exit(CONFLICT)
     if response.status_code >= 400:
         _err(f"the orchestrator refused the request ({response.status_code}): {_detail(response)}")
-        raise _Exit(2)
+        raise _Exit(UNAVAILABLE)
     return response
 
 
@@ -148,16 +159,16 @@ def _check(args: argparse.Namespace) -> int:
     if pack is None:
         for problem in problems:
             _err(str(problem))
-        return 1
+        return REFUSED
     for warning in pack_warnings(pack):
         _err(f"warning: {warning}")
     print("the pack is valid")
-    return 0
+    return OK
 
 
 def _diff(args: argparse.Namespace, client: httpx.Client) -> int:
     _show(_dry_run(client, _read(args.file)))
-    return 0
+    return OK
 
 
 def _confirmed(args: argparse.Namespace) -> bool:
@@ -165,7 +176,7 @@ def _confirmed(args: argparse.Namespace) -> bool:
         return True
     if not sys.stdin.isatty():
         _err("refusing to apply without a terminal to confirm on; pass --yes")
-        raise _Exit(2)
+        raise _Exit(USAGE)
     answer = input("Activate this pack? It re-prices the whole history. [y/N] ")
     return answer.strip().lower() in ("y", "yes")
 
@@ -176,10 +187,10 @@ def _apply(args: argparse.Namespace, client: httpx.Client) -> int:
     _show(preview)
     if not preview.get("would_change"):
         print("nothing changes: this is the pack in effect, so no version is recorded")
-        return 0
+        return OK
     if not _confirmed(args):
         _err("not applied")
-        return 1
+        return REFUSED
     params: dict[str, Any] = {"source": "file"}
     if args.reason:
         params["reason"] = args.reason
@@ -195,10 +206,10 @@ def _apply(args: argparse.Namespace, client: httpx.Client) -> int:
     result = _json(response)
     if not result.get("changed"):
         print("nothing changes: this is the pack in effect, so no version is recorded")
-        return 0
+        return OK
     previous = result.get("previous_version")
     print(f"activated version {result.get('version')}" + (f" (it replaces version {previous})" if previous else ""))
-    return 0
+    return OK
 
 
 def _export(args: argparse.Namespace, client: httpx.Client) -> int:
@@ -212,11 +223,15 @@ def _export(args: argparse.Namespace, client: httpx.Client) -> int:
             f"effect; the refused text is at GET {_PACK}/versions/{refused}"
         )
     if args.output:
-        Path(args.output).write_text(text, encoding="utf-8")
+        try:
+            Path(args.output).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            _err(f"{args.output}: cannot be written ({exc.strerror or exc})")
+            raise _Exit(USAGE) from None
         print(f"wrote {args.output}", file=sys.stderr)
     else:
         sys.stdout.write(text)
-    return 0
+    return OK
 
 
 def run(
@@ -247,6 +262,7 @@ def add_parser(subparsers: Any) -> None:
     parser = subparsers.add_parser(
         "progression-pack",
         help="Check, diff, apply or export the progression content pack (skills, rates, tiers, achievements...)",
+        description=SUMMARY,
     )
     verbs = parser.add_subparsers(dest="action", required=True)
     check = verbs.add_parser(

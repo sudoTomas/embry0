@@ -11,7 +11,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from embry0.cli.settings import OK, REFUSED, USAGE, run
+from embry0.cli.exit_codes import OK, REFUSED, USAGE
+from embry0.cli.settings import run
 from tests.unit.cli.test_settings_cli import URL, _Api, _args, _file, _preview, _stored
 
 HOURS = "# office hours\nasks:\n  hours: '08-17'\n"

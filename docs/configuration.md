@@ -317,7 +317,7 @@ The exit codes are the same for every verb, so a script can tell them apart:
 |---|---|
 | `0` | Done: valid, applied, nothing to change, written, undone |
 | `1` | Refused: the document has problems (a 422, or `check`), a variable `import-env` read is refused, or you answered no |
-| `2` | Usage: a bad argument, a file that cannot be read, `apply` or `undo` without a terminal and without `--yes`, or `apply --yes` that would unset a key without `--allow-unset` |
+| `2` | Usage: a bad argument, a file that cannot be read or written, `apply` or `undo` without a terminal and without `--yes`, or `apply --yes` that would unset a key without `--allow-unset` |
 | `3` | Conflict: the document changed since it was read (409), or the change to undo is not the newest one, or no longer what is stored |
 | `4` | Unavailable: the orchestrator cannot be reached, refused the key (401, 403), has no such revision (404), or failed |
 
@@ -434,7 +434,7 @@ embry0 progression-pack apply my-pack.yaml     # Show the diff, then activate it
 embry0 progression-pack export --default       # The shipped default as YAML (-o FILE to write it)
 ```
 
-See [progression.md](progression.md#changing-the-content).
+Exit codes: 0 done, 1 refused, 2 usage, 3 conflict, 4 orchestrator unavailable, as for `embry0 settings`. See [progression.md](progression.md#from-the-command-line-and-mcp).
 
 ### Settings document (`embry0 settings`)
 
