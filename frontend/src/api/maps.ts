@@ -1,9 +1,17 @@
 import { api } from "./client";
 import type { RunWith } from "./runWith";
 
-/** Knowledge maps (spec 2026-10-27): a scanner's map of a codebase or an organization. */
+/**
+ * Knowledge maps (spec 2026-10-27): a scanner's map of a codebase or an organization.
+ *
+ * Each map belongs to a forge owner (#180); `owner` null is a map of no owner, an admin's alone. An older backend
+ * sends no `owner` at all, so it is optional. A slug names a map within its owner: every call takes the owner as
+ * `MapOwner`, sent as `?owner=` when known, so a slug two owners share still reaches the right map.
+ */
 export interface MapSummary {
   slug: string;
+  /** Absent from an older backend. */
+  owner?: string | null;
   title: string;
   repo: string | null;
   commit: string | null;
@@ -49,6 +57,8 @@ export interface MapArea {
 
 export interface MapGraph {
   slug: string;
+  /** Absent from an older backend. */
+  owner?: string | null;
   title: string;
   repo: string | null;
   commit: string | null;
@@ -112,7 +122,7 @@ export interface PartDetail {
 }
 
 export interface PartView {
-  map: { slug: string; title: string; repo: string | null };
+  map: { slug: string; owner?: string | null; title: string; repo: string | null };
   node: MapNode;
   repo: string | null;
   /** A file or folder in a repository: an agent can remove it. A whole system or repository cannot be. */
@@ -140,45 +150,90 @@ export interface BatchJob {
   error: string | null;
 }
 
+/**
+ * Which owner's map a call names: the owner, `""` for the map of no owner, or undefined to let the server pick the
+ * one map of the slug the viewer sees (an address from before owners, or an older backend).
+ */
+export type MapOwner = string | undefined;
+
+/** `?owner=` for a call, only when the owner is known: an older backend is never sent one. */
+function ownerParams(owner: MapOwner): { owner?: string } {
+  return owner === undefined ? {} : { owner };
+}
+
+/** The owner a map's page and its calls name it by: `""` for a map of no owner, undefined when the backend says none. */
+export function ownerOf(map: { owner?: string | null }): MapOwner {
+  return map.owner === undefined ? undefined : (map.owner ?? "");
+}
+
+/** A map's page: with `?owner=` when its owner is known, so the link keeps opening it after another owner's upload. */
+export function mapPath(map: { slug: string; owner?: string | null }): string {
+  const owner = ownerOf(map);
+  const base = `/maps/${encodeURIComponent(map.slug)}`;
+  return owner === undefined ? base : `${base}?owner=${encodeURIComponent(owner)}`;
+}
+
 export async function fetchMaps(): Promise<MapSummary[]> {
   const { data } = await api.get<{ maps: MapSummary[] }>("/maps");
   return data.maps;
 }
 
-export async function fetchMap(slug: string): Promise<MapGraph> {
-  const { data } = await api.get<MapGraph>(`/maps/${encodeURIComponent(slug)}`, { timeout: 120_000 });
+export async function fetchMap(slug: string, owner?: MapOwner): Promise<MapGraph> {
+  const { data } = await api.get<MapGraph>(`/maps/${encodeURIComponent(slug)}`, {
+    params: ownerParams(owner),
+    timeout: 120_000,
+  });
   return data;
 }
 
-export async function fetchPart(slug: string, nodeId: string): Promise<PartView> {
-  const { data } = await api.get<PartView>(`/maps/${encodeURIComponent(slug)}/parts/${encodeURIComponent(nodeId)}`);
+export async function fetchPart(slug: string, nodeId: string, owner?: MapOwner): Promise<PartView> {
+  const { data } = await api.get<PartView>(`/maps/${encodeURIComponent(slug)}/parts/${encodeURIComponent(nodeId)}`, {
+    params: ownerParams(owner),
+  });
   return data;
 }
 
-export async function fetchMarks(slug: string, by: string): Promise<Record<string, MarkCounts>> {
+export async function fetchMarks(slug: string, by: string, owner?: MapOwner): Promise<Record<string, MarkCounts>> {
   const { data } = await api.get<{ marks: Record<string, MarkCounts> }>(`/maps/${encodeURIComponent(slug)}/marks`, {
-    params: { by },
+    params: { by, ...ownerParams(owner) },
   });
   return data.marks;
 }
 
-export async function fetchWork(slug: string): Promise<Record<string, WorkView>> {
-  const { data } = await api.get<{ work: Record<string, WorkView> }>(`/maps/${encodeURIComponent(slug)}/work`);
+export async function fetchWork(slug: string, owner?: MapOwner): Promise<Record<string, WorkView>> {
+  const { data } = await api.get<{ work: Record<string, WorkView> }>(`/maps/${encodeURIComponent(slug)}/work`, {
+    params: ownerParams(owner),
+  });
   return data.work;
 }
 
 export async function markPart(
   slug: string,
   body: { node_id: string; verdict: Verdict | "clear"; note?: string; by: string },
+  owner?: MapOwner,
 ): Promise<{ node_id: string; marks: MarkView[]; lead_id: string | null }> {
-  const { data } = await api.post(`/maps/${encodeURIComponent(slug)}/marks`, body);
+  const { data } = await api.post(`/maps/${encodeURIComponent(slug)}/marks`, body, { params: ownerParams(owner) });
   return data;
 }
 
 export async function sendParts(
   slug: string,
   body: { node_ids: string[]; kind?: SendKind; note?: string; by: string; run_with?: RunWith; together?: boolean },
+  owner?: MapOwner,
 ): Promise<{ sent: number; failed: number; results: SendResult[]; jobs?: BatchJob[] }> {
-  const { data } = await api.post(`/maps/${encodeURIComponent(slug)}/send`, body, { timeout: 120_000 });
+  const { data } = await api.post(`/maps/${encodeURIComponent(slug)}/send`, body, {
+    params: ownerParams(owner),
+    timeout: 120_000,
+  });
+  return data;
+}
+
+/** Admin: give a map to another owner, or to none (`null`); its marks, sends and leads go with it. */
+export async function setMapOwner(
+  slug: string,
+  owner: MapOwner,
+  to: string | null,
+): Promise<{ slug: string; owner: string | null; changed: boolean }> {
+  const { data } = await api.put(`/maps/${encodeURIComponent(slug)}/owner`, { owner: to }, { params: ownerParams(owner) });
   return data;
 }

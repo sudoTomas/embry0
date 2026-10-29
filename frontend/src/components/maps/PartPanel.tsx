@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
-import type { MarkView, PartView, SendKind, Verdict } from "@/api/maps";
+import type { MapOwner, MarkView, PartView, SendKind, Verdict } from "@/api/maps";
 import { toastApiError } from "@/api/errorToast";
 import { type RunWith, runWithBody } from "@/api/runWith";
 import { RunWithControl } from "@/components/runwith/RunWithControl";
@@ -38,6 +38,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 interface PartPanelProps {
   slug: string;
+  /** Which owner's map of the slug (`?owner=` on the page); undefined lets the server pick the only one. */
+  owner?: MapOwner;
   nodeId: string;
   by: string;
   canSend: boolean;
@@ -45,10 +47,10 @@ interface PartPanelProps {
 }
 
 /** Knowledge maps (spec 2026-10-27): one part — what the map knows, everyone's marks, and sending it to an agent. */
-export function PartPanel({ slug, nodeId, by, canSend, onClose }: PartPanelProps) {
-  const part = usePart(slug, nodeId);
-  const mark = useMarkPart(slug);
-  const send = useSendParts(slug);
+export function PartPanel({ slug, owner, nodeId, by, canSend, onClose }: PartPanelProps) {
+  const part = usePart(slug, nodeId, owner);
+  const mark = useMarkPart(slug, owner);
+  const send = useSendParts(slug, owner);
   const mine = part.data?.marks.find((m) => m.by.toLowerCase() === by.toLowerCase());
   const [note, setNote] = useState("");
   const [kind, setKind] = useState<SendKind>("analysis");

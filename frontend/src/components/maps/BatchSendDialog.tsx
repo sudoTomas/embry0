@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { MapGraph, SendKind } from "@/api/maps";
+import type { MapGraph, MapOwner, SendKind } from "@/api/maps";
 import { toastApiError } from "@/api/errorToast";
 import { type RunWith, runWithBody } from "@/api/runWith";
 import { RunWithControl } from "@/components/runwith/RunWithControl";
@@ -22,6 +22,8 @@ const KINDS: { id: SendKind; label: string; says: string }[] = [
 
 interface BatchSendDialogProps {
   slug: string;
+  /** Which owner's map of the slug (`?owner=` on the page); undefined lets the server pick the only one. */
+  owner?: MapOwner;
   graph: MapGraph;
   ids: string[];
   initialKind: SendKind;
@@ -35,8 +37,8 @@ interface BatchSendDialogProps {
  * so a hundred backup tables are one migration, not a hundred. Parts that cannot go for the chosen kind are listed
  * with the reason and left out; the rest can be unticked one by one.
  */
-export function BatchSendDialog({ slug, graph, ids, initialKind, title, by, onClose }: BatchSendDialogProps) {
-  const send = useSendParts(slug);
+export function BatchSendDialog({ slug, owner, graph, ids, initialKind, title, by, onClose }: BatchSendDialogProps) {
+  const send = useSendParts(slug, owner);
   const [kind, setKind] = useState<SendKind>(initialKind);
   const [together, setTogether] = useState(true);
   const [runWith, setRunWith] = useState<RunWith>({});

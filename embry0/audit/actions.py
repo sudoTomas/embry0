@@ -139,6 +139,8 @@ AuditAction = Literal[
     "handoff.created",
     "handoff.returned",
     "handoff.cancelled",
+    # Knowledge maps: an admin gave a map to another owner (#180)
+    "map.owner_changed",
 ]
 
 AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
@@ -243,6 +245,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "handoff.created": "Decision sent to a teammate",
     "handoff.returned": "Decision sent back",
     "handoff.cancelled": "Hand-off taken back",
+    "map.owner_changed": "Map owner changed",
 }
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))

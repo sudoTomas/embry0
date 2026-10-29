@@ -7,6 +7,11 @@ links between them, and a detail record per part (what it does and why it
 exists, its bloat score and the reasons, how much it is used, its history).
 embry0 keeps the last upload per map and shows it on the Maps page.
 
+Each map belongs to an owner, the forge organization or account it
+describes: the one the upload names, else the owner of its repository. Two
+owners may each have a map of one slug. A map with neither belongs to no
+one, and only an admin sees or changes it until an admin gives it an owner.
+
 People mark parts: bloat, keep or not sure. A bloat mark on a part that
 lives in a repository becomes a ``weed`` lead, offered to the repository's
 owners like every lead; sending the part accepts it, and the agent removes
@@ -18,6 +23,7 @@ upload, building the lead and the tasks.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -29,6 +35,8 @@ from embry0.services.leads import Lead
 FORMAT = "embry0.map/1"
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
+#: A forge owner (an organization, an account, a group): the owner part of a repository's ``owner/name``.
+OWNER = re.compile(r"^[\w.-]{1,255}$")
 #: Upper bounds on one upload: past these it is refused, not cut.
 MAX_NODES = 20_000
 MAX_EDGES = 100_000
@@ -61,6 +69,9 @@ class ParsedMap:
     slug: str
     title: str
     repo: str | None
+    #: The forge owner the map belongs to, lowercased; None when the upload names neither an owner nor a repository.
+    #: Kept beside the graph, not in it: the stored owner is the map's (it can change), and a read adds it.
+    owner: str | None
     commit: str | None
     source: str
     generated_at: str | None
@@ -84,6 +95,52 @@ def _number(value: Any) -> float | None:
 
 def _repo(value: Any) -> str | None:
     return value if isinstance(value, str) and _REPO.match(value) else None
+
+
+def repo_owner(repo: str | None) -> str | None:
+    """The owner part of an ``owner/name`` repository, lowercased (forge owners ignore case); None without one."""
+    return repo.split("/", 1)[0].lower() if repo and "/" in repo else None
+
+
+def _storable(value: Any) -> str | None:
+    """Why ``value`` cannot be stored as JSON that Postgres reads, or None when it can.
+
+    Python's JSON reads ``NaN`` and ``Infinity`` (and ``1e400`` as infinity), a NUL in a string and a lone
+    UTF-16 surrogate; JSONB refuses all of them, so a map carrying one could not be read back as JSONB.
+    """
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            if "\x00" in item:
+                return "a string holds a NUL character"
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                return "a string holds a lone UTF-16 surrogate"
+        elif isinstance(item, float):
+            if not math.isfinite(item):
+                return "a number is NaN or infinite"
+        elif isinstance(item, Mapping):
+            stack.extend(item.keys())
+            stack.extend(item.values())
+        elif isinstance(item, list | tuple):
+            stack.extend(item)
+    return None
+
+
+def foreign_repos(nodes: Iterable[Mapping[str, Any]], owner: str) -> list[str]:
+    """The repositories parts name that are not under ``owner``: a map holds only its owner's repositories."""
+    return sorted({str(n["repo"]) for n in nodes if n.get("repo") and repo_owner(str(n["repo"])) != owner})
+
+
+def clean_owner(value: Any) -> str | None:
+    """An owner as stored, lowercased; MapError when it is not a forge owner's name. None and "" are no owner."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or not OWNER.fullmatch(value):
+        raise MapError("owner is a forge owner's name: letters, digits, '.', '_' and '-'")
+    return value.lower()
 
 
 def _node(raw: Any) -> dict[str, Any] | None:
@@ -121,6 +178,9 @@ def parse_map(doc: Any, slug: str) -> ParsedMap:
         raise MapError("a map's slug is lowercase letters, digits and hyphens, at most 64")
     if not isinstance(doc, Mapping):
         raise MapError("the upload is not a JSON object")
+    unstorable = _storable(doc)
+    if unstorable is not None:
+        raise MapError(f"{unstorable}, which a map cannot store")
     if doc.get("format") != FORMAT:
         raise MapError(f"format must be {FORMAT!r}")
     if doc.get("slug") not in (None, slug):
@@ -168,6 +228,10 @@ def parse_map(doc: Any, slug: str) -> ParsedMap:
     details = {k: v for k, v in raw_details.items() if k in seen and isinstance(v, Mapping)}
     title = _text(doc.get("title"), 120) or slug
     repo = _repo(doc.get("repo"))
+    owner = clean_owner(doc.get("owner"))
+    if owner is not None and repo is not None and owner != repo_owner(repo):
+        raise MapError(f"owner must be the owner of the map's repo, {repo_owner(repo)!r}")
+    owner = owner or repo_owner(repo)
     commit = _text(doc.get("commit"), 64)
     source = _text(doc.get("source"), 200) or ""
     generated_at = _text(doc.get("generated_at"), 40)
@@ -187,6 +251,7 @@ def parse_map(doc: Any, slug: str) -> ParsedMap:
         slug=slug,
         title=title,
         repo=repo,
+        owner=owner,
         commit=commit,
         source=source,
         generated_at=generated_at,
@@ -221,10 +286,18 @@ def source_key(slug: str, node_id: str) -> str:
     return f"{SOURCE_PREFIX}{slug}:{node_id}"
 
 
-def part_url(base: str, slug: str, node_id: str) -> str:
+def owner_query(owner: str | None) -> str:
+    """The start of a map page's query that names its owner, ``?owner=<owner>&`` (empty for no owner)."""
     from urllib.parse import quote
 
-    return f"{base.rstrip('/')}/maps/{quote(slug)}?part={quote(node_id, safe='')}"
+    return f"?owner={quote(owner or '', safe='')}&"
+
+
+def part_url(base: str, slug: str, node_id: str, *, owner: str | None) -> str:
+    """The part on its map's page; ``owner=`` names the map even when another owner has one of the same slug."""
+    from urllib.parse import quote
+
+    return f"{base.rstrip('/')}/maps/{quote(slug)}{owner_query(owner)}part={quote(node_id, safe='')}"
 
 
 def part_text(node: Mapping[str, Any], detail: Mapping[str, Any] | None, map_title: str) -> str:
@@ -282,6 +355,7 @@ def part_text(node: Mapping[str, Any], detail: Mapping[str, Any] | None, map_tit
 def map_lead(
     *,
     slug: str,
+    owner: str | None,
     map_title: str,
     map_repo: str | None,
     node: Mapping[str, Any],
@@ -316,6 +390,8 @@ def map_lead(
         data={
             "source": "map",
             "map": slug,
+            # Which owner's map of this slug made the lead: an upload closes only its own map's leads.
+            "map_owner": owner,
             "node": str(node["id"]),
             "marked_by": list(dict.fromkeys(m.by for m in bloat)),
         },

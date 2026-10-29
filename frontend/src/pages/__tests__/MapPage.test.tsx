@@ -27,14 +27,19 @@ const PART: PartView = {
 const mutate = vi.fn();
 const mutateAsync = vi.fn();
 const markMutate = vi.fn();
-const hooks = vi.hoisted(() => ({ map: {} as unknown, part: {} as unknown }));
+const ownerMutate = vi.fn();
+const hooks = vi.hoisted(() => ({ map: {} as unknown, part: {} as unknown, owners: [] as unknown[] }));
 vi.mock("@/hooks/useMaps", () => ({
-  useMap: () => hooks.map,
+  useMap: (...args: unknown[]) => {
+    hooks.owners.push(args[1]);
+    return hooks.map;
+  },
   useMapMarks: () => ({ data: { "script:probe.mjs": { bloat: 1, keep: 1, unsure: 0, mine: "bloat" } } }),
   useMapWork: () => ({ data: {} }),
   usePart: () => hooks.part,
   useMarkPart: () => ({ mutate: markMutate, isPending: false }),
   useSendParts: () => ({ mutate, mutateAsync, isPending: false }),
+  useSetMapOwner: () => ({ mutate: ownerMutate, isPending: false }),
 }));
 const admin = { current: true };
 vi.mock("@/stores/authStore", () => ({
@@ -65,6 +70,8 @@ beforeEach(() => {
   mutate.mockReset();
   mutateAsync.mockReset();
   markMutate.mockReset();
+  ownerMutate.mockReset();
+  hooks.owners = [];
   admin.current = true;
   hooks.map = { data: GRAPH, isLoading: false, isError: false };
   hooks.part = { data: PART, isLoading: false, isError: false };
@@ -142,6 +149,47 @@ describe("MapPage (knowledge maps, spec 2026-10-27)", () => {
     renderAt("/maps/shop?part=script%3Aprobe.mjs");
     expect(screen.getByRole("button", { name: "Send my bloat marks (1)" })).toBeDisabled();
     expect(within(screen.getByTestId("part-panel")).getByRole("button", { name: "Send to an agent" })).toBeDisabled();
+  });
+
+  it("shows the map's owner, names the map by the owner in its address, and lets an admin give it another", async () => {
+    hooks.map = { data: { ...GRAPH, owner: "acme" }, isLoading: false, isError: false };
+    renderAt("/maps/shop?owner=acme");
+    expect(hooks.owners.at(-1), "the page must ask for the owner its address names").toBe("acme");
+    expect(screen.getByTestId("map-owner")).toHaveTextContent("acme ·");
+    await userEvent.click(screen.getByRole("button", { name: "Set owner" }));
+    const field = screen.getByRole("textbox", { name: "Owner" });
+    await userEvent.clear(field);
+    await userEvent.type(field, "zeta");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(ownerMutate).toHaveBeenCalledWith("zeta", expect.anything());
+  });
+
+  it("says a map of no owner is an admin's, and offers no owner change to anyone else", () => {
+    hooks.map = { data: { ...GRAPH, owner: null, repo: null }, isLoading: false, isError: false };
+    admin.current = false;
+    renderAt("/maps/shop?owner=");
+    expect(hooks.owners.at(-1), "an empty owner names the map of no owner").toBe("");
+    expect(screen.getByTestId("map-owner")).toHaveTextContent("no owner (admins only)");
+    expect(screen.queryByRole("button", { name: "Set owner" })).toBeNull();
+  });
+
+  it("draws an older backend's map, which says nothing about owners, as before", () => {
+    renderAt("/maps/shop");
+    expect(hooks.owners.at(-1), "an address without an owner names none").toBeUndefined();
+    expect(screen.getByRole("heading", { level: 1, name: "Shop" })).toBeInTheDocument();
+    expect(screen.queryByTestId("map-owner")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Set owner" })).toBeNull();
+  });
+
+  it("says which owners to pick from when two have a map of the slug", () => {
+    const ambiguous = Object.assign(new Error("409"), {
+      isAxiosError: true,
+      response: { status: 409, data: { detail: "several owners have a map called shop: name one with ?owner= (acme, zeta)" } },
+    });
+    hooks.map = { data: undefined, isLoading: false, isError: true, error: ambiguous, refetch: vi.fn() };
+    renderAt("/maps/shop");
+    expect(screen.getByText(/several owners have a map called shop/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "All maps" })).toHaveAttribute("href", "/maps");
   });
 
   it("says a map that does not exist is not there, with a way back", () => {

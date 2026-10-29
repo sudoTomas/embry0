@@ -86,6 +86,45 @@ def test_an_upload_that_is_not_a_map_says_why(doc: Any, slug: str, message: str)
         parse_map(doc, slug)
 
 
+def test_a_map_belongs_to_the_owner_it_names_else_its_repositorys_owner() -> None:
+    from_repo = parse_map(_doc(repo="Acme/Shop"), "shop")
+    assert getattr(from_repo, "owner", "missing") == "acme", "a map's owner must be its repo's owner, lowercased"
+    assert "owner" not in from_repo.graph, "the owner is kept beside the stored graph, which a change never rewrites"
+    named = parse_map(_doc(repo=None, owner="Acme"), "shop")
+    assert (named.owner, named.repo) == ("acme", None), "an organization map takes the owner it names"
+    assert parse_map(_doc(repo="acme/shop", owner="acme"), "shop").owner == "acme"
+    nobody = parse_map(_doc(repo=None), "shop")
+    assert nobody.owner is None, "a map naming neither belongs to no one"
+    with pytest.raises(MapError, match="owner must be the owner of the map's repo"):
+        parse_map(_doc(repo="acme/shop", owner="zeta"), "shop")
+    with pytest.raises(MapError, match="forge owner's name"):
+        parse_map(_doc(repo=None, owner="acme/shop"), "shop")
+
+
+@pytest.mark.parametrize(
+    ("raw", "why"),
+    [
+        ('{"x": NaN}', "NaN"),
+        ('{"x": -Infinity}', "infinite"),
+        ('{"x": 1e400}', "infinite"),
+        ('{"label": "a\\u0000b"}', "NUL"),
+        ('{"label": "\\ud800"}', "surrogate"),
+        ('{"\\udfff": 1}', "surrogate"),
+    ],
+)
+def test_an_upload_jsonb_cannot_read_is_refused(raw: str, why: str) -> None:
+    """Python's JSON reads these; Postgres's JSONB refuses them, so a stored map holding one could not be read."""
+    import json
+
+    node = {"id": "a", **json.loads(raw)} if "label" in raw else {"id": "a", "extra": json.loads(raw)}
+    try:
+        parse_map(_doc(nodes=[node]), "shop")
+    except MapError as exc:
+        assert why in str(exc), f"the refusal must say why: {exc}"
+    else:
+        raise AssertionError(f"an upload holding {raw} must be refused")
+
+
 def test_a_part_lives_in_its_own_repository_else_the_maps_when_it_is_a_file() -> None:
     assert part_repo("acme/shop", {"path": "a.py"}) == "acme/shop"
     assert part_repo("acme/shop", {"path": None}) is None
@@ -96,9 +135,10 @@ def test_a_part_lives_in_its_own_repository_else_the_maps_when_it_is_a_file() ->
 def test_a_part_marked_bloat_becomes_a_weed_lead_that_names_who_marked_it() -> None:
     node = parse_map(_doc(), "shop").graph["nodes"][0]
     marks = [Mark("ann@example.com", "bloat", "dead probe", T0), Mark("bo@example.com", "keep", "", T0)]
-    url = part_url("https://embry0.example.com/", "shop", node["id"])
+    url = part_url("https://embry0.example.com/", "shop", node["id"], owner="acme")
     lead = map_lead(
         slug="shop",
+        owner="acme",
         map_title="Shop",
         map_repo="acme/shop",
         node=node,
@@ -111,12 +151,22 @@ def test_a_part_marked_bloat_becomes_a_weed_lead_that_names_who_marked_it() -> N
     assert lead.title == "Remove probe.mjs"
     assert lead.summary == "ann@example.com marked probe.mjs bloat on the Shop map: dead probe"
     assert lead.paths == ("scripts/probe.mjs",)
-    assert lead.data == {"source": "map", "map": "shop", "node": "script:probe.mjs", "marked_by": ["ann@example.com"]}
-    assert url == "https://embry0.example.com/maps/shop?part=script%3Aprobe.mjs"
+    assert lead.data == {
+        "source": "map",
+        "map": "shop",
+        "map_owner": "acme",
+        "node": "script:probe.mjs",
+        "marked_by": ["ann@example.com"],
+    }
+    assert url == "https://embry0.example.com/maps/shop?owner=acme&part=script%3Aprobe.mjs"
+    assert part_url("https://embry0.example.com", "org", "a", owner=None) == (
+        "https://embry0.example.com/maps/org?owner=&part=a"
+    ), "an unowned map's part link names it with an empty owner"
     assert "What it does: Prints one row." in lead.details
     assert (
         map_lead(
             slug="shop",
+            owner="acme",
             map_title="Shop",
             map_repo=None,
             node={"id": "x", "label": "x"},
@@ -183,7 +233,9 @@ def test_only_a_file_in_a_repository_can_be_removed_or_become_a_lead() -> None:
     assert removable(None, system) is False, "a whole system is not removed by a code change"
     assert removable("acme/shop", {"id": "f", "path": "scripts/a.py"}) is True
     assert removable(None, {"id": "f", "path": "scripts/a.py"}) is False, "a path with no repository"
-    lead = map_lead(slug="org", map_title="Org", map_repo=None, node=system, detail=None, marks=marks, url=None)
+    lead = map_lead(
+        slug="org", owner=None, map_title="Org", map_repo=None, node=system, detail=None, marks=marks, url=None
+    )
     assert lead is None
 
 
