@@ -238,7 +238,8 @@ async def test_the_service_computes_at_most_once_per_minute() -> None:
             return Journal(
                 [
                     JobRow("o/app", "i-1", None, "failed", T0, T0),
-                    JobRow("o/app", "i-1", None, "pr_merged", T0, T0 + timedelta(hours=1)),
+                    # Created after the failed job: a later job on the issue (#234).
+                    JobRow("o/app", "i-1", None, "pr_merged", T0 + timedelta(minutes=1), T0 + timedelta(hours=1)),
                 ],
                 [],
             )
