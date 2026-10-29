@@ -679,6 +679,10 @@ class Embry0Config(BaseSettings):
         builds a nonsense base, every call 404s or leaks the PAT over http,
         and the clone silently falls back to github.com. Empty means "not
         configured" and resolves to the default (Spec 1A §3.8).
+
+        The refusal says what is wrong with the value, never the value: a URL
+        can carry a token in its userinfo, and the message reaches a
+        terminal and the logs.
         """
         from urllib.parse import urlparse
 
@@ -687,8 +691,14 @@ class Embry0Config(BaseSettings):
             return "https://gitlab.com"
         parsed = urlparse(candidate)
         if parsed.scheme != "https" or not parsed.hostname:
+            if parsed.scheme == "http":
+                wrong = "it is plaintext http"
+            elif parsed.scheme != "https":
+                wrong = "it does not start with https://"
+            else:
+                wrong = "it has no hostname"
             raise ValueError(
-                f"GITLAB_URL must be an https:// URL with a hostname (e.g. https://gitlab.example.com); got {v!r}. "
+                f"GITLAB_URL must be an https:// URL with a hostname (e.g. https://gitlab.example.com); {wrong}. "
                 "Plaintext http would send the PRIVATE-TOKEN in the clear, and a scheme-less value builds a "
                 "nonsense API base that silently falls back to github.com."
             )
