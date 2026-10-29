@@ -295,22 +295,31 @@ def random_world(seed: int) -> World:
         at = created + timedelta(hours=rng.uniform(0.1, 6))
         status = rng.choice(("failed", "pr_merged", "completed", "pr_merged"))
         template = rng.choice((None, None, "qa", "onboard"))
+        # Its pull request's latest state (a merge, for a merged job) comes up to three days after it finished (#216).
+        delivered = at + timedelta(hours=rng.uniform(0, 72))
         # A job is often recorded days late here, so a quest's completion moves into the folded days.
         late = timedelta(hours=rng.uniform(50, 120)) if rng.random() < 0.35 else _lateness(rng, "merged")
-        jobs.append(
-            JobItem(JobRow(repo, issue if rng.random() < 0.8 else None, template, status, created, at), at + late)
+        job = JobRow(
+            repo, issue if rng.random() < 0.8 else None, template, status, created, at, delivery_state_at=delivered
         )
+        jobs.append(JobItem(job, delivered + late))
         if rng.random() < 0.5:
             agent = rng.choice(("review", "pr-reviewer", "qa", "triage", "developer"))
             run_at = created + timedelta(minutes=rng.uniform(1, 60))
             runs.append(RunItem(RunRow(agent, repo, issue, run_at), run_at + _lateness(rng, "run")))
     # A failure and a merge on one issue early on, recorded days later: Try, Try Again completes in the past.
+    # The failed job's own pull request can settle after the merge, which must not move the failure (#216).
     for n in range(rng.randint(1, 2)):
         failed_at = START + timedelta(hours=rng.uniform(1, 30))
-        merged_at = failed_at + timedelta(hours=rng.uniform(1, 20))
-        recorded = START + timedelta(days=rng.uniform(5, 15))
-        for status, at in (("failed", failed_at), ("pr_merged", merged_at)):
-            jobs.append(JobItem(JobRow("acme/widgets", f"iss-late-{n}", None, status, at, at), recorded))
+        fixed_at = failed_at + timedelta(hours=rng.uniform(1, 20))
+        pairs = [
+            ("failed", failed_at, failed_at + timedelta(hours=rng.uniform(0, 72))),
+            ("pr_merged", fixed_at, fixed_at + timedelta(hours=rng.uniform(0, 72))),
+        ]
+        recorded = max(START + timedelta(days=rng.uniform(5, 15)), *(delivered for _, _, delivered in pairs))
+        for status, at, delivered in pairs:
+            job = JobRow("acme/widgets", f"iss-late-{n}", None, status, at, at, delivery_state_at=delivered)
+            jobs.append(JobItem(job, recorded))
     agents = sorted(rng.sample(AGENTS, rng.randint(1, len(AGENTS))))
     return World(items, jobs, runs, agents, clock=START + timedelta(days=rng.uniform(3, 6)))
 

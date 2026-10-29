@@ -8,6 +8,13 @@ rewards, and a diary tier is a list of tasks, each a task kind with its
 parameters. Like experience and achievements they are read from rows other
 features already write, never stored: each step and task is done at the
 time of the row that first met it.
+
+A job has two times (#216). A step or task about a job's own work (it
+finished, failed, ran QA or audited) reads when the job finished
+(``JobRow.finished_at``); one about a merge reads when its pull request
+merged (``JobRow.merged_at``). Neither moves when merge sync later records
+the pull request opened, closed or reopened, so a task done stays done at
+the time it was done.
 """
 
 from __future__ import annotations
@@ -52,6 +59,11 @@ def _nth(times: Iterable[datetime], n: int) -> datetime | None:
 
 def _first(times: Iterable[datetime]) -> datetime | None:
     return _nth(times, 1)
+
+
+def _merges(jobs: Iterable[JobRow]) -> list[tuple[JobRow, datetime]]:
+    """Every merged job, with when it merged: the time a step or task about a merge reads."""
+    return [(job, at) for job in jobs if (at := job.merged_at) is not None]
 
 
 def _when_all(times: Sequence[datetime | None]) -> datetime | None:
@@ -103,15 +115,19 @@ class Diary:
 
 
 def _quiet_stretch(jobs: Sequence[JobRow], days: int) -> datetime | None:
-    """The first finished job a full quiet stretch after the repo's last failure, or after its first job."""
+    """The first finished job a full quiet stretch after the repo's last failure, or after its first job.
+
+    The jobs are walked in the order they finished: a pull request merging
+    later does not move a job past a failure that came after it (#216).
+    """
     since: datetime | None = None
-    for job in sorted(jobs, key=lambda j: j.at):
+    for job in sorted(jobs, key=lambda j: j.finished_at):
         if since is None:
             since = job.created_at
         if job.status == "failed":
-            since = job.at
-        elif job.status in FINISHED_WELL and job.at - since >= timedelta(days=days):
-            return job.at
+            since = job.finished_at
+        elif job.status in FINISHED_WELL and job.finished_at - since >= timedelta(days=days):
+            return job.finished_at
     return None
 
 
@@ -124,7 +140,7 @@ class _RepoRows:
 
     @property
     def merges(self) -> list[datetime]:
-        return [j.at for j in self.jobs if j.status == "pr_merged"]
+        return [at for _, at in _merges(self.jobs)]
 
     @property
     def audits(self) -> list[JobRow]:
@@ -137,8 +153,8 @@ class _RepoRows:
 
 def _pass_qa(rows: _RepoRows, params: dict[str, Any], below: datetime | None) -> datetime | None:
     qa_issues = {r.issue_id for r in rows.agent_runs(params) if r.issue_id}
-    passes = [j.at for j in rows.jobs if j.template == "qa" and j.status in FINISHED_WELL]
-    passes += [j.at for j in rows.jobs if j.status == "pr_merged" and j.issue_id in qa_issues]
+    passes = [j.finished_at for j in rows.jobs if j.template == "qa" and j.status in FINISHED_WELL]
+    passes += [at for j, at in _merges(rows.jobs) if j.issue_id in qa_issues]
     return _first(passes)
 
 
@@ -148,15 +164,17 @@ _TaskEvaluator = Callable[[_RepoRows, dict[str, Any], datetime | None], datetime
 #: ``below`` is when every tier above the task's own was done.
 _TASKS: dict[str, _TaskEvaluator] = {
     "triage": lambda rows, params, below: _first(r.at for r in rows.agent_runs(params) if r.issue_id),
-    "finish_job": lambda rows, params, below: _first(j.at for j in rows.jobs if j.status in FINISHED_WELL),
+    "finish_job": lambda rows, params, below: _first(j.finished_at for j in rows.jobs if j.status in FINISHED_WELL),
     "run_qa": lambda rows, params, below: _first(
         [r.at for r in rows.agent_runs(params)]
-        + [j.at for j in rows.jobs if j.template == "qa" and j.status in FINISHED_WELL]
+        + [j.finished_at for j in rows.jobs if j.template == "qa" and j.status in FINISHED_WELL]
     ),
     "merges": lambda rows, params, below: _nth(rows.merges, int(params["count"])),
     "pass_qa": _pass_qa,
-    "audit": lambda rows, params, below: _first(j.at for j in rows.audits),
-    "clean_audit": lambda rows, params, below: _first(j.at for j in rows.audits if report_counts(j.report)[0] == 0),
+    "audit": lambda rows, params, below: _first(j.finished_at for j in rows.audits),
+    "clean_audit": lambda rows, params, below: _first(
+        j.finished_at for j in rows.audits if report_counts(j.report)[0] == 0
+    ),
     "reviews": lambda rows, params, below: _nth((r.at for r in rows.agent_runs(params)), int(params["count"])),
     "quiet_stretch": lambda rows, params, below: _quiet_stretch(rows.jobs, int(params["days"])),
     "all_above": lambda rows, params, below: below,
@@ -271,12 +289,12 @@ def _onboard_to_merge(journal: Journal, params: dict[str, Any]) -> tuple[str | N
         by_repo[job.repo].append(job)
     candidates = []
     for repo, jobs in by_repo.items():
-        onboarded = _first(j.at for j in jobs if j.template == "onboard" and j.status in FINISHED_WELL)
+        onboarded = _first(j.finished_at for j in jobs if j.template == "onboard" and j.status in FINISHED_WELL)
         if onboarded is None:
             continue
         after = [j for j in jobs if j.created_at > onboarded]
-        finished = _first(j.at for j in after if j.status in FINISHED_WELL)
-        merged = _first(j.at for j in after if j.status == "pr_merged")
+        finished = _first(j.finished_at for j in after if j.status in FINISHED_WELL)
+        merged = _first(at for _, at in _merges(after))
         candidates.append((repo, [onboarded, finished, merged]))
     where, times = _best(candidates)
     return where, times or [None, None, None]
@@ -284,13 +302,13 @@ def _onboard_to_merge(journal: Journal, params: dict[str, Any]) -> tuple[str | N
 
 def _merge_after_failure(journal: Journal, params: dict[str, Any]) -> tuple[str | None, list[datetime | None]]:
     failed: dict[str, datetime] = {}
-    for job in sorted(journal.jobs, key=lambda j: j.at):
+    for job in sorted(journal.jobs, key=lambda j: j.finished_at):
         if job.issue_id and job.status == "failed":
-            failed.setdefault(job.issue_id, job.at)
+            failed.setdefault(job.issue_id, job.finished_at)
     comebacks = [
-        (job.issue_id, job.at)
-        for job in journal.jobs
-        if job.issue_id and job.status == "pr_merged" and job.issue_id in failed and failed[job.issue_id] < job.at
+        (job.issue_id, at)
+        for job, at in _merges(journal.jobs)
+        if job.issue_id and job.issue_id in failed and failed[job.issue_id] < at
     ]
     first = min(comebacks, key=lambda c: c[1]) if comebacks else None
     return (
@@ -309,9 +327,9 @@ def _review_qa_merge(journal: Journal, params: dict[str, Any]) -> tuple[str | No
             reviewed.setdefault(run.issue_id, run.at)
         if run.issue_id and run.agent_type in qa_agents:
             tested.setdefault(run.issue_id, run.at)
-    for job in sorted(journal.jobs, key=lambda j: j.at):
-        if job.issue_id and job.status == "pr_merged":
-            merged.setdefault(job.issue_id, job.at)
+    for job, at in sorted(_merges(journal.jobs), key=lambda merge: merge[1]):
+        if job.issue_id:
+            merged.setdefault(job.issue_id, at)
     issues = set(reviewed) | set(tested) | set(merged)
     where, times = _best((i, [reviewed.get(i), tested.get(i), merged.get(i)]) for i in issues)
     return where, times or [None, None, None]
@@ -347,7 +365,7 @@ def _capstone(
     params = entry.params
     tier = str(params["diary_tier"])
     completed = _first(t for d in diaries if (t := d.tier(tier).completed_at) is not None)
-    merges = _nth((j.at for j in journal.jobs if j.status == "pr_merged"), int(params["merges"]))
+    merges = _nth((at for _, at in _merges(journal.jobs)), int(params["merges"]))
     quest = _quest(entry, None, [merges, completed])
     quest.requirement = templates.render(entry.requirement or "", params)
     quest.requirement_met_at = total_reached(int(params["total_level"]))

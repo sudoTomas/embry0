@@ -3841,7 +3841,7 @@
         "text": "Triage an issue"
        },
        {
-        "done_at": "2025-10-03T21:35:00+00:00",
+        "done_at": "2025-10-03T21:30:00+00:00",
         "text": "Finish a job"
        },
        {
@@ -3895,7 +3895,7 @@
         "text": "Merge 50 pull requests"
        },
        {
-        "done_at": "2025-12-25T15:35:00+00:00",
+        "done_at": "2025-12-25T15:30:00+00:00",
         "text": "Go 30 days without a failed job"
        },
        {
