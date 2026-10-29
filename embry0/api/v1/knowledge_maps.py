@@ -12,6 +12,15 @@ parts to agents: a removal accepts the part's lead (the sender's bloat mark
 is recorded first, because sending a removal is that decision), a fix opens
 an embry0 issue and dispatches it, an analysis starts a read-only job. Every
 send is recorded with the job it started or the error it met.
+
+Each map belongs to a forge owner (migration 133), and a slug names a map
+only within its owner: ``?owner=`` picks one when several owners have a map
+of a slug, and an address without it still works when only one of them is
+the caller's to see. A caller sees and changes the maps of the owners its
+key's repository allowlist covers (every owner, without an allowlist); a
+change it may not make is refused as a repository is elsewhere, a map it
+may not see is not there. A map that belongs to no one is an admin's alone,
+until an admin gives it an owner with ``PUT /maps/{slug}/owner``.
 """
 
 from __future__ import annotations
@@ -22,17 +31,20 @@ import io
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from embry0.api.actor_visibility import caller_scope
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist, owner_allowed, repo_allowed
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.person_name import PersonName
+from embry0.api.session import TIER_ADMIN
 from embry0.api.v1.run_with import checked_run_with
+from embry0.audit.helpers import emit_audit
 from embry0.services.knowledge_maps import (
     MAX_DECODED_BYTES,
     MAX_SEND,
@@ -42,6 +54,8 @@ from embry0.services.knowledge_maps import (
     MapError,
     Mark,
     batch_task,
+    clean_owner,
+    foreign_repos,
     map_lead,
     mark_counts,
     parse_map,
@@ -49,16 +63,30 @@ from embry0.services.knowledge_maps import (
     part_text,
     part_url,
     removable,
+    repo_owner,
     send_task,
     source_key,
 )
 from embry0.services.leads import as_utc_iso, lead_id
 from embry0.services.run_with import apply_run_with
+from embry0.storage.repositories.knowledge_maps import OwnerTaken
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 _ACTION_SEND = "send a map part"
+_ACTION_OWNER = "give a map an owner"
+#: The 403 detail's code when a caller who is not an admin acts on a map that belongs to no one.
+UNOWNED_CODE = "map_has_no_owner"
+
+#: ``?owner=``: which owner's map of the slug; empty names the map that belongs to no one.
+OwnerParam = Annotated[
+    str | None,
+    Query(
+        description="The map's owner, needed only when several owners have a map of this slug; "
+        "empty names the map that belongs to no one"
+    ),
+]
 
 
 def _maps(request: Request) -> Any:
@@ -81,27 +109,118 @@ def _slug(slug: str) -> str:
     return slug
 
 
+def _owner_arg(value: str) -> str | None:
+    """An owner a caller named, as stored: lowercased, None for "" (no owner); 422 when it is not an owner's name."""
+    try:
+        return clean_owner(value)
+    except MapError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _covers(request: Request, tier: str, owner: str | None) -> bool:
+    """Whether this caller sees and may change ``owner``'s maps.
+
+    An owner: when the key's repository allowlist covers it, as every
+    unrestricted caller's does. No owner: an admin without an allowlist only.
+    """
+    principal = getattr(request.state, "principal", None)
+    allowed = principal.allowed_repos if principal is not None else None
+    if owner is None:
+        return tier == TIER_ADMIN and allowed is None
+    return owner_allowed(allowed, owner)
+
+
+async def _may_change(request: Request, tier: str, owner: str | None, action: str) -> None:
+    """Refuse with 403 a change the caller may not make to ``owner``'s maps; a key's refusal is audited."""
+    if owner is None and tier != TIER_ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail=f"{UNOWNED_CODE}: only an admin may {action} on a map that belongs to no owner, "
+            "until an admin gives it one",
+        )
+    await enforce_owner_allowlist(request, owner, action=action)
+
+
+async def _map_owner(request: Request, slug: str, owner: str | None, *, action: str | None = None) -> str | None:
+    """The owner of the map an address names (``slug`` and ``?owner=``), checked for this caller.
+
+    Without ``?owner=`` the address names the one map of ``slug`` the caller
+    sees; several answer 409, none 404, whatever other owners have. With it, a
+    read (``action`` None) answers 404 for a map the caller may not see, and a
+    change (``action`` the verb phrase) is refused with 403, as a repository
+    is, when the map is not the caller's to change.
+    """
+    _slug(slug)
+    owners = await _maps(request).owners(slug)
+    tier, _ = await caller_scope(request)
+    seen = [o for o in owners if _covers(request, tier, o)]
+    if owner is not None:
+        target = _owner_arg(owner)
+        if target not in owners:
+            raise HTTPException(status_code=404, detail="no such map")
+    elif len(seen) == 1:
+        target = seen[0]
+    elif len(seen) > 1:
+        named = ", ".join(o or "'' (no owner)" for o in seen)
+        raise HTTPException(
+            status_code=409, detail=f"several owners have a map called {slug}: name one with ?owner= ({named})"
+        )
+    else:
+        raise HTTPException(status_code=404, detail="no such map")
+    if action is not None:
+        await _may_change(request, tier, target, action)
+    elif not _covers(request, tier, target):
+        raise HTTPException(status_code=404, detail="no such map")
+    return target
+
+
+def _allowed_repos(request: Request) -> tuple[str, ...] | None:
+    """The caller's repository allowlist; None for a caller without one."""
+    principal = getattr(request.state, "principal", None)
+    return principal.allowed_repos if principal is not None else None
+
+
+def _made_by(lead: dict[str, Any], owner: str | None) -> bool:
+    """Whether a weed lead is this owner's map's: the map that made it says so (one made before owners, any map)."""
+    data = lead.get("data") or {}
+    return "map_owner" not in data or data["map_owner"] == owner
+
+
+async def _existing_repo_allowed(request: Request, slug: str, owner: str | None, action: str) -> dict[str, Any]:
+    """The stored map ``owner``'s ``slug``, refused with 403 when its repository is not the caller's.
+
+    A change to a stored map is a change to the repository it describes, so it is checked as one: a map of no
+    repository refuses a key limited to an allowlist, as work naming no repository does.
+    """
+    meta = await _maps(request).meta(slug, owner=owner)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="no such map")
+    await enforce_repo_allowlist(request, meta.get("repo"), action=action)
+    return dict(meta)
+
+
 def _base_url(request: Request) -> str:
     return str(getattr(request.app.state.config, "dashboard_public_url", "") or "http://localhost:8200")
 
 
-async def _parts(request: Request, slug: str) -> dict[str, Any]:
+async def _parts(request: Request, slug: str, owner: str | None) -> dict[str, Any]:
     """The map's header and its parts by id, parsed once per upload and kept."""
-    stored = await _maps(request).graph_text(slug)
+    stored = await _maps(request).graph_text(slug, owner=owner)
     if stored is None:
         raise HTTPException(status_code=404, detail="no such map")
     text, uploaded_at = stored
-    cache: dict[str, Any] = request.app.state.__dict__.setdefault("knowledge_map_parts", {})
-    hit = cache.get(slug)
+    cache: dict[tuple[str | None, str], Any] = request.app.state.__dict__.setdefault("knowledge_map_parts", {})
+    hit = cache.get((owner, slug))
     if hit is None or hit["uploaded_at"] != uploaded_at:
         graph = json.loads(text)
         hit = {
             "uploaded_at": uploaded_at,
+            "owner": owner,
             "title": graph.get("title") or slug,
             "repo": graph.get("repo"),
             "nodes": {n["id"]: n for n in graph.get("nodes") or []},
         }
-        cache[slug] = hit
+        cache[(owner, slug)] = hit
     return hit
 
 
@@ -137,31 +256,63 @@ def _work_view(row: dict[str, Any], base: str) -> dict[str, Any]:
     }
 
 
+#: :func:`_other_holder`'s answer when no other map holds the part's open lead.
+_FREE = object()
+
+
+async def _other_holder(request: Request, slug: str, part: dict[str, Any], node: dict[str, Any]) -> Any:
+    """The owner of another map of ``slug`` that holds the part's open weed lead (None: the unowned map), or _FREE.
+
+    A lead is keyed by repository, slug and part id, so an unowned map and an owned one of the same slug can name
+    the same lead; the map that made an open lead keeps it.
+    """
+    repo = part_repo(part["repo"], node)
+    if repo is None:
+        return _FREE
+    current = await _leads(request).get(lead_id("weed", repo, source_key(slug, node["id"])))
+    if current is not None and current.get("state") == "open" and not _made_by(current, part["owner"]):
+        return (current.get("data") or {}).get("map_owner")
+    return _FREE
+
+
+async def _held_detail(request: Request, holder: str | None) -> str:
+    """Why a part cannot be sent for removal from this map: another map holds its lead.
+
+    Named only to a caller who may see that map; anyone else learns only that an admin must release it.
+    """
+    tier, _ = await caller_scope(request)
+    if _covers(request, tier, holder):
+        return f"the map of this slug with ?owner={holder or ''} holds this part's lead: send it from there"
+    return "this part's lead is held by another map: an admin must release it first"
+
+
 async def _sync_lead(
     request: Request, slug: str, part: dict[str, Any], node: dict[str, Any], now: datetime
 ) -> str | None:
     """Keep the part's weed lead open while someone marks it bloat, closed when nobody does; its id, or None.
 
     A part an agent cannot remove (a whole system or repository, :func:`removable`) has no lead: one opened
-    for it before is closed.
+    for it before is closed. An open lead another map of the slug made is left as it is (:func:`_other_holder`).
     """
     repo = part_repo(part["repo"], node)
-    if repo is None:
+    if repo is None or await _other_holder(request, slug, part, node) is not _FREE:
         return None
-    marks = _marks_of(await _maps(request).marks(slug, node["id"]))
-    key = source_key(slug, node["id"])
+    owner = part["owner"]
+    lid = lead_id("weed", repo, source_key(slug, node["id"]))
+    marks = _marks_of(await _maps(request).marks(slug, node["id"], owner=owner))
     if not removable(part["repo"], node) or not any(m.verdict == "bloat" for m in marks):
-        await _leads(request).close(lead_id("weed", repo, key), now=now)
+        await _leads(request).close(lid, now=now)
         return None
-    detail = await _maps(request).detail(slug, node["id"])
+    detail = await _maps(request).detail(slug, node["id"], owner=owner)
     lead = map_lead(
         slug=slug,
+        owner=owner,
         map_title=part["title"],
         map_repo=part["repo"],
         node=node,
         detail=detail,
         marks=marks,
-        url=part_url(_base_url(request), slug, node["id"]),
+        url=part_url(_base_url(request), slug, node["id"], owner=owner),
     )
     if lead is None:
         return None
@@ -174,11 +325,14 @@ async def _sync_lead(
 
 @router.get("/maps")
 async def list_maps(request: Request) -> dict[str, Any]:
-    rows = await _maps(request).summaries()
+    """The maps of the owners the caller sees: every owned map without an allowlist, and an admin's the unowned."""
+    tier, _ = await caller_scope(request)
+    rows = [r for r in await _maps(request).summaries() if _covers(request, tier, r.get("owner"))]
     return {
         "maps": [
             {
                 "slug": r["slug"],
+                "owner": r.get("owner"),
                 "title": r["title"],
                 "repo": r.get("repo"),
                 "commit": r.get("commit_sha"),
@@ -195,8 +349,12 @@ async def list_maps(request: Request) -> dict[str, Any]:
 
 
 @router.put("/maps/{slug}")
-async def put_map(slug: str, request: Request) -> dict[str, Any]:
-    """Store a scanner's upload; a part that left the map closes its lead, a marked part's lead is refreshed."""
+async def put_map(slug: str, request: Request, owner: OwnerParam = None) -> dict[str, Any]:
+    """Store a scanner's upload; a part that left the map closes its lead, a marked part's lead is refreshed.
+
+    The map's owner is the document's ``owner``, else its repository's owner, else ``?owner=``; an address
+    that names another owner than the document is refused. A map of no owner is uploaded by an admin only.
+    """
     _slug(slug)
     raw = await request.body()
     if "gzip" in request.headers.get("content-encoding", "").lower():
@@ -209,12 +367,33 @@ async def put_map(slug: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=413, detail=f"a map is at most {MAX_DECODED_BYTES // (1024 * 1024)} MB of JSON")
     try:
         parsed = parse_map(json.loads(raw), slug)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="the body is not JSON") from exc
-    except MapError as exc:
+    except MapError as exc:  # before ValueError, which it is
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    # A key limited to an allowlist may upload only a map of a repository on it, never an organization map.
+    except ValueError as exc:  # json.JSONDecodeError, and UnicodeDecodeError for bytes that are not UTF-8
+        raise HTTPException(status_code=400, detail="the body is not JSON") from exc
+    target = parsed.owner
+    if owner is not None:
+        named = _owner_arg(owner)
+        if parsed.owner is None:
+            target = named
+        elif named != parsed.owner:
+            raise HTTPException(status_code=422, detail="the document's owner is not the one in the address")
+    tier, _ = await caller_scope(request)
+    await _may_change(request, tier, target, "upload a map")
+    # A key limited to an allowlist may upload only a map of a repository on it, never an organization map,
+    # whose parts name only repositories on it, and replace only a map of a repository on it.
     await enforce_repo_allowlist(request, parsed.repo, action="upload a map")
+    nodes = parsed.graph["nodes"]
+    if target is not None and (foreign := foreign_repos(nodes, target)):
+        raise HTTPException(
+            status_code=422,
+            detail=f"a part's repo must be one of {target}'s repositories, as the map is: {', '.join(foreign[:5])}",
+        )
+    for part_repo_name in sorted({str(n["repo"]) for n in nodes if n.get("repo")}):
+        await enforce_repo_allowlist(request, part_repo_name, action="upload a map")
+    replaced = await _maps(request).meta(slug, owner=target)
+    if replaced is not None:
+        await enforce_repo_allowlist(request, replaced.get("repo"), action="replace a map")
     now = datetime.now(UTC)
     try:
         generated = datetime.fromisoformat(parsed.generated_at.replace("Z", "+00:00")) if parsed.generated_at else None
@@ -222,6 +401,7 @@ async def put_map(slug: str, request: Request) -> dict[str, Any]:
         generated = None
     await _maps(request).put(
         slug=slug,
+        owner=target,
         title=parsed.title,
         repo=parsed.repo,
         commit_sha=parsed.commit,
@@ -232,20 +412,32 @@ async def put_map(slug: str, request: Request) -> dict[str, Any]:
         details=parsed.details,
         now=now,
     )
-    part = await _parts(request, slug)
-    closed = 0
+    part = await _parts(request, slug, target)
+    closed, allowed = 0, _allowed_repos(request)
     for row in await _leads(request).open_by_source_prefix("weed", f"{SOURCE_PREFIX}{slug}:"):
-        node_id = str((row.get("data") or {}).get("node") or "")
+        data = row.get("data") or {}
+        if not _made_by(row, target) or not repo_allowed(allowed, row.get("repo")):
+            continue  # another owner's map's lead, or a repository the caller may not act on
+        node_id = str(data.get("node") or "")
         if node_id not in part["nodes"] and await _leads(request).close(str(row["id"]), now=now):
             closed += 1
-    marked = {str(m["node_id"]) for m in await _maps(request).marks(slug) if m["verdict"] == "bloat"}
+    marks = await _maps(request).marks(slug, owner=target)
+    marked = {str(m["node_id"]) for m in marks if m["verdict"] == "bloat"}
     refreshed = 0
     for node_id in sorted(marked & set(part["nodes"])):
         if await _sync_lead(request, slug, part, part["nodes"][node_id], now):
             refreshed += 1
-    logger.info("knowledge_map_uploaded", slug=slug, nodes=len(parsed.graph["nodes"]), leads=refreshed, closed=closed)
+    logger.info(
+        "knowledge_map_uploaded",
+        slug=slug,
+        owner=target,
+        nodes=len(parsed.graph["nodes"]),
+        leads=refreshed,
+        closed=closed,
+    )
     return {
         "slug": slug,
+        "owner": target,
         "nodes": len(parsed.graph["nodes"]),
         "edges": len(parsed.graph["edges"]),
         "leads": refreshed,
@@ -254,13 +446,19 @@ async def put_map(slug: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/maps/{slug}")
-async def get_map(slug: str, request: Request) -> Response:
-    """The parts and links as stored: one fetch draws the whole map. ETag per upload."""
-    stored = await _maps(request).graph_text(_slug(slug))
+async def get_map(slug: str, request: Request, owner: OwnerParam = None) -> Response:
+    """The parts and links as stored: one fetch draws the whole map. ETag per upload and owner."""
+    target = await _map_owner(request, slug, owner)
+    stored = await _maps(request).graph_text(slug, owner=target)
     if stored is None:
         raise HTTPException(status_code=404, detail="no such map")
     text, uploaded_at = stored
-    etag = '"' + hashlib.sha256(f"{slug}:{uploaded_at.isoformat()}".encode()).hexdigest()[:20] + '"'
+    # The owner column is the map's owner (it can change); the stored text is spliced, never parsed. The key goes
+    # last, so a JSON reader keeps it over any "owner" the stored text might hold.
+    if text.startswith("{") and text.endswith("}") and text != "{}":
+        text = text[:-1] + ',"owner":' + json.dumps(target) + "}"
+    tag = f"{target or ''}/{slug}:{uploaded_at.isoformat()}"
+    etag = '"' + hashlib.sha256(tag.encode()).hexdigest()[:20] + '"'
     headers = {"ETag": etag, "Cache-Control": "no-cache"}
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=headers)
@@ -268,31 +466,85 @@ async def get_map(slug: str, request: Request) -> Response:
 
 
 @router.delete("/maps/{slug}", dependencies=[require_admin])
-async def delete_map(slug: str, request: Request) -> dict[str, Any]:
-    if not await _maps(request).delete(_slug(slug)):
+async def delete_map(slug: str, request: Request, owner: OwnerParam = None) -> dict[str, Any]:
+    target = await _map_owner(request, slug, owner, action="delete a map")
+    await _existing_repo_allowed(request, slug, target, "delete a map")
+    if not await _maps(request).delete(slug, owner=target):
         raise HTTPException(status_code=404, detail="no such map")
-    request.app.state.__dict__.get("knowledge_map_parts", {}).pop(slug, None)
-    return {"slug": slug, "deleted": True}
+    request.app.state.__dict__.get("knowledge_map_parts", {}).pop((target, slug), None)
+    return {"slug": slug, "owner": target, "deleted": True}
+
+
+class OwnerBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The map's new owner, a forge owner's name; null leaves it to no one (an admin's alone).
+    owner: str | None = Field(max_length=255)
+
+
+@router.put("/maps/{slug}/owner", dependencies=[require_admin])
+async def set_map_owner(slug: str, body: OwnerBody, request: Request, owner: OwnerParam = None) -> dict[str, Any]:
+    """Give a map to another owner (or to none), with its marks, its sends and its leads; audited.
+
+    ``?owner=`` names the map as on every route; the body says whose it becomes.
+    """
+    current = await _map_owner(request, slug, owner, action=_ACTION_OWNER)
+    to = _owner_arg(body.owner or "")
+    tier, _ = await caller_scope(request)
+    await _may_change(request, tier, to, _ACTION_OWNER)
+    meta = await _existing_repo_allowed(request, slug, current, _ACTION_OWNER)
+    if to == current:
+        return {"slug": slug, "owner": to, "changed": False}
+    # The upload's rules: a map of a repository is its owner's, and a map's parts are in its owner's repositories.
+    if meta.get("repo") and to != repo_owner(meta["repo"]):
+        raise HTTPException(
+            status_code=422, detail=f"a map of {meta['repo']} belongs to {repo_owner(meta['repo'])}, its owner"
+        )
+    if to is not None and (foreign := foreign_repos((await _parts(request, slug, current))["nodes"].values(), to)):
+        raise HTTPException(
+            status_code=422,
+            detail=f"the map has parts in repositories that are not {to}'s: {', '.join(foreign[:5])}",
+        )
+    try:
+        moved = await _maps(request).set_owner(slug, owner=current, to=to)
+    except OwnerTaken as exc:
+        raise HTTPException(status_code=409, detail=f"{to or 'no owner'} already has a map called {slug}") from exc
+    if not moved:
+        raise HTTPException(status_code=404, detail="no such map")
+    request.app.state.__dict__.get("knowledge_map_parts", {}).pop((current, slug), None)
+    config = getattr(request.app.state, "config", None)
+    await emit_audit(
+        getattr(request.app.state, "db", None),
+        "map.owner_changed",
+        actor=request_actor(request),
+        details={"slug": slug, "before": current, "after": to},
+        audit_log_path=getattr(config, "audit_log_path", None),
+    )
+    logger.info("knowledge_map_owner_changed", slug=slug, before=current, after=to)
+    return {"slug": slug, "owner": to, "changed": True}
 
 
 @router.get("/maps/{slug}/parts/{node_id:path}")
-async def get_part(slug: str, node_id: str, request: Request) -> dict[str, Any]:
+async def get_part(slug: str, node_id: str, request: Request, owner: OwnerParam = None) -> dict[str, Any]:
     """One part: what the map says about it, everyone's marks, and the work it was last sent for."""
-    part = await _parts(request, _slug(slug))
+    target = await _map_owner(request, slug, owner)
+    part = await _parts(request, slug, target)
     node = part["nodes"].get(node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="no such part on this map")
     maps = _maps(request)
-    work = await maps.work(slug, node_id)
+    work = await maps.work(slug, node_id, owner=target)
     repo = part_repo(part["repo"], node)
     lead = await _leads(request).get(lead_id("weed", repo, source_key(slug, node_id))) if repo else None
+    if lead is not None and not _made_by(lead, target):
+        lead = None  # another owner's map of this slug made it
     return {
-        "map": {"slug": slug, "title": part["title"], "repo": part["repo"]},
+        "map": {"slug": slug, "owner": target, "title": part["title"], "repo": part["repo"]},
         "node": node,
         "repo": repo,
         "removable": removable(part["repo"], node),
-        "detail": await maps.detail(slug, node_id),
-        "marks": [_mark_view(m) for m in await maps.marks(slug, node_id)],
+        "detail": await maps.detail(slug, node_id, owner=target),
+        "marks": [_mark_view(m) for m in await maps.marks(slug, node_id, owner=target)],
         "work": _work_view(work[0], _base_url(request)) if work else None,
         "lead": {"id": lead["id"], "state": lead["state"]} if lead else None,
     }
@@ -313,29 +565,34 @@ class MarkBody(BaseModel):
 
 @router.get("/maps/{slug}/marks")
 async def list_marks(
-    slug: str, request: Request, by: str | None = Query(default=None, description="Whose verdict is 'mine'")
+    slug: str,
+    request: Request,
+    by: str | None = Query(default=None, description="Whose verdict is 'mine'"),
+    owner: OwnerParam = None,
 ) -> dict[str, Any]:
-    rows = await _maps(request).marks(_slug(slug))
+    target = await _map_owner(request, slug, owner)
+    rows = await _maps(request).marks(slug, owner=target)
     return {"marks": mark_counts(rows, by)}
 
 
 @router.post("/maps/{slug}/marks")
-async def post_mark(slug: str, body: MarkBody, request: Request) -> dict[str, Any]:
+async def post_mark(slug: str, body: MarkBody, request: Request, owner: OwnerParam = None) -> dict[str, Any]:
     """Mark a part, or take a mark back; the part's weed lead follows the bloat marks."""
-    part = await _parts(request, _slug(slug))
+    target = await _map_owner(request, slug, owner, action="mark a map part")
+    part = await _parts(request, slug, target)
     node = part["nodes"].get(body.node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="no such part on this map")
     await enforce_repo_allowlist(request, part_repo(part["repo"], node), action="mark a map part")
     maps, now = _maps(request), datetime.now(UTC)
     if body.verdict == "clear":
-        await maps.clear_mark(slug, body.node_id, body.by)
+        await maps.clear_mark(slug, body.node_id, body.by, owner=target)
     else:
-        await maps.set_mark(slug, body.node_id, body.by, body.verdict, body.note.strip(), now=now)
+        await maps.set_mark(slug, body.node_id, body.by, body.verdict, body.note.strip(), owner=target, now=now)
     lead = await _sync_lead(request, slug, part, node, now)
     return {
         "node_id": body.node_id,
-        "marks": [_mark_view(m) for m in await maps.marks(slug, body.node_id)],
+        "marks": [_mark_view(m) for m in await maps.marks(slug, body.node_id, owner=target)],
         "lead_id": lead,
     }
 
@@ -371,11 +628,15 @@ async def _start_removal(
             status_code=409,
             detail="this part is a whole system or repository, not a file in one: removing it is not a code change",
         )
-    mine = next((m for m in await maps.marks(slug, node["id"]) if m["marked_by"] == body.by), None)
+    owner = part["owner"]
+    mine = next((m for m in await maps.marks(slug, node["id"], owner=owner) if m["marked_by"] == body.by), None)
     if mine is None or mine["verdict"] != "bloat":
-        await maps.set_mark(slug, node["id"], body.by, "bloat", body.note.strip()[:500], now=now)
+        await maps.set_mark(slug, node["id"], body.by, "bloat", body.note.strip()[:500], owner=owner, now=now)
     lid = await _sync_lead(request, slug, part, node, now)
     if lid is None:
+        holder = await _other_holder(request, slug, part, node)
+        if holder is not _FREE:  # another map took the lead after send_parts looked
+            raise HTTPException(status_code=409, detail=await _held_detail(request, holder))
         raise HTTPException(status_code=409, detail="this part lives in no repository, so no agent can remove it")
     proposals = getattr(request.app.state, "proposals_repo", None)
     asked = still_open(lid, await proposals.decisions(), now) if proposals is not None else False
@@ -442,19 +703,20 @@ async def _send_together(
     from embry0.api.v1.proposals import record_lead_accept
     from embry0.services.proposals import still_open
 
-    maps, now = _maps(request), datetime.now(UTC)
+    maps, now, owner = _maps(request), datetime.now(UTC), part["owner"]
     leads: dict[str, str] = {}
     job: dict[str, Any] = {"repo": repo, "kind": kind, "parts": len(members), "job_id": None, "error": None}
     try:
         if kind == "remove":
-            mine = {str(m["node_id"]): m for m in await maps.marks(slug) if m["marked_by"] == body.by}
+            mine = {str(m["node_id"]): m for m in await maps.marks(slug, owner=owner) if m["marked_by"] == body.by}
             for node_id, node in members:
                 if mine.get(node_id, {}).get("verdict") != "bloat":
-                    await maps.set_mark(slug, node_id, body.by, "bloat", body.note.strip()[:500], now=now)
+                    note = body.note.strip()[:500]
+                    await maps.set_mark(slug, node_id, body.by, "bloat", note, owner=owner, now=now)
                 lid = await _sync_lead(request, slug, part, node, now)
                 if lid:
                     leads[node_id] = lid
-        parts = [(node, await maps.detail(slug, node_id)) for node_id, node in members]
+        parts = [(node, await maps.detail(slug, node_id, owner=owner)) for node_id, node in members]
         try:
             task = batch_task(kind, repo=repo, parts=parts, map_title=part["title"], note=body.note.strip(), by=body.by)
         except BatchTooLarge as exc:
@@ -486,14 +748,16 @@ async def _send_together(
 
 
 @router.post("/maps/{slug}/send", status_code=202)
-async def send_parts(slug: str, body: SendBody, request: Request) -> dict[str, Any]:
+async def send_parts(slug: str, body: SendBody, request: Request, owner: OwnerParam = None) -> dict[str, Any]:
     """Send parts to agents: one job each, or with ``together`` one job per repository and kind.
 
     A part that cannot go says why and the others still go.
     """
-    part = await _parts(request, _slug(slug))
+    target = await _map_owner(request, slug, owner, action=_ACTION_SEND)
+    part = await _parts(request, slug, target)
     maps = _maps(request)
-    mine = {str(m["node_id"]): m["verdict"] for m in await maps.marks(slug) if m["marked_by"] == body.by}
+    marks = await maps.marks(slug, owner=target)
+    mine = {str(m["node_id"]): m["verdict"] for m in marks if m["marked_by"] == body.by}
     checked: dict[str, Any] = {}
     results: list[dict[str, Any]] = []
     groups: dict[tuple[str, str], list[tuple[str, dict[str, Any]]]] = {}
@@ -517,13 +781,15 @@ async def send_parts(slug: str, body: SendBody, request: Request) -> dict[str, A
                     status_code=409,
                     detail="this part is a whole system or repository, not a file in one: removing it is not a code change",
                 )
+            if kind == "remove" and (holder := await _other_holder(request, slug, part, node)) is not _FREE:
+                raise HTTPException(status_code=409, detail=await _held_detail(request, holder))
             if body.together:
                 groups.setdefault((repo, kind), []).append((node_id, node))
                 continue
             if kind == "remove":
                 result["lead_id"], result["job_id"] = await _start_removal(request, slug, part, node, body, run_with)
             else:
-                text = part_text(node, await maps.detail(slug, node_id), part["title"])
+                text = part_text(node, await maps.detail(slug, node_id, owner=target), part["title"])
                 task = send_task(kind, repo=repo, node=node, text=text, note=body.note.strip(), by=body.by)
                 start = (
                     _start_fix(request, repo, node, task, body.by, slug, run_with)
@@ -536,6 +802,7 @@ async def send_parts(slug: str, body: SendBody, request: Request) -> dict[str, A
         if repo is not None and node is not None and not (result["error"] or "").startswith("no such part"):
             await maps.add_send(
                 slug=slug,
+                owner=target,
                 node_id=node_id,
                 kind=kind,
                 repo=repo,
@@ -562,6 +829,7 @@ async def send_parts(slug: str, body: SendBody, request: Request) -> dict[str, A
         for node_id, _node in members:
             await maps.add_send(
                 slug=slug,
+                owner=target,
                 node_id=node_id,
                 kind=group_kind,
                 repo=repo,
@@ -595,8 +863,9 @@ async def send_parts(slug: str, body: SendBody, request: Request) -> dict[str, A
 
 
 @router.get("/maps/{slug}/work")
-async def list_work(slug: str, request: Request) -> dict[str, Any]:
+async def list_work(slug: str, request: Request, owner: OwnerParam = None) -> dict[str, Any]:
     """Each part's newest send and its job: running, a pull request, merged, failed."""
-    rows = await _maps(request).work(_slug(slug))
+    target = await _map_owner(request, slug, owner)
+    rows = await _maps(request).work(slug, owner=target)
     base = _base_url(request)
     return {"work": {str(r["node_id"]): _work_view(r, base) for r in rows}}

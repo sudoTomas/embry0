@@ -3744,6 +3744,62 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_jobs_pr_url ON jobs (pr_url) WHERE pr_url IS NOT NULL;
         """,
     ),
+    (
+        133,
+        "knowledge maps: each map's owner, keyed by owner and slug, with its marks, sends and leads (#180)",
+        # A map belongs to the forge owner it describes, and a caller sees
+        # and changes the maps of the owners its key covers. The owner is the
+        # owner part of the map's repo, lowercased (forge owners ignore
+        # case); a map with no repo gets NULL, which only an admin sees or
+        # changes until an admin gives it an owner. The owner column is the
+        # only record of it: the stored graph text is not parsed or rewritten
+        # (text an older release stored may not be valid JSONB), and a read
+        # adds the owner to what it serves.
+        #
+        # A primary key cannot hold NULL, so the key is a unique index with
+        # NULLS NOT DISTINCT (PostgreSQL 15+; embry0 runs 16): two unowned
+        # maps of one slug conflict as two owned ones do, and the upload's
+        # ON CONFLICT (slug, owner) upserts both kinds. slug leads, so an
+        # address that names only a slug is still read through the index.
+        #
+        # Marks and sends have no foreign key to their map (they outlive it
+        # and come back with the next upload of the same map), so each
+        # carries its map's owner, backfilled from the map of its slug; one
+        # whose map was deleted keeps NULL. A map's weed leads record the
+        # owner too, so an upload closes only its own map's leads. Each
+        # backfill takes a slug only while one map has it, so running this
+        # again after owners share slugs moves nothing.
+        """
+        ALTER TABLE knowledge_maps ADD COLUMN IF NOT EXISTS owner TEXT;
+        UPDATE knowledge_maps m SET owner = lower(split_part(m.repo, '/', 1))
+            WHERE m.owner IS NULL AND position('/' IN coalesce(m.repo, '')) > 1
+              AND NOT EXISTS (SELECT 1 FROM knowledge_maps o WHERE o.slug = m.slug AND o.owner IS NOT NULL);
+        ALTER TABLE knowledge_maps DROP CONSTRAINT IF EXISTS knowledge_maps_pkey;
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_maps_slug_owner
+            ON knowledge_maps (slug, owner) NULLS NOT DISTINCT;
+        COMMENT ON COLUMN knowledge_maps.owner IS
+            'the forge owner the map belongs to, lowercased; NULL: no one''s, seen and changed only by an admin.';
+
+        ALTER TABLE knowledge_map_marks ADD COLUMN IF NOT EXISTS map_owner TEXT;
+        UPDATE knowledge_map_marks k SET map_owner = m.owner FROM knowledge_maps m
+            WHERE m.slug = k.map_slug AND k.map_owner IS NULL AND m.owner IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM knowledge_maps o WHERE o.slug = m.slug AND o.owner IS DISTINCT FROM m.owner);
+        ALTER TABLE knowledge_map_marks DROP CONSTRAINT IF EXISTS knowledge_map_marks_pkey;
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_map_marks_part
+            ON knowledge_map_marks (map_slug, node_id, marked_by, map_owner) NULLS NOT DISTINCT;
+        COMMENT ON COLUMN knowledge_map_marks.map_owner IS 'the owner of the marked map (knowledge_maps.owner).';
+
+        ALTER TABLE knowledge_map_sends ADD COLUMN IF NOT EXISTS map_owner TEXT;
+        UPDATE knowledge_map_sends s SET map_owner = m.owner FROM knowledge_maps m
+            WHERE m.slug = s.map_slug AND s.map_owner IS NULL AND m.owner IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM knowledge_maps o WHERE o.slug = m.slug AND o.owner IS DISTINCT FROM m.owner);
+        COMMENT ON COLUMN knowledge_map_sends.map_owner IS 'the owner of the map the part was sent from.';
+
+        UPDATE leads l SET data = l.data || jsonb_build_object('map_owner', m.owner) FROM knowledge_maps m
+            WHERE l.kind = 'weed' AND l.source_key LIKE 'map:' || m.slug || ':%' AND NOT (l.data ? 'map_owner')
+              AND NOT EXISTS (SELECT 1 FROM knowledge_maps o WHERE o.slug = m.slug AND o.owner IS DISTINCT FROM m.owner);
+        """,
+    ),
 ]
 
 

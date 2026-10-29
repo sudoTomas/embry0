@@ -1,17 +1,18 @@
 import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
-import type { SendKind } from "@/api/maps";
-import { isNotFound } from "@/api/errorDetail";
+import { type MapOwner, ownerOf, type SendKind } from "@/api/maps";
+import { apiErrorMessage, isConflict, isNotFound } from "@/api/errorDetail";
 import { PageError } from "@/components/PageError";
 import { BatchSendDialog } from "@/components/maps/BatchSendDialog";
 import { MapCanvas } from "@/components/maps/MapCanvas";
+import { MapOwnerControl } from "@/components/maps/MapOwnerControl";
 import { PartPanel } from "@/components/maps/PartPanel";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { Select } from "@/components/ui/Select";
 import { useMap, useMapMarks, useMapWork } from "@/hooks/useMaps";
-import { type ColorBy, canRemove, search, unsentBloat, workState } from "@/lib/mapView";
+import { type ColorBy, canRemove, ownerWords, search, unsentBloat, workState } from "@/lib/mapView";
 import { formatDateTime } from "@/lib/utils";
 import { useAuthStore, useIsAdmin } from "@/stores/authStore";
 
@@ -25,15 +26,21 @@ const COLOR_BY: { id: ColorBy; label: string }[] = [
 
 type Show = "all" | "bloat" | "marked" | "sent";
 
-/** Knowledge maps (spec 2026-10-27): one map — the parts on the scanner's layout, a part's panel, sending work. */
+/**
+ * Knowledge maps (spec 2026-10-27): one map — the parts on the scanner's layout, a part's panel, sending work.
+ *
+ * `?owner=` names whose map of the slug it is (#180; empty: the map of no owner). Without it the server answers with
+ * the one map of the slug the viewer sees, so a link from before owners keeps working.
+ */
 export function MapPage() {
   const { slug = "" } = useParams();
   const [params, setParams] = useSearchParams();
+  const owner: MapOwner = params.get("owner") ?? undefined;
   const by = useAuthStore((s) => s.user?.email) ?? "dashboard";
   const isAdmin = useIsAdmin();
-  const map = useMap(slug);
-  const marks = useMapMarks(slug, by);
-  const work = useMapWork(slug);
+  const map = useMap(slug, owner);
+  const marks = useMapMarks(slug, by, owner);
+  const work = useMapWork(slug, owner);
   const [colorBy, setColorBy] = useState<ColorBy>("bloat");
   const [query, setQuery] = useState("");
   const [show, setShow] = useState<Show>("all");
@@ -65,13 +72,18 @@ export function MapPage() {
 
   if (map.isLoading) return <Skeleton className="h-[70vh] w-full" />;
   if (map.isError || !map.data) {
-    return isNotFound(map.error) ? (
-      <PageError message="No map with that name" back={{ to: "/maps", label: "All maps" }} />
-    ) : (
-      <PageError message="The map did not load" onRetry={() => void map.refetch()} />
-    );
+    if (isNotFound(map.error)) return <PageError message="No map with that name" back={{ to: "/maps", label: "All maps" }} />;
+    // Several owners have a map of this slug and the address names none: the list links each by its owner.
+    if (isConflict(map.error)) return <PageError message={apiErrorMessage(map.error)} back={{ to: "/maps", label: "All maps" }} />;
+    return <PageError message="The map did not load" onRetry={() => void map.refetch()} />;
   }
   const g = map.data;
+  const whose = ownerWords(g);
+  const follow = (to: string) => {
+    const next = new URLSearchParams(params);
+    next.set("owner", to);
+    setParams(next, { replace: true });
+  };
   return (
     <div className="flex h-[calc(100vh-7rem)] min-h-[560px] flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -79,12 +91,14 @@ export function MapPage() {
           <p className="text-xs text-fg-muted"><Link className="hover:text-fg" to="/maps">Maps</Link> /</p>
           <h1 className="title-page text-xl font-bold">{g.title}</h1>
           <p className="text-xs text-fg-muted">
+            {whose !== null && <span data-testid="map-owner">{whose} · </span>}
             {g.repo ?? "organization map"} · {g.nodes.length.toLocaleString()} parts
             {g.generated_at ? ` · scanned ${formatDateTime(g.generated_at)}` : ""}
             {running ? ` · ${running} agent job${running === 1 ? "" : "s"} running` : ""}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && whose !== null && <MapOwnerControl slug={slug} owner={owner ?? ownerOf(g)} onMoved={follow} />}
           <Input className="w-56" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a part" aria-label="Find a part" />
           <Select className="w-40" value={show} onChange={(e) => setShow(e.target.value as Show)} aria-label="Show">
             <option value="all">All parts</option>
@@ -134,7 +148,7 @@ export function MapPage() {
         </div>
         {selected && (
           <aside className="max-h-[50vh] w-full shrink-0 overflow-y-auto rounded-md border border-border bg-surface p-3 lg:max-h-none lg:w-[380px]" aria-label="The selected part">
-            <PartPanel slug={slug} nodeId={selected} by={by} canSend={isAdmin} onClose={() => select(null)} />
+            <PartPanel slug={slug} owner={owner} nodeId={selected} by={by} canSend={isAdmin} onClose={() => select(null)} />
           </aside>
         )}
       </div>
@@ -144,6 +158,7 @@ export function MapPage() {
       {batch && (
         <BatchSendDialog
           slug={slug}
+          owner={owner}
           graph={g}
           ids={batch.ids}
           initialKind={batch.kind}

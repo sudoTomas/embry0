@@ -398,15 +398,18 @@ Work embry0 finds by itself and offers as owner proposals ([leads.md](leads.md),
 
 A scanner's map of a codebase or an organization, marked and sent to agents ([maps.md](maps.md), [the design](superpowers/specs/2026-10-27-knowledge-maps-design.md)).
 
-- `GET /api/v1/maps` (read): `{"maps": [{"slug", "title", "repo", "commit", "source", "generated_at", "uploaded_at", "uploaded_by", "nodes", "edges"}]}`.
-- `PUT /api/v1/maps/{slug}`: stores an `embry0.map/1` document (`Content-Encoding: gzip` or plain JSON; at most 64 MB decompressed, and 32 MB on the wire through the LAN vhost), replacing the last upload. Answers `{"slug", "nodes", "edges", "leads", "leads_closed"}`: the weed leads of parts still marked bloat, refreshed, and those of parts that left the map, closed. 422 names what is wrong with a document that is not a map; a key limited to a repository allowlist may upload only a map of a repository on it.
-- `GET /api/v1/maps/{slug}` (read): the parts and links as stored, `{"slug", "title", "repo", "commit", "source", "generated_at", "kinds", "areas", "nodes", "edges"}`, with an `ETag` per upload (`If-None-Match` answers 304).
-- `GET /api/v1/maps/{slug}/parts/{id}` (read): one part, `{"map", "node", "repo", "removable", "detail", "marks": [{"by", "verdict", "note", "at"}], "work", "lead": {"id", "state"} | null}`. `repo` is the repository the part lives in, or `null`; `removable` is whether an agent can remove it: a file or folder in it (a `path`), or a part with a `removal` note.
+**Owners and addresses.** Each map belongs to a forge owner, lowercased: the document's `owner`, else its `repo`'s owner; a map with neither belongs to no one (`owner: null`). A slug names a map within its owner. Every route below takes an optional `?owner=<owner>` that names the map (`?owner=` empty names the map of no owner). Without it, the address names the one map of the slug the caller sees, so the addresses from before owners still work while they are unambiguous; when the caller sees several, the route answers 409 naming their owners, and when it sees none, 404. A caller sees and changes the maps of the owners its key's [repository allowlist](#repository-allowlist) covers, every owner without one. A map it may not see answers 404 and is not listed; a change it may not make answers 403 `repo_not_allowed` naming `<owner>/*`, audited as a refused repository is. A map of no owner is an admin's alone (an admin without an allowlist): anyone else does not see it and is refused with 403 `map_has_no_owner`. See [maps.md](maps.md#who-owns-a-map).
+
+- `GET /api/v1/maps` (read): the maps the caller sees, `{"maps": [{"slug", "owner", "title", "repo", "commit", "source", "generated_at", "uploaded_at", "uploaded_by", "nodes", "edges"}]}`.
+- `PUT /api/v1/maps/{slug}`: stores an `embry0.map/1` document (`Content-Encoding: gzip` or plain JSON; at most 64 MB decompressed, and 32 MB on the wire through the LAN vhost), replacing the last upload of the same owner and slug. The owner is the document's `owner`, else its `repo`'s owner, else `?owner=`; an `?owner=` that names another owner than the document is refused with 422, and so is a part whose `repo` is not one of the owner's repositories, or a document holding `NaN`, `Infinity`, a NUL character or a lone surrogate. Answers `{"slug", "owner", "nodes", "edges", "leads", "leads_closed"}`: the weed leads of parts still marked bloat, refreshed, and those of parts that left the map, closed (only this map's, never another owner's map of the slug, and only in repositories the key may act on). 422 names what is wrong with a document that is not a map; a key limited to a repository allowlist may upload only a map of a repository on it whose parts name only repositories on it, and replace only a stored map of a repository on it; a map of no owner is uploaded by an admin only.
+- `GET /api/v1/maps/{slug}` (read): the parts and links as stored, `{"slug", "title", "owner", "repo", "commit", "source", "generated_at", "kinds", "areas", "nodes", "edges"}`, with an `ETag` per upload and owner (`If-None-Match` answers 304).
+- `GET /api/v1/maps/{slug}/parts/{id}` (read): one part, `{"map": {"slug", "owner", "title", "repo"}, "node", "repo", "removable", "detail", "marks": [{"by", "verdict", "note", "at"}], "work", "lead": {"id", "state"} | null}`. `repo` is the repository the part lives in, or `null`; `removable` is whether an agent can remove it: a file or folder in it (a `path`), or a part with a `removal` note.
 - `GET /api/v1/maps/{slug}/marks?by=` (read): `{"marks": {"<part id>": {"bloat", "keep", "unsure", "mine"}}}`, `mine` being the verdict of `by`.
 - `POST /api/v1/maps/{slug}/marks` (`{"node_id", "verdict": "bloat" | "keep" | "unsure" | "clear", "note", "by"}`): sets or takes back `by`'s mark. A removable part that someone marks bloat keeps a `weed` lead open; answers `{"node_id", "marks", "lead_id"}`.
-- `POST /api/v1/maps/{slug}/send` (`{"node_ids": [...], "kind": "remove" | "fix" | "analysis", "run_with", "note", "by", "together"}`, 202, at most 200 parts): one job per part, or with `together: true` one job per repository and kind (one pull request; each part's lead is accepted with that job, and `jobs` lists them as `{"repo", "kind", "parts", "job_id", "error"}`; a batch whose parts do not fit one job's task is refused with 413, never cut). `remove` (a removable part only; a whole system or repository answers with an error) records `by`'s bloat mark and accepts the part's lead (the yes is recorded as `by`'s); `fix` files an issue labelled `embry0-map` and `map:<slug>` and dispatches it; `analysis` starts a read-only `analysis-default` job. Without `kind`, a removable part `by` marked bloat is removed and any other analysed. Answers `{"sent", "failed", "results": [{"node_id", "kind", "lead_id", "job_id", "error"}]}`; a part that cannot go says why and the others still go.
+- `POST /api/v1/maps/{slug}/send` (`{"node_ids": [...], "kind": "remove" | "fix" | "analysis", "run_with", "note", "by", "together"}`, 202, at most 200 parts): one job per part, or with `together: true` one job per repository and kind (one pull request; each part's lead is accepted with that job, and `jobs` lists them as `{"repo", "kind", "parts", "job_id", "error"}`; a batch whose parts do not fit one job's task is refused with 413, never cut). `remove` (a removable part only; a whole system or repository answers with an error) records `by`'s bloat mark and accepts the part's lead (the yes is recorded as `by`'s); `fix` files an issue labelled `embry0-map` and `map:<slug>` and dispatches it; `analysis` starts a read-only `analysis-default` job. Without `kind`, a removable part `by` marked bloat is removed and any other analysed. A removal of a part whose open lead another map of the slug holds is refused for that part, with or without `together`; the error names that map only to a caller who may see it. Answers `{"sent", "failed", "results": [{"node_id", "kind", "lead_id", "job_id", "error"}]}`; a part that cannot go says why and the others still go.
 - `GET /api/v1/maps/{slug}/work` (read): `{"work": {"<part id>": {"kind", "repo", "lead_id", "job_id", "job_url", "status", "pr_url", "cost_usd", "error", "by", "note", "sent_at", "finished_at"}}}`, each part's newest send with its job.
-- `DELETE /api/v1/maps/{slug}` (admin): removes the map; its marks and sends stay and come back with a new upload under the same slug.
+- `DELETE /api/v1/maps/{slug}` (admin): removes the map; its marks and sends stay and come back with a new upload of the same owner and slug. A key limited to an allowlist deletes only a map of a repository on it.
+- `PUT /api/v1/maps/{slug}/owner` (admin; `{"owner": "<owner>" | null}`): gives the map to another owner, or to none, with its marks, its sends and its weed leads (whose links follow). `?owner=` names the map as on every route. Answers `{"slug", "owner", "changed"}`; 409 when the new owner already has a map of the slug; 422 when the map has a `repo` and the new owner is not that repository's owner, or when its parts name repositories that are not the new owner's. A change writes a `map.owner_changed` audit row with `before` and `after`. An admin key limited to an allowlist may move only a map of a repository on it, and only to an owner it covers.
 
 ## Pipeline templates
 
@@ -932,7 +935,16 @@ other repository:
 - the steps of setting up testing: `POST /repos/{repo}/setup/propose`,
   `POST /repos/{repo}/setup/proposal/{id}/apply` and `.../reject`,
   `POST /repos/{repo}/setup/skip-testing` and
-  `POST /repos/{repo}/history/{id}/undo`.
+  `POST /repos/{repo}/history/{id}/undo`;
+- the [knowledge maps](#knowledge-maps), which belong to a forge owner: a
+  key covers the owners of the repositories on its list. `PUT /maps/{slug}`,
+  `POST /maps/{slug}/marks`, `POST /maps/{slug}/send`,
+  `DELETE /maps/{slug}` and `PUT /maps/{slug}/owner` on a map of another
+  owner are refused naming `<owner>/*`, and a map that belongs to no owner
+  is refused as work with no repository is. Uploading, marking and sending
+  also check the repository of the map or the part, as before; an upload
+  checks each part's `repo`, and replacing, deleting or giving away a
+  stored map checks that map's `repo`.
 
 The MCP tools reach embry0 through these routes with the caller's key, so
 they are covered too. Matching ignores case and follows `REPO_RENAMES`
@@ -943,8 +955,9 @@ repository and the action, and writes an `apikey.repo_refused` audit row.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
 every key minted before the allowlist existed is unrestricted. Beyond the
-routes above, the list does not narrow what the key may read, nor the
-settings routes its scope allows, `PUT /repos/{repo}/qa-config` and
+routes above, the list does not narrow what the key may read (except the
+knowledge maps, which list and answer only the maps of covered owners), nor
+the settings routes its scope allows, `PUT /repos/{repo}/qa-config` and
 `PUT /repos/{repo}/preferences` among them. A restricted key may not mint
 keys or change any key's allowlist, its own included, since a key it minted
 would carry no restriction. For an agent that should only dispatch, mint an

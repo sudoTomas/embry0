@@ -5,6 +5,12 @@ import { PALETTE, PALETTE_HEX } from "@/lib/agentIdentity";
 
 export type ColorBy = "kind" | "area" | "bloat" | "marks" | "work";
 
+/** Whose map it is, in words; null for an older backend, which says nothing about owners. */
+export function ownerWords(map: { owner?: string | null }): string | null {
+  if (map.owner === undefined) return null;
+  return map.owner ?? "no owner (admins only)";
+}
+
 export interface View {
   /** World coordinate at the canvas centre, and pixels per world unit. */
   cx: number;

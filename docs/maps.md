@@ -13,6 +13,7 @@ One JSON document per map:
 | `format` | `"embry0.map/1"` |
 | `slug` | The map's name in URLs: lowercase letters, digits and hyphens, at most 64. Optional; it must match the upload's path when present. |
 | `title` | What the page calls the map. |
+| `owner` | The forge owner (organization, account or group) the map belongs to. Optional: absent, it is the owner of `repo`. When both are given they must agree. See [Who owns a map](#who-owns-a-map). |
 | `repo` | `owner/name` of the repository the map describes, or `null` for an organization-wide map. |
 | `commit`, `generated_at`, `source` | The commit read, when (ISO 8601), and what produced it, as shown on the page. |
 | `kinds` | `[{"id", "label"}]`: the kinds of part, in the order a legend lists them. |
@@ -28,7 +29,7 @@ A part (`nodes[]`):
 | `id` | Unique in the map, at most 300 characters. Keep it stable across scans: marks and sends are kept by it. |
 | `kind`, `area`, `label`, `sub` | Its kind and area ids, its name, and a short line under the name. |
 | `path`, `line`, `url` | Its file in the repository, a line in it, and an `https://` link to it. |
-| `repo` | `owner/name` when the part lives in a repository other than the map's (an organization map names one per system). Otherwise a part with a `path` lives in the map's `repo`, and a part with neither (a database table, a host) lives in none. |
+| `repo` | `owner/name` when the part lives in a repository other than the map's (an organization map names one per system). It must be one of the map owner's repositories. Otherwise a part with a `path` lives in the map's `repo`, and a part with neither (a database table, a host) lives in none. |
 | `x`, `y`, `r` | Its place and size on the plane, in any units; the page fits the whole map to the screen. A part without a place is put on a spiral. |
 | `signals` | Up to 8 short sentences that call for attention. |
 | `removal` | For a part that is not a file but can be removed by a code change, how (at most 600 characters): a database table the repository's migrations own is dropped by a new migration. Such a part lives in the map's `repo` and can be sent for removal. |
@@ -52,12 +53,25 @@ gzip -c map.json | curl -sf -X PUT "http://<embry0-host>:8200/api/v1/maps/<slug>
 
 - **Gzip or plain JSON**: send `Content-Encoding: gzip` for a compressed body. The decompressed document may be up to 64 MB; a bigger one is refused with 413.
 - **Over the LAN**: the LAN vhost takes a body of up to 32 MB on `/api/v1/maps/`. The public dashboard vhost keeps nginx's 1 MB default, so a scanner uploads over the LAN.
-- **The key**: an `operate` key does it. A key limited to a repository allowlist may upload only a map whose `repo` is on its list, never an organization map, and mark only parts of repositories on it ([API keys](api.md#api-keys)).
-- **What an upload keeps**: embry0 keeps the last upload per slug. Marks and sends are kept by part id across uploads. A part marked bloat that is still on the map has its lead refreshed with the new evidence; a part that left the map closes its lead, which is what a merged removal looks like on the next scan.
+- **The key**: an `operate` key does it, for a map whose owner the key covers ([Who owns a map](#who-owns-a-map)). A key limited to a repository allowlist may also upload only a map whose `repo` is on its list, never an organization map, whose parts name only repositories on its list, and replace only a stored map whose `repo` is on its list; it marks only parts of repositories on it ([API keys](api.md#api-keys)). A map that names neither an `owner` nor a `repo` belongs to no one, and only an admin may upload it.
+- **Valid JSON only**: `NaN`, `Infinity`, a number too large for a double, a NUL character in a string and a lone UTF-16 surrogate are refused with 422.
+- **What an upload keeps**: embry0 keeps the last upload per owner and slug. Marks and sends are kept by part id across uploads. A part marked bloat that is still on the map has its lead refreshed with the new evidence; a part that left the map closes its lead, which is what a merged removal looks like on the next scan. An upload closes only its own map's leads, and only in repositories the uploading key may act on.
+
+## Who owns a map
+
+Every map belongs to a forge owner: the `owner` its document names, else the owner part of its `repo`, lowercased (`acme` for `Acme/widgets`). An organization-wide map (`repo: null`) names its `owner`; an upload can also give it with `?owner=` on the address when the document cannot. A map holds only its owner's repositories: a part that names a repository of another owner is refused with 422. A slug names a map within its owner, so two owners can each have a map called `shop`.
+
+Who sees and changes a map follows the caller's [repository allowlist](api.md#repository-allowlist). A key covers the owners of the repositories on its list (with `REPO_RENAMES`, an old and a current owner alike); a key or a person without a list covers every owner. A caller lists and reads only the maps of owners it covers, and any other map is not there for it (404). Uploading, marking, sending, deleting or giving away a map of an owner it does not cover is refused with 403 `repo_not_allowed`, naming the owner as `<owner>/*`, logged and audited as a refused repository is. Replacing, deleting or giving away a stored map is also checked against the map's own `repo`, so a key limited to some of an owner's repositories changes only the maps of those.
+
+A map that belongs to no one (no `owner`, no `repo`) is an admin's alone: only an admin without an allowlist sees it, and only an admin uploads, marks, sends or deletes it (anyone else gets 403 `map_has_no_owner`). On the upgrade that brings owners, each stored map gets its repository's owner, and an organization map gets none and waits for an admin. An admin gives a map an owner on its page (**Set owner**) or with `PUT /api/v1/maps/{slug}/owner`; the map takes its marks, its sends and its leads (and their links) with it, and the change writes a `map.owner_changed` audit row. The upload's rules hold: a map of a repository stays with that repository's owner, and a map whose parts name another owner's repositories cannot move to an owner they are not under.
+
+A weed lead is keyed by repository, slug and part id, so an unowned map and an owned map of one slug can name the same part's lead. The map that opened it keeps it: another map of the slug does not show, close or rewrite it, and a removal of that part from the other map is refused, in a batch too. The refusal names the holding map only to a caller who may see it; anyone else is told an admin must release the lead.
+
+**Addressing a map.** Every route takes `?owner=<owner>` (empty, `?owner=`, for the map of no owner). Without it, an address names the one map of the slug the caller sees, so the addresses from before owners keep working; when the caller sees several, it answers 409 and names their owners, and when it sees none, 404, whatever other owners have. The page links carry the owner, so a link keeps opening its map after another owner uploads one of the same slug.
 
 ## The Maps page
 
-`/maps` lists every map. A map's page draws its parts on the scanner's layout: drag to move, the wheel or `+` and `-` to zoom, `0` to fit, a click to open a part. Colour the parts by bloat score, by marks, by agent work, by kind or by area; find parts by name, id or path; pick out the bloat candidates, the parts marked, or the parts sent. The address keeps the open part (`?part=<id>`), so a link opens it.
+`/maps` lists every map the viewer may see, with its owner. A map's page draws its parts on the scanner's layout: drag to move, the wheel or `+` and `-` to zoom, `0` to fit, a click to open a part. Colour the parts by bloat score, by marks, by agent work, by kind or by area; find parts by name, id or path; pick out the bloat candidates, the parts marked, or the parts sent. The address keeps the open part (`?part=<id>`), so a link opens it.
 
 An open part shows what the map knows about it (its signals, bloat score and reasons, what it does, use and history), everyone's marks, and its agent work: the newest job sent for it, running, its pull request open, merged or failed, with its cost.
 

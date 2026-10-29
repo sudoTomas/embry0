@@ -27,6 +27,12 @@ prints a config, the VMID is taken — pick another rather than reusing it.
 Storage is thin-provisioned on `local-lvm`, so a generously sized disk costs
 nothing until it is used.
 
+**PostgreSQL 15 or later.** The compose stack runs `postgres:16.6-alpine`. A
+deployment that points `DATABASE_URL` at a server of its own needs PostgreSQL
+15 or later: migration 133 keys the knowledge maps with unique indexes that
+use `NULLS NOT DISTINCT`, which older servers refuse, and the orchestrator runs
+its migrations before it starts.
+
 **On memory.** This host runs its guests oversubscribed on maxima with balloon
 floors keeping it safe. A new tenant VM should follow that pattern rather than
 demanding a fixed allocation. See §9 for what ballooning looks like in practice.

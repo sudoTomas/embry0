@@ -44,19 +44,22 @@ def _doc(nodes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
 
 
 class FakeMaps:
+    """The repository's contract, in memory: a map is named by its owner and its slug (migration 133)."""
+
     def __init__(self) -> None:
-        self.maps: dict[str, dict[str, Any]] = {}
-        self.marks_: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self.maps: dict[tuple[str | None, str], dict[str, Any]] = {}
+        self.marks_: dict[tuple[str | None, str, str, str], dict[str, Any]] = {}
         self.sends: list[dict[str, Any]] = []
         self.jobs: dict[str, dict[str, Any]] = {}
 
     async def put(self, **row: Any) -> None:
-        self.maps[row["slug"]] = {**row, "graph_text": json.dumps(row["graph"])}
+        self.maps[(row["owner"], row["slug"])] = {**row, "graph_text": json.dumps(row["graph"])}
 
     async def summaries(self) -> list[dict[str, Any]]:
         return [
             {
                 "slug": m["slug"],
+                "owner": m["owner"],
                 "title": m["title"],
                 "repo": m["repo"],
                 "uploaded_at": m["now"],
@@ -66,15 +69,27 @@ class FakeMaps:
             for m in self.maps.values()
         ]
 
-    async def graph_text(self, slug: str) -> tuple[str, datetime] | None:
-        m = self.maps.get(slug)
+    async def owners(self, slug: str) -> list[str | None]:
+        return sorted((o for o, s in self.maps if s == slug), key=lambda o: (o is None, o or ""))
+
+    async def meta(self, slug: str, *, owner: str | None) -> dict[str, Any] | None:
+        m = self.maps.get((owner, slug))
+        return {"slug": slug, "owner": owner, "repo": m["repo"], "title": m["title"]} if m else None
+
+    async def graph_text(self, slug: str, *, owner: str | None) -> tuple[str, datetime] | None:
+        m = self.maps.get((owner, slug))
         return (m["graph_text"], m["now"]) if m else None
 
-    async def detail(self, slug: str, node_id: str) -> dict[str, Any] | None:
-        return self.maps[slug]["details"].get(node_id)
+    async def detail(self, slug: str, node_id: str, *, owner: str | None) -> dict[str, Any] | None:
+        return self.maps[(owner, slug)]["details"].get(node_id)
 
-    async def set_mark(self, slug: str, node_id: str, by: str, verdict: str, note: str, *, now: datetime) -> None:
-        self.marks_[(slug, node_id, by)] = {
+    async def delete(self, slug: str, *, owner: str | None) -> bool:
+        return self.maps.pop((owner, slug), None) is not None
+
+    async def set_mark(
+        self, slug: str, node_id: str, by: str, verdict: str, note: str, *, owner: str | None, now: datetime
+    ) -> None:
+        self.marks_[(owner, slug, node_id, by)] = {
             "node_id": node_id,
             "marked_by": by,
             "verdict": verdict,
@@ -82,20 +97,20 @@ class FakeMaps:
             "marked_at": now,
         }
 
-    async def clear_mark(self, slug: str, node_id: str, by: str) -> None:
-        self.marks_.pop((slug, node_id, by), None)
+    async def clear_mark(self, slug: str, node_id: str, by: str, *, owner: str | None) -> None:
+        self.marks_.pop((owner, slug, node_id, by), None)
 
-    async def marks(self, slug: str, node_id: str | None = None) -> list[dict[str, Any]]:
-        return [m for (s, n, _), m in self.marks_.items() if s == slug and node_id in (None, n)]
+    async def marks(self, slug: str, node_id: str | None = None, *, owner: str | None) -> list[dict[str, Any]]:
+        return [m for (o, s, n, _), m in self.marks_.items() if (o, s) == (owner, slug) and node_id in (None, n)]
 
     async def add_send(self, **row: Any) -> int:
         self.sends.append(row)
         return len(self.sends)
 
-    async def work(self, slug: str, node_id: str | None = None) -> list[dict[str, Any]]:
+    async def work(self, slug: str, node_id: str | None = None, *, owner: str | None) -> list[dict[str, Any]]:
         newest: dict[str, dict[str, Any]] = {}
         for s in self.sends:
-            if s["slug"] == slug and node_id in (None, s["node_id"]):
+            if (s["owner"], s["slug"]) == (owner, slug) and node_id in (None, s["node_id"]):
                 newest[s["node_id"]] = {**s, "job_status": self.jobs.get(s["job_id"] or "", {}).get("status")}
         return list(newest.values())
 
@@ -166,7 +181,10 @@ def app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     st.knowledge_maps_repo = FakeMaps()
     st.leads_repo = FakeLeads()
     st.proposals_repo = FakeProposals()
-    st.config = SimpleNamespace(audit_log_path=None, dashboard_public_url="https://embry0.example.com")
+    # AUTH_DEV_MODE: the router alone, with no auth dependency, runs as the full-access caller it lets in.
+    st.config = SimpleNamespace(
+        audit_log_path=None, dashboard_public_url="https://embry0.example.com", auth_dev_mode=True
+    )
     st.db = None
     st.issues_repo = MagicMock()
     st.issues_repo.create = AsyncMock(return_value="iss-new")
@@ -210,6 +228,7 @@ async def test_an_upload_is_stored_and_served_as_it_is_with_an_etag(app: FastAPI
         missing = await client.get("/api/v1/maps/nope")
     assert put.status_code == 200 and put.json() == {
         "slug": "shop",
+        "owner": "acme",
         "nodes": 3,
         "edges": 0,
         "leads": 0,
@@ -251,7 +270,7 @@ async def test_a_bloat_mark_keeps_a_weed_lead_open_and_taking_it_back_closes_it(
         )
     assert marked["lead_id"] == PROBE_LEAD and marked["marks"][0]["verdict"] == "bloat"
     assert (lead["kind"], lead["title"], lead["data"]["source"]) == ("weed", "Remove probe.mjs", "map")
-    assert lead["url"] == "https://embry0.example.com/maps/shop?part=script%3Aprobe.mjs"
+    assert lead["url"] == "https://embry0.example.com/maps/shop?owner=acme&part=script%3Aprobe.mjs"
     assert counts["marks"][PROBE] == {"bloat": 1, "keep": 0, "unsure": 0, "mine": "bloat"}
     assert kept["lead_id"] is None and app.state.leads_repo.rows[PROBE_LEAD]["state"] == "gone"
     assert no_repo["lead_id"] is None, "a part in no repository has no lead"
@@ -288,7 +307,7 @@ async def test_sending_a_removal_records_the_bloat_mark_accepts_the_lead_and_sta
     assert response.json()["results"] == [
         {"node_id": PROBE, "kind": "remove", "lead_id": PROBE_LEAD, "job_id": "job-issue", "error": None}
     ]
-    assert app.state.knowledge_maps_repo.marks_[("shop", PROBE, "ann")]["verdict"] == "bloat"
+    assert app.state.knowledge_maps_repo.marks_[("acme", "shop", PROBE, "ann")]["verdict"] == "bloat"
     created = app.state.issues_repo.create.await_args.kwargs
     assert created["labels"] == ["embry0-lead", "lead:weed"] and created["repo"] == "acme/shop"
     assert created["body"].startswith("Remove probe.mjs from acme/shop.") and "do not re-assess" in created["body"]
@@ -474,7 +493,9 @@ async def test_together_sends_one_job_per_repository_and_kind_and_accepts_every_
     accepted = [r for r in app.state.proposals_repo.recorded if r["decision"] == "accept"]
     assert {r["job_id"] for r in accepted} == {"job-issue"} and len(accepted) == 2
     marks = app.state.knowledge_maps_repo.marks_
-    assert marks[("shop", "table:old_backup", "ann")]["verdict"] == "bloat", "the sender's bloat mark is recorded"
+    assert marks[("acme", "shop", "table:old_backup", "ann")]["verdict"] == "bloat", (
+        "the sender's bloat mark is recorded"
+    )
     sends = app.state.knowledge_maps_repo.sends
     assert sorted(s["node_id"] for s in sends) == sorted([PROBE, "table:old_backup", "sys:billing"])
     assert {s["job_id"] for s in sends if s["node_id"] != "sys:billing"} == {"job-issue"}

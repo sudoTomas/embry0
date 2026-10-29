@@ -20,11 +20,9 @@ def _sql() -> str:
     return next((s for v, _, s in MIGRATIONS if v == VERSION), "")
 
 
-def test_the_pr_url_index_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_131.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must index jobs.pr_url"
-    assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
+def test_the_pr_url_index_migration_is_present_once() -> None:
+    """The last-entry assertion moved to tests/unit/storage/test_migration_133.py."""
+    assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must index jobs.pr_url, once"
 
 
 def test_the_index_is_partial_plain_and_idempotent() -> None:

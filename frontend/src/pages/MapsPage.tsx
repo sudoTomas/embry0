@@ -1,12 +1,37 @@
 import { Link } from "react-router";
 import { Network } from "lucide-react";
 import { PageError } from "@/components/PageError";
+import { mapPath, type MapSummary } from "@/api/maps";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useMaps } from "@/hooks/useMaps";
+import { ownerWords } from "@/lib/mapView";
 import { formatDateTime } from "@/lib/utils";
 
-/** Knowledge maps (spec 2026-10-27): every map a scanner uploaded, one card each. */
+function Card({ m }: { m: MapSummary }) {
+  const owner = ownerWords(m);
+  return (
+    <Link
+      to={mapPath(m)}
+      className="block rounded-lg border border-border bg-surface p-4 transition-colors hover:border-border-strong"
+    >
+      <div className="font-semibold text-fg">{m.title}</div>
+      <div className="text-xs text-fg-muted">
+        {owner !== null && <span data-testid="map-owner">{owner} · </span>}
+        {m.repo ?? "organization map"}
+      </div>
+      <div className="mt-2 text-sm text-fg-secondary">
+        {m.nodes.toLocaleString()} parts · {m.edges.toLocaleString()} links
+      </div>
+      <div className="mt-1 text-xs text-fg-muted">
+        {m.uploaded_at ? `Updated ${formatDateTime(m.uploaded_at)}` : ""}
+        {m.source ? ` · ${m.source}` : ""}
+      </div>
+    </Link>
+  );
+}
+
+/** Knowledge maps (spec 2026-10-27): every map a scanner uploaded that the viewer may see, one card each. */
 export function MapsPage() {
   const maps = useMaps();
   return (
@@ -31,21 +56,7 @@ export function MapsPage() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {maps.data.map((m) => (
-            <Link
-              key={m.slug}
-              to={`/maps/${encodeURIComponent(m.slug)}`}
-              className="block rounded-lg border border-border bg-surface p-4 transition-colors hover:border-border-strong"
-            >
-              <div className="font-semibold text-fg">{m.title}</div>
-              <div className="text-xs text-fg-muted">{m.repo ?? "organization map"}</div>
-              <div className="mt-2 text-sm text-fg-secondary">
-                {m.nodes.toLocaleString()} parts · {m.edges.toLocaleString()} links
-              </div>
-              <div className="mt-1 text-xs text-fg-muted">
-                {m.uploaded_at ? `Updated ${formatDateTime(m.uploaded_at)}` : ""}
-                {m.source ? ` · ${m.source}` : ""}
-              </div>
-            </Link>
+            <Card key={`${m.owner ?? ""}/${m.slug}`} m={m} />
           ))}
         </div>
       )}
