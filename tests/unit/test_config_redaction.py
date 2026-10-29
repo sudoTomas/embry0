@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 import pytest
 import structlog
+from pydantic import ValidationError
 
 import embry0
 from embry0.cli.__main__ import cmd_config
@@ -68,7 +69,7 @@ ISSUE_535_SECRETS = frozenset(
 )
 
 FAKE_DB_URL = "postgresql://app:FAKE-db-password@db.example.com:5432/app"
-MASKED_DB_URL = "postgresql://app:****@db.example.com:5432/app"
+MASKED_DB_URL = "postgresql://****@db.example.com:5432/app"
 
 
 def _fake(name: str) -> str:
@@ -173,7 +174,7 @@ def test_embry0_config_masks_every_secret(secret_env, capsys):
     assert len(_all_secret_names()) >= len(ISSUE_535_SECRETS)
 
 
-def test_embry0_config_masks_the_database_password_only(secret_env, capsys):
+def test_embry0_config_masks_the_database_url_userinfo(secret_env, capsys):
     out, _ = _run_cmd_config(capsys)
     assert f"database_url={MASKED_DB_URL}" in out.splitlines(), out
     assert "FAKE-db-password" not in out
@@ -204,15 +205,37 @@ def test_structlog_masks_a_logged_config_object(secret_env, renderer):
     assert "FAKE-db-password" not in rendered
 
 
-def test_a_config_load_error_does_not_echo_a_url_password(tmp_path, monkeypatch, capsys):
-    """GITLAB_URL's validator quotes the value it refuses, and pydantic adds
-    the input value; neither may carry the password to the terminal."""
+@pytest.mark.parametrize(
+    "value",
+    ["http://tok-000000000007@gitlab.example.com", "http://oauth2:tok-000000000007@gitlab.example.com"],
+    ids=["bare-user-token", "password"],
+)
+def test_a_config_that_does_not_load_never_repeats_the_value_wherever_it_is_printed(value):
+    """Every loader of the config (the API's startup, a CLI, a test) may print ``str(exc)``, into a
+    traceback and the container logs: pydantic must not attach the refused value to it."""
+    with patch.dict(os.environ, {"GITLAB_URL": value}, clear=True), pytest.raises(ValidationError) as refused:
+        Embry0Config(_env_file=None)  # type: ignore[call-arg]
+    text = str(refused.value)
+    assert "tok-000000000007" not in text, f"the config error repeats the token the value carries: {text}"
+    assert "input_value" not in text, text
+    assert "GITLAB_URL must be an https:// URL" in text, text
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["http://tok-000000000007@gitlab.example.com", "http://reader:tok-000000000007@gitlab.example.com"],
+    ids=["bare-user-token", "password"],
+)
+def test_a_config_load_error_never_shows_a_credential_the_value_carries(tmp_path, monkeypatch, capsys, value):
+    """pydantic repeats the refused value in str(exc) (its input_value), and a URL can carry a token as
+    the bare user, which no URL mask can tell from a user name. The error names the variable and why."""
     monkeypatch.chdir(tmp_path)
-    with patch.dict(os.environ, {"GITLAB_URL": "http://reader:FAKE-gitlab-password@gitlab.example.com"}, clear=True):
+    with patch.dict(os.environ, {"GITLAB_URL": value}, clear=True):
         _, err = _run_cmd_config(capsys)
+    assert "tok-000000000007" not in err, f"embry0 config printed the token the refused URL carries: {err}"
+    assert "input_value" not in err, err
     assert "Error loading configuration" in err, err
-    assert "FAKE-gitlab-password" not in err, err
-    assert "reader:****@gitlab.example.com" in err, err
+    assert "\n  GITLAB_URL must be an https:// URL" in err, f"one line per variable, named once: {err}"
 
 
 # ---- the masks ------------------------------------------------------------
@@ -236,21 +259,26 @@ def test_mask_secret(value, shown):
     ("text", "shown"),
     [
         (FAKE_DB_URL, MASKED_DB_URL),
-        ("postgresql://app@db.example.com:5432/app", "postgresql://app@db.example.com:5432/app"),
+        # the whole userinfo goes: a token is often written as the bare user
+        ("https://tok-000000000007@gitlab.example.com", "https://****@gitlab.example.com"),
+        ("https://oauth2:tok-000000000007@gitlab.example.com/g/p.git", "https://****@gitlab.example.com/g/p.git"),
+        ("postgresql://app@db.example.com:5432/app", "postgresql://****@db.example.com:5432/app"),
         ("https://loki.example.com:3100/loki", "https://loki.example.com:3100/loki"),
-        ("redis://:FAKE-redis-pw@cache:6379/0", "redis://:****@cache:6379/0"),
-        ("https://reader:FAKE-pw@loki.example.com", "https://reader:****@loki.example.com"),
-        # urlparse reads up to the LAST '@' of the authority as the password
-        ("postgresql://app:FAKE@pw@db:5432/app", "postgresql://app:****@db:5432/app"),
+        ("redis://:FAKE-redis-pw@cache:6379/0", "redis://****@cache:6379/0"),
+        ("https://reader:FAKE-pw@loki.example.com", "https://****@loki.example.com"),
+        # urlparse reads up to the LAST '@' of the authority as the userinfo
+        ("postgresql://app:FAKE@pw@db:5432/app", "postgresql://****@db:5432/app"),
         # a raw '/' (base64): the URL is broken, and that is when it gets printed
-        ("postgresql://app:FAKE/pw+x=@db:5432/app", "postgresql://app:****@db:5432/app"),
-        ("postgresql://app:FAKE%2Fpw@db:5432/app", "postgresql://app:****@db:5432/app"),
+        ("postgresql://app:FAKE/pw+x=@db:5432/app", "postgresql://****@db:5432/app"),
+        ("postgresql://app:FAKE%2Fpw@db:5432/app", "postgresql://****@db:5432/app"),
         # a port is not a password, even with an '@' later in the URL
         ("https://hooks.example.com:8443/notify?to=ops@example.com", None),
-        ("postgresql://app:FAKE-pw@[::1]:5432/app", "postgresql://app:****@[::1]:5432/app"),
+        ("postgresql://app:FAKE-pw@[::1]:5432/app", "postgresql://****@[::1]:5432/app"),
+        # masking twice changes nothing
+        ("postgresql://****@db:5432/app", None),
         (
             "postgresql://app@db/app?password=FAKE-pw&sslmode=require",
-            "postgresql://app@db/app?password=****&sslmode=require",
+            "postgresql://****@db/app?password=****&sslmode=require",
         ),
         (
             "https://hooks.example.com/run?api-version=1&sig=FAKEsig",
@@ -259,7 +287,7 @@ def test_mask_secret(value, shown):
         ("https://hooks.example.com/run?apikey=FAKE&x=1", "https://hooks.example.com/run?apikey=****&x=1"),
         (
             "primary postgresql://a:FAKE-1@h1/d, replica postgresql://b:FAKE-2@h2/d",
-            "primary postgresql://a:****@h1/d, replica postgresql://b:****@h2/d",
+            "primary postgresql://****@h1/d, replica postgresql://****@h2/d",
         ),
         ("not a url at all", None),
         ('{app="web"} |= "error"', None),
@@ -276,13 +304,13 @@ def test_mask_url_credentials(text, shown):
     ("url", "logged"),
     [
         (FAKE_DB_URL, MASKED_DB_URL),
-        ("postgresql://app:FAKE-db-password@db/app", "postgresql://app:****@db/app"),
-        ("postgresql://app@db/app", "postgresql://app@db/app"),
+        ("postgresql://app:FAKE-db-password@db/app", "postgresql://****@db/app"),
+        ("postgresql://app@db/app", "postgresql://****@db/app"),
         ("host=db user=app password=FAKE-db-password", "***"),
     ],
     ids=["with-port", "no-port", "no-password", "keyword-dsn"],
 )
-def test_database_pool_logs_the_url_with_its_password_masked(url, logged):
+def test_database_pool_logs_the_url_with_its_userinfo_masked(url, logged):
     assert DatabasePool(url)._redacted_url == logged
 
 

@@ -224,7 +224,7 @@ See `.env.example` for the complete list.
 
 Unknown variables are ignored rather than rejected (the env is shared with Docker and the shell), so at startup — and in `embry0 config` — a variable that near-misses a setting is flagged as `unknown_env_var name=AUTH_DEV_MOD did_you_mean=AUTH_DEV_MODE`; it is a warning only and never blocks boot.
 
-`embry0 config` masks every credential setting, and so does a config object written to a log. A secret shorter than 24 characters is shown as `****`; a longer one keeps its first and last four characters, enough to tell two tokens apart. An unset secret is shown empty. Any URL keeps its scheme, user, host, port and path but not its password (`DATABASE_URL=postgresql://embry0:****@postgres:5432/embry0`), and query parameters such as `password=`, `token=` or `sig=` are masked too.
+`embry0 config` masks every credential setting, and so does a config object written to a log. A secret shorter than 24 characters is shown as `****`; a longer one keeps its first and last four characters, enough to tell two tokens apart. An unset secret is shown empty. Any URL keeps its scheme, host, port and path but not its user or password, since a token is often written as the bare user (`DATABASE_URL=postgresql://****@postgres:5432/embry0`), and query parameters such as `password=`, `token=` or `sig=` are masked too. A configuration that does not load names each variable and why, never its value.
 
 ## Secrets at rest
 

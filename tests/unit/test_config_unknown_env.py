@@ -100,7 +100,7 @@ def test_bad_gitlab_url_refuses_startup(bad):
 )
 def test_the_refusal_says_what_is_wrong_without_repeating_the_value(value, wrong):
     """A URL can carry a token in its userinfo, so the validator's own message names the
-    problem and never the value. (pydantic's ``input_value`` echo is the renderer's to drop.)"""
+    problem and never the value. (pydantic's own echo of it is off: ``hide_input_in_errors``.)"""
     with patch.dict(os.environ, {"GITLAB_URL": value}, clear=True):
         with pytest.raises(ValidationError) as excinfo:
             Embry0Config(_env_file=None)  # type: ignore[call-arg]

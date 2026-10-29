@@ -34,6 +34,9 @@ class Embry0Config(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # A refused value is never repeated in a ValidationError: every loader of the config
+        # (startup, a CLI, a test) may print str(exc), and a value can carry a token.
+        hide_input_in_errors=True,
     )
 
     def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:

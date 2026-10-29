@@ -309,13 +309,21 @@ def _wait_for_sandbox_daemon(host: str, timeout: int = 60) -> bool:
 
 def cmd_config(args: argparse.Namespace) -> None:
     """Validate and display current configuration."""
+    from pydantic import ValidationError
+
     from embry0.config import Embry0Config
-    from embry0.config_redaction import mask_url_credentials, redacted_settings
+    from embry0.config_redaction import mask_url_credentials, redacted_settings, validation_error_lines
 
     try:
         config = Embry0Config()
+    except ValidationError as exc:
+        # Each variable and why, never the value: str(exc) repeats pydantic's input_value, and a
+        # URL can carry a token in its userinfo.
+        _err("Error loading configuration:")
+        for line in validation_error_lines(Embry0Config, exc):
+            print(f"  {line}", file=sys.stderr)
+        sys.exit(1)
     except Exception as exc:
-        # A validator may quote the value it refused, URL and all.
         _err(f"Error loading configuration: {mask_url_credentials(str(exc))}")
         sys.exit(1)
 
