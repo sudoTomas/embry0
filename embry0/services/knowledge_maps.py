@@ -33,6 +33,7 @@ from typing import Any
 from embry0.services.leads import Lead
 
 FORMAT = "embry0.map/1"
+#: Applied with ``fullmatch``: ``match`` would let ``$`` match before a final newline, so ``shop\n`` would pass.
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 #: A forge owner (an organization, an account, a group): the owner part of a repository's ``owner/name``.
@@ -94,7 +95,7 @@ def _number(value: Any) -> float | None:
 
 
 def _repo(value: Any) -> str | None:
-    return value if isinstance(value, str) and _REPO.match(value) else None
+    return value if isinstance(value, str) and _REPO.fullmatch(value) else None
 
 
 def repo_owner(repo: str | None) -> str | None:
@@ -174,7 +175,7 @@ def _node(raw: Any) -> dict[str, Any] | None:
 
 def parse_map(doc: Any, slug: str) -> ParsedMap:
     """An upload as stored; MapError when it is not an ``embry0.map/1`` document for ``slug``."""
-    if not SLUG.match(slug):
+    if not SLUG.fullmatch(slug):
         raise MapError("a map's slug is lowercase letters, digits and hyphens, at most 64")
     if not isinstance(doc, Mapping):
         raise MapError("the upload is not a JSON object")

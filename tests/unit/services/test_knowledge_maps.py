@@ -86,6 +86,24 @@ def test_an_upload_that_is_not_a_map_says_why(doc: Any, slug: str, message: str)
         parse_map(doc, slug)
 
 
+def test_a_slug_that_ends_in_a_newline_is_refused() -> None:
+    """#232: Python's ``$`` also matches just before a final newline, so ``shop\\n`` passed as a slug."""
+    try:
+        parse_map(_doc(slug="shop\n"), "shop\n")
+    except MapError as exc:
+        assert "slug is lowercase" in str(exc), f"the refusal must say what a slug is: {exc}"
+    else:
+        raise AssertionError("a slug that ends in a newline must be refused, not stored as a second map")
+
+
+def test_a_repository_that_ends_in_a_newline_is_not_kept() -> None:
+    """#232: ``acme/shop\\n`` passed as a repository and reached the tasks sent to agents."""
+    parsed = parse_map(_doc(repo="acme/shop\n", nodes=[{"id": "sys:x", "repo": "acme/billing\n"}]), "shop")
+    assert parsed.repo is None, f"a map's repo that ends in a newline must not be kept: {parsed.repo!r}"
+    assert parsed.graph["nodes"][0]["repo"] is None, "a part's repo that ends in a newline must not be kept"
+    assert part_repo(None, {"repo": "acme/billing\n"}) is None, "a repo that ends in a newline names no repository"
+
+
 def test_a_map_belongs_to_the_owner_it_names_else_its_repositorys_owner() -> None:
     from_repo = parse_map(_doc(repo="Acme/Shop"), "shop")
     assert getattr(from_repo, "owner", "missing") == "acme", "a map's owner must be its repo's owner, lowercased"
