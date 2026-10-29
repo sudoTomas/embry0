@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from embry0.services.progression_pack import default_rules
 from embry0.services.quests import evaluate_diaries, evaluate_quests, quest_rewards
@@ -144,3 +147,60 @@ def test_elite_needs_every_tier_below_it() -> None:
     diary = evaluate_diaries(Journal(merges, []), rules=RULES)[0]
     assert diary.tier("elite").tasks[0].done_at == at(49)
     assert diary.tier("elite").tasks[2].done_at is None and diary.tier("elite").completed_at is None
+
+
+# ---- a job keeps what it earned when its pull request merges or closes (#210) ----
+
+#: The diary task kinds that read a job that finished its work, never a merge.
+FINISHED_KINDS = ("finish_job", "run_qa", "pass_qa", "audit", "clean_audit", "quiet_stretch")
+
+
+def _done_by_kind(diary) -> dict[str, list[datetime | None]]:
+    done: dict[str, list[datetime | None]] = {}
+    for entry in RULES.pack.diaries.tiers:
+        for task_entry, task in zip(entry.tasks, diary.tier(entry.id).tasks, strict=True):
+            if task_entry.kind in FINISHED_KINDS:
+                done.setdefault(task_entry.kind, []).append(task.done_at)
+    return done
+
+
+@pytest.mark.parametrize("status", ["pr_merged", "pr_closed"])
+def test_a_job_that_finished_its_work_keeps_its_tasks_and_steps_when_its_pull_request_settles(status: str) -> None:
+    """Merge sync moves a completed job's status with its pull request; what the job did stays done."""
+    finished = [
+        job(1, template="onboard"),
+        job(2),
+        job(3, template="qa"),
+        job(4, template="context-audit", report="Stale: 0\nFiles: 4\n"),
+        job((QUIET_DAYS + 1) * 24),
+    ]
+    settled = [replace(j, status=status) for j in finished]
+    want = _done_by_kind(evaluate_diaries(Journal(finished, []), rules=RULES)[0])
+    assert set(want) == set(FINISHED_KINDS) and None not in sum(want.values(), []), f"not every task is done: {want}"
+    got = _done_by_kind(evaluate_diaries(Journal(settled, []), rules=RULES)[0])
+    assert got == want, f"the pull requests became {status}: the diary tasks went from {want} to {got}"
+    first_steps = by_id(evaluate_quests(Journal(settled, []), [], lambda _total: None, rules=RULES))["first_steps"]
+    assert [s.done_at for s in first_steps.steps[:2]] == [at(1), at(2)], (
+        f"the pull requests became {status}: the onboarding quest's steps are {first_steps.steps}"
+    )
+
+
+def test_finished_well_is_completed_and_every_status_merge_sync_moves_a_completed_job_to() -> None:
+    """One definition of a job that did its work, the status model's: ``completed`` and every status reachable from it."""
+    from embry0.storage.repositories import progression
+    from embry0.storage.repositories.jobs import VALID_JOB_TRANSITIONS
+    from embry0.storage.schemas import JobStatus
+
+    reachable: set[str] = set()
+    todo = [JobStatus.COMPLETED]
+    while todo:
+        status = todo.pop()
+        if status.value not in reachable:
+            reachable.add(status.value)
+            todo.extend(VALID_JOB_TRANSITIONS.get(status, set()))
+    defined = set(getattr(progression, "FINISHED_WELL", ()))
+    assert defined == reachable, (
+        f"a job that finished its work is {sorted(defined)}, the status model says {sorted(reachable)}"
+    )
+    condition = progression.finished_well("j")
+    assert all(f"'{status}'" in condition for status in reachable), condition

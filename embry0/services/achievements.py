@@ -80,7 +80,7 @@ def metric_steps(
     steps: dict[str, list[Step]] = defaultdict(list)
     for fact in facts:
         if fact.metric == "audit":
-            # A completed context audit: its outdated claims, or, with none, a clean audit.
+            # A context audit that finished its work: its outdated claims, or, with none, a clean audit.
             stale, files = report_counts(fact.report)
             if stale:
                 steps["stale_claims"].append(Step(fact.at, stale, fact.label, fact.url))

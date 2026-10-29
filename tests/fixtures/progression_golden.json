@@ -4,8 +4,8 @@
    "characters": 13,
    "divine_trim": false,
    "quest_points": 4,
-   "total_level": 1901,
-   "xp": 23887000
+   "total_level": 1903,
+   "xp": 23927000
   },
   "achievement_categories": [
    {
@@ -1845,11 +1845,11 @@
       "xp_to_next": 83
      },
      {
-      "level": 53,
-      "level_xp": 136594,
+      "level": 55,
+      "level_xp": 166636,
       "stat": "documentation",
-      "xp": 138000,
-      "xp_to_next": 12872
+      "xp": 178000,
+      "xp_to_next": 6040
      },
      {
       "level": 1,
@@ -1895,8 +1895,8 @@
      }
     ],
     "tier": "platinum",
-    "total_level": 75,
-    "xp": 138000
+    "total_level": 77,
+    "xp": 178000
    },
    {
     "agent_type": "design-auditor",

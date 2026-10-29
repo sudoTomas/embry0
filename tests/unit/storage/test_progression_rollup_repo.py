@@ -19,10 +19,12 @@ from typing import Any
 
 import pytest
 
+from embry0.services.merge_sync.recorder import aligned_status
 from embry0.services.progression import ProgressionService
 from embry0.services.progression_pack import default_rules
 from embry0.services.progression_rollup import ProgressionRollup, closed_through
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.job_delivery import DeliveryWrite, JobDeliveryRepository
 from embry0.storage.repositories.progression import Journal, ProgressEvent, ProgressionRepository
 from embry0.storage.repositories.progression_rollup import ProgressionRollupRepository
 from tests.fixtures.progression_history import _job, _trace
@@ -408,3 +410,95 @@ async def test_a_reader_never_sees_a_rollup_half_written(db_with_migrations: Dat
         assert during == before, "a reader saw the rollup while it was being rewritten"
     after = await store.load(RULES.hash)
     assert after is not None and after.milestones == [] and after.xp == {}
+
+
+# ---- a job keeps what it earned when its pull request merges after its day was folded (#210) ----
+
+#: What a finished job of each template earns: its character and skill, an achievement it moves, and diary task kinds.
+EARNED = {
+    "context-audit": ("context-auditor", "documentation", "weeded_garden", ("audit", "clean_audit")),
+    "qa": ("qa", "quality_assurance", "potion_master", ("run_qa", "pass_qa")),
+}
+
+
+def _earned(progression: Any, template: str) -> tuple[int, float, dict[str, Any]]:
+    """The job's experience, its achievement's value, and when each of its diary tasks was done."""
+    character, skill, achievement, kinds = EARNED[template]
+    xp = progression.characters[character].stat_xp.get(skill, 0) if character in progression.characters else 0
+    value = next(a.value for a in progression.achievements if a.achievement.entry.id == achievement)
+    diary = next(d for d in progression.diaries if d.repo == "acme/widgets")
+    done = {
+        entry.kind: task.done_at
+        for tier in RULES.pack.diaries.tiers
+        for entry, task in zip(tier.tasks, diary.tier(tier.id).tasks, strict=True)
+        if entry.kind in kinds
+    }
+    return xp, value, done
+
+
+@pytest.mark.parametrize("template", sorted(EARNED))
+async def test_a_job_keeps_what_it_earned_when_its_pull_request_merges_after_its_day_was_folded(
+    db_with_migrations: DatabasePool, template: str
+) -> None:
+    """A finished audit or QA run whose pull request merges reads the same from the rollup, a full read and a rebuild."""
+    db = db_with_migrations
+    for agent in ("developer", "qa", "context-auditor"):
+        await db.execute(
+            "INSERT INTO agent_definitions (type, description, model) VALUES ($1, 'd', 'm') ON CONFLICT DO NOTHING",
+            agent,
+        )
+    finished = datetime(2026, 3, 2, 12, tzinfo=UTC)
+    await _job(
+        db,
+        "j-done",
+        status="completed",
+        pipeline_template=template,
+        result_summary="Stale: 0\nFiles: 2\n" if template == "context-audit" else None,
+        pr_url="https://forge/acme/widgets/pull/1",
+        delivery_state="pr_open",
+        at=finished - timedelta(hours=1),
+        ran_hours=1,
+    )
+    clock = [finished + timedelta(days=5)]
+    packs = Packs(RULES)
+    service = ProgressionService(
+        ProgressionRepository(db),
+        packs=packs,
+        rollups=ProgressionRollupRepository(db),
+        ttl_seconds=0,
+        now=lambda: clock[0],
+    )
+    reference = ProgressionService(WholeJournal(db), packs=packs, rollups=None, ttl_seconds=0)
+    await service.read()
+    await service.settle()
+    folded = await service.read()
+    assert folded.rollup is not None and datetime.fromisoformat(folded.rollup["boundary"]) > finished, folded.rollup
+    xp, value, done = _earned(folded, template)
+    assert xp > 0 and value == 1 and None not in done.values(), f"the finished job earned nothing: {xp, value, done}"
+
+    # Its pull request merges now: merge sync records the delivery, and the status follows it to pr_merged.
+    def merged(row: dict[str, Any]) -> DeliveryWrite:
+        return DeliveryWrite(
+            delivery_state="merged", delivery_state_at=clock[0], status=aligned_status(row["status"], "merged")
+        )
+
+    assert await JobDeliveryRepository(db).apply("j-done", merged) is not None
+    assert await db.fetchval("SELECT status FROM jobs WHERE job_id = 'j-done'") == "pr_merged"
+    full = await reference.read()
+    full_xp, full_value, full_done = _earned(full, template)
+    assert full_xp == xp, f"a full read took back the {template} job's experience when its pull request merged"
+    assert full_value == value, f"a full read took back the {template} job's achievement progress"
+    assert None not in full_done.values(), f"a full read took back the {template} job's diary tasks: {full_done}"
+    through_rollup = await service.read()
+    assert through_rollup.rollup is not None, "the read after the merge is the rollup's"
+    _same(through_rollup, full, f"the {template} job's pull request merged after its day was folded")
+
+    # The nightly rebuild folds every raw row again: the experience stays.
+    tomorrow = packs.rules.local(clock[0]).date() + timedelta(days=1)
+    clock[0] = datetime.combine(tomorrow, time(3, 1), tzinfo=packs.rules.zone)
+    await service.read()
+    await service.settle()
+    rebuilt = await service.read()
+    assert rebuilt.rollup is not None and rebuilt.rollup["rebuilt_at"] == clock[0].astimezone(UTC).isoformat()
+    assert _earned(rebuilt, template)[0] == xp, f"the nightly rebuild took back the {template} job's experience"
+    _same(rebuilt, await reference.read(), f"the {template} job's pull request merged, after the nightly rebuild")
