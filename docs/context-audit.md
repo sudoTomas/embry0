@@ -6,7 +6,7 @@ The schedule is off for every organization until an admin sets it.
 
 ## What it audits
 
-The instruction files are the paths that match one glob list, `INSTRUCTION_FILE_GLOBS` in `embry0/services/instruction_files.py`; the schedule fingerprints those files and the auditor reads the same list. `**/` stands for any number of directories, none included, and `*` stays inside one path segment:
+The instruction files are the paths that match one glob list, `INSTRUCTION_FILE_GLOBS` in `embry0/services/instruction_files.py`; the schedule fingerprints those files, and each audit's task hands the auditor the same list as a `git ls-files` command. `**/` stands for any number of directories, none included, and `*` stays inside one path segment:
 
 ```
 **/CLAUDE.md                **/CLAUDE.local.md          **/AGENTS.md
@@ -24,6 +24,8 @@ The instruction files are the paths that match one glob list, `INSTRUCTION_FILE_
 A file inside `.git`, `.venv`, `venv`, `node_modules`, `vendor`, `build` or `dist` is never one: those trees belong to another project.
 
 Each audit is a job on the `context-audit` pipeline template ([specialist-agents.md](specialist-agents.md)), over a clone of the repository. Its task names the repository, the commit that was read and every instruction file found there. A repository with no instruction file gets no job.
+
+The task then says how to run the audit: the command that lists the instruction files, the severities, and the shape of the report embry0 reads back (the `Stale:` and `Files:` lines, the findings table, the patch under `## Pull`). They are written when the task is built, from the running release's code, and not kept in the agent's prompt: a deployment keeps the context-auditor prompt it first stored, so a list or a shape kept there would stay as an older release left it. A changed list reaches the next audit without resetting the agent, and where an older stored prompt gives another command or shape, the task tells the agent to follow the task.
 
 ## When a repository is due
 
@@ -115,7 +117,7 @@ curl -X POST http://localhost:8200/api/v1/orgs/acme/context-audit/run \
 
 Due is the rule above without the setting: with the setting off no interval applies, so a repository is due when it has no context-audit job yet or its files changed. Nothing starts while one of the repository's context-audit jobs is live, `force` or not. Each job starts as a scheduled one does, under the actor `embry0:context-audit`, with the organization's per-job cap and the fingerprint and head it was read at, so the schedule anchors on it and does not repeat it; the audit row `organization.context_audit_run` names the person who asked. The answer lists the jobs started and every repository passed over, with why. Field by field: [api.md](api.md#organizations).
 
-A job created with `POST /api/v1/jobs` and `"pipeline_template": "context-audit"` runs the same auditor, but records no fingerprint, names no instruction files in its task, and has a hard cap only if it is given one; the schedule sees it as the newest audit of its repository without its fingerprint, so a file changed later is not compared with it until the next scheduled audit. Start one by hand with the run above.
+A job created with `POST /api/v1/jobs` and `"pipeline_template": "context-audit"` runs the same auditor, with the same command and report shape added to its task when the agent runs, but records no fingerprint, names no instruction files in its task, and has a hard cap only if it is given one; the schedule sees it as the newest audit of its repository without its fingerprint, so a file changed later is not compared with it until the next scheduled audit. Start one by hand with the run above.
 
 ## Pull requests from its fixes
 

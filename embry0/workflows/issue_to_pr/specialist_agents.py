@@ -19,7 +19,6 @@ is not offered those templates, and plan_route drops triage naming one.
 """
 
 from embry0.agents.output_text import MAX_OUTPUT_CHARS
-from embry0.services.instruction_files import INSTRUCTION_FILE_GLOBS, SKIPPED_DIRS
 from embry0.workflows.issue_to_pr.noncode_agents import DELIVERABLE_CONTRACT
 
 # The size a specialist's report stays under: the job keeps only the last
@@ -689,17 +688,11 @@ neither score measures, and anything the script could not measure.
 short; it goes last.
 {DELIVERABLE_CONTRACT}"""
 
-# The instruction files are the ones embry0.services.instruction_files lists,
-# so the auditor reads the files the context-audit schedule fingerprints. The
-# command is that list as git pathspecs: git's glob magic matches `**/` and
-# `*` the way the module does, and the excludes are its skipped directories
-# (test_specialist_agents.py runs the command against the module).
-_LIST_INSTRUCTION_FILES = "git ls-files -- " + " ".join(
-    [f"':(glob){glob}'" for glob in INSTRUCTION_FILE_GLOBS]
-    + [f"':(exclude,glob)**/{directory}/**'" for directory in sorted(SKIPPED_DIRS)]
-)
-_SKIPPED_DIR_NAMES = ", ".join(f"`{directory}`" for directory in sorted(SKIPPED_DIRS))
-
+# The command that lists the instruction files, the severities and the
+# report's shape are not in this prompt: the job's task carries them
+# (embry0/services/context_audit_command.py). A deployment keeps the prompt it
+# first stored, so a list or a shape written here would go stale on every
+# deployment that already ran the agent.
 CONTEXT_AUDITOR_SYSTEM_PROMPT = f"""You are embry0's context-auditor agent. A \
 coding agent takes the instruction files in a repository (CLAUDE.md, \
 AGENTS.md, rules, skills, handoff notes) as true. A stale line in one of \
@@ -711,15 +704,10 @@ You never change the repository yourself.
 
 ## The files
 
-The instruction files are every tracked file that matches one of the globs \
-in this command, outside vendored and generated trees \
-({_SKIPPED_DIR_NAMES}). In a glob, `**/` matches any number of directories, \
-none included, and `*` stays inside one path segment. The command lists \
-exactly those files; run it as written:
-
-```
-{_LIST_INSTRUCTION_FILES}
-```
+The task ends with a section that says how to run this audit: the command \
+that lists the instruction files, the severities and the report's shape. \
+embry0 writes it from its own code, so it is current; follow it. The \
+instruction files are the files that command lists.
 
 When the task names files or directories, audit the instruction files \
 among them; otherwise audit them all. Then add every file one of them \
@@ -792,58 +780,11 @@ under /tmp and check it on a copy, never in /workspace (`cd /tmp && rm \
 /tmp/pull.diff`), and quote the result. A finding whose right value you \
 cannot determine gets a question, not a guess.
 
-## Severity
+## Report
 
-- `misleads`: an agent following the line would do the wrong thing or \
-state something false.
-- `dead`: the line points at something that does not exist.
-- `drift`: an outdated detail with little consequence.
-
-Unverifiable and unreachable lines are listed in their own sections, not \
-counted as stale.
-
-## Deliverable shape
-
-Programs read the counts from the start of your report, so that start is \
-fixed. The first line is `Stale: N` and nothing else, where N is the number \
-of `misleads` and `dead` findings, the ones the table leaves out included. \
-The second line is `Files: M` and nothing else, where M is the number of \
-instruction files you read (READMEs read as context do not count). Next \
-comes a `## Findings` heading and one table with exactly these columns:
-
-| Severity | Location | Claim | Evidence | Fix |
-|---|---|---|---|---|
-
-One row per finding, `misleads` first, then `dead`, then `drift`, at most \
-40 rows. Location is `path:line`; Claim is the line, quoted and short; \
-Evidence is what contradicts it (a file:line, or the command you ran and \
-what it printed); Fix is the corrected text, `delete`, or the question. \
-Under the table, say how many findings were left out, if any, and give one \
-line of coverage: the references the script checked, how many did not \
-resolve, and how many of those you dropped, by reason. With nothing to \
-report, write `No findings.` under the heading and no table.
-
-Then, in this order:
-- `## Pull` - the diff in a diff code block, then the `git apply --check` \
-command and its result; with no certain fix, say so.
-- `## Unverifiable` - each claim nothing in the repository can confirm, as \
-path:line and the claim.
-- `## Unreachable from a clone` - each reference an agent in a clone cannot \
-reach, as path:line and the reference.
-- `## Not covered` - what this audit leaves out: instruction files that \
-live outside the repository (a user's own files, a home-directory skill), \
-claims that need a running service or a network the sandbox lacks, and \
-references the script cannot extract.
-- `## Assumptions` - as the contract below asks.
-
-The whole report, the diff included, stays under {REPORT_TARGET_CHARS:,} \
-characters. When it does not fit, cut in this order until it does: the \
-`drift` rows and their hunks, then the entries under the last four \
-headings, then the `dead` hunks. Never cut the first two lines or a \
-`misleads` row, and say under the table what you cut.
-
-With no instruction files, the report is `Stale: 0`, then `Files: 0`, then \
-where you looked: the command you ran and what it printed.
+The task's section gives the report's shape: its first two lines, the \
+findings table, the sections after it, how long it may be and what to cut \
+to fit. Programs read that shape, so keep to it exactly.
 {DELIVERABLE_CONTRACT}"""
 
 AREA_MAPPER_SYSTEM_PROMPT = f"""You are embry0's area-mapper agent. A \

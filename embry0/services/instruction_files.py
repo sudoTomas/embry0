@@ -1,8 +1,8 @@
 """The files that steer a coding agent working in a repository.
 
-One list, read by the context auditor's prompt and by the context-audit
-schedule, so the files the schedule fingerprints are the files the agent
-audits. A coding agent loads some of them on its own (``CLAUDE.md`` at any
+One list, read by the context-audit schedule and by the command each audit's
+task carries (:mod:`embry0.services.context_audit_command`), so the files the
+schedule fingerprints are the files the agent audits. A coding agent loads some of them on its own (``CLAUDE.md`` at any
 depth, ``AGENTS.md``, a rules directory) and is told to read the rest (a
 handoff note, a skill), so a stale line in any of them reaches the agent as
 an instruction.

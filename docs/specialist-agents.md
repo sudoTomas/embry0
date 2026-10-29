@@ -106,7 +106,10 @@ model or a job's `agent_models` outranks the one above.
   the columns Severity, Location, Claim, Evidence and Fix, then a `## Pull`:
   one diff that corrects every finding whose fix is certain, checked with
   `git apply --check` on a copy. A finding whose right value it cannot
-  determine gets a question instead of a fix.
+  determine gets a question instead of a fix. The file-listing command, the
+  severities and that report shape come in the job's task, not in the
+  prompt ([context-audit.md](context-audit.md#what-it-audits)), so editing
+  or keeping an older prompt never changes them.
 
 ### What to put in the task
 

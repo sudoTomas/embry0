@@ -33,7 +33,7 @@ DECISIONS: tuple[str, ...] = ("accept", "decline", "snooze")
 #: Who an assistant's answer is recorded under when it names nobody.
 ACTOR = "embry0:proposals"
 
-#: The columns of a context audit's findings table, as the auditor's prompt fixes them.
+#: The columns of a context audit's findings table, as the command in its task fixes them.
 FINDING_COLUMNS = ("severity", "location", "claim", "evidence", "fix")
 _LOCATION = re.compile(r"^`?(?P<path>[^`:\s]+)(?::(?P<line>\d+)(?:-\d+)?)?`?$")
 #: Where CODEOWNERS may live, in the order GitHub reads them.

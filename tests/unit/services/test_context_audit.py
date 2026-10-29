@@ -909,7 +909,10 @@ async def test_a_job_another_actor_starts_carries_its_task_and_never_anchors_the
         dispatched_by="embry0:proposals",
     )
     created = jobs.rows[0]["created_with"]
-    assert created["task"] == "Fix one outdated claim" and created["dispatched_by"] == "embry0:proposals"
+    assert created["task"].startswith("Fix one outdated claim\n\n## How to run this audit\n"), (
+        "its task, then the command"
+    )
+    assert created["dispatched_by"] == "embry0:proposals"
     assert created["pipeline_config"]["actor"] == "embry0:proposals" and created["pipeline_config"]["open_pr"] is True
 
 
@@ -998,13 +1001,15 @@ async def test_no_job_row_is_written_without_the_template_or_an_executor() -> No
 
 
 def test_the_task_names_the_commit_and_every_file_up_to_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The command follows the files (test_context_audit_command.py).
+    command = "\n\n## How to run this audit\n"
     task = audit_task(RepoContext("acme/web", HEAD, ("CLAUDE.md", "docs/AGENTS.md"), FP))
     assert "acme/web" in task.splitlines()[0]
     assert HEAD in task
-    assert task.endswith("Instruction files (2):\n- CLAUDE.md\n- docs/AGENTS.md")
+    assert "Instruction files (2):\n- CLAUDE.md\n- docs/AGENTS.md" + command in task, "the files, then the command"
     monkeypatch.setattr(context_audit, "TASK_FILE_LIMIT", 2)
     long = audit_task(RepoContext("acme/web", HEAD, ("a/CLAUDE.md", "b/CLAUDE.md", "c/CLAUDE.md"), FP))
-    assert long.endswith("Instruction files (3):\n- a/CLAUDE.md\n- b/CLAUDE.md\n- and 1 more")
+    assert "Instruction files (3):\n- a/CLAUDE.md\n- b/CLAUDE.md\n- and 1 more" + command in long, "past the limit too"
 
 
 class Config:

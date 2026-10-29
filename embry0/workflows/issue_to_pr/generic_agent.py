@@ -25,6 +25,7 @@ from langgraph.config import get_stream_writer
 
 from embry0.execution import events
 from embry0.orchestration.nodes.agent import agent_attempt, load_agent_definition_or_none, run_agent_node
+from embry0.services.context_audit_command import with_command
 from embry0.workflows.issue_to_pr.log_tool import grant_log_tool
 from embry0.workflows.issue_to_pr.route_plan import (
     _step_target,
@@ -68,6 +69,21 @@ def _with_watcher_log_tool(definition: dict[str, Any], state: dict[str, Any], ag
     return grant_log_tool(definition)
 
 
+def _task(state: dict[str, Any], agent_type: str) -> str:
+    """The job's task as the agent reads it.
+
+    The context auditor's task ends with the command that lists the
+    instruction files and fixes the report's shape (#170). The schedule, a
+    run by hand and an owner's fix write it when they build the task; a task
+    built anywhere else, such as one created with ``POST /jobs``, gets it
+    here, so the agent never depends on its stored prompt for either.
+    """
+    task = state.get("task", "")
+    if agent_type == "context-auditor":
+        return with_command(str(task or ""))
+    return str(task)
+
+
 def _build_generic_prompt(state: dict[str, Any], agent_type: str) -> str:
     """Task prompt for a generic agent step.
 
@@ -82,7 +98,7 @@ def _build_generic_prompt(state: dict[str, Any], agent_type: str) -> str:
     issue_number = state.get("issue_number")
     if issue_number:
         parts.append(f"GitHub Issue: #{issue_number}")
-    parts.append(f"\nTask:\n{state.get('task', '')}")
+    parts.append(f"\nTask:\n{_task(state, agent_type)}")
     additional_context = state.get("additional_context", "")
     if additional_context:
         parts.append(f"\nAdditional Context:\n{additional_context}")
