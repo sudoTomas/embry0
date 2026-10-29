@@ -47,6 +47,18 @@ async def test_register_is_idempotent_on_owner_and_lowercases(orgs_repo: Organiz
 
 
 @pytest.mark.asyncio
+async def test_registering_again_merges_settings_as_patch_does(orgs_repo: OrganizationsRepository) -> None:
+    """A second register names the settings it changes; the rest stay, as a PATCH leaves them (#161)."""
+    await orgs_repo.register("acme", "github", settings={"auto_register": True, "context_audit_days": 7})
+    again = await orgs_repo.register("acme", "github", settings={"rediscover_hours": 6})
+    assert again.settings == {"auto_register": True, "context_audit_days": 7, "rediscover_hours": 6}, (
+        f"registering again dropped the settings it did not name: {again.settings!r}"
+    )
+    unchanged = await orgs_repo.register("acme", "github")
+    assert unchanged.settings == again.settings, "a register without settings changes none"
+
+
+@pytest.mark.asyncio
 async def test_access_repo_count_status_and_removed_filter(orgs_repo: OrganizationsRepository) -> None:
     await orgs_repo.register("acme", "github")
     updated = await orgs_repo.update_access("acme", {"read": True, "hooks": False}, repo_count=12)

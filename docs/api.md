@@ -626,7 +626,7 @@ An owner with the `context_audit_days` setting on has its instruction files audi
 
 `GET /api/v1/orgs/{owner}/needs` is the needs list ([ADR 0011](adr/0011-organization-needs.md)): what embry0 still needs from a person to maintain the owner, derived from the newest finished discovery run, one need per kind and repository set. `dismiss` and `reopen` keep a person's answer across rediscovery. `repo_vanished` lists the repositories an earlier run listed, the newest did not and confirmed gone with a direct read, that embry0 still holds as active registrations; its action is `deactivate`, which a person runs: nothing is deactivated on its own. Each open need is also a healing case with origin `org`, listed by `GET /api/v1/cases?awaiting_decision=true` ([Healing cases](#healing-cases)); closing that case dismisses the need.
 
-`PATCH /api/v1/orgs/{owner}` sets `display_name` and merges `settings` from a closed list; an unknown key, a wrong type or a value out of range answers 422.
+`PATCH /api/v1/orgs/{owner}` sets `display_name` and merges `settings` from a closed list; an unknown key, a wrong type or a value out of range answers 422. `POST /api/v1/orgs` takes the same `settings`, checked the same way and refused with the same 422 before anything is stored or the forge is asked; registering an owner that is registered already merges them into its stored settings, as a `PATCH` does, so a setting the body does not name keeps its value.
 
 | Setting | Type | Default | Meaning |
 |---|---|---|---|

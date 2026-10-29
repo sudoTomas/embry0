@@ -122,8 +122,9 @@ def validate_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
 def rediscover_hours(settings: Mapping[str, Any]) -> int | None:
     """The owner's rediscovery interval in hours, or None when it is off.
 
-    Read defensively: ``POST /orgs`` stores its settings unvalidated, so a
-    value a PATCH would refuse reads as off here rather than as a schedule.
+    Read defensively: before ``POST /orgs`` checked its settings it stored
+    them as sent, and such rows remain, so a value a PATCH would refuse reads
+    as off here rather than as a schedule.
     """
     value = settings.get("rediscover_hours")
     low, high = SETTING_RANGES["rediscover_hours"]
@@ -166,8 +167,8 @@ def context_audit_max_jobs_per_tick(settings: Mapping[str, Any]) -> int | None:
 def context_audit_open_prs(settings: Mapping[str, Any]) -> bool:
     """Whether the owner's context audits open a pull request from the patch they checked.
 
-    Only a stored ``true`` turns it on: any other value, as one ``POST /orgs``
-    stored unvalidated, reads as off.
+    Only a stored ``true`` turns it on: any other value, as a row written
+    before ``POST /orgs`` checked its settings may hold, reads as off.
     """
     return settings.get("context_audit_open_prs") is True
 
