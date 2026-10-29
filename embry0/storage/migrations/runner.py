@@ -3726,6 +3726,24 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'progression (#176): the closed days of the pack calendar folded once, per pack hash; see progression_rollup.py.';
         """,
     ),
+    (
+        132,
+        "jobs: an index on pr_url, so the first_try fact finds an earlier job on the same pull request (#208)",
+        # The first_try fact looks for an earlier job on the same issue OR the
+        # same pull request, once per merged job. With issue_id indexed and
+        # pr_url not, Postgres cannot serve the OR from indexes and scans jobs
+        # for every merged job. With both, it answers each with a BitmapOr.
+        # Partial: most jobs never open a pull request.
+        #
+        # Plain CREATE INDEX, not CONCURRENTLY: the runner wraps each
+        # migration in a transaction (see migration 16). The build holds a
+        # SHARE lock on jobs, which blocks writes to jobs, not reads, until
+        # it commits; migrations run at startup, before this orchestrator
+        # writes a job.
+        """
+        CREATE INDEX IF NOT EXISTS idx_jobs_pr_url ON jobs (pr_url) WHERE pr_url IS NOT NULL;
+        """,
+    ),
 ]
 
 
