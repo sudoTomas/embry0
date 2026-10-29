@@ -23,12 +23,34 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
+from embry0.orchestration.dispatch_actors import PROPOSALS
 from embry0.storage.database import DatabasePool
 from embry0.storage.schemas import FINISHED_WELL_STATUSES
 
 # The character a job's code is credited to: the Slopmaster for a slop cleanup
 # (spec 2026-10-25, slop dungeon), the developer otherwise.
 _CODER = "CASE WHEN {job}.pipeline_template = 'slop-cleanup' THEN 'slopmaster' ELSE 'developer' END"
+
+#: The template a context audit runs on.
+AUDIT_TEMPLATE = "context-audit"
+#: The actor of a context-audit finding's fix job (``context_audit.FIX_ACTOR``, #240): the job an owner starts by
+#: accepting one finding. It runs on :data:`AUDIT_TEMPLATE` but is no audit, so it earns no audit's credit (no
+#: ``audited`` event, no lore, no ``audit_merged``); merged, it is credited as the proposal it is (#241). Every
+#: check of progression for an audit reads :func:`an_audit` or :attr:`JobRow.is_audit`, never the template alone.
+FIX_ACTOR = PROPOSALS
+
+
+def _literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def an_audit(job: str) -> str:
+    """The SQL condition that the job aliased ``job`` is a context audit: on its template, and not a finding's fix job."""
+    return (
+        f"({job}.pipeline_template = {_literal(AUDIT_TEMPLATE)}"
+        f" AND {job}.dispatched_by IS DISTINCT FROM {_literal(FIX_ACTOR)})"
+    )
+
 
 #: The statuses of a job that finished its work, ``FINISHED_WELL_STATUSES`` in ``embry0/storage/schemas.py``:
 #: an outcome a job earned is never taken back when its pull request merges or closes (#210). Every check of
@@ -109,9 +131,9 @@ FROM jobs j WHERE j.pipeline_template = 'qa' AND {finished_well("j")}""",
     ),
     (
         "j.finished_at",
-        f"""-- the context auditor: an audit that finished its work, with its report
+        f"""-- the context auditor: an audit that finished its work, with its report; a finding's fix job is no audit
 SELECT 7, j.job_id, 'audited', 'context-auditor', j.finished_at, j.result_summary, NULL, NULL
-FROM jobs j WHERE j.pipeline_template = 'context-audit' AND {finished_well("j")}""",
+FROM jobs j WHERE {an_audit("j")} AND {finished_well("j")}""",
     ),
     (
         "a.created_at",
@@ -200,6 +222,7 @@ class ProgressionRepository:
                     r["finished_at"],
                     r["report"],
                     r["delivery_state_at"],
+                    r["dispatched_by"],
                 )
                 for r in jobs
                 if r["finished_at"] is not None
@@ -260,10 +283,11 @@ class FactFragment(Protocol):
 
 
 # Every metric is an outcome (spec 2026-10-25, the achievement diary). A merged
-# pull request is one the forge confirmed merged, or whose job says so.
+# pull request is one the forge confirmed merged, or whose job says so. Its
+# ``dispatched_by`` tells a context audit from a finding's fix job (an_audit).
 _FACTS_CTES = """
 WITH merged AS (
-    SELECT j.job_id, j.repo, j.issue_id, j.pr_url, j.pipeline_template, j.area, j.total_cost_usd,
+    SELECT j.job_id, j.repo, j.issue_id, j.pr_url, j.pipeline_template, j.dispatched_by, j.area, j.total_cost_usd,
            j.created_at, j.started_at, j.finished_at,
            COALESCE(j.delivery_state_at, j.finished_at, j.updated_at) AS at,
            COALESCE(j.repo, 'a job') || COALESCE(' #' || substring(j.pr_url from '([0-9]+)/?$'), '') AS label
@@ -353,12 +377,15 @@ FRAGMENTS: dict[str, str] = {
     "question_answered": """
         SELECT q.answered_at, 1, left(q.question, 120), NULL, NULL
         FROM issue_inputs q WHERE q.answered_at IS NOT NULL AND q.answer IS NOT NULL""",
-    # lore: a context audit that finished its work, with its report; the service reads its claims
+    # lore: a context audit that finished its work, with its report; the service reads its claims. A finding's
+    # fix job is no audit (an_audit): merged, it counts as the proposal it is (proposal_merged), and only there.
     "audit": """
         SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, NULL, j.result_summary
-        FROM jobs j WHERE j.pipeline_template = 'context-audit' AND """
+        FROM jobs j WHERE """
+    + an_audit("j")
+    + " AND "
     + finished_well("j"),
-    "audit_merged": "SELECT m.at, 1, m.label, m.pr_url, NULL FROM merged m WHERE m.pipeline_template = 'context-audit'",
+    "audit_merged": "SELECT m.at, 1, m.label, m.pr_url, NULL FROM merged m WHERE " + an_audit("m"),
     "areas_mapped": """
         SELECT f.at, 1, f.repo, f.pr_url, NULL
         FROM (SELECT DISTINCT ON (repo) repo, at, pr_url FROM merged WHERE pipeline_template = 'map-areas' ORDER BY repo, at) f""",
@@ -468,10 +495,17 @@ class JobRow:
     created_at: datetime
     #: When it finished, which merge sync never moves; for a job that has not finished, when its row last changed.
     finished_at: datetime
-    #: A finished context audit's report, for its outdated claims; None for every other job.
+    #: A finished context audit's report, for its outdated claims; None for every other job, a fix job included.
     report: str | None = None
     #: When its pull request reached the state merge sync last recorded, by the forge's clock; None without one.
     delivery_state_at: datetime | None = None
+    #: Who asked for it (``jobs.dispatched_by``): :data:`FIX_ACTOR` for a finding's fix job.
+    dispatched_by: str | None = None
+
+    @property
+    def is_audit(self) -> bool:
+        """A context audit, and not a finding's fix job: :func:`an_audit` for one row of the journal."""
+        return self.template == AUDIT_TEMPLATE and self.dispatched_by != FIX_ACTOR
 
     @property
     def merged_at(self) -> datetime | None:
@@ -503,8 +537,8 @@ class Journal:
 
 _JOBS_SQL = f"""
 SELECT j.repo, j.issue_id, j.pipeline_template AS template, j.status, j.created_at,
-       COALESCE(j.finished_at, j.updated_at) AS finished_at, j.delivery_state_at,
-       CASE WHEN j.pipeline_template = 'context-audit' AND {finished_well("j")} THEN j.result_summary END AS report
+       COALESCE(j.finished_at, j.updated_at) AS finished_at, j.delivery_state_at, j.dispatched_by,
+       CASE WHEN {an_audit("j")} AND {finished_well("j")} THEN j.result_summary END AS report
 FROM jobs j
 WHERE j.repo IS NOT NULL
 ORDER BY COALESCE(j.finished_at, j.updated_at)

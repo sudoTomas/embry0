@@ -144,7 +144,8 @@ class _RepoRows:
 
     @property
     def audits(self) -> list[JobRow]:
-        return [j for j in self.jobs if j.template == "context-audit" and j.status in FINISHED_WELL]
+        """Its context audits that finished their work; a finding's fix job is no audit (#241)."""
+        return [j for j in self.jobs if j.is_audit and j.status in FINISHED_WELL]
 
     def agent_runs(self, params: dict[str, Any]) -> list[RunRow]:
         agents = set(params["agents"])

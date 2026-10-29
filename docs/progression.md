@@ -39,6 +39,8 @@ Its avatar picks a style: melee climbs plate (helm, chestplate, greaves, heater 
 - **Quests:** four short goals the account completes once, for quest points and an experience reward to the characters that did the work: First Steps, Try, Try Again, Gatekeeper and Divine Warden. Every quest done gives the character with the highest total level the quest cloak; Divine Warden trims every cloak in the Divine metal.
 - **Diaries:** one per repository, with tasks in four tiers, Easy to Elite (for example: triage an issue; merge ten pull requests; go 30 days without a failed job).
 
+A context-audit finding's fix job, the job an owner starts by accepting one finding (dispatched by `embry0:proposals`, [context-audit.md](context-audit.md)), is no audit. It earns the context auditor no experience, counts toward no Lore achievement (no outdated claims, no clean audit, no audit merged) and does no diary's audit task. Once its pull request merges it is credited once, as any accepted proposal whose job merged.
+
 ## The content pack
 
 Every name, number and word above comes from one document, the content pack. Its schema is code (`embry0/services/progression_pack.py`), and so is what it may name (`embry0/services/progression_vocabulary.py`): the metrics an achievement can count and the parameters each takes, the quest and diary task kinds, the action categories, the outcome sources and the art the dashboard draws. Its values are data. embry0 ships one, `embry0/services/progression_pack_default.yaml`, commented section by section; the design is [the spec](superpowers/specs/2026-10-28-progression-pack-design.md).

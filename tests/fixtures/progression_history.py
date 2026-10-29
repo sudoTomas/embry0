@@ -224,6 +224,32 @@ async def seed_history(db: DatabasePool) -> None:
         at=t(13),
     )
 
+    # A finding's fix job is no audit (#241): one merged and one with its pull request open, each started by its
+    # owner's yes. Neither earns audit credit, in a repository no audit ran on; the merged one is a merged proposal.
+    for job_id, status, delivery, pr, report, day in (
+        ("j-fix-merged", "pr_merged", "merged", 2, "Stale: 1\nFiles: 1\n", 26),
+        ("j-fix-open", "completed", "pr_open", 3, "Stale: 0\nFiles: 1\n", 27),
+    ):
+        await db.execute(
+            "INSERT INTO proposal_decisions (proposal_id, repo, kind, decision, decided_by, job_id, created_at) "
+            "VALUES ($1, 'acme/new', 'finding', 'accept', 'octocat', $2, $3)",
+            f"finding:{job_id}",
+            job_id,
+            t(day, -1),
+        )
+        await _job(
+            db,
+            job_id,
+            repo="acme/new",
+            pipeline_template="context-audit",
+            dispatched_by="embry0:proposals",
+            status=status,
+            delivery_state=delivery,
+            pr_url=f"https://forge/acme/new/pull/{pr}",
+            result_summary=report,
+            at=t(day),
+        )
+
     # QA, an area map, a follow-up, a gate refusal, a research, ops and design run.
     await _job(db, "j-qa", pipeline_template="qa", at=t(14))
     await _trace(db, "trc-qa", "j-qa", "qa", t(14, 0.1), actions={"browser:browsing": 50, "log:debugging": 5})
