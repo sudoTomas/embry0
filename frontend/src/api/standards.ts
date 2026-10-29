@@ -38,6 +38,7 @@ export interface Standard {
   values: Record<string, unknown>;
   prose: string;
   references: string[];
+  /** Who wrote this version; null for someone else unless the caller is an admin (as `GET /audit` shows actors). */
   created_by: string | null;
   created_at: string | null;
 }

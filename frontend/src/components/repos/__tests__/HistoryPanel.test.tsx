@@ -41,7 +41,8 @@ const HISTORY: RepoHistory = {
       id: 4,
       surface: "preferences",
       what: "Branch embry0 starts from changed from (repository default) to develop",
-      actor: "",
+      // Someone else's change, as the API answers a caller that is not an admin (as GET /audit shows actors).
+      actor: null,
       undoable: true,
       why_not: null,
     }),
@@ -92,7 +93,7 @@ describe("HistoryPanel", () => {
     expect(within(proposal).getByTestId("history-entry-meta")).toHaveTextContent(
       `alex@example.com · Setup proposal · ${when}`,
     );
-    expect(within(nobody).getByTestId("history-entry-meta")).toHaveTextContent(`Unknown · Dashboard or API · ${when}`);
+    expect(within(nobody).getByTestId("history-entry-meta")).toHaveTextContent(`Someone else · Dashboard or API · ${when}`);
     expect(within(restore).getByTestId("history-entry-meta")).toHaveTextContent("· Undo ·");
     expect(within(onboard).getByTestId("history-entry-meta")).toHaveTextContent("· embry0 setup ·");
     expect(within(starter).getByTestId("history-entry-meta")).toHaveTextContent(`sam@example.com · Starter · ${when}`);

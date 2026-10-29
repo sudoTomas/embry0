@@ -2,7 +2,8 @@
 
 Reads are operator-tier like the rest of the registry; writes are admin-tier,
 because registering an owner points embry0's credentials and, later, its
-spend at every repository under it.
+spend at every repository under it. Who registered an owner (``created_by``)
+is shown as ``GET /audit`` shows actors (:mod:`embry0.api.actor_visibility`).
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.types import Scope
 
+from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
@@ -135,10 +137,20 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
     return await org_service.probe_github(owner, token)
 
 
+def _org_view(org: Organization, shown: Shown) -> dict[str, Any]:
+    """An owner as a reader sees it: who registered it, as ``GET /audit`` shows actors."""
+    return {**org.to_dict(), "created_by": shown(org.created_by)}
+
+
 @router.get("/orgs")
 async def list_organizations(request: Request, include_removed: bool = False) -> dict[str, Any]:
     orgs = await _repo(request).list_all(include_removed=include_removed)
-    return {"organizations": [o.to_dict() for o in orgs], "forges": list(FORGES), "statuses": list(STATUSES)}
+    shown = await actor_shown(request)
+    return {
+        "organizations": [_org_view(o, shown) for o in orgs],
+        "forges": list(FORGES),
+        "statuses": list(STATUSES),
+    }
 
 
 # Declared before every /orgs/{owner} route, so "probe" is never read as an owner.
@@ -161,7 +173,7 @@ async def get_organization(owner: str, request: Request) -> dict[str, Any]:
     org = await _repo(request).get(owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
-    return org.to_dict()
+    return _org_view(org, await actor_shown(request))
 
 
 @router.post("/orgs", status_code=201, dependencies=[require_admin])

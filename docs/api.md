@@ -163,7 +163,7 @@ curl -X POST http://localhost:8200/api/v1/config/providers/openrouter/catalog/re
 
 ## Settings document
 
-The deployment's operator policy, one section per feature ([configuration.md](configuration.md#settings-document)). Reads take any key; writes take the admin tier and a key without a repository allowlist. Who changed it (`updated_by`, a revision's `actor`, a key's `set_by`) is shown as [`GET /audit`](#audit-log) shows actors: an admin sees every actor, anyone else their own and `null` for anyone else's.
+The deployment's operator policy, one section per feature ([configuration.md](configuration.md#settings-document)). Reads take any key; writes take the admin tier and a key without a repository allowlist. Who changed it (`updated_by`, a revision's `actor`, a key's `set_by`) follows [the audit log's rule](#who-changed-something-outside-the-audit-log).
 
 ```bash
 # The stored document: {yaml_text, data, schema_version, generation, updated_by, updated_at, sections,
@@ -313,7 +313,7 @@ The pack every progression page reads ([progression.md](progression.md#changing-
 | `POST /api/v1/progression/pack/versions/{version}/restore` | admin |
 | `POST /api/v1/progression/pack/reset` | admin |
 
-- **`GET /progression/pack`** answers the pack in effect, `{"version", "follows_default", "schema_version", "hash", "text", "document", "based_on", "default_hash", "default_moved", "source", "reason", "created_by", "activated_at", "fallback", "draft_version"}`, with `ETag: "<version>"`. `created_by`, here and on the draft and the versions, is shown as [`GET /audit`](#audit-log) shows actors: an admin sees every actor, anyone else their own and `null` for anyone else's. `version` is `0` while nothing is stored; `text` and `document` are the shipped default's while the deployment follows it. `fallback` lists, in the 422 shape, why a stored version is not in effect (the running release refuses it), in which case the shipped default is; null otherwise. `default_moved` is true when a customised pack was taken from a shipped default other than this release's. `?format=yaml` answers the text in effect alone: when a stored version is refused, that is the shipped default's text, and the header `X-Embry0-Pack-Refused` names the refused version (its own text is at `GET .../versions/{version}`). `GET /progression/pack/default` answers the shipped default, `{"text", "hash", "schema_version"}` or the text with `?format=yaml`; `GET .../default/diff` answers `{"based_on", "default_hash", "moved", "text_diff"}`, the unified diff from the default the active pack was based on to this release's (null when nothing moved or that default's text was not recorded). `GET .../vocabulary` answers the JSON Schema and every metric, quest kind, diary task kind, action kind and category, outcome source and art id with its parameters' schema, for editors.
+- **`GET /progression/pack`** answers the pack in effect, `{"version", "follows_default", "schema_version", "hash", "text", "document", "based_on", "default_hash", "default_moved", "source", "reason", "created_by", "activated_at", "fallback", "draft_version"}`, with `ETag: "<version>"`. `created_by`, here and on the draft and the versions, follows [the audit log's rule](#who-changed-something-outside-the-audit-log). `version` is `0` while nothing is stored; `text` and `document` are the shipped default's while the deployment follows it. `fallback` lists, in the 422 shape, why a stored version is not in effect (the running release refuses it), in which case the shipped default is; null otherwise. `default_moved` is true when a customised pack was taken from a shipped default other than this release's. `?format=yaml` answers the text in effect alone: when a stored version is refused, that is the shipped default's text, and the header `X-Embry0-Pack-Refused` names the refused version (its own text is at `GET .../versions/{version}`). `GET /progression/pack/default` answers the shipped default, `{"text", "hash", "schema_version"}` or the text with `?format=yaml`; `GET .../default/diff` answers `{"based_on", "default_hash", "moved", "text_diff"}`, the unified diff from the default the active pack was based on to this release's (null when nothing moved or that default's text was not recorded). `GET .../vocabulary` answers the JSON Schema and every metric, quest kind, diary task kind, action kind and category, outcome source and art id with its parameters' schema, for editors.
 - **Writes** take the pack as YAML (`application/yaml`, `text/yaml` or `text/plain`, stored as written, comments included) or a JSON object (`application/json`, stored as the YAML it dumps to), up to 256 KiB (413 beyond: before the body is read when `Content-Length` says so, and as soon as a body sent without one passes the limit). A pack that is not valid is a 422 in FastAPI's shape, one entry per problem, each `{"loc", "type", "msg"}` with `loc` the path from the document's root and the value never echoed: `{"detail": [{"loc": ["achievements", 3, "thresholds"], "type": "thresholds", "msg": "3 values; an objective has one, a tiered achievement one per tier (7)"}]}`. Besides the schema's own checks it refuses a key written twice (in YAML or in a JSON body), YAML aliases and merge keys, and a `timezone` the database does not know. Optional `?reason=` (500 characters) is kept with the version. `If-Match` names the version a write expects to replace, the `ETag` of the matching read (`"0"` for nothing stored; `*` matches any; a weak tag never matches); another is a 409.
 - **`PUT /progression/pack`** checks and activates in one call (the CLI and MCP), with `?source=person|file`. A text equal to the one in effect records nothing. It answers `{"changed", "version", "previous_version", "source", "hash", "follows_default", "warnings"}`. With `?dry_run=1` it stores nothing and answers `{"would_change", "version", "hash", "sections", "text_diff", "warnings"}`: the top-level sections whose values change and the unified diff from the text in effect. `warnings` never block: an action category no skill is trained by, an agent a rate names that is not defined.
 - **The draft.** `PUT /progression/pack/draft` stores the one draft, replacing any other under a new version number, and changes nothing anyone sees; `If-Match` names the draft it replaces. It answers `{"version", "replaced_version", "hash", "based_on", "sections", "warnings"}`. A draft records the active version it was saved over (`parent_version`). `GET` answers it with its `text`, the `sections` it changes, `problems` (non-null when the running release refuses it) and `stale` (the pack in effect changed since it was saved); `DELETE` discards it. `GET /progression/preview` answers `GET /progression`'s shape computed now from the whole history under the draft (both sides of `changes` from the raw rows, never from the rollup), plus `draft` (`{"version", "hash", "parent_version", "stale"}`), `active` (`{"version", "hash"}`) and `changes`: `{"characters": [{"agent_type", "before": {"level", "total_level", "xp"}, "after": {...}}], "account": {"before": {"total_level", "xp"}, "after": {...}}, "achievements_unlocked": {"before", "after"}}`, a side null where the agent is not a character. One preview runs at a time; another is a 429. `POST .../draft/activate` puts the draft live as a new active version, the newest, and uses the draft up (`If-Match`: the draft's version); it answers like `PUT`. A draft saved over an earlier version than the one in effect is a 409, so activating it cannot undo a newer activation unseen: preview it again, save it again over the pack in effect, then activate it.
@@ -978,6 +978,33 @@ event has one name: a QA, onboard or pull request review job writes one
 whose actor is the job's actor. Rows written before that also carry a
 second, underscore-spelled copy (`qa_job_created`, `onboard_job_created`,
 `pr_review_job_created`); the registry does not list those.
+
+### Who changed something, outside the audit log
+
+Change-history routes show who changed something the way `GET /audit`
+shows rows (`embry0/api/actor_visibility.py`): an admin (an admin session,
+the master key, an admin-scope key) sees every name, and anyone else sees
+their own name and `null` for anyone else's. Your own name is the one your
+changes are recorded under: your session's email, your key owner's email,
+or `key:<name>` (`key:<id>` for a key with no name). The fields:
+
+- the settings document's `updated_by`, a revision's `actor` and a key's `set_by`;
+- the progression pack's `created_by`, on the pack in effect, the draft and the versions;
+- a repository's history (`actor`), and `qa_config_updated_by` on `GET /repos/{repo}`;
+- merge approvals' `decided_by`, including the answer to a `decide` on an ask someone else already decided;
+- a setup proposal's `created_by` and `decided_by`;
+- `created_by` on a standard's versions, on credential bindings and on an organization's registration.
+
+An actor in embry0's own namespace (`embry0:`, such as `embry0:master-key`
+for a change made with the master key, or `embry0:bootstrap` for the
+settings imported at boot) is shown to everyone on these routes: it names
+no person.
+
+Collaboration fields name people working together and stay visible to
+every signed-in key: who started a job (`dispatched_by`) and set its
+done-when list, who answered or skipped a question, an issue's activity,
+who handed a decision over or closed a hand-off, who answered an ask, a
+map part's marks, sends and upload, and who evaluated a quest.
 
 ## Sandbox visibility
 

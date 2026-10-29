@@ -166,7 +166,8 @@ export interface SetupProposal {
   status: SetupProposalStatus;
   job_id: string | null;
   job_status: string | null;
-  created_by: string;
+  /** Who asked for it, and who decided it; null for someone else unless the caller is an admin (as `GET /audit` shows actors). */
+  created_by: string | null;
   created_at: string;
   decided_by: string | null;
   decided_at: string | null;

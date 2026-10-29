@@ -435,7 +435,7 @@ describe("PolicyTab", () => {
     expect(screen.getAllByRole("button", { name: "Undo this change" })).toHaveLength(1);
   });
 
-  it("reads a change whose author is hidden (null, or left out) as someone's, list and detail alike", async () => {
+  it("reads a change whose author is hidden (null, or left out) as someone else's, list and detail alike", async () => {
     const { actor: _hidden, ...withoutActor } = REVISIONS[1];
     api.fetchSettingsRevisions.mockResolvedValue([{ ...REVISIONS[0], actor: null }, withoutActor]);
     api.fetchSettingsRevision.mockResolvedValue({
@@ -446,8 +446,8 @@ describe("PolicyTab", () => {
     });
     renderTab();
     const [nulled, absent] = await screen.findAllByTestId("settings-revision");
-    expect(within(nulled).getByTestId("settings-revision-meta")).toHaveTextContent(/^Someone · Dashboard or API ·/);
-    expect(within(absent).getByTestId("settings-revision-meta")).toHaveTextContent(/^Someone · Imported from the environment ·/);
+    expect(within(nulled).getByTestId("settings-revision-meta")).toHaveTextContent(/^Someone else · Dashboard or API ·/);
+    expect(within(absent).getByTestId("settings-revision-meta")).toHaveTextContent(/^Someone else · Imported from the environment ·/);
     for (const row of [nulled, absent]) {
       expect(row).not.toHaveTextContent(/null|undefined/);
     }

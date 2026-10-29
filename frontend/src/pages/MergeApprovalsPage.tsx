@@ -11,6 +11,7 @@ import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { CHECKS_TONES, VERDICT_LABELS, VERDICT_TONES, approvalTitle } from "@/lib/mergeApprovals";
 import { sentenceCase, statusLabel, statusTone } from "@/lib/status";
+import { actorLabel } from "@/lib/actors";
 import { formatDateTime } from "@/lib/utils";
 
 function RecommendationBadge({ row }: { row: MergeApproval }) {
@@ -87,7 +88,7 @@ export function MergeApprovalsPage() {
                     {row.dry_run && <Badge tone="neutral">Dry run</Badge>}
                   </span>
                 </td>
-                <td className="hidden whitespace-nowrap text-fg-secondary sm:table-cell">{row.decided_by ?? "—"}</td>
+                <td className="hidden whitespace-nowrap text-fg-secondary sm:table-cell">{row.decided_by || row.decided_at ? actorLabel(row.decided_by) : "—"}</td>
                 <td className="num hidden whitespace-nowrap text-fg-muted sm:table-cell">{formatDateTime(row.posted_at ?? row.created_at)}</td>
                 <td className="whitespace-nowrap">
                   <Link to={`/merge-approvals/${encodeURIComponent(row.id)}`} className="text-sm text-fg hover:text-primary hover:underline">

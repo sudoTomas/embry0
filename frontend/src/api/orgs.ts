@@ -30,6 +30,7 @@ export interface Organization {
   repo_count: number | null;
   discovered_at: string | null;
   status: OrgStatus;
+  /** Who registered it; null for someone else unless the caller is an admin (as `GET /audit` shows actors). */
   created_by: string | null;
   created_at: string | null;
   updated_at: string | null;

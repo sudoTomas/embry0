@@ -189,6 +189,18 @@ describe("MergeApprovalPage", () => {
     expect(screen.queryByRole("dialog"), "the confirm closes either way").toBeNull();
   });
 
+  it("says someone else decided when the ask hides who, keeping the channel and the time", () => {
+    // Someone else's decision, as the API answers a caller that is not an admin (as GET /audit shows actors).
+    mockUseMergeApproval.mockReturnValue(
+      ready({ ...ROW, status: "rejected", decided_by: null, decided_at: "2026-10-20T11:00:00Z", chat_id: "chat-1" }),
+    );
+    renderPage();
+    const decided = screen.getByTestId("merge-approval-decided");
+    expect(decided).toHaveTextContent(/^Decided by someone else in the approval chat on /);
+    expect(decided).not.toHaveTextContent(/null|undefined/);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  });
+
   it("shows who decided and hides the buttons once decided", () => {
     mockUseMergeApproval.mockReturnValue(
       ready({ ...ROW, status: "merged", decided_by: "ops@example.test", decided_at: "2026-10-20T11:00:00Z", chat_id: "dashboard", merge_sha: "fed", detail: "merged" }),

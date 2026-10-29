@@ -466,11 +466,13 @@ def test_who_made_a_version_is_shown_as_the_audit_log_shows_actors() -> None:
         return StoredPack(version, status, 1, False, COPPER, document, None, "person", "", by, at, at)  # type: ignore[arg-type]
 
     mine, theirs = row(2, "active", "u@example.com"), row(1, "superseded", "other@example.com")
+    # A pack upgraded to a newer schema at startup is recorded under embry0's own actor, which names no person.
+    upgraded = row(0, "superseded", "embry0:upgrade")
     repo = MagicMock()
     repo.active = AsyncMock(return_value=mine)
     repo.active_version = AsyncMock(return_value=2)
     repo.draft = AsyncMock(return_value=row(3, "draft", "other@example.com"))
-    repo.versions = AsyncMock(return_value=[mine, theirs])
+    repo.versions = AsyncMock(return_value=[mine, theirs, upgraded])
     repo.get = AsyncMock(side_effect=lambda v: {2: mine, 1: theirs}.get(v))
     repo.default_text = AsyncMock(return_value=None)
     app = FastAPI()
@@ -490,8 +492,8 @@ def test_who_made_a_version_is_shown_as_the_audit_log_shows_actors() -> None:
         operator = TestClient(app)
         operator.cookies.set(SESSION_COOKIE, cookie("operator"))
         listed = operator.get(f"{PACK}/versions").json()["versions"]
-        assert [v["created_by"] for v in listed] == ["u@example.com", None], (
-            "a non-admin must see only their own name on a version"
+        assert [v["created_by"] for v in listed] == ["u@example.com", None, "embry0:upgrade"], (
+            "a non-admin must see only their own name on a version, and embry0's own"
         )
         assert operator.get(f"{PACK}/versions/1").json()["created_by"] is None
         assert operator.get(f"{PACK}/draft").json()["created_by"] is None
@@ -502,6 +504,7 @@ def test_who_made_a_version_is_shown_as_the_audit_log_shows_actors() -> None:
         assert [v["created_by"] for v in admin.get(f"{PACK}/versions").json()["versions"]] == [
             "u@example.com",
             "other@example.com",
+            "embry0:upgrade",
         ], "an admin sees every actor"
     finally:
         bust_user_gate_cache()

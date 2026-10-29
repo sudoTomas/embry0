@@ -13,6 +13,10 @@ other mutation; that restriction is enforced in ``embry0.api.deps``. The
 relay's form in turn is accepted only from that key, the master key or an
 admin: it names the person who answered, so anyone else who could send it
 would be attributing a decision to a name of their choosing.
+
+Who decided (``decided_by``) is shown as ``GET /audit`` shows actors
+(:mod:`embry0.api.actor_visibility`): an admin sees every name, anyone else
+their own and ``null`` for anyone else's.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from typing import Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from embry0.api.actor_visibility import Shown, actor_shown, with_actors
 from embry0.api.deps import TIER_MERGE, ensure_admin, request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist, restricted_key_name
 from embry0.api.schemas.person_name import PersonName
@@ -79,8 +84,9 @@ def _service(request: Request) -> MergeApprovalService:
     return cast("MergeApprovalService", service)
 
 
-def _serialize(row: dict[str, Any]) -> dict[str, Any]:
-    return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in row.items()}
+def _serialize(row: dict[str, Any], shown: Shown) -> dict[str, Any]:
+    out = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in row.items()}
+    return with_actors(out, shown, "decided_by")
 
 
 @router.get("/merge-approvals")
@@ -93,7 +99,8 @@ async def list_merge_approvals(
 ) -> dict[str, Any]:
     service = _service(request)
     rows = await service.list_recent(status=status, limit=limit)
-    return {"items": [_serialize(r) for r in rows], "mode": service.mode}
+    shown = await actor_shown(request)
+    return {"items": [_serialize(r, shown) for r in rows], "mode": service.mode}
 
 
 @router.get("/merge-approvals/{approval_id}")
@@ -101,7 +108,7 @@ async def get_merge_approval(approval_id: str, request: Request) -> dict[str, An
     row = await _service(request).get(approval_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"no merge approval {approval_id!r}")
-    return _serialize(row)
+    return _serialize(row, await actor_shown(request))
 
 
 @router.post(DECIDE_PATH)
@@ -140,6 +147,9 @@ async def decide_merge_approval(approval_id: str, body: DecideBody, request: Req
         )
     except DecisionRefused as refused:
         raise HTTPException(status_code=refused.status_code, detail=refused.detail) from None
+    if result.get("decided_by") != decided_by:
+        # Already decided by someone else: their name, as the reads show it.
+        result = with_actors(result, await actor_shown(request), "decided_by")
 
     config = request.app.state.config
     await emit_audit(

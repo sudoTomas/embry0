@@ -5,6 +5,9 @@ setting a repository's mode are admin-tier: they decide what embry0 holds every
 repository under an owner to, and which repositories it may spend on. Starting
 an audit is operator-tier like ``POST /jobs``, with the same repository
 allowlist, and only for a repository an admin put in mode advise or enforce.
+
+Who wrote a version (``created_by``) is shown as ``GET /audit`` shows actors
+(:mod:`embry0.api.actor_visibility`).
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
@@ -147,6 +151,11 @@ async def _state_or_default(request: Request, repo: str, kind: str) -> RepoStand
     return await _states(request).get(repo, kind) or standards_service.default_state(repo, kind)
 
 
+def _standard_view(standard: Standard, shown: Shown) -> dict[str, Any]:
+    """A version as a reader sees it: who wrote it, as ``GET /audit`` shows actors."""
+    return {**standard.to_dict(), "created_by": shown(standard.created_by)}
+
+
 async def standards_for_repo(request: Request, repo: str) -> list[dict[str, Any]]:
     """One state per kind for ``GET /repos/{repo}``: the stored row, or mode off when there is none."""
     repository = getattr(request.app.state, "repo_standard_state_repo", None)
@@ -160,11 +169,12 @@ async def list_standards(owner: str, request: Request) -> dict[str, Any]:
     owner = _owner(owner)
     active = await _standards(request).list_active(owner)
     states = await _states(request).list_for_owner(owner)
+    shown = await actor_shown(request)
     return {
         "owner": owner,
         "kinds": list(KINDS),
         "modes": list(MODES),
-        "standards": [s.to_dict() for s in active],
+        "standards": [_standard_view(s, shown) for s in active],
         "repos": [s.to_dict() for s in states],
     }
 
@@ -172,7 +182,7 @@ async def list_standards(owner: str, request: Request) -> dict[str, Any]:
 @router.get("/standards/{owner}/{kind}")
 async def get_standard(owner: str, kind: str, request: Request) -> dict[str, Any]:
     """The active version of the owner's standard of ``kind``; 404 when none was written."""
-    return (await _active_or_404(request, _owner(owner), _kind(kind))).to_dict()
+    return _standard_view(await _active_or_404(request, _owner(owner), _kind(kind)), await actor_shown(request))
 
 
 @router.put("/standards/{owner}/{kind}", dependencies=[require_admin])
@@ -209,7 +219,8 @@ async def list_standard_versions(owner: str, kind: str, request: Request) -> dic
     """Every version of the owner's standard of ``kind``, newest first, with its status."""
     owner, kind = _owner(owner), _kind(kind)
     versions = await _standards(request).list_versions(owner, kind)
-    return {"owner": owner, "kind": kind, "versions": [v.to_dict() for v in versions]}
+    shown = await actor_shown(request)
+    return {"owner": owner, "kind": kind, "versions": [_standard_view(v, shown) for v in versions]}
 
 
 @router.get("/standards/{owner}/{kind}/repos/{repo:path}")

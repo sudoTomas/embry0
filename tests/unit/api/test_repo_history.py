@@ -34,6 +34,8 @@ V2 = "version: 2\nqa_required: auto\nworkspace_provider:\n  type: npm-workspaces
 OPERATOR = "emb_" + "o" * 43
 READER = "emb_" + "r" * 43
 ELSEWHERE = "emb_" + "e" * 43
+ADMIN = "emb_" + "a" * 43
+COLLEAGUE = "emb_" + "c" * 43
 
 
 def _key(key_id: str, scope: str, user_id: str | None, allowed: tuple[str, ...] | None = None) -> ApiKeyRow:
@@ -56,7 +58,10 @@ KEYS = {
     hash_token(OPERATOR): _key("key-operator0001", "operate", "usr-dev"),
     hash_token(READER): _key("key-reader000001", "read", None),
     hash_token(ELSEWHERE): _key("key-elsewhere001", "operate", None, ("acme/other",)),
+    hash_token(ADMIN): _key("key-admin0000001", "admin", None),
+    hash_token(COLLEAGUE): _key("key-colleague001", "operate", "usr-colleague"),
 }
+EMAILS = {"usr-dev": "dev@example.com", "usr-colleague": "colleague@example.com"}
 
 
 def _user(email: str) -> Any:
@@ -88,7 +93,7 @@ async def client(db_with_migrations: DatabasePool) -> AsyncIterator[AsyncClient]
     keys.touch_last_used = AsyncMock()
     state.api_keys_repo = keys
     users = MagicMock()
-    users.get = AsyncMock(side_effect=lambda uid: _user("dev@example.com") if uid == "usr-dev" else None)
+    users.get = AsyncMock(side_effect=lambda uid: _user(EMAILS[uid]) if uid in EMAILS else None)
     state.users_repo = users
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_as(OPERATOR)) as c:
         yield c
@@ -269,6 +274,25 @@ async def test_every_change_and_undo_is_audited(client, db_with_migrations) -> N
             "details": {"repo": REPO, "revision_id": removed, "new_revision_id": undone},
         }
     ]
+
+
+@pytest.mark.requires_postgres
+async def test_who_made_each_change_is_shown_as_the_audit_log_shows_actors(client) -> None:
+    """An admin sees every actor; anyone else sees their own, and null for anyone else's (as ``GET /audit``)."""
+    await client.put(QA, content=V1)  # by dev@example.com
+    await client.put(QA, content=V2, headers=_as(COLLEAGUE))  # by colleague@example.com
+
+    def actors(token: str) -> Any:
+        return client.get(HISTORY, headers=_as(token))
+
+    admin = [e["actor"] for e in (await actors(ADMIN)).json()["entries"]]
+    assert admin == ["colleague@example.com", "dev@example.com"], f"an admin must see every actor: {admin}"
+    own = [e["actor"] for e in (await actors(OPERATOR)).json()["entries"]]
+    assert own == [None, "dev@example.com"], f"an operator must see only their own change: {own}"
+    theirs = [e["actor"] for e in (await actors(COLLEAGUE)).json()["entries"]]
+    assert theirs == ["colleague@example.com", None], f"each caller sees only their own change: {theirs}"
+    read = [e["actor"] for e in (await actors(READER)).json()["entries"]]
+    assert read == [None, None], f"a read key must not learn who changed the repository's setup: {read}"
 
 
 @pytest.mark.requires_postgres

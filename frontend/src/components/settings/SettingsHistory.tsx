@@ -9,6 +9,7 @@ import { REVISION_SOURCE_LABELS } from "@/lib/settingsDocument";
 import { diffLines } from "@/lib/textDiff";
 import { TextDiff } from "@/components/documents/TextDiff";
 import type { SettingsRevision } from "@/lib/types/settings";
+import { actorLabel } from "@/lib/actors";
 import { formatDateTime } from "@/lib/utils";
 import { SettingsChangeList } from "./SettingsChangeList";
 
@@ -75,7 +76,7 @@ export function SettingsHistory() {
                 <p className="text-sm text-fg [overflow-wrap:anywhere]">{revision.what}</p>
                 <p className="text-xs text-fg-muted" data-testid="settings-revision-meta">
                   {/* No actor: not known, or not for this key to see. */}
-                  {revision.actor || "Someone"} · {REVISION_SOURCE_LABELS[revision.source] ?? revision.source} ·{" "}
+                  {actorLabel(revision.actor)} · {REVISION_SOURCE_LABELS[revision.source] ?? revision.source} ·{" "}
                   {revision.created_at ? formatDateTime(revision.created_at) : "time not known"}
                 </p>
                 {revision.reason && (
