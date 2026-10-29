@@ -23,7 +23,9 @@ a start refused before any job existed (the template missing, the executor
 down): the loop keeps the time of each repository's last refusal. Either way
 a repository whose files did not change is tried again one interval later,
 not on every tick. The refusals live in the process, so a restart tries such
-a repository once more.
+a repository once more. A finding's fix job, which an owner starts from the
+findings feed, is no audit and anchors nothing, though it holds its
+repository while it runs (:data:`FIX_ACTOR`).
 
 The budget gate is asked before each start, as a label trigger asks it
 (#284). The schedule's actor skips the per-author hourly limit
@@ -71,6 +73,17 @@ TEMPLATE = "context-audit"
 #: The actor of every job the schedule starts, in ``jobs.dispatched_by`` and
 #: in the job's audit row.
 ACTOR = dispatch_actors.CONTEXT_AUDIT
+
+#: The actor of a finding's fix job: the job an owner starts by accepting one
+#: row of an audit's findings (owner proposals, spec 2026-10-24). It runs on
+#: :data:`TEMPLATE`, but it fixes one claim and is no audit: it is never the
+#: due rule's anchor or the survey's newest job, and the findings feed reads
+#: past it. While it runs it still holds its repository, as every
+#: context-audit job does, so no audit opens a pull request on the same
+#: files beside it. The actor is the marker because ``jobs.dispatched_by`` is
+#: written once, in the reserved ``embry0:`` names, while plan_route may
+#: rewrite the template column.
+FIX_ACTOR = dispatch_actors.PROPOSALS
 
 #: How often the loop wakes. A wake reads the forge, one commit listing per
 #: repository and its tree when the head moved, so it is longer than
@@ -479,7 +492,12 @@ class _Registry(Protocol):
 
 class _Jobs(Protocol):
     async def newest_per_repo(
-        self, repos: Collection[str], *, pipeline_template: str, dispatched_by: str | None = None
+        self,
+        repos: Collection[str],
+        *,
+        pipeline_template: str,
+        dispatched_by: str | None = None,
+        exclude_dispatched_by: Collection[str] = (),
     ) -> dict[str, dict[str, Any]]: ...
 
     async def result_summaries(self, job_ids: Collection[str]) -> dict[str, str | None]: ...
@@ -606,6 +624,21 @@ class ContextAuditLoop:
             if str(row["repo"]).split("/", 1)[0].lower() == org.owner and row.get("forge") == org.forge
         ]
 
+    async def _audits(self, repos: Collection[str]) -> tuple[dict[str, dict[str, Any]], set[str]]:
+        """Each repository's newest context audit, and the repositories with a context-audit job live.
+
+        A finding's fix job (:data:`FIX_ACTOR`) is no audit, so it is never
+        the newest and never anchors the due rule. While it runs it still
+        holds its repository, as every context-audit job does: an audit
+        started beside it could open a pull request on the same instruction
+        files. So the live jobs are read with it, the newest without.
+        """
+        every = await self._jobs.newest_per_repo(repos, pipeline_template=TEMPLATE, dispatched_by=ACTOR)
+        audits = await self._jobs.newest_per_repo(
+            repos, pipeline_template=TEMPLATE, dispatched_by=ACTOR, exclude_dispatched_by=(FIX_ACTOR,)
+        )
+        return audits, {repo for repo, row in every.items() if row.get("live")}
+
     async def survey(
         self, org: Organization, *, now: datetime | None = None, refresh: bool = True, reports: bool = False
     ) -> Survey:
@@ -654,7 +687,7 @@ class ContextAuditLoop:
         days = context_audit_days(org.settings)
         if not repos:
             return Survey(org.owner, days, ())
-        newest = await self._jobs.newest_per_repo(repos, pipeline_template=TEMPLATE, dispatched_by=ACTOR)
+        newest, live_repos = await self._audits(repos)
         stale = [repo for repo in repos if refresh or repo not in self._last_read]
         if stale:
             client = await self._client_for(org)
@@ -684,7 +717,7 @@ class ContextAuditLoop:
             job = newest.get(repo)
             refused = self._refused.get(repo)
             attempt = _newer(Attempt.from_job(job) if job else None, refused)
-            live = bool(job and job.get("live"))
+            live = repo in live_repos
             reason = due_reason(attempt, context, days=days, now=now, live=live, by_hand=by_hand)
             states.append(RepoState(context, job, refused.started_at if refused else None, reason))
         return Survey(org.owner, days, tuple(states), tuple(unread), min(read_at))
@@ -798,8 +831,8 @@ class ContextAuditLoop:
         """
         repo = context.repo
         async with self._starting:
-            newest = await self._jobs.newest_per_repo([repo], pipeline_template=TEMPLATE, dispatched_by=ACTOR)
-            if (newest.get(repo) or {}).get("live"):
+            _newest, live = await self._audits([repo])
+            if repo in live:
                 logger.info("context_audit_already_live", repo=repo)
                 return None
             refusal = await self._ask_gate()
@@ -1005,8 +1038,8 @@ async def start_context_audit_job(
 ) -> str:
     """Start one context-audit job the way ``POST /jobs`` starts a job, and return its id.
 
-    The job row, the ``job_created`` audit row naming :data:`ACTOR`, then the
-    workflow on the executor. With ``open_pr`` the job opens a pull request
+    The job row, the ``job_created`` audit row naming ``dispatched_by``, then
+    the workflow on the executor. With ``open_pr`` the job opens a pull request
     from the patch its report carries (ADR 0022). Refused with :class:`LookupError` before any
     row exists while no template is named :data:`TEMPLATE`: plan_route sends
     a job whose template is missing to the default template of its kind, a
@@ -1014,8 +1047,11 @@ async def start_context_audit_job(
 
     ``task`` replaces the audit's own (a fix an owner asked for names its one
     claim) and ends with the same command, and ``dispatched_by`` the
-    schedule's actor: a job dispatched by another never anchors the
-    schedule's due rule, which reads only its own.
+    schedule's actor. A fix an owner asked for is dispatched by
+    :data:`FIX_ACTOR`, and that makes it no audit: the schedule's due rule
+    never anchors on it (while it runs it still holds the repository) and
+    the findings feed never offers its report. A job any other actor
+    dispatches is an audit.
     ``run_with`` is the model and key a person chose (embry0/services/run_with.py).
     ``local_first_model`` is a model on the operator's own server the job
     prefers while it has a free slot (``CONTEXT_AUDIT_LOCAL_MODEL``); a model

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from embry0.services.context_audit import FIX_ACTOR
 from embry0.services.proposals import Decision
 from embry0.storage.database import DatabasePool
 from embry0.storage.schemas import FINISHED_WELL_STATUSES, JobStatus
@@ -36,7 +37,9 @@ ORDER BY i.created_at DESC
 # then offers none until its next audit finishes: the newest is picked first and only then left
 # out, so an older audit never stands in for it (#217). A pull request closed unmerged fixed
 # nothing, and its audit's findings stand. A newer audit that failed or has not finished is
-# passed over.
+# passed over. A finding's fix job ($3, context_audit.FIX_ACTOR) is no audit: whatever became
+# of it or its pull request, the audit before it is still the newest, and its other findings
+# are still offered; the one the job fixes was answered when its owner accepted it (#222).
 _AUDITS_SQL = """
 SELECT newest.repo, newest.job_id, newest.finished_at, newest.result_summary
 FROM (
@@ -44,6 +47,7 @@ FROM (
            COALESCE(j.finished_at, j.updated_at) AS finished_at, j.result_summary
     FROM jobs j
     WHERE j.pipeline_template = 'context-audit' AND j.status = ANY($1::text[]) AND j.repo IS NOT NULL
+      AND NOT (COALESCE(j.dispatched_by, '') = ANY($3::text[]))
     ORDER BY j.repo, COALESCE(j.finished_at, j.updated_at) DESC
 ) newest
 WHERE newest.status <> $2
@@ -66,9 +70,9 @@ class ProposalsRepository:
         """The context audit whose findings each repository offers, and its report.
 
         Its newest audit that finished its work; a repository whose newest such audit's pull
-        request merged is absent until its next audit finishes.
+        request merged is absent until its next audit finishes. A finding's fix job is no audit.
         """
-        rows = await self._db.fetch(_AUDITS_SQL, list(FINISHED_WELL_STATUSES), JobStatus.PR_MERGED.value)
+        rows = await self._db.fetch(_AUDITS_SQL, list(FINISHED_WELL_STATUSES), JobStatus.PR_MERGED.value, [FIX_ACTOR])
         return [dict(r) for r in rows]
 
     async def owners(self) -> dict[str, list[str]]:

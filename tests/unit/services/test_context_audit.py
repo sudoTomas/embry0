@@ -47,6 +47,8 @@ from embry0.services.organizations import Organization
 T0 = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 FP = "f" * 64
 HEAD = "1" * 40
+#: Who the proposals route dispatches a finding's fix job as (#222).
+FIX_BY = "embry0:proposals"
 
 
 class Clock:
@@ -159,7 +161,12 @@ class FakeJobs:
         return str(self.rows[-1]["job_id"])
 
     async def newest_per_repo(
-        self, repos: Collection[str], *, pipeline_template: str, dispatched_by: str | None = None
+        self,
+        repos: Collection[str],
+        *,
+        pipeline_template: str,
+        dispatched_by: str | None = None,
+        exclude_dispatched_by: Collection[str] = (),
     ) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
         for repo in repos:
@@ -171,6 +178,7 @@ class FakeJobs:
                     r["pipeline_template"] == pipeline_template
                     or (dispatched_by and r["dispatched_by"] == dispatched_by)
                 )
+                and (r["dispatched_by"] or "") not in exclude_dispatched_by
             ]
             if mine:
                 newest = max(mine, key=lambda r: r["created_at"])
@@ -944,33 +952,173 @@ async def test_a_job_starts_on_the_template_with_a_hard_budget_and_its_reading(m
 
 
 @pytest.mark.asyncio
-async def test_a_job_another_actor_starts_carries_its_task_and_never_anchors_the_schedule(
+async def test_a_finding_s_fix_job_carries_its_task_and_never_anchors_the_schedule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Owner proposals (spec 2026-10-24): a fix an owner asked for names its one claim, and its
-    dispatcher is not the schedule's, so the due rule (which reads only the schedule's jobs) ignores it."""
+    """#222: a fix an owner asked for names its one claim, and it is no audit. Once it completes,
+    the audit before it is still the due rule's anchor and the survey's newest job, so the fix
+    job's fingerprint, which names the proposal and no files, never makes the repository due."""
 
     async def record(_db: Any, action: str, **kw: Any) -> None:
         return None
 
     monkeypatch.setattr(context_audit, "emit_audit", record)
-    jobs = FakeJobs(Clock(T0))
+    world = World(org("acme", days=7), repos=(reg("acme/web"),))
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    assert await world.loop.tick() == ["acme/web"]
+    world.jobs.finish("acme/web", "completed", T0 + timedelta(hours=1), "Stale: 2\nFiles: 1\n")
+    audit = world.jobs.rows[-1]["job_id"]
+
+    # A day later an owner accepts one of its findings: the proposals route's start.
+    world.clock.now = T0 + timedelta(days=1)
     await start_context_audit_job(
-        ctx(),
-        jobs=jobs,
-        executor=FakeExecutor(),
-        templates=FakeTemplates(TEMPLATE),
+        RepoContext("acme/web", HEAD, ("CLAUDE.md",), f"{FIX_BY}:finding:0000000000000001"),
+        jobs=world.jobs,
+        executor=world.executor,
+        templates=world.templates,
         budget_usd=1.0,
         open_pr=True,
         task="Fix one outdated claim",
-        dispatched_by="embry0:proposals",
+        dispatched_by=FIX_BY,
     )
-    created = jobs.rows[0]["created_with"]
+    created = world.jobs.rows[-1]["created_with"]
     assert created["task"].startswith("Fix one outdated claim\n\n## How to run this audit\n"), (
         "its task, then the command"
     )
-    assert created["dispatched_by"] == "embry0:proposals"
-    assert created["pipeline_config"]["actor"] == "embry0:proposals" and created["pipeline_config"]["open_pr"] is True
+    assert created["dispatched_by"] == FIX_BY
+    assert created["pipeline_config"]["actor"] == FIX_BY and created["pipeline_config"]["open_pr"] is True
+    world.jobs.finish("acme/web", "completed", T0 + timedelta(days=1, minutes=10), "Stale: 1\nFiles: 1\n")
+
+    world.clock.now = T0 + timedelta(days=2)
+    state = (await world.loop.survey(org("acme", days=7), refresh=False)).repos[0]
+    newest = (state.newest_job or {}).get("job_id")
+    assert newest == audit, f"the completed fix job {newest} is the anchor, not the audit {audit}"
+    assert state.reason == CURRENT, f"a completed fix job makes the repository {state.reason}"
+    assert await world.loop.tick() == [], "a completed fix job makes the repository due early"
+
+
+@pytest.mark.asyncio
+async def test_a_running_fix_job_holds_a_due_repository_and_never_becomes_its_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#222: while a finding's fix job runs, no audit starts beside it to open a pull request on the
+    same files; once it completes, the repository is aged from the audit before it, not from the fix."""
+
+    async def record(_db: Any, action: str, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(context_audit, "emit_audit", record)
+    world = World(org("acme", days=7), repos=(reg("acme/web"),))
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    assert await world.loop.tick() == ["acme/web"]
+    world.jobs.finish("acme/web", "completed", T0 + timedelta(hours=1), "Stale: 2\nFiles: 1\n")
+    audit = world.jobs.rows[-1]["job_id"]
+    # Eight days on the audit is an interval old and the branch moved: the repository is due.
+    world.clock.now = T0 + timedelta(days=8)
+    world.forge.put("acme/web", "2" * 40, {"CLAUDE.md": "a" * 40, "src/app.py": "b" * 40})
+    await start_context_audit_job(
+        RepoContext("acme/web", "2" * 40, ("CLAUDE.md",), f"{FIX_BY}:finding:0000000000000001"),
+        jobs=world.jobs,
+        executor=world.executor,
+        templates=world.templates,
+        budget_usd=1.0,
+        open_pr=True,
+        task="Fix one outdated claim",
+        dispatched_by=FIX_BY,
+    )
+
+    state = (await world.loop.survey(org("acme", days=7))).repos[0]
+    assert state.reason == LIVE, f"a running fix job leaves the repository {state.reason}, so an audit starts beside it"
+    assert (state.newest_job or {}).get("job_id") == audit, "a running fix job is not the newest audit"
+    assert await world.loop.tick() == [], "an audit started beside a running fix job"
+    run = await world.loop.run(org("acme", days=7), repo="acme/web", force=True)
+    assert run.started == () and [(s.repo, s.reason) for s in run.skipped] == [("acme/web", LIVE)], (
+        "a start by hand, forced or not, never joins a running fix job"
+    )
+
+    world.jobs.finish("acme/web", "completed", T0 + timedelta(days=8, minutes=10), "Stale: 1\nFiles: 1\n")
+    state = (await world.loop.survey(org("acme", days=7), refresh=False)).repos[0]
+    newest = (state.newest_job or {}).get("job_id")
+    assert (newest, state.reason) == (audit, AGED), (
+        f"once the fix job completed the repository reads {(newest, state.reason)}, not the audit {audit} aged"
+    )
+    assert await world.loop.tick() == ["acme/web"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.requires_postgres
+async def test_the_jobs_table_s_read_never_anchors_on_a_fix_job_and_a_running_one_holds(
+    db_with_migrations: Any,
+) -> None:
+    """#222 over the real query: a fix job newer than the audit, finished or still running, is never
+    the repository's newest audit; while it runs it holds the repository, as any context-audit job does."""
+    from embry0.storage.repositories.jobs import JobsRepository
+
+    db = db_with_migrations
+    jobs = JobsRepository(db)
+    forge = FakeForge()
+    files = {"CLAUDE.md": "a" * 40}
+    audits: dict[str, str] = {}
+
+    async def job(repo: str, by: str, status: str, hours_ago: int, fp: str) -> str:
+        job_id = await jobs.create(
+            repo=repo,
+            task="t",
+            pipeline_template=TEMPLATE,
+            pipeline_config={"context_fingerprint": fp, "head_sha": HEAD},
+            dispatched_by=by,
+        )
+        await db.execute(
+            "UPDATE jobs SET status = $2, created_at = NOW() - make_interval(hours => $3),"
+            " finished_at = CASE WHEN $2 = 'running' THEN NULL ELSE NOW() - make_interval(hours => $3) END"
+            " WHERE job_id = $1",
+            job_id,
+            status,
+            hours_ago,
+        )
+        return job_id
+
+    for repo, fix_status in (("acme/fixed", "completed"), ("acme/fixing", "running")):
+        forge.put(repo, HEAD, files)
+        audits[repo] = await job(repo, ACTOR, "completed", 48, fingerprint(files))
+        await job(repo, FIX_BY, fix_status, 24, f"{FIX_BY}:finding:0000000000000001")
+    # A fix job is running where no audit finished yet (one started by hand, say, then deleted).
+    forge.put("acme/fix-only", HEAD, files)
+    await job("acme/fix-only", FIX_BY, "running", 1, f"{FIX_BY}:finding:0000000000000002")
+
+    attempts: list[str] = []
+
+    async def start_job(context: RepoContext, budget_usd: float, open_pr: bool) -> str:
+        attempts.append(context.repo)
+        return f"job-{len(attempts)}"
+
+    async def client_for(_org: Organization) -> FakeForge:
+        return forge
+
+    async def ask_gate() -> None:
+        return None
+
+    loop = ContextAuditLoop(
+        organizations=FakeOrgs(org("acme", days=7)),
+        registry=FakeRegistry(reg("acme/fixed"), reg("acme/fixing"), reg("acme/fix-only")),
+        jobs=jobs,
+        client_for=client_for,
+        start_job=start_job,
+        ask_gate=ask_gate,
+        max_jobs_per_tick=3,
+        budget_usd=2.0,
+    )
+    survey = await loop.survey(org("acme", days=7))
+    read = {s.context.repo: ((s.newest_job or {}).get("job_id"), s.reason) for s in survey.repos}
+    expected = {
+        "acme/fixed": (audits["acme/fixed"], CURRENT),
+        "acme/fixing": (audits["acme/fixing"], LIVE),
+        "acme/fix-only": (None, LIVE),
+    }
+    assert read == expected, (
+        f"a fix job is read as the newest audit, or a running one does not hold its repository: {read}"
+    )
+    assert await loop.tick() == [] and attempts == [], f"a fix job made {attempts} due"
 
 
 @pytest.mark.asyncio

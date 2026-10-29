@@ -146,3 +146,89 @@ async def test_owners_and_the_newest_answer(db_with_migrations) -> None:
     )
     decision = (await repo.decisions())["issue:i-1"]
     assert decision.decision == "accept" and decision.job_id == "job-9" and decision.decided_by == "octo"
+
+
+#: Who the proposals route dispatches a finding's fix job as.
+FIX_BY = "embry0:proposals"
+
+_AUDIT_REPORT = """Stale: 2
+Files: 1
+
+## Findings
+
+| Severity | Location | Claim | Evidence | Fix |
+|---|---|---|---|---|
+| high | `CLAUDE.md:3` | Run make check | There is no Makefile | Run the test script |
+| low | `CLAUDE.md:9` | Node 18 is required | The version file says 22 | Node 22 is required |
+"""
+
+# What a fix job of the first claim reports: that claim, which it fixed.
+_FIX_REPORT = """Stale: 1
+Files: 1
+
+## Findings
+
+| Severity | Location | Claim | Evidence | Fix |
+|---|---|---|---|---|
+| high | `CLAUDE.md:3` | Run make check | There is no Makefile | Run the test script |
+"""
+
+
+async def _offered_with_a_fix_job(db, fix_status: str) -> tuple[str, list[tuple[str, str]]]:
+    """An audit with two findings, a day later a fix job of the first one that reached ``fix_status``.
+
+    Answers the audit's id and each finding the feed offers, its claim and the audit it came from.
+    """
+    from types import SimpleNamespace
+
+    from embry0.api.v1.proposals import open_proposals
+    from embry0.services.proposals import finding_id
+
+    for job_id, by, status, report, days_ago in (
+        ("job-audit", "embry0:context-audit", "completed", _AUDIT_REPORT, 2),
+        ("job-fix", FIX_BY, fix_status, _FIX_REPORT, 1),
+    ):
+        await db.execute(
+            """
+            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, dispatched_by, result_summary,
+                              created_at, finished_at)
+            VALUES ($1, 'o/r', 't', $2, 'context-audit', $3, $4,
+                    NOW() - make_interval(days => $5, hours => 1), NOW() - make_interval(days => $5))
+            """,
+            job_id,
+            status,
+            by,
+            report,
+            days_ago,
+        )
+    repo = ProposalsRepository(db)
+    # The owner's yes that started the fix job.
+    await repo.record(
+        proposal_id=finding_id("o/r", "CLAUDE.md", "Run make check"),
+        repo="o/r",
+        kind="finding",
+        decision="accept",
+        decided_by="octo",
+        job_id="job-fix",
+    )
+    proposals = await open_proposals(SimpleNamespace(proposals_repo=repo, leads_repo=None))
+    return "job-audit", [(p.extra["claim"], p.extra["audit_job_id"]) for p in proposals if p.kind == "finding"]
+
+
+async def test_a_completed_fix_job_leaves_the_audit_s_other_findings_offered(db_with_migrations) -> None:
+    """#222: a finding's fix job is no audit, so the audit before it is still the one whose findings are offered,
+    less the one its owner accepted."""
+    audit, offered = await _offered_with_a_fix_job(db_with_migrations, "completed")
+    assert offered == [("Node 18 is required", audit)], (
+        f"a completed fix job took the audit's place in the feed: {offered}"
+    )
+
+
+async def test_a_fix_job_whose_pull_request_merged_leaves_the_audit_s_other_findings_offered(
+    db_with_migrations,
+) -> None:
+    """#222: its merge fixed the one claim its owner accepted, not the audit's others, so they are still offered."""
+    audit, offered = await _offered_with_a_fix_job(db_with_migrations, "pr_merged")
+    assert offered == [("Node 18 is required", audit)], (
+        f"a fix job's merged pull request was read as the audit's: {offered}"
+    )
