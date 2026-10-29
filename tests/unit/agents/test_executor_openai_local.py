@@ -25,7 +25,7 @@ _BEARER = "sandbox-bearer-for-the-local-llm-proxy-0123456789"
 
 @pytest.fixture
 def server():
-    fake = FakeOpenAIServer()
+    fake = FakeOpenAIServer(keys=[_BEARER])
     with fake.running():
         yield fake
 

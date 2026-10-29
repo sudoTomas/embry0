@@ -3,10 +3,11 @@
 ``FakeForge`` serves bare repositories with the real ``git http-backend`` and
 accepts only the forge credential, so a clone, fetch or push that succeeds
 through the proxy proves the proxy added it. ``RecordingUpstream`` answers
-anything and records what reached it. What they record is how the tests show
-what the proxy did and did not forward. ``FakeForge`` records only the
-requests for its own repositories or carrying its credential, since any
-process on the host can reach its port (#214).
+anything and records what reached it; ``ProxyRig`` puts one behind a git-proxy.
+What they record is how the tests show what the proxy did and did not forward.
+Both count only the requests for the repositories in play or carrying a
+credential the proxy may add, since any process on the host can reach their
+ports (#214, #221).
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ import os
 import socket
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,8 @@ from aiohttp import web
 from aiohttp.abc import AbstractResolver, ResolveResult
 from aiohttp.test_utils import TestClient, TestServer
 
+from tests.fixtures.recording_upstream import RecordingUpstream, Seen, is_test_request
+
 ADMIN = "admin-secret-for-git-proxy-tests"
 FORGE_TOKEN = "ghp_FORGE_TOKEN_THAT_MUST_NEVER_REACH_THE_SANDBOX"
 FORGE_USER = "x-access-token"
@@ -33,41 +35,6 @@ FORGE_USER = "x-access-token"
 
 def basic(username: str, token: str) -> str:
     return "Basic " + base64.b64encode(f"{username}:{token}".encode()).decode()
-
-
-@dataclass
-class Seen:
-    method: str
-    path: str
-    query: str
-    headers: dict[str, str]
-    body: bytes = b""
-
-
-@dataclass
-class RecordingUpstream:
-    """Answers every request with ``status``/``body`` and records it."""
-
-    status: int = 200
-    body: bytes = b"upstream-body"
-    content_type: str = "application/x-git-upload-pack-advertisement"
-    extra_headers: dict[str, str] = field(default_factory=dict)
-    seen: list[Seen] = field(default_factory=list)
-
-    def app(self) -> web.Application:
-        app = web.Application()
-        app.router.add_route("*", "/{path:.*}", self._handle)
-        return app
-
-    async def _handle(self, request: web.Request) -> web.Response:
-        body = await request.read()
-        self.seen.append(Seen(request.method, request.path, request.query_string, dict(request.headers), body))
-        return web.Response(
-            status=self.status, body=self.body, content_type=self.content_type, headers=self.extra_headers
-        )
-
-    def authorizations(self) -> list[str]:
-        return [s.headers.get("Authorization", "") for s in self.seen]
 
 
 class FakeForge:
@@ -124,13 +91,12 @@ class FakeForge:
 
     def _counts(self, request: web.Request) -> bool:
         """Whether a request is the tests' or the proxy's, not another process's."""
-        if request.headers.get("Authorization") == self.expected_auth:
-            return True
-        return any(request.path.startswith(f"/{repo}.git/") for repo in self._repos)
+        paths = [f"/{repo}.git/" for repo in self._repos]
+        return is_test_request(request.path, request.headers, paths=paths, credentials=[self.expected_auth])
 
     async def _handle(self, request: web.Request) -> web.Response:
         body = await request.read()
-        seen = Seen(request.method, request.path, request.query_string, dict(request.headers), body)
+        seen = Seen(request.method, request.path, request.query_string, request.headers, body, request.raw_path)
         (self.seen if self._counts(request) else self.ignored).append(seen)
         if request.headers.get("Authorization", "") != self.expected_auth:
             return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="forge"'})
@@ -273,12 +239,19 @@ class ProxyRig:
     ``upstream_host`` is the hostname enrolled upstreams carry; anything but
     127.0.0.1 is routed to the local upstream by :func:`route_every_host_to_localhost`,
     so a test can enroll ``github.com`` and see what the proxy would send there.
+
+    The upstream counts what the proxy may send it: requests for a repository
+    the rig enrolled or fetched, and any request carrying the proxy's global
+    token or a token the rig enrolled. Other requests on its port are kept in
+    ``upstream.ignored`` (#221).
     """
 
     def __init__(self, app: web.Application, upstream: RecordingUpstream, *, upstream_host: str = "127.0.0.1") -> None:
         self.app = app
         self.upstream = upstream
         self.upstream_host = upstream_host
+        if app["github_token"]:
+            upstream.credentials.add(app["github_token"])
         if upstream_host != "127.0.0.1":
             route_every_host_to_localhost(app)
         self._upstream_server = TestServer(upstream.app(), host="127.0.0.1")
@@ -300,19 +273,28 @@ class ProxyRig:
     async def enroll(
         self, sandbox_id: str, bearer: str, *, repo: str = "acme/widgets", **fields: Any
     ) -> dict[str, Any]:
+        self.upstream.paths.add(f"/{repo}.git/")
+        if fields.get("github_token"):
+            self.upstream.credentials.add(fields["github_token"])
         grant = {"allowed_repos": [repo], "git_upstream": self.upstream_url, **fields}
         return await enroll(self.client, sandbox_id, bearer, **grant)
 
     async def fetch_refs(self, bearer: str, repo: str = "acme/widgets", **headers: str) -> Any:
+        self.upstream.paths.add(f"/{repo}.git/")
         return await self.client.get(
             INFO_REFS.format(repo=repo), headers={"Authorization": f"Bearer {bearer}", **headers}
         )
 
     async def credential_sent(self, bearer: str, repo: str = "acme/widgets") -> str | None:
-        """The Authorization the upstream received for one info/refs request, or None if none got there."""
+        """The Authorization the upstream received for one info/refs request, or None if none got there.
+
+        Read from the last request the upstream counted during this one, so a
+        stray that reached its port meanwhile is not taken for the proxy's.
+        """
         before = len(self.upstream.seen)
         resp = await self.fetch_refs(bearer, repo)
         await resp.read()
-        if len(self.upstream.seen) == before:
+        counted = self.upstream.seen[before:]
+        if not counted:
             return None
-        return self.upstream.seen[-1].headers.get("Authorization", "")
+        return counted[-1].headers.get("Authorization", "")

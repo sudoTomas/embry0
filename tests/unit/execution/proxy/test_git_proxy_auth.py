@@ -1,12 +1,13 @@
 """git-proxy bearer auth and admin enrollment (#521: a bearer opens git routes, never a credential)."""
 
+import aiohttp
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from embry0.execution.proxy.git_proxy import create_git_proxy_app
 
 from .git_forge import ADMIN as RIG_ADMIN
-from .git_forge import ProxyRig, RecordingUpstream
+from .git_forge import ProxyRig, RecordingUpstream, basic
 
 ADMIN = "test-admin-secret-not-real"
 PAT = "ghp_PAT_TESTING_ONLY"
@@ -95,6 +96,69 @@ async def test_unenroll_revokes(rig):
     resp = await rig.fetch_refs(TOK_S1)
     assert resp.status == 403
     assert rig.upstream.seen == []
+
+
+async def _get_from_upstream(rig: ProxyRig, path: str, **headers: str) -> int:
+    """GET ``path`` from the upstream's port directly, as another process on the host can."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{rig.upstream_url}{path}", headers=headers) as resp:
+            await resp.read()
+            return resp.status
+
+
+async def test_a_stray_request_to_the_upstream_changes_no_refusal(rig):
+    """Any process on the host can reach the upstream's port, and a ``GET /``
+    from one fails the refusal tests above when it counts (#221). It could as
+    well pass a test that expects something to reach the upstream."""
+    await _rig_enroll(rig, "s1", TOK_S1)
+    assert await _get_from_upstream(rig, "/") == 200, "the stray request did not reach the upstream"
+    resp = await rig.fetch_refs("not-enrolled-" + "x" * 40)
+    assert await _get_from_upstream(rig, "/favicon.ico") == 200, "the stray request did not reach the upstream"
+
+    assert resp.status == 403
+    assert rig.upstream.seen == [], (
+        f"only the stray requests reached the upstream, and they must not count: {rig.upstream.seen}"
+    )
+    # A subset: a real stray from another process lands here too.
+    strays = {(s.method, s.path) for s in rig.upstream.ignored}
+    assert {("GET", "/"), ("GET", "/favicon.ico")} <= strays, f"the strays were not kept aside: {strays}"
+
+
+async def test_a_stray_request_is_not_taken_for_the_credential_sent(rig, monkeypatch):
+    """``credential_sent`` reports the Authorization of one fetch's request
+    upstream. Read off the upstream's last request, it reported a stray's that
+    landed right after the proxy's instead (#221)."""
+    await rig.enroll("s1", TOK_S1, git_host="127.0.0.1", git_username="x-access-token")
+    fetch_refs = rig.fetch_refs
+
+    async def fetch_refs_then_a_stray(*args, **kwargs):
+        resp = await fetch_refs(*args, **kwargs)
+        await resp.read()
+        await _get_from_upstream(rig, "/", Authorization=basic("someone", "else"))
+        return resp
+
+    monkeypatch.setattr(rig, "fetch_refs", fetch_refs_then_a_stray)
+    sent = await rig.credential_sent(TOK_S1)
+    assert sent == basic("x-access-token", PAT), f"the stray's Authorization was taken for the proxy's: {sent!r}"
+
+
+async def test_a_request_carrying_a_token_the_proxy_holds_counts_on_any_path(rig):
+    """A proxy that leaks need not use the repository's path: forwarding the
+    sandbox's own ``/git/<repo>.git/...`` with a forge token is a leak too, and
+    the refusal tests must see it. No other process holds the proxy's global
+    token or an enrolled one, so a request carrying either counts wherever it
+    goes; one carrying neither, off the repository's path, does not."""
+    await rig.enroll("s1", TOK_S1, git_host="127.0.0.1", github_token="ghp_PER_SANDBOX_TESTING_ONLY")
+    leaked = "/git/acme/widgets.git/info/refs"
+    for token in (PAT, "ghp_PER_SANDBOX_TESTING_ONLY"):
+        await _get_from_upstream(rig, leaked, Authorization=basic("x-access-token", token))
+    await _get_from_upstream(rig, leaked, Authorization=basic("someone", "else"))
+
+    counted = [(s.path, s.headers["Authorization"]) for s in rig.upstream.seen]
+    assert counted == [
+        (leaked, basic("x-access-token", PAT)),
+        (leaked, basic("x-access-token", "ghp_PER_SANDBOX_TESTING_ONLY")),
+    ], f"a request carrying a token the proxy holds must count on any path, and no other: {counted}"
 
 
 async def test_create_app_rejects_empty_admin():

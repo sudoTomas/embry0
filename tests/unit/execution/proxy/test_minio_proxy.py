@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from urllib.parse import parse_qsl
+
 import pytest
-from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from embry0.execution.proxy.minio_proxy import create_minio_proxy_app
+from tests.fixtures.recording_upstream import RecordingUpstream
 
 
 @pytest.mark.asyncio
@@ -27,23 +29,15 @@ def test_create_requires_upstream_url():
 async def test_proxy_forwards_method_and_body_and_query(aiohttp_client):
     """Spin a fake upstream server, point the proxy at it, and verify
     every HTTP attribute survives the hop intact."""
-    seen: dict[str, object] = {}
-
-    async def upstream_handler(request: web.Request) -> web.Response:
-        seen["method"] = request.method
-        seen["path"] = request.path
-        seen["query"] = dict(request.rel_url.query)
-        seen["body"] = await request.read()
-        seen["custom_header"] = request.headers.get("X-Custom")
-        return web.Response(
-            status=201,
-            text="upstream-body",
-            headers={"X-Upstream-Header": "yes", "Content-Type": "text/plain"},
-        )
-
-    upstream_app = web.Application()
-    upstream_app.router.add_route("*", "/{path:.*}", upstream_handler)
-    upstream_server = TestServer(upstream_app)
+    # The bucket's path is what the proxy forwards to; it adds no credential (#221).
+    upstream = RecordingUpstream(
+        status=201,
+        body=b"upstream-body",
+        content_type="text/plain",
+        extra_headers={"X-Upstream-Header": "yes"},
+        paths={"/qa-artifacts/"},
+    )
+    upstream_server = TestServer(upstream.app())
     await upstream_server.start_server()
     try:
         upstream_url = f"http://127.0.0.1:{upstream_server.port}"
@@ -60,11 +54,12 @@ async def test_proxy_forwards_method_and_body_and_query(aiohttp_client):
         assert (await resp.text()) == "upstream-body"
         assert resp.headers["X-Upstream-Header"] == "yes"
 
-        assert seen["method"] == "PUT"
-        assert seen["path"] == "/qa-artifacts/job1/1/foo.bin"
-        assert seen["query"] == {"X-Amz-Signature": "abc", "X-Amz-Date": "20260101"}
-        assert seen["body"] == b"hello-world"
-        assert seen["custom_header"] == "preserved"
+        (sent,) = upstream.seen
+        assert sent.method == "PUT"
+        assert sent.path == "/qa-artifacts/job1/1/foo.bin"
+        assert dict(parse_qsl(sent.query)) == {"X-Amz-Signature": "abc", "X-Amz-Date": "20260101"}
+        assert sent.body == b"hello-world"
+        assert sent.headers.get("X-Custom") == "preserved"
     finally:
         await upstream_server.close()
 

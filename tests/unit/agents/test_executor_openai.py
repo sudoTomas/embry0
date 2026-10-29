@@ -19,7 +19,7 @@ _KEY = "sk-test-key-not-real-0123456789"
 
 @pytest.fixture
 def server():
-    fake = FakeOpenAIServer()
+    fake = FakeOpenAIServer(keys=[_KEY])
     with fake.running():
         yield fake
 
