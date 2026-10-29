@@ -389,22 +389,23 @@ def describe_changes(catalog: Catalog, before: Mapping[str, Any], after: Mapping
 
     ``before`` and ``after`` are the stored values, null when the key was not
     written; ``effective_*`` is what a loop reads, the default included. A
-    key of a section this code does not know has no effective value.
+    key of a section this code does not know has no effective value, and
+    ``managed_by``, which no loop reads, none at all.
     """
     old, new = read_sections(catalog, before), read_sections(catalog, after)
     out: list[dict[str, Any]] = []
     for change in changes(before, after):
-        out.append(
-            {
-                "key": change.path,
-                "before": change.before,
-                "after": change.after,
-                "set_before": change.set_before,
-                "set_after": change.set_after,
-                "effective_before": _effective(old, change),
-                "effective_after": _effective(new, change),
-            }
-        )
+        described: dict[str, Any] = {
+            "key": change.path,
+            "before": change.before,
+            "after": change.after,
+            "set_before": change.set_before,
+            "set_after": change.set_after,
+        }
+        if change.key:  # a key of the document itself (managed_by) is read by no loop, so it has no effective value
+            described["effective_before"] = _effective(old, change)
+            described["effective_after"] = _effective(new, change)
+        out.append(described)
     return out
 
 

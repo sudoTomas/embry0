@@ -315,7 +315,7 @@ async def test_the_schema_names_each_section_and_its_variables(client) -> None:
     resp = await client.get(f"{URL}/schema")
     assert resp.status_code == 200, resp.text
     schema = resp.json()
-    assert set(schema["properties"]) == {"version", "sample", "other"}
+    assert set(schema["properties"]) == {"version", "managed_by", "sample", "other"}
     assert schema["x-embry0-sections"]["sample"]["env"]["remind_hours"] == "ASK_REMIND_HOURS"
     assert schema["x-embry0-sections"]["sample"]["repo_keys"] == ["mode"]
 
@@ -506,3 +506,22 @@ async def test_who_changed_the_document_is_shown_as_the_audit_log_shows_actors(c
     assert [r["actor"] for r in own] == ["alex@example.com"], "anyone sees their own changes"
     admin = (await client.get(f"{URL}/revisions/{revision_id}")).json()
     assert admin["actor"] == "alex@example.com", "an admin sees every actor"
+
+
+# ---- #162: a document kept in a file -----------------------------------------------------
+
+
+async def test_managed_by_file_is_served_and_turning_it_on_is_a_named_change(client) -> None:
+    """The dashboard reads managed_by from GET to make its editor read-only; the history names the switch."""
+    await _put(client, V1)
+    assert (await client.get(URL)).json()["managed_by"] is None, "a document edited on the dashboard says null"
+    on = await _put(client, "managed_by: file\n" + V1, params={"source": "file"})
+    assert on.status_code == 200, on.text
+    assert [c["key"] for c in on.json()["changes"]] == ["managed_by"]
+    switch = on.json()["changes"][0]
+    assert (switch["before"], switch["after"], switch["set_before"], switch["set_after"]) == (None, "file", False, True)
+    assert "effective_after" not in switch, "no loop reads managed_by, so it has no value in effect to show"
+    doc = (await client.get(URL)).json()
+    assert (doc["managed_by"], doc["unknown_sections"]) == ("file", []), "managed_by is not a section nobody knows"
+    newest = (await client.get(f"{URL}/revisions")).json()["revisions"][0]
+    assert (newest["what"], newest["source"]) == ("Changed: managed_by", "file")

@@ -27,6 +27,9 @@ import structlog
 import yaml
 
 from embry0.settings.registry import (
+    DOCUMENT_KEYS,
+    MANAGED_BY_FILE,
+    MANAGED_BY_KEY,
     SCHEMA_VERSION,
     VERSION_KEY,
     Catalog,
@@ -302,8 +305,21 @@ def check(catalog: Catalog, raw: Mapping[str, Any], *, stored: Mapping[str, Any]
                 f"{SCHEMA_VERSION}. Upgrade embry0, or write version {SCHEMA_VERSION}.",
             )
         )
+    managed_by = raw.get(MANAGED_BY_KEY)
+    if managed_by is not None:
+        if type(managed_by) is str and managed_by == MANAGED_BY_FILE:
+            data[MANAGED_BY_KEY] = MANAGED_BY_FILE
+        else:
+            problems.append(
+                Problem(
+                    (MANAGED_BY_KEY,),
+                    "literal_error",
+                    f"'{MANAGED_BY_KEY}' can only be {MANAGED_BY_FILE}, which keeps the document in a file and the "
+                    "dashboard's editor read-only. Leave it out to edit the document on the dashboard.",
+                )
+            )
     for key, value in raw.items():
-        if key == VERSION_KEY:
+        if key in DOCUMENT_KEYS:
             continue
         if not isinstance(key, str):
             problems.append(Problem((str(key),), "key_type", "A section name must be text."))
@@ -407,7 +423,7 @@ class Sections:
 
 def unknown_parts(catalog: Catalog, data: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """The stored sections the catalog does not hold, and the stored keys its sections do not have."""
-    sections = tuple(sorted(k for k in data if k not in catalog))
+    sections = tuple(sorted(k for k in data if k not in catalog and k not in DOCUMENT_KEYS))
     keys: list[str] = []
     for section in catalog:
         raw = data.get(section.name)
@@ -625,17 +641,33 @@ class Change:
 
     @property
     def path(self) -> str:
-        return f"{self.section}.{self.key}"
+        """``section.key``; a key of the document itself (``managed_by``) is its name alone."""
+        return f"{self.section}.{self.key}" if self.key else self.section
 
 
 def changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[Change]:
     """Every stored key that differs between two documents' values, in section then key order.
 
     A key written in one and absent in the other counts, even when its
-    value equals the default: writing a default down is a change.
+    value equals the default: writing a default down is a change. A key of
+    the document itself (``managed_by``) is a change with an empty ``key``.
     """
     out: list[Change] = []
     for name in dict.fromkeys([*before, *after]):
+        if name in DOCUMENT_KEYS:
+            was, now = before.get(name, _MISSING), after.get(name, _MISSING)
+            if was is not now and was != now:
+                out.append(
+                    Change(
+                        section=name,
+                        key="",
+                        before=None if was is _MISSING else was,
+                        after=None if now is _MISSING else now,
+                        set_before=was is not _MISSING,
+                        set_after=now is not _MISSING,
+                    )
+                )
+            continue
         old = before.get(name)
         new = after.get(name)
         old_map = old if isinstance(old, dict) else {}

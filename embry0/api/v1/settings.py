@@ -38,6 +38,7 @@ from embry0.settings.document import (
 )
 from embry0.settings.effective import effective_view, iso
 from embry0.settings.env import env_name
+from embry0.settings.registry import MANAGED_BY_KEY
 from embry0.settings.store import (
     WHY_NOT,
     GenerationMismatch,
@@ -81,7 +82,8 @@ async def get_settings(
     """The stored settings document: its text, its values and its generation.
 
     ``?format=yaml`` answers the text alone. The ``ETag`` is the generation,
-    for ``If-Match`` on a later PUT.
+    for ``If-Match`` on a later PUT. ``managed_by`` is ``"file"`` when the
+    document says it is kept in a file, else null.
     """
     store = _store(request)
     row = await store.document()
@@ -102,6 +104,8 @@ async def get_settings(
         "sections": list(store.catalog.names),
         "unknown_sections": list(unknown_sections),
         "unknown_keys": list(unknown_keys),
+        # "file" when the document is kept in a file (`embry0 settings apply`): the dashboard only shows it.
+        "managed_by": row["data"].get(MANAGED_BY_KEY),
     }
 
 

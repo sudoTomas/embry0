@@ -175,7 +175,7 @@ The deployment's operator policy, one section per feature ([configuration.md](co
 
 ```bash
 # The stored document: {yaml_text, data, schema_version, generation, updated_by, updated_at, sections,
-#                       unknown_sections, unknown_keys}
+#                       unknown_sections, unknown_keys, managed_by}
 curl http://localhost:8200/api/v1/config/settings
 curl http://localhost:8200/api/v1/config/settings?format=yaml      # the text alone; ETag: "<generation>"
 
@@ -200,12 +200,13 @@ curl -X POST http://localhost:8200/api/v1/config/settings/revisions/12/undo -H "
 ```
 
 - **`text_diff`** is a unified diff as git writes it, one line per line. After the last line of a text with no final newline comes git's own line `\ No newline at end of file`, with no `' '`, `-` or `+` before it, and the hunk counts do not count it; a change of the final newline alone shows the last line removed and added.
-- **A change** in `changes` is `{key: "<section>.<key>", before, after, set_before, set_after, effective_before, effective_after}`: `before` and `after` are the stored values (null when not written), `effective_*` what a loop reads, its default included.
+- **A change** in `changes` is `{key: "<section>.<key>", before, after, set_before, set_after, effective_before, effective_after}`: `before` and `after` are the stored values (null when not written), `effective_*` what a loop reads, its default included (left out for `managed_by`, which no loop reads).
 - **422** lists every problem in one response, each `{loc, type, msg}` with `loc` the path from the document's root, e.g. `{"loc": ["sample", "per_tick"], "type": "less_than_equal", "msg": "Input should be less than or equal to 20"}`. The rejected value is never echoed. Unknown sections and keys get a "Did you mean" when one is close; a YAML error is one entry with `loc: []` and its line and column.
 - **The text** may not use aliases (`*name`) or merge keys (`<<`), write a key twice (in YAML or in a JSON body), nest too deeply, or hold the NUL character; each is a 422.
 - **If-Match** takes the `ETag` a GET returned (`"<generation>"`), a list of them, or `*` for any. Comparison is strong: a weak tag (`W/"3"`) never matches. It is checked on a dry run too.
 - **409** on PUT when `If-Match` names no generation that is stored; on undo for any change but the newest, or once the stored text is no longer what that change wrote. **413** past 256 KiB: before the body is read when `Content-Length` says so, and as soon as a body sent without one (chunked) passes the limit.
 - **Unknown parts.** `unknown_sections` and `unknown_keys` (`section.key`) list what a newer release wrote and this one does not know: kept while sent back exactly as stored, type included, as the stored text has it or as GET's `data` does; refused (422) when changed.
+- **`managed_by`** is `"file"` when the document's top level says `managed_by: file` (it is kept in a file and stored with `embry0 settings apply`, `?source=file`), else null. The dashboard then shows the document read-only; the API refuses nothing for it. Any other value is a 422 at `["managed_by"]`, and a change to it is listed in `changes` with the key `managed_by`. The CLI and MCP tools over these routes are in [configuration.md](configuration.md#from-a-file-the-command-line-and-mcp).
 - **Effective.** `{generation, sections: [{name, summary, keys: [{key, value, default, source, set_by, set_at, env, env_still_set, overridable, refused, description}]}], unknown_sections, unknown_keys}`. `source` is `default`, `document` or `bootstrap` (imported from the variable `env` and not changed since). `refused` holds why a stored value is read as its default.
 - **Revisions.** `{revisions: [{id, what, actor, source, reason, created_at, undoable, why_not}]}`; `source` is `person`, `file`, `bootstrap`, `restore` or `upgrade`. One revision adds `before_text`, `after_text` and its `changes`. Undo answers like a PUT (`{generation, revision_id, changes, unknown_sections, unknown_keys}`) and is recorded with source `restore`; an old text today's sections refuse is a 422 whose first entry says "That earlier version is no longer valid."
 
