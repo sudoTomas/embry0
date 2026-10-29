@@ -6,8 +6,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from embry0.services.merge_sync.recorder import aligned_status
 from embry0.services.progression_pack import FactQuery, default_rules, fact_key
 from embry0.services.progression_vocabulary import METRICS
+from embry0.storage.repositories.job_delivery import DeliveryWrite, JobDeliveryRepository
 from embry0.storage.repositories.progression import ProgressionRepository
 
 pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
@@ -453,3 +455,58 @@ async def test_a_threshold_hour_falls_on_the_packs_clock_not_utcs(db_with_migrat
     in_new_york = _by_achievement(rules, _counts(await repo.facts(rules.fact_queries, "America/New_York")))
     assert in_utc["night_shift"] == 0, "08:59 and 09:00 are mornings in UTC"
     assert in_new_york["night_shift"] == 1, "03:59 in New York is a night shift, 04:00 is not"
+
+
+# ---- a job keeps what it earned when its pull request merges or closes (#210) ----
+
+
+async def _pull_request_settles(db, job_id: str, state: str, at: datetime) -> None:
+    """What merge sync writes when a job's pull request merges or closes: its delivery, and the status that follows."""
+
+    def decide(row: dict) -> DeliveryWrite:
+        return DeliveryWrite(delivery_state=state, delivery_state_at=at, status=aligned_status(row["status"], state))
+
+    assert await JobDeliveryRepository(db).apply(job_id, decide) is not None, f"merge sync wrote nothing on {job_id}"
+
+
+@pytest.mark.parametrize("state", ["merged", "closed"])
+async def test_a_job_that_finished_its_work_keeps_its_outcomes_when_its_pull_request_settles(
+    db_with_migrations, state: str
+) -> None:
+    """An audit, a QA run and a resumed job read the same before and after their status follows the pull request."""
+    db = db_with_migrations
+    await _job(db, "job-audit", status="completed", template="context-audit", report="Stale: 3\nFiles: 1\n")
+    await _job(db, "job-qa", status="completed", template="qa")
+    await _job(db, "job-resumed", status="completed")
+    await db.execute("UPDATE jobs SET resume_attempts = 2 WHERE job_id = 'job-resumed'")
+    await db.execute("UPDATE jobs SET pr_url = 'https://forge/o/r/pull/' || job_id, delivery_state = 'pr_open'")
+    await _trace(db, "trc-resumed", "job-resumed", "developer")
+    rules = default_rules()
+    keys = {q.key for q in rules.fact_queries if q.fragment in ("audit", "qa_passed", "resumed")}
+    repo = ProgressionRepository(db)
+
+    async def outcomes() -> tuple[list, list, list]:
+        events = [
+            (e.source, e.agent_type, e.at, e.report)
+            for e in await repo.events()
+            if e.source in ("audited", "qa_passed", "resumed")
+        ]
+        facts = [
+            (f.metric, f.at, f.value, f.report)
+            for f in await repo.facts(rules.fact_queries, rules.pack.timezone)
+            if f.metric in keys
+        ]
+        journal = sorted((j.template or "", j.report or "") for j in (await repo.journal()).jobs)
+        return events, facts, journal
+
+    before = await outcomes()
+    assert sorted(e[0] for e in before[0]) == ["audited", "qa_passed", "resumed"], before[0]
+    assert ("context-audit", "Stale: 3\nFiles: 1\n") in before[2], before[2]
+    for job_id in ("job-audit", "job-qa", "job-resumed"):
+        await _pull_request_settles(db, job_id, state, datetime.now(UTC) + timedelta(days=2))
+    statuses = {r["status"] for r in await db.fetch("SELECT status FROM jobs")}
+    assert statuses == {"pr_merged" if state == "merged" else "pr_closed"}, statuses
+    after = await outcomes()
+    assert after[0] == before[0], f"the pull request {state}: the events it earned went from {before[0]} to {after[0]}"
+    assert after[1] == before[1], f"the pull request {state}: the facts it earned went from {before[1]} to {after[1]}"
+    assert after[2] == before[2], f"the pull request {state}: the journal's report went from {before[2]} to {after[2]}"

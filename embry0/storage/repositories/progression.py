@@ -24,10 +24,26 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from embry0.storage.database import DatabasePool
+from embry0.storage.schemas import JobStatus
 
 # The character a job's code is credited to: the Slopmaster for a slop cleanup
 # (spec 2026-10-25, slop dungeon), the developer otherwise.
 _CODER = "CASE WHEN {job}.pipeline_template = 'slop-cleanup' THEN 'slopmaster' ELSE 'developer' END"
+
+#: The statuses of a job that finished its work: ``completed``, and every status merge sync moves a
+#: completed job to as it records what became of its pull request (``pr_merged``; ``pr_closed``, which a
+#: reopened pull request walks back to ``completed``; ``VALID_JOB_TRANSITIONS`` in
+#: ``embry0/storage/repositories/jobs.py``). The work was done whatever became of the pull request, so an
+#: outcome it earned is never taken back when the pull request merges or closes (#210). Every check of
+#: progression for a job that did its work reads this, never a status of its own.
+FINISHED_WELL: tuple[str, ...] = (JobStatus.COMPLETED.value, JobStatus.PR_MERGED.value, JobStatus.PR_CLOSED.value)
+_FINISHED_WELL_LIST = ", ".join("'" + status + "'" for status in FINISHED_WELL)
+
+
+def finished_well(job: str) -> str:
+    """The SQL condition that the job aliased ``job`` finished its work: its status is one of :data:`FINISHED_WELL`."""
+    return f"{job}.status IN ({_FINISHED_WELL_LIST})"
+
 
 #: Every source of an event, in a fixed order: (when it happened, its rows). Each SELECT gives
 #: ``(branch, key, source, agent_type, at, report, tools_called, skill_actions)``; ``branch`` and
@@ -82,23 +98,23 @@ WHERE m.status = 'pr_merged' AND m.issue_id IS NOT NULL
     ),
     (
         "j.finished_at",
-        """-- an interrupted job resumed to the end: the agent of its last run
+        f"""-- an interrupted job resumed to the end: the agent of its last run
 SELECT 5, j.job_id, 'resumed',
        (SELECT t.agent_type FROM traces t WHERE t.job_id = j.job_id ORDER BY t.created_at DESC LIMIT 1),
        j.finished_at, NULL, NULL, NULL
-FROM jobs j WHERE j.resume_attempts > 0 AND j.status IN ('completed', 'pr_merged')""",
+FROM jobs j WHERE j.resume_attempts > 0 AND {finished_well("j")}""",
     ),
     (
         "j.finished_at",
-        """-- QA: a QA job that completed
+        f"""-- QA: a QA job that finished its work
 SELECT 6, j.job_id, 'qa_passed', 'qa', j.finished_at, NULL, NULL, NULL
-FROM jobs j WHERE j.pipeline_template = 'qa' AND j.status = 'completed'""",
+FROM jobs j WHERE j.pipeline_template = 'qa' AND {finished_well("j")}""",
     ),
     (
         "j.finished_at",
-        """-- the context auditor: an audit that completed, with its report
+        f"""-- the context auditor: an audit that finished its work, with its report
 SELECT 7, j.job_id, 'audited', 'context-auditor', j.finished_at, j.result_summary, NULL, NULL
-FROM jobs j WHERE j.pipeline_template = 'context-audit' AND j.status = 'completed'""",
+FROM jobs j WHERE j.pipeline_template = 'context-audit' AND {finished_well("j")}""",
     ),
     (
         "a.created_at",
@@ -339,10 +355,11 @@ FRAGMENTS: dict[str, str] = {
     "question_answered": """
         SELECT q.answered_at, 1, left(q.question, 120), NULL, NULL
         FROM issue_inputs q WHERE q.answered_at IS NOT NULL AND q.answer IS NOT NULL""",
-    # lore: a completed context audit, with its report; the service reads its claims
+    # lore: a context audit that finished its work, with its report; the service reads its claims
     "audit": """
         SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, NULL, j.result_summary
-        FROM jobs j WHERE j.pipeline_template = 'context-audit' AND j.status = 'completed'""",
+        FROM jobs j WHERE j.pipeline_template = 'context-audit' AND """
+    + finished_well("j"),
     "audit_merged": "SELECT m.at, 1, m.label, m.pr_url, NULL FROM merged m WHERE m.pipeline_template = 'context-audit'",
     "areas_mapped": """
         SELECT f.at, 1, f.repo, f.pr_url, NULL
@@ -359,7 +376,8 @@ FRAGMENTS: dict[str, str] = {
         SELECT r.posted_at, 1, r.repo || ' #' || r.number, NULL, NULL FROM pr_reviews r WHERE r.posted_at IS NOT NULL""",
     "qa_passed": """
         SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, NULL, NULL
-        FROM jobs j WHERE j.pipeline_template = 'qa' AND j.status = 'completed'""",
+        FROM jobs j WHERE j.pipeline_template = 'qa' AND """
+    + finished_well("j"),
     "gate_blocked": """
         SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, j.pr_url, NULL
         FROM jobs j WHERE j.error_code = 'ERR_VERIFY_NEW_TEST_FAILURES'""",
@@ -374,7 +392,8 @@ FRAGMENTS: dict[str, str] = {
         )""",
     "resumed": """
         SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, j.pr_url, NULL
-        FROM jobs j WHERE j.resume_attempts >= {min_resumes}::int AND j.status IN ('completed', 'pr_merged')""",
+        FROM jobs j WHERE j.resume_attempts >= {min_resumes}::int AND """
+    + finished_well("j"),
     "followup_merged": "SELECT m.at, 1, m.label, m.pr_url, NULL FROM merged m WHERE m.pipeline_template = 'pr-followup'",
     "merged_on_attempt": """
         SELECT f.at, 1, f.label, f.pr_url, NULL
@@ -443,7 +462,7 @@ class JobRow:
     created_at: datetime
     #: When it finished, else when it last changed.
     at: datetime
-    #: A completed context audit's report, for its outdated claims; None for every other job.
+    #: A finished context audit's report, for its outdated claims; None for every other job.
     report: str | None = None
 
 
@@ -463,10 +482,10 @@ class Journal:
     runs: list[RunRow]
 
 
-_JOBS_SQL = """
+_JOBS_SQL = f"""
 SELECT j.repo, j.issue_id, j.pipeline_template AS template, j.status, j.created_at,
        COALESCE(j.delivery_state_at, j.finished_at, j.updated_at) AS at,
-       CASE WHEN j.pipeline_template = 'context-audit' AND j.status = 'completed' THEN j.result_summary END AS report
+       CASE WHEN j.pipeline_template = 'context-audit' AND {finished_well("j")} THEN j.result_summary END AS report
 FROM jobs j
 WHERE j.repo IS NOT NULL
 ORDER BY at

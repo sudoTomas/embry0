@@ -31,8 +31,11 @@ time, for a day already folded, counts from the next full rebuild, so at
 most a day late. So does a change to a row of a folded day (a job's last
 run names whom its resumed event credits). An event's time never moves (a
 job's events happen when it finished, never at its update time), so none
-is counted twice. Achievements, quests and diaries read the raw rows on
-every read and are never stale; GET /progression reports the rollup's times.
+is counted twice, and a job's event does not come and go with its pull
+request (a job that finished its work keeps it when the pull request
+merges or closes: ``FINISHED_WELL``), so a folded day never loses one.
+Achievements, quests and diaries read the raw rows on every read and are
+never stale; GET /progression reports the rollup's times.
 """
 
 from __future__ import annotations

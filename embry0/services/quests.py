@@ -24,10 +24,7 @@ from embry0.services.progression_pack import DiaryTier as DiaryTierEntry
 from embry0.services.progression_pack import Quest as QuestEntry
 from embry0.services.progression_pack import Rules
 from embry0.services.progression_vocabulary import QUEST_KINDS
-from embry0.storage.repositories.progression import JobRow, Journal, RunRow
-
-#: The job statuses that mean the job did its work.
-FINISHED = ("completed", "pr_merged")
+from embry0.storage.repositories.progression import FINISHED_WELL, JobRow, Journal, RunRow
 
 #: The parameters, of a quest kind or a diary task kind, that name the agents whose runs it reads.
 #: Every kind that reads ``Journal.runs`` keeps only the runs of the agents these name.
@@ -113,7 +110,7 @@ def _quiet_stretch(jobs: Sequence[JobRow], days: int) -> datetime | None:
             since = job.created_at
         if job.status == "failed":
             since = job.at
-        elif job.status in FINISHED and job.at - since >= timedelta(days=days):
+        elif job.status in FINISHED_WELL and job.at - since >= timedelta(days=days):
             return job.at
     return None
 
@@ -131,7 +128,7 @@ class _RepoRows:
 
     @property
     def audits(self) -> list[JobRow]:
-        return [j for j in self.jobs if j.template == "context-audit" and j.status == "completed"]
+        return [j for j in self.jobs if j.template == "context-audit" and j.status in FINISHED_WELL]
 
     def agent_runs(self, params: dict[str, Any]) -> list[RunRow]:
         agents = set(params["agents"])
@@ -140,7 +137,7 @@ class _RepoRows:
 
 def _pass_qa(rows: _RepoRows, params: dict[str, Any], below: datetime | None) -> datetime | None:
     qa_issues = {r.issue_id for r in rows.agent_runs(params) if r.issue_id}
-    passes = [j.at for j in rows.jobs if j.template == "qa" and j.status == "completed"]
+    passes = [j.at for j in rows.jobs if j.template == "qa" and j.status in FINISHED_WELL]
     passes += [j.at for j in rows.jobs if j.status == "pr_merged" and j.issue_id in qa_issues]
     return _first(passes)
 
@@ -151,10 +148,10 @@ _TaskEvaluator = Callable[[_RepoRows, dict[str, Any], datetime | None], datetime
 #: ``below`` is when every tier above the task's own was done.
 _TASKS: dict[str, _TaskEvaluator] = {
     "triage": lambda rows, params, below: _first(r.at for r in rows.agent_runs(params) if r.issue_id),
-    "finish_job": lambda rows, params, below: _first(j.at for j in rows.jobs if j.status in FINISHED),
+    "finish_job": lambda rows, params, below: _first(j.at for j in rows.jobs if j.status in FINISHED_WELL),
     "run_qa": lambda rows, params, below: _first(
         [r.at for r in rows.agent_runs(params)]
-        + [j.at for j in rows.jobs if j.template == "qa" and j.status in FINISHED]
+        + [j.at for j in rows.jobs if j.template == "qa" and j.status in FINISHED_WELL]
     ),
     "merges": lambda rows, params, below: _nth(rows.merges, int(params["count"])),
     "pass_qa": _pass_qa,
@@ -274,11 +271,11 @@ def _onboard_to_merge(journal: Journal, params: dict[str, Any]) -> tuple[str | N
         by_repo[job.repo].append(job)
     candidates = []
     for repo, jobs in by_repo.items():
-        onboarded = _first(j.at for j in jobs if j.template == "onboard" and j.status == "completed")
+        onboarded = _first(j.at for j in jobs if j.template == "onboard" and j.status in FINISHED_WELL)
         if onboarded is None:
             continue
         after = [j for j in jobs if j.created_at > onboarded]
-        finished = _first(j.at for j in after if j.status in FINISHED)
+        finished = _first(j.at for j in after if j.status in FINISHED_WELL)
         merged = _first(j.at for j in after if j.status == "pr_merged")
         candidates.append((repo, [onboarded, finished, merged]))
     where, times = _best(candidates)
