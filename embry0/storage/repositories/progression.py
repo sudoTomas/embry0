@@ -200,11 +200,12 @@ class ProgressionRepository:
                     r["template"],
                     str(r["status"]),
                     r["created_at"],
-                    r["at"],
+                    r["finished_at"],
                     r["report"],
+                    r["delivery_state_at"],
                 )
                 for r in jobs
-                if r["at"] is not None
+                if r["finished_at"] is not None
             ],
             runs=[RunRow(str(r["agent_type"]), str(r["repo"]), r["issue_id"], r["at"]) for r in runs],
         )
@@ -453,17 +454,38 @@ def facts_sql(queries: Iterable[FactFragment], timezone: str) -> tuple[str, list
 
 @dataclass(frozen=True)
 class JobRow:
-    """One job, for quests and repo diaries (spec 2026-10-24)."""
+    """One job, for quests and repo diaries (spec 2026-10-24), with when it finished and when it merged.
+
+    A task or step about the job's own work reads ``finished_at``, and one
+    about a merge reads ``merged_at`` (#216). Nothing reads
+    ``delivery_state_at`` as the job's time: it moves every time merge sync
+    records the pull request opened, merged, closed or reopened (and on
+    later updates to an open one), so a task dated by it would move with
+    the pull request, or undo itself.
+    """
 
     repo: str
     issue_id: str | None
     template: str | None
     status: str
     created_at: datetime
-    #: When it finished, else when it last changed.
-    at: datetime
+    #: When it finished, which merge sync never moves; for a job that has not finished, when its row last changed.
+    finished_at: datetime
     #: A finished context audit's report, for its outdated claims; None for every other job.
     report: str | None = None
+    #: When its pull request reached the state merge sync last recorded, by the forge's clock; None without one.
+    delivery_state_at: datetime | None = None
+
+    @property
+    def merged_at(self) -> datetime | None:
+        """When its pull request merged, for a merged job (when it finished, if the forge's time is unknown).
+
+        None for every other job. A merge is final: once it is recorded,
+        merge sync only fills in its forge time, if that was unknown.
+        """
+        if self.status != "pr_merged":
+            return None
+        return self.delivery_state_at or self.finished_at
 
 
 @dataclass(frozen=True)
@@ -484,11 +506,11 @@ class Journal:
 
 _JOBS_SQL = f"""
 SELECT j.repo, j.issue_id, j.pipeline_template AS template, j.status, j.created_at,
-       COALESCE(j.delivery_state_at, j.finished_at, j.updated_at) AS at,
+       COALESCE(j.finished_at, j.updated_at) AS finished_at, j.delivery_state_at,
        CASE WHEN j.pipeline_template = 'context-audit' AND {finished_well("j")} THEN j.result_summary END AS report
 FROM jobs j
 WHERE j.repo IS NOT NULL
-ORDER BY at
+ORDER BY COALESCE(j.finished_at, j.updated_at)
 """
 
 _RUNS_SQL = """
