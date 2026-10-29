@@ -81,7 +81,17 @@ An admin changes the pack on the dashboard (**Settings → Game content**), with
 | `apply <file> [--reason TEXT] [--yes]` | Shows the diff, asks, then activates it with source `file`. A file equal to the pack in effect records nothing; without a terminal it needs `--yes`; a pack changed since the diff is refused (409) |
 | `export [--default] [-o FILE]` | Writes the pack in effect, or the shipped default, as YAML. When the stored version is refused, that is the shipped default, and it says so |
 
-`check` exits 1 on a problem. `diff` and `apply` exit 1 on a refusal (422 or 409), and 2 when the orchestrator cannot be reached or refuses the key. Like `embry0 onboard`, they read `EMBRY0_API_URL` and the API key (`--api-url`, `--api-key`).
+`diff`, `apply` and `export` read `EMBRY0_API_URL` and the API key (`--api-url`, `--api-key`), like `embry0 onboard`. The exit codes are the same for every verb and for [`embry0 settings`](configuration.md#from-a-file-the-command-line-and-mcp), so a script handles both commands alike:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Done: valid, activated, nothing to change, written |
+| `1` | Refused: the pack has problems (a 422, or `check`), is larger than 256 KiB (413) or is not UTF-8 text, or you answered no |
+| `2` | Usage: a bad argument, a file that cannot be read or written, or `apply` without a terminal and without `--yes` |
+| `3` | Conflict: the pack in effect changed since the diff (409) |
+| `4` | Unavailable: the orchestrator cannot be reached, refused the key (401, 403), or failed |
+
+From an MCP client:
 
 | MCP tool | Effect |
 |---|---|

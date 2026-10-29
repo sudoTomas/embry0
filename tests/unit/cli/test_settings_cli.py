@@ -16,7 +16,8 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from embry0.cli.settings import CONFLICT, OK, REFUSED, UNAVAILABLE, USAGE, problem_line, run
+from embry0.cli.exit_codes import CONFLICT, OK, REFUSED, UNAVAILABLE, USAGE
+from embry0.cli.settings import problem_line, run
 from embry0.settings.document import DocumentInvalid, check, load_yaml
 from embry0.settings.example import render
 from embry0.settings.sections import CATALOG

@@ -49,14 +49,16 @@ inherits needs the stored documents, so ``diff`` says. ``undo`` takes the
 change's number, which names its layer. ``import-env`` and ``export
 --default`` are the deployment's only.
 
-Exit codes, for scripts:
+Exit codes, for scripts, the same as ``embry0 progression-pack``'s
+(:mod:`embry0.cli.exit_codes`):
 
     0  done: valid, applied, nothing to change, written, undone
     1  refused: the document has problems (the API's 422, or ``check``),
        a variable the environment sets is refused, or the answer was no
-    2  usage: a bad argument, a file that cannot be read, ``apply`` or
-       ``undo`` without a terminal to confirm on and without ``--yes``, or
-       ``apply --yes`` that would unset a key without ``--allow-unset``
+    2  usage: a bad argument, a file that cannot be read or written,
+       ``apply`` or ``undo`` without a terminal to confirm on and without
+       ``--yes``, or ``apply --yes`` that would unset a key without
+       ``--allow-unset``
     3  conflict: the document changed since it was read (409), or the
        change to undo is not the newest one, or no longer what is stored
     4  unavailable: the orchestrator cannot be reached, refused the key
@@ -75,11 +77,7 @@ from typing import Any, Final
 
 import httpx
 
-OK: Final = 0
-REFUSED: Final = 1
-USAGE: Final = 2
-CONFLICT: Final = 3
-UNAVAILABLE: Final = 4
+from embry0.cli.exit_codes import CONFLICT, OK, REFUSED, SUMMARY, UNAVAILABLE, USAGE
 
 _SETTINGS: Final = "/api/v1/config/settings"
 _YAML: Final = {"Content-Type": "application/yaml"}
@@ -604,7 +602,7 @@ def add_parser(subparsers: Any) -> None:
     parser = subparsers.add_parser(
         "settings",
         help="Check, diff, apply or export the settings document (operator policy) from a file",
-        description="Exit codes: 0 done, 1 refused, 2 usage, 3 conflict, 4 orchestrator unavailable.",
+        description=SUMMARY,
     )
     verbs = parser.add_subparsers(dest="action", required=True)
     check = verbs.add_parser(

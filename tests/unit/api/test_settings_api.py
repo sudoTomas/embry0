@@ -531,7 +531,8 @@ async def test_offline_check_prints_what_the_api_s_dry_run_refuses_with(client, 
     `diff` prints it, is line for line what the offline check prints for the same file."""
     from argparse import Namespace
 
-    from embry0.cli.settings import REFUSED, problem_lines, run
+    from embry0.cli.exit_codes import REFUSED
+    from embry0.cli.settings import problem_lines, run
 
     bad = "sampel:\n  x: 1\nsample:\n  enabled: maybe\n  per_tick: 50\n  zone: Mars/Base\nother:\n  limit: -1\n"
     resp = await _put(client, bad, params={"dry_run": 1, "source": "file"})
