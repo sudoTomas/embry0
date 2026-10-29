@@ -7,9 +7,14 @@ and ``GET /audit/actions`` serves the list the Audit page filters by.
 ``tests/unit/audit/test_action_registry.py`` checks both directions: every
 name written is listed, and every listed name is written somewhere.
 
-A name is the string stored in the row, so it never changes: renaming one
-would split one event's history across two names. Add new actions as
-``noun.verb``; the older ``noun_verb`` names stay as they are.
+A name is the string stored in the row, so a row's name never changes. When
+an action is renamed, its old name moves to :data:`RETIRED_AUDIT_ACTIONS`
+with the name that replaced it: nothing writes it again, old rows keep it
+and still read with a label, and a filter by the new name finds them too
+(:func:`names_of`), so one event's history is not split across two names.
+Add new actions as dotted names ending in their verb, ``noun.verb`` or
+``noun.part.verb`` (``job.review.evaluated``); the older ``noun_verb`` names
+stay as they are.
 """
 
 from __future__ import annotations
@@ -124,12 +129,12 @@ AuditAction = Literal[
     "merge.decided",
     # Owner proposals (spec 2026-10-24)
     "proposal.answered",
-    # The world (spec 2026-10-25): the player's evaluation of a finished quest
-    "quest.evaluated",
-    "quest.sent_back",
-    "quest.rejected",
-    "quest.restarted",
-    "quest.dismissed",
+    # Job review: a person's verdict on a finished job's work, and what they did with it
+    "job.review.evaluated",
+    "job.review.sent_back",
+    "job.review.rejected",
+    "job.review.restarted",
+    "job.review.dismissed",
     # Decisions (spec 2026-10-27): a decision sent to a teammate
     "handoff.created",
     "handoff.returned",
@@ -230,14 +235,29 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "case_closed": "Case closed",
     "merge.decided": "Merge decided",
     "proposal.answered": "Proposal answered",
-    "quest.evaluated": "Quest evaluated",
-    "quest.sent_back": "Quest sent back",
-    "quest.rejected": "Quest rejected",
-    "quest.restarted": "Quest run again",
-    "quest.dismissed": "Quest dismissed",
+    "job.review.evaluated": "Job evaluated",
+    "job.review.sent_back": "Job sent back",
+    "job.review.rejected": "Job rejected",
+    "job.review.restarted": "Job run again",
+    "job.review.dismissed": "Job dismissed",
     "handoff.created": "Decision sent to a teammate",
     "handoff.returned": "Decision sent back",
     "handoff.cancelled": "Hand-off taken back",
 }
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))
+
+#: Names that older rows carry and nothing writes any more, each with the name that replaced it.
+#: Reviewing a job was the world's (the game layer's) until it moved under /jobs/{job_id}.
+RETIRED_AUDIT_ACTIONS: Final[dict[str, AuditAction]] = {
+    "quest.evaluated": "job.review.evaluated",
+    "quest.sent_back": "job.review.sent_back",
+    "quest.rejected": "job.review.rejected",
+    "quest.restarted": "job.review.restarted",
+    "quest.dismissed": "job.review.dismissed",
+}
+
+
+def names_of(action: str) -> tuple[str, ...]:
+    """``action`` and every retired name it replaced: what a filter by ``action`` matches."""
+    return (action, *sorted(old for old, new in RETIRED_AUDIT_ACTIONS.items() if new == action))

@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import importlib
 import pathlib
+import re
 import typing
 from contextlib import asynccontextmanager
 from typing import Any
@@ -18,9 +19,11 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import embry0
-from embry0.audit.actions import AUDIT_ACTION_LABELS, AUDIT_ACTIONS, AuditAction
+from embry0.audit.actions import AUDIT_ACTION_LABELS, AUDIT_ACTIONS, RETIRED_AUDIT_ACTIONS, AuditAction
 
 _SRC = pathlib.Path(embry0.__file__).parent
+#: The dashboard's copy of the labels and the renames, which the Audit page reads.
+_AUDIT_LABELS_TS = _SRC.parent / "frontend" / "src" / "lib" / "auditLabels.ts"
 # Every function that writes an audit row, and the position of its action argument.
 _WRITERS = {"emit_audit": 1, "emit_audit_event": 0, "emit_audit_event_db": 1, "_emit_audit": 1, "_audit": 1, "audit": 1}
 
@@ -135,6 +138,34 @@ def test_no_event_has_two_spellings() -> None:
     assert [names for names in spellings.values() if len(names) > 1] == []
 
 
+def test_a_retired_name_is_never_written_and_names_the_action_that_replaced_it() -> None:
+    """Old rows keep a renamed action's old name; nothing may write it again, or one event has two names."""
+    assert not set(RETIRED_AUDIT_ACTIONS) & AUDIT_ACTIONS, "a retired name is still a registered action"
+    unknown = sorted(f"{old} -> {new}" for old, new in RETIRED_AUDIT_ACTIONS.items() if new not in AUDIT_ACTIONS)
+    assert unknown == [], f"retired names replaced by no registered action: {unknown}"
+    written, _problems = _scan()
+    still = sorted({f"{where} {action}" for where, action in written if action in RETIRED_AUDIT_ACTIONS})
+    assert still == [], f"retired audit actions still written: {still}"
+
+
+def _ts_record(source: str, name: str) -> dict[str, str]:
+    """A ``Record<string, string>`` constant of a TypeScript module, as its quoted keys and values."""
+    block = re.search(rf"export const {name}: Record<string, string> = \{{(.*?)\n\}};", source, re.S)
+    assert block, f"auditLabels.ts no longer declares {name} as a Record<string, string>"
+    return dict(re.findall(r'^\s*"?([\w.]+)"?:\s*"([^"]*)",?\s*$', block.group(1), re.M))
+
+
+def test_the_dashboard_reads_each_retired_name_as_the_backend_does() -> None:
+    """The Audit page keeps its own copy of the renames and labels: it must name the same pairs and words."""
+    source = _AUDIT_LABELS_TS.read_text()
+    retired, labels = _ts_record(source, "RETIRED_ACTIONS"), _ts_record(source, "ACTION_LABELS")
+    assert retired == dict(RETIRED_AUDIT_ACTIONS), (
+        f"auditLabels.ts RETIRED_ACTIONS {retired} differs from embry0/audit/actions.py {dict(RETIRED_AUDIT_ACTIONS)}"
+    )
+    words = {new: (labels.get(new), AUDIT_ACTION_LABELS[new]) for new in RETIRED_AUDIT_ACTIONS.values()}
+    assert all(ts == py for ts, py in words.values()), f"a renamed action reads otherwise in the dashboard: {words}"
+
+
 def _writer_functions() -> dict[str, Any]:
     from embry0.api.v1 import _audit, credentials, hosts, standards
     from embry0.audit.db_logger import emit_audit_event_db
@@ -176,4 +207,9 @@ async def test_the_audit_filter_list_is_served_from_the_registry() -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/v1/audit/actions")
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"actions": [{"action": a, "label": label} for a, label in AUDIT_ACTION_LABELS.items()]}
+    current = [{"action": a, "label": label, "replaced_by": None} for a, label in AUDIT_ACTION_LABELS.items()]
+    retired = [
+        {"action": old, "label": AUDIT_ACTION_LABELS[new], "replaced_by": new}
+        for old, new in RETIRED_AUDIT_ACTIONS.items()
+    ]
+    assert resp.json() == {"actions": [*current, *retired]}

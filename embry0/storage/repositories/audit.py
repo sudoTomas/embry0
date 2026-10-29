@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from embry0.audit.actions import names_of
 from embry0.storage.database import DatabasePool
 
 
@@ -27,8 +28,10 @@ def _where(
         args.append(list(actors))
         clauses.append(f"actor = ANY(${len(args)})")
     if action is not None:
-        args.append(action)
-        clauses.append(f"action = ${len(args)}")
+        # A renamed action's filter also finds the rows written under its old names.
+        names = names_of(action)
+        args.append(action if len(names) == 1 else list(names))
+        clauses.append(f"action = ${len(args)}" if len(names) == 1 else f"action = ANY(${len(args)})")
     if since is not None:
         args.append(since)
         clauses.append(f"created_at >= ${len(args)}")

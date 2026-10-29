@@ -2892,6 +2892,7 @@ def _register_routers(app: FastAPI) -> None:
         hosts,
         internal_qa,
         issues,
+        job_review,
         jobs,
         knowledge_maps,
         leads,
@@ -2956,6 +2957,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(audit.router, prefix="/api/v1", tags=["audit"], dependencies=auth_deps)
     app.include_router(issues.router, prefix="/api/v1", tags=["issues"], dependencies=auth_deps)
     app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
+    # Reviewing a finished job: evaluate, send back, run again, dismiss, reject.
+    app.include_router(job_review.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
     # RAV-603: typed job outputs (pr/report/artifact/message) + artifact download.
     app.include_router(deliverables.router, prefix="/api/v1", tags=["deliverables"], dependencies=auth_deps)
     # RAV-1057: on-demand container-log queries (Loki proxy). Operator tier
@@ -2996,6 +2999,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(slop_meter.router, prefix="/api/v1", tags=["slop-meter"], dependencies=auth_deps)
     # The world (spec 2026-10-25): the guild hall, the quest board and the quests' scrolls.
     app.include_router(world.router, prefix="/api/v1", tags=["world"], dependencies=auth_deps)
+    # The review routes' old paths under the world, deprecated until job_review.ALIASES_REMOVED_IN.
+    app.include_router(job_review.deprecated_router, prefix="/api/v1", tags=["world"], dependencies=auth_deps)
     # Decisions (spec 2026-10-27): every choice waiting on a person, in one shape.
     app.include_router(decisions.router, prefix="/api/v1", tags=["decisions"], dependencies=auth_deps)
     # Knowledge maps (spec 2026-10-27): upload, read, mark and send a scanner's maps.

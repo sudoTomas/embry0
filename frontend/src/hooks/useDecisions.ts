@@ -3,14 +3,8 @@ import { type Decision, type DecisionAction, type DecisionFilters, fetchDecision
 import { fetchPeople, returnHandoff, sendDecision, setMyGithubLogin } from "@/api/handoffs";
 import { answerOwnerProposal } from "@/api/ownerProposals";
 import { type RunWith, runWithBody } from "@/api/runWith";
-import {
-  approveMerge,
-  dismissQuest,
-  evaluateQuest,
-  rejectQuest,
-  runQuestAgain,
-  sendQuestBack,
-} from "@/api/world";
+import { dismissJob, evaluateJob, rejectJob, runJobAgain, sendJobBack } from "@/api/jobReview";
+import { approveMerge } from "@/api/world";
 
 const KEY = ["decisions"] as const;
 
@@ -62,24 +56,24 @@ export async function answerDecision({ decision, action, by, text = "", runWith 
     switch (action) {
       case "merge":
         if (decision.links.merge_approval) await approveMerge(decision.links.merge_approval);
-        else await evaluateQuest(job, { verdict: "merged" });
+        else await evaluateJob(job, { verdict: "merged" });
         return "Merged";
       case "send_back":
-        await sendQuestBack(job, text, runWith);
+        await sendJobBack(job, text, runWith);
         return "Sent back";
       case "reject":
-        await rejectQuest(job, text, false);
+        await rejectJob(job, text, false);
         return "Rejected";
       case "run_again": {
-        const again = await runQuestAgain(job, runWith);
+        const again = await runJobAgain(job, runWith);
         return `Running again as ${again.followup_job_id}`;
       }
       case "good":
       case "bad":
-        await evaluateQuest(job, { rating: action });
+        await evaluateJob(job, { rating: action });
         return action === "good" ? "Marked good" : "Marked bad";
       case "dismiss":
-        await dismissQuest(job);
+        await dismissJob(job);
         return "Dismissed";
     }
   }
