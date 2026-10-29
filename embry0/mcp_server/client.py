@@ -804,6 +804,49 @@ class Embry0Client:
     async def progression_pack_reset(self) -> dict[str, Any]:
         return _as_dict(await self._request("POST", "/api/v1/progression/pack/reset"))
 
+    # ---------------------------------------------------------- settings document
+
+    async def settings_get(self) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", "/api/v1/config/settings"))
+
+    async def settings_effective(self) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", "/api/v1/config/settings/effective"))
+
+    async def settings_schema(self) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", "/api/v1/config/settings/schema"))
+
+    async def settings_set(
+        self, text: str, *, dry_run: bool = False, expected_generation: int | None = None, reason: str = ""
+    ) -> dict[str, Any]:
+        """Replace the whole settings document (raw-YAML PUT); ``dry_run`` only reports what it would change.
+
+        ``expected_generation`` is the generation the caller read; it goes in
+        ``If-Match``, so a document someone else changed since is not
+        overwritten (409).
+        """
+        params: dict[str, Any] = {"source": "person"}
+        if dry_run:
+            params["dry_run"] = 1
+        if reason:
+            params["reason"] = reason
+        headers = {"Content-Type": "application/yaml"}
+        if expected_generation is not None:
+            headers["If-Match"] = f'"{int(expected_generation)}"'
+        return _as_dict(
+            await self._request(
+                "PUT", "/api/v1/config/settings", params=params, content=text.encode("utf-8"), headers=headers
+            )
+        )
+
+    async def settings_revisions(self, *, limit: int = 20) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", "/api/v1/config/settings/revisions", params={"limit": limit}))
+
+    async def settings_revision(self, revision_id: int) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/config/settings/revisions/{int(revision_id)}"))
+
+    async def settings_undo(self, revision_id: int) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", f"/api/v1/config/settings/revisions/{int(revision_id)}/undo"))
+
     async def org_webhook_install(self, owner: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/webhook"))
 
@@ -879,12 +922,32 @@ class Embry0Client:
         return _as_dict(await self._request("PUT", f"/api/v1/repos/{_repo_path(repo)}/credentials", body=body))
 
 
+def _problem(item: Any) -> str | None:
+    """One entry of a FastAPI-shaped 422 as ``key: message``; None when it is not one.
+
+    ``input`` is never read: a refused value may be whatever someone pasted.
+    """
+    if not isinstance(item, dict) or not isinstance(item.get("msg"), str):
+        return None
+    loc = item.get("loc")
+    path = ".".join(str(part) for part in loc) if isinstance(loc, list) else ""
+    msg = item["msg"].strip().removeprefix("Value error, ")
+    return f"{path}: {msg}" if path else msg
+
+
 def _error_detail(response: httpx.Response) -> str:
+    """The API's ``detail`` as text. A list of problems (``loc``, ``msg``) reads one per key, without their values."""
     try:
         payload = response.json()
     except ValueError:
         return response.text or f"HTTP {response.status_code}"
     if isinstance(payload, dict) and "detail" in payload:
         detail = payload["detail"]
-        return detail if isinstance(detail, str) else str(detail)
+        if isinstance(detail, str):
+            return detail
+        if isinstance(detail, list) and detail:
+            problems = [_problem(item) for item in detail]
+            if all(problem is not None for problem in problems):
+                return "; ".join(str(problem) for problem in problems)
+        return str(detail)
     return str(payload)

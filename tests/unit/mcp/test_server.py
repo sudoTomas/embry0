@@ -63,6 +63,12 @@ EXPECTED_TOOLS = {
     "progression_pack_get",
     "progression_pack_set",
     "progression_pack_reset",
+    "settings_get",
+    "settings_effective",
+    "settings_schema",
+    "settings_set",
+    "settings_revisions",
+    "settings_undo",
     "org_webhook_install",
     "org_act",
     "qa_config_get",
@@ -112,6 +118,8 @@ CONFIRM_GATED = {
     "standard_audit",
     "progression_pack_set",
     "progression_pack_reset",
+    "settings_set",
+    "settings_undo",
     "org_webhook_install",
     "org_act",
     "qa_config_set",
@@ -181,6 +189,8 @@ async def test_confirm_gated_tools_refuse_without_confirm(fake_client):
         await server.standard_audit("acme", "design", "acme/widgets"),
         await server.progression_pack_set("version: 1\n"),
         await server.progression_pack_reset(),
+        await server.settings_set("asks:\n  enabled: true\n", expected_generation=3),
+        await server.settings_undo(12),
         await server.credential_bind("acme/widgets", "cred-000000000009"),
     ]
     for refusal in refusals:
@@ -214,6 +224,8 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
     assert await server.standard_audit("acme", "design", "acme/widgets", confirm=True) == {"called": "standard_audit"}
     assert await server.progression_pack_set("version: 1\n", confirm=True) == {"called": "progression_pack_set"}
     assert await server.progression_pack_reset(confirm=True) == {"called": "progression_pack_reset"}
+    assert await server.settings_set("asks:\n  enabled: true\n", confirm=True) == {"called": "settings_set"}
+    assert await server.settings_undo(12, confirm=True) == {"called": "settings_undo"}
     assert await server.credential_bind(
         "acme/widgets", "cred-000000000009", role="forge", pinned=True, confirm=True
     ) == {"called": "credential_bind"}
@@ -244,6 +256,8 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
         "standard_audit",
         "progression_pack_set",
         "progression_pack_reset",
+        "settings_set",
+        "settings_undo",
         "credential_bind",
     ]
 
@@ -632,3 +646,49 @@ async def test_progression_pack_set_names_the_version_it_read(fake_client):
     assert fake_client.calls == [("progression_pack_set", ("version: 1\n",), {"expected_version": 4})], (
         "progression_pack_set must pass the version the caller read on to the API"
     )
+
+
+# ---- the settings document (#162) ----
+
+
+async def test_settings_reads_pass_through(fake_client):
+    assert await server.settings_get() == {"called": "settings_get"}
+    assert await server.settings_effective() == {"called": "settings_effective"}
+    assert await server.settings_schema() == {"called": "settings_schema"}
+    assert await server.settings_revisions(limit=5) == {"called": "settings_revisions"}
+    assert await server.settings_revisions(revision_id=12) == {"called": "settings_revision"}
+    assert fake_client.calls == [
+        ("settings_get", (), {}),
+        ("settings_effective", (), {}),
+        ("settings_schema", (), {}),
+        ("settings_revisions", (), {"limit": 5}),
+        ("settings_revision", (12,), {}),
+    ]
+
+
+async def test_settings_dry_run_needs_no_confirm_and_a_write_does(fake_client):
+    """A dry run stores nothing, so it runs without confirm; a real write does not, and the undo neither."""
+    text = "asks:\n  enabled: true\n"
+    assert await server.settings_set(text, expected_generation=3, dry_run=True) == {"called": "settings_set"}
+    write = await server.settings_set(text, expected_generation=3)
+    assert write.get("error") == "confirmation_required", "a real write must still require confirm"
+    undo = await server.settings_undo(12)
+    assert undo.get("error") == "confirmation_required", "an undo must require confirm"
+    assert fake_client.calls == [
+        ("settings_set", (text,), {"dry_run": True, "expected_generation": 3, "reason": ""}),
+    ], "only the dry run may reach the API without confirm"
+
+
+async def test_settings_set_names_the_generation_it_read_and_the_reason(fake_client):
+    """The generation the caller read goes along, so a change made in between is refused, not overwritten."""
+    text = "asks:\n  enabled: true\n"
+    await server.settings_set(text, expected_generation=4, reason="office hours", confirm=True)
+    await server.settings_undo(13, confirm=True)
+    assert fake_client.calls == [
+        ("settings_set", (text,), {"expected_generation": 4, "reason": "office hours"}),
+        ("settings_undo", (13,), {}),
+    ], "settings_set must pass the generation the caller read on to the API"
+
+
+def test_the_instructions_name_the_settings_document():
+    assert "settings document" in (server.mcp.instructions or "")
