@@ -4,12 +4,13 @@ Three kinds are read from rows other features write: a watcher case at
 stage ``tracked`` (accepting it runs the case's acceptance), an issue that is
 open with no job (accepting it sends it to triage), and one row of the
 findings table of a repository's newest context audit that finished its work,
-none once that audit's pull request merged (accepting it starts a fix job for
-that file, which opens a pull request; that job is no audit, so the audit's
-other findings are still asked while it runs and after its pull request
-merges). The rest are leads, work embry0's finders found by itself (spec
-2026-10-25, ``embry0.services.leads``): a backlog ticket, failing CI, an
-alert, a flaky check, unanswered review threads. An owner answers each with
+none once that audit's pull request merged, or another audit's after it
+started (accepting it starts a fix job for that file, which opens a pull
+request; that job is no audit, so the audit's other findings are still asked
+while it runs and after its pull request merges). The rest are leads, work
+embry0's finders found by itself (spec 2026-10-25,
+``embry0.services.leads``): a backlog ticket, failing CI, an alert, a flaky
+check, unanswered review threads. An owner answers each with
 accept, decline or snooze; the newest answer decides whether it is still
 asked.
 
