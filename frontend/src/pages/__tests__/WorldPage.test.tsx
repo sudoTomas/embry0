@@ -316,6 +316,26 @@ describe("WorldPage (the guild, spec 2026-10-25)", () => {
     ).toHaveTextContent("Lvl 55");
   });
 
+  it("names a quest's kind on the board and in its dialog as GET /world's catalogue says (#166)", async () => {
+    state.world = {
+      ...WORLD,
+      lead_kinds: [
+        {
+          id: "case",
+          label: "Watcher problem",
+          plural: "Watcher problems",
+          about: "a problem the log watcher keeps seeing in production",
+          found_by: "the log watcher",
+        },
+      ],
+    };
+    renderAt();
+    const board = screen.getByTestId("quest-board");
+    expect(within(within(board).getByTestId("quest")).getByText("Watcher problem")).toBeInTheDocument();
+    await userEvent.click(within(board).getByTestId("quest"));
+    expect(within(screen.getByTestId("send-party")).getByText("Watcher problem")).toBeInTheDocument();
+  });
+
   it("starts a lead as the signed-in operator, with the model chosen", async () => {
     renderAt();
     await userEvent.click(

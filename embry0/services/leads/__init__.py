@@ -22,9 +22,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-#: The lead kinds, one per finder; ``crack`` and ``weed`` come from the scout
-#: loop's finished jobs (:mod:`embry0.services.scout`), not from a finder.
-LEAD_KINDS: tuple[str, ...] = ("ticket", "ci", "alert", "flaky", "review", "crack", "weed")
+from embry0.services import lead_kinds
+
+#: The kinds stored as leads (:mod:`embry0.services.lead_kinds`): one per finder, and
+#: ``crack`` and ``weed``, which come from the scout loop's finished jobs
+#: (:mod:`embry0.services.scout`) and knowledge maps, not from a finder.
+LEAD_KINDS: tuple[str, ...] = lead_kinds.ids(lead=True)
 SEVERITIES: tuple[str, ...] = ("low", "medium", "high", "critical")
 EFFORTS: tuple[str, ...] = ("small", "medium", "large")
 #: Who a lead's start is recorded under when the person who said yes is not known.

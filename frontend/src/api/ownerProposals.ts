@@ -1,18 +1,12 @@
 import { api } from "./client";
 import type { RunWith } from "./runWith";
 
-/** Work a repository's owners could start (owner proposals, spec 2026-10-24); the last five are leads embry0 found. */
-export type OwnerProposalKind =
-  | "case"
-  | "issue"
-  | "finding"
-  | "ticket"
-  | "ci"
-  | "alert"
-  | "flaky"
-  | "review"
-  | "crack"
-  | "weed";
+/**
+ * Work a repository's owners could start (owner proposals, spec 2026-10-24):
+ * one of the ids of GET /world's `lead_kinds` whose `proposal` is true. The
+ * backend's catalogue (embry0/services/lead_kinds.py) is the one list.
+ */
+export type OwnerProposalKind = string;
 
 /** The proposal in plain words, written by a model (proposal briefs, spec 2026-10-25). */
 export interface OwnerProposalBrief {

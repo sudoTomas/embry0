@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 import structlog
 
+from embry0.services.lead_kinds import KINDS, ids
 from embry0.services.leads import LEAD_KINDS
 from embry0.services.proposals import Proposal
 
@@ -39,7 +40,7 @@ RETRY_SECONDS = 30 * 60
 PROMPT_VERSION = 2
 REQUEST_TIMEOUT_SECONDS = 90.0
 #: What a brief must never carry: a proposal id, which says nothing to a person.
-_ID = re.compile(r"\b(?:case|issue|finding|ticket|ci|alert|flaky|review):[0-9a-z-]{4,}", re.IGNORECASE)
+_ID = re.compile(rf"\b(?:{'|'.join(map(re.escape, ids(proposal=True)))}):[0-9a-z-]{{4,}}", re.IGNORECASE)
 _DIGITS = re.compile(r"\d+")
 
 SYSTEM_PROMPT = """\
@@ -107,39 +108,11 @@ def input_hash(p: Proposal) -> str:
     return hashlib.sha256(json.dumps(folded, sort_keys=True).encode()).hexdigest()[:24]
 
 
-_KIND_WORDS = {
-    "case": "a problem the log watcher keeps seeing in production",
-    "issue": "an open issue nobody has started",
-    "finding": "a claim in a file that steers coding agents, which an audit thinks is wrong",
-    "ticket": "a backlog ticket",
-    "ci": "a failing CI check",
-    "alert": "a firing alert",
-    "flaky": "a flaky check",
-    "review": "review comments nobody answered",
-    "crack": "a crack the scout found in the code",
-    "weed": "dead or duplicated code the scout found",
-}
-
-
-#: What a yes starts, per kind, in the words an owner uses.
-_YES_WORDS = {
-    "case": "the agents investigate the problem, fix it and open a pull request",
-    "issue": "the agents plan the issue and start the work, usually ending in a pull request",
-    "finding": "a pull request that changes that one claim in the file",
-    "ticket": "the agents take the ticket and work it, usually ending in a pull request",
-    "ci": "the agents find why the check fails and open a pull request that fixes it",
-    "alert": "the agents fix what the alert names and open a pull request",
-    "flaky": "the agents find why the check is unreliable and open a pull request",
-    "review": "the agents answer the open review comments on the pull request's branch",
-    "crack": "the agents fix what the crack names and open a pull request",
-    "weed": "the agents remove the dead code, change no behavior, and open a pull request",
-}
-
-
 def user_prompt(p: Proposal) -> str:
     inputs = _inputs(p)
+    kind = KINDS.get(p.kind)
     lines = [
-        f"Kind: {_KIND_WORDS.get(p.kind, p.kind)}",
+        f"Kind: {kind.about if kind else p.kind}",
         f"Repository: {p.repo.split('/', 1)[-1]}",
         f"Title: {p.title}",
     ]
@@ -147,7 +120,7 @@ def user_prompt(p: Proposal) -> str:
         lines.append(f"Severity: {inputs['severity']}")
     if inputs["paths"]:
         lines.append(f"Files: {', '.join(inputs['paths'][:8])}")
-    lines.append(f"What a yes starts: {_YES_WORDS.get(p.kind, p.action)} ({p.action})")
+    lines.append(f"What a yes starts: {kind.starts if kind else p.action} ({p.action})")
     if p.details:
         lines += ["Details:", p.details[:3500]]
     return "\n".join(lines)
@@ -196,15 +169,14 @@ def parse_brief(text: str) -> Brief:
     return Brief(title=_cut(fields["title"]), problem=fields["problem"], fix=fields["fix"], size=size.strip().lower())
 
 
-#: The least severity of a scout lead asked in chat; the rest stay on the page.
-SCOUT_CHAT_SEVERITIES = frozenset({"high", "critical"})
-
-
 def held(p: Proposal, min_readiness: int) -> bool:
-    """Shown on the page, not asked in chat: a backlog ticket below the readiness floor, a weed, or a
-    crack below ``break`` (spec 2026-10-27: a scout running all day must not fill the chat)."""
-    if p.kind in ("crack", "weed"):
-        return str(p.extra.get("severity") or "") not in SCOUT_CHAT_SEVERITIES
+    """Shown on the page, not asked in chat: a backlog ticket below the readiness floor, or a lead
+    whose kind asks only some severities in chat and whose severity is not one of them (a weed, a
+    crack below ``break``: spec 2026-10-27, a scout running all day must not fill the chat)."""
+    known = KINDS.get(p.kind)
+    asked = known.chat_severities if known else None
+    if asked is not None:
+        return str(p.extra.get("severity") or "") not in asked
     if p.kind != "ticket":
         return False
     readiness = (p.extra.get("source") or {}).get("readiness") if isinstance(p.extra.get("source"), Mapping) else None

@@ -19,11 +19,11 @@ import json
 import math
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from embry0.orchestration import dispatch_actors
+from embry0.services.lead_kinds import lead_kind
 from embry0.services.progression import price
 from embry0.services.progression_pack import Rules
 from embry0.services.proposals import ACTOR as PROPOSALS_ACTOR
@@ -49,43 +49,7 @@ MAX_LEVEL = 126
 #: How long the heavy parts of the world (the quest board, the regions) are kept.
 CACHE_SECONDS = 60.0
 
-
-@dataclass(frozen=True)
-class LeadKind:
-    #: The button that sends a party: what the player does to it.
-    verb: str
-    #: What stands in the world for it.
-    creature: str
-    #: The character a quest of this kind is led by.
-    leader: str
-
-
-#: Every kind of lead the quest board knows; a kind not here reads as a mystery to investigate.
-LEAD_KINDS: dict[str, LeadKind] = {
-    "case": LeadKind("Attack", "case_bug", "developer"),
-    "issue": LeadKind("Start quest", "quest_giver", "developer"),
-    "finding": LeadKind("Repair", "audit_signpost", "context-auditor"),
-    # The leads finders bring in (spec 2026-10-25, leads).
-    "ticket": LeadKind("Start quest", "quest_giver", "developer"),
-    "ci": LeadKind("Attack", "ci_golem", "developer"),
-    "alert": LeadKind("Attack", "alert_wyrm", "developer"),
-    "flaky": LeadKind("Attack", "flaky_imp", "developer"),
-    "review": LeadKind("Talk", "review_ghost", "developer"),
-    # The scout's finds (spec 2026-10-27): a crack is mended like a bug, a weed
-    # is pulled like slop, by the Slopmaster.
-    "crack": LeadKind("Mend", "crack_pot", "developer"),
-    "weed": LeadKind("Pull", "weed_sprout", SLOPMASTER),
-    # Slop dungeon (spec 2026-10-25): a finding judged slop, not a bug. It is
-    # cleaned, not fought, and the Slopmaster leads it.
-    "slop": LeadKind("Clean up", "slop_ooze", SLOPMASTER),
-}
-UNKNOWN_KIND = LeadKind("Investigate", "mystery", "developer")
-#: Creatures the art manifest has no sheet for yet: the map draws each as its original
-#: pixel glyph (frontend CreatureIcon's GLYPHS), and the art guard checks the glyph exists.
-GLYPH_CREATURES: frozenset[str] = frozenset({"slop_ooze", "crack_pot", "weed_sprout"})
-
 _SEVERITY = {"critical": 4, "high": 3, "medium": 2, "low": 1, "misleads": 2, "dead": 1, "drift": 1}
-_BASE_LEVEL = {"finding": 9, "ci": 45, "alert": 40, "flaky": 30, "review": 12, "crack": 25, "weed": 6}
 
 #: The character that leads a job of each template when no agent has started yet.
 LEADER_BY_TEMPLATE: dict[str, str] = {
@@ -132,10 +96,6 @@ def _clamp(level: float) -> int:
     return max(1, min(MAX_LEVEL, int(round(level))))
 
 
-def lead_kind(kind: str) -> LeadKind:
-    return LEAD_KINDS.get(kind, UNKNOWN_KIND)
-
-
 def lead_level(lead: Mapping[str, Any]) -> int:
     """A lead's difficulty, 1 to 126: how menacing it stands in the world.
 
@@ -155,7 +115,7 @@ def lead_level(lead: Mapping[str, Any]) -> int:
         asks = len(str(lead.get("details") or ""))
         labels = {str(label).lower() for label in lead.get("labels") or []}
         return _clamp(10 + min(40, asks // 150) + (10 if "bug" in labels else 0))
-    base = _BASE_LEVEL.get(kind, 20)
+    base = lead_kind(kind).base_level
     return _clamp(base + (8 * (severity - 2) if kind == "alert" else 0))
 
 

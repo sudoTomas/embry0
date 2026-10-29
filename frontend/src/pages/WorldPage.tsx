@@ -22,6 +22,7 @@ import { useWorld } from "@/hooks/useWorld";
 import { useWorldChatDock } from "@/hooks/useWorldChatDock";
 import {
   inboxOrder,
+  kindsById,
   levelUps,
   narrate,
   xpDrops,
@@ -109,6 +110,7 @@ export function WorldPage() {
     );
   if (!world.data) return <Skeleton className="h-96 w-full" />;
   const data = world.data;
+  const kinds = kindsById(data.lead_kinds);
   const partyOf = new Map<string, Party>(
     data.parties.map((p) => [p.job_id, p]),
   );
@@ -213,6 +215,7 @@ export function WorldPage() {
             <div className="lg:sticky lg:top-3 lg:max-h-[calc(100vh-6rem)]">
               <QuestBoard
                 quests={data.quests}
+                kinds={kinds}
                 partyLevel={strongest}
                 onPick={(lead) => set("lead", lead.id)}
               />
@@ -249,6 +252,7 @@ export function WorldPage() {
         {selectedLead && (
           <SendPartyDialog
             lead={selectedLead}
+            kinds={kinds}
             characters={data.characters}
             by={by}
             canSend={isAdmin}

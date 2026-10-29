@@ -1,13 +1,15 @@
 import { useMemo, useState } from "react";
-import type { Lead } from "@/api/world";
+import type { Lead, LeadKind } from "@/api/world";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { FilterSelect } from "@/components/ui/FilterSelect";
-import { BAND_TONE, KIND_WORD, KIND_WORDS, NO_FILTERS, filterLeads, levelBand, placeOf, type LeadFilters } from "@/lib/world";
+import { BAND_TONE, NO_FILTERS, filterLeads, kindHint, kindLabel, kindPlural, levelBand, placeOf, type LeadFilters } from "@/lib/world";
 import { CreatureIcon } from "./CreatureIcon";
 
 interface QuestBoardProps {
   quests: readonly Lead[];
+  /** GET /world's lead-kind catalogue by id (lib/world kindsById): what each kind is called. */
+  kinds: ReadonlyMap<string, LeadKind>;
   /** The level a lead's colour is read against: the strongest agent's. */
   partyLevel: number;
   onPick: (lead: Lead) => void;
@@ -16,12 +18,12 @@ interface QuestBoardProps {
 const LEVEL_CAPS = ["90", "60", "40", "20"];
 
 /**
- * The work embry0 found (watcher problems, open issues, outdated
- * instructions, the finders' leads), hardest first, filterable by
- * repository, area, kind and level. Each row wears its creature and the
- * game's verb for it; a click opens it.
+ * The work embry0 found (production errors, open issues, outdated
+ * instructions, the finders' and the scout's leads, slop), hardest first,
+ * filterable by repository, area, kind and level. Each row wears its
+ * creature and the game's verb for it; a click opens it.
  */
-export function QuestBoard({ quests, partyLevel, onPick }: QuestBoardProps) {
+export function QuestBoard({ quests, kinds: kindNames, partyLevel, onPick }: QuestBoardProps) {
   const [filters, setFilters] = useState<LeadFilters>(NO_FILTERS);
   const repos = useMemo(() => [...new Set(quests.map((q) => q.repo))].sort(), [quests]);
   const areas = useMemo(
@@ -46,7 +48,7 @@ export function QuestBoard({ quests, partyLevel, onPick }: QuestBoardProps) {
         <div className="grid grid-cols-2 gap-2">
           <FilterSelect label="Repositories" value={filters.repo || undefined} options={repos} optionLabel={(r) => placeOf(r)} onChange={(v) => set({ repo: v ?? "", area: "" })} />
           <FilterSelect label="Areas" value={filters.area || undefined} options={areas} onChange={(v) => set({ area: v ?? "" })} />
-          <FilterSelect label="Kinds" value={filters.kind || undefined} options={kinds} optionLabel={(k) => KIND_WORDS[k] ?? k} onChange={(v) => set({ kind: v ?? "" })} />
+          <FilterSelect label="Kinds" value={filters.kind || undefined} options={kinds} optionLabel={(k) => kindPlural(kindNames, k)} onChange={(v) => set({ kind: v ?? "" })} />
           <FilterSelect
             label="Levels"
             value={filters.maxLevel === NO_FILTERS.maxLevel ? undefined : String(filters.maxLevel)}
@@ -66,7 +68,7 @@ export function QuestBoard({ quests, partyLevel, onPick }: QuestBoardProps) {
                 data-testid="quest"
                 data-kind={q.kind}
               >
-                <CreatureIcon kind={q.kind} creature={q.creature} size={32} label={KIND_WORDS[q.kind] ?? q.kind} />
+                <CreatureIcon kind={q.kind} creature={q.creature} size={32} label={kindLabel(kindNames, q.kind)} />
                 <span className="min-w-0 flex-1 space-y-1">
                   <span className="flex items-start justify-between gap-2">
                     <span className="line-clamp-2 text-sm text-fg">{q.title}</span>
@@ -75,7 +77,9 @@ export function QuestBoard({ quests, partyLevel, onPick }: QuestBoardProps) {
                     </Badge>
                   </span>
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <Badge tone="neutral">{KIND_WORD[q.kind] ?? q.kind}</Badge>
+                    <Badge tone="neutral" title={kindHint(kindNames, q.kind)}>
+                      {kindLabel(kindNames, q.kind)}
+                    </Badge>
                     <span className="truncate font-mono text-2xs text-fg-muted">{placeOf(q.repo, q.area)}</span>
                     <span className="ml-auto shrink-0 text-2xs text-fg-muted" data-testid="quest-verb">
                       {q.verb}
