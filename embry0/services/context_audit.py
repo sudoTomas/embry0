@@ -50,6 +50,7 @@ import structlog
 
 from embry0.audit.helpers import emit_audit
 from embry0.orchestration import dispatch_actors
+from embry0.services.context_audit_command import with_command
 from embry0.services.instruction_files import instruction_files
 from embry0.services.loop_schedule import seconds_until_next_run
 from embry0.services.organizations import (
@@ -187,9 +188,9 @@ def fingerprint(blobs: Mapping[str, str]) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-# The two lines the context-auditor's report starts with; its prompt fixes them
-# (``CONTEXT_AUDITOR_SYSTEM_PROMPT``: "Programs read the counts from the start
-# of your report").
+# The two lines the context-auditor's report starts with; the command its task
+# carries fixes them (``context_audit_command.command``: "Programs read the
+# counts from the start of your report").
 _STALE_LINE = re.compile(r"^Stale:[ \t]*(\d+)[ \t]*$", re.MULTILINE)
 _FILES_LINE = re.compile(r"^Files:[ \t]*(\d+)[ \t]*$", re.MULTILINE)
 
@@ -967,7 +968,13 @@ def job_budget_usd(config: Any) -> float:
 
 
 def audit_task(context: RepoContext) -> str:
-    """The job's task: the repository, the commit read, and the instruction files found there."""
+    """The job's task: the repository, the commit read, the instruction files found there, and the command.
+
+    The command (:func:`~embry0.services.context_audit_command.command`) is
+    built now, from the instruction-file list as it is when the task is
+    written, and says how to list the files and how to report. It reaches
+    the agent whatever prompt the deployment stored for it.
+    """
     lines = [
         f"Audit the files that steer a coding agent in {context.repo} for statements that are stale or wrong.",
         "",
@@ -978,7 +985,7 @@ def audit_task(context: RepoContext) -> str:
     ]
     if len(context.files) > TASK_FILE_LIMIT:
         lines.append(f"- and {len(context.files) - TASK_FILE_LIMIT} more")
-    return "\n".join(lines)
+    return with_command("\n".join(lines))
 
 
 async def start_context_audit_job(
@@ -1006,8 +1013,9 @@ async def start_context_audit_job(
     code job, rather than failing it.
 
     ``task`` replaces the audit's own (a fix an owner asked for names its one
-    claim), and ``dispatched_by`` the schedule's actor: a job dispatched by
-    another never anchors the schedule's due rule, which reads only its own.
+    claim) and ends with the same command, and ``dispatched_by`` the
+    schedule's actor: a job dispatched by another never anchors the
+    schedule's due rule, which reads only its own.
     ``run_with`` is the model and key a person chose (embry0/services/run_with.py).
     ``local_first_model`` is a model on the operator's own server the job
     prefers while it has a free slot (``CONTEXT_AUDIT_LOCAL_MODEL``); a model
@@ -1018,7 +1026,7 @@ async def start_context_audit_job(
         raise LookupError(f"no pipeline template named {TEMPLATE!r}")
     if executor is None:
         raise RuntimeError("executor not initialized")
-    task = task or audit_task(context)
+    task = with_command(task) if task else audit_task(context)
     pipeline_config = {
         # Nobody watches a scheduled audit, so its cap is a hard stop
         # whatever the fleet-wide overrun mode is, as the watcher's (#275).
