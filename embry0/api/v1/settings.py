@@ -392,6 +392,8 @@ def _what(revision: dict[str, Any]) -> str:
     before = (revision.get("before") or {}).get("data") or {}
     after = (revision.get("after") or {}).get("data") or {}
     keys = [change.path for change in changes(before, after)]
+    if not keys and revision.get("source") == "upgrade" and revision.get("reason"):
+        return f"No setting changed: {revision['reason']}"
     if not keys:
         return "Comments or layout changed; no setting changed"
     verb = "Imported from the environment" if revision.get("source") == "bootstrap" else "Changed"

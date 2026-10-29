@@ -125,3 +125,40 @@ def test_a_layer_reads_only_the_keys_its_level_may_set() -> None:
     assert settable_values(SAMPLE, "organization", stored) == {"per_tick": 4}
     assert settable_values(SAMPLE, "repository", stored) == {}
     assert settable_values(SAMPLE, "organization", {"sample": "not a mapping"}) == {}
+
+
+# ---- offline: what the layer inherits is not known ---------------------------------------
+
+
+def test_offline_a_layer_s_keys_are_each_checked_on_their_own() -> None:
+    """``inherited=None``: a key is not checked against the defaults of the keys it is compared with (#161)."""
+    try:
+        checked = check(LAYERED_CATALOG, {"window": {"high": 5}}, stored={}, layer="organization", inherited=None)
+    except DocumentInvalid as exc:
+        pytest.fail(f"offline, high: 5 was checked against the default low, which the layer may not inherit: {exc}")
+    assert checked.data == {"window": {"high": 5}}
+    with pytest.raises(DocumentInvalid) as online:
+        check(LAYERED_CATALOG, {"window": {"high": 5}}, stored={}, layer="organization", inherited={"window": {}})
+    assert [p.msg for p in online.value.problems] == ["high must not be below low"], "online the combination is checked"
+
+
+def test_offline_each_key_still_meets_its_own_checks() -> None:
+    from embry0.settings.registry import Catalog
+    from embry0.settings.sections.asks import ASKS
+
+    with pytest.raises(DocumentInvalid) as caught:
+        check(
+            LAYERED_CATALOG,
+            {"window": {"high": "x", "label": "y"}, "sample": {"per_tick": 99}},
+            stored={},
+            layer="organization",
+            inherited=None,
+        )
+    assert sorted((tuple(p.loc), p.type) for p in caught.value.problems) == [
+        (("sample", "per_tick"), "less_than_equal"),
+        (("window", "high"), "int_type"),
+        (("window", "label"), "not_overridable"),
+    ]
+    with pytest.raises(DocumentInvalid) as hours:
+        check(Catalog((ASKS,)), {"asks": {"hours": "25-30"}}, stored={}, layer="organization", inherited=None)
+    assert [tuple(p.loc) for p in hours.value.problems] == [("asks", "hours")], "a key's own validator still runs"
