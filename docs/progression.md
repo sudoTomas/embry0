@@ -36,7 +36,7 @@ Its avatar picks a style: melee climbs plate (helm, chestplate, greaves, heater 
 ## Achievements, quests and diaries
 
 - **Achievements:** fifty, in eight categories (Shipping, Hunting, Questing, Lore, Guarding, Grit, Growth, Oddities). Most are tiered from Bronze to Divine by how many times the outcome happened; some are objectives, done once; a few are secret until reached.
-- **Quests:** four short goals the account completes once, for quest points and an experience reward to the characters that did the work: First Steps, Try, Try Again, Gatekeeper and Divine Warden. Every quest done gives the character with the highest total level the quest cloak; Divine Warden trims every cloak in the Divine metal.
+- **Quests:** four short goals the account completes once, for quest points and an experience reward to the characters that did the work: First Steps, Try, Try Again, Gatekeeper and Divine Warden. Try, Try Again counts the merge a comeback counts (the comeback's Recovery XP and its achievement): a merged job on an issue where a job created before it failed; a retry that merges before the job it retried fails completes the step when that failure lands. Every quest done gives the character with the highest total level the quest cloak; Divine Warden trims every cloak in the Divine metal.
 - **Diaries:** one per repository, with tasks in four tiers, Easy to Elite (for example: triage an issue; merge ten pull requests; go 30 days without a failed job).
 
 ## The content pack

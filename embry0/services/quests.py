@@ -301,20 +301,30 @@ def _onboard_to_merge(journal: Journal, params: dict[str, Any]) -> tuple[str | N
 
 
 def _merge_after_failure(journal: Journal, params: dict[str, Any]) -> tuple[str | None, list[datetime | None]]:
-    failed: dict[str, datetime] = {}
-    for job in sorted(journal.jobs, key=lambda j: j.finished_at):
+    """A failure on an issue, then a merge of a later job on it: the comeback rule (#234).
+
+    A merged job counts when a failed job on its issue was created before it,
+    as for the comeback XP and the achievement that counts comebacks
+    (``comeback`` in ``embry0/storage/repositories/progression.py``). The
+    failure step is that failure, and the merge step is done once both
+    happened: a retry that merges before the job it retried fails is done
+    when the failure lands.
+    """
+    failures: dict[str, list[JobRow]] = defaultdict(list)
+    for job in journal.jobs:
         if job.issue_id and job.status == "failed":
-            failed.setdefault(job.issue_id, job.finished_at)
-    comebacks = [
-        (job.issue_id, at)
-        for job, at in _merges(journal.jobs)
-        if job.issue_id and job.issue_id in failed and failed[job.issue_id] < at
-    ]
-    first = min(comebacks, key=lambda c: c[1]) if comebacks else None
-    return (
-        first[0] if first else None,
-        [failed[first[0]] if first else _first(failed.values()), first[1] if first else None],
-    )
+            failures[job.issue_id].append(job)
+    comebacks: list[tuple[str, datetime, datetime]] = []
+    for job, merged_at in _merges(journal.jobs):
+        if not job.issue_id:
+            continue
+        failed_at = _first(f.finished_at for f in failures[job.issue_id] if f.created_at < job.created_at)
+        if failed_at is not None:
+            comebacks.append((job.issue_id, failed_at, max(failed_at, merged_at)))
+    if not comebacks:
+        return None, [_first(f.finished_at for jobs in failures.values() for f in jobs), None]
+    issue, failed_at, done_at = min(comebacks, key=lambda c: c[2])
+    return issue, [failed_at, done_at]
 
 
 def _review_qa_merge(journal: Journal, params: dict[str, Any]) -> tuple[str | None, list[datetime | None]]:
