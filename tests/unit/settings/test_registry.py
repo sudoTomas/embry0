@@ -204,6 +204,67 @@ def test_every_section_module_is_in_the_catalog() -> None:
     assert missing == [], f"add these to CATALOG in embry0/settings/sections/__init__.py: {missing}"
 
 
+def unsorted(catalog: Catalog) -> list[str]:
+    """The catalog's section names in the order they should have, or ``[]`` when they have it."""
+    names = list(catalog.names)
+    return [] if names == sorted(names) else sorted(names)
+
+
+def crowded(source: str) -> list[str]:
+    """Why the list handed to ``Catalog`` for ``CATALOG`` in ``source`` is not one section name per line.
+
+    Two changes that each add a section then add a line each, instead of
+    both editing the one line that holds the list.
+    """
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            target, value = node.target, node.value
+        else:
+            continue
+        if not (isinstance(target, ast.Name) and target.id == "CATALOG"):
+            continue
+        if (
+            not isinstance(value, ast.Call)
+            or len(value.args) != 1
+            or not isinstance(value.args[0], ast.List | ast.Tuple)
+        ):
+            return ["CATALOG is not Catalog([...]) with its sections written out"]
+        listed = value.args[0]
+        lines = [listed.lineno, listed.end_lineno] + [entry.lineno for entry in listed.elts]
+        return [
+            f"line {entry.lineno}: {ast.unparse(entry)} is not a section name on a line of its own"
+            for entry in listed.elts
+            if not isinstance(entry, ast.Name) or lines.count(entry.lineno) > 1
+        ]
+    return ["no CATALOG = Catalog([...])"]
+
+
+def test_the_checks_for_the_catalog_order_and_layout_can_fail() -> None:
+    assert unsorted(Catalog((SAMPLE, OTHER))) == ["other", "sample"]
+    assert unsorted(Catalog((OTHER, SAMPLE))) == []
+    assert crowded("CATALOG: Catalog = Catalog((ASKS,))\n") == [
+        "line 1: ASKS is not a section name on a line of its own"
+    ], "an entry on the line of a bracket counts"
+    assert crowded("CATALOG = Catalog(\n    [\n        ASKS, OTHER,\n        SAMPLE,\n    ]\n)\n") == [
+        "line 3: ASKS is not a section name on a line of its own",
+        "line 3: OTHER is not a section name on a line of its own",
+    ]
+    assert crowded("CATALOG = Catalog(\n    [\n        sections.ASKS,\n    ]\n)\n") == [
+        "line 3: sections.ASKS is not a section name on a line of its own"
+    ]
+    assert crowded("CATALOG = Catalog(SECTIONS)\n") == ["CATALOG is not Catalog([...]) with its sections written out"]
+    assert crowded("CATALOGUE = Catalog([])\n") == ["no CATALOG = Catalog([...])"]
+    assert crowded("CATALOG: Catalog = Catalog(\n    [\n        ASKS,\n        OTHER,\n    ]\n)\n") == []
+
+
+def test_the_catalog_lists_one_section_per_line_sorted_by_name() -> None:
+    source = Path(sections_package.__file__).read_text(encoding="utf-8")
+    assert crowded(source) == [], "write CATALOG in embry0/settings/sections/__init__.py one section per line"
+    assert unsorted(CATALOG) == [], "sort CATALOG in embry0/settings/sections/__init__.py by section name"
+
+
 _ALLOWED_IMPORTS = frozenset({"__future__", "pydantic", "embry0.settings.registry"})
 #: The package itself: ``CATALOG`` imports each section module, and those are held to the same rule.
 _SECTIONS = "embry0.settings.sections"

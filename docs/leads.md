@@ -2,6 +2,8 @@
 
 Until leads, work reached embry0 in three ways: a person put the trigger label on a ticket, the watcher drafted one from production logs, or the context audit read the files that steer coding agents. Everything else waited for someone to think of embry0. Leads are the work embry0 finds on its own and offers to a repository's owners as [owner proposals](api.md#owner-proposals): a person only says yes. The design is in [the spec](superpowers/specs/2026-10-25-leads-design.md).
 
+The backlog intake and the lead client work only with Linear and GitHub today; other forges and trackers are tracked in #181.
+
 ## Where it looks
 
 A repository is read when it is registered and active and someone answers for it: its preferences name owners, or it is a watched stack. Each finder reads it with its organization's credential and adds at most `LEADS_MAX_NEW_PER_REPO_PER_DAY` new leads a day, the most severe first.
