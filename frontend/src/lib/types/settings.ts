@@ -19,6 +19,12 @@ export interface SettingsDocument {
   unknown_sections: string[];
   /** Stored keys of a known section that this release does not have, as `section.key`; kept the same way. */
   unknown_keys: string[];
+  /**
+   * `"file"` when the document says it is kept in a file and stored with
+   * `embry0 settings apply`: the Policy tab then only shows it. Null when it
+   * is edited here too.
+   */
+  managed_by: "file" | null;
 }
 
 /**

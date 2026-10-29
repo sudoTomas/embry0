@@ -4,7 +4,12 @@ import { AdminButton } from "@/components/auth/AdminButton";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { toastApiError } from "@/api/errorToast";
-import { useSettingsRevision, useSettingsRevisions, useUndoSettingsChange } from "@/hooks/useSettingsDocument";
+import {
+  useSettingsDocument,
+  useSettingsRevision,
+  useSettingsRevisions,
+  useUndoSettingsChange,
+} from "@/hooks/useSettingsDocument";
 import { REVISION_SOURCE_LABELS } from "@/lib/settingsDocument";
 import { diffLines } from "@/lib/textDiff";
 import { TextDiff } from "@/components/documents/TextDiff";
@@ -36,11 +41,14 @@ function RevisionDetail({ id }: { id: number }) {
 /**
  * Every change to the document, newest first. Each can be opened to show
  * what it changed. Only the newest can be undone, while the stored text is
- * still what it wrote; the server says why any other cannot.
+ * still what it wrote; the server says why any other cannot. A document
+ * kept in a file (`managed_by: file`) is undone from the command line, so
+ * the file and the stored document are changed by one hand.
  */
 export function SettingsHistory() {
   const revisions = useSettingsRevisions();
   const undo = useUndoSettingsChange();
+  const inFile = useSettingsDocument().data?.managed_by === "file";
   const [open, setOpen] = useState<number | null>(null);
 
   function onUndo(revision: SettingsRevision) {
@@ -92,7 +100,12 @@ export function SettingsHistory() {
                 >
                   {isOpen ? "Hide the change" : "Show the change"}
                 </Button>
-                {revision.undoable ? (
+                {revision.undoable && inFile ? (
+                  <p className="text-xs text-fg-muted" data-testid="settings-undo-in-file">
+                    {"Kept in a file: undo it there, or with "}
+                    <code className="font-mono">{`embry0 settings undo ${revision.id}`}</code>
+                  </p>
+                ) : revision.undoable ? (
                   <AdminButton variant="outline" size="xs" disabled={undo.isPending} onClick={() => onUndo(revision)}>
                     Undo this change
                   </AdminButton>
