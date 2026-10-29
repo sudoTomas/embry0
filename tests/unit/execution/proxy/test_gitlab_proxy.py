@@ -3,13 +3,13 @@
 import ssl
 
 import pytest
-from aiohttp import web
 
 from embry0.execution.proxy.gitlab_proxy import (
     DEFAULT_GITLAB_API_BASE,
     _auth_headers,
     create_gitlab_proxy_app,
 )
+from tests.fixtures.recording_upstream import RecordingUpstream
 
 ADMIN = "admin-secret"
 # The enroll handler enforces a 32-char minimum — real bearers are
@@ -37,6 +37,11 @@ c4e0+qw4L6q4kPNiZiNmumxWekny53FXSVrhhHJS4MwcuLyfvwBD4LsvuNhKYpgm
 mJ6PoFKMXR9xjyWUTmkVT6oYfPdl0vzcQw==
 -----END CERTIFICATE-----
 """
+
+
+def _gitlab_api(*tokens: str) -> RecordingUpstream:
+    """A GitLab API that counts the project requests and any request carrying one of ``tokens`` (#221)."""
+    return RecordingUpstream(body=b"{}", content_type="application/json", paths={"/projects/"}, credentials=set(tokens))
 
 
 def test_pat_goes_in_private_token():
@@ -69,19 +74,8 @@ async def test_unenrolled_request_is_401(aiohttp_client):
 
 
 async def test_enrolled_request_injects_the_token_and_strips_the_bearer(aiohttp_client):
-    seen: dict = {}
-
-    async def upstream(request: web.Request) -> web.Response:
-        seen["path"] = request.path_qs
-        seen["private_token"] = request.headers.get("PRIVATE-TOKEN")
-        seen["authorization"] = request.headers.get("Authorization")
-        seen["user_agent"] = request.headers.get("User-Agent")
-        seen["cookie"] = request.headers.get("Cookie")
-        return web.json_response({"ok": True})
-
-    up = web.Application()
-    up.router.add_route("*", "/{path:.*}", upstream)
-    up_client = await aiohttp_client(up)
+    upstream = _gitlab_api("glpat-real")
+    up_client = await aiohttp_client(upstream.app())
     base = str(up_client.make_url("")).rstrip("/")
 
     app = create_gitlab_proxy_app("glpat-real", ADMIN, api_base=base)
@@ -103,25 +97,19 @@ async def test_enrolled_request_injects_the_token_and_strips_the_bearer(aiohttp_
         },
     )
     assert resp.status == 200
+    (sent,) = upstream.seen
     # Real credential injected...
-    assert seen["private_token"] == "glpat-real"
+    assert sent.headers.get("PRIVATE-TOKEN") == "glpat-real"
     # ...the sandbox's own bearer never reaches upstream...
-    assert seen["authorization"] is None
+    assert sent.headers.get("Authorization") is None
     # ...allowlisted headers pass, everything else is dropped.
-    assert seen["user_agent"] == "sandbox/1.0"
-    assert seen["cookie"] is None
+    assert sent.headers.get("User-Agent") == "sandbox/1.0"
+    assert sent.headers.get("Cookie") is None
 
 
 async def test_per_sandbox_token_overrides_the_global(aiohttp_client):
-    seen: dict = {}
-
-    async def upstream(request: web.Request) -> web.Response:
-        seen["private_token"] = request.headers.get("PRIVATE-TOKEN")
-        return web.json_response({})
-
-    up = web.Application()
-    up.router.add_route("*", "/{path:.*}", upstream)
-    up_client = await aiohttp_client(up)
+    upstream = _gitlab_api("glpat-global", "glpat-per-sandbox")
+    up_client = await aiohttp_client(upstream.app())
 
     app = create_gitlab_proxy_app("glpat-global", ADMIN, api_base=str(up_client.make_url("")).rstrip("/"))
     client = await aiohttp_client(app)
@@ -136,7 +124,8 @@ async def test_per_sandbox_token_overrides_the_global(aiohttp_client):
         headers={"X-Admin-Token": ADMIN},
     )
     await client.get("/projects/acme%2Fwidgets", headers={"Authorization": f"Bearer {BEARER_2}"})
-    assert seen["private_token"] == "glpat-per-sandbox"
+    (sent,) = upstream.seen
+    assert sent.headers.get("PRIVATE-TOKEN") == "glpat-per-sandbox"
 
 
 async def test_admin_enroll_requires_the_admin_token(aiohttp_client):
@@ -148,15 +137,8 @@ async def test_admin_enroll_requires_the_admin_token(aiohttp_client):
 
 @pytest.mark.parametrize("query", ["", "?state=opened&per_page=5"])
 async def test_query_string_is_preserved(aiohttp_client, query):
-    seen: dict = {}
-
-    async def upstream(request: web.Request) -> web.Response:
-        seen["path_qs"] = request.path_qs
-        return web.json_response({})
-
-    up = web.Application()
-    up.router.add_route("*", "/{path:.*}", upstream)
-    up_client = await aiohttp_client(up)
+    upstream = _gitlab_api("glpat-x")
+    up_client = await aiohttp_client(upstream.app())
 
     app = create_gitlab_proxy_app("glpat-x", ADMIN, api_base=str(up_client.make_url("")).rstrip("/"))
     client = await aiohttp_client(app)
@@ -166,7 +148,8 @@ async def test_query_string_is_preserved(aiohttp_client, query):
         headers={"X-Admin-Token": ADMIN},
     )
     await client.get(f"/projects/acme%2Fwidgets/issues{query}", headers={"Authorization": f"Bearer {BEARER}"})
-    assert seen["path_qs"] == f"/projects/acme%2Fwidgets/issues{query}"
+    (sent,) = upstream.seen
+    assert sent.raw_path == f"/projects/acme%2Fwidgets/issues{query}"
 
 
 # --- private CA (spec 1A §3.2) ----------------------------------------------

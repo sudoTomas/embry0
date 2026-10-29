@@ -74,7 +74,7 @@ def test_the_sandbox_runner_reads_the_rates_and_ignores_a_bad_value() -> None:
 
 @pytest.fixture
 def server(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[FakeOpenAIServer]:
-    fake = FakeOpenAIServer()
+    fake = FakeOpenAIServer(keys=[_KEY])
     with fake.running():
         monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
         monkeypatch.setenv("EMBRY0_LLM_OPENROUTER_API_KEY", _KEY)

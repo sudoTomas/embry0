@@ -4,24 +4,35 @@ from __future__ import annotations
 
 from typing import Any
 
+import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient
 
 from embry0.execution.proxy.local_llm_proxy import create_local_llm_proxy_app
+from tests.fixtures.recording_upstream import is_test_request
 
 _ADMIN = "test-admin-secret-not-real"
 _SANDBOX_TOKEN = "sandbox-bearer-token-at-least-32-chars-long"
 _SERVER_KEY = "server-key-the-sandbox-never-sees"
+_API_ROOT = "/v1/"
 
 
 @pytest.fixture
 async def upstream(aiohttp_server) -> Any:
-    """A fake model server recording every request it gets."""
+    """A fake model server recording the requests the proxy may send it.
+
+    ``seen`` holds the requests under the API root the proxy forwards to, and
+    any carrying the server key, wherever they go. Anything else that reaches
+    its port, such as an unrelated client's ``GET /``, is answered the same way
+    and kept in ``ignored`` (#221).
+    """
     seen: list[dict[str, Any]] = []
+    ignored: list[dict[str, Any]] = []
 
     async def record(request: web.Request) -> web.Response:
-        seen.append(
+        counted = is_test_request(request.path, request.headers, paths=[_API_ROOT], credentials=[_SERVER_KEY])
+        (seen if counted else ignored).append(
             {
                 "method": request.method,
                 "path": request.path,
@@ -37,6 +48,7 @@ async def upstream(aiohttp_server) -> Any:
     app.router.add_route("*", "/{tail:.*}", record)
     server = await aiohttp_server(app)
     server.seen = seen
+    server.ignored = ignored
     return server
 
 
@@ -134,6 +146,46 @@ async def test_a_request_over_the_size_limit_is_refused(aiohttp_client, upstream
     assert upstream.seen == []
     ok = await client.post("/v1/chat/completions", data=b"{}", headers={**_AUTH, "Content-Type": "application/json"})
     assert ok.status == 200
+
+
+async def _get_from_upstream(upstream: Any, path: str, **headers: str) -> int:
+    """GET ``path`` from the model server's port directly, as another process on the host can."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"http://127.0.0.1:{upstream.port}{path}", headers=headers) as resp:
+            await resp.read()
+            return resp.status
+
+
+async def test_a_stray_request_to_the_model_server_changes_no_refusal(aiohttp_client, upstream):
+    """Any process on the host can reach the model server's port. Counted, a
+    ``GET /`` from one fails the refusal tests above, which expect nothing to
+    reach it, or passes a test that expects something to (#221)."""
+    client = await _proxy(aiohttp_client, upstream, upstream_api_key=_SERVER_KEY)
+    assert await _get_from_upstream(upstream, "/") == 200, "the stray request did not reach the model server"
+    bad = {"Authorization": "Bearer someone-elses-token-that-is-long-enough"}
+    refused = await client.post("/v1/chat/completions", json={}, headers=bad)
+    assert await _get_from_upstream(upstream, "/favicon.ico") == 200, "the stray request did not reach the model server"
+
+    assert refused.status == 401
+    assert upstream.seen == [], (
+        f"only the stray requests reached the model server, and they must not count: {upstream.seen}"
+    )
+    # A subset: a real stray from another process lands here too.
+    strays = {(r["method"], r["path"]) for r in upstream.ignored}
+    assert {("GET", "/"), ("GET", "/favicon.ico")} <= strays, f"the strays were not kept aside: {strays}"
+
+
+async def test_a_request_carrying_the_server_key_counts_on_any_path(upstream):
+    """A proxy that leaks the server key need not use the API root, and no other
+    process has the key, so a request carrying it counts wherever it goes; one
+    without it, off the API root, does not."""
+    await _get_from_upstream(upstream, "/metrics", Authorization=f"Bearer {_SERVER_KEY}")
+    await _get_from_upstream(upstream, "/metrics", Authorization="Bearer someone-elses-key")
+
+    counted = [(r["path"], r["authorization"]) for r in upstream.seen]
+    assert counted == [("/metrics", f"Bearer {_SERVER_KEY}")], (
+        f"a request carrying the server key must count on any path, and no other: {counted}"
+    )
 
 
 async def test_an_unreachable_server_is_a_502(aiohttp_client):

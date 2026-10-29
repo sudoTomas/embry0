@@ -21,6 +21,9 @@ from embry0.services.provider_readiness import (
 from tests.fixtures.openai_compatible_server import FakeOpenAIServer
 
 _KEYS = ("OPENAI_API_KEY", "CUSTOM_LLM_API_KEY", "CUSTOM_LLM_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "XAI_API_KEY")
+_PROBE_KEY = "sk-probe"
+_BAD_KEY = "sk-bad"
+_REGISTRY_KEY = "sk-registry"
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +35,7 @@ def _enabled(monkeypatch):
 
 @pytest.fixture
 def server():
-    fake = FakeOpenAIServer()
+    fake = FakeOpenAIServer(keys=[_PROBE_KEY, _BAD_KEY, _REGISTRY_KEY])
     with fake.running():
         yield fake
 
@@ -86,22 +89,61 @@ def test_probe_urls_hang_off_the_openai_compatible_root() -> None:
 
 
 async def test_the_env_key_is_probed_on_the_models_list(server, monkeypatch) -> None:
-    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "sk-probe")
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", _PROBE_KEY)
     monkeypatch.setenv("CUSTOM_LLM_BASE_URL", server.url)
     checks = await probe.probe_chat_completions_provider(CUSTOM)
     assert [(c.source, c.status) for c in checks] == [("api_key", "ok")]
     (request,) = server.requests
     assert (request["method"], request["path"]) == ("GET", "/v1/models")
-    assert request["headers"]["Authorization"] == "Bearer sk-probe"
+    assert request["headers"]["Authorization"] == f"Bearer {_PROBE_KEY}"
+
+
+async def _get_from_server(server: FakeOpenAIServer, path: str, **headers: str) -> int:
+    """GET ``path`` from the fake server's port directly, as another process on the host can."""
+    async with AsyncClient() as client:
+        return (await client.get(server.url.removesuffix("/v1") + path, headers=headers)).status_code
+
+
+async def test_a_stray_request_to_the_server_changes_no_result(server, monkeypatch) -> None:
+    """Any process on the host can reach the fake server's port. In a full run
+    one reached it during the env-key probe above, whose ``(request,) =
+    server.requests`` then found two requests (#221). Counted, a stray could
+    as well pass a test that expects a request."""
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", _PROBE_KEY)
+    monkeypatch.setenv("CUSTOM_LLM_BASE_URL", server.url)
+    assert await _get_from_server(server, "/") == 404, "the stray request did not reach the server"
+    checks = await probe.probe_chat_completions_provider(CUSTOM)
+    assert await _get_from_server(server, "/favicon.ico") == 404, "the stray request did not reach the server"
+
+    assert [(c.source, c.status) for c in checks] == [("api_key", "ok")]
+    counted = [(r["method"], r["path"]) for r in server.requests]
+    assert counted == [("GET", "/v1/models")], f"only the probe's request may count, not the strays: {counted}"
+    # A subset: a real stray from another process lands here too.
+    strays = {(r["method"], r["path"]) for r in server.ignored}
+    assert {("GET", "/"), ("GET", "/favicon.ico")} <= strays, f"the strays were not kept aside: {strays}"
+
+
+async def test_a_request_carrying_a_key_counts_on_any_path(server) -> None:
+    """Code that sends the key off the API root, as a client that drops the
+    base URL's path does, still calls the server, and no other process has the
+    key: a request carrying it counts wherever it goes; one without it, off the
+    API root, does not."""
+    await _get_from_server(server, "/models", Authorization=f"Bearer {_PROBE_KEY}")
+    await _get_from_server(server, "/models", Authorization="Bearer someone-elses-key")
+
+    counted = [(r["path"], r["headers"].get("Authorization")) for r in server.requests]
+    assert counted == [("/models", f"Bearer {_PROBE_KEY}")], (
+        f"a request carrying a key the test set must count on any path, and no other: {counted}"
+    )
 
 
 async def test_a_rejected_key_is_unauthorized(server, monkeypatch) -> None:
     server.get_status = 401
-    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "sk-bad")
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", _BAD_KEY)
     monkeypatch.setenv("CUSTOM_LLM_BASE_URL", server.url)
     checks = await probe.probe_chat_completions_provider(CUSTOM)
     assert checks[0].status == probe.STATUS_UNAUTHORIZED
-    assert "sk-bad" not in checks[0].message
+    assert _BAD_KEY not in checks[0].message
 
 
 async def test_the_registry_credential_a_job_would_get_is_probed(server) -> None:
@@ -113,7 +155,7 @@ async def test_the_registry_credential_a_job_would_get_is_probed(server) -> None
             provider="custom",
             host="127.0.0.1",
             label="ollama",
-            secret="sk-registry",
+            secret=_REGISTRY_KEY,
             git_author_name=None,
             git_author_email=None,
             source="registry",
@@ -124,7 +166,7 @@ async def test_the_registry_credential_a_job_would_get_is_probed(server) -> None
     checks = await probe.probe_chat_completions_provider(CUSTOM, resolver)
     assert [(c.source, c.status) for c in checks] == [("registry", "ok")]
     assert resolver.resolve_llm.await_args.args == ("", "custom"), "the global pool, as a job with no binding sees it"
-    assert server.requests[0]["headers"]["Authorization"] == "Bearer sk-registry"
+    assert server.requests[0]["headers"]["Authorization"] == f"Bearer {_REGISTRY_KEY}"
 
 
 async def test_no_credential_anywhere_is_not_configured() -> None:
@@ -148,7 +190,7 @@ def _app() -> Any:
 
 
 async def test_the_page_lists_the_family_and_caches_the_last_test(server, monkeypatch) -> None:
-    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "sk-probe")
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", _PROBE_KEY)
     monkeypatch.setenv("CUSTOM_LLM_BASE_URL", server.url)
     app = _app()
     written: list[dict[str, Any]] = []
