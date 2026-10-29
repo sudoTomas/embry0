@@ -3800,6 +3800,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
               AND NOT EXISTS (SELECT 1 FROM knowledge_maps o WHERE o.slug = m.slug AND o.owner IS DISTINCT FROM m.owner);
         """,
     ),
+    (
+        134,
+        "settings_documents: a layer per organization and per repository beside the deployment's (spec 2026-10-29)",
+        # Widens the scope check of migration 129 and nothing else. A layer is
+        # a row under its own scope, organization:<owner> or
+        # repository:<owner>/<name>, created by its first write; the
+        # deployment's row keeps its scope, its values and its generation, so
+        # an ETag a client holds stays valid. The owner and name patterns are
+        # embry0/settings/scope.py's. config_revisions needs no change: its
+        # scope is free text, indexed with the surface.
+        """
+        ALTER TABLE settings_documents DROP CONSTRAINT IF EXISTS settings_documents_scope_check;
+        ALTER TABLE settings_documents ADD CONSTRAINT settings_documents_scope_check CHECK (
+            scope = 'deployment'
+            OR scope ~ '^organization:[a-z0-9_][a-z0-9._-]*$'
+            OR scope ~ '^repository:[a-z0-9_][a-z0-9._-]*(/[a-z0-9._-]+)+$'
+        );
+        COMMENT ON TABLE settings_documents IS
+            'spec 2026-10-28 and 2026-10-29: operator policy as YAML documents, one for the deployment and one layer per organization and repository that sets its own; data = the validated values of yaml_text.';
+        """,
+    ),
 ]
 
 

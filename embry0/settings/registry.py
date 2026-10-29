@@ -124,8 +124,9 @@ class Section[M: SectionModel]:
     """One feature's part of the settings document.
 
     ``org_keys`` and ``repo_keys`` name the fields an organization or a
-    repository may override. They are checked and published now; nothing
-    resolves them until the organization and repository layers exist.
+    repository may override in its own layer (spec 2026-10-29): a layer
+    replaces the inherited value of such a field whole, and may set nothing
+    else.
     ``env`` maps a field to the ``Embry0Config`` attribute its value is
     imported from, once (``embry0.settings.bootstrap``): a string is the
     attribute, an :class:`EnvImport` adds a converter.
@@ -162,6 +163,15 @@ class Section[M: SectionModel]:
     def validate(self, raw: Mapping[str, Any]) -> M:
         """``raw`` as this section's model; :class:`SectionRefused` naming each refused key."""
         return validate_values(self.model, raw)
+
+    def settable(self, layer: str) -> frozenset[str]:
+        """The keys a document at ``layer`` may set: every field for the deployment's,
+        ``org_keys`` for an organization's, ``repo_keys`` for a repository's."""
+        if layer == "organization":
+            return self.org_keys
+        if layer == "repository":
+            return self.repo_keys
+        return frozenset(self.fields)
 
 
 def _nested_models(annotation: Any) -> Iterator[type[BaseModel]]:

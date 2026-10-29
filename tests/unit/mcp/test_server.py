@@ -690,5 +690,25 @@ async def test_settings_set_names_the_generation_it_read_and_the_reason(fake_cli
     ], "settings_set must pass the generation the caller read on to the API"
 
 
+async def test_settings_tools_pass_the_layer_on(fake_client):
+    """``owner`` or ``repo`` names an organization's or a repository's layer (spec 2026-10-29)."""
+    text = "asks:\n  hours: '08-17'\n"
+    await server.settings_get(owner="acme")
+    await server.settings_effective(repo="acme/widgets")
+    await server.settings_revisions(limit=5, owner="acme")
+    await server.settings_set(text, expected_generation=0, dry_run=True, owner="acme")
+    refused = await server.settings_set(text, repo="acme/widgets")
+    await server.settings_set(text, expected_generation=2, repo="acme/widgets", confirm=True)
+    assert fake_client.calls == [
+        ("settings_get", (), {"owner": "acme"}),
+        ("settings_effective", (), {"repo": "acme/widgets"}),
+        ("settings_revisions", (), {"limit": 5, "owner": "acme"}),
+        ("settings_set", (text,), {"dry_run": True, "expected_generation": 0, "reason": "", "owner": "acme"}),
+        ("settings_set", (text,), {"expected_generation": 2, "reason": "", "repo": "acme/widgets"}),
+    ], "a settings tool dropped the layer it was given, so it would read or replace the deployment's document"
+    assert refused.get("error") == "confirmation_required"
+    assert "acme/widgets" in str(refused), "the confirmation names the layer it would replace"
+
+
 def test_the_instructions_name_the_settings_document():
     assert "settings document" in (server.mcp.instructions or "")

@@ -82,3 +82,24 @@ async def test_a_detail_that_is_not_a_list_of_problems_reads_as_before() -> None
         with pytest.raises(Embry0APIError) as refused:
             await client.settings_get()
         assert refused.value.detail == expected
+
+
+async def test_settings_name_an_organization_s_or_a_repository_s_layer() -> None:
+    """``owner`` or ``repo`` goes in the query (spec 2026-10-29); neither is the deployment's document."""
+    seen: list[httpx.Request] = []
+    client = _client(seen)
+    await client.settings_get(owner="acme")
+    await client.settings_effective(repo="acme/widgets")
+    await client.settings_set("asks:\n  hours: '08-17'\n", owner="acme", expected_generation=0)
+    await client.settings_set("sample: {}\n", repo="acme/widgets", dry_run=True)
+    await client.settings_revisions(limit=5, repo="acme/widgets")
+    await client.settings_get()
+    assert [dict(r.url.params) for r in seen] == [
+        {"owner": "acme"},
+        {"repo": "acme/widgets"},
+        {"source": "person", "owner": "acme"},
+        {"source": "person", "repo": "acme/widgets", "dry_run": "1"},
+        {"limit": "5", "repo": "acme/widgets"},
+        {},
+    ], "the layer was not named in the query, so the deployment's document would be read or replaced"
+    assert seen[2].headers["If-Match"] == '"0"', "a layer nobody wrote is generation 0"

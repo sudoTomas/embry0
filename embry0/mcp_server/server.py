@@ -1199,26 +1199,38 @@ async def progression_pack_reset(confirm: bool = False) -> dict[str, Any]:
     return await _get_client().progression_pack_reset()
 
 
+def _layer(owner: str, repo: str) -> dict[str, str]:
+    """The settings tools' layer arguments that were given; none names the deployment's document."""
+    return {name: value for name, value in (("owner", owner), ("repo", repo)) if value}
+
+
 @_tool
-async def settings_get() -> dict[str, Any]:
+async def settings_get(owner: str = "", repo: str = "") -> dict[str, Any]:
     """The deployment's settings document: its operator policy, one YAML document with one section per
     feature (such as ``asks``). ``yaml_text`` is the text as written, comments included; ``data`` its values,
     sparse (a key not written takes its default); ``generation`` the version to pass to settings_set as
-    ``expected_generation``. ``managed_by`` is "file" when the operator keeps the document in a file in their
-    own repository and stores it with `embry0 settings apply`; the dashboard then shows it read-only.
-    ``unknown_sections`` and ``unknown_keys`` are what a newer release wrote and this one does not read.
-    Read-only; any key."""
-    return await _get_client().settings_get()
+    ``expected_generation`` (0 for a layer nobody wrote yet); ``settable`` the keys this document may set, per
+    section. ``managed_by`` is "file" when the operator keeps the document in a file in their own repository
+    and stores it with `embry0 settings apply`; the dashboard then shows it read-only. ``unknown_sections`` and
+    ``unknown_keys`` are what a newer release wrote and this one does not read.
+    With ``owner`` (an organization, by its forge owner) or ``repo`` (a repository's path, "group/name" or
+    a GitLab subgroup path like "group/subgroup/project"), never both, it reads that
+    organization's or repository's layer instead: a document of the same shape holding only what it sets. A key
+    takes the value of the most specific layer that sets it: the deployment's document, then the organization's
+    layer, then the repository's. Read-only; any key."""
+    return await _get_client().settings_get(**_layer(owner, repo))
 
 
 @_tool
-async def settings_effective() -> dict[str, Any]:
+async def settings_effective(owner: str = "", repo: str = "") -> dict[str, Any]:
     """Every key of every section of the settings document with the value loops read now: ``value``,
     ``default``, ``source`` (default; document; bootstrap, imported once from an environment variable), who set
     it and when, the variable it was imported from (``env``) and whether that is still set, the layers that may
-    override it, ``refused`` for a stored value this release reads as its default, and its description.
-    Read-only; any key."""
-    return await _get_client().settings_effective()
+    override it, ``refused`` for a stored value this release reads as its default, and its description. With
+    ``owner`` or ``repo``, the values that organization or repository reads: ``source`` is then also
+    ``organization`` or ``repository``, and each key adds ``inherited`` (the value without that layer) and
+    ``layers`` (what each document sets). Read-only; any key."""
+    return await _get_client().settings_effective(**_layer(owner, repo))
 
 
 @_tool
@@ -1235,6 +1247,8 @@ async def settings_set(
     expected_generation: int | None = None,
     dry_run: bool = False,
     reason: str = "",
+    owner: str = "",
+    repo: str = "",
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Replace the WHOLE settings document with ``text``, YAML (comments are kept). Read it with settings_get,
@@ -1247,27 +1261,34 @@ async def settings_set(
     diff. A real write applies on each loop's next tick, is recorded as a revision with ``reason``, and can be
     undone with settings_undo; a text equal to the stored one records nothing. When settings_get says
     ``managed_by`` is "file", the operator keeps the document in a file: say so, and write here only if the
-    user still wants to (the next `embry0 settings apply` of that file puts it back). Needs an admin key
-    without a repository allowlist. Requires confirm=true for a real write."""
+    user still wants to (the next `embry0 settings apply` of that file puts it back). With ``owner`` or ``repo``
+    (never both) it replaces that organization's or repository's layer instead; a key left out of a layer takes
+    what the layer inherits, and a key the layer may not set is a 422 ``not_overridable``.
+    ``layers_refused`` lists the values of the layers under the document that the change makes read as
+    inherited. Needs an admin key, without a repository allowlist except for a repository's layer, which takes
+    a key whose allowlist covers that repository. Requires confirm=true for a real write."""
+    common: dict[str, Any] = {"expected_generation": expected_generation, "reason": reason, **_layer(owner, repo)}
     if dry_run:
-        return await _get_client().settings_set(
-            text, dry_run=True, expected_generation=expected_generation, reason=reason
-        )
+        return await _get_client().settings_set(text, dry_run=True, **common)
     if not confirm:
-        return _confirmation_refusal("settings_set", "replace the deployment's settings document")
-    return await _get_client().settings_set(text, expected_generation=expected_generation, reason=reason)
+        what = f"the settings layer of {owner or repo}" if owner or repo else "the deployment's settings document"
+        return _confirmation_refusal("settings_set", f"replace {what}")
+    return await _get_client().settings_set(text, **common)
 
 
 @_tool
-async def settings_revisions(revision_id: int | None = None, limit: int = 20) -> dict[str, Any]:
+async def settings_revisions(
+    revision_id: int | None = None, limit: int = 20, owner: str = "", repo: str = ""
+) -> dict[str, Any]:
     """The settings document's changes, newest first, up to ``limit`` (1 to 100): each with its ``id``,
-    ``what`` (the keys it changed), ``actor``, ``source`` (person, file, bootstrap, restore, upgrade),
-    ``reason``, ``created_at``, and ``undoable`` (only the newest change, while it is still what is stored;
-    ``why_not`` otherwise). With ``revision_id``, that one change, with its text before and after and each key
-    it changed. Read-only; any key."""
+    ``scope`` (which document it changed), ``what`` (the keys it changed), ``actor``, ``source`` (person, file,
+    bootstrap, restore, upgrade), ``reason``, ``created_at``, and ``undoable`` (only the newest change, while it
+    is still what is stored; ``why_not`` otherwise). With ``owner`` or ``repo``, that organization's or
+    repository's layer's changes. With ``revision_id``, that one change, of whichever document, with its text
+    before and after and each key it changed. Read-only; any key."""
     if revision_id is not None:
         return await _get_client().settings_revision(revision_id)
-    return await _get_client().settings_revisions(limit=limit)
+    return await _get_client().settings_revisions(limit=limit, **_layer(owner, repo))
 
 
 @_tool
@@ -1275,8 +1296,9 @@ async def settings_undo(revision_id: int, confirm: bool = False) -> dict[str, An
     """Put back what settings change ``revision_id`` replaced. Only the newest change can be undone, while the
     stored document is still what it wrote (else 409, with why), and only while that earlier text is still
     valid (else 422 naming its problems). The undo applies on each loop's next tick and is itself a revision
-    (source ``restore``), so it can be undone the same way. Needs an admin key without a repository
-    allowlist. Requires confirm=true."""
+    (source ``restore``), so it can be undone the same way. A change of an organization's or a repository's
+    layer is undone in that layer. Needs an admin key without a repository allowlist, or, for a repository's
+    layer, one whose allowlist covers that repository. Requires confirm=true."""
     if not confirm:
         return _confirmation_refusal("settings_undo", f"undo settings change {revision_id}")
     return await _get_client().settings_undo(revision_id)

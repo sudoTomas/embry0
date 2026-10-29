@@ -171,11 +171,11 @@ curl -X POST http://localhost:8200/api/v1/config/providers/openrouter/catalog/re
 
 ## Settings document
 
-The deployment's operator policy, one section per feature ([configuration.md](configuration.md#settings-document)). Reads take any key; writes take the admin tier and a key without a repository allowlist. Who changed it (`updated_by`, a revision's `actor`, a key's `set_by`) follows [the audit log's rule](#who-changed-something-outside-the-audit-log).
+The deployment's operator policy, one section per feature, and a layer of it per organization and per repository that sets its own ([configuration.md](configuration.md#settings-document)). Reads take any key; writes take the admin tier, and a key without a repository allowlist except for a repository's layer, which takes a key whose allowlist covers that repository. Who changed it (`updated_by`, a revision's `actor`, a key's `set_by`) follows [the audit log's rule](#who-changed-something-outside-the-audit-log).
 
 ```bash
-# The stored document: {yaml_text, data, schema_version, generation, updated_by, updated_at, sections,
-#                       unknown_sections, unknown_keys, managed_by}
+# The stored document: {scope, yaml_text, data, schema_version, generation, updated_by, updated_at, sections,
+#                       settable, unknown_sections, unknown_keys, managed_by}
 curl http://localhost:8200/api/v1/config/settings
 curl http://localhost:8200/api/v1/config/settings?format=yaml      # the text alone; ETag: "<generation>"
 
@@ -197,6 +197,15 @@ curl http://localhost:8200/api/v1/config/settings/schema      # JSON Schema of t
 curl http://localhost:8200/api/v1/config/settings/revisions   # newest first
 curl http://localhost:8200/api/v1/config/settings/revisions/12
 curl -X POST http://localhost:8200/api/v1/config/settings/revisions/12/undo -H "X-Requested-With: XMLHttpRequest"
+
+# An organization's or a repository's layer: the same routes with ?owner= or ?repo=
+curl "http://localhost:8200/api/v1/config/settings?owner=acme"
+curl -X PUT "http://localhost:8200/api/v1/config/settings?repo=acme/widgets" \
+  -H "Content-Type: application/yaml" -H 'If-Match: "0"' -H "X-Requested-With: XMLHttpRequest" \
+  --data-binary @widgets.yaml
+curl "http://localhost:8200/api/v1/config/settings/revisions?owner=acme"
+curl "http://localhost:8200/api/v1/config/settings/effective?repo=acme/widgets"   # what acme/widgets reads
+curl http://localhost:8200/api/v1/config/settings/layers      # every stored layer and the keys it sets
 ```
 
 - **`text_diff`** is a unified diff as git writes it, one line per line. After the last line of a text with no final newline comes git's own line `\ No newline at end of file`, with no `' '`, `-` or `+` before it, and the hunk counts do not count it; a change of the final newline alone shows the last line removed and added.
@@ -208,7 +217,9 @@ curl -X POST http://localhost:8200/api/v1/config/settings/revisions/12/undo -H "
 - **Unknown parts.** `unknown_sections` and `unknown_keys` (`section.key`) list what a newer release wrote and this one does not know: kept while sent back exactly as stored, type included, as the stored text has it or as GET's `data` does; refused (422) when changed.
 - **`managed_by`** is `"file"` when the document's top level says `managed_by: file` (it is kept in a file and stored with `embry0 settings apply`, `?source=file`), else null. The dashboard then shows the document read-only; the API refuses nothing for it. Any other value is a 422 at `["managed_by"]`, and a change to it is listed in `changes` with the key `managed_by`. The CLI and MCP tools over these routes are in [configuration.md](configuration.md#from-a-file-the-command-line-and-mcp).
 - **Effective.** `{generation, sections: [{name, summary, keys: [{key, value, default, source, set_by, set_at, env, env_still_set, overridable, refused, description}]}], unknown_sections, unknown_keys}`. `source` is `default`, `document` or `bootstrap` (imported from the variable `env` and not changed since). `refused` holds why a stored value is read as its default.
-- **Revisions.** `{revisions: [{id, what, actor, source, reason, created_at, undoable, why_not}]}`; `source` is `person`, `file`, `bootstrap`, `restore` or `upgrade`. One revision adds `before_text`, `after_text` and its `changes`. Undo answers like a PUT (`{generation, revision_id, changes, unknown_sections, unknown_keys}`) and is recorded with source `restore`; an old text today's sections refuse is a 422 whose first entry says "That earlier version is no longer valid."
+- **Revisions.** `{revisions: [{id, scope, what, actor, source, reason, created_at, undoable, why_not}]}`; `source` is `person`, `file`, `bootstrap`, `restore` or `upgrade`. One revision adds `before_text`, `after_text` and its `changes`. Undo answers like a PUT (`{generation, revision_id, changes, unknown_sections, unknown_keys}`) and is recorded with source `restore`; an old text today's sections refuse is a 422 whose first entry says "That earlier version is no longer valid."
+- **Layers** (spec 2026-10-29). `?owner=<owner>` names an organization's layer and `?repo=<owner>/<name>` a repository's, on `GET` and `PUT /config/settings` and on `GET /config/settings/revisions`; both at once is a 422. A layer is a document of the same shape, holding only what that organization or repository sets; a key takes the value of the most specific layer that sets it, and a layer replaces an inherited value whole. A layer may set only the keys its section lets that level set, listed per section in `settable` (and in the schema's `x-embry0-sections`); any other is a 422 `not_overridable` at its key. A value that is refused only together with what the layer inherits is a 422 at its key, or `conflicts_with_inherited` at the section when the refusal names a key the layer did not set. A layer of an organization or repository that is not registered is 404 to write, and to read while nothing is stored. A layer nobody wrote is generation 0, so `If-Match: "0"` creates it unless someone else did first. An empty text clears a layer; nothing deletes one. Revision ids are global: a revision answers its `scope`, and undo is authorized as a write to that document is; undo answers like a `PUT`, `scope`, `layers_refused` and `layers_refused_total` included. A write, its dry run and an undo answer `layers_refused`, `[{scope: {layer, owner, repo}, key, reason}]`: the values of the layers under the document that the change makes read as inherited, at most 100 of them, with `layers_refused_total` counting them all; each such value is also logged as `settings_layer_value_refused`, once per snapshot that reads it. A layer's write queues behind any write in progress to the documents it inherits from, and is checked against what they hold once it commits. A repository renamed with `REPO_RENAMES` since its layer was written keeps that layer under its old slug: `?repo=` with the new slug opens, writes, lists and undoes that row, while no layer is stored under the new slug. `GET /config/settings/layers` lists every stored layer: `{layer, owner, repo, stored_as, generation, updated_by, updated_at, keys}`, where `stored_as` is the old scope string a renamed repository's layer is kept under, else null.
+- **Effective, for a layer.** `GET /config/settings/effective?owner=<owner>` answers as that organization reads every key, and `?repo=<owner>/<name>` as that repository does, its organization's layer included (an `owner` beside `repo` must be its owner, else 422). `source` is then also `organization` or `repository` when a layer supplies the value, each key adds `inherited`, the value it would have without the layer the view is of, and `layers`: `[{layer, owner, repo, set, value, set_by, set_at, settable, refused}]`, one per document in the view, most general first, where `refused` says why a stored value is not read. The answer adds `scope`.
 
 ## Skills
 
