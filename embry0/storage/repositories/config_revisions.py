@@ -74,6 +74,12 @@ class ConfigRevisionsRepository:
         )
         return int(revision_id)
 
+    async def rescope(self, conn: asyncpg.Connection, old: str, new: str, surface: RevisionSurface) -> None:
+        """Move a document's history from ``old`` to ``new``, on the caller's transaction, with the document."""
+        await conn.execute(
+            "UPDATE config_revisions SET scope = $2 WHERE scope = $1 AND surface = $3", old, new, surface
+        )
+
     async def history(self, scope: str, surface: RevisionSurface, limit: int = 50) -> list[dict[str, Any]]:
         """One scope and surface, newest first."""
         rows = await self._db.fetch(

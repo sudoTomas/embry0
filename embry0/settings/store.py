@@ -591,6 +591,24 @@ class SettingsStore:
             yield draft
             if draft.dirty:
                 text_changed = draft.yaml_text != row["yaml_text"]
+                target = current(scope)
+                if text_changed and row.get("exists") and stored.layer == "repository" and key != str(target):
+                    # A renamed repository's layer is written under its current slug from now on, with
+                    # its history, so it does not depend on the rename entry staying in REPO_RENAMES.
+                    await self._documents.move(conn, key, str(target))
+                    await self._revisions.rescope(conn, key, str(target), SURFACE)
+                    await self._revisions.append(
+                        conn,
+                        scope=str(target),
+                        surface=SURFACE,
+                        before=_document(row),
+                        after=_document(row),
+                        actor=actor,
+                        source="upgrade",
+                        reason=f"moved from {key}: REPO_RENAMES maps it to {target.name}",
+                    )
+                    logger.info("settings_layer_moved", scope=key, to=str(target))
+                    key, draft.stored = str(target), target
                 written = await self._documents.write(
                     conn,
                     key,

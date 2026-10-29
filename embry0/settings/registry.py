@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from pydantic import BaseModel, ConfigDict, ValidationError, create_model
+from pydantic import BaseModel, ConfigDict, ValidationError, create_model, field_validator
 
 from embry0.config_redaction import SECRET_NAME_PATTERN
 
@@ -105,6 +105,37 @@ class SectionModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
+#: Each (model, field) as a model of that field alone, built once: :func:`field_alone`.
+_ALONE: dict[tuple[type[BaseModel], str], type[BaseModel]] = {}
+
+
+def field_alone(model: type[BaseModel], key: str) -> type[BaseModel]:
+    """``model`` with only the field ``key``, its type, bounds and own field validators.
+
+    What a key is checked against when nothing else is known, as offline,
+    where a layer's file is checked without the values it inherits: a field
+    validator of ``key`` sees no other field's value (``info.data`` is empty,
+    so a check that compares it with another key, written to read that key
+    with ``info.data.get``, has nothing to compare), and the model's own
+    validators, which see every field, are left out.
+    """
+    found = _ALONE.get((model, key))
+    if found is not None:
+        return found
+    field = model.model_fields[key]
+    validators: dict[str, Any] = {}
+    for name, decorator in model.__pydantic_decorators__.field_validators.items():
+        if key in decorator.info.fields or "*" in decorator.info.fields:
+            function = getattr(decorator.func, "__func__", decorator.func)
+            validators[name] = field_validator(key, mode=decorator.info.mode)(classmethod(function))
+    fields: dict[str, Any] = {key: (field.annotation, field)}
+    alone: type[BaseModel] = create_model(
+        f"{model.__name__}_{key}", __base__=SectionModel, __validators__=validators, **fields
+    )
+    _ALONE[(model, key)] = alone
+    return alone
+
+
 @dataclass(frozen=True)
 class EnvImport:
     """Where a section field's value came from before the document existed.
@@ -163,6 +194,27 @@ class Section[M: SectionModel]:
     def validate(self, raw: Mapping[str, Any]) -> M:
         """``raw`` as this section's model; :class:`SectionRefused` naming each refused key."""
         return validate_values(self.model, raw)
+
+    def validate_alone(self, raw: Mapping[str, Any]) -> dict[str, Any]:
+        """Each key of ``raw`` on its own (:func:`field_alone`), as the values a reader of it would get.
+
+        For a layer's file checked offline, where what it inherits is not
+        known: each key meets its type, bounds and own validators, and a
+        check that compares it with another key is left to the online check.
+        :class:`SectionRefused` naming each refused key.
+        """
+        errors: list[dict[str, Any]] = []
+        out: dict[str, Any] = {}
+        for key, value in raw.items():
+            try:
+                alone = validate_values(field_alone(self.model, key), {key: value})
+            except SectionRefused as exc:
+                errors.extend(exc.errors)
+                continue
+            out[key] = alone.model_dump(mode="json")[key]
+        if errors:
+            raise SectionRefused(errors)
+        return out
 
     def settable(self, layer: str) -> frozenset[str]:
         """The keys a document at ``layer`` may set: every field for the deployment's,

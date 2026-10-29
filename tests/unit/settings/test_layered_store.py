@@ -189,10 +189,10 @@ async def test_a_layer_under_a_renamed_slug_applies_to_the_new_one(
 OLD_LAYER = "# kept for the old slug\nsample:\n  mode: 'on'\nwindow:\n  high: 70\n"
 
 
-async def test_a_layer_under_a_renamed_slug_is_read_and_written_where_it_is_stored(
+async def test_a_renamed_repository_s_layer_moves_to_its_new_slug_on_its_next_write(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Editing the layer of a renamed repository changes its stored layer; nothing new shadows it."""
+    """Opened under the old slug, saved under the new one with its history, so it outlives the rename entry."""
     store = _store(db_with_migrations)
     first = await _save(store, OLD_LAYER, Scope.repository("acme/old-widgets"))
     monkeypatch.setattr(repo_renames, "REPO_RENAMES", {"acme/old-widgets": "acme/widgets"})
@@ -203,16 +203,41 @@ async def test_a_layer_under_a_renamed_slug_is_read_and_written_where_it_is_stor
     )
     edited = OLD_LAYER.replace("high: 70", "high: 60")
     second = await _save(store, edited, current, if_generation=opened["generation"])
-    snapshot = await store.snapshot()
+    rows = await db_with_migrations.fetch(
+        "SELECT scope, generation FROM settings_documents WHERE scope LIKE 'repository:%'"
+    )
+    assert [(r["scope"], r["generation"]) for r in rows] == [("repository:acme/widgets", first.generation + 1)], (
+        "the layer stayed under the old slug, so removing the rename entry would silently drop it"
+    )
+    history = await store.revisions(scope=current)
+    assert [(r["id"], r["source"]) for r in history] == [
+        (second.revision_id, "person"),
+        (history[1]["id"], "upgrade"),
+        (first.revision_id, "person"),
+    ], "the history moves with the layer, and the move is recorded between the two changes"
+    assert history[1]["reason"] == "moved from repository:acme/old-widgets: REPO_RENAMES maps it to acme/widgets"
+    assert history[1]["before"]["yaml_text"] == history[1]["after"]["yaml_text"] == OLD_LAYER
+    monkeypatch.setattr(repo_renames, "REPO_RENAMES", {})
+    snapshot = await _store(db_with_migrations).snapshot()
     assert (snapshot.get(SAMPLE, repo="acme/widgets").mode, snapshot.get(WINDOW, repo="acme/widgets").high) == (
         "on",
         60,
-    ), "a key the edit did not touch stopped applying"
-    rows = await db_with_migrations.fetch("SELECT scope FROM settings_documents WHERE scope LIKE 'repository:%'")
-    assert [r["scope"] for r in rows] == ["repository:acme/old-widgets"], "the edit wrote a second layer"
-    assert [r["id"] for r in await store.revisions(scope=current)] == [second.revision_id, first.revision_id]
+    ), "with the rename entry gone, the repository's layer stopped applying"
     await store.undo(second.revision_id, actor="sam@example.com")
     assert (await store.document(current))["yaml_text"] == OLD_LAYER
+
+
+async def test_a_dry_run_through_the_new_slug_moves_nothing(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(db_with_migrations)
+    await _save(store, OLD_LAYER, Scope.repository("acme/old-widgets"))
+    monkeypatch.setattr(repo_renames, "REPO_RENAMES", {"acme/old-widgets": "acme/widgets"})
+    await store.preview(OLD_LAYER, load_yaml(OLD_LAYER), scope=Scope.repository("acme/widgets"))
+    unchanged = await _save(store, OLD_LAYER, Scope.repository("acme/widgets"))
+    assert unchanged.revision_id is None
+    rows = await db_with_migrations.fetch("SELECT scope FROM settings_documents WHERE scope LIKE 'repository:%'")
+    assert [r["scope"] for r in rows] == ["repository:acme/old-widgets"], "only a change moves the layer"
 
 
 async def test_a_layer_write_waits_for_a_write_to_what_it_inherits(db_with_migrations: DatabasePool) -> None:

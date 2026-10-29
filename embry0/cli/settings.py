@@ -335,8 +335,8 @@ def _check(args: argparse.Namespace) -> int:
     text = _read(args.file)
     try:
         _, values = parse_body(text.encode("utf-8"), _content_type(args.file))
-        # A layer's values alone: what they combine with is stored, so `diff` checks that.
-        checked = check(CATALOG, values, stored={}, layer=_level(args), inherited={})
+        # A layer's keys each on its own: what they combine with is stored, so `diff` checks that.
+        checked = check(CATALOG, values, stored={}, layer=_level(args), inherited=None)
     except DocumentTooLarge as exc:
         _err(str(exc))
         return REFUSED
@@ -349,6 +349,11 @@ def _check(args: argparse.Namespace) -> int:
         written.insert(0, MANAGED_BY_KEY)
     what = {"organization": "organization layer", "repository": "repository layer"}.get(_level(args), "document")
     print(f"the settings {what} is valid; it sets {', '.join(written) if written else 'nothing'}")
+    if _level(args) != "deployment":
+        print(
+            "each key was checked on its own: whether they combine with what the layer inherits is checked by "
+            "`embry0 settings diff`"
+        )
     return OK
 
 

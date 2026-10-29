@@ -310,7 +310,10 @@ def check(
     its values are checked together with ``inherited``, the section's values
     the layer inherits now, so a value that combines with them badly is
     refused at the key that set it, or at the section (``conflicts_with_inherited``)
-    when the refusal names no key the layer set.
+    when the refusal names no key the layer set. ``inherited`` None, for a
+    layer, is a check made offline, where what the layer inherits is not
+    known: each key is checked on its own (``Section.validate_alone``), and
+    how keys combine is left to the check made where the documents are.
     """
     problems: list[Problem] = []
     data: dict[str, Any] = {}
@@ -412,6 +415,20 @@ def check(
                 else:
                     problems.append(Problem((key, name), "not_overridable", _not_settable(section, layer, name)))
                 del known[name]
+        if layer != "deployment" and inherited is None:
+            # Offline: what the layer inherits is not known, so each key is checked on its own and a
+            # check that compares keys is left to the online one (`embry0 settings diff`).
+            try:
+                alone = section.validate_alone(known)
+            except SectionRefused as exc:
+                for error in exc.errors:
+                    loc = tuple(error.get("loc") or ())
+                    problems.append(Problem((key, *loc), str(error.get("type")), _message(section, error)))
+                continue
+            clean = {**alone, **kept}
+            if clean:
+                data[key] = clean
+            continue
         base = mapping((inherited or {}).get(key)) if layer != "deployment" else {}
         try:
             model = section.validate({**base, **known})

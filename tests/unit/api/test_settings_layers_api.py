@@ -319,7 +319,7 @@ async def test_undo_of_a_layer_is_checked_against_what_it_inherits_now(app: Any)
     assert layer.json()["data"] == {"window": {"low": 20}}, "nothing was put back"
 
 
-async def test_a_renamed_repository_s_layer_is_opened_and_saved_where_it_is_stored(
+async def test_a_renamed_repository_s_layer_is_opened_under_its_old_slug_and_saved_under_its_new_one(
     app: Any, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from embry0.storage import repo_renames
@@ -347,7 +347,20 @@ async def test_a_renamed_repository_s_layer_is_opened_and_saved_where_it_is_stor
         "a key the save kept stopped applying"
     )
     stored = await db_with_migrations.fetch("SELECT scope FROM settings_documents WHERE scope LIKE 'repository:%'")
-    assert [r["scope"] for r in stored] == ["repository:acme/old-widgets"]
+    assert [r["scope"] for r in stored] == ["repository:acme/widgets"], "the save moved the layer to its new slug"
+    monkeypatch.setattr(repo_renames, "REPO_RENAMES", {})
+    async with _client(app) as client:
+        after = await client.get(f"{URL}/effective", params={"repo": "acme/widgets"})
+        listed = await client.get(f"{URL}/layers")
+        history = await client.get(f"{URL}/revisions", params={"repo": "acme/widgets"})
+    assert [r["what"] for r in history.json()["revisions"]][1] == (
+        "No setting changed: moved from repository:acme/old-widgets: REPO_RENAMES maps it to acme/widgets"
+    ), "the history says the layer moved"
+    values = {(s["name"], k["key"]): k["value"] for s in after.json()["sections"] for k in s["keys"]}
+    assert (values[("sample", "mode")], values[("window", "high")]) == ("on", 60), (
+        "with the rename entry gone, the repository's layer stopped applying"
+    )
+    assert [(row["repo"], row["stored_as"]) for row in listed.json()["layers"]] == [("acme/widgets", None)]
 
 
 async def test_each_layer_says_whether_it_is_kept_in_a_file(app: Any) -> None:

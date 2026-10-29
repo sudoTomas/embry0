@@ -75,3 +75,16 @@ def test_org_and_repo_are_one_or_the_other(monkeypatch: pytest.MonkeyPatch, tmp_
     with pytest.raises(SystemExit) as done:
         cli.main()
     assert done.value.code == OK, "--org reaches the check through the real parser"
+
+
+def test_check_of_a_layer_does_not_judge_a_combination_it_cannot_see(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Offline the values the layer inherits are unknown, so keys checked together are left to `diff`."""
+    from tests.fixtures.settings_sections import LAYERED_CATALOG
+
+    monkeypatch.setattr("embry0.settings.sections.CATALOG", LAYERED_CATALOG)
+    code = run(_args("check", file=_file(tmp_path, "window:\n  high: 5\n"), org="acme"))
+    captured = capsys.readouterr()
+    assert code == OK, f"check --org refused a value only a combination with defaults refuses: {captured.err}"
+    assert "embry0 settings diff" in captured.out, "the output says where the combination is checked"

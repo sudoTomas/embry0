@@ -1,8 +1,10 @@
 """The stored settings documents (migration 129, spec 2026-10-28; layers, migration 134, spec 2026-10-29).
 
 One row per scope: the deployment's, inserted by migration 129, and one per
-organization or repository layer, inserted by the layer's first write. No
-row is ever deleted: an empty text is how a layer is cleared. This layer
+organization or repository layer, inserted by the layer's first write. An
+empty text is how a layer is cleared; the one row ever removed is a renamed
+repository's layer, which :meth:`SettingsDocumentsRepository.move` moves to
+its new slug with its write counter. This layer
 stores what it is given: :mod:`embry0.settings.document` checks a document
 before the store writes it, and SQL cannot.
 """
@@ -38,8 +40,9 @@ class SettingsDocumentsRepository:
         """What every reader's freshness check compares: the rows, the sum of their write counters, the newest write.
 
         One query over the table. Every write adds one to its row's counter
-        and no row is deleted, so the sum moves on every committed write in
-        any scope; a database restored to an older copy moves it, or the
+        and no counter is lost (a row that moves to a renamed repository's
+        new slug takes its counter along), so the sum moves on every committed
+        write in any scope; a database restored to an older copy moves it, or the
         newest write time, in either direction.
         """
         row = await self._db.fetchrow(
@@ -89,6 +92,24 @@ class SettingsDocumentsRepository:
             scopes,
         )
         return [{**dict(r), "data": dict(r["data"] or {})} for r in rows]
+
+    async def move(self, conn: asyncpg.Connection, old: str, new: str) -> None:
+        """Move the locked document at ``old`` to ``new``: its text, values, ledger and write counter, unchanged.
+
+        For a renamed repository's layer, on the caller's transaction, which
+        holds the locks of both scopes; ``new`` has no row.
+        """
+        await conn.execute(
+            """
+            INSERT INTO settings_documents
+                (scope, yaml_text, data, schema_version, generation, bootstrapped_keys, updated_by, created_at, updated_at)
+            SELECT $2, yaml_text, data, schema_version, generation, bootstrapped_keys, updated_by, created_at, updated_at
+              FROM settings_documents WHERE scope = $1
+            """,
+            old,
+            new,
+        )
+        await conn.execute("DELETE FROM settings_documents WHERE scope = $1", old)
 
     async def lock(self, conn: asyncpg.Connection, scope: str) -> dict[str, Any]:
         """The row, locked for the caller's transaction.
