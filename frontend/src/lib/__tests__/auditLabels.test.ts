@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Dot, KeyRound, Plus } from "lucide-react";
-import { ACTION_ICONS, ACTION_LABELS, actionIcon, formatDetails } from "../auditLabels";
+import { ACTION_ICONS, ACTION_LABELS, actionIcon, actionLabel, formatDetails } from "../auditLabels";
 
 describe("auditLabels", () => {
   it("labels the issue events lifted from IssueActivityFeed", () => {
@@ -64,6 +64,18 @@ describe("auditLabels", () => {
     expect(formatDetails("settings.bootstrapped", { sections: { sample: ["enabled", "per_tick"] }, revision_id: 1 })).toBe(
       "sample.enabled, sample.per_tick",
     );
+  });
+
+  it("reads a job review row by its new name, and an older row under the name it had in the world, the same way", () => {
+    expect(actionLabel("job.review.evaluated")).toBe("Job evaluated");
+    expect(actionLabel("quest.evaluated"), "an older row keeps reading after the rename").toBe("Job evaluated");
+    expect(actionLabel("quest.sent_back")).toBe("Job sent back");
+    expect(actionLabel("quest.rejected")).toBe("Job rejected");
+    expect(actionLabel("quest.restarted")).toBe("Job run again");
+    expect(actionLabel("quest.dismissed")).toBe("Job dismissed");
+    const filters = Object.keys(ACTION_LABELS);
+    expect(filters, "the Audit filter offers the new names").toContain("job.review.dismissed");
+    expect(filters, "the old names are found by the new name's filter, not offered twice").not.toContain("quest.dismissed");
   });
 
   it("falls back to empty detail for unknown actions", () => {

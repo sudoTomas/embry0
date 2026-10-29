@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from embry0.api.v1 import merge_approvals, proposals, world
+from embry0.api.v1 import job_review, merge_approvals, proposals
 from embry0.services.proposals import Proposal
 
 SETTLED: list[tuple[str, str, str]] = []
@@ -73,19 +73,19 @@ class FakeWorld:
 @pytest.mark.parametrize(
     ("action", "fields", "outcome"),
     [
-        ("quest.evaluated", {"verdict": "merged"}, "merged"),
-        ("quest.evaluated", {"rating": "good"}, "good"),
-        ("quest.sent_back", {"verdict": "sent_back", "rating": "needs_work"}, "send_back"),
-        ("quest.rejected", {"verdict": "rejected", "rating": "bad"}, "reject"),
-        ("quest.restarted", {"followup_job_id": "job-2"}, "run_again"),
-        ("quest.dismissed", {}, "dismiss"),
+        ("job.review.evaluated", {"verdict": "merged"}, "merged"),
+        ("job.review.evaluated", {"rating": "good"}, "good"),
+        ("job.review.sent_back", {"verdict": "sent_back", "rating": "needs_work"}, "send_back"),
+        ("job.review.rejected", {"verdict": "rejected", "rating": "bad"}, "reject"),
+        ("job.review.restarted", {"followup_job_id": "job-2"}, "run_again"),
+        ("job.review.dismissed", {}, "dismiss"),
     ],
 )
-async def test_every_answer_on_a_finished_quest_settles_its_hand_off(
+async def test_every_answer_on_a_finished_job_settles_its_hand_off(
     monkeypatch: pytest.MonkeyPatch, action: Any, fields: dict[str, Any], outcome: str
 ) -> None:
-    monkeypatch.setattr(world, "request_actor", lambda _r: "ada@example.com")
-    await world._audit(request(world_repo=FakeWorld()), action, "job-1", **fields)
+    monkeypatch.setattr(job_review, "request_actor", lambda _r: "ada@example.com")
+    await job_review._audit(request(world_repo=FakeWorld()), action, "job-1", **fields)
     assert SETTLED == [("done:job-1", outcome, "ada@example.com")]
 
 

@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { Evaluation, Rating, Verdict } from "./jobReview";
 import { type RunWith, runWithBody } from "./runWith";
 import type { RecentEvent } from "./progression";
 import type { SlopMeterReading } from "./slopMeter";
@@ -9,8 +10,6 @@ import type { SlopMeterReading } from "./slopMeter";
 export type PartyState = "travelling" | "working" | "waiting" | "returning" | "defeated" | "recalled";
 export type CharacterState = PartyState | "idle" | "following";
 export type Outcome = "merged" | "pr_open" | "closed" | "done" | "failed" | "recalled" | "out";
-export type Rating = "good" | "needs_work" | "bad";
-export type Verdict = "merged" | "sent_back" | "rejected";
 
 export interface CharacterStats {
   quests: number;
@@ -211,15 +210,6 @@ export interface CharacterDetail extends WorldCharacter {
   quest_log: QuestLogEntry[];
 }
 
-export interface Evaluation {
-  rating: Rating | null;
-  verdict: Verdict | null;
-  note: string;
-  followup_job_id: string | null;
-  by: string | null;
-  at: string | null;
-}
-
 export interface QuestFallback {
   agent_type: string;
   model: string;
@@ -276,45 +266,6 @@ export async function fetchCharacter(agentType: string): Promise<CharacterDetail
 
 export async function fetchQuest(jobId: string): Promise<QuestScroll> {
   const { data } = await api.get<QuestScroll>(`/world/quests/${encodeURIComponent(jobId)}`);
-  return data;
-}
-
-export async function evaluateQuest(
-  jobId: string,
-  body: { rating?: Rating; verdict?: "merged"; note?: string },
-): Promise<Evaluation> {
-  const { data } = await api.put<Evaluation>(`/world/quests/${encodeURIComponent(jobId)}/evaluation`, body);
-  return data;
-}
-
-export async function sendQuestBack(jobId: string, notes: string, runWith?: RunWith): Promise<Evaluation> {
-  const { data } = await api.post<Evaluation>(`/world/quests/${encodeURIComponent(jobId)}/send-back`, {
-    notes,
-    ...runWithBody(runWith),
-  });
-  return data;
-}
-
-export async function rejectQuest(jobId: string, note: string, closePr: boolean): Promise<Evaluation & { closed_pr: boolean }> {
-  const { data } = await api.post<Evaluation & { closed_pr: boolean }>(`/world/quests/${encodeURIComponent(jobId)}/reject`, {
-    note,
-    close_pr: closePr,
-  });
-  return data;
-}
-
-/** Start the quest again as a new job, from what started it; the evaluation records the new job. */
-export async function runQuestAgain(jobId: string, runWith?: RunWith): Promise<Evaluation & { followup_job_id: string }> {
-  const { data } = await api.post<Evaluation & { followup_job_id: string }>(
-    `/world/quests/${encodeURIComponent(jobId)}/run-again`,
-    runWithBody(runWith),
-  );
-  return data;
-}
-
-/** Seen, nothing to do: the quest leaves the inbox without a rating. */
-export async function dismissQuest(jobId: string): Promise<Evaluation> {
-  const { data } = await api.post<Evaluation>(`/world/quests/${encodeURIComponent(jobId)}/dismiss`);
   return data;
 }
 

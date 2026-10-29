@@ -98,18 +98,26 @@ A code job carries its finish line, `done_when`, on `GET /jobs/{job_id}` ([done 
 
 A paused job that waits for an LLM account carries `account_wait` on `GET /jobs/{job_id}` (lists say only `paused`): `{"provider", "reason", "until", "model", "agent", "chosen", "watch", "mode"}`, with `until` in UTC ISO; `null` for every other job ([spent account waits](providers.md#spent-account-waits)). `POST /jobs/{job_id}/resume` on such a job goes on now whatever the `choice` ("Try now", answering `{"status": "resuming", "choice": "account_ready"}`), except `abandon`, which cancels it. It answers 409 when the job no longer waits, and 503 while embry0 shuts down. A job whose account is still spent is parked again. `mode` says how a job goes on: `resume` from its last checkpoint, or `relaunch` from its beginning, which is how qa, onboard and pr-review jobs and any job held before it started go on.
 
+### Reviewing a job
+
+A person's verdict on a finished job's work, and what they do with it. Each answer is stored as the job's evaluation, settles the job's [hand-off](#hand-offs) when it has one, and is audited as `job.review.evaluated`, `job.review.sent_back`, `job.review.rejected`, `job.review.restarted` or `job.review.dismissed`. Each answers with the evaluation as it now stands, `{"job_id", "rating", "verdict", "note", "followup_job_id", "by", "at"}`; `by` is who reviewed it, a [collaboration field](#who-changed-something-outside-the-audit-log). An unknown job answers 404, and a key limited to a [repository allowlist](#repository-allowlist) gets 403 for a job outside it.
+
+- `PUT /api/v1/jobs/{job_id}/evaluation` (`{"rating": "good"|"needs_work"|"bad", "verdict": "merged", "note"}`, any of them): 409 while the job has not finished, 422 with none of them.
+- `POST /api/v1/jobs/{job_id}/send-back` (`{"notes", "run_with"}`, 202): a pr-followup job on the job's GitHub pull request branch with the notes; 409 without one, or when the pull request is not open.
+- `POST /api/v1/jobs/{job_id}/reject` (`{"note", "close_pr"}`): records the rejection; with `close_pr`, which takes the admin tier, closes the pull request with the note as a comment. The answer adds `closed_pr`.
+- `POST /api/v1/jobs/{job_id}/run-again` (`{"run_with"}`, 202): starts the job again as a new job from its launch record (same repo, task, pipeline and settings; a Run with choice replaces the old one) and records the new job as its follow-up, so it leaves the review inbox. 409 while the job has not finished, or for a job with no launch record.
+- `POST /api/v1/jobs/{job_id}/dismiss`: seen, nothing to do; the job leaves the review inbox with no rating or verdict. 409 while it has not finished.
+
+**Deprecated paths.** Until 0.2.0 these five routes also answer at their old paths under the world: `PUT /api/v1/world/quests/{job_id}/evaluation`, and `POST /api/v1/world/quests/{job_id}/send-back`, `/reject`, `/run-again` and `/dismiss`. They run the same code and are marked `deprecated` in the OpenAPI schema. 0.2.0 removes them, so move a client to `/api/v1/jobs/{job_id}/…` now.
+
 ## The world
 
-The guild screen's API ([the guild](world.md), [spec](superpowers/specs/2026-10-25-world-design.md)). Sending a party is `POST /proposals/{id}/accept` or `POST /jobs`; these routes add only the reading and the judging.
+The guild screen's API ([the guild](world.md), [spec](superpowers/specs/2026-10-25-world-design.md)). Sending a party is `POST /proposals/{id}/accept` or `POST /jobs`, and judging the work is [reviewing the job](#reviewing-a-job); these routes add only the reading.
 
 - `GET /api/v1/world` (read): `characters` (with `state`: idle, travelling, working, waiting, returning, defeated, recalled or following; the `job_id` it is drawn at; `stats`; `idle_too_long`; `can_quest` and `quest_template`), `parties` (jobs out now and back in the last three minutes: `leader`, `party`, `working`, `lead_id`, `stuck`, `failure`; a defeated one also its `error_code` and `error_message`, the message as the job stored it, at most 2,000 characters; a waiting one held by a spent account its `account_wait`: `provider`, `reason`, `until`, `model`, `agent`, `chosen`), `quests` (the board: each proposal with `level` 1-126, `verb`, `creature`, `leader`; a proposal judged [slop](glossary.md#slop) is a `slop` lead: verb `Clean up`, creature `slop_ooze`, leader `slopmaster`), `lead_kinds` (every kind a quest can be, from the one lead-kind catalogue in `embry0/services/lead_kinds.py`, in its order: `id`, `label` (one, as a badge says it), `plural` (several, as a filter says them), `about` (what it is) and `found_by` (what brings it in); the dashboard names each kind from it, and falls back to the kind's id when it is absent), `dungeons` (one [Slop Dungeon](glossary.md#slop-dungeon) per repository and area with open slop or recent cleanups: `repo`, `area`, `score` 0-100, `open`, `cleaned` in the last 30 days, and `meter`, its [Slop-O-Meter](glossary.md#slop-o-meter) reading `{score, level, name, provisional, computed_at}` or `null`; an area at Spaghetti Bolognese or worse has one even with no open slop; worst first), `inbox` (finished quests a person sent, or that brought back a pull request, not yet judged, each with its `failure` and `error_code`), `loot`, `recent`, `regions`, `frontier`.
 - `GET /api/v1/world/characters/{agent_type}` (read): the character, its `stats` and its `quest_log` (each job it ran in: outcome, pull request, its share of cost and time, `rating`, `verdict`).
 - `GET /api/v1/world/quests/{job_id}` (read): the scroll: `report`, `failure`, `error_code`, `error_message`, `pr` (files, additions, deletions, from the forge when it answers in time), `merge_approval`, `verification`, `party`, `fallbacks` (the runs that ran on a [provider fallback](providers.md#provider-fallback) model: `agent_type`, `model`, `instead_of`, `provider`, `reason`, `until`, `runs`), `account_wait` (what a paused quest waits for, as on its party; `null` otherwise), `work_nature` (the slopometer's verdict on the job: `nature` bug, slop or noise, `slop_score`, `kinds`, `evidence`, and a Slopmaster cleanup's `cleanup` `{added, removed}`; `null` when unclassified), `xp` per character and skill (a slop cleanup's pull request is the Slopmaster's, and its merge adds `cleaned` experience), `cost_usd`, `seconds`, `evaluation`. A `failure` anywhere is the reason in words; an account failure (a spent usage window, a rate limit, a refused token) quotes the provider's own words when the job kept them (`the LLM account it ran on refused it: weekly limit · resets ...`).
-- `PUT /api/v1/world/quests/{job_id}/evaluation` (`{"rating": "good"|"needs_work"|"bad", "verdict": "merged", "note"}`, any of them): 409 while the quest is out.
-- `POST /api/v1/world/quests/{job_id}/send-back` (`{"notes", "run_with"}`, 202): a pr-followup job on the quest's GitHub pull request branch with the notes; 409 without one, or when the pull request is not open.
-- `POST /api/v1/world/quests/{job_id}/reject` (`{"note", "close_pr"}`): records the rejection; with `close_pr`, closes the pull request with the note as a comment.
-- `POST /api/v1/world/quests/{job_id}/run-again` (`{"run_with"}`, 202): starts the quest again as a new job from its launch record (same repo, task, pipeline and settings; a Run with choice replaces the old one) and records the new job as the quest's follow-up, so it leaves the inbox. 409 while the quest is still out, or for a job with no launch record.
-- `POST /api/v1/world/quests/{job_id}/dismiss`: seen, nothing to do; the quest leaves the inbox with no rating or verdict. 409 while it is still out.
+- The review routes that were here, `/api/v1/world/quests/{job_id}/evaluation`, `/send-back`, `/reject`, `/run-again` and `/dismiss`, are [a job's review routes](#reviewing-a-job) now; the old paths are deprecated aliases, removed in 0.2.0.
 
 ## Run with
 
@@ -342,7 +350,7 @@ Work embry0 asks a repository's owners to start ([the design](superpowers/specs/
 
 ## Decisions
 
-Every choice waiting on a person, a quest on offer or a quest to review, in one shape that the dashboard's cards and a chat's cards both render ([the design](superpowers/specs/2026-10-27-decisions-design.md)). Read only: the actions a decision lists stay on their own routes (owner proposals above, the world's quest routes, merge approvals).
+Every choice waiting on a person, a quest on offer or a quest to review, in one shape that the dashboard's cards and a chat's cards both render ([the design](superpowers/specs/2026-10-27-decisions-design.md)). Read only: the actions a decision lists stay on their own routes (owner proposals above, [a job's review routes](#reviewing-a-job), merge approvals).
 
 - `GET /api/v1/decisions?stage=offered|done|all&owner=&repo=&include_held=true&limit=100` (read): `{"decisions": [...], "count"}`, the worst first (`bad`, `warn`, `good`, `info`), then the newest. Each is `{"id", "stage", "kind", "kind_label", "verdict": {"label", "tone"}, "title", "repo", "area", "at", "facts": [{"label", "value", "tone"}], "why", "yes_starts", "actions", "owners", "held", "assigned_to", "links", "details"}`.
   - `id` is `offer:<proposal id>` for a quest on offer (the owner proposals feed, with its brief) or `done:<job id>` for a quest to review (the world's inbox: finished in the last 14 days and not yet rated).
@@ -969,7 +977,7 @@ curl "http://localhost:8200/api/v1/audit?action=qa.job_created&limit=50" \
 # Every action a row can carry, with its label (the dashboard's filter list)
 curl http://localhost:8200/api/v1/audit/actions \
   -H "Authorization: Bearer $EMBRY0_API_KEY"
-# -> {"actions": [{"action": "user.login", "label": "Signed in"}, ...]}
+# -> {"actions": [{"action": "user.login", "label": "Signed in", "replaced_by": null}, ...]}
 ```
 
 The action names live in one registry, `embry0/audit/actions.py`. Each
@@ -978,6 +986,16 @@ event has one name: a QA, onboard or pull request review job writes one
 whose actor is the job's actor. Rows written before that also carry a
 second, underscore-spelled copy (`qa_job_created`, `onboard_job_created`,
 `pr_review_job_created`); the registry does not list those.
+
+A row's action never changes, so a renamed action's older rows keep its old
+name. `GET /audit/actions` lists each old name last, with the label of the
+action that replaced it and that action's name in `replaced_by`. A filter
+by the new name finds the old rows too, and a filter by the old name finds
+only those. The review of a job is one such rename: rows written before it
+moved out of the world say `quest.evaluated`, `quest.sent_back`,
+`quest.rejected`, `quest.restarted` and `quest.dismissed`, which are now
+`job.review.evaluated`, `job.review.sent_back`, `job.review.rejected`,
+`job.review.restarted` and `job.review.dismissed`.
 
 ### Who changed something, outside the audit log
 
@@ -1004,7 +1022,8 @@ Collaboration fields name people working together and stay visible to
 every signed-in key: who started a job (`dispatched_by`) and set its
 done-when list, who answered or skipped a question, an issue's activity,
 who handed a decision over or closed a hand-off, who answered an ask, a
-map part's marks, sends and upload, and who evaluated a quest.
+map part's marks, sends and upload, and who reviewed a job (an
+evaluation's `by`).
 
 ## Sandbox visibility
 

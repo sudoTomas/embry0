@@ -1,20 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { dismissJob, evaluateJob, type Rating, rejectJob, runJobAgain, sendJobBack } from "@/api/jobReview";
 import { cancelJob } from "@/api/jobs";
 import type { RunWith } from "@/api/runWith";
-import {
-  acceptLead,
-  approveMerge,
-  dismissQuest,
-  evaluateQuest,
-  fetchCharacter,
-  fetchQuest,
-  fetchWorld,
-  rejectQuest,
-  runQuestAgain,
-  sendQuestBack,
-  writeQuest,
-  type Rating,
-} from "@/api/world";
+import { acceptLead, approveMerge, fetchCharacter, fetchQuest, fetchWorld, writeQuest } from "@/api/world";
 
 /** How often the guild hall reads the world: parties move between reads. */
 export const WORLD_POLL_MS = 5_000;
@@ -58,24 +46,24 @@ export function useWriteQuest() {
 
 export function useRateQuest() {
   return useWorldMutation((v: { jobId: string; rating?: Rating; verdict?: "merged"; note?: string }) =>
-    evaluateQuest(v.jobId, { rating: v.rating, verdict: v.verdict, note: v.note }),
+    evaluateJob(v.jobId, { rating: v.rating, verdict: v.verdict, note: v.note }),
   );
 }
 
 export function useSendBack() {
-  return useWorldMutation((v: { jobId: string; notes: string; runWith?: RunWith }) => sendQuestBack(v.jobId, v.notes, v.runWith));
+  return useWorldMutation((v: { jobId: string; notes: string; runWith?: RunWith }) => sendJobBack(v.jobId, v.notes, v.runWith));
 }
 
 export function useRejectQuest() {
-  return useWorldMutation((v: { jobId: string; note: string; closePr: boolean }) => rejectQuest(v.jobId, v.note, v.closePr));
+  return useWorldMutation((v: { jobId: string; note: string; closePr: boolean }) => rejectJob(v.jobId, v.note, v.closePr));
 }
 
 export function useRunAgain() {
-  return useWorldMutation((v: { jobId: string; runWith?: RunWith }) => runQuestAgain(v.jobId, v.runWith));
+  return useWorldMutation((v: { jobId: string; runWith?: RunWith }) => runJobAgain(v.jobId, v.runWith));
 }
 
 export function useDismissQuest() {
-  return useWorldMutation((jobId: string) => dismissQuest(jobId));
+  return useWorldMutation((jobId: string) => dismissJob(jobId));
 }
 
 export function useApproveMerge() {

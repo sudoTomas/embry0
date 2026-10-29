@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from embry0.api.actor_visibility import caller_scope
 from embry0.api.deps import get_audit_repo
 from embry0.api.session import TIER_ADMIN
-from embry0.audit.actions import AUDIT_ACTION_LABELS
+from embry0.audit.actions import AUDIT_ACTION_LABELS, RETIRED_AUDIT_ACTIONS
 from embry0.storage.repositories.audit import AuditRepository
 
 router = APIRouter()
@@ -43,6 +43,8 @@ class AuditListResponse(BaseModel):
 class AuditActionEntry(BaseModel):
     action: str
     label: str
+    #: For a retired name, which older rows carry, the action that replaced it; null for a current one.
+    replaced_by: str | None = None
 
 
 class AuditActionsResponse(BaseModel):
@@ -76,11 +78,17 @@ async def list_audit_actions() -> AuditActionsResponse:
     """Every action an audit row can carry, with its label: the Audit filter's list.
 
     Served from ``embry0.audit.actions``, the registry the writers are typed
-    against, so the filter can select every action that is recorded.
+    against, so the filter can select every action that is recorded. The
+    retired names older rows carry come last, each with the action that
+    replaced it (``replaced_by``) and that action's label; a filter by the new
+    name finds their rows too.
     """
-    return AuditActionsResponse(
-        actions=[AuditActionEntry(action=action, label=label) for action, label in AUDIT_ACTION_LABELS.items()]
-    )
+    current = [AuditActionEntry(action=action, label=label) for action, label in AUDIT_ACTION_LABELS.items()]
+    retired = [
+        AuditActionEntry(action=old, label=AUDIT_ACTION_LABELS[new], replaced_by=new)
+        for old, new in RETIRED_AUDIT_ACTIONS.items()
+    ]
+    return AuditActionsResponse(actions=[*current, *retired])
 
 
 @router.get("/audit")

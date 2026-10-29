@@ -27,6 +27,17 @@ import {
 } from "lucide-react";
 import { sentenceCase } from "./status";
 
+/** Names older rows carry and nothing writes any more, each with the action that replaced it (the backend's
+ * `RETIRED_AUDIT_ACTIONS`). Such a row reads as its replacement; it is not a filter of its own, because the
+ * audit API's filter by the new name finds it too. */
+export const RETIRED_ACTIONS: Record<string, string> = {
+  "quest.evaluated": "job.review.evaluated",
+  "quest.sent_back": "job.review.sent_back",
+  "quest.rejected": "job.review.rejected",
+  "quest.restarted": "job.review.restarted",
+  "quest.dismissed": "job.review.dismissed",
+};
+
 /** One lucide icon per audit action, drawn muted beside its label. Emoji used
  * to stand in here and rendered as empty boxes on a machine without a colour
  * emoji font; every other page already draws lucide icons. */
@@ -68,7 +79,7 @@ export const ACTION_ICONS: Record<string, LucideIcon> = {
 
 /** The icon for an audit action; an action the map does not know yet gets a dot. */
 export function actionIcon(action: string): LucideIcon {
-  return ACTION_ICONS[action] ?? Dot;
+  return ACTION_ICONS[RETIRED_ACTIONS[action] ?? action] ?? Dot;
 }
 
 export const ACTION_LABELS: Record<string, string> = {
@@ -105,12 +116,17 @@ export const ACTION_LABELS: Record<string, string> = {
   "progression.pack_draft_saved": "Game content draft saved",
   "progression.pack_draft_deleted": "Game content draft discarded",
   "progression.pack_reset": "Game content reset to the shipped default",
+  "job.review.evaluated": "Job evaluated",
+  "job.review.sent_back": "Job sent back",
+  "job.review.rejected": "Job rejected",
+  "job.review.restarted": "Job run again",
+  "job.review.dismissed": "Job dismissed",
 };
 
-/** The words for an audit action; an action this map does not know yet reads
- * in sentence case rather than as its identifier. */
+/** The words for an audit action; a retired name reads as the action that replaced it, and an action this map
+ * does not know yet reads in sentence case rather than as its identifier. */
 export function actionLabel(action: string): string {
-  return ACTION_LABELS[action] ?? sentenceCase(action);
+  return ACTION_LABELS[RETIRED_ACTIONS[action] ?? action] ?? sentenceCase(action);
 }
 
 export function formatDetails(action: string, details: Record<string, unknown>): string {

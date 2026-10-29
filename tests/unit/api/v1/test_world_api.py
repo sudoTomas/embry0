@@ -1,10 +1,12 @@
-"""The world API (spec 2026-10-25): the guild hall, a character's quest log, a quest's scroll and the player's evaluation."""
+"""The world API (spec 2026-10-25): the guild hall, a character's quest log and a quest's scroll.
+
+Reviewing the work moved to ``/jobs/{job_id}/…``: ``test_job_review_api.py``.
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -16,13 +18,11 @@ from embry0.services.progression import Character, Progression
 from embry0.services.progression_pack import Rules, default_rules
 from embry0.services.world import WorldCache
 
-HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 NOW = datetime.now(UTC)
 
 
 class FakeRepo:
     def __init__(self) -> None:
-        self.ratings: list[dict[str, Any]] = []
         self.quest_row: dict[str, Any] | None = {
             "job_id": "job-1",
             "repo": "acme/web",
@@ -121,10 +121,6 @@ class FakeRepo:
 
     async def merge_approval(self, job_id: str) -> dict[str, Any] | None:
         return {"id": "ma-1", "status": "pending", "pr_url": "https://github.com/acme/web/pull/7"}
-
-    async def rate(self, job_id: str, *, rated_by: str, **fields: Any) -> dict[str, Any]:
-        self.ratings.append({"job_id": job_id, "rated_by": rated_by, **fields})
-        return {"rated_by": rated_by, "rated_at": NOW, **{k: v for k, v in fields.items() if v is not None}}
 
 
 class FakeProgression:
@@ -269,153 +265,6 @@ async def test_a_quest_scroll_says_what_it_did_and_what_it_earned(app: Any) -> N
         }
     ], "the scroll names the run that ran on a stand-in, and why"
     assert scroll["account_wait"] is None, "a finished quest waits for nothing"
-
-
-async def test_the_player_rates_a_quest_once_it_is_back(app: Any) -> None:
-    async with await _client(app) as client:
-        empty = await client.put("/api/v1/world/quests/job-1/evaluation", json={}, headers=HEADERS)
-        rated = await client.put(
-            "/api/v1/world/quests/job-1/evaluation", json={"rating": "good", "note": "clean"}, headers=HEADERS
-        )
-        app.state.world_repo.quest_row["status"] = "running"
-        early = await client.put("/api/v1/world/quests/job-1/evaluation", json={"rating": "bad"}, headers=HEADERS)
-    assert empty.status_code == 422
-    assert rated.status_code == 200 and rated.json()["rating"] == "good"
-    assert early.status_code == 409
-    assert app.state.world_repo.ratings[0]["rating"] == "good" and app.state.world_repo.ratings[0]["note"] == "clean"
-
-
-async def test_sending_work_back_starts_a_follow_up_on_its_pull_request(app: Any) -> None:
-    dispatch = AsyncMock()
-    dispatch.start_followup = AsyncMock(return_value={"dispatched": True, "job_id": "job-2", "branch": "embry0/x"})
-    app.state.comment_dispatch = dispatch
-    async with await _client(app) as client:
-        sent = await client.post(
-            "/api/v1/world/quests/job-1/send-back", json={"notes": "Handle the empty list too."}, headers=HEADERS
-        )
-    assert sent.status_code == 202 and sent.json()["followup_job_id"] == "job-2"
-    args, kwargs = dispatch.start_followup.await_args
-    assert args == ("acme/web", 7)
-    assert "Handle the empty list too." in kwargs["request"] and kwargs["asks"] == "the notes"
-    assert kwargs["kind"] == "send_back" and kwargs["pipeline_config"] is None
-    assert app.state.world_repo.ratings[-1] == {
-        "job_id": "job-1",
-        "rated_by": app.state.world_repo.ratings[-1]["rated_by"],
-        "verdict": "sent_back",
-        "rating": "needs_work",
-        "note": "Handle the empty list too.",
-        "followup_job_id": "job-2",
-    }
-
-
-async def test_work_without_a_pull_request_cannot_be_sent_back_and_rejecting_records_it(app: Any) -> None:
-    app.state.world_repo.quest_row["pr_url"] = None
-    async with await _client(app) as client:
-        refused = await client.post("/api/v1/world/quests/job-1/send-back", json={"notes": "x"}, headers=HEADERS)
-        rejected = await client.post("/api/v1/world/quests/job-1/reject", json={"note": "not wanted"}, headers=HEADERS)
-    assert refused.status_code == 409
-    assert rejected.status_code == 200 and rejected.json()["closed_pr"] is False
-    assert app.state.world_repo.ratings[-1]["verdict"] == "rejected"
-
-
-async def test_closing_the_pull_request_on_reject_needs_admin(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Closing a pull request is as weighty as merging one, which already needs admin."""
-    from fastapi import HTTPException
-
-    from embry0.api.v1 import world as world_api
-
-    async def not_admin(request: Any) -> None:
-        raise HTTPException(status_code=403, detail="admin only")
-
-    monkeypatch.setattr(world_api, "ensure_admin", not_admin)
-    async with await _client(app) as client:
-        closing = await client.post(
-            "/api/v1/world/quests/job-1/reject", json={"note": "no", "close_pr": True}, headers=HEADERS
-        )
-        keeping = await client.post("/api/v1/world/quests/job-1/reject", json={"note": "no"}, headers=HEADERS)
-    assert closing.status_code == 403
-    assert keeping.status_code == 200 and keeping.json()["closed_pr"] is False
-
-
-class FakeJobs:
-    def __init__(self, row: dict[str, Any] | None) -> None:
-        self.row = row
-        self.created: list[dict[str, Any]] = []
-        self.updates: list[tuple[str, dict[str, Any]]] = []
-
-    async def get(self, job_id: str) -> dict[str, Any] | None:
-        return dict(self.row) if self.row and job_id == self.row["job_id"] else None
-
-    async def create(self, **fields: Any) -> str:
-        self.created.append(fields)
-        return "job-again"
-
-    async def update(self, job_id: str, **fields: Any) -> None:
-        self.updates.append((job_id, fields))
-
-
-def _failed_job(**overrides: Any) -> dict[str, Any]:
-    return {
-        "job_id": "job-1",
-        "repo": "acme/web",
-        "task": "[watcher] Fix the sender",
-        "issue_number": None,
-        "issue_id": "iss-1",
-        "pipeline_template": "full-magnum-opus",
-        "pipeline_config": {"agent_models_override": {"developer": "grok-4.7"}},
-        "sandbox_profile": None,
-        "context": {"type": "git", "repo": "acme/web"},
-        "job_kind": "code",
-        "area": "Billing",
-        "launch": {"runner": "workflow", "issue_id": "iss-1"},
-        **overrides,
-    }
-
-
-async def test_a_finished_quest_runs_again_as_a_new_job_from_its_launch_record(app: Any) -> None:
-    app.state.world_repo.quest_row.update(status="failed", pr_url=None, delivery_state=None)
-    app.state.jobs_repo = FakeJobs(_failed_job())
-    executor = MagicMock()
-    app.state.issue_executor = executor
-    async with await _client(app) as client:
-        again = await client.post("/api/v1/world/quests/job-1/run-again", json={}, headers=HEADERS)
-    assert again.status_code == 202 and again.json()["followup_job_id"] == "job-again"
-    created = app.state.jobs_repo.created[0]
-    assert created["repo"] == "acme/web" and created["task"] == "[watcher] Fix the sender"
-    assert created["issue_id"] == "iss-1" and created["pipeline_template"] == "full-magnum-opus"
-    assert created["pipeline_config"] == {"agent_models_override": {"developer": "grok-4.7"}}
-    assert app.state.jobs_repo.updates == [("job-again", {"job_kind": "code", "area": "Billing"})]
-    args, kwargs = executor.run_again.call_args
-    assert args == ("job-again", {"runner": "workflow", "issue_id": "iss-1"}) and kwargs["issue_id"] == "iss-1"
-    assert app.state.world_repo.ratings[-1]["followup_job_id"] == "job-again"
-    assert "verdict" not in app.state.world_repo.ratings[-1], "running it again is no verdict on the work"
-
-
-async def test_a_quest_still_out_or_without_a_launch_record_is_not_run_again(app: Any) -> None:
-    app.state.issue_executor = MagicMock()
-    app.state.world_repo.quest_row["status"] = "running"
-    app.state.jobs_repo = FakeJobs(_failed_job())
-    async with await _client(app) as client:
-        out = await client.post("/api/v1/world/quests/job-1/run-again", json={}, headers=HEADERS)
-        app.state.world_repo.quest_row["status"] = "failed"
-        app.state.jobs_repo = FakeJobs(_failed_job(launch=None))
-        old = await client.post("/api/v1/world/quests/job-1/run-again", json={}, headers=HEADERS)
-    assert out.status_code == 409 and old.status_code == 409
-    assert "launch record" in old.json()["detail"]
-    app.state.issue_executor.run_again.assert_not_called()
-
-
-async def test_dismissing_a_quest_takes_it_out_of_the_inbox_with_no_rating(app: Any) -> None:
-    app.state.world_repo.quest_row["status"] = "failed"
-    async with await _client(app) as client:
-        dismissed = await client.post("/api/v1/world/quests/job-1/dismiss", headers=HEADERS)
-        app.state.world_repo.quest_row["status"] = "running"
-        early = await client.post("/api/v1/world/quests/job-1/dismiss", headers=HEADERS)
-    assert dismissed.status_code == 200 and early.status_code == 409
-    assert app.state.world_repo.ratings[-1] == {
-        "job_id": "job-1",
-        "rated_by": app.state.world_repo.ratings[-1]["rated_by"],
-    }
 
 
 async def test_slop_is_cleaned_in_its_dungeon_by_the_slopmaster(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
