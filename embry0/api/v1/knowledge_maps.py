@@ -104,7 +104,7 @@ def _leads(request: Request) -> Any:
 
 
 def _slug(slug: str) -> str:
-    if not SLUG.match(slug):
+    if not SLUG.fullmatch(slug):
         raise HTTPException(status_code=404, detail="no such map")
     return slug
 

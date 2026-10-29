@@ -241,6 +241,18 @@ async def test_an_upload_is_stored_and_served_as_it_is_with_an_etag(app: FastAPI
     assert garbled.status_code == 400 and missing.status_code == 404
 
 
+async def test_a_slug_that_ends_in_a_newline_names_no_map(app: FastAPI) -> None:
+    """#232: ``/maps/shop%0A`` passed the slug check, as Python's ``$`` matches before a final newline."""
+    doc = {k: v for k, v in _doc().items() if k != "slug"}
+    async with await _client(app) as client:
+        put = await client.put("/api/v1/maps/shop%0A", content=json.dumps(doc), headers=HEADERS)
+        marks = await client.get("/api/v1/maps/shop%0A/marks")
+    stored = sorted(slug for _, slug in app.state.knowledge_maps_repo.maps)
+    assert put.status_code == 404, f"an upload to a slug ending in a newline must be refused: {put.status_code}"
+    assert stored == [], f"no map may be stored under a slug ending in a newline: {stored!r}"
+    assert marks.status_code == 404, f"a slug ending in a newline must name no map: {marks.status_code}"
+
+
 async def test_a_bloat_mark_keeps_a_weed_lead_open_and_taking_it_back_closes_it(app: FastAPI) -> None:
     async with await _client(app) as client:
         await _upload(client)
