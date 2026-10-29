@@ -93,6 +93,19 @@ describe("MergeApprovalsPage", () => {
     expect(screen.getByText("Merge approvals are off on this deployment")).toBeInTheDocument();
   });
 
+  it("names who decided, says someone else when the list hides them, and nothing while pending", () => {
+    const mine = { ...ROW, id: "ma-2", status: "approved", decided_by: "ops@example.test", decided_at: "2026-10-20T11:00:00Z" };
+    // Someone else's decision, as the API answers a caller that is not an admin (as GET /audit shows actors).
+    const theirs = { ...ROW, id: "ma-3", status: "rejected", decided_by: null, decided_at: "2026-10-20T12:00:00Z" };
+    mockUseMergeApprovals.mockReturnValue(ready({ items: [ROW, mine, theirs], mode: "on" }));
+    renderPage();
+    const [pending, decided, hidden] = screen.getAllByTestId("merge-approval-row");
+    expect(decided).toHaveTextContent("ops@example.test");
+    expect(hidden).toHaveTextContent("Someone else");
+    expect(pending).not.toHaveTextContent("Someone else");
+    expect(pending).toHaveTextContent("—");
+  });
+
   it("shows the error state with a retry", () => {
     const refetch = vi.fn();
     mockUseMergeApprovals.mockReturnValue({ data: undefined, isPending: false, isError: true, refetch });

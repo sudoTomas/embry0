@@ -4,7 +4,9 @@ The registry is the authoritative list of target repos embry0 knows. A repo
 appears here when registered explicitly, when its QA config is written, or
 via the migration-52 backfill from pre-registry configured surfaces. The
 detail endpoint aggregates the repo-scoped state that already lives in
-sibling tables so the UI can render one unified repo view.
+sibling tables so the UI can render one unified repo view. Who last wrote
+its test setup (``qa_config_updated_by``) is shown as ``GET /audit`` shows
+actors (:mod:`embry0.api.actor_visibility`).
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.api.v1.standards import standards_for_repo
@@ -127,7 +130,7 @@ async def get_repo(full_repo: str, request: Request) -> dict[str, Any]:
         **row,
         "has_qa_config": config_row is not None,
         "qa_config_updated_at": str(config_row["updated_at"]) if config_row else None,
-        "qa_config_updated_by": config_row["updated_by"] if config_row else None,
+        "qa_config_updated_by": (await actor_shown(request))(config_row["updated_by"]) if config_row else None,
         "preferences": prefs,
         "env_var_count": len(env_vars),
         "env_secret_count": sum(1 for v in env_vars if v.get("var_type") == "secret"),

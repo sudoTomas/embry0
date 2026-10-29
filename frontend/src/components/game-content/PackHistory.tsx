@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { usePack, usePackVersion, usePackVersions, useRestorePackVersion } from "@/hooks/useProgressionPack";
 import { PACK_SOURCE_LABELS, packProblems } from "@/lib/progressionPack";
+import { actorLabel } from "@/lib/actors";
 import { formatDateTime } from "@/lib/utils";
 import { PackProblems } from "./PackProblems";
 
@@ -104,7 +105,7 @@ export function PackHistory() {
                     {version.follows_default && <span className="pl-2 text-xs text-fg-muted">follows the shipped default</span>}
                   </p>
                   <p className="text-xs text-fg-muted [overflow-wrap:anywhere]" data-testid="pack-version-meta">
-                    {version.created_by || "Someone else"} · {PACK_SOURCE_LABELS[version.source] ?? version.source} ·{" "}
+                    {actorLabel(version.created_by)} · {PACK_SOURCE_LABELS[version.source] ?? version.source} ·{" "}
                     {version.activated_at ?? version.created_at
                       ? formatDateTime((version.activated_at ?? version.created_at) as string)
                       : "time not known"}

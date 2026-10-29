@@ -4,6 +4,7 @@ import type { HistoryEntry, HistorySource } from "@/api/repoHistory";
 import { toastApiError } from "@/api/errorToast";
 import { useRepoHistory, useUndoChange } from "@/hooks/useRepoHistory";
 import { Button } from "@/components/ui/Button";
+import { actorLabel } from "@/lib/actors";
 import { formatDateTime } from "@/lib/utils";
 
 const HOW: Record<HistorySource, string> = {
@@ -70,7 +71,7 @@ export function HistoryPanel({ repo }: { repo: string }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-fg">{entry.what}</p>
                 <p className="text-xs text-fg-muted" data-testid="history-entry-meta">
-                  {entry.actor || "Unknown"} · {HOW[entry.source] ?? entry.source} · {formatDateTime(entry.created_at)}
+                  {actorLabel(entry.actor)} · {HOW[entry.source] ?? entry.source} · {formatDateTime(entry.created_at)}
                 </p>
               </div>
               {entry.undoable ? (

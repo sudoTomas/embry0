@@ -29,6 +29,7 @@ from collections.abc import Iterable
 import structlog
 from fastapi import HTTPException, Request
 
+from embry0.api.deps import request_actor
 from embry0.audit.helpers import emit_audit
 from embry0.storage.repo_renames import normalize_repo_slug
 
@@ -103,7 +104,8 @@ async def enforce_repo_allowlist(request: Request, repo: str | None, *, action: 
     await emit_audit(
         getattr(request.app.state, "db", None),
         "apikey.repo_refused",
-        actor=f"key:{principal.key_name}",
+        # Recorded as every other row the key writes, so its owner finds it in /audit.
+        actor=request_actor(request),
         details={"key_id": principal.key_id, "key_name": principal.key_name, "repo": shown, "action": action},
         audit_log_path=getattr(config, "audit_log_path", None),
     )

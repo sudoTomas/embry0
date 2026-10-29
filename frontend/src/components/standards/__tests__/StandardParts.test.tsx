@@ -95,5 +95,7 @@ describe("VersionsTable", () => {
     expect(rows[0]).toHaveTextContent("Active");
     expect(rows[0]).toHaveTextContent("admin@example.com");
     expect(rows[1]).toHaveTextContent("Superseded");
+    // No writer named: someone else's version, as the API answers a caller that is not an admin.
+    expect(rows[1]).toHaveTextContent("Someone else");
   });
 });

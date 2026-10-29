@@ -11,8 +11,8 @@ export interface HistoryEntry {
   surface: HistorySurface;
   /** The change in plain words, written by the server. */
   what: string;
-  /** Who made it; empty when not known. */
-  actor: string;
+  /** Who made it; null for someone else unless the caller is an admin (as `GET /audit` shows actors), empty when not known. */
+  actor: string | null;
   source: HistorySource;
   created_at: string;
   /** Only the newest change of a setting, while it is still what is stored. */

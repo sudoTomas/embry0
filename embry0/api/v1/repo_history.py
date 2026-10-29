@@ -9,6 +9,10 @@ An undo is itself recorded, with source ``restore``, so it can be undone too.
 Operator tier, the same as the writes it reverses: the router is mounted with
 ``auth_deps``, which already refuses a read-scope key on POST. Undo also
 checks the calling key's repository allowlist first.
+
+Who made each change (``actor``) is shown as ``GET /audit`` shows actors
+(:mod:`embry0.api.actor_visibility`): an admin sees everyone, anyone else
+their own and ``null`` for anyone else's.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import yaml
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import ValidationError
 
+from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas.repo_preferences import RepoPreferencesUpdateRequest
@@ -114,6 +119,7 @@ async def get_history(full_repo: str, request: Request, limit: int = Query(50, g
         "qa_config": await _current(request, full_repo, "qa_config"),
         "preferences": await _current(request, full_repo, "preferences"),
     }
+    shown = await actor_shown(request)
     # Newest first, so the first row of a surface is that surface's newest change.
     newest: dict[str, int] = {}
     for row in rows:
@@ -126,7 +132,7 @@ async def get_history(full_repo: str, request: Request, limit: int = Query(50, g
                 "id": row["id"],
                 "surface": row["surface"],
                 "what": change_what(row["surface"], row["before"], row["after"]),
-                "actor": row["actor"],
+                "actor": shown(row["actor"]),
                 "source": row["source"],
                 "created_at": row["created_at"].isoformat(),
                 "undoable": undoable,

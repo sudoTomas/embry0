@@ -92,6 +92,7 @@ prefix and all (`embry0/api/deps.py:MERGE_SCOPE_MUTATIONS`, read through
 
 - `GET /api/v1/merge-approvals?status=pending` — asks, newest first, plus the current `mode`.
 - `GET /api/v1/merge-approvals/{id}`
+- Who decided (`decided_by`) follows [the audit log's rule](api.md#who-changed-something-outside-the-audit-log).
 - `POST /api/v1/merge-approvals/{id}/decide`, two forms on one route →
   `{outcome: merged|would_merge|rejected|refused|stale|failed|already_decided, status, detail, …}`:
   - the relay's: `{decision: approve|reject, decided_by, chat_id}`, with `chat_id` checked against `MERGE_APPROVAL_CHAT_ID`; accepted from the `merge`-scope key, the master key or an admin, since `decided_by` names whoever answered (an operate key or an operator session gets 403 pointing at the dashboard's form);

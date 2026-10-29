@@ -355,24 +355,39 @@ def unidentified_caller_tier(request: Request) -> str:
     raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
 
 
-def request_actor(request: Request) -> str:
-    """Audit actor, named from who authenticated.
+def own_actor(request: Request) -> str | None:
+    """The actor a request is recorded under when it names someone; None for the master key or no identity.
 
-    Session email > key owner email > key name > the master key. Never the
-    client address: behind the dashboard proxy every master-key request comes
-    from the proxy, so an address named no one. A request with no identity
-    (only AUTH_DEV_MODE lets one in) is ``embry0:anonymous``.
+    Session email > key owner email > key name > key id. The one place an
+    actor string is built from a caller: :func:`request_actor` records it,
+    and :mod:`embry0.api.actor_visibility` matches it, so a caller always
+    sees what it wrote itself.
     """
     session = getattr(request.state, "session", None)
     if session is not None and session.email:
         return str(session.email)
     principal = getattr(request.state, "principal", None)
-    if principal is not None and principal.kind == "master":
-        return dispatch_actors.MASTER_KEY
     if principal is not None and principal.kind == "key":
         if principal.email:
             return str(principal.email)
         return f"key:{principal.key_name or principal.key_id}"
+    return None
+
+
+def request_actor(request: Request) -> str:
+    """Audit actor, named from who authenticated.
+
+    :func:`own_actor`, else the master key. Never the client address: behind
+    the dashboard proxy every master-key request comes from the proxy, so an
+    address named no one. A request with no identity (only AUTH_DEV_MODE lets
+    one in) is ``embry0:anonymous``.
+    """
+    actor = own_actor(request)
+    if actor is not None:
+        return actor
+    principal = getattr(request.state, "principal", None)
+    if principal is not None and principal.kind == "master":
+        return dispatch_actors.MASTER_KEY
     return dispatch_actors.ANONYMOUS
 
 

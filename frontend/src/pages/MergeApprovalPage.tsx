@@ -13,6 +13,7 @@ import { MergeApprovalsOff } from "@/components/merge-approvals/MergeApprovalsOf
 import { PageError } from "@/components/PageError";
 import { CHECKS_TONES, VERDICT_LABELS, VERDICT_TONES, approvalTitle, decidedVia, detailSentence } from "@/lib/mergeApprovals";
 import { sentenceCase, statusLabel, statusTone } from "@/lib/status";
+import { actorInText } from "@/lib/actors";
 import { formatDateTime } from "@/lib/utils";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -73,8 +74,8 @@ function Decision({ row }: { row: MergeApproval }) {
     return (
       <>
         <p className="text-sm text-fg-secondary" data-testid="merge-approval-decided">
-          {row.decided_by
-            ? `Decided by ${row.decided_by} ${decidedVia(row.chat_id)}${row.decided_at ? ` on ${formatDateTime(row.decided_at)}` : ""}.`
+          {row.decided_by || row.decided_at
+            ? `Decided by ${actorInText(row.decided_by)} ${decidedVia(row.chat_id)}${row.decided_at ? ` on ${formatDateTime(row.decided_at)}` : ""}.`
             : `${statusLabel(row.status)}.`}
           {row.detail && ` ${detailSentence(row.detail)}`}
         </p>

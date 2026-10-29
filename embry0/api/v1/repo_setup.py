@@ -13,7 +13,8 @@ is the checklist the repo page opens on, built from stored facts only.
 Operator tier for every write, the same as saving a test setup: the router
 is mounted with ``auth_deps``, which refuses a read-scope key on POST. Every
 write also checks the calling key's repository allowlist before it reads or
-changes anything.
+changes anything. Who asked for a proposal and who decided it are shown as
+``GET /audit`` shows actors (:mod:`embry0.api.actor_visibility`).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
@@ -125,7 +127,7 @@ async def get_setup_proposal(full_repo: str, request: Request) -> dict[str, Any]
     view = await proposal_view(request.app.state, full_repo)
     if view is None:
         raise HTTPException(status_code=404, detail="embry0 has not proposed a test setup for this repository.")
-    return view
+    return with_actors(view, await actor_shown(request), "created_by", "decided_by")
 
 
 @router.post("/repos/{full_repo:path}/setup/proposal/{proposal_id}/apply")

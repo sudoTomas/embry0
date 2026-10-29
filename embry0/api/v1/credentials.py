@@ -1,4 +1,8 @@
-"""Credential registry endpoints (spec 2026-09-29 §3.8). No reveal endpoint, by design."""
+"""Credential registry endpoints (spec 2026-09-29 §3.8). No reveal endpoint, by design.
+
+Who made a binding (``created_by``) is shown as ``GET /audit`` shows actors
+(:mod:`embry0.api.actor_visibility`).
+"""
 
 from __future__ import annotations
 
@@ -19,6 +23,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.schemas.credentials import (
     BindingsSet,
@@ -161,6 +166,12 @@ async def _out_with_count(request: Request, row: dict[str, Any]) -> CredentialOu
     return _out(dict(row, binding_count=len(bound)))
 
 
+async def _bindings_view(request: Request, bindings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bindings as a reader sees them: who made each, as ``GET /audit`` shows actors."""
+    shown = await actor_shown(request)
+    return [with_actors(b, shown, "created_by") for b in bindings]
+
+
 # Literal paths first: /credentials/resolve, /credentials/bindings,
 # /credentials/import-env and /credentials/xai/device-login must never be
 # captured by /credentials/{credential_id}.
@@ -248,7 +259,8 @@ async def get_bindings(
     scope_kind: Literal["repo", "owner", "host", "global"] = Query(...),
     scope_value: str = Query(default=""),
 ) -> dict[str, Any]:
-    return {"bindings": await _state(request).credentials_repo.bindings_for_scope(scope_kind, scope_value.strip())}
+    bindings = await _state(request).credentials_repo.bindings_for_scope(scope_kind, scope_value.strip())
+    return {"bindings": await _bindings_view(request, bindings)}
 
 
 @router.put("/credentials/bindings", dependencies=[require_admin])
@@ -623,7 +635,7 @@ async def get_repo_credentials(full_repo: str, request: Request) -> dict[str, An
         }
     if llm:
         effective["llm"] = llm
-    return {"repo": scope_value, "bindings": bindings, "effective": effective}
+    return {"repo": scope_value, "bindings": await _bindings_view(request, bindings), "effective": effective}
 
 
 @router.put("/repos/{full_repo:path}/credentials", dependencies=[require_admin])

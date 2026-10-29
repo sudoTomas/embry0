@@ -273,6 +273,21 @@ async def test_one_revision_shows_both_texts_and_its_changes(client) -> None:
     assert (await client.get(f"{URL}/revisions/999999")).status_code == 404
 
 
+async def test_embry0_s_own_import_is_shown_to_every_key(app, client) -> None:
+    """The boot import is recorded under embry0's own actor, which names no person, so a read key sees it."""
+    from embry0.settings.bootstrap import BOOTSTRAP_ACTOR
+
+    await import_env_once(app.state.settings, app.state.config)
+    reader = _as(READER)
+    listed = (await client.get(f"{URL}/revisions", headers=reader)).json()["revisions"]
+    assert [r["actor"] for r in listed] == [BOOTSTRAP_ACTOR], f"a read key must see embry0's own actor: {listed}"
+    assert (await client.get(URL, headers=reader)).json()["updated_by"] == BOOTSTRAP_ACTOR
+    sample = next(
+        s for s in (await client.get(f"{URL}/effective", headers=reader)).json()["sections"] if s["name"] == "sample"
+    )
+    assert {k["key"]: k["set_by"] for k in sample["keys"]}["remind_hours"] == BOOTSTRAP_ACTOR
+
+
 # ---- effective values and the schema -----------------------------------------------------
 
 

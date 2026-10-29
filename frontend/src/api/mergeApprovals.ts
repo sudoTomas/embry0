@@ -72,6 +72,7 @@ export interface MergeApproval {
   case_id: string | null;
   status: MergeApprovalStatus | string;
   dry_run: boolean;
+  /** Who decided; null for someone else unless the caller is an admin (as `GET /audit` shows actors). */
   decided_by: string | null;
   decided_at: string | null;
   /** The chat the answer came from, or the literal `dashboard`. */

@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/Badge";
 import { TABLE_BOX } from "@/components/orgs/styles";
 import { formatRoleValue, isPlainColour, typeScale, type RoleEntry, type TypeStep } from "@/lib/standards";
 import { statusLabel, statusTone } from "@/lib/status";
+import { actorLabel } from "@/lib/actors";
 import { formatDate } from "@/lib/utils";
 
 /**
@@ -157,7 +158,7 @@ export function VersionsTable({ versions }: { versions: readonly Standard[] }) {
               <td className="w-px">
                 <Badge tone={statusTone(v.status)}>{statusLabel(v.status)}</Badge>
               </td>
-              <td className="hidden font-mono text-xs text-fg-secondary sm:table-cell">{v.created_by ?? "-"}</td>
+              <td className="hidden font-mono text-xs text-fg-secondary sm:table-cell">{actorLabel(v.created_by)}</td>
               <td className="whitespace-nowrap text-fg-muted">{v.created_at ? formatDate(v.created_at) : "-"}</td>
             </tr>
           ))}
