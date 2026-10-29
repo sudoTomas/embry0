@@ -12,7 +12,9 @@ import pytest
 from embry0.services.healing.confirm_sweep import ConfirmHealedSweep
 from embry0.storage.repositories.log_signatures import SignatureRow
 
-NOW = datetime.now(UTC)
+# A fixed instant, handed to the sweep as its clock: every window below is
+# measured from it, however long after import the suite reaches a test.
+NOW = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
 
 
 def _case(**over: Any) -> dict[str, Any]:
@@ -84,6 +86,7 @@ def _sweep(cases, row, *, comments=None, retry=(), **cfg):
         signatures_repo=signatures,
         config=SimpleNamespace(watcher_repo="owner/repo", **cfg),
         commenter=_comment if comments is not None else None,
+        clock=lambda: NOW,
     )
     return sweep, service
 
@@ -231,11 +234,10 @@ async def test_the_verdict_is_commented_on_the_ticket() -> None:
 
 @pytest.mark.asyncio
 async def test_the_comment_states_elapsed_and_window_in_whole_minutes() -> None:
-    now = datetime.now(UTC)  # not NOW: the suite may reach this test minutes after import
-    deployed = now - timedelta(hours=5)
+    deployed = NOW - timedelta(hours=5)
     case = _case(deployed_at=deployed, deploy_marker_at=deployed)
     comments: list[tuple[str, str]] = []
-    sweep, _ = _sweep([case], _row(last_seen_at=now - timedelta(hours=7)), comments=comments)
+    sweep, _ = _sweep([case], _row(last_seen_at=NOW - timedelta(hours=7)), comments=comments)
     await sweep.run_once()
     _key, body = comments[0]
     assert "Checked 300 minutes after the deploy (def456)" in body, body

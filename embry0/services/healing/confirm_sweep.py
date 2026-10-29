@@ -33,6 +33,7 @@ case stays ``verified`` for a person to decide.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -83,6 +84,7 @@ class ConfirmHealedSweep:
         config: Any,
         commenter: Any = None,
         metrics: Any = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._repo = cases_repo
         self._cases = cases_service
@@ -90,6 +92,9 @@ class ConfirmHealedSweep:
         self._config = config
         self._commenter = commenter
         self._metrics = metrics
+        # When a case is judged: the wall clock, or a test's fixed instant, so
+        # a window is measured from the same now the test's times are.
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     @property
     def enabled(self) -> bool:
@@ -206,7 +211,7 @@ class ConfirmHealedSweep:
         prior_rate = getattr(row, "rate_per_hour", None) if row is not None else None
         plan = plan_verification(
             deployed_at=deployed_at,
-            now=datetime.now(UTC),
+            now=self._clock(),
             prior_rate_per_hour=prior_rate,
         )
         # A case with no signature can never be counted, so waiting out a
