@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import pytest
 
 from embry0.storage.repositories.proposals import ProposalsRepository
@@ -71,15 +73,20 @@ async def test_each_repo_s_newest_completed_audit(db_with_migrations) -> None:
 async def _audits(db, *rows: tuple[str, str, str, int | None]) -> dict[str, str]:
     """Context-audit jobs ``(job_id, repo, status, finished days ago)``; None for one that has not finished.
 
+    A pull request that merged or closed did so, by the forge's clock, when its audit finished.
     Answers the audit whose findings each repository offers, repository to job id.
     """
     for job_id, repo, status, days_ago in rows:
         await db.execute(
             """
-            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, result_summary, created_at, finished_at)
+            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, result_summary, created_at, finished_at,
+                              delivery_state, delivery_state_at, updated_at)
             VALUES ($1, $2, 't', $3, 'context-audit', 'Stale: 1',
                     NOW() - make_interval(days => COALESCE($4, 0)::int, hours => 1),
-                    NOW() - make_interval(days => $4::int))
+                    NOW() - make_interval(days => $4::int),
+                    CASE $3 WHEN 'pr_merged' THEN 'merged' WHEN 'pr_closed' THEN 'closed' ELSE 'none' END,
+                    CASE WHEN $3 IN ('pr_merged', 'pr_closed') THEN NOW() - make_interval(days => $4::int) END,
+                    COALESCE(NOW() - make_interval(days => $4::int), NOW()))
             """,
             job_id,
             repo,
@@ -133,6 +140,109 @@ async def test_a_completed_newest_audit_is_offered_over_an_older_merged_one(db_w
     assert offered == {"o/a": "job-new"}, f"the newest completed audit's findings are offered: {offered}"
 
 
+#: Who the proposals route dispatches a finding's fix job as.
+FIX_BY = "embry0:proposals"
+
+
+class _Run(NamedTuple):
+    """One context-audit job of ``repo``, its times in hours before now."""
+
+    job_id: str
+    status: str
+    started: int
+    finished: int
+    #: When its pull request merged or closed, by the forge's clock; None for one that did neither.
+    settled: int | None = None
+    by: str = "embry0:context-audit"
+    repo: str = "o/r"
+    #: False for a merge or close merge sync recorded without the forge's time, at ``settled``.
+    forge_time: bool = True
+
+
+async def _offered_of(db, *runs: _Run) -> str | None:
+    """The audit whose findings ``o/r`` offers, after ``runs``; None for none."""
+    for run in runs:
+        delivery = {"pr_merged": "merged", "pr_closed": "closed"}.get(run.status, "none")
+        await db.execute(
+            """
+            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, dispatched_by, result_summary,
+                              created_at, finished_at, delivery_state, delivery_state_at, updated_at)
+            VALUES ($1, $2, 't', $3, 'context-audit', $4, 'Stale: 1',
+                    NOW() - make_interval(hours => $5), NOW() - make_interval(hours => $6),
+                    $7, CASE WHEN $9 THEN NOW() - make_interval(hours => $8::int) END,
+                    NOW() - make_interval(hours => COALESCE($8::int, $6)))
+            """,
+            run.job_id,
+            run.repo,
+            run.status,
+            run.by,
+            run.started,
+            run.finished,
+            delivery,
+            run.settled,
+            run.forge_time,
+        )
+    return {a["repo"]: a["job_id"] for a in await ProposalsRepository(db).audits()}.get("o/r")
+
+
+@pytest.mark.parametrize(
+    ("runs", "expected"),
+    [
+        pytest.param([_Run("a1", "completed", 10, 9)], "a1", id="newest-completed"),
+        pytest.param([_Run("a1", "pr_merged", 10, 9, 8)], None, id="newest-merged"),
+        pytest.param(
+            [_Run("a1", "pr_merged", 10, 9, 8), _Run("a2", "completed", 7, 6)],
+            "a2",
+            id="started-after-the-merge",
+        ),
+        # #236, the first order: a2 started before a1's pull request merged, and finished after it.
+        pytest.param(
+            [_Run("a1", "pr_merged", 10, 9, 5), _Run("a2", "completed", 7, 3)],
+            None,
+            id="started-before-an-earlier-audit-merged",
+        ),
+        # #236, the second order: a1 started before a2, which merged, and finished after it.
+        pytest.param(
+            [_Run("a1", "completed", 10, 3), _Run("a2", "pr_merged", 8, 6, 5)],
+            None,
+            id="started-before-the-merged-audit",
+        ),
+        pytest.param(
+            [_Run("a1", "pr_merged", 10, 9, 5), _Run("a2", "completed", 7, 3), _Run("a3", "completed", 2, 1)],
+            "a3",
+            id="the-next-audit-after-the-merge",
+        ),
+        pytest.param(
+            [_Run("a1", "pr_closed", 10, 9, 5), _Run("a2", "completed", 7, 3)],
+            "a2",
+            id="closed-unmerged-while-it-ran",
+        ),
+        pytest.param(
+            [_Run("a1", "completed", 10, 3), _Run("x1", "pr_merged", 8, 6, 5, repo="o/other")],
+            "a1",
+            id="another-repository-merged-while-it-ran",
+        ),
+        # Without the forge's time a merge counts from when merge sync recorded it, which is no earlier
+        # than the merge, so an unknown time can only offer less.
+        pytest.param(
+            [_Run("a1", "pr_merged", 10, 9, 5, forge_time=False), _Run("a2", "completed", 7, 3)],
+            None,
+            id="merged-with-no-forge-time-while-it-ran",
+        ),
+        # #240: a fix job's merge changed the one claim its owner accepted, not the audit's others.
+        pytest.param(
+            [_Run("a1", "completed", 10, 9), _Run("fix", "pr_merged", 8, 6, 5, by=FIX_BY)],
+            "a1",
+            id="a-fix-job-merged-while-it-ran",
+        ),
+    ],
+)
+async def test_an_audit_a_merge_overlapped_offers_no_findings(db_with_migrations, runs, expected) -> None:
+    """#236: a merge after an audit started may have fixed what it found, whichever audit's pull request it was."""
+    offered = await _offered_of(db_with_migrations, *runs)
+    assert offered == expected, f"offered {offered!r}, expected {expected!r}, after {runs}"
+
+
 async def test_owners_and_the_newest_answer(db_with_migrations) -> None:
     db = db_with_migrations
     await db.execute(
@@ -147,9 +257,6 @@ async def test_owners_and_the_newest_answer(db_with_migrations) -> None:
     decision = (await repo.decisions())["issue:i-1"]
     assert decision.decision == "accept" and decision.job_id == "job-9" and decision.decided_by == "octo"
 
-
-#: Who the proposals route dispatches a finding's fix job as.
-FIX_BY = "embry0:proposals"
 
 _AUDIT_REPORT = """Stale: 2
 Files: 1

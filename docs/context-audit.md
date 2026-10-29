@@ -142,12 +142,13 @@ One is open per repository at a time: while an earlier audit's pull request is o
 Each row of an audit's findings table is also offered to the repository's owners as an [owner proposal](api.md#owner-proposals) of kind `finding`; accepting one starts a job narrowed to that file, which opens a pull request for that claim. The findings offered are those of the repository's newest audit that finished its work:
 
 - **Its pull request merged:** none, until the repository's next audit finishes. The pull request may have fixed any of them, so they are not offered, and an older audit's findings are never offered in their place: they may be fixed too. A merge changes the instruction files, so with the schedule on the repository is due again at once.
+- **Another audit's pull request merged after it started:** none either, until an audit that started after that merge finishes. It read the instruction files before the merge, so the merge may have fixed what it found. That happens when it ran while an earlier audit's pull request merged, and when it started before an audit that finished and merged ahead of it. A merge counts from when the forge says it merged; one recorded without the forge's time counts from its job's last change, which is no earlier.
 - **Its pull request was closed unmerged:** its findings are still offered. Nothing reached the default branch through it, so the claims still stand; an owner who disagrees with one declines it.
-- **It completed, with no pull request or one still open:** its findings are offered.
+- **It completed, with no pull request or one still open,** and no other audit's pull request merged since it started: its findings are offered.
 
 An audit that failed, or one that has not finished, is passed over: the feed keeps to the newest audit that finished its work, as above.
 
-A finding's fix job is no audit, here as for the schedule, so the feed reads past it. While it runs, once it completes, and once its pull request merges or closes, the audit before it is still the newest, and that audit's findings are still offered, all but the one the job fixes: its owner answered that one by accepting it. The fix job's merged pull request changed that one claim, so it is not the audit's pull request merging, and its own report is never offered.
+A finding's fix job is no audit, here as for the schedule, so the feed reads past it. While it runs, once it completes, and once its pull request merges or closes, the audit before it is still the newest, and that audit's findings are still offered, all but the one the job fixes: its owner answered that one by accepting it. The fix job's merged pull request changed that one claim, so it is neither the audit's pull request merging nor another audit's, and its own report is never offered.
 
 ## From an MCP client
 
