@@ -43,8 +43,18 @@ export function usePack() {
   return useQuery({ queryKey: ACTIVE_KEY, queryFn: fetchPack });
 }
 
+/**
+ * The draft, or null. The pack names its draft (`draft_version`), so the draft is read only when
+ * there is one: a deployment without a draft makes no request that answers 404.
+ */
 export function usePackDraft() {
-  return useQuery({ queryKey: DRAFT_KEY, queryFn: fetchPackDraft });
+  const pack = usePack();
+  const draftVersion = pack.data?.draft_version ?? null;
+  return useQuery({
+    queryKey: [...DRAFT_KEY, draftVersion],
+    queryFn: () => (draftVersion === null ? Promise.resolve(null) : fetchPackDraft()),
+    enabled: pack.isSuccess,
+  });
 }
 
 export function usePackVersions() {

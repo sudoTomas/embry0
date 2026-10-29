@@ -154,6 +154,20 @@ describe("GameContentTab", () => {
     expect(await screen.findByTestId("pack-warnings")).toHaveTextContent("shell:plain trains no skill");
   });
 
+  it("asks for the draft only when the pack names one, so no request answers 404", async () => {
+    renderTab();
+    await textarea();
+    expect(api.fetchPackDraft, "the pack names no draft, yet the tab asked for one").not.toHaveBeenCalled();
+  });
+
+  it("reads the draft the pack names", async () => {
+    api.fetchPack.mockResolvedValue(pack({ draft_version: 7 }));
+    api.fetchPackDraft.mockResolvedValue(draft());
+    renderTab();
+    await waitFor(() => expect(api.fetchPackDraft).toHaveBeenCalledTimes(1));
+    expect(await textarea()).toHaveValue(draft().text);
+  });
+
   it("checks a text: the sections it changes, its warnings and the text diff", async () => {
     api.checkPack.mockResolvedValue({
       would_change: true,
@@ -318,7 +332,7 @@ describe("GameContentTab", () => {
     renderTab();
     const rows = await screen.findAllByTestId("pack-version");
     expect(within(rows[0]).getByTestId("pack-version-meta")).toHaveTextContent("Someone else");
-    expect(screen.getByTestId("pack-meta")).not.toHaveTextContent("activated by");
+    expect(await screen.findByTestId("pack-meta")).not.toHaveTextContent("activated by");
   });
 
   it("says when someone else changed the draft, and keeps the text", async () => {
