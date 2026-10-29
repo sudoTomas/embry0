@@ -2,8 +2,9 @@
 
 Three kinds are read from rows other features write: a watcher case at
 stage ``tracked`` (accepting it runs the case's acceptance), an issue that is
-open with no job (accepting it sends it to triage), and one row of a
-completed context audit's findings table (accepting it starts a fix job for
+open with no job (accepting it sends it to triage), and one row of the
+findings table of a repository's newest context audit that finished its work,
+none once that audit's pull request merged (accepting it starts a fix job for
 that file, which opens a pull request). The rest are leads, work embry0's
 finders found by itself (spec 2026-10-25, ``embry0.services.leads``): a
 backlog ticket, failing CI, an alert, a flaky check, unanswered review

@@ -60,6 +60,7 @@ from embry0.services.organizations import (
     context_audit_open_prs,
 )
 from embry0.services.run_with import apply_run_with
+from embry0.storage.schemas import FINISHED_WELL_STATUSES
 
 logger = structlog.get_logger(__name__)
 
@@ -135,7 +136,8 @@ class Attempt:
     """The newest context audit of a repository, as the due rule reads it."""
 
     started_at: datetime
-    #: When it completed; None for any other outcome, which counts from its start.
+    #: When it finished its work (:data:`~embry0.storage.schemas.FINISHED_WELL_STATUSES`: completed,
+    #: its pull request merged or closed since); None for any other outcome, which counts from its start.
     finished_at: datetime | None = None
     fingerprint: str | None = None
     head_sha: str | None = None
@@ -151,7 +153,7 @@ class Attempt:
         recorded = {key: value if isinstance(value, str) and value else None for key, value in config.items()}
         return cls(
             started_at=started,
-            finished_at=_when(row.get("finished_at")) if row.get("status") == "completed" else None,
+            finished_at=_when(row.get("finished_at")) if row.get("status") in FINISHED_WELL_STATUSES else None,
             fingerprint=recorded.get("context_fingerprint"),
             head_sha=recorded.get("head_sha"),
         )
@@ -225,7 +227,8 @@ def due_reason(
     is ``days`` old and the branch head moved since; else :data:`CURRENT`.
     The age is read as
     :func:`~embry0.services.loop_schedule.seconds_until_next_run` reads its
-    anchors: a completed audit from when it finished, any other (failed,
+    anchors: an audit that finished its work (completed, its pull request
+    merged or closed since) from when it finished, any other (failed,
     cancelled, refused before it existed) from when it started, so a failure
     waits a full interval like a success. A job the budget gate refused is
     never ``newest``: it did no work.
@@ -361,7 +364,7 @@ class RepoState:
     refused_at: datetime | None
     reason: str
     #: The counts the newest job's report starts with (:func:`report_counts`),
-    #: when it completed and they were asked for.
+    #: when it finished its work and they were asked for.
     report: tuple[int | None, int | None] | None = None
 
     @property
@@ -613,8 +616,9 @@ class ContextAuditLoop:
         ``unread``. With ``refresh`` false, each repository's last reading is
         used when there is one, so only the jobs are read (the forge, one
         repository after another, takes seconds per dozen) and ``read_at``
-        says how old the oldest reading is. With ``reports``, each completed
-        newest job carries the counts its report starts with
+        says how old the oldest reading is. With ``reports``, each newest job
+        that finished its work (completed, its pull request merged or closed
+        since) carries the counts its report starts with
         (:func:`report_counts`). Raises :class:`UnsupportedForge` for an
         owner on a forge whose trees are not read this way, and what
         ``client_for`` raises when the owner's credential cannot be resolved
@@ -625,18 +629,18 @@ class ContextAuditLoop:
         return await self._with_reports(survey) if reports else survey
 
     async def _with_reports(self, survey: Survey) -> Survey:
-        """``survey`` with the counts of each completed newest job's report."""
-        completed = {
+        """``survey`` with the counts of the report of each newest job that finished its work."""
+        finished = {
             str(state.newest_job["job_id"])
             for state in survey.repos
-            if state.newest_job is not None and state.newest_job.get("status") == "completed"
+            if state.newest_job is not None and state.newest_job.get("status") in FINISHED_WELL_STATUSES
         }
-        if not completed:
+        if not finished:
             return survey
-        summaries = await self._jobs.result_summaries(completed)
+        summaries = await self._jobs.result_summaries(finished)
         repos = tuple(
             replace(state, report=report_counts(summaries.get(str(state.newest_job["job_id"]))))
-            if state.newest_job is not None and str(state.newest_job["job_id"]) in completed
+            if state.newest_job is not None and str(state.newest_job["job_id"]) in finished
             else state
             for state in survey.repos
         )

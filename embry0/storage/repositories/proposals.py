@@ -11,6 +11,7 @@ from typing import Any
 
 from embry0.services.proposals import Decision
 from embry0.storage.database import DatabasePool
+from embry0.storage.schemas import FINISHED_WELL_STATUSES, JobStatus
 
 _CASES_SQL = """
 SELECT c.id, c.repo, c.title, c.severity, c.signature, c.occurrence_count, c.tracker_url,
@@ -29,12 +30,23 @@ WHERE i.status = 'open' AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.issue_id = 
 ORDER BY i.created_at DESC
 """
 
-# The newest completed context audit of each repository, with its report.
+# The audit whose findings each repository offers, with its report: its newest context audit
+# that finished its work ($1, FINISHED_WELL_STATUSES), unless that audit's pull request merged
+# ($2). The merge may have fixed any of its findings, and any older audit's, so the repository
+# then offers none until its next audit finishes: the newest is picked first and only then left
+# out, so an older audit never stands in for it (#217). A pull request closed unmerged fixed
+# nothing, and its audit's findings stand. A newer audit that failed or has not finished is
+# passed over.
 _AUDITS_SQL = """
-SELECT DISTINCT ON (j.repo) j.repo, j.job_id, COALESCE(j.finished_at, j.updated_at) AS finished_at, j.result_summary
-FROM jobs j
-WHERE j.pipeline_template = 'context-audit' AND j.status = 'completed' AND j.repo IS NOT NULL
-ORDER BY j.repo, COALESCE(j.finished_at, j.updated_at) DESC
+SELECT newest.repo, newest.job_id, newest.finished_at, newest.result_summary
+FROM (
+    SELECT DISTINCT ON (j.repo) j.repo, j.job_id, j.status,
+           COALESCE(j.finished_at, j.updated_at) AS finished_at, j.result_summary
+    FROM jobs j
+    WHERE j.pipeline_template = 'context-audit' AND j.status = ANY($1::text[]) AND j.repo IS NOT NULL
+    ORDER BY j.repo, COALESCE(j.finished_at, j.updated_at) DESC
+) newest
+WHERE newest.status <> $2
 """
 
 
@@ -51,8 +63,13 @@ class ProposalsRepository:
         return [dict(r) for r in await self._db.fetch(_ISSUES_SQL)]
 
     async def audits(self) -> list[dict[str, Any]]:
-        """Each repository's newest completed context audit and its report."""
-        return [dict(r) for r in await self._db.fetch(_AUDITS_SQL)]
+        """The context audit whose findings each repository offers, and its report.
+
+        Its newest audit that finished its work; a repository whose newest such audit's pull
+        request merged is absent until its next audit finishes.
+        """
+        rows = await self._db.fetch(_AUDITS_SQL, list(FINISHED_WELL_STATUSES), JobStatus.PR_MERGED.value)
+        return [dict(r) for r in rows]
 
     async def owners(self) -> dict[str, list[str]]:
         """The repositories whose preferences name owners, lower-cased name to logins."""
