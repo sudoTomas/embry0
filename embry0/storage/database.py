@@ -137,7 +137,7 @@ class DatabasePool:
 
     @property
     def _redacted_url(self) -> str:
-        """The URL for logs: password masked, user/host/port/database kept.
+        """The URL for logs: user and password masked, host/port/database kept.
 
         #535: the one URL masker every renderer of a setting uses. Anything
         that is not a URL (a libpq keyword DSN) is not shown at all.

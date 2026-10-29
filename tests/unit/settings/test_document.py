@@ -230,6 +230,35 @@ def test_changes_count_a_key_written_down_even_at_its_default() -> None:
     ]
 
 
+# ---- #162: managed_by: file ----
+
+
+def test_managed_by_file_is_stored_beside_the_sections_and_is_not_a_section() -> None:
+    checked = check(TEST_CATALOG, load_yaml("managed_by: file\nsample:\n  per_tick: 4\n"), stored={})
+    assert checked.data == {"managed_by": "file", "sample": {"per_tick": 4}}
+    assert checked.unknown_sections == (), "managed_by is the document's own key, not a section nobody knows"
+    sections = read_sections(TEST_CATALOG, checked.data)
+    assert (sections.unknown, sections.refused) == ((), ()), "a reader must not report managed_by as unknown"
+    assert check(TEST_CATALOG, load_yaml("managed_by:\n"), stored={}).data == {}, "null is the same as absent"
+
+
+@pytest.mark.parametrize("value", ["git", "yes", "1", "[file]", "{file: 1}"])
+def test_managed_by_takes_only_file(value: str) -> None:
+    problems = _problems(f"managed_by: {value}\n")
+    assert [(p["loc"], p["type"]) for p in problems] == [(["managed_by"], "literal_error")]
+    assert value not in problems[0]["msg"], "a problem never echoes the rejected value"
+
+
+def test_turning_managed_by_on_or_off_is_a_change_named_managed_by() -> None:
+    on = changes({"sample": {"per_tick": 4}}, {"managed_by": "file", "sample": {"per_tick": 4}})
+    assert [(c.path, c.before, c.after, c.set_before, c.set_after) for c in on] == [
+        ("managed_by", None, "file", False, True)
+    ]
+    off = changes({"managed_by": "file"}, {})
+    assert [(c.path, c.before, c.after) for c in off] == [("managed_by", "file", None)]
+    assert changes({"managed_by": "file"}, {"managed_by": "file"}) == []
+
+
 def test_an_empty_section_in_the_text_does_not_cost_the_comments() -> None:
     """``other:`` with nothing under it is stored as nothing, but is still in the text."""
     out = with_section("# kept\nother:\n", {}, "sample", {"per_tick": 4}, "Imported X.")

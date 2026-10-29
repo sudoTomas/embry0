@@ -41,6 +41,7 @@ const DOC: SettingsDocument = {
   sections: ["sample"],
   unknown_sections: [],
   unknown_keys: [],
+  managed_by: null,
 };
 
 const EMPTY_DOC: SettingsDocument = {
@@ -53,6 +54,7 @@ const EMPTY_DOC: SettingsDocument = {
   sections: [],
   unknown_sections: [],
   unknown_keys: [],
+  managed_by: null,
 };
 
 const EFFECTIVE: EffectiveSettings = {
@@ -523,6 +525,29 @@ describe("PolicyTab", () => {
 
     await userEvent.click(within(newest).getByRole("button", { name: "Hide the change" }));
     expect(within(newest).queryByTestId("settings-revision-detail")).not.toBeInTheDocument();
+  });
+
+  it("shows a document kept in a file read-only, to an admin too, and says how to change it", async () => {
+    api.fetchSettings.mockResolvedValue({ ...DOC, managed_by: "file" });
+    renderTab();
+    expect(await textarea()).toHaveAttribute("readonly");
+    expect(screen.getByTestId("settings-managed-by-file")).toHaveTextContent("embry0 settings apply");
+    expect(screen.queryByRole("button", { name: "Preview" }), "nothing to preview: the file is the source").not.toBeInTheDocument();
+    expect(screen.queryByText("Only an admin can change the settings document.")).not.toBeInTheDocument();
+    const [newest] = await screen.findAllByTestId("settings-revision");
+    await waitFor(() =>
+      expect(within(newest).queryByRole("button", { name: "Undo this change" })).not.toBeInTheDocument(),
+    );
+    expect(within(newest).getByTestId("settings-undo-in-file")).toHaveTextContent("embry0 settings undo 9");
+    expect(await screen.findAllByTestId("effective-key"), "the values in effect are still shown").toHaveLength(2);
+  });
+
+  it("lets an admin edit a document that is not kept in a file", async () => {
+    api.fetchSettings.mockResolvedValue({ ...DOC, managed_by: null });
+    renderTab();
+    expect(await textarea()).not.toHaveAttribute("readonly");
+    expect(screen.queryByTestId("settings-managed-by-file")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview" })).toBeInTheDocument();
   });
 
   it("lets an operator read everything but change nothing", async () => {

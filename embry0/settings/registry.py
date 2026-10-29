@@ -30,13 +30,21 @@ VERSION_KEY: Final = "version"
 #: The schema version this code reads and writes. Bumped only by a change to
 #: a section that is not additive; see the spec, "Schema changes are additive".
 SCHEMA_VERSION: Final = 1
+#: The top-level key that says where the document is kept, never a section.
+MANAGED_BY_KEY: Final = "managed_by"
+#: What ``managed_by`` may say: the document is kept in a file, in the
+#: operator's own repository, and written with ``embry0 settings apply``; the
+#: dashboard only shows it.
+MANAGED_BY_FILE: Final = "file"
+#: The document's own top-level keys: everything else at the top is a section.
+DOCUMENT_KEYS: Final = frozenset({VERSION_KEY, MANAGED_BY_KEY})
 
 _NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 #: Words YAML 1.1 reads as true, false or null: a key spelled so is not text.
 YAML_WORDS: Final = frozenset({"yes", "no", "on", "off", "true", "false", "null", "y", "n"})
-#: Section names that are taken: the schema version, and the first ``loc``
+#: Section names that are taken: the document's own keys, and the first ``loc``
 #: segment a FastAPI error parser drops (``frontend/src/api/errorDetail.ts``).
-RESERVED_NAMES: Final = frozenset({VERSION_KEY, "body", "query", "path", "header", "cookie"})
+RESERVED_NAMES: Final = DOCUMENT_KEYS | frozenset({"body", "query", "path", "header", "cookie"})
 
 
 class SectionError(ValueError):
@@ -271,11 +279,12 @@ class Catalog:
         """The JSON Schema of the whole document.
 
         Each section is an optional property holding its model; ``version``
-        is the optional schema version. ``x-embry0-sections`` adds what JSON
-        Schema has no word for: each section's summary and the keys an
+        is the optional schema version, and ``managed_by`` the optional word
+        that the document is kept in a file. ``x-embry0-sections`` adds what
+        JSON Schema has no word for: each section's summary and the keys an
         organization or a repository may override.
         """
-        fields: dict[str, Any] = {VERSION_KEY: (int | None, None)}
+        fields: dict[str, Any] = {VERSION_KEY: (int | None, None), MANAGED_BY_KEY: (str | None, None)}
         for section in self:
             fields[section.name] = (section.model | None, None)
         document = create_model(
@@ -293,6 +302,18 @@ class Catalog:
                     "minimum": 1,
                     "maximum": SCHEMA_VERSION,
                     "description": "The schema version the document is written for; absent means the current one.",
+                }
+            )
+        managed = schema.get("properties", {}).get(MANAGED_BY_KEY)
+        if isinstance(managed, dict):
+            managed.clear()
+            managed.update(
+                {
+                    "enum": [MANAGED_BY_FILE, None],
+                    "description": (
+                        "file: the document is kept in a file and written with `embry0 settings apply`, so the "
+                        "dashboard only shows it. Absent: it is edited on the dashboard too."
+                    ),
                 }
             )
         schema["x-embry0-sections"] = {

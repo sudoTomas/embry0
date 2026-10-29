@@ -22,6 +22,13 @@ that is not yet in the document's ``bootstrapped_keys`` ledger
 - adds the key to the ledger whether or not anything was imported (a held
   key aside), so it never runs again for that key.
 
+A document kept in a file (``managed_by: file``) is written all the same,
+since the variable is ignored from then on, but the import goes into the
+stored document, not into the operator's file: the next ``embry0 settings
+apply`` of the file would put each key back to its default. So it warns
+(``settings_env_imported_into_file_document``), naming each key to copy into
+the file.
+
 The ledger is per key, so a key a later release adds to a section that was
 imported before still gets its variable. All of it runs in one transaction
 holding the document's row lock, so two processes booting together import
@@ -41,7 +48,7 @@ from embry0.audit.helpers import emit_audit
 from embry0.orchestration import dispatch_actors
 from embry0.settings.document import mapping, read_sections, with_section
 from embry0.settings.env import GovernedVariable, env_name, governed_variables, is_set
-from embry0.settings.registry import Catalog, EnvImport, Section, SectionRefused
+from embry0.settings.registry import MANAGED_BY_FILE, MANAGED_BY_KEY, Catalog, EnvImport, Section, SectionRefused
 from embry0.settings.store import SettingsStore
 
 logger = structlog.get_logger(__name__)
@@ -136,6 +143,44 @@ def _env_values(
     return accepted
 
 
+@dataclass(frozen=True)
+class EnvValues:
+    """What the environment says now, section by section, as the import would read it into an empty document."""
+
+    #: Section name to the keys and values the environment holds for it.
+    values: dict[str, dict[str, Any]] = field(default_factory=dict)
+    refused: tuple[RefusedImport, ...] = ()
+    #: Values accepted on their own and refused together with the section's other values.
+    held: tuple[RefusedImport, ...] = ()
+
+    def variables(self, catalog: Catalog, section: str) -> list[str]:
+        """The variables the values of ``section`` were read from, in the section's order."""
+        found = catalog.get(section)
+        if found is None:
+            return []
+        imports = found.imports()
+        return [env_name(imports[key].attr) for key in self.values.get(section, {}) if key in imports]
+
+
+def env_values(catalog: Catalog, config: Any) -> EnvValues:
+    """Each section key's value from ``config``, by the import's own rules, storing nothing.
+
+    The rules of :func:`import_env_once`: only a variable an operator set,
+    whose value differs from its key's default and which the section
+    accepts. Neither the document nor the import's ledger is read, so this
+    is what the environment says now, whatever was imported before: what
+    ``embry0 settings import-env`` writes out.
+    """
+    values: dict[str, dict[str, Any]] = {}
+    refused: list[RefusedImport] = []
+    held: list[RefusedImport] = []
+    for section in catalog:
+        found = _env_values(section, list(section.imports()), config, {}, refused, held)
+        if found:
+            values[section.name] = found
+    return EnvValues(values=values, refused=tuple(refused), held=tuple(held))
+
+
 async def import_env_once(store: SettingsStore, config: Any, *, today: date | None = None) -> BootstrapResult:
     """Import the environment value of every section key not imported yet. See the module docstring."""
     pending = [f"{section.name}.{key}" for section in store.catalog for key in section.imports()]
@@ -161,6 +206,7 @@ async def import_env_once(store: SettingsStore, config: Any, *, today: date | No
             text = with_section(text, data, section.name, values, comment)
             data = {**data, section.name: {**stored, **values}}
             imported[section.name] = values
+        in_file = data.get(MANAGED_BY_KEY) == MANAGED_BY_FILE
         if imported:
             # Each value was checked as its section when it was read; the rest
             # of the document is what is stored, checked when it was written.
@@ -186,6 +232,16 @@ async def import_env_once(store: SettingsStore, config: Any, *, today: date | No
         )
     for name, values in imported.items():
         logger.info("settings_env_imported", section=name, keys=sorted(values), revision_id=draft.revision_id)
+    if imported and in_file:
+        logger.warning(
+            "settings_env_imported_into_file_document",
+            keys=[f"{name}.{key}" for name, values in imported.items() for key in values],
+            revision_id=draft.revision_id,
+            hint=(
+                "the settings document is kept in a file (managed_by: file): copy these keys into it, as the "
+                "revision shows them, or the next `embry0 settings apply` of the file puts them back to their defaults"
+            ),
+        )
     if imported:
         await emit_audit(
             store.db,

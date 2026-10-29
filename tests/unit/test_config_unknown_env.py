@@ -88,12 +88,25 @@ def test_bad_gitlab_url_refuses_startup(bad):
             Embry0Config(_env_file=None)  # type: ignore[call-arg]
 
 
-def test_the_refusal_message_names_the_offending_value():
-    """The message itself must quote the value — not only pydantic's input_value echo."""
-    with patch.dict(os.environ, {"GITLAB_URL": "http://gitlab.example.com"}, clear=True):
+@pytest.mark.parametrize(
+    ("value", "wrong"),
+    [
+        ("http://oauth2:tok-000000000007@gitlab.example.com", "it is plaintext http"),
+        ("http://tok-000000000007@gitlab.example.com", "it is plaintext http"),
+        ("oauth2:tok-000000000007@gitlab.example.com", "it does not start with https://"),
+        ("https://", "it has no hostname"),
+    ],
+    ids=["password", "bare-user", "no-scheme", "no-host"],
+)
+def test_the_refusal_says_what_is_wrong_without_repeating_the_value(value, wrong):
+    """A URL can carry a token in its userinfo, so the validator's own message names the
+    problem and never the value. (pydantic's own echo of it is off: ``hide_input_in_errors``.)"""
+    with patch.dict(os.environ, {"GITLAB_URL": value}, clear=True):
         with pytest.raises(ValidationError) as excinfo:
             Embry0Config(_env_file=None)  # type: ignore[call-arg]
-    assert "got 'http://gitlab.example.com'" in str(excinfo.value)
+    (error,) = excinfo.value.errors()
+    assert wrong in error["msg"], error["msg"]
+    assert "tok-000000000007" not in error["msg"], "the refusal repeats the token the value carries"
 
 
 def test_empty_gitlab_url_means_the_default_not_a_refusal():

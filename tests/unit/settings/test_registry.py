@@ -70,6 +70,7 @@ def test_a_declaration_that_names_no_field_is_refused(label: str) -> None:
     ("name", "expected"),
     [
         ("version", "'version' is a reserved name"),
+        ("managed_by", "'managed_by' is a reserved name"),
         ("Bad-Name", "lowercase letters, digits"),
         # FastAPI's error parser drops a first loc segment with these names.
         ("body", "'body' is a reserved name"),
@@ -157,7 +158,10 @@ def test_a_catalog_refuses_a_section_twice() -> None:
 def test_the_schema_holds_every_section_the_version_and_what_may_override() -> None:
     schema = TEST_CATALOG.json_schema()
     properties = schema["properties"]
-    assert set(properties) == {"version", "sample", "other"}
+    assert set(properties) == {"version", "managed_by", "sample", "other"}
+    assert properties["managed_by"]["enum"] == ["file", None], (
+        "an editor that validates against the schema must accept managed_by: file and nothing else"
+    )
     assert properties["version"] == {
         "type": "integer",
         "minimum": 1,

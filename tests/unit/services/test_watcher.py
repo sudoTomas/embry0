@@ -1137,7 +1137,7 @@ async def test_misconfigured_loki_alarm_masks_the_url_password():
     with structlog.testing.capture_logs() as logs:
         await svc.validate_queries()
     [alarm] = [e for e in logs if e["event"] == "watcher_loki_misconfigured"]
-    assert alarm["loki_url"] == "https://reader:****@loki.test:3100", alarm
+    assert alarm["loki_url"] == "https://****@loki.test:3100", alarm
 
 
 async def _run_loop(svc: WatcherService, probe_results: list, *, iterations: int) -> list[str]:

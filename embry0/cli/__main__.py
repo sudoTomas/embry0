@@ -309,13 +309,21 @@ def _wait_for_sandbox_daemon(host: str, timeout: int = 60) -> bool:
 
 def cmd_config(args: argparse.Namespace) -> None:
     """Validate and display current configuration."""
+    from pydantic import ValidationError
+
     from embry0.config import Embry0Config
-    from embry0.config_redaction import mask_url_credentials, redacted_settings
+    from embry0.config_redaction import mask_url_credentials, redacted_settings, validation_error_lines
 
     try:
         config = Embry0Config()
+    except ValidationError as exc:
+        # Each variable and why, never the value: str(exc) repeats pydantic's input_value, and a
+        # URL can carry a token in its userinfo.
+        _err("Error loading configuration:")
+        for line in validation_error_lines(Embry0Config, exc):
+            print(f"  {line}", file=sys.stderr)
+        sys.exit(1)
     except Exception as exc:
-        # A validator may quote the value it refused, URL and all.
         _err(f"Error loading configuration: {mask_url_credentials(str(exc))}")
         sys.exit(1)
 
@@ -836,6 +844,21 @@ def cmd_progression_pack(args: argparse.Namespace) -> None:
     sys.exit(progression_pack.run(args, base_url=base, api_key=_resolve_api_key(args.api_key)))
 
 
+def cmd_settings(args: argparse.Namespace) -> None:
+    """Handle ``embry0 settings check|diff|apply|export|import-env|revisions|undo`` (#162).
+
+    ``check``, ``import-env`` and ``export --default`` run offline; the other
+    verbs are thin clients of ``/api/v1/config/settings`` on the running
+    orchestrator. The exit codes are in :mod:`embry0.cli.settings`.
+    """
+    from embry0.cli import settings
+
+    if settings.offline(args):
+        sys.exit(settings.run(args))
+    base = (args.api_url or os.environ.get("EMBRY0_API_URL") or "http://localhost:8200").rstrip("/")
+    sys.exit(settings.run(args, base_url=base, api_key=_resolve_api_key(args.api_key)))
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Handle ``embry0 init`` (EMB-49) — one-command new-project bootstrap.
 
@@ -1074,6 +1097,11 @@ def main() -> None:
 
     add_progression_pack_parser(subparsers)
 
+    # settings (#162)
+    from embry0.cli.settings import add_parser as add_settings_parser
+
+    add_settings_parser(subparsers)
+
     args = parser.parse_args()
 
     commands = {
@@ -1092,6 +1120,7 @@ def main() -> None:
         "review": cmd_review,
         "init": cmd_init,
         "progression-pack": cmd_progression_pack,
+        "settings": cmd_settings,
     }
     commands[args.command](args)
 

@@ -1,0 +1,82 @@
+# The embry0 settings document: every section, every key at its default.
+#
+# Generated from the sections in embry0/settings/sections/ by
+#   python -m embry0.settings.example --write docs/examples/settings.yaml
+# and printed by `embry0 settings export --default`.
+#
+# Every key below is a comment, so applying this file as it is sets nothing.
+# Uncomment the keys you change and leave the rest out: a key you do not
+# write takes its default, including a default a later release changes.
+# Check a file with `embry0 settings check FILE`, see what it would change
+# with `embry0 settings diff FILE`, and store it with `embry0 settings apply
+# FILE`. Each key is described in docs/configuration.md#settings-reference.
+version: 1
+
+# Uncomment to keep this document in a file, written with `embry0 settings
+# apply`: the dashboard then shows it read-only. Leave it out to edit the
+# document on the dashboard too.
+# managed_by: file
+
+# When and how often embry0 asks a person about a decision that waits on them.
+asks:
+  # Keep one ask per person a decision waits on, for a chat assistant to send
+  # from GET /asks/due. While false the ask loop does nothing and the feed is
+  # empty; asks already stored wait.
+  # enabled: false
+
+  # Working hours in `timezone`, HH-HH from 00 to 24, start first. An ask is
+  # due, and a reminder goes, only within them.
+  # hours: 09-18
+
+  # The days asks go out: a day name (mon to sun), a range such as mon-fri or
+  # sun-thu, or a list such as mon,wed,fri.
+  # weekdays: mon-fri
+
+  # The IANA time zone `hours` and `weekdays` are read in, such as
+  # Europe/Berlin.
+  # timezone: UTC
+
+  # Hours an ask waits unanswered before its one reminder.
+  # remind_hours: 24.0
+
+  # Days after which an unanswered ask expires. That answers nothing, and the
+  # person is not asked about that decision again.
+  # expire_days: 7.0
+
+  # Unanswered asks one person holds at once; the next, worst first, is
+  # released as one is answered or expires.
+  # max_open_per_person: 3
+
+  # How often the ask loop runs: it expires asks past `expire_days`, withdraws
+  # those whose decision was answered or moved on, and queues one for each
+  # person a decision now waits on.
+  # tick_seconds: 120.0
+
+# What the scout runs, how often it comes back to a repository, and how much
+# it may start and spend.
+scout:
+  # The templates the scout runs on each repository and area, at least one and
+  # each named once: garden (one provable weed) and kintsugi-trace (a ledger
+  # of graded cracks).
+  # templates:
+  # - garden
+  # - kintsugi-trace
+
+  # Most scouting jobs out at once; 0 starts none, and the jobs already out
+  # are still read into leads. Keep it below the local model server's slots so
+  # the watcher and briefs still get one.
+  # max_in_flight: 2
+
+  # Hours before a repository or area is scouted again with the same template.
+  # revisit_hours: 24.0
+
+  # Most leads one scouting job adds, the worst first.
+  # max_leads_per_job: 5
+
+  # The hard cap of one scouting job, in US dollars. A job pinned to the local
+  # model bills nothing; this stops one whose pin is ever lost.
+  # job_budget_usd: 1.0
+
+  # Most scouting jobs started in any 24 hours; null sets no cap, and 0 starts
+  # none.
+  # max_jobs_per_day: null

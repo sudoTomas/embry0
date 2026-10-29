@@ -12,10 +12,10 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``skill_source_add``, ``skill_source_update``, ``skill_source_sync``,
 ``skill_source_remove``, ``inline_skill_put``, ``inline_skill_remove``,
 ``agent_skill_add``, ``agent_skill_remove``, ``standard_set``,
-``standard_audit``, ``progression_pack_set``, ``progression_pack_reset``)
-require ``confirm=true``; without it they return an instructive refusal
-instead of acting. ``progression_pack_set`` with ``dry_run=true`` stores
-nothing and runs without it.
+``standard_audit``, ``progression_pack_set``, ``progression_pack_reset``,
+``settings_set``, ``settings_undo``) require ``confirm=true``; without it they
+return an instructive refusal instead of acting. ``progression_pack_set``
+and ``settings_set`` with ``dry_run=true`` store nothing and run without it.
 """
 
 from __future__ import annotations
@@ -51,7 +51,10 @@ mcp = MCPServer(
         "an owner's standards (get, set, audit a repository against one), "
         "and the progression content pack: every skill, rate, tier, achievement, quest and chat-box message the "
         "game layer shows, one YAML document per deployment (get it, set it with a dry run first, reset it to "
-        "the shipped default). "
+        "the shipped default), "
+        "and the settings document: the deployment's operator policy, one YAML document with a section per "
+        "feature (read it, the values in effect and its schema; set it with a dry run first; list its changes "
+        "and undo the newest). "
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '
@@ -1194,6 +1197,89 @@ async def progression_pack_reset(confirm: bool = False) -> dict[str, Any]:
             "progression_pack_reset", "reset the progression content pack to the shipped default"
         )
     return await _get_client().progression_pack_reset()
+
+
+@_tool
+async def settings_get() -> dict[str, Any]:
+    """The deployment's settings document: its operator policy, one YAML document with one section per
+    feature (such as ``asks``). ``yaml_text`` is the text as written, comments included; ``data`` its values,
+    sparse (a key not written takes its default); ``generation`` the version to pass to settings_set as
+    ``expected_generation``. ``managed_by`` is "file" when the operator keeps the document in a file in their
+    own repository and stores it with `embry0 settings apply`; the dashboard then shows it read-only.
+    ``unknown_sections`` and ``unknown_keys`` are what a newer release wrote and this one does not read.
+    Read-only; any key."""
+    return await _get_client().settings_get()
+
+
+@_tool
+async def settings_effective() -> dict[str, Any]:
+    """Every key of every section of the settings document with the value loops read now: ``value``,
+    ``default``, ``source`` (default; document; bootstrap, imported once from an environment variable), who set
+    it and when, the variable it was imported from (``env``) and whether that is still set, the layers that may
+    override it, ``refused`` for a stored value this release reads as its default, and its description.
+    Read-only; any key."""
+    return await _get_client().settings_effective()
+
+
+@_tool
+async def settings_schema() -> dict[str, Any]:
+    """The JSON Schema of the settings document: each section's keys with their types, bounds and defaults;
+    and, under ``x-embry0-sections``, each section's summary, the keys an organization or a repository may
+    override, and the environment variable each key was imported from. Read-only; any key."""
+    return await _get_client().settings_schema()
+
+
+@_tool
+async def settings_set(
+    text: str,
+    expected_generation: int | None = None,
+    dry_run: bool = False,
+    reason: str = "",
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Replace the WHOLE settings document with ``text``, YAML (comments are kept). Read it with settings_get,
+    edit its ``yaml_text`` and send all of it back with ``expected_generation`` set to the ``generation`` that
+    read returned, so a change someone made in between is refused (409) instead of overwritten; read it again
+    then. A key left out takes its default, and an empty text puts every key back to its default. A document
+    with problems is refused with a 422 naming every bad key (``asks.hours: ...``), never its value; nothing is
+    stored then. With ``dry_run=true`` nothing is stored and no confirm is needed: the answer says whether it
+    would change, each key it changes (stored before and after, and the value loops would read) and the text
+    diff. A real write applies on each loop's next tick, is recorded as a revision with ``reason``, and can be
+    undone with settings_undo; a text equal to the stored one records nothing. When settings_get says
+    ``managed_by`` is "file", the operator keeps the document in a file: say so, and write here only if the
+    user still wants to (the next `embry0 settings apply` of that file puts it back). Needs an admin key
+    without a repository allowlist. Requires confirm=true for a real write."""
+    if dry_run:
+        return await _get_client().settings_set(
+            text, dry_run=True, expected_generation=expected_generation, reason=reason
+        )
+    if not confirm:
+        return _confirmation_refusal("settings_set", "replace the deployment's settings document")
+    return await _get_client().settings_set(text, expected_generation=expected_generation, reason=reason)
+
+
+@_tool
+async def settings_revisions(revision_id: int | None = None, limit: int = 20) -> dict[str, Any]:
+    """The settings document's changes, newest first, up to ``limit`` (1 to 100): each with its ``id``,
+    ``what`` (the keys it changed), ``actor``, ``source`` (person, file, bootstrap, restore, upgrade),
+    ``reason``, ``created_at``, and ``undoable`` (only the newest change, while it is still what is stored;
+    ``why_not`` otherwise). With ``revision_id``, that one change, with its text before and after and each key
+    it changed. Read-only; any key."""
+    if revision_id is not None:
+        return await _get_client().settings_revision(revision_id)
+    return await _get_client().settings_revisions(limit=limit)
+
+
+@_tool
+async def settings_undo(revision_id: int, confirm: bool = False) -> dict[str, Any]:
+    """Put back what settings change ``revision_id`` replaced. Only the newest change can be undone, while the
+    stored document is still what it wrote (else 409, with why), and only while that earlier text is still
+    valid (else 422 naming its problems). The undo applies on each loop's next tick and is itself a revision
+    (source ``restore``), so it can be undone the same way. Needs an admin key without a repository
+    allowlist. Requires confirm=true."""
+    if not confirm:
+        return _confirmation_refusal("settings_undo", f"undo settings change {revision_id}")
+    return await _get_client().settings_undo(revision_id)
 
 
 @_tool

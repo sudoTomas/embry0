@@ -20,6 +20,21 @@ import { SettingsChangeList } from "./SettingsChangeList";
 
 const PLACEHOLDER = "# Every key is optional; a key you leave out takes its default.\nversion: 1\n";
 
+/** Why the editor only shows a document kept in a file, and how to change it. */
+function ManagedByFile() {
+  return (
+    <p
+      className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-fg-secondary"
+      data-testid="settings-managed-by-file"
+    >
+      This document is kept in a file (<code className="font-mono text-xs">managed_by: file</code>), so it is
+      read-only here. Change the file and store it with{" "}
+      <code className="font-mono text-xs">embry0 settings apply</code>. To edit it here again, apply the file
+      without <code className="font-mono text-xs">managed_by</code>.
+    </p>
+  );
+}
+
 function Problems({ problems }: { problems: DocumentProblem[] }) {
   return (
     <div
@@ -67,7 +82,8 @@ function PreviewResult({ result }: { result: SettingsPreview }) {
  * generation the edit started from, so a change over someone else's newer
  * one is refused (409) instead of overwriting it; the new version is then
  * read in and the person's text kept. A refused document lists every
- * problem by key. Only an admin can preview or save.
+ * problem by key. Only an admin can preview or save, and nobody can while
+ * the document says it is kept in a file (`managed_by: file`).
  */
 export function SettingsDocumentEditor() {
   const doc = useSettingsDocument();
@@ -87,8 +103,10 @@ export function SettingsDocumentEditor() {
   const [conflict, setConflict] = useState<string | null>(null);
 
   const stored = doc.data?.yaml_text ?? "";
-  const text = draft ?? stored;
-  const dirty = draft !== null && draft !== stored;
+  // A document kept in a file is only shown: an edit begun before it said so is not.
+  const inFile = doc.data?.managed_by === "file";
+  const text = inFile ? stored : (draft ?? stored);
+  const dirty = !inFile && draft !== null && draft !== stored;
 
   // Once the stored text is the draft (a save landed and was read back, or
   // the version read in after a conflict says the same), there is no edit
@@ -221,7 +239,7 @@ export function SettingsDocumentEditor() {
       <Textarea
         value={text}
         onChange={(e) => edit(e.target.value)}
-        readOnly={!isAdmin}
+        readOnly={!isAdmin || inFile}
         spellCheck={false}
         // Indentation is the structure of YAML: a long line scrolls inside the box rather than wrap to column 0.
         wrap="off"
@@ -230,7 +248,11 @@ export function SettingsDocumentEditor() {
         className="min-h-[280px] font-mono text-sm"
         data-testid="settings-textarea"
       />
-      {!isAdmin && <p className="text-xs text-fg-muted">Only an admin can change the settings document.</p>}
+      {inFile ? (
+        <ManagedByFile />
+      ) : (
+        !isAdmin && <p className="text-xs text-fg-muted">Only an admin can change the settings document.</p>
+      )}
 
       {conflict && (
         <div role="alert" data-testid="settings-conflict" className="rounded-lg border border-warning/30 bg-amber-dim p-3 text-sm text-warning">
@@ -239,16 +261,18 @@ export function SettingsDocumentEditor() {
       )}
       {problems && <Problems problems={problems} />}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <AdminButton variant="secondary" onClick={runPreview} disabled={!dirty || busy} data-testid="settings-preview-button">
-          {preview.isPending ? "Previewing…" : "Preview"}
-        </AdminButton>
-        <Button variant="outline" onClick={revert} disabled={draft === null || busy} data-testid="settings-revert">
-          Revert
-        </Button>
-      </div>
+      {!inFile && (
+        <div className="flex flex-wrap items-center gap-2">
+          <AdminButton variant="secondary" onClick={runPreview} disabled={!dirty || busy} data-testid="settings-preview-button">
+            {preview.isPending ? "Previewing…" : "Preview"}
+          </AdminButton>
+          <Button variant="outline" onClick={revert} disabled={draft === null || busy} data-testid="settings-revert">
+            Revert
+          </Button>
+        </div>
+      )}
 
-      {previewed && (
+      {previewed && !inFile && (
         <section className="space-y-3 rounded-lg border border-border p-3" data-testid="settings-preview" aria-label="Preview">
           <h3 className="text-sm font-semibold text-fg">What saving would change</h3>
           <PreviewResult result={previewed.result} />

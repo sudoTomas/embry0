@@ -21,8 +21,11 @@ empty. That way the reader of ``config.py`` can see which settings are
 credentials, and a name that only looks secret is marked safe on purpose.
 
 A value that is not secret still goes through :func:`mask_url_credentials`.
-The password of any URL in it (``scheme://user:PASSWORD@host``) and any
+The whole userinfo of any URL in it (``scheme://USER:PASSWORD@host``, or a
+token written as the bare user, ``scheme://TOKEN@host``) and any
 secret-looking query parameter are masked, whatever the setting is called.
+:func:`validation_error_lines` renders a settings model's load error the
+same way: each variable and why, never the value pydantic attaches.
 
 Pure: no embry0 imports, so ``config.py`` can import it.
 """
@@ -34,7 +37,7 @@ import functools
 import re
 from typing import Annotated, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic.fields import FieldInfo
 
 
@@ -68,17 +71,19 @@ SECRET_NAME_PATTERN = re.compile("|".join(_SECRET_NAME_PARTS), re.IGNORECASE)
 _SCHEME = r"[A-Za-z][A-Za-z0-9+.\-]{0,31}://"
 _USER = r"[^/?#\s:@]*"
 
-# The password as urllib.parse (and so the client) reads it: from the first
-# ':' of the userinfo to the LAST '@' of the authority, which ends at the first
-# '/', '?', '#' or whitespace. urlparse accepts a raw '@' in a password.
-_URL_PASSWORD = re.compile(rf"({_SCHEME}{_USER}:)[^/?#\s]+(?=@)")
+# The userinfo as urllib.parse (and so the client) reads it: everything up to
+# the LAST '@' of the authority, which ends at the first '/', '?', '#' or
+# whitespace. urlparse accepts a raw '@' in a password. All of it is masked,
+# the user included: a token is often written as the bare user
+# (`https://<token>@host`), and a user name is not worth the risk.
+_URL_USERINFO = re.compile(rf"({_SCHEME})[^/?#\s]+(?=@)")
 
 # A raw '/', '?' or '#' in the password (a base64 password has '/'). urlparse
 # cannot read such a URL, so the client fails to connect, and that is exactly
 # when an operator runs `embry0 config`. Mask up to the first '@', unless the
 # text after the ':' is a port (digits, then '/', '?', '#', whitespace or the
 # end), which is a host:port and not a userinfo.
-_URL_PASSWORD_RAW = re.compile(rf"({_SCHEME}{_USER}:)(?!\d*(?:[/?#\s]|$))[^\s@]+(?=@)")
+_URL_USERINFO_RAW = re.compile(rf"({_SCHEME}){_USER}:(?!\d*(?:[/?#\s]|$))[^\s@]+(?=@)")
 
 # `?password=…`, `&api_key=…` (libpq accepts `?password=` in a URL), and the
 # `sig` capability of a signed webhook URL.
@@ -98,17 +103,42 @@ def mask_secret(value: str) -> str:
 
 
 def mask_url_credentials(text: str) -> str:
-    """``text`` with every URL password and secret query value masked.
+    """``text`` with every URL's userinfo and secret query value masked.
 
-    The scheme, user, host, port, path and the other query parameters stay,
-    so ``postgresql://app:pw@db:5432/app`` reads ``postgresql://app:****@db:5432/app``.
-    Text with no URL in it comes back unchanged.
+    The scheme, host, port, path and the other query parameters stay, so
+    ``postgresql://app:pw@db:5432/app`` reads ``postgresql://****@db:5432/app``
+    and ``https://<token>@host`` reads ``https://****@host``. Text with no URL
+    in it comes back unchanged.
     """
     if not text or ("://" not in text and "?" not in text):
         return text
-    text = _URL_PASSWORD.sub(rf"\g<1>{MASK}", text)
-    text = _URL_PASSWORD_RAW.sub(rf"\g<1>{MASK}", text)
+    text = _URL_USERINFO.sub(rf"\g<1>{MASK}", text)
+    text = _URL_USERINFO_RAW.sub(rf"\g<1>{MASK}", text)
     return _SECRET_QUERY_PARAM.sub(rf"\g<1>{MASK}", text)
+
+
+def _variable(model: type[BaseModel], loc: Any) -> str:
+    """The environment variable a field of ``model`` is read from: its alias, or its name, in capitals."""
+    name = str(loc)
+    field = model.model_fields.get(name)
+    return ((field.alias if field is not None else None) or name).upper()
+
+
+def validation_error_lines(model: type[BaseModel], exc: ValidationError) -> list[str]:
+    """Why ``model`` (a settings model) did not load: one ``VARIABLE: message`` line per problem.
+
+    The value is never shown: not pydantic's ``input`` (``str(exc)`` repeats
+    it), and a check's own message has its URL credentials masked, since a
+    check may quote what it refused.
+    """
+    lines: list[str] = []
+    for error in exc.errors():
+        loc = tuple(error.get("loc") or ())
+        path = ".".join([_variable(model, loc[0]), *map(str, loc[1:])]) if loc else ""
+        msg = mask_url_credentials(str(error.get("msg") or "invalid")).removeprefix("Value error, ")
+        # A check that names its own variable ("GITLAB_URL must be ...") is not prefixed with it again.
+        lines.append(f"{path}: {msg}" if path and not msg.startswith(f"{path} ") else msg)
+    return lines
 
 
 def _marks(field: FieldInfo) -> set[Sensitivity]:

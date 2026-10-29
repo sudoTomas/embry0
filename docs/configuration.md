@@ -224,7 +224,7 @@ See `.env.example` for the complete list.
 
 Unknown variables are ignored rather than rejected (the env is shared with Docker and the shell), so at startup — and in `embry0 config` — a variable that near-misses a setting is flagged as `unknown_env_var name=AUTH_DEV_MOD did_you_mean=AUTH_DEV_MODE`; it is a warning only and never blocks boot.
 
-`embry0 config` masks every credential setting, and so does a config object written to a log. A secret shorter than 24 characters is shown as `****`; a longer one keeps its first and last four characters, enough to tell two tokens apart. An unset secret is shown empty. Any URL keeps its scheme, user, host, port and path but not its password (`DATABASE_URL=postgresql://embry0:****@postgres:5432/embry0`), and query parameters such as `password=`, `token=` or `sig=` are masked too.
+`embry0 config` masks every credential setting, and so does a config object written to a log. A secret shorter than 24 characters is shown as `****`; a longer one keeps its first and last four characters, enough to tell two tokens apart. An unset secret is shown empty. Any URL keeps its scheme, host, port and path but not its user or password, since a token is often written as the bare user (`DATABASE_URL=postgresql://****@postgres:5432/embry0`), and query parameters such as `password=`, `token=` or `sig=` are masked too. A configuration that does not load names each variable and why, never its value.
 
 ## Secrets at rest
 
@@ -277,12 +277,50 @@ asks:
 - **Read** it with `GET /api/v1/config/settings` (`?format=yaml` for the text alone), every setting's effective value and where it came from with `GET /api/v1/config/settings/effective`, and the JSON Schema with `GET /api/v1/config/settings/schema`. Any key can read: the document holds no secrets.
 - **Write** it with `PUT /api/v1/config/settings`, the whole document as YAML (comments are kept) or as a JSON object. Admin only, with a key that has no repository allowlist. A 422 lists every bad key at once, a key written twice included; `?dry_run=1` answers what would change and stores nothing; `If-Match: "<generation>"` (the `ETag` of a GET) refuses a write over a newer one with 409, on a dry run too.
 - **History.** Every write that changes the text is a revision with its actor and source: `GET /api/v1/config/settings/revisions`, and `POST /api/v1/config/settings/revisions/{id}/undo` for the newest one. The newest 100 are kept.
-- **In the dashboard**, Settings → Policy holds the same three things. The document is a YAML text box: **Preview** runs the dry run and lists each key the text would change, before and after, with the text diff; **Save** then stores exactly the previewed text, with an optional reason. Both name the generation the edit started from, so if someone else saved in between they are refused, the new version is read in and your text stays in the box to preview again. A refused document lists every problem next to the text, each with its key. Below it, **Values in effect** shows every key of every section with its value, its default and where it came from, and warns when a stored value is refused, an imported variable is still set, or the document holds a section or key this release does not know; **History** lists the revisions, opens each one to show what it changed, and offers Undo on the newest. Anyone signed in can read the tab; only an admin can preview, save or undo.
+- **In the dashboard**, Settings → Policy holds the same three things. The document is a YAML text box: **Preview** runs the dry run and lists each key the text would change, before and after, with the text diff; **Save** then stores exactly the previewed text, with an optional reason. Both name the generation the edit started from, so if someone else saved in between they are refused, the new version is read in and your text stays in the box to preview again. A refused document lists every problem next to the text, each with its key. Below it, **Values in effect** shows every key of every section with its value, its default and where it came from, and warns when a stored value is refused, an imported variable is still set, or the document holds a section or key this release does not know; **History** lists the revisions, opens each one to show what it changed, and offers Undo on the newest. Anyone signed in can read the tab; only an admin can preview, save or undo. A document [kept in a file](#from-a-file-the-command-line-and-mcp) is shown read-only, to an admin too.
 - **From the environment.** When a release moves a feature's policy into a section, the first start of that release imports each of its variables you set, when the value differs from the default, once per key (source `bootstrap`); a key a later release adds to the section is imported at that release's first start. A value the section refuses is skipped with a `settings_bootstrap_value_refused` warning: set it in the document instead. A value refused only together with the section's other stored values is held (`settings_bootstrap_value_held`) and tried again at the next start. After that the variable is ignored: startup logs `settings_env_ignored` and `embry0 config` says the document governs it. The variable is removed one release later. The reference below names the variable each key was imported from.
 - **After a rollback.** A section or a key that a newer release wrote and this one does not know is kept as long as it is sent back exactly as stored (as the stored text has it, or as GET's `data` does), and is listed in `unknown_sections` or `unknown_keys`.
 - **Moved so far**, one section per bullet, in name order:
   - The asks policy (`asks`, from `ASKS_ENABLED` and the `ASK_*` variables): the ask loop reads it every tick and `GET /api/v1/asks/due` on every request, so turning asks on or changing their hours needs no restart.
   - The scout's policy (`scout`, from `SCOUT_TEMPLATES`, `SCOUT_MAX_IN_FLIGHT`, `SCOUT_REVISIT_HOURS` and `SCOUT_MAX_LEADS_PER_JOB`, plus each job's hard cap, until now fixed at 1 USD, and a daily cap, off by default): the scout reads it every tick, so a change applies within 5 minutes with no restart. `SCOUT_MODEL`, `SCOUT_REPOS` and `SCOUT_EXCLUDE` stay variables (#164, #165).
+
+### From a file, the command line and MCP
+
+You can keep the deployment's settings in a file in your own repository, review a change to it like any other, and store it with `embry0 settings apply`. [`docs/examples/settings.yaml`](examples/settings.yaml) holds every section with every key at its default, each key a comment with its description above it: applying it as it is sets nothing. Copy it, uncomment the keys you change and leave the rest out, so a default a later release changes still reaches them. `embry0 settings export --default` prints the same file; it is generated from the sections (`python -m embry0.settings.example --write docs/examples/settings.yaml`) and a test fails when it is out of date.
+
+| Command | What it does |
+|---|---|
+| `embry0 settings check FILE` | Validates the file offline, with the checks a write meets, against the sections of the embry0 it runs from, and prints every problem as `key: message`, the words the API's 422 uses, never the value. Needs no orchestrator and no key, so it runs in CI. It cannot see what is stored, so what only a newer release knows, a section or a key of a known section, is reported here and kept by the orchestrator (see *After a rollback*) |
+| `embry0 settings diff FILE` | A dry run through the API: whether the file would change the stored document, each key it changes (stored before and after, and the default a key falls back to), and the text diff. Stores nothing |
+| `embry0 settings apply FILE [--reason TEXT] [--yes] [--allow-unset]` | Reads the stored generation, shows the diff against it, asks, then stores the file with source `file` and `If-Match` naming that generation, so a document someone changed in between is refused rather than overwritten. A file that is the stored text already sends nothing more and records no revision. Without a terminal it needs `--yes`. Each key that is set now and that the file leaves out is listed under *unsets*, since it goes back to its default; the prompt says how many, and `--yes` unsets them only with `--allow-unset` too. A reason is at most 500 characters |
+| `embry0 settings export [-o FILE]` | Writes the stored document as written, comments included |
+| `embry0 settings export --default [-o FILE]` | Writes the example: every key at its default, as comments. Offline |
+| `embry0 settings import-env [-o FILE]` | Writes a document holding each policy variable this environment sets, by the rules of the import at startup: only a variable you set, whose value differs from its key's default and which the section accepts; a refused one is named on stderr and left out. Offline: it reads the environment and `./.env` it runs in, such as the orchestrator's (`docker exec embry0-orchestrator embry0 settings import-env`), whatever was imported before |
+| `embry0 settings revisions [ID] [--limit N]` | Lists the changes, newest first (20 by default, up to 100), and names the one that can be undone; with an ID, that change with each key it changed and its text diff |
+| `embry0 settings undo ID [--yes]` | Shows what undoing the newest change puts back, its keys and its text, asks, then undoes it (source `restore`) |
+
+A file named `*.json` is read and sent as JSON, any other as YAML. `diff`, `apply`, `export`, `revisions` and `undo` read `EMBRY0_API_URL` and the API key (`EMBRY0_API_KEY`, `API_KEY`, then `./.env`), or `--api-url` and `--api-key`, like `embry0 onboard`. Writing needs an admin key without a repository allowlist. The exit codes are the same for every verb, so a script can tell them apart:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Done: valid, applied, nothing to change, written, undone |
+| `1` | Refused: the document has problems (a 422, or `check`), a variable `import-env` read is refused, or you answered no |
+| `2` | Usage: a bad argument, a file that cannot be read, `apply` or `undo` without a terminal and without `--yes`, or `apply --yes` that would unset a key without `--allow-unset` |
+| `3` | Conflict: the document changed since it was read (409), or the change to undo is not the newest one, or no longer what is stored |
+| `4` | Unavailable: the orchestrator cannot be reached, refused the key (401, 403), has no such revision (404), or failed |
+
+**Kept in a file.** Write `managed_by: file` at the top of the document and the Policy tab shows it read-only, with how to change it: in the file, then `embry0 settings apply`; its history offers `embry0 settings undo` instead of an Undo button. Nothing else is refused: the API and MCP still write, so a change made there lasts until the file is applied again. To edit the document on the dashboard again, apply the file without `managed_by`. When a release moves a feature into the document, its first start imports your variables into the stored document, not into your file (*From the environment* above): startup then logs `settings_env_imported_into_file_document` naming each key it wrote, so copy those keys into the file, as the revision shows them. A key you do not copy is listed under *unsets* by the next `diff` or `apply` of the file, which puts it back to its default only once you confirm, or with `--allow-unset`. `managed_by` takes only `file`; turning it on or off is a change like any other, named `managed_by` in the history.
+
+From an MCP client:
+
+| MCP tool | Effect |
+|---|---|
+| `settings_get()` | The stored document: its text, its values, its `generation` and `managed_by` |
+| `settings_effective()` | Every key's value in effect, its default and where it came from |
+| `settings_schema()` | The JSON Schema of the document |
+| `settings_set(text, expected_generation=None, dry_run=False, reason="", confirm=False)` | Replaces the whole document. Pass the `generation` `settings_get` returned as `expected_generation`, so a change made in between is refused (409) rather than overwritten. A dry run needs no `confirm` and stores nothing; a write without `confirm=true` returns `confirmation_required` and changes nothing. A 422 names every bad key. Needs an admin key |
+| `settings_revisions(revision_id=None, limit=20)` | The changes, newest first; with `revision_id`, that change with its text before and after |
+| `settings_undo(revision_id, confirm=False)` | Undoes the newest change; without `confirm=true` it returns `confirmation_required` |
 
 ### Settings reference
 
@@ -385,3 +423,18 @@ embry0 progression-pack export --default       # The shipped default as YAML (-o
 ```
 
 See [progression.md](progression.md#changing-the-content).
+
+### Settings document (`embry0 settings`)
+
+```bash
+embry0 settings check settings.yaml     # Validate offline, every problem by key; exit 1 on one
+embry0 settings diff settings.yaml      # What applying it would change (a dry run)
+embry0 settings apply settings.yaml     # Show the diff, then store it (--yes without a terminal; --allow-unset to unset keys)
+embry0 settings export -o settings.yaml # The stored document, comments included
+embry0 settings export --default        # Every key at its default, as comments (offline)
+embry0 settings import-env              # A document of the policy variables this environment sets (offline)
+embry0 settings revisions [ID]          # The changes, newest first; or one, with its diff
+embry0 settings undo ID                 # Undo the newest change
+```
+
+Exit codes: 0 done, 1 refused, 2 usage, 3 conflict, 4 orchestrator unavailable. See [From a file, the command line and MCP](#from-a-file-the-command-line-and-mcp).

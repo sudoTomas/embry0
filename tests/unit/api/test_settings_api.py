@@ -315,7 +315,7 @@ async def test_the_schema_names_each_section_and_its_variables(client) -> None:
     resp = await client.get(f"{URL}/schema")
     assert resp.status_code == 200, resp.text
     schema = resp.json()
-    assert set(schema["properties"]) == {"version", "sample", "other"}
+    assert set(schema["properties"]) == {"version", "managed_by", "sample", "other"}
     assert schema["x-embry0-sections"]["sample"]["env"]["remind_hours"] == "ASK_REMIND_HOURS"
     assert schema["x-embry0-sections"]["sample"]["repo_keys"] == ["mode"]
 
@@ -506,3 +506,43 @@ async def test_who_changed_the_document_is_shown_as_the_audit_log_shows_actors(c
     assert [r["actor"] for r in own] == ["alex@example.com"], "anyone sees their own changes"
     admin = (await client.get(f"{URL}/revisions/{revision_id}")).json()
     assert admin["actor"] == "alex@example.com", "an admin sees every actor"
+
+
+# ---- #162: a document kept in a file -----------------------------------------------------
+
+
+async def test_managed_by_file_is_served_and_turning_it_on_is_a_named_change(client) -> None:
+    """The dashboard reads managed_by from GET to make its editor read-only; the history names the switch."""
+    await _put(client, V1)
+    assert (await client.get(URL)).json()["managed_by"] is None, "a document edited on the dashboard says null"
+    on = await _put(client, "managed_by: file\n" + V1, params={"source": "file"})
+    assert on.status_code == 200, on.text
+    assert [c["key"] for c in on.json()["changes"]] == ["managed_by"]
+    switch = on.json()["changes"][0]
+    assert (switch["before"], switch["after"], switch["set_before"], switch["set_after"]) == (None, "file", False, True)
+    assert "effective_after" not in switch, "no loop reads managed_by, so it has no value in effect to show"
+    doc = (await client.get(URL)).json()
+    assert (doc["managed_by"], doc["unknown_sections"]) == ("file", []), "managed_by is not a section nobody knows"
+    newest = (await client.get(f"{URL}/revisions")).json()["revisions"][0]
+    assert (newest["what"], newest["source"]) == ("Changed: managed_by", "file")
+
+
+async def test_offline_check_prints_what_the_api_s_dry_run_refuses_with(client, monkeypatch, tmp_path, capsys) -> None:
+    """`embry0 settings check` and `diff` must read alike: the real 422 of a dry run, printed the way
+    `diff` prints it, is line for line what the offline check prints for the same file."""
+    from argparse import Namespace
+
+    from embry0.cli.settings import REFUSED, problem_lines, run
+
+    bad = "sampel:\n  x: 1\nsample:\n  enabled: maybe\n  per_tick: 50\n  zone: Mars/Base\nother:\n  limit: -1\n"
+    resp = await _put(client, bad, params={"dry_run": 1, "source": "file"})
+    assert resp.status_code == 422, resp.text
+    from_api = problem_lines(resp.json()["detail"])
+    assert len(from_api) == 5, from_api
+
+    monkeypatch.setattr("embry0.settings.sections.CATALOG", TEST_CATALOG)  # the catalog the app was built with
+    path = tmp_path / "settings.yaml"
+    path.write_text(bad, encoding="utf-8")
+    assert run(Namespace(action="check", file=str(path))) == REFUSED
+    offline = [line.strip() for line in capsys.readouterr().err.splitlines()[1:]]
+    assert offline == from_api, "check must print exactly the problems the API refuses the same file with"
