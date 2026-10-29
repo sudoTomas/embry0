@@ -24,19 +24,16 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from embry0.storage.database import DatabasePool
-from embry0.storage.schemas import JobStatus
+from embry0.storage.schemas import FINISHED_WELL_STATUSES
 
 # The character a job's code is credited to: the Slopmaster for a slop cleanup
 # (spec 2026-10-25, slop dungeon), the developer otherwise.
 _CODER = "CASE WHEN {job}.pipeline_template = 'slop-cleanup' THEN 'slopmaster' ELSE 'developer' END"
 
-#: The statuses of a job that finished its work: ``completed``, and every status merge sync moves a
-#: completed job to as it records what became of its pull request (``pr_merged``; ``pr_closed``, which a
-#: reopened pull request walks back to ``completed``; ``VALID_JOB_TRANSITIONS`` in
-#: ``embry0/storage/repositories/jobs.py``). The work was done whatever became of the pull request, so an
-#: outcome it earned is never taken back when the pull request merges or closes (#210). Every check of
+#: The statuses of a job that finished its work, ``FINISHED_WELL_STATUSES`` in ``embry0/storage/schemas.py``:
+#: an outcome a job earned is never taken back when its pull request merges or closes (#210). Every check of
 #: progression for a job that did its work reads this, never a status of its own.
-FINISHED_WELL: tuple[str, ...] = (JobStatus.COMPLETED.value, JobStatus.PR_MERGED.value, JobStatus.PR_CLOSED.value)
+FINISHED_WELL: tuple[str, ...] = FINISHED_WELL_STATUSES
 _FINISHED_WELL_LIST = ", ".join("'" + status + "'" for status in FINISHED_WELL)
 
 

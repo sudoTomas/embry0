@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Link } from "react-router";
 import { FileSearch, RefreshCw } from "lucide-react";
-import type { ContextAuditReason, ContextAuditRepo, ContextAuditSurvey } from "@/api/orgs";
+import type { ContextAuditJob, ContextAuditReason, ContextAuditRepo, ContextAuditSurvey } from "@/api/orgs";
 import { toastApiError } from "@/api/errorToast";
 import { formatErrorDetail } from "@/api/errorDetail";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useContextAudit, useRefreshContextAudit } from "@/hooks/useOrgs";
+import { isFinishedWell } from "@/lib/jobStatus";
 import type { JobStatus } from "@/lib/types";
 import { cn, formatCost, formatDate, formatDateTime } from "@/lib/utils";
 import { TABLE_BOX, TD, TH } from "./styles";
@@ -33,17 +34,31 @@ const FAILURE: Record<string, string> = {
 
 const MISSING = "-";
 
-/** Most outdated claims first; a repository whose count is unknown after them, then by name. */
+/**
+ * Whether the audit's pull request merged: the claims it counted were what the
+ * pull request corrected, so they are probably fixed now. The proposals feed
+ * offers none of them (#217); the row keeps its own count.
+ */
+function merged(job: ContextAuditJob | null | undefined): boolean {
+  return job?.status === "pr_merged";
+}
+
+/**
+ * Most outdated claims first; a repository whose count is unknown after them,
+ * then by name. A repository whose newest audit's pull request merged comes
+ * after every other: its claims are probably fixed.
+ */
 function byStale(a: ContextAuditRepo, b: ContextAuditRepo): number {
   const sa = a.newest_job?.stale ?? -1;
   const sb = b.newest_job?.stale ?? -1;
-  return sb - sa || a.repo.localeCompare(b.repo);
+  return Number(merged(a.newest_job)) - Number(merged(b.newest_job)) || sb - sa || a.repo.localeCompare(b.repo);
 }
 
 function Totals({ survey }: { survey: ContextAuditSurvey }) {
   const jobs = survey.repos.map((r) => r.newest_job).filter((j) => j !== null);
-  const audited = jobs.filter((j) => j.status === "completed");
-  const stale = audited.reduce((sum, j) => sum + (j.stale ?? 0), 0);
+  const audited = jobs.filter((j) => isFinishedWell(j.status));
+  // A merged audit's claims are probably fixed: counted in its row, not in the total.
+  const stale = audited.filter((j) => !merged(j)).reduce((sum, j) => sum + (j.stale ?? 0), 0);
   const failed = jobs.filter((j) => j.status === "failed").length;
   const cost = jobs.reduce((sum, j) => sum + (j.total_cost_usd ?? 0), 0);
   return (
@@ -95,11 +110,18 @@ function LatestAudit({ row }: { row: ContextAuditRepo }) {
 
 function Stale({ row }: { row: ContextAuditRepo }) {
   const job = row.newest_job;
-  if (job?.status !== "completed") return <span className="text-muted-foreground">{MISSING}</span>;
+  if (!job || !isFinishedWell(job.status)) return <span className="text-muted-foreground">{MISSING}</span>;
   if (job.stale === null) {
     return (
       <span className="text-warning" title="The report lost its count: open the job to read it">
         ?
+      </span>
+    );
+  }
+  if (merged(job)) {
+    return (
+      <span className="text-white/50" title="Counted before its pull request merged: probably fixed since">
+        {job.stale}
       </span>
     );
   }

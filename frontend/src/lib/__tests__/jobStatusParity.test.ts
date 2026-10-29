@@ -7,7 +7,7 @@ import jobsRepoPy from "../../../../embry0/storage/repositories/jobs.py?raw";
 import streamingPy from "../../../../embry0/api/ws/streaming.py?raw";
 import jobsRoutePy from "../../../../embry0/api/v1/jobs.py?raw";
 import { ALL_JOB_STATUSES } from "../types/jobs";
-import { CANCELLABLE_JOB_STATUSES, TERMINAL_JOB_STATUSES } from "../jobStatus";
+import { CANCELLABLE_JOB_STATUSES, FINISHED_WELL_JOB_STATUSES, TERMINAL_JOB_STATUSES } from "../jobStatus";
 
 /** NAME -> value of `class JobStatus(StrEnum)` in embry0/storage/schemas.py. */
 function backendEnum(): Map<string, string> {
@@ -16,14 +16,35 @@ function backendEnum(): Map<string, string> {
   return new Map([...body.matchAll(/^\s+([A-Z_]+) = "([a-z_]+)"/gm)].map((m) => [m[1], m[2]]));
 }
 
+/**
+ * The status values of a Python set or tuple literal's body. Each entry is
+ * `JobStatus.NAME` (`.value` or not) or a quoted value; any other entry fails
+ * the test, so a member written some other way is never skipped silently.
+ */
 function members(source: string, pattern: RegExp, what: string): string[] {
   const block = pattern.exec(source)?.[1];
   if (!block) throw new Error(`${what} not found`);
   const e = backendEnum();
-  return [...block.matchAll(/JobStatus\.([A-Z_]+)/g)].map((m) => {
-    const value = e.get(m[1]);
-    if (!value) throw new Error(`${what} names JobStatus.${m[1]}, which the enum lacks`);
-    return value;
+  const known = new Set(e.values());
+  const entries = block
+    .replace(/#.*$/gm, "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (entries.length === 0) throw new Error(`${what} has no members`);
+  return entries.map((entry) => {
+    const named = /^JobStatus\.([A-Z_]+)(?:\.value)?$/.exec(entry);
+    if (named) {
+      const value = e.get(named[1]);
+      if (!value) throw new Error(`${what} names JobStatus.${named[1]}, which the enum lacks`);
+      return value;
+    }
+    const quoted = /^(["'])([a-z_]+)\1$/.exec(entry);
+    if (quoted) {
+      if (!known.has(quoted[2])) throw new Error(`${what} names "${quoted[2]}", which the enum lacks`);
+      return quoted[2];
+    }
+    throw new Error(`${what} has a member this test cannot read: ${entry}`);
   });
 }
 
@@ -40,6 +61,11 @@ describe("client job status sets match the backend", () => {
     const terminal = members(jobsRepoPy, /_TERMINAL_STATUSES: frozenset\[str\] = frozenset\(\s*\{([\s\S]*?)\}\s*\)/, "jobs.py _TERMINAL_STATUSES");
     const added = members(streamingPy, /FINISHED_STATUSES: frozenset\[str\] = TERMINAL_JOB_STATUSES \| \{([^}]*)\}/, "streaming.py FINISHED_STATUSES");
     expect(sorted(TERMINAL_JOB_STATUSES)).toEqual(sorted(new Set([...terminal, ...added])));
+  });
+
+  it("reads a job as having done its work on the backend's FINISHED_WELL_STATUSES", () => {
+    const finished = members(schemasPy, /^FINISHED_WELL_STATUSES: tuple\[str, \.\.\.\] = \(([^)]*)\)/m, "schemas.py FINISHED_WELL_STATUSES");
+    expect(sorted(FINISHED_WELL_JOB_STATUSES)).toEqual(sorted(finished));
   });
 
   it("offers Cancel on exactly the statuses POST /jobs/{id}/cancel accepts", () => {

@@ -37,7 +37,7 @@ A repository is due when:
 
 It is never due while one of its context-audit jobs is pending, running, awaiting input or paused, whoever started it.
 
-The newest job is the anchor whatever became of it. A completed job counts from when it finished; a failed or cancelled one from when it started, so a failure waits a full interval, the same as a success, and the schedule never retries on every tick. A start refused before any job existed counts the same way; the orchestrator remembers it until it restarts. The budget gate is the exception: the schedule asks it before each start, and while it refuses (a daily or monthly budget; the schedule's actor, `embry0:context-audit`, skips the per-author hourly limit) no job is written, nothing counts as an attempt and the tick stops there, so the repositories it did not reach are due again on the next tick. A job the gate refused anyway, between the ask and the run, did no work and is no anchor either. A change to the files is due at once in every case. A job a person starts with the run below is the schedule's own start and counts like one. A context-audit job started any other way, such as one created with `POST /api/v1/jobs`, counts too; it records no fingerprint, so only its age is read.
+The newest job is the anchor whatever became of it. A completed job counts from when it finished, and so does one whose pull request merged or closed since (`pr_merged`, `pr_closed`): it did its work. A failed or cancelled one counts from when it started, so a failure waits a full interval, the same as a success, and the schedule never retries on every tick. A start refused before any job existed counts the same way; the orchestrator remembers it until it restarts. The budget gate is the exception: the schedule asks it before each start, and while it refuses (a daily or monthly budget; the schedule's actor, `embry0:context-audit`, skips the per-author hourly limit) no job is written, nothing counts as an attempt and the tick stops there, so the repositories it did not reach are due again on the next tick. A job the gate refused anyway, between the ask and the run, did no work and is no anchor either. A change to the files is due at once in every case. A job a person starts with the run below is the schedule's own start and counts like one. A context-audit job started any other way, such as one created with `POST /api/v1/jobs`, counts too; it records no fingerprint, so only its age is read.
 
 The schedule reads GitHub repositories in this release. An organization on GitLab is skipped with one log line.
 
@@ -91,7 +91,7 @@ The answer lists each active registered repository with at least one instruction
 
 Each job the schedule starts is a job like any other: the read above names each repository's newest one, `GET /api/v1/jobs?repo=<owner>/<name>` lists it among the repository's jobs, and `GET /api/v1/jobs/{job_id}` carries its report. Its `job_created` audit row names the actor `embry0:context-audit`, and its `pipeline_config` records the `context_fingerprint` and `head_sha` it was started for.
 
-The organization page's **Context audit** tab shows the same read: each repository with instruction files, the outdated claims its newest audit counted, that audit's status, cost and failure if it failed, and whether the schedule will audit it again, most outdated claims first. Each row links to the job, whose page carries the findings table and the patch. The tab serves the last reading of the default branches; **Read again** reads them anew.
+The organization page's **Context audit** tab shows the same read: each repository with instruction files, the outdated claims its newest audit counted (still shown once that audit's pull request merged or closed), that audit's status, cost and failure if it failed, and whether the schedule will audit it again, most outdated claims first. A merged pull request probably fixed the claims its audit counted, so that repository is listed last and its claims stay out of the tab's total. Each row links to the job, whose page carries the findings table and the patch. The tab serves the last reading of the default branches; **Read again** reads them anew.
 
 ## Running it now
 
@@ -132,6 +132,16 @@ curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
 With it on, a job that finds outdated claims takes the patch from its report, the one it checked with `git apply --check`, commits it on its own branch and pushes it through the git proxy. At completion embry0 opens the pull request: titled with the number of claims it corrects, its body the report's findings table, labelled `embry0`, and asked about in the merge-approval chat when the repository has merge approvals on. The pull request changes only instruction files, and a person merges it.
 
 One is open per repository at a time: while an earlier audit's pull request is open, a later audit only reports. An audit that finds nothing, a report with no patch, and a patch that no longer applies open nothing; the findings stay in the report. The Context audit tab links each audit's pull request.
+
+## Findings offered to owners
+
+Each row of an audit's findings table is also offered to the repository's owners as an [owner proposal](api.md#owner-proposals) of kind `finding`; accepting one starts a job narrowed to that file, which opens a pull request for that claim. The findings offered are those of the repository's newest audit that finished its work:
+
+- **Its pull request merged:** none, until the repository's next audit finishes. The pull request may have fixed any of them, so they are not offered, and an older audit's findings are never offered in their place: they may be fixed too. A merge changes the instruction files, so with the schedule on the repository is due again at once.
+- **Its pull request was closed unmerged:** its findings are still offered. Nothing reached the default branch through it, so the claims still stand; an owner who disagrees with one declines it.
+- **It completed, with no pull request or one still open:** its findings are offered.
+
+An audit that failed, or one that has not finished, is passed over: the feed keeps to the newest audit that finished its work, as above.
 
 ## From an MCP client
 

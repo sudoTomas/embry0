@@ -181,6 +181,12 @@ class FakeJobs:
         row = next(r for r in reversed(self.rows) if r["repo"] == repo)
         row.update(status=status, finished_at=when, result_summary=report)
 
+    def deliver(self, repo: str, status: str) -> None:
+        """Merge sync's write once the newest job's pull request merged or closed: its finish time stays."""
+        row = next(r for r in reversed(self.rows) if r["repo"] == repo)
+        assert row["status"] == "completed", row["status"]
+        row.update(status=status)
+
     async def result_summaries(self, job_ids: Collection[str]) -> dict[str, str | None]:
         self.summary_reads.append(sorted(job_ids))
         return {r["job_id"]: r.get("result_summary") for r in self.rows if r["job_id"] in job_ids}
@@ -399,6 +405,20 @@ def test_an_attempt_reads_the_job_row_it_came_from() -> None:
     assert Attempt.from_job({"status": "pending"}) is None
 
 
+@pytest.mark.parametrize("status", ["pr_merged", "pr_closed"])
+def test_an_audit_whose_pull_request_merged_or_closed_finished_when_it_completed(status: str) -> None:
+    """Merge sync moves a completed audit on as its pull request merges or closes (#217); it still did its work."""
+    row = {
+        "status": status,
+        "created_at": T0 - timedelta(hours=1),
+        "finished_at": T0,
+        "pipeline_config": {"context_fingerprint": FP, "head_sha": HEAD},
+    }
+    assert Attempt.from_job(row) == Attempt(T0 - timedelta(hours=1), T0, FP, HEAD), (
+        f"a {status} audit is aged from when it finished, not from when it started"
+    )
+
+
 # ---- reading the forge ----
 
 
@@ -555,6 +575,25 @@ async def test_a_repository_is_never_audited_twice_at_once_and_waits_its_interva
     world.forge.put("acme/web", "2" * 40, {"CLAUDE.md": "a" * 40, "src/app.py": "b" * 40})
     world.clock.now = T0 + timedelta(days=7, minutes=59)
     assert await world.loop.tick() == [], "the code moved, but the audit is not an interval old"
+    world.clock.now = T0 + timedelta(days=7, hours=1)
+    assert await world.loop.tick() == ["acme/web"], "an interval after it finished, with the branch moved"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["pr_merged", "pr_closed"])
+async def test_an_audit_whose_pull_request_merged_waits_its_interval_from_when_it_finished(status: str) -> None:
+    """#217: the next audit is due a full interval after the merged (or closed) one finished, not after it started."""
+    world = World(org("acme", days=7), repos=(reg("acme/web"),))
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    assert await world.loop.tick() == ["acme/web"]
+    world.jobs.finish("acme/web", "completed", T0 + timedelta(hours=1), "Stale: 2\nFiles: 1\n")
+    world.clock.now = T0 + timedelta(days=1)
+    world.jobs.deliver("acme/web", status)
+    world.forge.put("acme/web", "2" * 40, {"CLAUDE.md": "a" * 40, "src/app.py": "b" * 40})
+    world.clock.now = T0 + timedelta(days=7, minutes=30)
+    assert await world.loop.tick() == [], (
+        f"the {status} audit finished an hour after it started: it is not an interval old yet"
+    )
     world.clock.now = T0 + timedelta(days=7, hours=1)
     assert await world.loop.tick() == ["acme/web"], "an interval after it finished, with the branch moved"
 
@@ -810,6 +849,24 @@ async def test_a_survey_without_refresh_serves_the_last_reading_with_the_jobs_as
     fresh = await world.loop.survey(org("acme", days=7))
     assert fresh.read_at == world.clock.now
     assert next(s for s in fresh.repos if s.context.repo == "acme/web").reason == CHANGED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["pr_merged", "pr_closed"])
+async def test_a_survey_keeps_the_counts_of_an_audit_whose_pull_request_merged(status: str) -> None:
+    """#217: once the newest audit's pull request merges or closes, its row still shows what that audit counted."""
+    world = World(org("acme", days=7), repos=(reg("acme/web"),))
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    assert await world.loop.tick() == ["acme/web"]
+    world.jobs.finish("acme/web", "completed", T0 + timedelta(minutes=10), "Stale: 4\nFiles: 2\n")
+    world.jobs.deliver("acme/web", status)
+    survey = await world.loop.survey(org("acme", days=7), refresh=False, reports=True)
+    newest = survey.repos[0].to_dict()["newest_job"]
+    assert newest["status"] == status
+    assert (newest["stale"], newest["files_read"]) == (4, 2), (
+        f"a {status} audit's row shows its counts, not {(newest['stale'], newest['files_read'])}"
+    )
+    assert world.jobs.summary_reads == [["job-1"]], "its report is read"
 
 
 @pytest.mark.asyncio

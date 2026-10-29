@@ -26,6 +26,20 @@ class JobStatus(StrEnum):
     PR_CLOSED = "pr_closed"
 
 
+#: The statuses of a job that finished its work: ``completed``, and every
+#: status merge sync moves a completed job to as it records what became of
+#: its pull request (``pr_merged``; ``pr_closed``, which a reopened pull
+#: request walks back to ``completed``; ``VALID_JOB_TRANSITIONS`` in
+#: ``embry0/storage/repositories/jobs.py``). The work was done whatever
+#: became of the pull request, so every reader of "a job that did its work"
+#: reads this set, never ``completed`` alone (#210, #217).
+FINISHED_WELL_STATUSES: tuple[str, ...] = (
+    JobStatus.COMPLETED.value,
+    JobStatus.PR_MERGED.value,
+    JobStatus.PR_CLOSED.value,
+)
+
+
 class IssueStatus(StrEnum):
     OPEN = "open"
     TRIAGING = "triaging"

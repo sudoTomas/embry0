@@ -316,7 +316,7 @@ export interface ContextAuditJob {
   error_code: string | null;
   /** The pull request it opened from its patch, when its organization has that on. */
   pr_url: string | null;
-  /** Outdated claims the report counted; null until the job completed, or when its report lost the count. */
+  /** Outdated claims the report counted; null until the job finished its work (completed, its pull request merged or closed since), or when its report lost the count. */
   stale: number | null;
   /** Instruction files the audit read. */
   files_read: number | null;

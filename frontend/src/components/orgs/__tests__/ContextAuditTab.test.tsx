@@ -113,6 +113,26 @@ describe("ContextAuditTable", () => {
     );
   });
 
+  it("keeps a merged audit's own count, but leaves it out of the total and sorts it last (#217)", () => {
+    renderTable(
+      survey([
+        row("acme/merged", { newest_job: job({ job_id: "job-merged", status: "pr_merged", stale: 5, total_cost_usd: 1 }) }),
+        row("acme/closed", { newest_job: job({ job_id: "job-closed", status: "pr_closed", stale: 2, total_cost_usd: 1 }) }),
+        row("acme/open", { newest_job: job({ job_id: "job-open", stale: 1, total_cost_usd: 1 }) }),
+        row("acme/new", { newest_job: null, due: true, reason: "first" }),
+      ]),
+    );
+    expect(rows().map((r) => [repoOf(r), within(r).getByTestId("context-audit-stale").textContent])).toEqual([
+      ["acme/closed", "2"],
+      ["acme/open", "1"],
+      ["acme/new", "-"],
+      ["acme/merged", "5"],
+    ]);
+    expect(screen.getByTestId("context-audit-totals")).toHaveTextContent(
+      "4 repositories with instruction files · 3 audited · 3 outdated claims · $3.00 on the latest audits",
+    );
+  });
+
   it("shows a start refused before any job, and the repositories the forge did not answer for", () => {
     renderTable(
       survey([row("acme/web", { newest_job: null, refused_at: "2026-10-20T12:00:00Z" })], {

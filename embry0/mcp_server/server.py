@@ -1037,8 +1037,9 @@ async def context_audit_status(owner: str, refresh: bool = False) -> dict[str, A
     """What the context audit reads for one GitHub organization: its context_audit_days (null is
     off) and, for each active registered repository with files that steer a coding agent (CLAUDE.md,
     AGENTS.md, skills, rules), how many there are, their fingerprint, the head read, the newest
-    context-audit job (job_id, status, created_at, finished_at, total_cost_usd, error_code, and for a
-    completed one stale and files_read, the counts its report starts with), whether the schedule
+    context-audit job (job_id, status, created_at, finished_at, total_cost_usd, error_code, and for
+    one that finished its work, completed or its pull request merged or closed since, stale and
+    files_read, the counts its report starts with), whether the schedule
     would start one now (due) and why (reason: first, changed, aged, live, current or off). unread
     lists the repositories the forge did not answer for, with why. Each repository's last reading
     is served, read_at says when the oldest was taken; refresh=true reads every default branch again,
