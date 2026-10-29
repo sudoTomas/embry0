@@ -269,3 +269,34 @@ async def test_a_value_refused_only_with_the_other_values_is_tried_again_at_the_
     await store.save(text, load_yaml(text), actor="alex@example.com")
     second = await import_env_once(store, config, today=DAY)
     assert second.imported == {"range": {"low": 7}}
+
+
+# ---- #162: a document kept in a file ----
+
+
+async def test_an_import_into_a_document_kept_in_a_file_names_each_key_to_copy_into_it(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """The import writes into the stored document, not the operator's file, so the next apply of the
+    file would put the key back to its default without a word. The boot says which keys to copy."""
+    store = SettingsStore(db_with_migrations, TEST_CATALOG)
+    text = "managed_by: file\nother:\n  limit: 2\n"
+    await store.save(text, load_yaml(text), actor="alex@example.com", source="file")
+    with capture_logs() as logs:
+        result = await import_env_once(store, _config(ASK_REMIND_HOURS="12", ASKS_ENABLED="true"), today=DAY)
+    assert result.imported == {"sample": {"enabled": True, "remind_hours": 12.0}}
+    warnings = [e for e in logs if e["event"] == "settings_env_imported_into_file_document"]
+    assert len(warnings) == 1, f"a document kept in a file must be warned about: {[e['event'] for e in logs]}"
+    assert warnings[0]["keys"] == ["sample.enabled", "sample.remind_hours"]
+    assert warnings[0]["log_level"] == "warning"
+    assert "embry0 settings apply" in warnings[0]["hint"]
+    assert "12" not in str(warnings[0]["keys"]), "the keys are named, not their values"
+
+
+async def test_an_import_into_a_document_edited_on_the_dashboard_does_not_warn(
+    db_with_migrations: DatabasePool,
+) -> None:
+    store = SettingsStore(db_with_migrations, TEST_CATALOG)
+    with capture_logs() as logs:
+        await import_env_once(store, _config(ASK_REMIND_HOURS="12"), today=DAY)
+    assert not [e for e in logs if e["event"] == "settings_env_imported_into_file_document"]

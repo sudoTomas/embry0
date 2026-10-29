@@ -525,3 +525,24 @@ async def test_managed_by_file_is_served_and_turning_it_on_is_a_named_change(cli
     assert (doc["managed_by"], doc["unknown_sections"]) == ("file", []), "managed_by is not a section nobody knows"
     newest = (await client.get(f"{URL}/revisions")).json()["revisions"][0]
     assert (newest["what"], newest["source"]) == ("Changed: managed_by", "file")
+
+
+async def test_offline_check_prints_what_the_api_s_dry_run_refuses_with(client, monkeypatch, tmp_path, capsys) -> None:
+    """`embry0 settings check` and `diff` must read alike: the real 422 of a dry run, printed the way
+    `diff` prints it, is line for line what the offline check prints for the same file."""
+    from argparse import Namespace
+
+    from embry0.cli.settings import REFUSED, problem_lines, run
+
+    bad = "sampel:\n  x: 1\nsample:\n  enabled: maybe\n  per_tick: 50\n  zone: Mars/Base\nother:\n  limit: -1\n"
+    resp = await _put(client, bad, params={"dry_run": 1, "source": "file"})
+    assert resp.status_code == 422, resp.text
+    from_api = problem_lines(resp.json()["detail"])
+    assert len(from_api) == 5, from_api
+
+    monkeypatch.setattr("embry0.settings.sections.CATALOG", TEST_CATALOG)  # the catalog the app was built with
+    path = tmp_path / "settings.yaml"
+    path.write_text(bad, encoding="utf-8")
+    assert run(Namespace(action="check", file=str(path))) == REFUSED
+    offline = [line.strip() for line in capsys.readouterr().err.splitlines()[1:]]
+    assert offline == from_api, "check must print exactly the problems the API refuses the same file with"
