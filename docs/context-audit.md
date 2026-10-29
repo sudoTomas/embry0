@@ -37,9 +37,11 @@ A repository is due when:
 2. the fingerprint differs from the one its newest context-audit job recorded; or
 3. that job is `context_audit_days` old and the branch head moved since it was started.
 
-It is never due while one of its context-audit jobs is pending, running, awaiting input or paused, whoever started it.
+It is never due while one of its context-audit jobs is pending, running, awaiting input or paused, whoever started it, a finding's fix job (below) included.
 
 The newest job is the anchor whatever became of it. A completed job counts from when it finished, and so does one whose pull request merged or closed since (`pr_merged`, `pr_closed`): it did its work. A failed or cancelled one counts from when it started, so a failure waits a full interval, the same as a success, and the schedule never retries on every tick. A start refused before any job existed counts the same way; the orchestrator remembers it until it restarts. The budget gate is the exception: the schedule asks it before each start, and while it refuses (a daily or monthly budget; the schedule's actor, `embry0:context-audit`, skips the per-author hourly limit) no job is written, nothing counts as an attempt and the tick stops there, so the repositories it did not reach are due again on the next tick. A job the gate refused anyway, between the ask and the run, did no work and is no anchor either. A change to the files is due at once in every case. A job a person starts with the run below is the schedule's own start and counts like one. A context-audit job started any other way, such as one created with `POST /api/v1/jobs`, counts too; it records no fingerprint, so only its age is read.
+
+A finding's fix job is no audit. Accepting a finding ([below](#findings-offered-to-owners)) starts a job on the `context-audit` template that fixes that one claim, dispatched by `embry0:proposals`, and the schedule never reads a job of that actor as a repository's newest job, so it never anchors the due rule. While it runs it still holds the repository, as every context-audit job does, so no audit starts beside it to open a pull request on the same files. Its recorded fingerprint names the finding, not the files, so read as the anchor it would make the repository due at once. Once its pull request merges, the file it changed no longer matches the fingerprint the audit before it recorded, so with the schedule on the repository is due again, as after any change to the files.
 
 The schedule reads GitHub repositories in this release. An organization on GitLab is skipped with one log line.
 
@@ -89,7 +91,7 @@ curl http://localhost:8200/api/v1/orgs/acme/context-audit \
   -H "Authorization: Bearer $API_KEY"
 ```
 
-The answer lists each active registered repository with at least one instruction file: how many it has, the fingerprint and head it was read at, its newest context-audit job (id, status, date), whether the schedule would start one now and why (`first`, `changed`, `aged`, `live`, `current`, or `off` while the setting is off). Repositories the forge did not answer for are listed under `unread`, with why. The read reads the forge and starts nothing, and works with the setting off. Field by field: [api.md](api.md#organizations).
+The answer lists each active registered repository with at least one instruction file: how many it has, the fingerprint and head it was read at, its newest context-audit job (id, status, date; never a finding's fix job), whether the schedule would start one now and why (`first`, `changed`, `aged`, `live`, `current`, or `off` while the setting is off). Repositories the forge did not answer for are listed under `unread`, with why. The read reads the forge and starts nothing, and works with the setting off. Field by field: [api.md](api.md#organizations).
 
 Each job the schedule starts is a job like any other: the read above names each repository's newest one, `GET /api/v1/jobs?repo=<owner>/<name>` lists it among the repository's jobs, and `GET /api/v1/jobs/{job_id}` carries its report. Its `job_created` audit row names the actor `embry0:context-audit`, and its `pipeline_config` records the `context_fingerprint` and `head_sha` it was started for.
 
@@ -144,6 +146,8 @@ Each row of an audit's findings table is also offered to the repository's owners
 - **It completed, with no pull request or one still open:** its findings are offered.
 
 An audit that failed, or one that has not finished, is passed over: the feed keeps to the newest audit that finished its work, as above.
+
+A finding's fix job is no audit, here as for the schedule, so the feed reads past it. While it runs, once it completes, and once its pull request merges or closes, the audit before it is still the newest, and that audit's findings are still offered, all but the one the job fixes: its owner answered that one by accepting it. The fix job's merged pull request changed that one claim, so it is not the audit's pull request merging, and its own report is never offered.
 
 ## From an MCP client
 

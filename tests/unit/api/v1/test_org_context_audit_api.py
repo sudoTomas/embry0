@@ -40,7 +40,12 @@ class FakeRegistry:
 
 class FakeJobs:
     async def newest_per_repo(
-        self, repos: Collection[str], *, pipeline_template: str, dispatched_by: str | None = None
+        self,
+        repos: Collection[str],
+        *,
+        pipeline_template: str,
+        dispatched_by: str | None = None,
+        exclude_dispatched_by: Collection[str] = (),
     ) -> dict[str, dict[str, Any]]:
         assert pipeline_template == TEMPLATE and dispatched_by == "embry0:context-audit"
         assert sorted(repos) == ["acme/plain", "acme/web"], "only the owner's own registered repositories"

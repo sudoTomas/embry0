@@ -5,11 +5,13 @@ stage ``tracked`` (accepting it runs the case's acceptance), an issue that is
 open with no job (accepting it sends it to triage), and one row of the
 findings table of a repository's newest context audit that finished its work,
 none once that audit's pull request merged (accepting it starts a fix job for
-that file, which opens a pull request). The rest are leads, work embry0's
-finders found by itself (spec 2026-10-25, ``embry0.services.leads``): a
-backlog ticket, failing CI, an alert, a flaky check, unanswered review
-threads. An owner answers each with accept, decline or snooze; the newest
-answer decides whether it is still asked.
+that file, which opens a pull request; that job is no audit, so the audit's
+other findings are still asked while it runs and after its pull request
+merges). The rest are leads, work embry0's finders found by itself (spec
+2026-10-25, ``embry0.services.leads``): a backlog ticket, failing CI, an
+alert, a flaky check, unanswered review threads. An owner answers each with
+accept, decline or snooze; the newest answer decides whether it is still
+asked.
 
 Owners are the repository's ``owners`` preference, else the users its
 ``CODEOWNERS`` names for every file. Nothing here messages anyone: an
@@ -25,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from embry0.orchestration import dispatch_actors
 from embry0.services import lead_kinds
 from embry0.services.areas import Area, area_of_labels, area_of_logs, area_of_path
 from embry0.services.leads import LEAD_KINDS
@@ -33,8 +36,10 @@ from embry0.services.slop import is_slop, parse_work_nature
 #: Every kind of owner proposal (:mod:`embry0.services.lead_kinds`): case, issue, finding and the leads.
 KINDS: tuple[str, ...] = lead_kinds.ids(proposal=True)
 DECISIONS: tuple[str, ...] = ("accept", "decline", "snooze")
-#: Who an assistant's answer is recorded under when it names nobody.
-ACTOR = "embry0:proposals"
+#: Who an assistant's answer is recorded under when it names nobody, and who
+#: dispatches a finding's fix job, which the context audit therefore reads as
+#: no audit (``context_audit.FIX_ACTOR``).
+ACTOR = dispatch_actors.PROPOSALS
 
 #: The columns of a context audit's findings table, as the command in its task fixes them.
 FINDING_COLUMNS = ("severity", "location", "claim", "evidence", "fix")

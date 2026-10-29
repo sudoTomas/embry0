@@ -305,16 +305,25 @@ class JobsRepository:
         return [dict(r) for r in rows], int(total or 0)
 
     async def newest_per_repo(
-        self, repos: Collection[str], *, pipeline_template: str, dispatched_by: str | None = None
+        self,
+        repos: Collection[str],
+        *,
+        pipeline_template: str,
+        dispatched_by: str | None = None,
+        exclude_dispatched_by: Collection[str] = (),
     ) -> dict[str, dict[str, Any]]:
         """The newest job of each repository in ``repos`` that names ``pipeline_template``.
 
         A job ``dispatched_by`` started counts too, whatever its template
         column says now: plan_route rewrites the column with the template it
-        resolved. Each row carries ``live``, whether any such job of the
-        repository has not been released (``RELEASED_JOB_STATUSES``), not only
-        the newest. One query for the whole set, without the task text; a
-        repository with no such job is absent.
+        resolved. A job an actor in ``exclude_dispatched_by`` started never
+        counts, whatever its template, neither as the newest nor in
+        ``live``: the context audit reads each repository's newest audit
+        this way, without a finding's fix job. Each row carries ``live``,
+        whether any such job of the repository has not been released
+        (``RELEASED_JOB_STATUSES``), not only the newest. One query for the
+        whole set, without the task text; a repository with no such job is
+        absent.
 
         A job the budget gate refused before any agent ran is left out
         (``gate_refusal_sql``, #331): it did no work, so it is nobody's
@@ -330,6 +339,7 @@ class JobsRepository:
                 bool_or(NOT (status = ANY($4::text[]))) OVER (PARTITION BY repo) AS live
             FROM jobs
             WHERE repo = ANY($1::text[]) AND (pipeline_template = $2 OR dispatched_by = $3)
+              AND NOT (COALESCE(dispatched_by, '') = ANY($5::text[]))
               AND NOT {gate_refusal_sql("jobs")}
             ORDER BY repo, created_at DESC, job_id DESC
             """,
@@ -337,6 +347,7 @@ class JobsRepository:
             pipeline_template,
             dispatched_by,
             sorted(str(status) for status in RELEASED_JOB_STATUSES),
+            sorted(set(exclude_dispatched_by)),
         )
         return {str(r["repo"]): dict(r) for r in rows}
 

@@ -70,6 +70,11 @@ MASTER_KEY = f"{RESERVED_PREFIX}master-key"
 # jobs an hour: its brakes are SCOUT_MAX_IN_FLIGHT (never more out at once),
 # the pin (a local model bills nothing), and each job's hard budget.
 SCOUT = f"{RESERVED_PREFIX}scout"
+# Owner proposals (spec 2026-10-24): the fix job an owner starts by accepting
+# one finding of a context audit. Rate-limited: an owner's yes is not a
+# continuation. The context audit reads its jobs as no audit by this actor
+# (``context_audit.FIX_ACTOR``).
+PROPOSALS = f"{RESERVED_PREFIX}proposals"
 # A request with no identity at all: only AUTH_DEV_MODE lets one through.
 ANONYMOUS = f"{RESERVED_PREFIX}anonymous"
 # The one-time import of a section's environment values into the settings

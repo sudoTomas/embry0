@@ -77,7 +77,12 @@ class FakeJobs:
         self.rows: list[dict[str, Any]] = []
 
     async def newest_per_repo(
-        self, repos: Collection[str], *, pipeline_template: str, dispatched_by: str | None = None
+        self,
+        repos: Collection[str],
+        *,
+        pipeline_template: str,
+        dispatched_by: str | None = None,
+        exclude_dispatched_by: Collection[str] = (),
     ) -> dict[str, dict[str, Any]]:
         return {row["repo"]: {**row, "live": True} for row in self.rows if row["repo"] in repos}
 
