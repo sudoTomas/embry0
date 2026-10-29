@@ -40,8 +40,8 @@ logger = structlog.get_logger(__name__)
 # database-wide namespace, so any future advisory lock in embry0 MUST pick a
 # different key and be registered here (grep `pg_advisory` for the roster).
 # The others hash a prefixed text key with hashtextextended:
-# `qa_image_tags:<repo>`, `org_needs:<owner>`, `standards:<owner>:<kind>` and
-# `org_discovery:<owner>`.
+# `qa_image_tags:<repo>`, `org_needs:<owner>`, `standards:<owner>:<kind>`,
+# `org_discovery:<owner>` and `progression_rollup`.
 MIGRATIONS_ADVISORY_LOCK_KEY = 0x656D62727930
 
 # Acquisition is usually instantaneous; anything slower means another replica
@@ -3670,6 +3670,60 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         COMMENT ON TABLE progression_pack_defaults IS
             'progression (#176): each shipped default a stored pack was based on, so a later release can show what moved.';
+        """,
+    ),
+    (
+        131,
+        "progression: a daily rollup of experience per pack, and the two trace indexes its reads use",
+        # #176, spec 2026-10-28 section 7. The closed days are folded once per
+        # pack hash (embry0/services/progression_rollup.py), so a read of
+        # GET /progression folds only the raw events of the last few days.
+        # One rollup row per pack, its rows deleted with it, stamped with the
+        # version of the code that folded it. A milestone keeps its exact time
+        # and its place in the fold (seq).
+        #
+        # The indexes: the recent runs by start time, and one agent's
+        # successful runs (the quests' journal and the reviews fact). Plain
+        # CREATE INDEX, not CONCURRENTLY: the runner wraps each migration in a
+        # transaction (see migration 16). It holds a SHARE lock on traces while
+        # it builds, which blocks trace writes, not reads; migrations run at
+        # startup, before this orchestrator writes a trace.
+        """
+        CREATE TABLE IF NOT EXISTS progression_rollups (
+            pack_hash    TEXT PRIMARY KEY,
+            fold_version TEXT NOT NULL,
+            timezone     TEXT NOT NULL,
+            through_day  DATE NOT NULL,
+            boundary     TIMESTAMPTZ NOT NULL,
+            state        JSONB NOT NULL CHECK (jsonb_typeof(state) = 'object'),
+            rewards      JSONB NOT NULL CHECK (jsonb_typeof(rewards) = 'array'),
+            built_at     TIMESTAMPTZ NOT NULL,
+            rebuilt_at   TIMESTAMPTZ NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS progression_daily (
+            pack_hash  TEXT NOT NULL REFERENCES progression_rollups (pack_hash) ON DELETE CASCADE,
+            day        DATE NOT NULL,
+            agent_type TEXT NOT NULL,
+            skill      TEXT NOT NULL,
+            xp         BIGINT NOT NULL,
+            PRIMARY KEY (pack_hash, day, agent_type, skill)
+        );
+        CREATE TABLE IF NOT EXISTS progression_milestones (
+            pack_hash  TEXT NOT NULL REFERENCES progression_rollups (pack_hash) ON DELETE CASCADE,
+            seq        INTEGER NOT NULL,
+            at         TIMESTAMPTZ NOT NULL,
+            kind       TEXT NOT NULL CHECK (kind IN ('level', 'agent_level', 'rare')),
+            agent_type TEXT NOT NULL,
+            skill      TEXT,
+            level      INTEGER,
+            rare       TEXT,
+            PRIMARY KEY (pack_hash, seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_traces_created_at ON traces (created_at);
+        CREATE INDEX IF NOT EXISTS idx_traces_success_agent
+            ON traces (agent_type, created_at) WHERE result = 'success' AND error_code IS NULL;
+        COMMENT ON TABLE progression_rollups IS
+            'progression (#176): the closed days of the pack calendar folded once, per pack hash; see progression_rollup.py.';
         """,
     ),
 ]

@@ -404,7 +404,9 @@ async def preview_pack_draft(request: Request) -> dict[str, Any]:
             raise _unprocessable(exc) from None
         rules = rules_for(draft)
         active = await store.effective()
-        before = await service.read()
+        # Both sides from the raw rows: a preview never reads or builds the active pack's rollup, so a day the
+        # rollup holds stale (work recorded late) cannot show up as a change the draft makes.
+        before = await service.compute(await service.rules())
         after = await service.compute(rules)
     return {
         **after.to_dict(),

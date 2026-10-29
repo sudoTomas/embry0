@@ -838,13 +838,18 @@ async def _init_app_state(
     # under the active content pack (#176), read by GET /progression. The
     # pack is the stored one an operator activated, else the shipped default;
     # a stored pack this release refuses is never served (the default is).
+    # The closed days are folded once into the rollup tables (migration 131),
+    # so a read folds only the last few days' raw events.
     from embry0.services.progression import ProgressionService
     from embry0.services.progression_pack_store import PackStore
     from embry0.storage.repositories.progression import ProgressionRepository
     from embry0.storage.repositories.progression_packs import ProgressionPacksRepository
+    from embry0.storage.repositories.progression_rollup import ProgressionRollupRepository
 
     app.state.progression_packs = PackStore(ProgressionPacksRepository(db))
-    app.state.progression = ProgressionService(ProgressionRepository(db), packs=app.state.progression_packs)
+    app.state.progression = ProgressionService(
+        ProgressionRepository(db), packs=app.state.progression_packs, rollups=ProgressionRollupRepository(db)
+    )
     from embry0.storage.repositories.organizations import OrganizationsRepository
 
     app.state.organizations_repo = OrganizationsRepository(db)
@@ -2750,6 +2755,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await gh_client.aclose()
         except Exception:
             logger.warning("github_http_client_close_failed", exc_info=True)
+    # A rollup write still running is rolled back; the next read starts it again.
+    progression_service = getattr(app.state, "progression", None)
+    if progression_service is not None:
+        await progression_service.aclose()
     # Asks still in flight hold no state worth waiting for; the next job asks again.
     merge_approvals = getattr(app.state, "merge_approvals", None)
     if merge_approvals is not None:

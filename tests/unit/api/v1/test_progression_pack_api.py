@@ -505,3 +505,82 @@ def test_who_made_a_version_is_shown_as_the_audit_log_shows_actors() -> None:
         ], "an admin sees every actor"
     finally:
         bust_user_gate_cache()
+
+
+# ---- the rollup (#176, PR 3): a pack change is read from the raw rows, then gets a rollup of its own ----
+
+
+async def _read_then_settle(client: AsyncClient) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    """The first read under the pack in effect, the read after its background write, and the rollups stored."""
+    first = (await client.get("/api/v1/progression")).json()
+    await client.app.state.progression.settle()  # type: ignore[attr-defined]
+    second = (await client.get("/api/v1/progression")).json()
+    rows = await client.app.state.db.fetch("SELECT pack_hash FROM progression_rollups")  # type: ignore[attr-defined]
+    return first, second, [r["pack_hash"] for r in rows]
+
+
+async def test_activate_reset_and_restore_each_read_raw_then_build_their_own_rollup(client: AsyncClient) -> None:
+    _first, settled, stored = await _read_then_settle(client)
+    assert settled["rollup"] is not None and stored == [settled["pack"]["hash"]], "the shipped pack's rollup"
+    previous = settled["pack"]["hash"]
+
+    async def changed(step: str) -> str:
+        nonlocal previous
+        first, second, stored = await _read_then_settle(client)
+        current = first["pack"]["hash"]
+        assert current != previous, f"{step} left the pack's hash as it was"
+        assert first["rollup"] is None, f"after {step} the first read used another pack's rollup"
+        assert second["rollup"] is not None and stored == [current], (
+            f"after {step} the new pack's rollup was not built, alone: {stored}"
+        )
+        previous = current
+        return current
+
+    draft = (await client.put(f"{PACK}/draft", content=COPPER, headers=YAML)).json()
+    activated = await client.post(f"{PACK}/draft/activate", headers={"If-Match": f'"{draft["version"]}"'})
+    assert activated.status_code == 200, activated.text
+    copper = await changed("an activation")
+    reset = await client.post(f"{PACK}/reset", headers={"If-Match": f'"{activated.json()["version"]}"'})
+    assert reset.status_code == 200, reset.text
+    await changed("a reset")
+    restored = await client.post(f"{PACK}/versions/{activated.json()['version']}/restore")
+    assert restored.status_code == 200, restored.text
+    assert await changed("a restore") == copper, "the restored version prices as it did"
+
+
+async def test_the_preview_never_reads_or_builds_a_rollup(client: AsyncClient) -> None:
+    """Both sides of a preview fold the raw rows: a day the rollup holds stale is no change the draft makes."""
+    db = client.app.state.db  # type: ignore[attr-defined]
+    await _read_then_settle(client)
+    before = [dict(r) for r in await db.fetch("SELECT pack_hash, built_at FROM progression_rollups")]
+    assert len(before) == 1
+    # Recorded after the rollup was built, for a day it holds: the rollup leaves it out until the nightly rebuild.
+    at = datetime(2026, 3, 2, 10, tzinfo=UTC)
+    await db.execute(
+        "INSERT INTO jobs (job_id, repo, task, status, budget_overrun_usd, created_at, started_at, finished_at, "
+        "updated_at) VALUES ('pack-late-job', 'acme/widgets', 't', 'completed', 0, $1, $1, $1, $1)",
+        at,
+    )
+    await db.execute(
+        "INSERT INTO traces (trace_id, job_id, agent_type, model, result, tools_called, skill_actions, created_at) "
+        "VALUES ('pack-late-trace', 'pack-late-job', $1, 'm', 'success', '{}'::jsonb, $2::jsonb, $3)",
+        AGENT,
+        {"edit:source": 50},
+        at,
+    )
+    try:
+        draft_text = DEFAULT.replace("actions: {edit: 1400,", "actions: {edit: 140000,")
+        assert (await client.put(f"{PACK}/draft", content=draft_text, headers=YAML)).status_code == 200
+        preview = await client.get("/api/v1/progression/preview")
+        assert preview.status_code == 200, preview.text
+        agent = next(c for c in preview.json()["changes"]["characters"] if c["agent_type"] == AGENT)
+        assert agent["before"] is not None and (agent["before"]["xp"], agent["after"]["xp"]) == (
+            50 * 1400,
+            50 * 140000,
+        ), f"the preview's active side was read from a stale rollup: {agent}"
+        await client.app.state.progression.settle()  # type: ignore[attr-defined]
+        after = [dict(r) for r in await db.fetch("SELECT pack_hash, built_at FROM progression_rollups")]
+        assert after == before, f"the preview wrote a rollup: {after}"
+    finally:
+        await db.execute("DELETE FROM traces WHERE trace_id = 'pack-late-trace'")
+        await db.execute("DELETE FROM jobs WHERE job_id = 'pack-late-job'")

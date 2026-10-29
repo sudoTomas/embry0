@@ -18,7 +18,7 @@ ever enters the SQL.
 from __future__ import annotations
 
 import string
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -29,52 +29,101 @@ from embry0.storage.database import DatabasePool
 # (spec 2026-10-25, slop dungeon), the developer otherwise.
 _CODER = "CASE WHEN {job}.pipeline_template = 'slop-cleanup' THEN 'slopmaster' ELSE 'developer' END"
 
-_EVENTS_SQL = f"""
--- an agent run that ended without an error, with the tool calls it made
-SELECT 'run' AS source, t.agent_type, t.created_at AS at, NULL::text AS report, t.tools_called, t.skill_actions
+#: Every source of an event, in a fixed order: (when it happened, its rows). Each SELECT gives
+#: ``(branch, key, source, agent_type, at, report, tools_called, skill_actions)``; ``branch`` and
+#: ``key`` (the row's id) order events that happened at the same time the same way in every read,
+#: so the rollup (``embry0/services/progression_rollup.py``) folds them in the order a full read does.
+#:
+#: A job's event happens when it finished (or, for a merge, when the forge says it merged), never at
+#: its ``updated_at``: that moves every time the row is touched, so an event dated by it could be
+#: folded into a closed day and then counted again in the recent days. Every finished job has a
+#: ``finished_at`` (set with its status, older rows backfilled by migration 89); a job that has not
+#: finished earns its ``opened`` XP when it does.
+_EVENT_BRANCHES: tuple[tuple[str, str], ...] = (
+    (
+        "t.created_at",
+        """-- an agent run that ended without an error, with the tool calls it made; it happened when it started
+SELECT 0 AS branch, t.trace_id AS key, 'run' AS source, t.agent_type, t.created_at AS at, NULL::text AS report,
+       t.tools_called, t.skill_actions
 FROM traces t
-WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL
-UNION ALL
--- the developer (the Slopmaster, for a slop cleanup): a pull request a job opened was merged
-SELECT 'merged', {_CODER.format(job="j")}, COALESCE(j.delivery_state_at, j.finished_at, j.updated_at), NULL, NULL, NULL
-FROM jobs j WHERE j.status = 'pr_merged'
-UNION ALL
--- the developer (or the Slopmaster): a job that opened a pull request
-SELECT 'opened', {_CODER.format(job="j")}, COALESCE(j.finished_at, j.updated_at), NULL, NULL, NULL
-FROM jobs j WHERE j.pr_url IS NOT NULL
-UNION ALL
--- the Slopmaster: a merged slop cleanup, with the lines it added and removed as its report
-SELECT 'cleaned', 'slopmaster', COALESCE(j.delivery_state_at, j.finished_at, j.updated_at),
+WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL""",
+    ),
+    (
+        "COALESCE(j.delivery_state_at, j.finished_at)",
+        f"""-- the developer (the Slopmaster, for a slop cleanup): a pull request a job opened was merged
+SELECT 1, j.job_id, 'merged', {_CODER.format(job="j")}, COALESCE(j.delivery_state_at, j.finished_at),
+       NULL, NULL, NULL
+FROM jobs j WHERE j.status = 'pr_merged'""",
+    ),
+    (
+        "j.finished_at",
+        f"""-- the developer (or the Slopmaster): a job that opened a pull request, once it finished
+SELECT 2, j.job_id, 'opened', {_CODER.format(job="j")}, j.finished_at, NULL, NULL, NULL
+FROM jobs j WHERE j.pr_url IS NOT NULL AND j.finished_at IS NOT NULL""",
+    ),
+    (
+        "COALESCE(j.delivery_state_at, j.finished_at)",
+        """-- the Slopmaster: a merged slop cleanup, with the lines it added and removed as its report
+SELECT 3, j.job_id, 'cleaned', 'slopmaster', COALESCE(j.delivery_state_at, j.finished_at),
        (j.work_nature -> 'cleanup')::text, NULL, NULL
-FROM jobs j WHERE j.status = 'pr_merged' AND j.pipeline_template = 'slop-cleanup'
-UNION ALL
--- the developer (or the Slopmaster): a merge on an issue whose earlier job had failed
-SELECT 'comeback', {_CODER.format(job="m")}, COALESCE(m.delivery_state_at, m.finished_at, m.updated_at), NULL, NULL, NULL
+FROM jobs j WHERE j.status = 'pr_merged' AND j.pipeline_template = 'slop-cleanup'""",
+    ),
+    (
+        "COALESCE(m.delivery_state_at, m.finished_at)",
+        f"""-- the developer (or the Slopmaster): a merge on an issue whose earlier job had failed
+SELECT 4, m.job_id, 'comeback', {_CODER.format(job="m")}, COALESCE(m.delivery_state_at, m.finished_at),
+       NULL, NULL, NULL
 FROM jobs m
 WHERE m.status = 'pr_merged' AND m.issue_id IS NOT NULL
   AND EXISTS (
     SELECT 1 FROM jobs f
     WHERE f.issue_id = m.issue_id AND f.status = 'failed' AND f.created_at < m.created_at
-  )
-UNION ALL
--- an interrupted job resumed to the end: the agent of its last run
-SELECT 'resumed', (SELECT t.agent_type FROM traces t WHERE t.job_id = j.job_id ORDER BY t.created_at DESC LIMIT 1),
-       COALESCE(j.finished_at, j.updated_at), NULL, NULL, NULL
-FROM jobs j WHERE j.resume_attempts > 0 AND j.status IN ('completed', 'pr_merged')
-UNION ALL
--- QA: a QA job that completed
-SELECT 'qa_passed', 'qa', COALESCE(j.finished_at, j.updated_at), NULL, NULL, NULL
-FROM jobs j WHERE j.pipeline_template = 'qa' AND j.status = 'completed'
-UNION ALL
--- the context auditor: an audit that completed, with its report
-SELECT 'audited', 'context-auditor', COALESCE(j.finished_at, j.updated_at), j.result_summary, NULL, NULL
-FROM jobs j WHERE j.pipeline_template = 'context-audit' AND j.status = 'completed'
-UNION ALL
--- a question an agent asked a person
-SELECT 'asked', a.actor, a.created_at, NULL, NULL, NULL
-FROM audit_log a WHERE a.action = 'issue.input_created'
-ORDER BY at
-"""
+  )""",
+    ),
+    (
+        "j.finished_at",
+        """-- an interrupted job resumed to the end: the agent of its last run
+SELECT 5, j.job_id, 'resumed',
+       (SELECT t.agent_type FROM traces t WHERE t.job_id = j.job_id ORDER BY t.created_at DESC LIMIT 1),
+       j.finished_at, NULL, NULL, NULL
+FROM jobs j WHERE j.resume_attempts > 0 AND j.status IN ('completed', 'pr_merged')""",
+    ),
+    (
+        "j.finished_at",
+        """-- QA: a QA job that completed
+SELECT 6, j.job_id, 'qa_passed', 'qa', j.finished_at, NULL, NULL, NULL
+FROM jobs j WHERE j.pipeline_template = 'qa' AND j.status = 'completed'""",
+    ),
+    (
+        "j.finished_at",
+        """-- the context auditor: an audit that completed, with its report
+SELECT 7, j.job_id, 'audited', 'context-auditor', j.finished_at, j.result_summary, NULL, NULL
+FROM jobs j WHERE j.pipeline_template = 'context-audit' AND j.status = 'completed'""",
+    ),
+    (
+        "a.created_at",
+        """-- a question an agent asked a person
+SELECT 8, a.id::text, 'asked', a.actor, a.created_at, NULL, NULL, NULL
+FROM audit_log a WHERE a.action = 'issue.input_created'""",
+    ),
+)
+
+
+def events_sql(*, since: bool = False, until: bool = False) -> str:
+    """The events query: every source, from ``$1`` on with ``since``, before the next bind with ``until``.
+
+    Each bound is put on the source's own time, so a read of the last few
+    days reaches ``traces`` through its ``created_at`` index (migration 131).
+    """
+    parts: list[str] = []
+    for at, branch in _EVENT_BRANCHES:
+        bounds: list[str] = []
+        if since:
+            bounds.append(f"{at} >= $1")
+        if until:
+            bounds.append(f"{at} < ${len(bounds) + 1}")
+        parts.append(branch + "".join(f"\n  AND {bound}" for bound in bounds))
+    return "\nUNION ALL\n".join(parts) + "\nORDER BY at, branch, key"
 
 
 @dataclass(frozen=True)
@@ -94,8 +143,14 @@ class ProgressionRepository:
     def __init__(self, db: DatabasePool) -> None:
         self._db = db
 
-    async def events(self) -> list[ProgressEvent]:
-        rows: list[Any] = await self._db.fetch(_EVENTS_SQL)
+    async def events(self, *, since: datetime | None = None, until: datetime | None = None) -> list[ProgressEvent]:
+        """The events that happened from ``since`` (inclusive) to ``until`` (exclusive), every one without either.
+
+        Events at the same time come in one fixed order, whatever the bounds.
+        """
+        bounds = [b for b in (since, until) if b is not None]
+        sql = events_sql(since=since is not None, until=until is not None)
+        rows: list[Any] = await self._db.fetch(sql, *bounds)
         return [
             ProgressEvent(
                 str(r["source"]),
@@ -109,10 +164,18 @@ class ProgressionRepository:
             if r["at"] is not None
         ]
 
-    async def journal(self) -> Journal:
-        """Every job and every successful run, with its repo and issue: what quests and repo diaries read."""
+    async def journal(self, agents: Collection[str] | None = None) -> Journal:
+        """Every job and every successful run, with its repo and issue: what quests and repo diaries read.
+
+        With ``agents``, only those agents' runs: the quests and diaries read
+        no other (``quests.run_agents``), and the read stays on the
+        ``idx_traces_success_agent`` index (migration 131).
+        """
         jobs: list[Any] = await self._db.fetch(_JOBS_SQL)
-        runs: list[Any] = await self._db.fetch(_RUNS_SQL)
+        if agents is None:
+            runs: list[Any] = await self._db.fetch(_RUNS_SQL.format(agents=""))
+        else:
+            runs = await self._db.fetch(_RUNS_SQL.format(agents="AND t.agent_type = ANY($1::text[])"), sorted(agents))
         return Journal(
             jobs=[
                 JobRow(
@@ -412,6 +475,6 @@ ORDER BY at
 _RUNS_SQL = """
 SELECT t.agent_type, j.repo, j.issue_id, t.created_at AS at
 FROM traces t JOIN jobs j ON j.job_id = t.job_id
-WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL AND j.repo IS NOT NULL
+WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL AND j.repo IS NOT NULL {agents}
 ORDER BY t.created_at
 """
