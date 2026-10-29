@@ -778,18 +778,25 @@ class Embry0Config(BaseSettings):
     # pinned to SCOUT_MODEL, a model on the operator's own server, rotating
     # through the world map's repositories (plus SCOUT_REPOS, minus
     # SCOUT_EXCLUDE, comma-separated) and each area of one that declares areas.
-    # Each finished job's weed card and ledger rows become weed and crack leads,
-    # at most SCOUT_MAX_LEADS_PER_JOB, the worst first. Off while SCOUT_MODEL is
-    # empty. At most SCOUT_MAX_IN_FLIGHT jobs are out at once, and a unit
-    # (repository, area, template) is scouted again after SCOUT_REVISIT_HOURS.
+    # Off while SCOUT_MODEL is empty. These three stay variables until the
+    # background-model map (#164) and the repository scope rule (#165).
     scout_model: Annotated[str, NOT_SECRET] = ""
+    scout_repos: Annotated[str, NOT_SECRET] = ""
+    scout_exclude: Annotated[str, NOT_SECRET] = ""
+    # The scout's policy is the settings document's `scout` section now
+    # (embry0/settings/sections/scout.py). These four are only its import
+    # source: read once, at the first start of the release that added the
+    # section, and ignored after that. They are removed in the next release;
+    # nothing else reads them.
     scout_templates: Annotated[str, NOT_SECRET] = "garden,kintsugi-trace"
     scout_max_in_flight: int = Field(default=2, ge=0)
     scout_revisit_hours: float = Field(default=24.0, gt=0)
-    scout_tick_seconds: float = Field(default=300.0, ge=30)
     scout_max_leads_per_job: int = Field(default=5, ge=1)
-    scout_repos: Annotated[str, NOT_SECRET] = ""
-    scout_exclude: Annotated[str, NOT_SECRET] = ""
+    # SCOUT_TICK_SECONDS is no longer read: the scout ticks every 300 seconds
+    # (embry0.services.scout.TICK_SECONDS). Kept one release only so startup
+    # can warn while it is still set (settings_env_retired), as text, so no
+    # value of it can stop a start.
+    scout_tick_seconds: Annotated[str, NOT_SECRET] = ""
 
     # Asks (spec 2026-10-27, decisions): the policy is the settings document's
     # `asks` section now (embry0/settings/sections/asks.py, spec 2026-10-28).

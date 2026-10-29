@@ -2604,12 +2604,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Scout (spec 2026-10-27): read-only jobs pinned to the operator's local
     # model, rotating through the world map's repositories and their areas;
     # each finished job's cracks and weeds become leads. Off until SCOUT_MODEL
-    # names a model.
+    # names a model. Its policy is the settings document's `scout` section,
+    # read every tick, so a change to it needs no restart.
     from embry0.audit.helpers import emit_audit as _scout_audit
     from embry0.orchestration import dispatch_actors as _scout_actors
     from embry0.services.areas import AREAS as _SCOUT_AREAS
     from embry0.services.areas import read_contents as _scout_read_contents
-    from embry0.services.scout import ScoutLoop, scout_settings
+    from embry0.services.scout import ScoutLoop, scout_model, warn_retired_tick
+    from embry0.settings.sections.scout import SCOUT as _SCOUT
+    from embry0.settings.store import section_reader as _section_reader
     from embry0.storage.repositories.scout import ScoutRunsRepository
 
     async def _scout_repos() -> list[str]:
@@ -2646,8 +2649,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             job_id, repo=unit.repo, title=text.splitlines()[0][:200], body=text, kind="scout"
         )
 
+    warn_retired_tick(config)
     app.state.scout = ScoutLoop(
-        settings=scout_settings(config),
+        model=scout_model(config),
+        settings=_section_reader(app.state.settings, _SCOUT),
         runs=ScoutRunsRepository(db),
         jobs=app.state.jobs_repo,
         leads=app.state.leads_repo,
@@ -2668,7 +2673,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.api.v1.decisions import list_decisions as _ask_decisions
     from embry0.services.ask_loop import AskLoop
     from embry0.settings.sections.asks import ASKS as _ASKS
-    from embry0.settings.store import section_reader as _section_reader
 
     async def _asked_decisions() -> list[dict[str, Any]]:
         listed = await _ask_decisions(

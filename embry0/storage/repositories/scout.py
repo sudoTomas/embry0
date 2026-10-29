@@ -32,6 +32,10 @@ class ScoutRunsRepository:
         )
         return {(str(r["repo"]), str(r["area"]), str(r["template"])): r["at"] for r in rows}
 
+    async def dispatched_since(self, since: datetime) -> int:
+        """How many scouting jobs were started at ``since`` or later: what the daily cap counts."""
+        return int(await self._db.fetchval("SELECT count(*) FROM scout_runs WHERE dispatched_at >= $1", since) or 0)
+
     async def unharvested(self) -> list[dict[str, Any]]:
         """The runs whose leads were not taken yet: the jobs still out, and the finished ones not read."""
         rows = await self._db.fetch(
