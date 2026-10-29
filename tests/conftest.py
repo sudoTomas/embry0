@@ -9,8 +9,7 @@ import pytest
 import structlog
 
 from embry0.storage.database import DatabasePool, _jsonb_decoder, _jsonb_encoder
-from embry0.storage.migrations.runner import run_migrations
-from tests.fixtures.postgres import postgres_unavailable
+from tests.fixtures.postgres import migrate_from_empty, postgres_unavailable
 
 
 def pytest_collection_modifyitems(config, items):
@@ -70,9 +69,7 @@ async def db_with_migrations() -> AsyncIterator[DatabasePool]:
     except Exception as exc:
         postgres_unavailable(exc)
         return
-    await db.execute("DROP SCHEMA public CASCADE")
-    await db.execute("CREATE SCHEMA public")
-    await run_migrations(db)
+    await migrate_from_empty(db)
     yield db
     await db.close()
 
