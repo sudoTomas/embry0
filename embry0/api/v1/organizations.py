@@ -46,7 +46,13 @@ class OrganizationBody(BaseModel):
         description="a forge_token credential from the registry; absent means the environment token for this owner",
     )
     display_name: str | None = Field(default=None, max_length=200)
-    settings: dict[str, Any] = Field(default_factory=dict, description="defaults for repositories under this owner")
+    settings: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "settings from the list PATCH takes, checked the same way; registering an owner again "
+            "merges them into the stored ones"
+        ),
+    )
     probe: bool = Field(default=True, description="call the forge to learn what the credential can do before storing")
 
 
@@ -180,8 +186,18 @@ async def get_organization(owner: str, request: Request) -> dict[str, Any]:
 async def register_organization(body: OrganizationBody, request: Request) -> dict[str, Any]:
     """Register an owner. With ``probe`` on, the forge is asked what the
     credential can do there first, and an owner the credential cannot even
-    list is refused with the probe's own words."""
+    list is refused with the probe's own words.
+
+    ``settings`` are checked as ``PATCH /orgs/{owner}`` checks them, before
+    anything is stored or the forge is asked, and refused with the same 422.
+    Registering an owner again merges them into its stored settings, as a
+    PATCH does: a key not named keeps its value.
+    """
     owner = _owner_name(body.owner)
+    try:
+        settings = org_service.validate_settings(body.settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     access: dict[str, Any] = {}
     repo_count: int | None = None
     if body.probe:
@@ -197,7 +213,7 @@ async def register_organization(body: OrganizationBody, request: Request) -> dic
             body.forge,
             credential_id=body.credential_id,
             display_name=body.display_name,
-            settings=body.settings,
+            settings=settings,
             created_by=request_actor(request),
         )
     except ValueError as exc:

@@ -56,11 +56,14 @@ class OrganizationsRepository:
         settings: dict[str, Any] | None = None,
         created_by: str | None = None,
     ) -> Organization:
-        """Create the organization, or update its forge, credential and name.
+        """Create the organization, or update its forge, credential, name and settings.
 
         Idempotent on ``owner``: a second register with the same owner is an
         update, never a duplicate, and a removed organization comes back as
         active. ``owner`` is stored lowercase, the way the forges compare it.
+        ``settings`` merge into the stored ones, as :meth:`patch` merges them:
+        a key not named keeps its value, so registering an owner again never
+        drops a setting the caller did not mention.
         """
         owner = owner.strip().lower()
         if not owner or "/" in owner:
@@ -75,7 +78,7 @@ class OrganizationsRepository:
                 forge = EXCLUDED.forge,
                 credential_id = EXCLUDED.credential_id,
                 display_name = COALESCE(EXCLUDED.display_name, organizations.display_name),
-                settings = CASE WHEN EXCLUDED.settings = '{{}}'::jsonb THEN organizations.settings ELSE EXCLUDED.settings END,
+                settings = organizations.settings || EXCLUDED.settings,
                 status = 'active',
                 updated_at = NOW()
             RETURNING {_COLUMNS}
