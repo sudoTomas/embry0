@@ -214,7 +214,7 @@ ACTOR_COLUMNS: dict[str, tuple[str, str | tuple[str, ...]]] = {
             "/api/v1/config/settings/revisions/{revision_id}",
         ),
     ),
-    "settings_documents.updated_by": (_HISTORY, ("/api/v1/config/settings",)),
+    "settings_documents.updated_by": (_HISTORY, ("/api/v1/config/settings", "/api/v1/config/settings/layers")),
     "progression_packs.created_by": (
         _HISTORY,
         (

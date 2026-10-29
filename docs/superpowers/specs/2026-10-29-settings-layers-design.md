@@ -1,6 +1,6 @@
 # Settings layers: organization and repository overrides of the settings document
 
-Status: proposed (2026-10-29). Four decisions are open, L1 to L4 (section 15); everything else is decided in section 14. Refs #159, #161; builds on #160 (`docs/superpowers/specs/2026-10-28-settings-documents-design.md`, ADR 0026). Line numbers are at `343b4030`.
+Status: decided (2026-10-29; section 15, each on its recommended option). Pull request 1 is the `POST /orgs` fix, pull request 2 the layers (sections 2 to 7 and 10, as built in section 16); 3 and 4 follow. Refs #159, #161; builds on #160 (`docs/superpowers/specs/2026-10-28-settings-documents-design.md`, ADR 0026). Line numbers are at `343b4030`.
 
 **Why.** One deployment can serve several organizations, and their working hours, caps, label vocabularies and conventions differ. The settings document of #160 is one per deployment, so every key in it is global. The registry already lets a section name the keys an organization or a repository may override (`Section.org_keys`, `Section.repo_keys`, `embry0/settings/registry.py:114-131`), and the effective view already lists them (`embry0/settings/effective.py:63-67`), but nothing resolves them: "nothing resolves them until the organization and repository layers exist" (`registry.py:118-123`). Meanwhile the two per-owner and per-repository layers that do exist validate differently (section 1).
 
@@ -144,12 +144,11 @@ Every route of #160 (`embry0/api/v1/settings.py:77-292`) takes the layer as a qu
 
 | Route | Change |
 |---|---|
-| `GET /config/settings?owner=acme` or `?repo=acme/widgets` | the layer's text, values, generation (`ETag`), `updated_by`, `updated_at`, plus `scope` and `overridable` (per section, the keys this layer may set). 404 when no such organization or repository is registered and no layer is stored |
+| `GET /config/settings?owner=acme` or `?repo=acme/widgets` | the layer's text, values, generation (`ETag`), `updated_by`, `updated_at`, plus `scope` and `settable` (per section, the keys this layer may set). 404 when no such organization or repository is registered and no layer is stored |
 | `PUT /config/settings?owner=…` or `?repo=…` (`dry_run`, `reason`, `source`, `If-Match` as today) | writes the layer. Both parameters: 422 "name one layer". The answer adds `scope`; a deployment write's answer adds `layers_refused` |
 | `GET /config/settings/revisions?owner=…` or `?repo=…` | that layer's revisions |
 | `GET /config/settings/revisions/{id}`, `POST …/{id}/undo` | unchanged paths: an id names one revision of one scope, and the answer says which (`scope`). Undo is authorized for that scope |
 | `GET /config/settings/effective?owner=&repo=` | section 6 |
-| `GET /config/settings/schema?layer=organization\|repository` | the document's JSON Schema with only the keys that layer may set, for editors and for #162's offline `check` |
 | `GET /config/settings/layers` (new) | every stored layer: `{layer, owner\|repo, generation, updated_by, updated_at, keys}` with `keys` the `section.key` it sets; for the dashboard's picker and `export` |
 
 **Auth.** Reads take any key, as for the deployment: no layer holds secrets, and `GET /orgs` already shows every organization's settings to any key. Writes and undo take the admin tier (#160's D4):
@@ -167,12 +166,12 @@ No organization owner can write its own layer, because embry0 has no such role (
 
 | #162 verb or tool | Layer |
 |---|---|
-| `embry0 settings check <file> [--org OWNER \| --repo OWNER/NAME]` | offline: everything `check()` does without the database, including the declared-key rule (`org_keys` and `repo_keys` are on `main` now). The combination with what the layer inherits needs the stored values, so `diff` reports it |
+| `embry0 settings check <file> [--org OWNER \| --repo PATH]` | offline: everything `check()` does without the database, including the declared-key rule (`org_keys` and `repo_keys` are on `main` now). The combination with what the layer inherits needs the stored values, so `diff` reports it |
 | `diff`, `apply`, `export` with `--org` or `--repo` | the same routes with `?owner=` or `?repo=` |
 | `import-env` | the deployment only; with `--org` or `--repo` it exits 2 saying the environment is the deployment's |
 | MCP `settings_get(owner=None, repo=None)`, `settings_set(text, owner=None, repo=None, confirm=False)` | the same parameters |
 
-`--org` names the organization by its owner, as `/orgs/{owner}` does. `managed_by: file` (#162) is a key of a document, so it applies per layer. Whichever of #162 and pull request 2 merges second adds the flags and parameters.
+`--org` names the organization by its owner, as `/orgs/{owner}` does. `managed_by: file` (#162) is a key of a document, so it applies per layer. Whichever of #162 (pull request #230) and pull request 2 merges second adds the flags and parameters.
 
 ## 8. Dashboard
 
@@ -202,14 +201,14 @@ The API functions in `frontend/src/api/settings.ts` take an optional `{owner} | 
 
 ## 10. Migration
 
-One migration, its number the next free one at merge (133 today). It widens the scope check of `settings_documents` and nothing else:
+One migration, 134 (133 is held by another pull request; the number is fixed at merge). It widens the scope check of `settings_documents` and nothing else:
 
 ```sql
 ALTER TABLE settings_documents DROP CONSTRAINT IF EXISTS settings_documents_scope_check;
 ALTER TABLE settings_documents ADD CONSTRAINT settings_documents_scope_check CHECK (
     scope = 'deployment'
-    OR scope ~ '^organization:[a-z0-9][a-z0-9._-]*$'
-    OR scope ~ '^repository:[a-z0-9][a-z0-9._-]*(/[a-z0-9._-]+)+$'
+    OR scope ~ '^organization:[a-z0-9_][a-z0-9._-]*$'
+    OR scope ~ '^repository:[a-z0-9_][a-z0-9._-]*(/[a-z0-9._-]+)+$'
 );
 COMMENT ON TABLE settings_documents IS
     'spec 2026-10-28 and 2026-10-29: operator policy as YAML documents, one for the deployment and one per organization and repository layer; data = the validated values of yaml_text.';
@@ -239,7 +238,7 @@ So asks is the acceptance proof for the organization layer, and a section regist
 
 ## 12. Delivery
 
-1. **`fix(api): validate settings on POST /orgs as PATCH does`** (S). `register_organization` calls `validate_settings` before storing, 422 with the same text as `PATCH`. Independent of the rest; closes #161's first acceptance criterion. Re-registering an existing owner with settings still replaces its stored settings whole (`embry0/storage/repositories/organizations.py:78`), which this pull request states in the route's docstring.
+1. **`fix(api): check an organization's settings on POST /orgs too`** (S). `register_organization` calls `validate_settings` before it probes the forge or stores anything, 422 with the same text as `PATCH`, and stores the values as the check writes them. Independent of the rest; closes #161's first acceptance criterion. Registering an existing owner again used to replace its stored settings whole (`embry0/storage/repositories/organizations.py:78`), so a call naming one setting dropped the others; it now merges them, as `PATCH` does, and `docs/api.md` says so.
 2. **`feat(config): layer the settings document by organization and repository`** (M–L). The migration; a `Scope` value type; `check()` with the layer and inherited values; the multi-scope store (write, preview, revisions, undo per scope; one snapshot of all layers; the aggregate freshness token); `Snapshot.get(…, owner=, repo=)`, `Scoped`, `scoped_reader`; the effective view; every route of section 7 with its auth; `layers_refused` on deployment writes; audit details; ADR 0028 ("operator policy is layered: deployment, organization, repository; a section declares what each layer may set"); `docs/api.md` and the "Layers" part of `docs/configuration.md`. Proven with a test-only section that has both `org_keys` and `repo_keys`. No feature changes behaviour.
 3. **`feat(frontend): edit organization and repository layers on the Policy tab`** (M). Section 8. Lands no later than 4, so an operator can set an organization's ask hours without raw API calls.
 4. **`feat(asks): read the ask policy per organization`** (S–M). Section 11. Closes #161.
@@ -287,12 +286,14 @@ These are cheap to change later, or follow from #160 and the issue:
 - `source` in the effective view keeps `default`, `document`, `bootstrap` and adds `organization`, `repository`.
 - Asks: `max_open_per_person` counts per person within an organization; `enabled` and `tick_seconds` stay the deployment's.
 - The legacy-key import (section 9) is specified here and built by the first feature that moves a key.
-- CLI flags `--org OWNER` and `--repo OWNER/NAME`; `import-env` is the deployment's only.
+- CLI flags `--org OWNER` and `--repo PATH` (`group/name` or `group/subgroup/name`); `import-env` and `export --default` are the deployment's only.
 - The repository page links to its layer on the Policy tab; its History panel does not merge the two revision tables.
 
-## 15. Open decisions
+## 15. Decisions
 
-**L1. Where layers live, and whether `organizations.settings` becomes the organization layer.**
+Taken by the maintainer on 2026-10-29, each on the option this spec recommended (A). The options are kept below as they were weighed.
+
+**L1. Where layers live, and whether `organizations.settings` becomes the organization layer.** Decided: A.
 
 - **A (recommended).** Each layer is a document of its own, a row of `settings_documents` with revisions in `config_revisions` (section 3); `organizations.settings` keeps its seven keys until each one's feature moves it into a section, copied once and accepted on `PATCH /orgs` for a release (section 9). Cost: this departs from #161's text ("`organizations.settings` becomes the organization layer, with its keys unchanged"): the keys get section names (`context_audit.days`), and until #169, #170, #171 and one new issue land an organization's policy sits in two places.
 - **B (#161 as written).** `organizations.settings` holds the organization layer next to its seven keys, and repository overrides go in a new JSONB column beside `repo_preferences`, recorded in `repo_config_revisions`. Cost: no text, so comments are lost and #162 cannot round-trip a layer file; three write paths, each with its own validation, merge semantics (`PATCH` merges, a document replaces), `If-Match` and undo; `organizations` needs a generation column and `repo_config_revisions` wider surface and source checks; the freshness check and the effective view read three tables.
@@ -300,7 +301,7 @@ These are cheap to change later, or follow from #160 and the issue:
 
 Expensive to reverse: moving layers and their revisions between tables later, and changing the file shape #162 exports.
 
-**L2. How a layer overrides a list or a nested object.**
+**L2. How a layer overrides a list or a nested object.** Decided: A.
 
 - **A (recommended).** It replaces the value at the section's top-level field; `org_keys` and `repo_keys` stay field names, as the registry checks today (`registry.py:218-221`). Cost: an organization overriding a nested object restates all of it, so section authors give each overridable part its own field (#168's `readiness` becomes several fields).
 - **B.** Deep merge: mappings merge key by key, lists replace. Cost: `org_keys` needs dotted paths; provenance, the 422 and the effective view become per leaf; nothing can say "drop this inherited entry".
@@ -308,7 +309,7 @@ Expensive to reverse: moving layers and their revisions between tables later, an
 
 Expensive to reverse: switching later silently changes the effective value of every stored nested override.
 
-**L3. How the API names a layer.** This matters now: #162's CLI and MCP tools are being built against it.
+**L3. How the API names a layer.** Decided: A, with `--org` and `--repo` on the CLI. This mattered now: #162's CLI and MCP tools are being built against it.
 
 - **A (recommended).** Query parameters on the existing routes: `?owner=acme` or `?repo=acme/widgets` on `/config/settings`, its revisions and effective view; revision ids stay global (section 7). Cost: a layer has no path of its own; every settings route grows a scope parameter.
 - **B.** Nested under the resources: `/orgs/{owner}/settings` and `/repos/{repo}/settings`, each with `/revisions` and undo. Cost: three copies of every route; `{repo:path}` routes collide with a repository named `settings` or `revisions` under a group, as `/repos/{repo}/history` can today; #162's client builds three URL shapes.
@@ -316,13 +317,28 @@ Expensive to reverse: switching later silently changes the effective value of ev
 
 Expensive to reverse: a public API, the MCP tool signatures and #162's client are built on it.
 
-**L4. Where new per-repository policy goes** (#182's done-when and salvage, #165's background enrollment, both of which today say "beside `repo_preferences`").
+**L4. Where new per-repository policy goes** (#182's done-when and salvage, #165's background enrollment, both of which said "beside `repo_preferences`"). Decided: A; both issues are amended.
 
 - **A (recommended).** In sections with `repo_keys` (and `org_keys` where an organization default makes sense), read through layers; `repo_preferences` keeps facts about a repository that have no wider default. Cost: #182 and #165 are amended; a repository's configuration sits in two places (its preferences and its layer), joined by a link.
 - **B.** As #182 and #165 propose: new `repo_preferences` columns, with organization defaults read from the organization layer. Cost: two override mechanisms for per-repository policy; the effective view and #162's file workflow do not cover the columns; each column brings its own validation.
 - **C.** A, and also move `pr_review`, `execution_mode` and `auth_mode` out of `repo_preferences` now. Cost: churns settings #159 leaves for later; `PUT /repos/{repo}/preferences` clients need an alias.
 
 Expensive to reverse: once #182 or #165 stores values in one place, moving them needs a migration and an alias release.
+
+## 16. As built (pull request 2)
+
+Where the code settled a detail this spec left open, or differs from it:
+
+- **`settable`, not `overridable`,** is the name of the per-section key list `GET /config/settings` answers: "overridable" already means, in the effective view, which layers may override a key. The deployment's document answers every field.
+- **No `GET /config/settings/schema?layer=`.** #162's offline `check` calls `check()` with the layer directly, and the schema's `x-embry0-sections` already lists `org_keys` and `repo_keys` for an editor.
+- **`inherited` and `layers` are answered only in a layer's effective view,** so the deployment's view, which the Policy tab reads today, is unchanged; its top-level `refused` stays the deployment's, and each layer entry has its own.
+- **Creating a layer.** The store takes a transaction-level advisory lock on the scope before it looks for the row, so two first writes of one layer queue instead of both inserting; the write is an upsert that creates the row at generation 1. A layer that has no row reads as generation 0 and nothing creates one but a write that changes the text.
+- **The owner pattern** is `[a-z0-9_][a-z0-9._-]*` (a GitLab group may start with `_`); a repository segment may start with `.` (`.github`); `.` and `..` are refused as segments.
+- **The freshness token** is `(count, sum(generation), max(updated_at))`, computed by the check and, for the cached snapshot, from the rows the reload read.
+- **`layers_refused`** is answered by `PUT` (when it stored a change), its dry run (when the text would change) and undo. Each entry's `scope` is the `{layer, owner, repo}` object every other `scope` field is. It names at most 100 values, and `layers_refused_total` counts them all. The layers under the document are resolved once, in the snapshot after the change; the snapshot before it, which the write only imagines and which logs nothing, is consulted only for the layers that come out refused.
+- **What a layer inherits is read under lock.** A layer's write takes the advisory locks of the documents it inherits from, most general first (deployment, then the organization, then its own), and reads what they hold on its own connection after taking them. A concurrent write to the deployment's document or the organization's layer therefore commits first, and the layer is checked against it. Every writer takes the locks in that order, so none waits on another in a circle. A deployment write takes only its own lock and is never refused because of a layer.
+- **With #230.** #230 (the `embry0 settings` CLI and the MCP settings tools) merged first, so this pull request adds `--org` and `--repo` to `check`, `diff`, `apply`, `export` and `revisions`, refuses them on `import-env` and `export --default` (exit 2), and adds `owner` and `repo` to the MCP `settings_get`, `settings_effective`, `settings_set` and `settings_revisions`; `settings_undo` takes the global revision id. `managed_by` is a key of each document, so each layer answers its own on `GET`; a layer's `managed_by` is never logged as a key the layer may not set, and a change to it has no `effective_*` values, as for the deployment's.
+- **Renamed repositories are resolved when read, not when the snapshot is built.** The orchestrator installs `REPO_RENAMES` after it reads the first snapshot, so a snapshot keeps every layer under its stored scope, and which stored row a repository reads is worked out on first read with the renames installed then (`stored_rows` in `embry0/settings/scope.py`): the row under its current slug, else the first row stored under a slug the renames map to it. The store uses the same rule for a write: with no row under the new slug, `?repo=<new slug>` opens, writes, lists and undoes the row under the old one, so a save never starts a second layer that would shadow it. `GET /config/settings/layers` names such a row's `stored_as`.
 
 ## Out of scope
 

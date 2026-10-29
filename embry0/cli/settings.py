@@ -9,6 +9,9 @@
     embry0 settings revisions [ID]           # the document's changes, newest first; or one, with its diff
     embry0 settings undo ID                  # put back what the newest change replaced
 
+    embry0 settings apply --org acme acme.yaml            # an organization's layer (spec 2026-10-29)
+    embry0 settings diff --repo acme/widgets widgets.yaml # a repository's layer
+
 An operator who keeps the deployment's settings in their own repository
 reviews a change as a file and stores it with ``apply``; the verbs read like
 ``embry0 progression-pack``.
@@ -35,6 +38,16 @@ its default: ``apply`` names each one, and with ``--yes`` it unsets them
 only with ``--allow-unset`` too, since a key the startup import wrote into
 the stored document (and not into the file) would be lost without a word.
 ``export --default`` and ``import-env`` run offline too.
+
+``--org OWNER`` or ``--repo PATH`` (``group/name``, or a GitLab subgroup's
+``group/subgroup/name``) on ``check``, ``diff``, ``apply``,
+``export`` and ``revisions`` names an organization's or a repository's layer
+instead of the deployment's document: a document of the same shape holding
+only what that organization or repository sets. ``check`` then also refuses
+a key the layer may not set; whether its values combine with what the layer
+inherits needs the stored documents, so ``diff`` says. ``undo`` takes the
+change's number, which names its layer. ``import-env`` and ``export
+--default`` are the deployment's only.
 
 Exit codes, for scripts:
 
@@ -250,23 +263,44 @@ def _send(client: httpx.Client, method: str, path: str, **kwargs: Any) -> httpx.
     elif status == 403:
         _err(
             f"refused (403): {_detail(response)}; changing the settings document needs an admin key without a "
-            "repository allowlist"
+            "repository allowlist, or for a repository's layer one whose allowlist covers it"
         )
     else:
         _err(f"the orchestrator answered {status}: {_detail(response)}")
     raise _Exit(UNAVAILABLE)
 
 
-def _generation(client: httpx.Client) -> int:
-    """The stored document's generation, from its ``ETag``."""
-    response = _send(client, "GET", _SETTINGS)
+def _layer(args: argparse.Namespace) -> dict[str, str]:
+    """The query that names the layer ``--org`` or ``--repo`` asks for; neither names the deployment's document."""
+    org, repo = getattr(args, "org", None), getattr(args, "repo", None)
+    if org:
+        return {"owner": org}
+    if repo:
+        return {"repo": repo}
+    return {}
+
+
+def _level(args: argparse.Namespace) -> str:
+    """The layer ``check`` checks a file as: ``deployment``, ``organization`` or ``repository``."""
+    if getattr(args, "org", None):
+        return "organization"
+    if getattr(args, "repo", None):
+        return "repository"
+    return "deployment"
+
+
+def _generation(client: httpx.Client, layer: dict[str, str]) -> int:
+    """The stored document's generation, from its ``ETag``; 0 for a layer nobody wrote yet."""
+    response = _send(client, "GET", _SETTINGS, params=layer)
     etag = response.headers.get("etag", "").strip('"')
     if etag.isdigit():
         return int(etag)
     return int(_json(response).get("generation") or 0)
 
 
-def _dry_run(client: httpx.Client, text: str, content_type: str, generation: int | None = None) -> dict[str, Any]:
+def _dry_run(
+    client: httpx.Client, text: str, content_type: str, layer: dict[str, str], generation: int | None = None
+) -> dict[str, Any]:
     headers = {"Content-Type": content_type}
     if generation is not None:
         headers["If-Match"] = f'"{generation}"'
@@ -274,7 +308,7 @@ def _dry_run(client: httpx.Client, text: str, content_type: str, generation: int
         client,
         "PUT",
         _SETTINGS,
-        params={"dry_run": 1, "source": "file"},
+        params={"dry_run": 1, "source": "file", **layer},
         content=text.encode("utf-8"),
         headers=headers,
     )
@@ -301,7 +335,8 @@ def _check(args: argparse.Namespace) -> int:
     text = _read(args.file)
     try:
         _, values = parse_body(text.encode("utf-8"), _content_type(args.file))
-        checked = check(CATALOG, values, stored={})
+        # A layer's values alone: what they combine with is stored, so `diff` checks that.
+        checked = check(CATALOG, values, stored={}, layer=_level(args), inherited={})
     except DocumentTooLarge as exc:
         _err(str(exc))
         return REFUSED
@@ -312,12 +347,13 @@ def _check(args: argparse.Namespace) -> int:
     ]
     if MANAGED_BY_KEY in checked.data:
         written.insert(0, MANAGED_BY_KEY)
-    print(f"the settings document is valid; it sets {', '.join(written) if written else 'nothing'}")
+    what = {"organization": "organization layer", "repository": "repository layer"}.get(_level(args), "document")
+    print(f"the settings {what} is valid; it sets {', '.join(written) if written else 'nothing'}")
     return OK
 
 
 def _diff(args: argparse.Namespace, client: httpx.Client) -> int:
-    _show(_dry_run(client, _read(args.file), _content_type(args.file)))
+    _show(_dry_run(client, _read(args.file), _content_type(args.file), _layer(args)))
     return OK
 
 
@@ -327,8 +363,9 @@ def _apply(args: argparse.Namespace, client: httpx.Client) -> int:
         return USAGE
     text = _read(args.file)
     content_type = _content_type(args.file)
-    generation = _generation(client)
-    preview = _dry_run(client, text, content_type, generation)
+    layer = _layer(args)
+    generation = _generation(client, layer)
+    preview = _dry_run(client, text, content_type, layer, generation)
     _show(preview)
     if not preview.get("would_change"):
         print("nothing to apply: the stored document is this text already, so no revision is recorded")
@@ -348,7 +385,7 @@ def _apply(args: argparse.Namespace, client: httpx.Client) -> int:
     if not _confirmed(args, question):
         _err("not applied")
         return REFUSED
-    params: dict[str, Any] = {"source": "file"}
+    params: dict[str, Any] = {"source": "file", **layer}
     if args.reason:
         params["reason"] = args.reason
     # The generation the diff above was taken against: a document changed since is refused, not overwritten.
@@ -377,15 +414,24 @@ def _export_default(args: argparse.Namespace) -> int:
 
 
 def _export(args: argparse.Namespace, client: httpx.Client) -> int:
-    response = _send(client, "GET", _SETTINGS, params={"format": "yaml"})
+    layer = _layer(args)
+    response = _send(client, "GET", _SETTINGS, params={"format": "yaml", **layer})
     if not response.text.strip():
-        _err("the stored document is empty: every key takes its default")
+        _err(
+            "the stored layer is empty: every key takes what it inherits"
+            if layer
+            else "the stored document is empty: every key takes its default"
+        )
     _write(response.text, args.output)
     return OK
 
 
 def _import_env(args: argparse.Namespace) -> int:
     from pydantic import ValidationError
+
+    if _layer(args):
+        _err("import-env writes the deployment's document: the environment is the deployment's, not a layer's")
+        return USAGE
 
     from embry0.config import Embry0Config
     from embry0.config_redaction import mask_url_credentials, validation_error_lines
@@ -433,7 +479,8 @@ def _import_env(args: argparse.Namespace) -> int:
 def _revisions(args: argparse.Namespace, client: httpx.Client) -> int:
     if args.id is not None:
         return _revision(args.id, client)
-    rows = _json(_send(client, "GET", f"{_SETTINGS}/revisions", params={"limit": args.limit})).get("revisions") or []
+    params = {"limit": args.limit, **_layer(args)}
+    rows = _json(_send(client, "GET", f"{_SETTINGS}/revisions", params=params)).get("revisions") or []
     if not rows:
         print("no change is recorded yet")
         return OK
@@ -523,6 +570,9 @@ def run(
         if args.action == "import-env":
             return _import_env(args)
         if args.action == "export" and args.default:
+            if _layer(args):
+                _err("export --default writes the deployment's defaults; a layer holds only what it sets")
+                return USAGE
             return _export_default(args)
         headers = {"X-Requested-With": "XMLHttpRequest"}
         if api_key:
@@ -587,6 +637,12 @@ def add_parser(subparsers: Any) -> None:
     undo = verbs.add_parser("undo", help="Put back what the newest change replaced (recorded as a restore)")
     undo.add_argument("id", type=int, help="the newest change's number, from `embry0 settings revisions`")
     undo.add_argument("--yes", action="store_true", help="undo without asking (needed without a terminal)")
+    for verb in (check, diff, apply, export, import_env, revisions):
+        layer = verb.add_mutually_exclusive_group()
+        layer.add_argument("--org", default=None, metavar="OWNER", help="an organization's layer, by its forge owner")
+        layer.add_argument(
+            "--repo", default=None, metavar="PATH", help="a repository's layer: group/name, or group/subgroup/name"
+        )
     for verb in (diff, apply, export, revisions, undo):
         verb.add_argument(
             "--api-url", default=None, help="Orchestrator base URL (default: EMBRY0_API_URL or http://localhost:8200)"

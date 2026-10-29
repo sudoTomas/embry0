@@ -332,8 +332,10 @@ def _expanded() -> list[Any]:
 HISTORY_ROUTES = frozenset(case.route for case in CASES) | {
     # Already on the rule before this module: tests/unit/api/test_settings_api.py,
     # tests/unit/api/v1/test_progression_pack_api.py and tests/unit/api/v1/test_audit_api.py.
+    # The settings layers' routes: tests/unit/api/test_settings_layers_api.py.
     "/api/v1/audit",
     "/api/v1/config/settings",
+    "/api/v1/config/settings/layers",
     "/api/v1/config/settings/effective",
     "/api/v1/config/settings/revisions",
     "/api/v1/config/settings/revisions/{revision_id}",

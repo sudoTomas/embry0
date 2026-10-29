@@ -806,25 +806,45 @@ class Embry0Client:
 
     # ---------------------------------------------------------- settings document
 
-    async def settings_get(self) -> dict[str, Any]:
-        return _as_dict(await self._request("GET", "/api/v1/config/settings"))
+    @staticmethod
+    def _layer(owner: str = "", repo: str = "") -> dict[str, str]:
+        """The query naming an organization's or a repository's layer; neither names the deployment's document."""
+        out: dict[str, str] = {}
+        if owner:
+            out["owner"] = owner
+        if repo:
+            out["repo"] = repo
+        return out
 
-    async def settings_effective(self) -> dict[str, Any]:
-        return _as_dict(await self._request("GET", "/api/v1/config/settings/effective"))
+    async def settings_get(self, *, owner: str = "", repo: str = "") -> dict[str, Any]:
+        return _as_dict(await self._request("GET", "/api/v1/config/settings", params=self._layer(owner, repo)))
+
+    async def settings_effective(self, *, owner: str = "", repo: str = "") -> dict[str, Any]:
+        return _as_dict(
+            await self._request("GET", "/api/v1/config/settings/effective", params=self._layer(owner, repo))
+        )
 
     async def settings_schema(self) -> dict[str, Any]:
         return _as_dict(await self._request("GET", "/api/v1/config/settings/schema"))
 
     async def settings_set(
-        self, text: str, *, dry_run: bool = False, expected_generation: int | None = None, reason: str = ""
+        self,
+        text: str,
+        *,
+        dry_run: bool = False,
+        expected_generation: int | None = None,
+        reason: str = "",
+        owner: str = "",
+        repo: str = "",
     ) -> dict[str, Any]:
-        """Replace the whole settings document (raw-YAML PUT); ``dry_run`` only reports what it would change.
+        """Replace a whole settings document (raw-YAML PUT); ``dry_run`` only reports what it would change.
 
-        ``expected_generation`` is the generation the caller read; it goes in
-        ``If-Match``, so a document someone else changed since is not
-        overwritten (409).
+        The deployment's, or with ``owner`` or ``repo`` that organization's or
+        repository's layer. ``expected_generation`` is the generation the
+        caller read; it goes in ``If-Match``, so a document someone else
+        changed since is not overwritten (409).
         """
-        params: dict[str, Any] = {"source": "person"}
+        params: dict[str, Any] = {"source": "person", **self._layer(owner, repo)}
         if dry_run:
             params["dry_run"] = 1
         if reason:
@@ -838,8 +858,9 @@ class Embry0Client:
             )
         )
 
-    async def settings_revisions(self, *, limit: int = 20) -> dict[str, Any]:
-        return _as_dict(await self._request("GET", "/api/v1/config/settings/revisions", params={"limit": limit}))
+    async def settings_revisions(self, *, limit: int = 20, owner: str = "", repo: str = "") -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit, **self._layer(owner, repo)}
+        return _as_dict(await self._request("GET", "/api/v1/config/settings/revisions", params=params))
 
     async def settings_revision(self, revision_id: int) -> dict[str, Any]:
         return _as_dict(await self._request("GET", f"/api/v1/config/settings/revisions/{int(revision_id)}"))

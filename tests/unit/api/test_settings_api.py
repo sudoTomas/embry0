@@ -410,9 +410,8 @@ async def test_undo_answers_like_a_put(client) -> None:
     await _put(client, V1)
     second = (await _put(client, V2)).json()
     undo = (await client.post(f"{URL}/revisions/{second['revision_id']}/undo")).json()
-    assert set(undo) == {"generation", "revision_id", "changes", "unknown_sections", "unknown_keys"}, (
-        f"undo's answer is not a PUT's: {sorted(undo)}"
-    )
+    assert set(undo) == set(second), f"undo's answer is not a PUT's: {sorted(undo)} against {sorted(second)}"
+    assert {"generation", "revision_id", "changes", "unknown_sections", "unknown_keys"} <= set(undo)
 
 
 async def test_after_a_rollback_a_json_client_can_send_back_the_stored_values(app, client, db_with_migrations) -> None:

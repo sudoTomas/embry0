@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 
 from embry0.settings.registry import Catalog, EnvImport, Section, SectionModel
 
@@ -84,3 +84,33 @@ BRITTLE = Section(
     summary="A section whose check raises KeyError.",
     env={"zone": "ask_timezone", "hours": "ask_remind_hours"},
 )
+
+
+class WindowSettings(SectionModel):
+    low: int = Field(default=10, ge=0, le=100, description="The lower bound.")
+    high: int = Field(default=50, ge=0, le=100, description="The upper bound, never below the lower one.")
+    label: str = Field(default="", max_length=40, description="Text only the deployment sets.")
+
+    @field_validator("high")
+    @classmethod
+    def _not_below_low(cls, value: int, info: ValidationInfo) -> int:
+        low = info.data.get("low")
+        if isinstance(low, int) and value < low:
+            raise ValueError("high must not be below low")
+        return value
+
+
+#: A section whose fields are checked against each other, so a layer's value
+#: can be refused together with what it inherits: ``high`` is checked against
+#: ``low``, and the refusal names ``high`` whichever layer set ``low``.
+WINDOW = Section(
+    name="window",
+    model=WindowSettings,
+    summary="A section whose keys are checked against each other.",
+    org_keys=frozenset({"low", "high"}),
+    repo_keys=frozenset({"high"}),
+)
+
+#: The test sections with layers: ``sample`` (organization and repository keys),
+#: ``other`` (no key a layer may set) and ``window`` (keys checked together).
+LAYERED_CATALOG = Catalog((SAMPLE, OTHER, WINDOW))

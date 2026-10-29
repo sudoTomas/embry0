@@ -107,13 +107,13 @@ async def test_a_failed_check_keeps_the_last_snapshot(db_with_migrations: Databa
     await _save(store, V1)
     last = await store.snapshot()
 
-    async def down(scope: str) -> Any:
+    async def down(*args: Any) -> Any:
         raise ConnectionError("database unreachable")
 
-    monkeypatch.setattr(store._documents, "head", down)
+    monkeypatch.setattr(store._documents, "token", down)
     assert await store.snapshot() is last, "a tick never fails because the check did"
     fresh = _store(db_with_migrations)
-    monkeypatch.setattr(fresh._documents, "head", down)
+    monkeypatch.setattr(fresh._documents, "token", down)
     with pytest.raises(ConnectionError):
         await fresh.snapshot()
 

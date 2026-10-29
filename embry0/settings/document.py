@@ -37,6 +37,7 @@ from embry0.settings.registry import (
     SectionModel,
     SectionRefused,
 )
+from embry0.settings.scope import LAYER_NOUNS
 from embry0.text_documents import NO_NEWLINE as NO_NEWLINE  # re-exported: the settings tests and API name it here
 from embry0.text_documents import DuplicateKey, refuse_duplicate_keys, structure_problems
 from embry0.text_documents import text_diff as shared_text_diff
@@ -275,7 +276,23 @@ def _stored_text_values(stored_text: str) -> dict[str, Any]:
         return {}
 
 
-def check(catalog: Catalog, raw: Mapping[str, Any], *, stored: Mapping[str, Any], stored_text: str = "") -> Checked:
+def _not_settable(section: Section[Any], layer: str, key: str) -> str:
+    noun = LAYER_NOUNS[layer]
+    keys = sorted(section.settable(layer))
+    if not keys:
+        return f"{noun} cannot set anything in '{section.name}'."
+    return f"{noun} cannot set '{key}'. In '{section.name}' it can set {', '.join(keys)}."
+
+
+def check(
+    catalog: Catalog,
+    raw: Mapping[str, Any],
+    *,
+    stored: Mapping[str, Any],
+    stored_text: str = "",
+    layer: str = "deployment",
+    inherited: Mapping[str, Mapping[str, Any]] | None = None,
+) -> Checked:
     """``raw`` as it would be stored, or :class:`DocumentInvalid` listing every problem.
 
     ``stored`` is the stored document's values and ``stored_text`` its text.
@@ -285,6 +302,15 @@ def check(catalog: Catalog, raw: Mapping[str, Any], *, stored: Mapping[str, Any]
     values do (what a JSON client sends back from GET's ``data``). A rollback
     so never makes the document unwritable. For a section, nothing written,
     ``null`` and ``{}`` are alike. It keeps the stored value.
+
+    ``layer`` is the document's level (spec 2026-10-29). An organization's
+    or a repository's layer may set only the keys its section declares for
+    that level (``not_overridable`` otherwise, unless the key is exactly as
+    stored: a release that stopped letting the layer set it keeps it), and
+    its values are checked together with ``inherited``, the section's values
+    the layer inherits now, so a value that combines with them badly is
+    refused at the key that set it, or at the section (``conflicts_with_inherited``)
+    when the refusal names no key the layer set.
     """
     problems: list[Problem] = []
     data: dict[str, Any] = {}
@@ -376,15 +402,38 @@ def check(catalog: Catalog, raw: Mapping[str, Any], *, stored: Mapping[str, Any]
                         f"'{extra}' is not a setting of '{key}'.{_close(extra, section.fields)}",
                     )
                 )
+        if layer != "deployment":
+            allowed = section.settable(layer)
+            for name in [name for name in known if name not in allowed]:
+                if _as_stored(known[name], stored_section.get(name, _ABSENT), kept_section.get(name, _ABSENT)):
+                    unknown_keys.append(f"{key}.{name}")
+                    if name in kept_section:
+                        kept[name] = kept_section[name]
+                else:
+                    problems.append(Problem((key, name), "not_overridable", _not_settable(section, layer, name)))
+                del known[name]
+        base = mapping((inherited or {}).get(key)) if layer != "deployment" else {}
         try:
-            model = section.validate(known)
+            model = section.validate({**base, **known})
         except SectionRefused as exc:
             for error in exc.errors:
-                problems.append(
-                    Problem((key, *tuple(error.get("loc") or ())), str(error.get("type")), _message(section, error))
-                )
+                loc = tuple(error.get("loc") or ())
+                if layer != "deployment" and not (loc and str(loc[0]) in known):
+                    problems.append(
+                        Problem(
+                            (key,),
+                            "conflicts_with_inherited",
+                            f"{_message(section, error)} (together with the values this layer inherits)",
+                        )
+                    )
+                else:
+                    problems.append(Problem((key, *loc), str(error.get("type")), _message(section, error)))
             continue
-        clean = {**model.model_dump(mode="json", exclude_unset=True), **kept}
+        if layer == "deployment":
+            clean = {**model.model_dump(mode="json", exclude_unset=True), **kept}
+        else:
+            dumped = model.model_dump(mode="json")
+            clean = {**{name: dumped[name] for name in known}, **kept}
         if clean:
             data[key] = clean
     if problems:
