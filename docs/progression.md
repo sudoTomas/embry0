@@ -131,4 +131,4 @@ A re-record writes only the fields the file already holds, with the values the c
 
 ## Turning it off
 
-There is no setting yet; #177 tracks one per deployment and organization.
+`ui.game: false` in the [settings document](configuration.md#settings-document) turns the whole game layer off for the deployment: the dashboard shows no level, skill sheet, outfit, achievement or chat-box message and reads no progression, and `GET /api/v1/progression` and `POST /api/v1/progression/rebuild` answer 404. The experience is recomputed from the recorded work, so it is all there when the game is turned on again; the first read then brings the rollup up to date. The content pack's routes, CLI and MCP tools work either way. See [turning the game off](world.md#turning-the-game-off).

@@ -26,6 +26,7 @@ import {
   Zap,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import type { HomePage } from "@/lib/uiSettings";
 
 /** The sidebar's sections and entries, shared with the breadcrumb line so a
  * top-level page can name its section instead of repeating its own title. */
@@ -41,6 +42,14 @@ export interface NavItem {
   /** Render only for admin-tier sessions (or API-key mode —
    *  the master key is admin-equivalent). Backend enforces regardless. */
   adminOnly?: boolean;
+  /** Part of the game layer: left out while the settings document turns
+   *  the game off (`ui.game`, #177). */
+  game?: boolean;
+  /** A page the dashboard can open on: at `/` while it is the home
+   *  (`ui.home`), at `/<home>` otherwise (lib/uiSettings.ts, navGroupsFor).
+   *  `path` is where it is with nothing written, the game on and the guild
+   *  the home. */
+  home?: HomePage;
 }
 
 export interface NavGroup {
@@ -55,9 +64,9 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "Overview",
     items: [
       // The world (spec 2026-10-25): the home screen, where the player runs their guild.
-      { path: "/", label: "Guild", icon: Castle },
-      { path: "/overview", label: "Overview", icon: Gauge },
-      { path: "/achievements", label: "Achievements", icon: Trophy },
+      { path: "/", label: "Guild", icon: Castle, game: true, home: "guild" },
+      { path: "/overview", label: "Overview", icon: Gauge, home: "overview" },
+      { path: "/achievements", label: "Achievements", icon: Trophy, game: true },
     ],
   },
   {

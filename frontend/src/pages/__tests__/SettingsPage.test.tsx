@@ -13,6 +13,7 @@ vi.mock("../settings/ApiKeysTab", () => ({ default: () => <p>api keys panel</p> 
 vi.mock("../settings/GameContentTab", () => ({ default: () => <p>game content panel</p> }));
 
 import { SettingsPage } from "../SettingsPage";
+import { UiSettingsContext } from "@/hooks/useUiSettings";
 
 function Search() {
   return <output data-testid="search">{useLocation().search}</output>;
@@ -63,5 +64,24 @@ describe("SettingsPage", () => {
     renderAt("/settings?tab=game");
     expect(screen.queryByRole("tab", { name: "Game content" }), "the tab is listed").not.toBeNull();
     expect(screen.queryByText("game content panel"), "?tab=game opens it").not.toBeNull();
+  });
+
+  it("has no Game content tab while the game layer is off, and opens General for a link to it (#177)", () => {
+    render(
+      <UiSettingsContext.Provider value={{ game: false, home: "guild" }}>
+        <MemoryRouter initialEntries={["/settings?tab=game"]}>
+          <SettingsPage />
+        </MemoryRouter>
+      </UiSettingsContext.Provider>,
+    );
+    expect(screen.queryByRole("tab", { name: "Game content" })).toBeNull();
+    expect(screen.queryByText("game content panel")).toBeNull();
+    expect(screen.getByText("general panel")).toBeInTheDocument();
+  });
+
+  it("keeps the Game content tab while the game is on", () => {
+    renderAt("/settings?tab=game");
+    expect(screen.getByRole("tab", { name: "Game content" })).toBeInTheDocument();
+    expect(screen.getByText("game content panel")).toBeInTheDocument();
   });
 });

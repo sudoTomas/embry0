@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { Breadcrumbs } from "../Breadcrumbs";
+import { UiSettingsContext } from "@/hooks/useUiSettings";
 
 // The trail moved out of the header into a line at the top of the content.
 // A sidebar page names its section there, never its own title again (the h1
@@ -127,5 +128,21 @@ describe("Breadcrumbs", () => {
     expect(trail()).toBe("Work");
     renderAt("/merge-approvals/ma-1");
     expect(screen.getAllByRole("navigation", { name: "Breadcrumb" })[1]).toHaveTextContent("Merge approvals/ma-1");
+  });
+
+  it("names the guild's section at its own path, where it is while the Overview is the home (#177)", () => {
+    renderAt("/guild");
+    expect(trail()).toBe("Overview");
+  });
+
+  it("names General for a link to the Game content tab while the game is off (#177)", () => {
+    render(
+      <UiSettingsContext.Provider value={{ game: false, home: "guild" }}>
+        <MemoryRouter initialEntries={["/settings?tab=game"]}>
+          <Breadcrumbs />
+        </MemoryRouter>
+      </UiSettingsContext.Provider>,
+    );
+    expect(trail(), "the page opens General, and the line says so").toBe("Settings/General");
   });
 });

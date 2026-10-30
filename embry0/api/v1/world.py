@@ -12,6 +12,9 @@ or a job (``POST /jobs``) with Run with: the world adds no way to start work.
 Judging the work is reviewing the job (``embry0/api/v1/job_review.py``,
 ``/jobs/{job_id}/evaluation`` and the rest), which is not part of the game:
 the ``/world/quests/{job_id}/…`` paths it had are its deprecated aliases.
+
+Every route here answers 404 while the settings document turns the game
+layer off (``ui.game``, ``embry0/api/v1/ui.py``); the review aliases do not.
 """
 
 from __future__ import annotations
@@ -21,10 +24,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.v1.job_review import GITHUB_PR
+from embry0.api.v1.ui import require_game
 from embry0.services.lead_kinds import catalogue as lead_kind_catalogue
 from embry0.services.slop import dungeons
 from embry0.services.world import (
@@ -46,7 +50,8 @@ from embry0.services.world import (
 )
 
 logger = structlog.get_logger(__name__)
-router = APIRouter()
+# The game's reads: 404 while the settings document turns the game layer off (ui.game, #177).
+router = APIRouter(dependencies=[Depends(require_game)])
 
 #: How many unexplored repositories the map's edge names.
 FRONTIER = 60

@@ -14,7 +14,7 @@ import {
 import { DEPLOYMENT_LAYER, layerKey, writeAccess, type PolicyLayer, type WriteAccess } from "@/lib/settingsLayer";
 import { useIsAdmin } from "@/stores/authStore";
 
-/** The prefix of every settings document query: each layer's document, its effective values and its history, and the list of layers. */
+/** The prefix of every settings document query: each layer's document, its effective values and its history, the list of layers, and the dashboard's own ui read (useUiSettings). */
 export const SETTINGS_KEY = ["settings-document"] as const;
 
 const DOCUMENT_KEY = [...SETTINGS_KEY, "document"] as const;

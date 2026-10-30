@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Decision } from "@/api/decisions";
+import { UiSettingsContext } from "@/hooks/useUiSettings";
 
 const mockUseDecisions = vi.fn();
 const mutate = vi.fn();
@@ -178,4 +179,37 @@ describe("DecisionsPage (decisions, spec 2026-10-27)", () => {
     renderPage("/decisions?stage=done");
     expect(within(screen.getByTestId("decision-card")).queryByRole("button", { name: "Merge" })).toBeNull();
   });
+
+  it("keeps the game's words while the game layer is on", () => {
+    renderPage("/decisions?stage=done");
+    expect(screen.getByText(/^Every quest waiting on someone/)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Quests to review/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Quests on offer/ })).toBeInTheDocument();
+  });
+
+  it.each(["/decisions", "/decisions?stage=done", "/decisions?stage=offered"])(
+    "says no quest at %s while the game layer is off (#177)",
+    (path) => {
+      // What the backend answers with the game off: a finished job is a "Job done".
+      const plainReview = { ...REVIEW, kind_label: "Job done" };
+      mockUseDecisions.mockImplementation((filters: { for?: string }) =>
+        filters.for === "me" ? { data: [] } : { data: [CRACK, plainReview, WEED] },
+      );
+      render(
+        <UiSettingsContext.Provider value={{ game: false, home: "guild" }}>
+          <MemoryRouter initialEntries={[path]}>
+            <DecisionsPage />
+          </MemoryRouter>
+        </UiSettingsContext.Provider>,
+      );
+      const words = screen.getByTestId("decisions-page").textContent ?? "";
+      expect(words, `no game word on the page while the game is off: ${words}`).not.toMatch(/\bquests?\b/i);
+      const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
+      expect(tabs, "finished work is jobs to review, and what embry0 found is work on offer").toEqual([
+        "Waiting for me0",
+        "Jobs to review1",
+        "Work on offer2",
+      ]);
+    },
+  );
 });
