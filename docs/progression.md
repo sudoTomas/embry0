@@ -119,6 +119,16 @@ Experience is one pass over every event in time order: each event's XP goes to i
 
 **Staleness.** An event recorded more than 48 hours after its own time, for a day the rollup already holds, is not in the experience until the next rebuild, so at most a day late. The same goes for a row of a closed day that changes after it was folded, such as a job's last run, which names the character a resumed job credits. An event's time never moves: a job's events happen when it finished (a merge when the forge says it merged), never at the time its row was last touched, so a job that opened a pull request earns that XP when it finishes. Nor does an outcome come and go with the job's pull request: a job that finished its work (`completed`, and the `pr_merged` and `pr_closed` that merge sync moves it to) keeps its experience, its achievement progress and its diary tasks when the pull request merges, closes or reopens, so a context audit or a QA run counts the same before and after. Those tasks and quest steps keep their time too: one about the job's own work (it finished, failed, ran QA, audited) is dated when the job finished, and one about a merge when the pull request merged, so a later merge never moves a done task or undoes one, such as 30 days without a failed job. `GET /api/v1/progression` says how old the rollup is in `rollup`: `through_day`, the newest closed day; `boundary`, from which every event counts at once; `built_at`, the last write; and `rebuilt_at`, the last full rebuild. `rollup` is `null` when the answer passed over every raw row. After a backfill of old merges, an admin can rebuild at once with `POST /api/v1/progression/rebuild` ([api.md](api.md#progression)).
 
+**How it is checked.** `tests/unit/services/test_progression_golden.py` seeds one history and reads it from every raw row, from the rollup at four clocks across a year, and with today's category keys; each read must answer `tests/fixtures/progression_golden.json` field for field. The file holds the fields recorded before the content moved into the pack. Fields added since, `rollup` and the pack's own names and art among them, have tests of their own, and the file never grows to hold them. After a change that moves a recorded value on purpose, record the file again, run it, and read the diff:
+
+```
+EMBRY0_RECORD_GOLDEN=1 pytest tests/unit/services/test_progression_golden.py
+pytest tests/unit/services/test_progression_golden.py
+git diff tests/fixtures/progression_golden.json
+```
+
+A re-record writes only the fields the file already holds, with the values the code answers now, so the diff is exactly what moved, and an unchanged tree gives none. A list takes the entries the code answers, each cut to the fields of the stored entry at its place; an entry of another shape there, such as a `recent` entry of another kind, or one past the stored end, is written whole.
+
 ## Turning it off
 
 There is no setting yet; #177 tracks one per deployment and organization.
