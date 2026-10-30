@@ -2931,6 +2931,7 @@ def _register_routers(app: FastAPI) -> None:
         telegram,
         tools,
         traces,
+        ui,
         users,
         watcher,
         watcher_stacks,
@@ -2987,6 +2988,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(config.router, prefix="/api/v1", tags=["config"], dependencies=auth_deps)
     # Spec 2026-10-28: operator policy in one settings document, one section per feature.
     app.include_router(settings.router, prefix="/api/v1", tags=["settings"], dependencies=auth_deps)
+    # The dashboard's settings in effect (ui section, #177): read before it draws its home and navigation.
+    app.include_router(ui.router, prefix="/api/v1", tags=["settings"], dependencies=auth_deps)
     app.include_router(stats.router, prefix="/api/v1", tags=["stats"], dependencies=auth_deps)
     app.include_router(progression.router, prefix="/api/v1", tags=["progression"], dependencies=auth_deps)
     app.include_router(progression_pack.router, prefix="/api/v1", tags=["progression"], dependencies=auth_deps)

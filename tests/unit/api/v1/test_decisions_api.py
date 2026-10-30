@@ -16,6 +16,7 @@ from embry0.api.v1 import proposals as proposals_api
 from embry0.api.v1 import world as world_api
 from embry0.config import Embry0Config
 from embry0.services.proposals import Proposal
+from embry0.settings.sections.ui import UI
 
 HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 NOW = datetime.now(UTC)
@@ -166,3 +167,29 @@ async def test_a_key_limited_to_some_repos_lists_only_theirs_and_refuses_nothing
         assert decisions_api._allowed(request, "acme/web") is True
         assert decisions_api._allowed(request, "acme/other") is False
     assert not logs and not audited, "a list read every minute hides another repo's decisions without a refusal"
+
+
+class GameOff:
+    """A settings store whose document turns the game layer off (``ui.game: false``, #177)."""
+
+    async def snapshot(self) -> Any:
+        return SimpleNamespace(
+            get=lambda section, **_: section.model(game=False) if section is UI else section.defaults()
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_finished_job_is_a_quest_while_the_game_is_on(app: Any) -> None:
+    listed = (await get(app, "/api/v1/decisions?stage=done")).json()["decisions"]
+    assert [d["kind_label"] for d in listed] == ["Quest done"], "the game's word stays while the game is on"
+    assert (await get(app, "/api/v1/decisions/done:job-1")).json()["kind_label"] == "Quest done"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_job_is_a_job_while_the_game_is_off(app: Any) -> None:
+    app.state.settings = GameOff()
+    listed = (await get(app, "/api/v1/decisions")).json()["decisions"]
+    labels = [d["kind_label"] for d in listed if d["stage"] == "done"]
+    assert labels == ["Job done"], f"no game word on a decision card while the game is off: {labels}"
+    one = (await get(app, "/api/v1/decisions/done:job-1")).json()
+    assert one["kind_label"] == "Job done", f"nor on the one read by its id: {one['kind_label']}"

@@ -4,6 +4,9 @@
 quests to review (the world's inbox), each as a decision
 (:mod:`embry0.services.decisions`). The actions a decision lists stay on their
 own endpoints; this module only reads.
+
+While the settings document turns the game layer off (``ui.game``, #177), a
+finished job's card is labelled ``Job done`` instead of ``Quest done``.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import refusal_detail
+from embry0.api.v1.ui import ui_settings
 from embry0.services.decisions import Decision, done, offered, ordered
 
 logger = structlog.get_logger(__name__)
@@ -146,12 +150,13 @@ async def _reviews(request: Request, *, repo: str | None) -> list[Decision]:
     world = getattr(request.app.state, "world_repo", None)
     if world is None:
         return []
+    game = (await ui_settings(request)).game
     rows = await world.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS))
     if repo:
         rows = [r for r in rows if str(r.get("repo") or "").lower() == repo.lower()]
     rows = [r for r in rows if _allowed(request, r.get("repo"))]
     inputs, owners = await asyncio.gather(done_inputs(request, rows), owners_of(request, rows))
-    return [done({**q, "owners": owners.get(str(q["job_id"]), [])}) for q in inputs]
+    return [done({**q, "owners": owners.get(str(q["job_id"]), [])}, game=game) for q in inputs]
 
 
 async def with_assignees(request: Request, shown: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -235,6 +240,7 @@ async def get_decision(decision_id: str, request: Request) -> dict[str, Any]:
         from embry0.api.v1.world import _quest_or_404
 
         quest = await _quest_or_404(request, ref)
-        found = done((await done_inputs(request, [quest]))[0]).to_dict()
+        game = (await ui_settings(request)).game
+        found = done((await done_inputs(request, [quest]))[0], game=game).to_dict()
         return (await with_assignees(request, [found]))[0]
     raise HTTPException(status_code=404, detail="a decision id is offer:<proposal id> or done:<job id>")

@@ -292,6 +292,7 @@ asks:
 - **Moved so far**, one section per bullet, in name order:
   - The asks policy (`asks`, from `ASKS_ENABLED` and the `ASK_*` variables): the ask loop reads it every tick and `GET /api/v1/asks/due` on every request, so turning asks on or changing their hours needs no restart.
   - The scout's policy (`scout`, from `SCOUT_TEMPLATES`, `SCOUT_MAX_IN_FLIGHT`, `SCOUT_REVISIT_HOURS` and `SCOUT_MAX_LEADS_PER_JOB`, plus each job's hard cap, until now fixed at 1 USD, and a daily cap, off by default): the scout reads it every tick, so a change applies within 5 minutes with no restart. `SCOUT_MODEL`, `SCOUT_REPOS` and `SCOUT_EXCLUDE` stay variables (#164, #165).
+  - The dashboard's game layer and home page (`ui`, new: no variable configured them). The game is on and the guild is the home until a document says otherwise. The dashboard reads the section before it draws its navigation and home page, every minute after that and at once after a save on the Policy tab, and `GET /api/v1/config/ui` and the game's routes read it on every request, so turning the game off or on needs no restart and no reload. The deployment's only: the dashboard knows no viewer's organization to read a layer for. See [turning the game off](world.md#turning-the-game-off).
 
 ### From a file, the command line and MCP
 
@@ -370,6 +371,15 @@ What the scout runs, how often it comes back to a repository, and how much it ma
 | `max_leads_per_job` | whole number | `5` | ≥ 1, ≤ 100 | organization | `SCOUT_MAX_LEADS_PER_JOB` | Most leads one scouting job adds, the worst first. |
 | `job_budget_usd` | number | `1.0` | > 0, ≤ 1000 |  |  | The hard cap of one scouting job, in US dollars. A job pinned to the local model bills nothing; this stops one whose pin is ever lost. |
 | `max_jobs_per_day` | whole number or null | `null` | ≥ 0, ≤ 10000 |  |  | Most scouting jobs started in any 24 hours; null sets no cap, and 0 starts none. |
+
+#### `ui`
+
+What the dashboard shows: the game layer, and the page it opens on.
+
+| Key | Type | Default | Allowed | Overridable by | Imported from | Description |
+|---|---|---|---|---|---|---|
+| `game` | true or false | `true` |  |  |  | Show the game layer: the guild, the agents' levels, skills and outfits, the Achievements page, the chat box and the Game content tab. While false the dashboard opens on the Overview, and GET /world, its characters and quests, GET /progression and POST /progression/rebuild answer 404. Reviewing a job and the content pack's routes work either way. |
+| `home` | text | `"guild"` | one of `"guild"`, `"overview"` |  |  | The page the dashboard opens on: guild or overview. While `game` is false it opens on the Overview, whatever this says. |
 
 <!-- settings-reference:end -->
 

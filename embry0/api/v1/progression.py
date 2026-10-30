@@ -1,14 +1,21 @@
-"""Progression API (spec 2026-10-24): the account, its characters' skills and levels, and its achievements."""
+"""Progression API (spec 2026-10-24): the account, its characters' skills and levels, and its achievements.
+
+Both routes answer 404 while the settings document turns the game layer off
+(``ui.game``, ``embry0/api/v1/ui.py``).
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from embry0.api.deps import require_admin
+from embry0.api.v1.ui import require_game
 
-router = APIRouter()
+# The game's reads: 404 while the settings document turns the game layer off (ui.game, #177).
+# The content pack's routes (progression_pack.py) are its configuration and stay.
+router = APIRouter(dependencies=[Depends(require_game)])
 
 
 def _service(request: Request) -> Any:

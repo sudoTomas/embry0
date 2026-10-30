@@ -18,6 +18,7 @@ vi.mock("@/api/queue", () => ({
 }));
 
 import { Sidebar } from "../Sidebar";
+import { UiSettingsContext } from "@/hooks/useUiSettings";
 
 function renderSidebar(path = "/") {
   const client = new QueryClient({
@@ -183,6 +184,28 @@ describe("Sidebar — unified IA (ticket 011)", () => {
       ["Overview", "/overview"],
       ["Achievements", "/achievements"],
     ]);
+  });
+
+  it("offers no game entry while the game layer is off, with the Overview at / (#177)", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <UiSettingsContext.Provider value={{ game: false, home: "guild" }}>
+          <MemoryRouter initialEntries={["/"]}>
+            <Sidebar />
+          </MemoryRouter>
+        </UiSettingsContext.Provider>
+      </QueryClientProvider>,
+    );
+    const section = screen.getByRole("heading", { level: 3, name: "Overview" }).parentElement as HTMLElement;
+    const links = within(section).getAllByRole("link");
+    expect(links.map((l) => [l.textContent?.trim(), l.getAttribute("href")])).toEqual([["Overview", "/"]]);
+    expect(screen.queryByRole("link", { name: "Guild" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Achievements" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Overview" }), "the home is the active entry at /").toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("every nav item points to its expected route (blocker-ticket coverage check)", () => {

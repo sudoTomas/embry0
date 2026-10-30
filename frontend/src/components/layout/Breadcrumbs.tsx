@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { useLocation } from "react-router";
 import { cn } from "@/lib/utils";
+import { useUiSettings } from "@/hooks/useUiSettings";
 import { settingsTab } from "@/lib/settingsTabs";
 import { NAV_GROUPS } from "./navGroups";
 
@@ -52,9 +53,16 @@ const qaTailMap: Record<string, string> = {
   affected: "Affected",
 };
 
-/** Every sidebar entry's path, with the section it sits in and its own label. */
+/** Every sidebar entry's path, with the section it sits in and its own label;
+ * a page that can be the home also at its own path (`/guild`), where it is
+ * while another page is the home. */
 const NAV_BY_PATH = new Map(
-  NAV_GROUPS.flatMap((group) => group.items.map((item) => [item.path, { section: group.label, label: item.label }] as const)),
+  NAV_GROUPS.flatMap((group) =>
+    group.items.flatMap((item) => {
+      const where = { section: group.label, label: item.label };
+      return item.home ? [[item.path, where] as const, [`/${item.home}`, where] as const] : [[item.path, where] as const];
+    }),
+  ),
 );
 
 interface Crumb {
@@ -77,7 +85,7 @@ function decode(segment: string): string {
  * the trail is the parent and the record, with a repo always named in full
  * (`owner/name`), on the repo page and under QA alike.
  */
-function crumbsFor(pathname: string, search: string): Crumb[] {
+function crumbsFor(pathname: string, search: string, game: boolean): Crumb[] {
   // A "-" segment marks an app route under a name space (the organization
   // wizard at /orgs/-/new), never a name, so the crumb skips it.
   const segments = pathname
@@ -88,7 +96,7 @@ function crumbsFor(pathname: string, search: string): Crumb[] {
   // Settings is its own section, so its line names the open tab instead of
   // standing empty.
   if (segments.length === 1 && segments[0] === "settings") {
-    return [{ label: "Settings" }, { label: settingsTab(new URLSearchParams(search).get("tab")).label }];
+    return [{ label: "Settings" }, { label: settingsTab(new URLSearchParams(search).get("tab"), game).label }];
   }
 
   const nav = NAV_BY_PATH.get(`/${segments.join("/")}`);
@@ -129,7 +137,7 @@ function crumbsFor(pathname: string, search: string): Crumb[] {
  */
 export function Breadcrumbs() {
   const { pathname, search } = useLocation();
-  const crumbs = crumbsFor(pathname, search);
+  const crumbs = crumbsFor(pathname, search, useUiSettings().game);
   const lineClass =
     "flex h-9 shrink-0 items-center gap-2 overflow-hidden border-b border-border px-[var(--density-padding)] text-sm text-fg-muted";
 

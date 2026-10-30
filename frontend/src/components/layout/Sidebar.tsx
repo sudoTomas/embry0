@@ -9,6 +9,8 @@ import { useAwaitingIndicator } from "@/hooks/useAwaitingIndicator";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { OrchestratorStatus } from "./OrchestratorStatus";
+import { useUiSettings } from "@/hooks/useUiSettings";
+import { navGroupsFor } from "@/lib/uiSettings";
 import { NAV_GROUPS, type NavItem } from "./navGroups";
 
 function NavItemLink({
@@ -190,6 +192,9 @@ export function Sidebar() {
   // and mirrors into document.title ("(2⚠) …") — the sidebar is mounted on
   // every route, so the title stays honest app-wide.
   const awaitingCount = useAwaitingIndicator();
+  // The game's entries only while the game is on, and the home page at "/"
+  // (the settings document's ui section, issue 177).
+  const groups = navGroupsFor(NAV_GROUPS, useUiSettings());
 
   if (narrow && !drawerOpen) return null;
 
@@ -227,7 +232,7 @@ export function Sidebar() {
           sidebarOpen ? "overflow-y-auto" : "overflow-visible",
         )}
       >
-        {NAV_GROUPS.map((group) => (
+        {groups.map((group) => (
           <section key={group.label} aria-label={group.label}>
             {/* A quiet label over each group, aligned with the item icons.
                 Overview is a group of one and needs none; the collapsed rail

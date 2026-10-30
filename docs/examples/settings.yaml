@@ -80,3 +80,16 @@ scout:
   # Most scouting jobs started in any 24 hours; null sets no cap, and 0 starts
   # none.
   # max_jobs_per_day: null
+
+# What the dashboard shows: the game layer, and the page it opens on.
+ui:
+  # Show the game layer: the guild, the agents' levels, skills and outfits,
+  # the Achievements page, the chat box and the Game content tab. While false
+  # the dashboard opens on the Overview, and GET /world, its characters and
+  # quests, GET /progression and POST /progression/rebuild answer 404.
+  # Reviewing a job and the content pack's routes work either way.
+  # game: true
+
+  # The page the dashboard opens on: guild or overview. While `game` is false
+  # it opens on the Overview, whatever this says.
+  # home: guild

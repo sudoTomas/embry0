@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { useState, type ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { Link, MemoryRouter, Routes, Route } from "react-router";
@@ -19,8 +19,17 @@ vi.mock("@/components/dashboard/BriefBar", () => ({
   ),
 }));
 // The chat box reads progression through the query client, which these
-// shell tests do not provide; its own tests cover it.
-vi.mock("@/components/progression/Chatbox", () => ({ Chatbox: () => null }));
+// shell tests do not provide; its own tests cover it. The stub says where it is mounted.
+vi.mock("@/components/progression/Chatbox", () => ({ Chatbox: () => <div data-testid="stub-chatbox" /> }));
+// The settings document's ui section (#177), as the layout's read answers it;
+// the context it hands down stays the real one.
+const uiRead = vi.hoisted(() => ({
+  current: { settled: true, settings: { game: true, home: "guild" as "guild" | "overview" } },
+}));
+vi.mock("@/hooks/useUiSettings", async (original) => ({
+  ...(await original<typeof import("@/hooks/useUiSettings")>()),
+  useUiSettingsQuery: () => uiRead.current,
+}));
 vi.mock("@/components/progression/OutfitProvider", () => ({ OutfitProvider: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/stores/layoutStore", () => ({
   useLayoutStore: (selector?: (s: { densityMode: string }) => unknown) =>
@@ -28,6 +37,11 @@ vi.mock("@/stores/layoutStore", () => ({
 }));
 
 import { AppLayout } from "../AppLayout";
+import { useUiSettings } from "@/hooks/useUiSettings";
+
+beforeEach(() => {
+  uiRead.current = { settled: true, settings: { game: true, home: "guild" } };
+});
 
 describe("AppLayout", () => {
   it("renders sidebar, topbar, and the routed outlet content", () => {
@@ -218,3 +232,49 @@ describe("AppLayout — each page arrives as it opens", () => {
   });
 });
 
+
+/** A page that says what the layout handed it. */
+function SaysGame() {
+  const { game, home } = useUiSettings();
+  return <p>{`game ${game ? "on" : "off"}, home ${home}`}</p>;
+}
+
+function renderHome() {
+  return render(
+    <MemoryRouter initialEntries={["/"]}>
+      <Routes>
+        <Route element={<AppLayout />}>
+          <Route index element={<SaysGame />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+describe("AppLayout — the settings document's ui section (#177)", () => {
+  it("draws the header alone until the section answers, so the game never shows for a moment", () => {
+    uiRead.current = { settled: false, settings: { game: true, home: "guild" } };
+    renderHome();
+    expect(screen.getByTestId("stub-topbar")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-sidebar"), "the navigation waits for the section").toBeNull();
+    expect(screen.queryByRole("main"), "so does the page").toBeNull();
+    expect(screen.queryByTestId("stub-chatbox"), "and the chat box").toBeNull();
+  });
+
+  it("mounts the chat box only while the game is on", () => {
+    const { unmount } = renderHome();
+    expect(screen.getByTestId("stub-chatbox"), "the game on: the chat box").toBeInTheDocument();
+    unmount();
+
+    uiRead.current = { settled: true, settings: { game: false, home: "guild" } };
+    renderHome();
+    expect(screen.getByTestId("stub-sidebar")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-chatbox"), "the game off: no chat box").toBeNull();
+  });
+
+  it("hands what it read to every page inside it", () => {
+    uiRead.current = { settled: true, settings: { game: false, home: "overview" } };
+    renderHome();
+    expect(screen.getByText("game off, home overview")).toBeInTheDocument();
+  });
+});

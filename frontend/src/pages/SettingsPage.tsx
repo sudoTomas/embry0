@@ -1,6 +1,7 @@
 import { useSearchParams } from "react-router";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
-import { SETTINGS_TABS, settingsTab } from "@/lib/settingsTabs";
+import { useUiSettings } from "@/hooks/useUiSettings";
+import { SETTINGS_TABS, settingsTab, settingsTabs } from "@/lib/settingsTabs";
 import GeneralTab from "./settings/GeneralTab";
 import PolicyTab from "./settings/PolicyTab";
 import ContextTab from "./settings/ContextTab";
@@ -11,7 +12,9 @@ import GameContentTab from "./settings/GameContentTab";
 export function SettingsPage() {
   // The open tab lives in the URL so the breadcrumb line names it.
   const [params, setParams] = useSearchParams();
-  const tab = settingsTab(params.get("tab")).value;
+  // The game's content is a tab only while the game is on (ui.game, #177).
+  const { game } = useUiSettings();
+  const tab = settingsTab(params.get("tab"), game).value;
   const openTab = (value: string) =>
     setParams(value === SETTINGS_TABS[0].value ? {} : { tab: value }, { replace: true });
 
@@ -20,7 +23,7 @@ export function SettingsPage() {
       <h1 className="title-page text-xl font-bold">Settings</h1>
       <Tabs defaultValue={SETTINGS_TABS[0].value} value={tab} onValueChange={openTab}>
         <TabsList>
-          {SETTINGS_TABS.map((t) => (
+          {settingsTabs(game).map((t) => (
             <TabsTrigger key={t.value} value={t.value}>
               {t.label}
             </TabsTrigger>
@@ -31,7 +34,7 @@ export function SettingsPage() {
         <TabsContent value="context"><ContextTab /></TabsContent>
         <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
         <TabsContent value="apikeys"><ApiKeysTab /></TabsContent>
-        <TabsContent value="game"><GameContentTab /></TabsContent>
+        {game && <TabsContent value="game"><GameContentTab /></TabsContent>}
       </Tabs>
     </div>
   );

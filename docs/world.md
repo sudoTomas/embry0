@@ -1,6 +1,6 @@
 # The guild: embry0's home screen
 
-embry0 opens on its guild: the agents at work, drawn as characters in a hall and on a map. The page around the pictures is embry0's usual interface and speaks its usual words (agents, jobs, review); the pictures and the activity box speak the game's (loot, XP, attack, defeated). Both call a piece of work a quest through its whole life (spec 2026-10-27, decisions): a quest on offer (what embry0 found), a quest underway (a job running), a quest to review (a job done). The achievements journal is Deeds. The design is in [the spec](superpowers/specs/2026-10-25-world-design.md).
+embry0 opens on its guild: the agents at work, drawn as characters in a hall and on a map. The page around the pictures is embry0's usual interface and speaks its usual words (agents, jobs, review); the pictures and the activity box speak the game's (loot, XP, attack, defeated). Both call a piece of work a quest through its whole life (spec 2026-10-27, decisions): a quest on offer (what embry0 found), a quest underway (a job running), a quest to review (a job done). The achievements journal is Deeds. The design is in [the spec](superpowers/specs/2026-10-25-world-design.md). It is on by default, and an operator can [turn it off](#turning-the-game-off).
 
 ## The screen
 
@@ -34,6 +34,26 @@ A job's report says what it did, the pull request (files and lines changed, the 
 Reviewing is not part of the game: these buttons, like the Decisions page's, call the job's own review routes ([API](api.md#reviewing-a-job)).
 
 Only an admin session reviews, starts and cancels; others see everything read-only.
+
+## Turning the game off
+
+The guild is the home screen of the game layer, which every deployment gets until it says otherwise. To run a plain operations dashboard instead, write the `ui` section of the [settings document](configuration.md#settings-document) (Settings → Policy, `embry0 settings apply`, or the `settings_set` MCP tool):
+
+```yaml
+ui:
+  game: false     # or `off`
+```
+
+With the game off:
+
+- `/` opens the Overview, with the brief above it, and the sidebar's Overview group holds the Overview alone.
+- The guild, the Achievements page, the chat box, each agent's level, skill sheet and outfit (the Agents pages, a job's party, the pipeline graph), and the Settings page's Game content tab are not shown. A link to `/guild`, `/achievements` or `/overview` opens the Overview at `/`.
+- The dashboard reads no progression, and the game's routes (`GET /world`, a character, a quest's scroll, `GET /progression`, `POST /progression/rebuild`) answer 404 saying the game is off ([API](api.md#the-world)).
+- Everything else works as before. Reviewing a finished job is not part of the game ([Reviewing the work](#reviewing-the-work)), so the Decisions page, a job's page and the review routes work as they did. The Decisions page drops the game's word: its tabs read Jobs to review and Work on offer, and a finished job's card is labelled Job done instead of Quest done (in `GET /decisions` too). The content pack can still be read and changed through the API, the CLI and MCP, ready for when the game is turned on again, and the experience keeps counting from the recorded work, so nothing is lost while it is off.
+
+`home: overview` keeps the game on but opens the dashboard on the Overview; the guild is then at `/guild`, and a link into the guild written while it was at `/` (`/?quest=…`, `?character=`, `?lead=`, `?write=`, `?view=`) opens it there, with its query. While `game` is false, `home` is not read.
+
+A change shows on every dashboard within a minute, and at once on the one that saved it. Nothing restarts. A browser keeps the last answer and draws with it at once on its next visit, then reads the section again; so a browser that last saw the game on shows it for the moment that read takes after the game is turned off. A browser's first visit waits for the read, with the header alone, so it never shows the game while it is off; the wait is at most 3 seconds, after which it draws with the defaults. The setting is the deployment's: an organization cannot turn the game off for its own people, because the dashboard has no viewer's organization to read it for: a session carries an email, a name and roles, and an API key at most a repository allowlist, and neither names an organization. The game itself is one account whose characters are the deployment's agents.
 
 ## Art
 

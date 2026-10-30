@@ -9,17 +9,39 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useDecisions, usePeople, useSetMyGithubLogin } from "@/hooks/useDecisions";
+import { useUiSettings } from "@/hooks/useUiSettings";
 import { toastApiError } from "@/api/errorToast";
 import { toast } from "sonner";
 import { useAuthStore, useIsAdmin } from "@/stores/authStore";
 
 type Stage = "mine" | "done" | "offered";
 
-const STAGES: { stage: Stage; label: string; empty: string }[] = [
-  { stage: "mine", label: "Waiting for me", empty: "Nothing waits for you: nothing was sent to you, and no quest on offer is owned by your GitHub login." },
-  { stage: "done", label: "Quests to review", empty: "Nothing waits for a review." },
-  { stage: "offered", label: "Quests on offer", empty: "No quest on offer right now." },
-];
+interface StageTab {
+  stage: Stage;
+  label: string;
+  empty: string;
+}
+
+/** The page's words: the game's (a quest) while the game layer is on, plain ones while the
+ * settings document turns it off (`ui.game`, #177). */
+const WORDS: Record<"game" | "plain", { intro: string; stages: StageTab[] }> = {
+  game: {
+    intro: "Every quest waiting on someone: finished work to review, and work embry0 found that its owners could start. The worst come first.",
+    stages: [
+      { stage: "mine", label: "Waiting for me", empty: "Nothing waits for you: nothing was sent to you, and no quest on offer is owned by your GitHub login." },
+      { stage: "done", label: "Quests to review", empty: "Nothing waits for a review." },
+      { stage: "offered", label: "Quests on offer", empty: "No quest on offer right now." },
+    ],
+  },
+  plain: {
+    intro: "Everything waiting on someone: finished work to review, and work embry0 found that its owners could start. The worst come first.",
+    stages: [
+      { stage: "mine", label: "Waiting for me", empty: "Nothing waits for you: nothing was sent to you, and no work on offer is owned by your GitHub login." },
+      { stage: "done", label: "Jobs to review", empty: "Nothing waits for a review." },
+      { stage: "offered", label: "Work on offer", empty: "No work on offer right now." },
+    ],
+  },
+};
 
 /** Name your GitHub login once, so the quests your login owns wait for you here. */
 function LinkLogin() {
@@ -86,10 +108,12 @@ function CardList({
  * Decisions (spec 2026-10-27): every quest waiting on a person, as one card
  * each. Quests to review are finished jobs waiting for a merge, a send-back or
  * a rating; quests on offer are what embry0 found and asks owners to start.
- * The worst come first.
+ * The worst come first. While the game layer is off the page says jobs and
+ * work instead of quests.
  */
 export function DecisionsPage() {
   const [params, setParams] = useSearchParams();
+  const words = WORDS[useUiSettings().game ? "game" : "plain"];
   const raw = params.get("stage");
   const stage: Stage = raw === "offered" || raw === "done" ? raw : "mine";
   const owner = params.get("owner") ?? "";
@@ -113,22 +137,20 @@ export function DecisionsPage() {
   const all = decisions.data ?? [];
   const source = stage === "mine" ? waiting : decisions;
   const inStage = stage === "mine" ? (waiting.data ?? []) : all.filter((d) => d.stage === stage);
-  // Finished work all reads "Quest done": the kinds filter quests on offer only.
+  // Finished work all reads one label ("Quest done", "Job done" with the game off): the kinds filter what is on offer only.
   const kinds = stage === "offered" ? [...new Map(inStage.map((d) => [d.kind, d.kind_label])).entries()] : [];
   const shown = kind ? inStage.filter((d) => d.kind === kind) : inStage;
   const repos = [...new Set(shown.map((d) => d.repo))];
-  const current = STAGES.find((s) => s.stage === stage) ?? STAGES[0];
+  const current = words.stages.find((s) => s.stage === stage) ?? words.stages[0];
 
   return (
     <div className="space-y-4" data-testid="decisions-page">
       <header className="space-y-1">
         <h1 className="title-page text-xl font-bold">Decisions</h1>
-        <p className="text-sm text-fg-secondary">
-          Every quest waiting on someone: finished work to review, and work embry0 found that its owners could start. The worst come first.
-        </p>
+        <p className="text-sm text-fg-secondary">{words.intro}</p>
       </header>
       <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Stage">
-        {STAGES.map((s) => (
+        {words.stages.map((s) => (
           <Button
             key={s.stage}
             role="tab"

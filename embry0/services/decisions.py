@@ -265,8 +265,17 @@ def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
-def done(q: Mapping[str, Any]) -> Decision:
+#: A finished job's card label: the game's word while the game layer is on, a plain one while
+#: the settings document turns it off (``ui.game``, #177).
+DONE_LABEL = "Quest done"
+DONE_LABEL_PLAIN = "Job done"
+
+
+def done(q: Mapping[str, Any], *, game: bool = True) -> Decision:
     """A quest to review, from a finished job's row and what is known about it.
+
+    ``game`` is whether the game layer is on (``ui.game``): its card is
+    labelled ``Quest done`` while it is, ``Job done`` while it is not.
 
     ``q`` carries the job's ``job_id``, ``repo``, ``area``, ``title``, ``outcome``,
     ``pr_url``, ``template``, ``finished_at``, ``cost_usd``, ``seconds``,
@@ -295,7 +304,7 @@ def done(q: Mapping[str, Any]) -> Decision:
         id=f"done:{q['job_id']}",
         stage="done",
         kind=template or "job",
-        kind_label="Quest done",
+        kind_label=DONE_LABEL if game else DONE_LABEL_PLAIN,
         verdict=verdict,
         tone=tone,
         title=str(brief.get("title") or q.get("title") or ""),

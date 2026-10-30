@@ -16,10 +16,12 @@ from __future__ import annotations
 from embry0.settings.registry import Catalog
 from embry0.settings.sections.asks import ASKS
 from embry0.settings.sections.scout import SCOUT
+from embry0.settings.sections.ui import UI
 
 CATALOG: Catalog = Catalog(
     [
         ASKS,
         SCOUT,
+        UI,
     ]
 )

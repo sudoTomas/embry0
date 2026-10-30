@@ -3,9 +3,11 @@ import { lazy, Suspense } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageError } from "../components/PageError";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { GameRoute, HomeRoute, OwnPathRoute } from "./homeRoutes";
 
 const DashboardPage = lazy(() => import("../pages/DashboardPage").then(m => ({ default: m.DashboardPage })));
-// The world (spec 2026-10-25) is the home screen: the guild, the quest board, the quests' scrolls.
+// The world (spec 2026-10-25) is the home screen: the guild, the quest board, the quests' scrolls,
+// unless the settings document's ui section (#177) opens the Overview or turns the game off.
 const WorldPage = lazy(() => import("../pages/WorldPage").then(m => ({ default: m.WorldPage })));
 const ConsolePage = lazy(() => import("../pages/ConsolePage").then(m => ({ default: m.ConsolePage })));
 const JobsPage = lazy(() => import("../pages/JobsPage").then(m => ({ default: m.JobsPage })));
@@ -60,13 +62,18 @@ export function JobLogsPageRedirect() {
   return <Navigate to={`/jobs/${jobId}`} replace />;
 }
 
+const guild = <ErrorBoundary inline><Suspense fallback={fallback}><WorldPage /></Suspense></ErrorBoundary>;
+const overview = <ErrorBoundary inline><Suspense fallback={fallback}><DashboardPage /></Suspense></ErrorBoundary>;
+
 export const router = createBrowserRouter([
   {
     element: <AppLayout />,
     errorElement: <PageError message="Something went wrong" />,
     children: [
-      { index: true, element: <ErrorBoundary inline><Suspense fallback={fallback}><WorldPage /></Suspense></ErrorBoundary> },
-      { path: "overview", element: <ErrorBoundary inline><Suspense fallback={fallback}><DashboardPage /></Suspense></ErrorBoundary> },
+      // `/` opens the guild or the Overview; each is also at its own path while the other is the home.
+      { index: true, element: <HomeRoute pages={{ guild, overview }} /> },
+      { path: "overview", element: <OwnPathRoute page="overview">{overview}</OwnPathRoute> },
+      { path: "guild", element: <GameRoute><OwnPathRoute page="guild">{guild}</OwnPathRoute></GameRoute> },
       { path: "console", element: <ErrorBoundary inline><Suspense fallback={fallback}><ConsolePage /></Suspense></ErrorBoundary> },
       { path: "jobs", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobsPage /></Suspense></ErrorBoundary> },
       { path: "jobs/:jobId", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobDetailPage /></Suspense></ErrorBoundary> },
@@ -74,7 +81,7 @@ export const router = createBrowserRouter([
       { path: "merge-approvals", element: <ErrorBoundary inline><Suspense fallback={fallback}><MergeApprovalsPage /></Suspense></ErrorBoundary> },
       { path: "merge-approvals/:approvalId", element: <ErrorBoundary inline><Suspense fallback={fallback}><MergeApprovalPage /></Suspense></ErrorBoundary> },
       { path: "agents", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentsPage /></Suspense></ErrorBoundary> },
-      { path: "achievements", element: <ErrorBoundary inline><Suspense fallback={fallback}><AchievementsPage /></Suspense></ErrorBoundary> },
+      { path: "achievements", element: <GameRoute><ErrorBoundary inline><Suspense fallback={fallback}><AchievementsPage /></Suspense></ErrorBoundary></GameRoute> },
       { path: "agents/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
       { path: "agents/:type", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
       { path: "skills", element: <ErrorBoundary inline><Suspense fallback={fallback}><SkillsPage /></Suspense></ErrorBoundary> },
