@@ -1,4 +1,8 @@
-"""The leads loop (spec 2026-10-25): what it stores, caps and closes, and what it never closes."""
+"""The leads loop (spec 2026-10-25): what it stores, caps and closes, and what it never closes.
+
+Its policy is the ``leads`` section of the settings document, read through
+``tests.fixtures.leads`` as the real snapshot reads it.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,8 @@ from typing import Any
 
 from embry0.execution.forge_client import Listing
 from embry0.services.leads import Lead
-from embry0.services.leads.loop import LeadsLoop, LeadsSettings, leads_settings
+from embry0.services.leads.loop import LeadsLoop
+from tests.fixtures.leads import MemorySettings
 from tests.unit.services.leads.fakes import FakeForge, MemoryLeads
 from tests.unit.services.leads.test_backlog import READY_BODY
 
@@ -33,6 +38,7 @@ def _ci(*failing: str) -> FakeForge:
 
 def _loop(store: MemoryLeads, client: Any, *, finders: set[str], linear: Any = None, cap: int = 5, now=T0) -> LeadsLoop:
     clock = {"now": now}
+    settings = MemorySettings({"enabled": True, "finders": sorted(finders), "max_new_per_repo_per_day": cap})
 
     async def targets() -> list[str]:
         return [REPO]
@@ -53,7 +59,7 @@ def _loop(store: MemoryLeads, client: Any, *, finders: set[str], linear: Any = N
         return "Web" if lead.kind == "ci" else None
 
     loop = LeadsLoop(
-        settings=LeadsSettings(finders=frozenset(finders), max_new_per_repo_per_day=cap),
+        settings=settings.leads,
         leads=store,
         targets=targets,
         client_for=client_for,
@@ -142,12 +148,3 @@ async def test_the_backlog_waits_for_its_own_interval():
     loop = _loop(store, FakeForge({}), finders={"ticket"}, linear=_linear("ENG-1"))
     assert "ticket" in (await loop.tick())[REPO]
     assert "ticket" not in (await loop.tick())[REPO], "the second pass of the day leaves the backlog alone"
-
-
-def test_settings_from_the_config():
-    config = SimpleNamespace(
-        leads_finders="ci, Alert ,nonsense", leads_interval_hours=1, leads_max_new_per_repo_per_day=2
-    )
-    settings = leads_settings(config)
-    assert settings.finders == frozenset({"ci", "alert"}) and settings.interval_seconds == 3600
-    assert settings.max_new_per_repo_per_day == 2 and settings.backlog_interval_seconds == 24 * 3600

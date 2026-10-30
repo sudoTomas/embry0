@@ -23,6 +23,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from embry0.services.proposals import Proposal
+from tests.fixtures.leads import brief_reader
 
 BRIEF = {"title": "Stop retrying a saved email", "problem": "It retries.", "fix": "Stop it.", "size": "small"}
 
@@ -168,10 +169,9 @@ async def test_bad_usage_never_raises_past_a_writer(providers: None) -> None:
     spend = Spend()
     writer = ProposalBriefWriter(
         proposals=feed,
-        models=models,
+        settings=brief_reader(models),
         briefs=Briefs(),
         calls=module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=Gate()),
-        min_readiness=60,
         client=_raw_client([], _body('{"prompt_tokens": 1e999, "completion_tokens": 1}')),
     )
     try:

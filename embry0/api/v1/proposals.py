@@ -25,7 +25,7 @@ from embry0.api.schemas.person_name import PersonName
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.services.leads import LEAD_KINDS
-from embry0.services.proposal_briefs import held, with_briefs
+from embry0.services.proposal_briefs import held_by, with_briefs
 from embry0.services.proposals import (
     ACTOR,
     CODEOWNERS_PATHS,
@@ -42,6 +42,9 @@ from embry0.services.proposals import (
     with_owners,
 )
 from embry0.services.run_with import RunWith
+from embry0.settings.layers import PerRepository
+from embry0.settings.sections.leads import LEADS, LeadsSettings
+from embry0.settings.store import Scoped, SettingsStore
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -182,12 +185,20 @@ async def _open(request: Request, proposal_id: str) -> Proposal:
     return found
 
 
-def _min_readiness(request: Request) -> int:
-    return int(getattr(request.app.state.config, "proposals_ticket_min_readiness", 60))
+async def leads_policy(request: Request) -> Scoped[LeadsSettings]:
+    """The settings document's ``leads`` section as it stands now, read per repository: whose
+    ``ask_min`` holds a backlog ticket out of chat."""
+    store: SettingsStore | None = getattr(request.app.state, "settings", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="settings storage not initialized")
+    return (await store.snapshot()).scoped(LEADS)
 
 
-async def _shown(request: Request, proposals: list[Proposal]) -> list[dict[str, Any]]:
-    """The proposals as the API shows them: each with its brief (spec 2026-10-25) and whether it is held."""
+async def _shown(
+    request: Request, proposals: list[Proposal], leads: PerRepository[LeadsSettings] | None = None
+) -> list[dict[str, Any]]:
+    """The proposals as the API shows them: each with its brief (spec 2026-10-25) and whether it is held,
+    by ``leads`` (read now when not given)."""
     briefs = getattr(request.app.state, "proposal_briefs_repo", None)
     stored: dict[str, Any] = {}
     if briefs is not None:
@@ -195,7 +206,7 @@ async def _shown(request: Request, proposals: list[Proposal]) -> list[dict[str, 
             stored = await briefs.all()
         except Exception:  # noqa: BLE001 - the feed never waits on briefs
             logger.warning("proposal_briefs_unread", exc_info=True)
-    return with_briefs(proposals, stored, _min_readiness(request))
+    return with_briefs(proposals, stored, leads if leads is not None else await leads_policy(request))
 
 
 @router.get("/proposals")
@@ -216,10 +227,10 @@ async def list_proposals(
         proposals = [p for p in proposals if p.kind == kind]
     if since is not None:
         proposals = [p for p in proposals if p.created_at > since]
+    leads = await leads_policy(request)
     if not include_held:
-        floor = _min_readiness(request)
-        proposals = [p for p in proposals if not held(p, floor)]
-    shown = await _shown(request, proposals)
+        proposals = [p for p in proposals if not held_by(p, leads)]
+    shown = await _shown(request, proposals, leads)
     return {"proposals": shown, "count": len(shown)}
 
 

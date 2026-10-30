@@ -16,7 +16,11 @@ from embry0.api.v1 import proposals as proposals_api
 from embry0.api.v1 import world as world_api
 from embry0.config import Embry0Config
 from embry0.services.proposals import Proposal
+from embry0.settings.scope import DEPLOYMENT
+from embry0.settings.sections import CATALOG
 from embry0.settings.sections.ui import UI
+from embry0.settings.store import build_snapshot
+from tests.fixtures.leads import MemorySettings
 
 HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 NOW = datetime.now(UTC)
@@ -97,6 +101,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     app.state.jobs_repo = FakeJobs()
     app.state.job_briefs_repo = FakeBriefs()
     app.state.proposal_briefs_repo = None
+    app.state.settings = MemorySettings()
     offers = [
         proposal("issue:1", "issue"),
         proposal("crack:abc", "crack", severity="high"),
@@ -170,12 +175,14 @@ async def test_a_key_limited_to_some_repos_lists_only_theirs_and_refuses_nothing
 
 
 class GameOff:
-    """A settings store whose document turns the game layer off (``ui.game: false``, #177)."""
+    """A settings store whose document turns the game layer off (``ui.game: false``, #177).
+
+    A real snapshot of that document, so every section a decision reads (``leads`` too) reads as it would.
+    """
 
     async def snapshot(self) -> Any:
-        return SimpleNamespace(
-            get=lambda section, **_: section.model(game=False) if section is UI else section.defaults()
-        )
+        rows = [{"scope": DEPLOYMENT, "data": {UI.name: {"game": False}}, "generation": 1, "updated_at": None}]
+        return build_snapshot(CATALOG, rows, token=(), log=False)
 
 
 @pytest.mark.asyncio

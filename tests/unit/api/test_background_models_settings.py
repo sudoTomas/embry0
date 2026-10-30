@@ -30,6 +30,7 @@ from structlog.testing import capture_logs
 from embry0.api.app import create_app, lifespan
 from embry0.api.deps import bust_api_key_cache
 from embry0.config import Embry0Config
+from embry0.services.proposal_briefs import brief_settings
 from embry0.services.proposals import Proposal
 from embry0.settings.bootstrap import import_env_once
 from embry0.settings.registry import Section
@@ -303,14 +304,13 @@ async def test_a_hosted_model_s_spend_is_counted_against_the_caps_and_refused_pa
 
     writer = ProposalBriefWriter(
         proposals=feed,
-        models=module.background_model(app.state.settings, "proposal_brief"),
+        settings=brief_settings(app.state.settings),
         briefs=Briefs(),
         calls=module.BackgroundCalls(
             resolver=Resolver(),
             spend=BackgroundSpendRepository(db),
             gate=build_budget_gate(policy),
         ),
-        min_readiness=60,
         per_tick=1,
         client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),
     )
@@ -369,8 +369,12 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
             # The scout reads its model with its section, from one snapshot a tick.
             return (await state.scout.settings()).models
 
+        async def proposal_brief() -> Any:
+            # The proposal briefs read their model with the leads section, from one snapshot a tick.
+            return (await state.proposal_brief_writer._settings()).models  # noqa: SLF001
+
         readers = {
-            "proposal_brief": state.proposal_brief_writer._models,  # noqa: SLF001
+            "proposal_brief": proposal_brief,
             "job_brief": state.job_brief_writer._models,  # noqa: SLF001
             "slop_judge": state.slop_meter._models,  # noqa: SLF001
             "scout": scout,

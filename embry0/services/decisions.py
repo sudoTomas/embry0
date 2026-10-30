@@ -119,8 +119,12 @@ def _seen(p: Mapping[str, Any]) -> str:
     return ""
 
 
-def offered(p: Mapping[str, Any]) -> Decision:
-    """A quest on offer, from a proposal as the proposals API shows it (with its brief and held flag)."""
+def offered(p: Mapping[str, Any], *, ask_min: int) -> Decision:
+    """A quest on offer, from a proposal as the proposals API shows it (with its brief and held flag).
+
+    ``ask_min`` is ``leads.ask_min`` for the proposal's repository: a backlog
+    ticket's readiness below it is marked, as it is the ticket a chat does not ask.
+    """
     kind = str(p.get("kind") or "")
     brief = p.get("brief") if isinstance(p.get("brief"), Mapping) else None
     severity = str(p.get("severity") or "").lower()
@@ -150,7 +154,7 @@ def offered(p: Mapping[str, Any]) -> Decision:
                 Fact("Evidence", _evidence(p)),
                 Fact("Size", str(size or "")),
                 Fact("Seen", _seen(p)),
-                Fact("Readiness", f"{readiness}/100", "warn" if readiness < 60 else "")
+                Fact("Readiness", f"{readiness}/100", "warn" if readiness < ask_min else "")
                 if isinstance(readiness, int | float)
                 else None,
                 Fact("Owners", _people(list(p.get("owners") or []))),

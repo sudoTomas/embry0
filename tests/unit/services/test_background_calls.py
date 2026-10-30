@@ -23,6 +23,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from embry0.services.proposals import Proposal
+from tests.fixtures.leads import brief_reader
 
 GOOD = {
     "title": "Stop retrying a saved email",
@@ -210,10 +211,9 @@ async def test_a_writer_refused_by_the_caps_stops_its_tick_and_writes_on_a_later
     sent: list[dict[str, Any]] = []
     writer = ProposalBriefWriter(
         proposals=feed,
-        models=models,
+        settings=brief_reader(models),
         briefs=Briefs(),
         calls=module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=gate),
-        min_readiness=60,
         client=_answering(sent, {"prompt_tokens": 10, "completion_tokens": 5}),
     )
     assert await writer.tick() == [], "over the caps: no brief, and no exception out of the tick"

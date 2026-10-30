@@ -78,7 +78,7 @@ def test_the_board_the_cards_and_the_briefs_read_a_kind_from_the_catalogue(kind:
     entry = KINDS[kind]
     board = lead_entry({"id": f"{kind}:1", "kind": kind})
     assert (board["verb"], board["creature"], board["leader"]) == (entry.verb, entry.creature, entry.leader)
-    card = offered({"id": f"{kind}:1", "kind": kind, "repo": "acme/widgets", "title": "t"}).to_dict()
+    card = offered({"id": f"{kind}:1", "kind": kind, "repo": "acme/widgets", "title": "t"}, ask_min=60).to_dict()
     assert card["kind_label"] == entry.label and card["verdict"]["label"] == entry.label
     assert card["yes_starts"] == entry.starts
     prompt = user_prompt(_proposal(kind))
@@ -93,6 +93,7 @@ def test_a_kind_the_catalogue_does_not_know_still_reads() -> None:
 
     board = lead_entry({"id": "omen:1", "kind": "omen"})
     assert (board["verb"], board["creature"]) == ("Investigate", "mystery")
-    card = offered({"id": "omen:1", "kind": "omen", "repo": "acme/widgets", "title": "t", "action": "Look"}).to_dict()
+    omen = {"id": "omen:1", "kind": "omen", "repo": "acme/widgets", "title": "t", "action": "Look"}
+    card = offered(omen, ask_min=60).to_dict()
     assert card["kind_label"] == "Omen" and card["yes_starts"] == "Look"
     assert "Kind: omen\n" in user_prompt(_proposal("omen"))

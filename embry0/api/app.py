@@ -1086,6 +1086,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     db = DatabasePool(config.database_url)
     await db.connect()
+    # When this process began, by the database's clock, before the migrations
+    # create anything: the settings import counts as a deployment's past only
+    # what it held before a release first asked (ReliedOn, below).
+    settings_started = await db.fetchval("SELECT now()")
     await run_migrations(db)
 
     # The settings document (spec 2026-10-28): before any loop reads a
@@ -1094,19 +1098,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # (the budget_config row, which won over its variables), and load the
     # first snapshot. Then copy each organization's settings that moved into
     # a section into its layer, once (spec 2026-10-29, section 9). A failed
-    # import is retried at the next boot (its ledger is not written) and
-    # never stops this one: every section reads as its defaults meanwhile,
-    # except the budget. Its policy reads each key not imported as the
-    # release before did and tries the import again while this one runs.
+    # import never stops this boot: every section reads as its defaults
+    # meanwhile, except the budget. Its policy reads each key not imported as
+    # the release before did and tries the import again while this one runs;
+    # an import that failed, or left a key whose relied-on check failed, is
+    # tried again in this run too, once the background tasks exist
+    # (settle_unchecked, below). The store carries when this process began,
+    # so every try counts a deployment's past against the same moment.
     from embry0.services.background_models import import_provider_settings_once
-    from embry0.settings.bootstrap import import_env_once, log_ignored_env
+    from embry0.settings.bootstrap import BootstrapResult, import_env_once, log_ignored_env
     from embry0.settings.earlier import EARLIER_SOURCES
     from embry0.settings.org_import import import_org_settings_once
     from embry0.settings.store import SettingsStore
 
-    app.state.settings = SettingsStore(db)
+    app.state.settings = SettingsStore(db, started=settings_started)
+    settings_bootstrap: BootstrapResult | None = None
     try:
-        await import_env_once(app.state.settings, config, earlier=EARLIER_SOURCES)
+        settings_bootstrap = await import_env_once(app.state.settings, config, earlier=EARLIER_SOURCES)
     except Exception:
         logger.critical("settings_bootstrap_failed", exc_info=True)
     try:
@@ -1685,6 +1693,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.volume_reaper = volume_reaper
 
     app.state.background_tasks = set()
+    # The settings import above failed, or left a key whose relied-on check
+    # failed (it reads its default): it is tried again in this run, not only
+    # at the next start, with the same start time.
+    if settings_bootstrap is None or settings_bootstrap.unchecked:
+        from embry0.settings.bootstrap import settle_unchecked
+
+        settle_task = asyncio.create_task(
+            settle_unchecked(app.state.settings, config, settings_bootstrap, earlier=EARLIER_SOURCES)
+        )
+        app.state.background_tasks.add(settle_task)
+        settle_task.add_done_callback(app.state.background_tasks.discard)
     if qa_minio_task is not None:
         app.state.background_tasks.add(qa_minio_task)
         qa_minio_task.add_done_callback(app.state.background_tasks.discard)
@@ -2339,14 +2358,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Leads (spec 2026-10-25): every finder on every repository someone answers
     # for (owners set, or a watched stack), read with its organization's
-    # credential; what they find is offered as owner proposals. Off with
-    # LEADS_ENABLED=false; POST /leads/run runs one pass by hand either way.
+    # credential; what they find is offered as owner proposals. The loop
+    # always runs and reads the settings document's `leads` section every
+    # look (spec 2026-10-28), each repository through its organization's
+    # layer (spec 2026-10-29), so turning leads on, or changing what they
+    # read, needs no restart; it does nothing while `leads.enabled` is false.
+    # POST /leads/run runs one pass by hand either way.
     app.state.leads_loop = None
     try:
         from embry0.api.trigger_context import resolve_trigger_labels
         from embry0.api.v1.organizations import app_request as _leads_request
         from embry0.api.v1.organizations import org_forge_client as _leads_forge_client
-        from embry0.services.leads.loop import LeadsLoop, leads_settings
+        from embry0.services.leads.loop import LeadsLoop
+        from embry0.settings.sections.leads import LEADS as _LEADS
+        from embry0.settings.store import scoped_reader as _leads_reader
 
         async def _lead_targets() -> list[str]:
             owned = await app.state.proposals_repo.owners()
@@ -2373,7 +2398,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             return await resolve_trigger_labels(_leads_request(app))
 
         app.state.leads_loop = LeadsLoop(
-            settings=leads_settings(config),
+            settings=_leads_reader(app.state.settings, _LEADS),
             leads=app.state.leads_repo,
             targets=_lead_targets,
             client_for=_lead_client,
@@ -2381,12 +2406,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             tracked=_lead_tracked,
             trigger_labels=_lead_triggers,
         )
-        if config.leads_enabled:
-            leads_task = asyncio.create_task(app.state.leads_loop.start())
-            app.state.background_tasks.add(leads_task)
-            leads_task.add_done_callback(app.state.background_tasks.discard)
-        else:
-            logger.info("leads_loop_disabled", hint="LEADS_ENABLED=false: no finder runs on a schedule")
+        leads_task = asyncio.create_task(app.state.leads_loop.start())
+        app.state.background_tasks.add(leads_task)
+        leads_task.add_done_callback(app.state.background_tasks.discard)
     except Exception:
         app.state.leads_loop = None
         logger.critical("leads_unavailable", exc_info=True)
@@ -2561,16 +2583,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     # Proposal briefs (spec 2026-10-25): writes each owner proposal in plain
-    # words on its model, a few a minute; the feed only reads them.
+    # words on its model, a few a minute; the feed only reads them. The held
+    # tickets (below their repository's `leads.ask_min`) come last. Each tick
+    # reads its model and the leads section from one settings snapshot.
     from embry0.api.v1.proposals import open_proposals
-    from embry0.services.proposal_briefs import ProposalBriefWriter
+    from embry0.services.proposal_briefs import ProposalBriefWriter, brief_settings
 
     app.state.proposal_brief_writer = ProposalBriefWriter(
         proposals=lambda: open_proposals(app.state),
-        models=background_model(app.state.settings, "proposal_brief"),
+        settings=brief_settings(app.state.settings),
         briefs=app.state.proposal_briefs_repo,
         calls=app.state.background_calls,
-        min_readiness=config.proposals_ticket_min_readiness,
         per_tick=config.proposal_briefs_per_tick,
         interval_seconds=config.proposal_brief_interval_seconds,
     )

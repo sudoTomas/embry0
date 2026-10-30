@@ -86,6 +86,7 @@ def test_a_ticket_lead_says_why_it_is_offered_and_how_it_starts():
         url="https://tracker/ENG-12",
         labels=["bug"],
         priority=2,
+        min_score=40,
     )
     assert isinstance(lead, Lead)
     assert lead.id == lead_id("ticket", "acme/web", "linear:ENG-12")
@@ -93,7 +94,10 @@ def test_a_ticket_lead_says_why_it_is_offered_and_how_it_starts():
     assert lead.summary.startswith("A backlog ticket embry0 could take (")
     assert lead.action == "Put the trigger label on the ticket and start its pipeline"
     assert lead.data == {"tracker": "linear", "key": "ENG-12", "readiness": lead.data["readiness"]}
-    assert ticket_lead(repo="acme/web", tracker="github", key="3", title="Idea", body="", url=None, labels=[]) is None
+    idea = ticket_lead(
+        repo="acme/web", tracker="github", key="3", title="Idea", body="", url=None, labels=[], min_score=40
+    )
+    assert idea is None
 
 
 def _ticket(key: str, *, repo: str = "acme/web", labels: tuple[str, ...] = ("bug",), assigned=False, mine=False):
@@ -115,7 +119,7 @@ async def test_linear_tickets_someone_holds_labelled_or_tracked_are_left_alone()
         _ticket("ENG-5", labels=("bug", "Embry0")),
         _ticket("ENG-6", assigned=True, mine=True),
     ]
-    leads = await linear_leads("acme/web", tickets, trigger_labels=["embry0"], tracked=tracked)
+    leads = await linear_leads("acme/web", tickets, trigger_labels=["embry0"], tracked=tracked, min_score=40)
     assert [lead.data["key"] for lead in leads] == ["ENG-1", "ENG-6"]
 
 
@@ -134,7 +138,9 @@ async def test_github_issues_nobody_holds_and_not_yet_tracked_become_leads():
         {"number": 5, "title": "Rethink billing", "body": "", "labels": [{"name": "epic"}]},
     ]
     client = FakeForge({"/repos/acme/web/issues": Listing(issues, complete=True)})
-    result = await find_github_tickets(client, "acme/web", trigger_labels=["embry0"], tracked=_untracked)
+    result = await find_github_tickets(client, "acme/web", trigger_labels=["embry0"], tracked=_untracked, min_score=40)
     assert [lead.data["key"] for lead in result.leads] == ["1"] and result.complete
     partial = FakeForge({"/repos/acme/web/issues": Listing(issues, complete=False)})
-    assert not (await find_github_tickets(partial, "acme/web", trigger_labels=[], tracked=_untracked)).complete
+    assert not (
+        await find_github_tickets(partial, "acme/web", trigger_labels=[], tracked=_untracked, min_score=40)
+    ).complete

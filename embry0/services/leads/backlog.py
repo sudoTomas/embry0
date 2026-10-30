@@ -11,8 +11,9 @@ What it offers is judged first by a cheap reading of the ticket
 (:func:`readiness`): a description with something to act on (file paths,
 error text, what done looks like) and a label that says chore or bug reads
 as ready; an epic, a question or a one-line title does not. Only tickets at
-or above the minimum score become leads. A second, model-based reading is
-not part of this version.
+or above the minimum score (``leads.offer_min`` in the settings document,
+read by the loop for each repository's organization) become leads. A second,
+model-based reading is not part of this version.
 """
 
 from __future__ import annotations
@@ -25,8 +26,6 @@ from embry0.services.leads import FinderResult, Lead
 from embry0.services.trigger_labels import normalize_labels
 
 KIND = "ticket"
-#: The default lowest readiness a ticket must score to be offered.
-DEFAULT_MIN_SCORE = 40
 #: Pages of 100 GitHub issues read per repository per pass, newest-updated first.
 GITHUB_ISSUE_PAGES = 3
 
@@ -164,7 +163,7 @@ def ticket_lead(
     labels: Sequence[str],
     priority: int = 0,
     estimate: float | None = None,
-    min_score: int = DEFAULT_MIN_SCORE,
+    min_score: int,
 ) -> Lead | None:
     """The lead for one ticket, or None when it does not read as ready."""
     score, why = readiness(title, body, labels, estimate)
@@ -206,7 +205,7 @@ async def linear_leads(
     *,
     trigger_labels: Iterable[str],
     tracked: Tracked,
-    min_score: int = DEFAULT_MIN_SCORE,
+    min_score: int,
 ) -> list[Lead]:
     """The leads among Linear backlog tickets (``LinearSyncService.list_backlog_tickets``) for ``repo``."""
     triggers = normalize_labels(trigger_labels)
@@ -240,7 +239,7 @@ async def find_github_tickets(
     *,
     trigger_labels: Iterable[str],
     tracked: Tracked,
-    min_score: int = DEFAULT_MIN_SCORE,
+    min_score: int,
 ) -> FinderResult:
     """The repository's open GitHub issues nobody holds, not labelled for embry0 and not yet tracked, that read as ready."""
     listing = await client.paginate_listing(

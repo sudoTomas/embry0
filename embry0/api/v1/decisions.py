@@ -23,6 +23,8 @@ from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import refusal_detail
 from embry0.api.v1.ui import ui_settings
 from embry0.services.decisions import Decision, done, offered, ordered
+from embry0.settings.layers import PerRepository
+from embry0.settings.sections.leads import LeadsSettings
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -45,8 +47,13 @@ def _json(value: Any) -> Any:
     return value
 
 
+def _offered(p: dict[str, Any], leads: PerRepository[LeadsSettings]) -> Decision:
+    """A proposal as its decision card, its readiness read against its repository's ``leads.ask_min``."""
+    return offered(p, ask_min=leads.repo(str(p.get("repo") or "") or None).ask_min)
+
+
 async def _offers(request: Request, *, owner: str | None, repo: str | None) -> list[Decision]:
-    from embry0.api.v1.proposals import _shown, feed
+    from embry0.api.v1.proposals import _shown, feed, leads_policy
     from embry0.services.proposals import for_owner
 
     try:
@@ -55,7 +62,8 @@ async def _offers(request: Request, *, owner: str | None, repo: str | None) -> l
         return []
     if repo:
         proposals = [p for p in proposals if p.repo.lower() == repo.lower()]
-    return [offered(p) for p in await _shown(request, proposals)]
+    leads = await leads_policy(request)
+    return [_offered(p, leads) for p in await _shown(request, proposals, leads)]
 
 
 def _allowed(request: Request, repo: str | None) -> bool:
@@ -232,9 +240,10 @@ async def get_decision(decision_id: str, request: Request) -> dict[str, Any]:
     """One decision by its id: ``offer:<proposal id>`` or ``done:<job id>``."""
     stage, _, ref = decision_id.partition(":")
     if stage == "offer" and ref:
-        from embry0.api.v1.proposals import _open, _shown
+        from embry0.api.v1.proposals import _open, _shown, leads_policy
 
-        found = offered((await _shown(request, [await _open(request, ref)]))[0]).to_dict()
+        leads = await leads_policy(request)
+        found = _offered((await _shown(request, [await _open(request, ref)], leads))[0], leads).to_dict()
         return (await with_assignees(request, [found]))[0]
     if stage == "done" and ref:
         from embry0.api.v1.world import _quest_or_404

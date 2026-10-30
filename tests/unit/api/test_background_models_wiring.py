@@ -21,13 +21,15 @@ import embry0.api.app as app_module
 
 #: Each loop, the keyword it takes its model by, and the reader production must pass.
 READERS = {
-    "ProposalBriefWriter": ("models", "background_model(app.state.settings, 'proposal_brief')"),
     "JobBriefWriter": ("models", "background_model(app.state.settings, 'job_brief')"),
     "SlopMeterLoop": ("models", "background_model(app.state.settings, 'slop_judge')"),
 }
 #: The scout reads its model with its own section, from one snapshot a tick: ``tick_settings`` reads
 #: ``background_models.scout`` (``tests/unit/api/test_scout_per_organization.py`` runs it).
 SCOUT_READER = ("settings", "tick_settings(app.state.settings)")
+#: The proposal briefs read their model with the ``leads`` section, from one snapshot a tick: ``brief_settings``
+#: reads ``background_models.proposal_brief`` (``tests/unit/api/test_leads_settings.py`` counts the snapshots).
+BRIEF_READER = ("settings", "brief_settings(app.state.settings)")
 #: The variables and the provider setting the features read before #164; app.py reads none of them now.
 RETIRED = ("proposal_brief_model", "job_brief_model", "scout_model", "context_audit_local_model", "watcher_local_model")
 
@@ -63,6 +65,15 @@ def test_the_scout_reads_its_model_and_its_section_from_one_snapshot() -> None:
     assert passed.get(keyword) == reader and "models" not in passed, (
         "the scout reads background_models.scout and its scout section from one snapshot a tick, through one "
         f"reader, so a write during a tick cannot mix two versions; got {passed}"
+    )
+
+
+def test_the_proposal_briefs_read_their_model_and_the_leads_section_from_one_snapshot() -> None:
+    keyword, reader = BRIEF_READER
+    passed = _keywords(_construction("ProposalBriefWriter"))
+    assert passed.get(keyword) == reader and not {"models", "leads"} & set(passed), (
+        "the proposal briefs read background_models.proposal_brief and the leads section from one snapshot a "
+        f"tick, through one reader, so a write during a tick cannot mix two versions; got {passed}"
     )
 
 

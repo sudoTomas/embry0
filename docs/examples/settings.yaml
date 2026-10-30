@@ -176,6 +176,55 @@ done_when:
   # ticket_sections:
   # - Acceptance criteria
 
+# Whether the finders run, which ones and how often, and which backlog tickets
+# are offered and asked.
+leads:
+  # Run the finders on their schedule, on the repositories someone answers for
+  # (owners set, or a watched stack), and offer what they find as owner
+  # proposals. While false the loop does nothing; POST /leads/run still runs a
+  # pass by hand, and the leads already stored stay until answered.
+  # enabled: false
+
+  # The finders that run, each named once: ticket (backlog tickets nobody
+  # labelled for embry0), ci (checks failing on the default branch), alert
+  # (dependency and code-scanning alerts), flaky (a check that failed and then
+  # passed on one commit), review (review threads nobody answered). An empty
+  # list runs none.
+  # finders:
+  # - ticket
+  # - ci
+  # - alert
+  # - flaky
+  # - review
+
+  # Hours between passes of the finders; the backlog intake keeps its own
+  # interval.
+  # interval_hours: 6.0
+
+  # Hours between backlog intakes (ticket), which read Linear once for every
+  # repository.
+  # backlog_interval_hours: 24.0
+
+  # Most new leads each finder adds per repository in a day, the most severe
+  # first; a lead already stored is always kept up to date. 0 adds none.
+  # max_new_per_repo_per_day: 5
+
+  # Days a review thread waits for an answer before it is a lead.
+  # review_stale_days: 3
+
+  # Newest commits of the default branch the flaky-check finder reads.
+  # flaky_commits: 10
+
+  # The lowest readiness (0 to 100) a backlog ticket must score to be stored
+  # as a lead at all; one below it is never offered.
+  # offer_min: 40
+
+  # The lowest readiness (0 to 100) at which an offered backlog ticket is
+  # asked in chat. One below it is held: left out of the chat feed and never
+  # sent as an ask, shown on the page only, folded, its brief written after
+  # the others, and its readiness marked on its decision card.
+  # ask_min: 60
+
 # The subject of the commit that keeps the work of a coding run that stopped
 # before it committed.
 salvage:

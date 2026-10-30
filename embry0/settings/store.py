@@ -42,6 +42,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Final, cast
 
 import asyncpg
@@ -522,13 +523,22 @@ class SettingsStore:
     """Every settings document of the deployment, for every reader and writer in this process."""
 
     def __init__(
-        self, db: DatabasePool, catalog: Catalog | None = None, *, write_context: WriteContext | None = None
+        self,
+        db: DatabasePool,
+        catalog: Catalog | None = None,
+        *,
+        write_context: WriteContext | None = None,
+        started: datetime | None = None,
     ) -> None:
         if catalog is None:
             from embry0.settings.sections import CATALOG
 
             catalog = CATALOG
         self._catalog = catalog
+        #: When this process began, by the database's clock (the lifespan reads it before the migrations):
+        #: what every environment import in this process, at the start or retried, counts a deployment's past
+        #: against when it records a ``ReliedOn`` key as first asked (``embry0.settings.bootstrap``).
+        self.started = started
         #: Built for each write: what the deployment offers now (the model catalogue moves while it runs).
         self._write_context: WriteContext = write_context if write_context is not None else deployment_context
         self._documents = SettingsDocumentsRepository(db)

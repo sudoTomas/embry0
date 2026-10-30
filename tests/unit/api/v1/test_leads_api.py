@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from embry0.api.v1 import leads as leads_api
 from embry0.api.v1 import proposals as proposals_api
 from embry0.services.proposals import Decision
+from tests.fixtures.leads import MemorySettings
 
 T0 = datetime(2026, 10, 25, 12, tzinfo=UTC)
 HEADERS = {"X-Requested-With": "XMLHttpRequest"}
@@ -98,6 +99,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     st.proposals_repo = FakeProposals()
     st.config = SimpleNamespace(audit_log_path=None)
     st.db = None
+    st.settings = MemorySettings()
     st.issues_repo = MagicMock()
     st.issues_repo.create = AsyncMock(return_value="iss-new")
     st.issues_repo.update = AsyncMock()

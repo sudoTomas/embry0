@@ -22,6 +22,7 @@ from embry0.services.job_briefs import JobBriefWriter
 from embry0.services.proposal_briefs import ProposalBriefWriter
 from embry0.services.scout import ScoutLoop
 from embry0.services.slop_meter.loop import SlopMeterLoop
+from tests.fixtures.leads import brief_reader
 
 BRIEF = {
     "title": "Stop retrying a saved email",
@@ -54,8 +55,8 @@ class Reader:
         return lambda repo: model
 
 
-def _takes_a_reader(loop: type) -> None:
-    assert "models" in inspect.signature(loop).parameters, (
+def _takes_a_reader(loop: type, parameter: str = "models") -> None:
+    assert parameter in inspect.signature(loop).parameters, (
         f"{loop.__name__} takes a reader of the settings document's background_models section (#164)"
     )
 
@@ -92,7 +93,8 @@ def custom_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_the_proposal_briefs_read_their_model_at_every_tick() -> None:
-    _takes_a_reader(ProposalBriefWriter)
+    # Its reader gives the model and the leads section from one snapshot (brief_settings).
+    _takes_a_reader(ProposalBriefWriter, "settings")
     from datetime import UTC, datetime
 
     from embry0.services.proposals import Proposal
@@ -130,10 +132,9 @@ async def test_the_proposal_briefs_read_their_model_at_every_tick() -> None:
     reader = Reader("custom/first")
     writer = ProposalBriefWriter(
         proposals=feed,
-        models=reader,
+        settings=brief_reader(reader),
         briefs=Briefs(),
         calls=_calls(),
-        min_readiness=60,
         per_tick=1,
         client=_client(sent, BRIEF),
     )
