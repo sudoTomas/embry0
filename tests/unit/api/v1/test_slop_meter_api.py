@@ -1,4 +1,4 @@
-"""GET /repos/{repo}/slop-meter (spec 2026-10-26, slop-o-meter): a repository's score, its areas' and a weekly series."""
+"""GET /repos/{repo}/-/slop-meter (spec 2026-10-26, slop-o-meter): a repository's score, its areas' and a weekly series."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ async def _get(app: Any, path: str) -> Any:
 
 
 async def test_the_repository_page_reads_its_score_areas_and_weeks(app: Any) -> None:
-    resp = await _get(app, "/api/v1/repos/acme/web/slop-meter")
+    resp = await _get(app, "/api/v1/repos/acme/web/-/slop-meter")
     assert resp.status_code == 200
     body = resp.json()
     assert body["repo"] == "Acme/Web" and body["area"] is None
@@ -87,8 +87,8 @@ async def test_the_repository_page_reads_its_score_areas_and_weeks(app: Any) -> 
 
 
 async def test_an_area_series_and_the_refusals(app: Any) -> None:
-    ok = await _get(app, "/api/v1/repos/acme/web/slop-meter?area=Billing")
+    ok = await _get(app, "/api/v1/repos/acme/web/-/slop-meter?area=Billing")
     assert ok.status_code == 200 and ok.json()["area"] == "Billing"
     assert app.state.slop_meter_repo.asked[-1] == ("Acme/Web", "Billing")
-    assert (await _get(app, "/api/v1/repos/acme/web/slop-meter?area=Nope")).status_code == 404
-    assert (await _get(app, "/api/v1/repos/acme/gone/slop-meter")).status_code == 404
+    assert (await _get(app, "/api/v1/repos/acme/web/-/slop-meter?area=Nope")).status_code == 404
+    assert (await _get(app, "/api/v1/repos/acme/gone/-/slop-meter")).status_code == 404

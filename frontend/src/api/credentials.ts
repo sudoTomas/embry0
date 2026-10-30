@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { repoPath } from "./repoPath";
 import type {
   Binding,
   BindingInput,
@@ -77,7 +78,7 @@ export async function setScopedBindings(
   bindings: BindingInput[],
 ): Promise<Binding[]> {
   // ScopedBindingsSet puts scope in the body and rejects scope_kind "repo".
-  // Repo bindings go through /repos/{repo}/credentials. The drawer renders a
+  // Repo bindings go through /repos/{repo}/-/credentials. The drawer renders a
   // 422 detail inline, so the global validation toast would duplicate it.
   const { data } = await api.put<{ bindings: Binding[] }>(
     "/credentials/bindings",
@@ -89,7 +90,7 @@ export async function setScopedBindings(
 
 export async function fetchRepoCredentials(fullRepo: string): Promise<RepoCredentials> {
   // Slash stays in the path (`acme/widgets`); the route is `{full_repo:repo}`.
-  const { data } = await api.get<RepoCredentials>(`/repos/${fullRepo}/credentials`);
+  const { data } = await api.get<RepoCredentials>(repoPath(fullRepo, "credentials"));
   return data;
 }
 
@@ -97,7 +98,7 @@ export async function setRepoCredentials(
   fullRepo: string,
   bindings: BindingInput[],
 ): Promise<RepoCredentials> {
-  const { data } = await api.put<RepoCredentials>(`/repos/${fullRepo}/credentials`, { bindings });
+  const { data } = await api.put<RepoCredentials>(repoPath(fullRepo, "credentials"), { bindings });
   return data;
 }
 

@@ -41,7 +41,7 @@ describe("qaConfig api", () => {
     const result = await fetchQaConfig("owner/name");
 
     expect(result).toBe(YAML);
-    expect(captured.config?.url).toBe("/repos/owner/name/qa-config");
+    expect(captured.config?.url).toBe("/repos/owner/name/-/qa-config");
     expect(captured.config?.responseType).toBe("text");
     // The identity transform must be installed or axios JSON-parses the YAML.
     expect(captured.config?.transformResponse).toHaveLength(1);
@@ -68,7 +68,7 @@ describe("qaConfig api", () => {
     const result = await saveQaConfig("owner/name", YAML);
 
     expect(result).toEqual({ repo: "owner/name", updated_at: "2026-08-06T00:00:00Z" });
-    expect(captured.config?.url).toBe("/repos/owner/name/qa-config");
+    expect(captured.config?.url).toBe("/repos/owner/name/-/qa-config");
     expect(captured.config?.method).toBe("put");
     // Raw string body — axios must not JSON.stringify it.
     expect(captured.config?.data).toBe(YAML);
@@ -82,7 +82,7 @@ describe("qaConfig api", () => {
     const { checkQaConfig } = await import("../qaConfig");
 
     await expect(checkQaConfig("acme/group/widgets", YAML)).resolves.toEqual(result);
-    expect(captured.config?.url).toBe("/repos/acme/group/widgets/qa-config/check");
+    expect(captured.config?.url).toBe("/repos/acme/group/widgets/-/qa-config/check");
     expect(captured.config?.method).toBe("post");
     expect(captured.config?.data).toBe(YAML);
     expect(captured.config?.headers["Content-Type"]).toBe("application/yaml");
@@ -95,7 +95,7 @@ describe("qaConfig api", () => {
 
     await deleteQaConfig("owner/name");
 
-    expect(captured.config?.url).toBe("/repos/owner/name/qa-config");
+    expect(captured.config?.url).toBe("/repos/owner/name/-/qa-config");
     expect(captured.config?.method).toBe("delete");
   });
 });

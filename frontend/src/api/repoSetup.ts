@@ -1,8 +1,9 @@
 import { api } from "./client";
+import { repoPath } from "./repoPath";
 import { isNotFound } from "./errorDetail";
 import { type RunWith, runWithBody } from "./runWith";
 
-/** Where a repository stands overall (GET /repos/{repo}/readiness). */
+/** Where a repository stands overall (GET /repos/{repo}/-/readiness). */
 export type ReadinessStatus = "ready" | "steps_left" | "needs_admin" | "setup_to_review";
 
 /** The required steps, in order; `work_trigger` is the one optional row. */
@@ -73,13 +74,13 @@ export interface SkipTestingResult {
 }
 
 export async function fetchReadiness(fullRepo: string): Promise<Readiness> {
-  const { data } = await api.get<Readiness>(`/repos/${fullRepo}/readiness`);
+  const { data } = await api.get<Readiness>(repoPath(fullRepo, "readiness"));
   return data;
 }
 
 /** Store a starter with testing off, so first tasks do not stop at the test step. 409 when a setup exists. */
 export async function skipTesting(fullRepo: string): Promise<SkipTestingResult> {
-  const { data } = await api.post<SkipTestingResult>(`/repos/${fullRepo}/setup/skip-testing`);
+  const { data } = await api.post<SkipTestingResult>(repoPath(fullRepo, "setup/skip-testing"));
   return data;
 }
 
@@ -193,7 +194,7 @@ export interface PendingSetupProposal {
 }
 
 export async function fetchSetupCost(fullRepo: string): Promise<SetupCost> {
-  const { data } = await api.get<SetupCost>(`/repos/${fullRepo}/setup/cost`);
+  const { data } = await api.get<SetupCost>(repoPath(fullRepo, "setup/cost"));
   return data;
 }
 
@@ -203,7 +204,7 @@ export async function fetchSetupCost(fullRepo: string): Promise<SetupCost> {
  */
 export async function startSetup(fullRepo: string, runWith?: RunWith): Promise<StartSetupResult> {
   const { data } = await api.post<StartSetupResult>(
-    `/repos/${fullRepo}/setup/propose`,
+    repoPath(fullRepo, "setup/propose"),
     { confirm_spend: true, ...runWithBody(runWith) },
     { suppressValidationToast: true, suppressErrorToast: true },
   );
@@ -213,7 +214,7 @@ export async function startSetup(fullRepo: string, runWith?: RunWith): Promise<S
 /** The latest proposal for a repository, or null when it has none. */
 export async function fetchProposal(fullRepo: string): Promise<SetupProposal | null> {
   try {
-    const { data } = await api.get<SetupProposal>(`/repos/${fullRepo}/setup/proposal`);
+    const { data } = await api.get<SetupProposal>(repoPath(fullRepo, "setup/proposal"));
     return data;
   } catch (error) {
     if (isNotFound(error)) return null;
@@ -232,7 +233,7 @@ export async function applyProposal(
   acknowledged: QaCheckWarningCode[],
 ): Promise<ApplyProposalResult> {
   const { data } = await api.post<ApplyProposalResult>(
-    `/repos/${fullRepo}/setup/proposal/${proposalId}/apply`,
+    repoPath(fullRepo, `setup/proposal/${proposalId}/apply`),
     { acknowledged },
     { suppressValidationToast: true },
   );
@@ -240,7 +241,7 @@ export async function applyProposal(
 }
 
 export async function rejectProposal(fullRepo: string, proposalId: string): Promise<void> {
-  await api.post(`/repos/${fullRepo}/setup/proposal/${proposalId}/reject`);
+  await api.post(repoPath(fullRepo, `setup/proposal/${proposalId}/reject`));
 }
 
 /** Every repository's test setup waiting for review, for the Overview's Needs-you brief. */

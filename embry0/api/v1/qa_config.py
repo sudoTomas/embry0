@@ -36,7 +36,7 @@ async def _audit(request: Request, action: AuditAction, details: dict[str, Any])
     )
 
 
-@router.get("/repos/{full_repo:repo}/qa-config")
+@router.get("/repos/{full_repo:repo}/-/qa-config")
 async def get_qa_config(full_repo: str, request: Request) -> Response:
     configs_repo = request.app.state.qa_configs_repo
     row = await configs_repo.get(full_repo)
@@ -45,7 +45,7 @@ async def get_qa_config(full_repo: str, request: Request) -> Response:
     return Response(content=row["yaml_text"], media_type="application/yaml")
 
 
-@router.put("/repos/{full_repo:repo}/qa-config")
+@router.put("/repos/{full_repo:repo}/-/qa-config")
 async def put_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
     from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 
@@ -69,7 +69,7 @@ async def put_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
     return {"repo": full_repo, "updated_at": str(row["updated_at"]), "revision_id": revision_id}
 
 
-@router.delete("/repos/{full_repo:repo}/qa-config", status_code=204, response_model=None)
+@router.delete("/repos/{full_repo:repo}/-/qa-config", status_code=204, response_model=None)
 async def delete_qa_config(full_repo: str, request: Request) -> None:
     configs_repo = request.app.state.qa_configs_repo
     revision_id = await configs_repo.delete_recorded(full_repo, actor=request_actor(request))
@@ -77,7 +77,7 @@ async def delete_qa_config(full_repo: str, request: Request) -> None:
         await _audit(request, "repo.qa_config_deleted", {"repo": full_repo, "revision_id": revision_id})
 
 
-@router.post("/repos/{full_repo:repo}/qa-config/check")
+@router.post("/repos/{full_repo:repo}/-/qa-config/check")
 async def check_repo_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
     """Check a test setup the way a run would use it. Stores nothing."""
     text = (await request.body()).decode("utf-8", errors="replace")

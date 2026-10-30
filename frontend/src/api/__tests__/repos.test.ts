@@ -63,7 +63,7 @@ describe("repos api (RAV-1251)", () => {
     const captured = await withCapturingAdapter({ ...ROW, env_var_count: 2, env_secret_count: 1 });
     const { fetchRepoDetail } = await import("../repos");
     const detail = await fetchRepoDetail("acme/widgets");
-    expect(captured.config?.url).toBe("/repos/acme/widgets");
+    expect(captured.config?.url).toBe("/repos/acme/widgets/-/");
     expect(detail.env_secret_count).toBe(1);
   });
 
@@ -72,7 +72,7 @@ describe("repos api (RAV-1251)", () => {
     const { setRepoActive } = await import("../repos");
     const row = await setRepoActive("acme/widgets", false);
     expect(captured.config?.method).toBe("put");
-    expect(captured.config?.url).toBe("/repos/acme/widgets/active");
+    expect(captured.config?.url).toBe("/repos/acme/widgets/-/active");
     expect(JSON.parse(captured.config?.data as string)).toEqual({ active: false });
     expect(row.active).toBe(false);
   });
@@ -81,7 +81,7 @@ describe("repos api (RAV-1251)", () => {
     const { fetchRepoDetail } = await import("../repos");
     await fetchRepoDetail("acme/products/fbr");
     // Three segments — the old fetchRepoDetail(owner, name) could not express this.
-    expect(captured.config?.url).toBe("/repos/acme/products/fbr");
+    expect(captured.config?.url).toBe("/repos/acme/products/fbr/-/");
   });
 
   it("registers a repo on gitlab when asked (#169)", async () => {

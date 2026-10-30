@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { repoPath } from "./repoPath";
 import type { EnvVar, DetectedEnvVar } from "@/lib/types/environment";
 
 export async function fetchGlobalEnv(): Promise<EnvVar[]> {
@@ -12,16 +13,16 @@ export async function setGlobalEnv(variables: EnvVar[]): Promise<void> {
 }
 
 export async function fetchRepoEnv(fullRepo: string): Promise<EnvVar[]> {
-  const { data } = await api.get(`/repos/${fullRepo}/environment`);
+  const { data } = await api.get(repoPath(fullRepo, "environment"));
   return data.variables;
 }
 
 export async function setRepoEnv(fullRepo: string, variables: EnvVar[]): Promise<void> {
-  await api.put(`/repos/${fullRepo}/environment`, { variables }, { suppressValidationToast: true });
+  await api.put(repoPath(fullRepo, "environment"), { variables }, { suppressValidationToast: true });
 }
 
 export async function deleteRepoEnvVar(fullRepo: string, key: string): Promise<void> {
-  await api.delete(`/repos/${fullRepo}/environment/${key}`);
+  await api.delete(repoPath(fullRepo, `environment/${key}`));
 }
 
 export async function revealSecret(
@@ -29,10 +30,13 @@ export async function revealSecret(
   key: string,
   fullRepo?: string,
 ): Promise<string> {
+  if (scope === "repo" && fullRepo === undefined) {
+    throw new Error("revealSecret: a repository's secret is read with its repository");
+  }
   const path =
-    scope === "global"
-      ? `/environment/global/${key}/reveal`
-      : `/repos/${fullRepo}/environment/${key}/reveal`;
+    scope === "repo" && fullRepo !== undefined
+      ? repoPath(fullRepo, `environment/${key}/reveal`)
+      : `/environment/global/${key}/reveal`;
   const { data } = await api.get(path);
   return data.value;
 }
@@ -44,12 +48,12 @@ export interface DetectRepoEnvResponse {
 }
 
 export async function detectRepoEnv(fullRepo: string): Promise<DetectRepoEnvResponse> {
-  const { data } = await api.get(`/repos/${fullRepo}/environment/detect`);
+  const { data } = await api.get(repoPath(fullRepo, "environment/detect"));
   return data;
 }
 
 /** The variables a sandbox for this repository gets: global ones with the repo's written over them, secrets masked. */
 export async function fetchResolvedRepoEnv(fullRepo: string): Promise<EnvVar[]> {
-  const { data } = await api.get(`/repos/${fullRepo}/environment/resolve`);
+  const { data } = await api.get(repoPath(fullRepo, "environment/resolve"));
   return data.variables;
 }

@@ -1,6 +1,6 @@
 """The Slop-O-Meter's readings of a repository (spec 2026-10-26, slop-o-meter).
 
-``GET /repos/{repo}/slop-meter``: the repository's score and level, each area's,
+``GET /repos/{repo}/-/slop-meter``: the repository's score and level, each area's,
 where reading its history stands, and the week-by-week series of attention
 cost, capacity and slop for the repository or one area. After Slop-O-Meter's
 published slop score algorithm (https://github.com/slop-o-meter/slop-o-meter).
@@ -23,7 +23,7 @@ def _iso(value: Any) -> Any:
     return value.isoformat() if isinstance(value, date | datetime) else value
 
 
-@router.get("/repos/{full_repo:repo}/slop-meter")
+@router.get("/repos/{full_repo:repo}/-/slop-meter")
 async def read_slop_meter(full_repo: str, request: Request, area: str = Query(default="")) -> dict[str, Any]:
     """The repository's Slop-O-Meter: its score, its areas', and the weekly series of ``area`` ('' the repository)."""
     registry = getattr(request.app.state, "repos_repo", None)

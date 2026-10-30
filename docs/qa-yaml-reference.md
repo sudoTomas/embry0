@@ -14,12 +14,12 @@ retired `apps/<name>/.embry0/app.yaml` tree files).
   `tests/fixtures/toy-monorepo/.embry0/qa.yaml`.
 
 > **Storing the document.** Four write surfaces, all schema-validated:
-> `PUT /api/v1/repos/{owner}/{repo}/qa-config` (raw yaml body), the dashboard
+> `PUT /api/v1/repos/{owner}/{repo}/-/qa-config` (raw yaml body), the dashboard
 > config editor (`/qa/repos/<repo>/config`), the `qa_config_set` MCP tool,
 > and onboarding/bootstrap (below). A repo with no stored config fails QA
 > runs with a clear "no QA config stored in embry0" error.
 >
-> **Checking it first.** `POST /api/v1/repos/{owner}/{repo}/qa-config/check`
+> **Checking it first.** `POST /api/v1/repos/{owner}/{repo}/-/qa-config/check`
 > takes the same raw body and stores nothing. Beyond the schema, it reports
 > what every run would stop on: a `sandbox_profile` that does not exist or
 > has no browser, a `workspace_provider.type` that is not installed, and an
@@ -150,7 +150,7 @@ files and Dockerfiles all run with that reach.
 Nothing in this document grants it. A sandbox profile with `dind_enabled`
 (the builtin `qa-jvm`, or your own) only asks for the daemon; the sandbox gets
 it when an admin has also granted the repo Docker access — on the repo page in
-the dashboard, or `PUT /api/v1/repos/{repo}/docker-access {"enabled": true}`
+the dashboard, or `PUT /api/v1/repos/{repo}/-/docker-access {"enabled": true}`
 (admin tier, audited). Without the grant, a sandbox on such a profile is
 refused before it starts, and the app reports an infra failure that names the
 endpoint. Grant it only to repos whose code you trust as much as the host.

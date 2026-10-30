@@ -1,8 +1,8 @@
 """A repository's areas (spec 2026-10-25): what its ``.embry0/areas.yml`` names, and mapping them with an agent.
 
-``GET /repos/{repo}/areas`` reads the file from the default branch with the
+``GET /repos/{repo}/-/areas`` reads the file from the default branch with the
 organization's credential and says what the newest map-areas job did.
-``POST /repos/{repo}/areas/map`` starts that job, with the model and key a
+``POST /repos/{repo}/-/areas/map`` starts that job, with the model and key a
 person chose (run with); it opens a pull request adding or updating the file.
 """
 
@@ -60,7 +60,7 @@ async def _newest_job(request: Request, repo: str) -> dict[str, Any] | None:
     return {k: newest.get(k) for k in ("job_id", "status", "created_at", "finished_at", "pr_url", "live")}
 
 
-@router.get("/repos/{full_repo:repo}/areas")
+@router.get("/repos/{full_repo:repo}/-/areas")
 async def get_areas(full_repo: str, request: Request, fresh: bool = Query(default=False)) -> dict[str, Any]:
     """The areas the file names (read again with ``fresh``), and the newest map-areas job."""
     repo = await _registered(request, full_repo)
@@ -81,7 +81,7 @@ async def get_areas(full_repo: str, request: Request, fresh: bool = Query(defaul
     }
 
 
-@router.post("/repos/{full_repo:repo}/areas/map", status_code=202)
+@router.post("/repos/{full_repo:repo}/-/areas/map", status_code=202)
 async def map_areas(full_repo: str, request: Request, body: MapBody | None = None) -> dict[str, Any]:
     """Start an agent job that writes the file and opens its pull request.
 

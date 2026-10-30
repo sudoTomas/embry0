@@ -53,8 +53,8 @@ async def test_a_repository_s_areas_and_its_newest_map(app: Any) -> None:
         }
     )
     async with await _client(app) as client:
-        body = (await client.get("/api/v1/repos/acme/web/areas")).json()
-        missing = await client.get("/api/v1/repos/acme/nope/areas")
+        body = (await client.get("/api/v1/repos/acme/web/-/areas")).json()
+        missing = await client.get("/api/v1/repos/acme/nope/-/areas")
     assert body["path"] == ".embry0/areas.yml"
     assert body["areas"] == [
         {"name": "Billing", "slug": "billing", "paths": ["services/billing/**"], "logs": [], "owners": ["octo"]}
@@ -66,7 +66,7 @@ async def test_a_repository_s_areas_and_its_newest_map(app: Any) -> None:
 async def test_mapping_starts_the_agent_with_what_the_repository_already_says(app: Any) -> None:
     async with await _client(app) as client:
         response = await client.post(
-            "/api/v1/repos/acme/web/areas/map", json={"run_with": {"model": "claude-sonnet-5"}}, headers=HEADERS
+            "/api/v1/repos/acme/web/-/areas/map", json={"run_with": {"model": "claude-sonnet-5"}}, headers=HEADERS
         )
     assert response.status_code == 202, response.text
     assert response.json() == {"job_id": "job-map", "repo": "acme/web"}
@@ -85,8 +85,8 @@ async def test_mapping_starts_the_agent_with_what_the_repository_already_says(ap
 async def test_one_map_at_a_time_and_only_on_a_registered_repository(app: Any) -> None:
     app.state.jobs_repo.newest_per_repo = AsyncMock(return_value={"acme/web": {"job_id": "job-1", "live": True}})
     async with await _client(app) as client:
-        busy = await client.post("/api/v1/repos/acme/web/areas/map", json={}, headers=HEADERS)
-        missing = await client.post("/api/v1/repos/acme/nope/areas/map", json={}, headers=HEADERS)
+        busy = await client.post("/api/v1/repos/acme/web/-/areas/map", json={}, headers=HEADERS)
+        missing = await client.post("/api/v1/repos/acme/nope/-/areas/map", json={}, headers=HEADERS)
     assert busy.status_code == 409 and "job-1" in busy.text
     assert missing.status_code == 404
     app.state.jobs_repo.create.assert_not_called()

@@ -1,5 +1,6 @@
 import { isAxiosError } from "axios";
 import { api } from "./client";
+import { repoPath } from "./repoPath";
 
 export interface QaConfigSaveResult {
   repo: string;
@@ -7,7 +8,7 @@ export interface QaConfigSaveResult {
 }
 
 /**
- * The free check of a test setup (`POST /repos/{repo}/qa-config/check`): no
+ * The free check of a test setup (`POST /repos/{repo}/-/qa-config/check`): no
  * model, no forge call, no sandbox, and nothing is written. `ok` is false
  * when every test run would stop on the setup (`problems`); `warnings` are
  * worth knowing but do not stop a run. `summary` is null when the text could
@@ -53,7 +54,7 @@ export interface QaCheckResult {
  */
 export async function fetchQaConfig(fullRepo: string): Promise<string | null> {
   try {
-    const { data } = await api.get<string>(`/repos/${fullRepo}/qa-config`, {
+    const { data } = await api.get<string>(repoPath(fullRepo, "qa-config"), {
       responseType: "text",
       // Identity transform — without it axios tries JSON.parse on the YAML.
       transformResponse: [(d: string) => d],
@@ -76,7 +77,7 @@ export async function saveQaConfig(
   yamlText: string,
 ): Promise<QaConfigSaveResult> {
   const { data } = await api.put<QaConfigSaveResult>(
-    `/repos/${fullRepo}/qa-config`,
+    repoPath(fullRepo, "qa-config"),
     yamlText,
     {
       headers: { "Content-Type": "application/yaml" },
@@ -93,7 +94,7 @@ export async function saveQaConfig(
  */
 export async function checkQaConfig(fullRepo: string, yamlText: string): Promise<QaCheckResult> {
   const { data } = await api.post<QaCheckResult>(
-    `/repos/${fullRepo}/qa-config/check`,
+    repoPath(fullRepo, "qa-config/check"),
     yamlText,
     {
       headers: { "Content-Type": "application/yaml" },
@@ -105,5 +106,5 @@ export async function checkQaConfig(fullRepo: string, yamlText: string): Promise
 
 /** Remove the stored qa.yaml (idempotent 204). QA then treats the repo as unconfigured. */
 export async function deleteQaConfig(fullRepo: string): Promise<void> {
-  await api.delete(`/repos/${fullRepo}/qa-config`);
+  await api.delete(repoPath(fullRepo, "qa-config"));
 }

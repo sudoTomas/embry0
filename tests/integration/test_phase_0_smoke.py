@@ -59,13 +59,13 @@ async def test_phase_0_smoke_round_trip(app, builtin_profile_seeded, database_ur
         ]
     }
     r = await app.put(
-        "/api/v1/repos/owner/proj/environment",
+        "/api/v1/repos/owner/proj/-/environment",
         json=repo_payload,
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
     assert r.status_code == 200, f"PUT failed: {r.status_code} {r.text}"
 
-    r = await app.get("/api/v1/repos/owner/proj/environment")
+    r = await app.get("/api/v1/repos/owner/proj/-/environment")
     assert r.status_code == 200
     by_key = {v["key"]: v for v in r.json()["variables"]}
     assert by_key["DB_URL"]["scope"] == "app"
@@ -73,14 +73,14 @@ async def test_phase_0_smoke_round_trip(app, builtin_profile_seeded, database_ur
 
     # 5. Reserved infrastructure keys are rejected at the API
     r = await app.put(
-        "/api/v1/repos/owner/proj/environment",
+        "/api/v1/repos/owner/proj/-/environment",
         json={"variables": [{"key": "QA_JOB_ID", "value": "x", "scope": "qa"}]},
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
     assert r.status_code == 422, f"Expected 422 for QA_JOB_ID, got {r.status_code}"
 
     r = await app.put(
-        "/api/v1/repos/owner/proj/environment",
+        "/api/v1/repos/owner/proj/-/environment",
         json={"variables": [{"key": "DOCKER_HOST", "value": "tcp://evil:2376", "scope": "app"}]},
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
@@ -88,7 +88,7 @@ async def test_phase_0_smoke_round_trip(app, builtin_profile_seeded, database_ur
 
     # Reserved prefix
     r = await app.put(
-        "/api/v1/repos/owner/proj/environment",
+        "/api/v1/repos/owner/proj/-/environment",
         json={"variables": [{"key": "DOCKER_BUILDKIT", "value": "1", "scope": "app"}]},
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
@@ -96,7 +96,7 @@ async def test_phase_0_smoke_round_trip(app, builtin_profile_seeded, database_ur
 
     # 6. QA scope key without QA_ prefix is rejected
     r = await app.put(
-        "/api/v1/repos/owner/proj/environment",
+        "/api/v1/repos/owner/proj/-/environment",
         json={"variables": [{"key": "DB_URL", "value": "x", "scope": "qa"}]},
         headers={"X-Requested-With": "XMLHttpRequest"},
     )

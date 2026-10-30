@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { repoPath } from "./repoPath";
 
 /** Which setting a change touched. */
 export type HistorySurface = "qa_config" | "preferences";
@@ -32,7 +33,7 @@ export interface UndoResult {
 
 /** Every recorded change to a repo's test setup and preferences, newest first. */
 export async function fetchHistory(fullRepo: string, limit = 50): Promise<RepoHistory> {
-  const { data } = await api.get<RepoHistory>(`/repos/${fullRepo}/history`, { params: { limit } });
+  const { data } = await api.get<RepoHistory>(repoPath(fullRepo, "history"), { params: { limit } });
   return data;
 }
 
@@ -43,7 +44,7 @@ export async function fetchHistory(fullRepo: string, limit = 50): Promise<RepoHi
  * the global validation toast is suppressed.
  */
 export async function undoChange(fullRepo: string, revisionId: number): Promise<UndoResult> {
-  const { data } = await api.post<UndoResult>(`/repos/${fullRepo}/history/${revisionId}/undo`, undefined, {
+  const { data } = await api.post<UndoResult>(repoPath(fullRepo, `history/${revisionId}/undo`), undefined, {
     suppressValidationToast: true,
   });
   return data;

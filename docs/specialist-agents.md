@@ -135,7 +135,7 @@ model or a job's `agent_models` outranks the one above.
 - **context-auditor**: the files or directories to audit, or nothing for every
   instruction file in the repository.
 - **area-mapper**: started from the repository page's Areas section (or
-  `POST /repos/{repo}/areas/map`), whose task carries the file already on the
+  `POST /repos/{repo}/-/areas/map`), whose task carries the file already on the
   default branch and the LogQL the watcher reads the repository's logs with.
 
 ## Running one

@@ -77,12 +77,12 @@ async def _audit(request: Request, action: AuditAction, details: dict[str, Any])
     )
 
 
-@router.get("/repos/{full_repo:repo}/setup/cost")
+@router.get("/repos/{full_repo:repo}/-/setup/cost")
 async def get_setup_cost(full_repo: str, request: Request) -> dict[str, Any]:
     return await cost_facts(request.app.state, full_repo)
 
 
-@router.post("/repos/{full_repo:repo}/setup/propose")
+@router.post("/repos/{full_repo:repo}/-/setup/propose")
 async def propose_setup(full_repo: str, request: Request, req: ProposeRequest | None = None) -> dict[str, str]:
     if req is None or not req.confirm_spend:
         raise HTTPException(status_code=422, detail="Confirm the cost first: send confirm_spend true.")
@@ -122,7 +122,7 @@ async def propose_setup(full_repo: str, request: Request, req: ProposeRequest | 
     return {"proposal_id": proposal_id, "job_id": job_id}
 
 
-@router.get("/repos/{full_repo:repo}/setup/proposal")
+@router.get("/repos/{full_repo:repo}/-/setup/proposal")
 async def get_setup_proposal(full_repo: str, request: Request) -> dict[str, Any]:
     view = await proposal_view(request.app.state, full_repo)
     if view is None:
@@ -130,7 +130,7 @@ async def get_setup_proposal(full_repo: str, request: Request) -> dict[str, Any]
     return with_actors(view, await actor_shown(request), "created_by", "decided_by")
 
 
-@router.post("/repos/{full_repo:repo}/setup/proposal/{proposal_id}/apply")
+@router.post("/repos/{full_repo:repo}/-/setup/proposal/{proposal_id}/apply")
 async def apply_setup_proposal(
     full_repo: str, proposal_id: str, request: Request, req: ApplyRequest | None = None
 ) -> dict[str, int | None]:
@@ -151,7 +151,7 @@ async def apply_setup_proposal(
     return {"revision_id": revision_id}
 
 
-@router.post("/repos/{full_repo:repo}/setup/proposal/{proposal_id}/reject")
+@router.post("/repos/{full_repo:repo}/-/setup/proposal/{proposal_id}/reject")
 async def reject_setup_proposal(full_repo: str, proposal_id: str, request: Request) -> dict[str, str]:
     await enforce_repo_allowlist(request, full_repo, action="turn down a setup proposal")
     try:
@@ -162,7 +162,7 @@ async def reject_setup_proposal(full_repo: str, proposal_id: str, request: Reque
     return {"proposal_id": proposal_id, "status": "rejected"}
 
 
-@router.post("/repos/{full_repo:repo}/setup/skip-testing")
+@router.post("/repos/{full_repo:repo}/-/setup/skip-testing")
 async def skip_setup_testing(full_repo: str, request: Request) -> dict[str, int | None]:
     await enforce_repo_allowlist(request, full_repo, action="skip testing")
     try:
@@ -172,7 +172,7 @@ async def skip_setup_testing(full_repo: str, request: Request) -> dict[str, int 
     return {"revision_id": revision_id}
 
 
-@router.get("/repos/{full_repo:repo}/readiness")
+@router.get("/repos/{full_repo:repo}/-/readiness")
 async def get_readiness(full_repo: str, request: Request) -> dict[str, Any]:
     """The checklist the repo page opens on (``build_readiness``). It reads
     stored facts only: no model call and no forge call."""

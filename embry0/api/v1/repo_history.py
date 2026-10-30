@@ -111,7 +111,7 @@ async def _current(request: Request, repo: str, surface: RevisionSurface) -> dic
     return None if prefs is None else preferences_snapshot(prefs)
 
 
-@router.get("/repos/{full_repo:repo}/history")
+@router.get("/repos/{full_repo:repo}/-/history")
 async def get_history(full_repo: str, request: Request, limit: int = Query(50, ge=1, le=200)) -> dict[str, Any]:
     revisions = request.app.state.repo_config_revisions_repo
     rows = await revisions.list_for_repo(full_repo, limit=limit)
@@ -147,7 +147,7 @@ def _no_longer_valid(exc: Exception) -> HTTPException:
     return HTTPException(status_code=422, detail=f"That earlier version is no longer valid: {exc}")
 
 
-@router.post("/repos/{full_repo:repo}/history/{revision_id}/undo")
+@router.post("/repos/{full_repo:repo}/-/history/{revision_id}/undo")
 async def undo_change(full_repo: str, revision_id: int, request: Request) -> dict[str, int | None]:
     from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 

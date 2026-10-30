@@ -96,8 +96,9 @@ def _slash_redirect_patterns(app: FastAPI) -> list[str]:
     path, ID included, so every ID would mint its own ``handler`` series. Each
     pattern is a route's own regex with the slash appended, so it matches the
     paths Starlette redirects to that route and nothing else: never a template
-    (no route path ends in ``/``, a test pins that), and never an unmatched
-    path, which still counts as ``none``. Static routes are left out: their
+    (a test pins that none matches), and never an unmatched path, which still
+    counts as ``none``. A route whose path ends in ``/`` also serves its path
+    without the slash, so nothing redirects the other way (a test pins that too). Static routes are left out: their
     slash path is one fixed value, the same label 7.x gave it.
 
     Reads the routes registered so far, so it must run after them. Walks the

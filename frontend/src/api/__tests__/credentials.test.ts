@@ -70,7 +70,7 @@ describe("credentials api", () => {
     const captured = await capture({ repo: "acme/widgets", bindings: [], effective: {} });
     const { setRepoCredentials } = await import("../credentials");
     await setRepoCredentials("acme/widgets", [{ credential_id: "cred-000000000001", role: "forge" }]);
-    expect(captured.config?.url).toBe("/repos/acme/widgets/credentials");
+    expect(captured.config?.url).toBe("/repos/acme/widgets/-/credentials");
     expect(JSON.parse(captured.config?.data as string)).toEqual({ bindings: [{ credential_id: "cred-000000000001", role: "forge" }] });
   });
 });

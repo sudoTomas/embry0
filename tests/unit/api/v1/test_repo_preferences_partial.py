@@ -1,10 +1,10 @@
-"""PUT /repos/{owner}/{repo}/preferences is a partial update (#350), end to end on a real database."""
+"""PUT /repos/{owner}/{repo}/-/preferences is a partial update (#350), end to end on a real database."""
 
 import pytest
 
 pytestmark = pytest.mark.asyncio
 
-URL = "/api/v1/repos/acme/partial-prefs/preferences"
+URL = "/api/v1/repos/acme/partial-prefs/-/preferences"
 
 FULL = {
     "language_hint": "python",

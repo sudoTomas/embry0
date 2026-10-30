@@ -275,7 +275,7 @@ async def test_repo_environment_lists_partial_previews():
     app, _env_repo, _provider = _env_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/repos/o/r/environment")
+        resp = await client.get("/api/v1/repos/o/r/-/environment")
     assert resp.status_code == 200
     by_key = {v["key"]: v for v in resp.json()["variables"]}
     secret = by_key["AZURE_KEY"]
@@ -342,7 +342,7 @@ async def test_put_repo_environment_keeps_a_secret_when_the_client_sends_the_mas
     async with AsyncClient(
         transport=transport, base_url="http://test", headers={"X-Requested-With": "XMLHttpRequest"}
     ) as client:
-        resp = await client.put("/api/v1/repos/o/r/environment", json=_secret_roundtrip_payload())
+        resp = await client.put("/api/v1/repos/o/r/-/environment", json=_secret_roundtrip_payload())
     assert resp.status_code == 200
     saved = {row["key"]: row for row in env_repo.set_repo.await_args.args[1]}
     assert saved["AZURE_KEY"]["value"] == "ciphertext-1", "PUT stored the mask over the existing secret"
@@ -390,7 +390,7 @@ async def test_put_rejects_a_new_secret_whose_value_is_the_mask():
     async with AsyncClient(
         transport=transport, base_url="http://test", headers={"X-Requested-With": "XMLHttpRequest"}
     ) as client:
-        resp = await client.put("/api/v1/repos/o/r/environment", json=payload)
+        resp = await client.put("/api/v1/repos/o/r/-/environment", json=payload)
     assert resp.status_code == 400, "a mask with no stored secret was accepted"
     env_repo.set_repo.assert_not_awaited()
 
@@ -416,7 +416,7 @@ async def test_put_encrypts_a_secret_when_the_client_sends_a_new_value():
     async with AsyncClient(
         transport=transport, base_url="http://test", headers={"X-Requested-With": "XMLHttpRequest"}
     ) as client:
-        resp = await client.put("/api/v1/repos/o/r/environment", json=payload)
+        resp = await client.put("/api/v1/repos/o/r/-/environment", json=payload)
     assert resp.status_code == 200
     saved = {row["key"]: row for row in env_repo.set_repo.await_args.args[1]}
     assert saved["AZURE_KEY"]["value"] == "enc:rotated-value"
@@ -432,7 +432,7 @@ async def test_repo_environment_preview_fails_open_on_decrypt_error():
     provider.decrypt = AsyncMock(side_effect=RuntimeError("bad key"))
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/repos/o/r/environment")
+        resp = await client.get("/api/v1/repos/o/r/-/environment")
     assert resp.status_code == 200
     secret = next(v for v in resp.json()["variables"] if v["key"] == "AZURE_KEY")
     assert secret["value"] == "****"

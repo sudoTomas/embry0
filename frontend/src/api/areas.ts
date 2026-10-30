@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { repoPath } from "./repoPath";
 import { type RunWith, runWithBody } from "./runWith";
 
 /** One part of a monorepo, as its `.embry0/areas.yml` names it (spec 2026-10-25). */
@@ -26,13 +27,13 @@ export interface RepoAreas {
 }
 
 export async function fetchRepoAreas(fullRepo: string, fresh = false): Promise<RepoAreas> {
-  const { data } = await api.get<RepoAreas>(`/repos/${fullRepo}/areas`, { params: fresh ? { fresh: true } : {} });
+  const { data } = await api.get<RepoAreas>(repoPath(fullRepo, "areas"), { params: fresh ? { fresh: true } : {} });
   return data;
 }
 
 /** Start the agent that writes the file and opens its pull request. 409 while a map is running. */
 export async function startMapAreas(fullRepo: string, runWith?: RunWith): Promise<{ job_id: string }> {
-  const { data } = await api.post<{ job_id: string }>(`/repos/${fullRepo}/areas/map`, runWithBody(runWith), {
+  const { data } = await api.post<{ job_id: string }>(repoPath(fullRepo, "areas/map"), runWithBody(runWith), {
     suppressValidationToast: true,
   });
   return data;

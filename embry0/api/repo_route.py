@@ -9,14 +9,24 @@ could not be read: the sub-resource routes are registered before the detail
 route.
 
 ``{full_repo:repo}`` matches two or more segments and nothing shorter, so a
-path of two segments is always a repository's own address. A path of three
-or more is still read by registration order (``acme/widgets/history`` is
-the history of ``acme/widgets``); ``tests/unit/api/test_repos_route_order.py``
-pins that order.
+path of two segments is always a repository's own address.
+
+A repository's sub-resources follow a ``/-/`` separator, as GitLab's do
+(#257): ``/repos/acme/products/qa-config/-/history`` is the history of the
+repository ``acme/products/qa-config``, and a path without ``/-/`` is the
+repository itself, however many segments it has; so is the separator with
+nothing after it (``/repos/acme/products/qa-config/-/``), the address that
+means the repository alone while the old paths last. No segment of a repository
+is ``-`` (a segment starts with a letter, a digit or a dot), so the
+convertor never reads the separator as part of the repository, and no
+registration order decides between a repository and a sub-resource. The old
+paths without the separator answer until they are removed
+(``embry0/api/v1/repo_old_paths.py``); ``tests/unit/api/test_repos_route_order.py``
+pins both.
 
 Each segment follows the one repository rule every request schema checks
-(``SEGMENT`` in ``embry0/api/schemas/repo_path.py``): it starts with a letter
-or digit and holds only letters, digits, ``_``, ``.`` and ``-``. So a path
+(``SEGMENT`` in ``embry0/api/schemas/repo_path.py``): it starts with a letter,
+a digit or a dot and holds only letters, digits, ``_``, ``.`` and ``-``. So a path
 segment carrying a newline, a space or another control character, or a
 ``.`` or ``..`` segment, names no repository and the request matches no
 ``/repos`` route. A route can no longer write a repository that ``POST
@@ -34,8 +44,12 @@ from starlette.convertors import Convertor, register_url_convertor
 
 from embry0.api.schemas.repo_path import SEGMENT
 
-#: The convertor's name in a route path: ``/repos/{full_repo:repo}/history``.
+#: The convertor's name in a route path: ``/repos/{full_repo:repo}/-/history``.
 REPO_CONVERTOR = "repo"
+#: A repository's address in a route path, before the separator: the address of the repository itself.
+REPO_ADDRESS = "/repos/{full_repo:repo}"
+#: What a sub-resource's route path starts with: the repository's address and the separator (#257).
+SUB_RESOURCES = f"{REPO_ADDRESS}/-/"
 
 
 class RepoConvertor(Convertor[str]):

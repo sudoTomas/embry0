@@ -819,7 +819,7 @@ graph TB
 
     subgraph Configuration
         BG["/config/budget · /config/context ·<br/>/config/provider · /config/integrations"]
-        SP["/sandbox-profiles · /pipeline-templates ·<br/>/agents · /repos/{repo}/preferences ·<br/>/environments"]
+        SP["/sandbox-profiles · /pipeline-templates ·<br/>/agents · /repos/{repo}/-/preferences ·<br/>/environments"]
     end
 
     subgraph Ingress["Webhooks & Callbacks (rate-limited per IP, HMAC/secret-verified)"]
@@ -842,7 +842,7 @@ graph TB
 - `POST /api/v1/jobs/{id}/qa/log-stream-token` — mints the short-lived job-scoped token the dashboard's live QA log tail (an EventSource, which cannot send a header) passes as `?token=` to `GET /api/v1/jobs/{id}/artifacts/logs/{service}?follow=true` (#634).
 - `GET /api/v1/jobs/{id}/logs/events` — one page of the persisted pipeline events, oldest first, each with its `event_seq`; `?since_seq=` and `?limit=` (default 500, at most 1000) page it, and the response's `next_since_seq` and `has_more` say where to continue (#203).
 - `GET /api/v1/qa/runs/{job_id}` — a QA run is addressed by the id of the job that ran it (there is no `?job_id=` filter on `/qa/runs`); `GET /api/v1/qa/runs/{job_id}/apps/{app}` returns one app's result, and `GET /api/v1/qa/repos/{owner}/{repo}/runs` lists a repository's runs, newest first.
-- `GET/PUT/DELETE /api/v1/repos/{owner}/{repo}/preferences` (Plan K) — per-repo preferences override triage (see Triage Decision note below).
+- `GET/PUT/DELETE /api/v1/repos/{owner}/{repo}/-/preferences` (Plan K) — per-repo preferences override triage (see Triage Decision note below).
 - `CRUD /api/v1/environments` (Plan J) — global + per-repo environment variables with Fernet-encrypted secrets (see Environment Variable Storage below).
 - Auth model: master `API_KEY` or scoped `emb_` keys (Bearer), Auth0 SSO session cookies on the public origin, per-principal rate limiting; see [sso.md](sso.md) and the audit/API-key routers.
 

@@ -269,7 +269,7 @@ async def _watch(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: 
 
 async def _deactivate(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: bool) -> ActionResult:
     # The answer to a repository that left the listing (ADR 0016). The row
-    # goes inactive through the call PUT /repos/{repo}/active makes: it stays
+    # goes inactive through the call PUT /repos/{repo}/-/active makes: it stays
     # registered and is hidden from listings, never deleted, and the same
     # route turns it back on.
     if ctx.registry is None:

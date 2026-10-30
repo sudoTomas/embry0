@@ -31,7 +31,7 @@ async def _audit(request: Request, action: AuditAction, details: dict[str, Any])
     )
 
 
-@router.get("/repos/{full_repo:repo}/preferences", response_model=RepoPreferencesResponse | None)
+@router.get("/repos/{full_repo:repo}/-/preferences", response_model=RepoPreferencesResponse | None)
 async def get_repo_preferences(full_repo: str, request: Request) -> RepoPreferencesResponse | None:
     prefs_repo = request.app.state.repo_preferences_repo
     row = await prefs_repo.get(full_repo)
@@ -45,7 +45,7 @@ async def get_repo_preferences(full_repo: str, request: Request) -> RepoPreferen
     return RepoPreferencesResponse(**row)
 
 
-@router.put("/repos/{full_repo:repo}/preferences", response_model=RepoPreferencesResponse)
+@router.put("/repos/{full_repo:repo}/-/preferences", response_model=RepoPreferencesResponse)
 async def put_repo_preferences(
     full_repo: str, req: RepoPreferencesUpdateRequest, request: Request
 ) -> RepoPreferencesResponse:
@@ -87,7 +87,7 @@ async def put_repo_preferences(
     return RepoPreferencesResponse(**saved)
 
 
-@router.delete("/repos/{full_repo:repo}/preferences", status_code=204, response_model=None)
+@router.delete("/repos/{full_repo:repo}/-/preferences", status_code=204, response_model=None)
 async def delete_repo_preferences(full_repo: str, request: Request) -> None:
     prefs_repo = request.app.state.repo_preferences_repo
     revision_id = await prefs_repo.delete_recorded(full_repo, actor=request_actor(request))

@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { repoPath } from "./repoPath";
 
 /** One pre-PR self-check (RAV-1254): run `command` when the diff touches any
  * of `paths` (repo-root-relative prefixes; empty = always). */
@@ -61,7 +62,7 @@ export interface RepoPreferencesUpdate {
 export async function fetchRepoPreferences(
   fullRepo: string,
 ): Promise<RepoPreferences | null> {
-  const { data } = await api.get<RepoPreferences | null>(`/repos/${fullRepo}/preferences`);
+  const { data } = await api.get<RepoPreferences | null>(repoPath(fullRepo, "preferences"));
   return data;
 }
 
@@ -69,10 +70,10 @@ export async function setRepoPreferences(
   fullRepo: string,
   update: RepoPreferencesUpdate,
 ): Promise<RepoPreferences> {
-  const { data } = await api.put<RepoPreferences>(`/repos/${fullRepo}/preferences`, update);
+  const { data } = await api.put<RepoPreferences>(repoPath(fullRepo, "preferences"), update);
   return data;
 }
 
 export async function deleteRepoPreferences(fullRepo: string): Promise<void> {
-  await api.delete(`/repos/${fullRepo}/preferences`);
+  await api.delete(repoPath(fullRepo, "preferences"));
 }

@@ -265,7 +265,7 @@ async def _sync_organization_needs(request: Request, owner: str) -> None:
 
 async def _bind_organization_credential(request: Request, repo_name: str, org: Organization) -> None:
     """Bind the organization's credential to a repository the gate just
-    registered, as ``PUT /repos/{repo}/credentials`` would.
+    registered, as ``PUT /repos/{repo}/-/credentials`` would.
 
     A repository that already has a forge binding keeps it: someone chose it.
     Its other bindings are kept as they are.
