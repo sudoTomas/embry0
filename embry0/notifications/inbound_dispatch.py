@@ -55,7 +55,7 @@ async def _resolve(
 ) -> tuple[dict[str, Any] | None, str]:
     """(row, reason). row is None unless the ref names one pending input
     belonging to ``issue_id``."""
-    if _INTEGER_RE.match(ref):
+    if _INTEGER_RE.fullmatch(ref):
         if resolve_sequence is None:
             return None, "no_render_mapping"
         row = await resolve_sequence(int(ref))

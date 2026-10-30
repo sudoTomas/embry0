@@ -135,7 +135,7 @@ def _int(value: Any) -> int | None:
 
 def _sha(value: Any) -> str | None:
     sha = _str(value).strip().lower()
-    return sha if _SHA_RE.match(sha) else None
+    return sha if _SHA_RE.fullmatch(sha) else None
 
 
 def pr_from_github(pr: Mapping[str, Any], *, repo: str) -> PullRequestInfo | None:

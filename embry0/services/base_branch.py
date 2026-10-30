@@ -24,20 +24,20 @@ fetch error names it (Spec 1A §6).
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import structlog
+
+from embry0.git_refs import valid_ref
 
 logger = structlog.get_logger(__name__)
 
 DEFAULT_BASE_BRANCH = "main"
 
-# Same vocabulary as workspace_init/git.py::_REF_RE and
-# execution/workspace_diff.py::_BRANCH_RE. The API validator (schemas/
-# repo_preferences.py) is the boundary, but a row written before that
-# validator existed — or by hand — must not reach a shell line either.
-_BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
+# A stored base branch is checked with embry0.git_refs.valid_ref, the rule the
+# clone and the diff apply. The API validator (schemas/repo_preferences.py) is
+# the boundary, but a row written before that validator existed — or by hand —
+# must not reach a shell line either.
 
 
 def _safe(name: Any) -> str | None:
@@ -45,7 +45,7 @@ def _safe(name: Any) -> str | None:
     if not isinstance(name, str):
         return None
     candidate = name.strip()
-    if candidate and _BRANCH_RE.match(candidate):
+    if valid_ref(candidate):
         return candidate
     return None
 

@@ -14,14 +14,13 @@ from urllib.parse import urlsplit
 
 import structlog
 
+from embry0.git_refs import REF_RULE, valid_ref
 from embry0.storage.database import DatabasePool
 
 logger = structlog.get_logger(__name__)
 
 SOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 INLINE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
-# Same grammar as embry0/workspace_init/git.py: the ref is passed to git on a command line.
-REF_RE = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
 INLINE_BODY_MAX = 64 * 1024
 SOURCE_KINDS = ("git", "path", "inline")
 _UPDATE_FIELDS = {"ref", "enabled", "status", "error", "resolved_sha", "plugin_name", "skills", "synced_at"}
@@ -59,7 +58,7 @@ def validate_source_url(kind: str, url: str) -> str:
 
 
 def _check_id(source_id: str) -> str:
-    if not SOURCE_ID_RE.match(source_id):
+    if not SOURCE_ID_RE.fullmatch(source_id):
         raise SkillSourceRefused("id must match ^[a-z][a-z0-9-]{0,39}$")
     return source_id
 
@@ -69,8 +68,9 @@ def _check_ref(kind: str, ref: str) -> str:
         if ref:
             raise SkillSourceRefused(f"a {kind} source has no ref")
         return ""
-    if not REF_RE.match(ref):
-        raise SkillSourceRefused("ref must be a tag, branch or sha matching ^[A-Za-z0-9._/-]{1,255}$")
+    # The ref is passed to git on a command line: embry0.git_refs is the rule the clone applies too.
+    if not valid_ref(ref):
+        raise SkillSourceRefused(f"ref must be a tag, branch or sha: {REF_RULE}")
     return ref
 
 
@@ -200,7 +200,7 @@ class InlineSkillsRepository:
         return None if row is None else dict(row)
 
     async def upsert(self, *, name: str, description: str, body: str) -> dict[str, Any]:
-        if not INLINE_NAME_RE.match(name):
+        if not INLINE_NAME_RE.fullmatch(name):
             raise SkillSourceRefused("name must match ^[a-z][a-z0-9-]{0,63}$")
         if not description.strip():
             raise SkillSourceRefused("description is required")

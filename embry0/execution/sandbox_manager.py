@@ -639,7 +639,7 @@ class SandboxManager:
         # and assigned after this merge, so a profile can never override it.
         extra_hosts: dict[str, str] = {}
         for host, ip in (p.get("extra_hosts") or {}).items():
-            if host == "dind" or not _HOSTNAME_PATTERN.match(host):
+            if host == "dind" or not _HOSTNAME_PATTERN.fullmatch(host):
                 logger.warning("profile_extra_host_invalid_name_dropped", host=host)
                 continue
             try:

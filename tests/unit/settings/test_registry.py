@@ -72,6 +72,7 @@ def test_a_declaration_that_names_no_field_is_refused(label: str) -> None:
         ("version", "'version' is a reserved name"),
         ("managed_by", "'managed_by' is a reserved name"),
         ("Bad-Name", "lowercase letters, digits"),
+        ("good\n", "lowercase letters, digits"),
         # FastAPI's error parser drops a first loc segment with these names.
         ("body", "'body' is a reserved name"),
         ("query", "'query' is a reserved name"),

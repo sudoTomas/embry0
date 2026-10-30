@@ -73,7 +73,7 @@ def _checked_login(raw: str) -> str | None:
     login = raw.strip().removeprefix("@")
     if not login:
         return None
-    if not _LOGIN.match(login):
+    if not _LOGIN.fullmatch(login):
         raise HTTPException(status_code=422, detail="not a GitHub login")
     return login
 

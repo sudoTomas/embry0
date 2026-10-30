@@ -2,7 +2,9 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 
+from embry0.api.v1 import qa_artifacts
 from embry0.execution.runtime import DockerRuntime
 
 
@@ -653,3 +655,42 @@ async def test_qa_services_unsafe_job_id_rejected(api_client):
     api_client.app.state.runtime = _runtime(["sh", "-c", "printf 'web\\n'"])
     r = await api_client.get("/api/v1/jobs/..%2Fevil/qa/services")
     assert r.status_code == 404
+
+
+# ---- a name that ends in a newline ------------------------------------------
+# Python's ``$`` also matches just before a final newline, so these checks,
+# written with ``match``, took ``web\n`` for ``web``.
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        pytest.param(lambda: qa_artifacts._check_safe("result.json\n"), id="artifact path"),
+        pytest.param(lambda: qa_artifacts._check_safe_job_id("job-1\n"), id="job id"),
+        pytest.param(lambda: qa_artifacts._check_safe_app("web\n"), id="app"),
+        pytest.param(lambda: qa_artifacts._check_safe_filename("shot.png\n"), id="filename"),
+    ],
+)
+def test_an_artifact_name_ending_in_a_newline_is_refused(check):
+    try:
+        check()
+    except HTTPException:
+        return
+    raise AssertionError("a name ending in a newline must be refused")
+
+
+async def test_a_log_service_ending_in_a_newline_is_refused_before_a_stream_starts():
+    runtime = MagicMock(compose_log_stream=AsyncMock())
+    try:
+        await qa_artifacts.get_log("job-1", "web\n", follow=True, qa_minio=AsyncMock(), runtime=runtime)
+    except HTTPException as exc:
+        assert exc.status_code == 404, f"the refusal is a 404: {exc.status_code}"
+    else:
+        raise AssertionError("a log service ending in a newline must be refused")
+    runtime.compose_log_stream.assert_not_awaited()
+
+
+async def test_a_compose_service_ending_in_a_newline_is_not_listed():
+    runtime = MagicMock(compose_services=AsyncMock(return_value=["web", "worker\n"]))
+    listed = await qa_artifacts.list_qa_services("job-1", runtime=runtime)
+    assert listed == {"services": ["web"]}, f"a service ending in a newline must not be offered: {listed}"

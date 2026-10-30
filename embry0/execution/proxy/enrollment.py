@@ -310,7 +310,7 @@ def register_admin_routes(
         sandbox_token = body.get("sandbox_token", "")
         if not sandbox_id or not sandbox_token or len(sandbox_token) < 32:
             return web.json_response({"error": "bad_request"}, status=400)
-        if not _SANDBOX_ID_RE.match(sandbox_id):
+        if not _SANDBOX_ID_RE.fullmatch(sandbox_id):
             return web.json_response({"error": "bad_request"}, status=400)
         ttl_raw = body.get("ttl_seconds")
         ttl_seconds: float | None = None
@@ -352,7 +352,7 @@ def register_admin_routes(
         if denied is not None:
             return denied
         sandbox_id = request.match_info["sandbox_id"]
-        if not _SANDBOX_ID_RE.match(sandbox_id):
+        if not _SANDBOX_ID_RE.fullmatch(sandbox_id):
             return web.json_response({"error": "bad_request"}, status=400)
         registry: EnrollmentRegistry = request.app["enrollment"]
         registry.unenroll(sandbox_id)  # runs on_unenroll when there was an enrollment

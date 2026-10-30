@@ -82,9 +82,9 @@ def build_checkout_script(
     depth: int = 50,
     runs_nothing: bool = False,
 ) -> str:
-    if not _SHA_RE.match(head_sha):
+    if not _SHA_RE.fullmatch(head_sha):
         raise ValueError(f"head_sha {head_sha!r} is not a commit sha")
-    if previous_sha and not _SHA_RE.match(previous_sha):
+    if previous_sha and not _SHA_RE.fullmatch(previous_sha):
         raise ValueError(f"previous_sha {previous_sha!r} is not a commit sha")
     if not fetch_ref or not base_ref:
         raise ValueError("fetch_ref and base_ref are required")
@@ -167,7 +167,7 @@ def parse_checkout_output(stdout: str) -> CheckoutResult | None:
         if delta not in DELTA_STATES:
             return None
         base_sha = fields.get("base", "")
-        return CheckoutResult(delta=delta, base_sha=base_sha if _SHA_RE.match(base_sha) else "")
+        return CheckoutResult(delta=delta, base_sha=base_sha if _SHA_RE.fullmatch(base_sha) else "")
     return None
 
 

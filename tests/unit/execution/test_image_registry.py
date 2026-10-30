@@ -5,6 +5,7 @@ from embry0.execution.image_registry import (
     clear_image_pins,
     install_image_pins,
     is_registry_qualified,
+    is_valid_digest,
     load_image_pins,
     parse_image_pins,
     pinned_digest,
@@ -205,3 +206,17 @@ def test_pushed_digest_reads_what_docker_push_reported():
 def test_strip_digest():
     assert strip_digest(f"registry:5000/embry0-proxy:latest@{PROXY_PIN}") == "registry:5000/embry0-proxy:latest"
     assert strip_digest("registry:5000/embry0-proxy:latest") == "registry:5000/embry0-proxy:latest"
+
+
+def test_a_digest_ending_in_a_newline_is_not_a_digest():
+    """Python's ``$`` also matches just before a final newline, so ``match`` took ``sha256:…\\n``."""
+    digest = "sha256:" + "a" * 64
+    assert is_valid_digest(digest), "a sha256 digest is valid"
+    assert not is_valid_digest(digest + "\n"), "a digest ending in a newline must not be valid"
+    try:
+        install_image_pins("registry:5000", {"embry0-proxy:latest": digest + "\n"})
+    except ImagePinError:
+        pass
+    else:
+        clear_image_pins()
+        raise AssertionError("a pin whose digest ends in a newline must be refused")

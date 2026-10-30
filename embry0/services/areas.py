@@ -72,7 +72,9 @@ def parse_areas(text: str | None) -> list[Area]:
     for entry in entries if isinstance(entries, list) else []:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str) or not entry["name"].strip():
             continue
-        owners = tuple(o.removeprefix("@") for o in _strings(entry.get("owners")) if _LOGIN.match(o.removeprefix("@")))
+        owners = tuple(
+            o.removeprefix("@") for o in _strings(entry.get("owners")) if _LOGIN.fullmatch(o.removeprefix("@"))
+        )
         areas.append(Area(entry["name"].strip(), _strings(entry.get("paths")), _strings(entry.get("logs")), owners))
     return areas
 

@@ -1169,3 +1169,12 @@ async def test_create_without_a_skill_store_mounts_nothing_extra(manager: Sandbo
     await manager.create(job_id="job-plain")
     volumes = manager._docker.build_run_cmd.call_args.kwargs["volumes"]
     assert not volumes or not any("/opt/embry0/skills/" in v for v in volumes)
+
+
+@pytest.mark.asyncio
+async def test_create_drops_a_profile_extra_host_ending_in_a_newline(manager: SandboxManager):
+    """Python's ``$`` also matches just before a final newline, so ``match`` took ``app.example.com\\n``."""
+    profile = {"extra_hosts": {"app.example.com\n": "10.0.0.5", "good.example.com": "10.0.0.6"}}
+    await manager.create(job_id="job-eh-nl", profile=profile)
+    hosts = manager._docker.build_run_cmd.call_args.kwargs["extra_hosts"]
+    assert hosts == {"good.example.com": "10.0.0.6"}, f"a hostname ending in a newline must be dropped: {hosts!r}"

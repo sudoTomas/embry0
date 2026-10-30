@@ -111,7 +111,7 @@ class CredentialCreate(BaseModel):
             if unknown:
                 raise ValueError(f"tailnet_api_key metadata takes only 'tailnet', got {unknown}")
             tailnet = self.metadata.get("tailnet", "-")
-            if not isinstance(tailnet, str) or not _TAILNET.match(tailnet):
+            if not isinstance(tailnet, str) or not _TAILNET.fullmatch(tailnet):
                 raise ValueError("metadata.tailnet must be '-' or a tailnet name of letters, digits and . _ @ + -")
             self.metadata = {"tailnet": tailnet}
         elif self.provider == "custom":

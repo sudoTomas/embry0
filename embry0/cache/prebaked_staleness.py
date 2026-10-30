@@ -116,10 +116,10 @@ async def image_digest(runtime: AgentRuntime, ref: str, *, repo_name: str) -> st
         logger.info("qa_base_image_digest_unresolved", image=ref, error=str(exc)[:200])
         return None
     if not is_registry_qualified(repo_name):
-        return local_id if _DIGEST_RE.match(local_id) else None
+        return local_id if _DIGEST_RE.fullmatch(local_id) else None
     prefix = f"{_repo_of(repo_name)}@"
     for entry in repo_digests:
-        if entry.startswith(prefix) and _DIGEST_RE.match(entry[len(prefix) :]):
+        if entry.startswith(prefix) and _DIGEST_RE.fullmatch(entry[len(prefix) :]):
             return entry[len(prefix) :]
     logger.info("qa_base_image_digest_unresolved", image=ref, error="no registry digest for " + repo_name)
     return None
@@ -191,7 +191,7 @@ async def container_base_image(runtime: AgentRuntime, container_id: str) -> tupl
     mark a good image stale, or worse, a stale one fresh.
     """
     name, digest = await runtime.container_image(container_id, timeout=10)
-    if not name or not _DIGEST_RE.match(digest):
+    if not name or not _DIGEST_RE.fullmatch(digest):
         raise ValueError(f"unexpected docker inspect output for container {container_id}")
     return name, digest
 

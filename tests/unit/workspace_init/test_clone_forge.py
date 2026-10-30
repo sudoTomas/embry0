@@ -68,7 +68,7 @@ def test_base_branch_fetch_stays_brace_scoped_and_best_effort():
     assert "&& { git -C /workspace fetch origin release/2026.09:release/2026.09 --depth=50 || true; }" in shell
 
 
-@pytest.mark.parametrize("bad", ["feat branch", "a;rm -rf /", "", "--upload-pack=evil"])
+@pytest.mark.parametrize("bad", ["feat branch", "a;rm -rf /", "", "--upload-pack=evil", "dev\n"])
 def test_unsafe_base_branch_falls_back_to_main_instead_of_reaching_the_shell(bad):
     assert "fetch origin main:main" in build_clone_shell("owner/repo", base_branch=bad)
 

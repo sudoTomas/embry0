@@ -65,6 +65,24 @@ def test_denied_host_paths(tool, path):
     assert not v.allowed, f"{tool} {path} should be denied"
 
 
+@pytest.mark.parametrize(
+    ("tool", "path"),
+    [
+        ("Read", "/etc/a\nb/passwd"),
+        ("Read", "/etc/\n/passwd"),
+        ("Read", "/root/x\ny"),
+        ("Write", "/usr/lib\n/x"),
+        ("Read", "/etc/passwd\n"),
+        ("Write", "/workspace/.claude/settings.json\n"),
+        ("Edit", "/workspace/.claude/settings\n.json"),
+    ],
+)
+def test_deny_globs_match_paths_with_a_newline_in_any_segment(tool, path):
+    """A deny glob matches a path whatever its segments hold, a newline included."""
+    v = evaluate_ring2_paths(_dev_policy(), tool, {"file_path": path}, home=HOME)
+    assert not v.allowed, f"{tool} {path!r} should be denied"
+
+
 def test_denied_home_paths_expand_tilde():
     pol = _dev_policy()
     for tool, path in [

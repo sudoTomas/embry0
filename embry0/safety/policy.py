@@ -381,9 +381,12 @@ def evaluate_ring2_paths(
             if tool_name not in _RULE_COVERS.get(rule_tool, frozenset({rule_tool})):
                 continue
             rule_glob = rule_path_to_absolute(rule_path, cwd=cwd, home=home)
-            pattern = f"^{_glob_to_regex(rule_glob)}$"
+            # DOTALL: a deny glob matches a path with a newline in any segment.
+            # The optional final newline keeps what `$` matched before, so a
+            # path that ends in a newline is denied as it was.
+            pattern = re.compile(_glob_to_regex(rule_glob) + "\n?", re.DOTALL)
             for path in candidates:
-                if re.match(pattern, path):
+                if pattern.fullmatch(path):
                     return Verdict.deny(
                         f"Blocked by safety policy: {tool_name} path {path!r} matches deny rule {rule!r}"
                     )

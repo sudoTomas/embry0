@@ -349,7 +349,7 @@ class SkillSourceSync:
             pin = ("-c", f"http.curloptResolve={_curl_resolve(host, urlsplit(url).port or 443, addresses)}")
         home = Path(tempfile.mkdtemp(prefix="embry0-skills-home-"))
         try:
-            if _SHA_RE.match(ref):
+            if _SHA_RE.fullmatch(ref):
                 await self._git(home, staged, "init", "-q")
                 await self._git(home, staged, "remote", "add", "origin", url)
                 await self._git(
@@ -365,7 +365,7 @@ class SkillSourceSync:
         finally:
             await asyncio.to_thread(shutil.rmtree, home, ignore_errors=True)
         await asyncio.to_thread(shutil.rmtree, staged / ".git", ignore_errors=True)
-        if not _SHA_RE.match(sha):
+        if not _SHA_RE.fullmatch(sha):
             raise SkillSyncError(f"git did not report a commit sha for {ref!r}")
         return sha
 
@@ -454,7 +454,7 @@ class SkillSourceSync:
             name = str(data.get("name") or "").strip() if isinstance(data, dict) else ""
             if not name:
                 raise SkillSyncError(".claude-plugin/plugin.json has no name")
-            if not _PLUGIN_NAME_RE.match(name):
+            if not _PLUGIN_NAME_RE.fullmatch(name):
                 raise SkillSyncError(f"plugin name {name!r} must match {_PLUGIN_NAME_RE.pattern}")
             return name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -489,7 +489,7 @@ def _catalog(staged: Path) -> list[dict[str, str]]:
     for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
         name, description = parse_skill_frontmatter(skill_md.read_text(encoding="utf-8", errors="replace"))
         name = name or skill_md.parent.name
-        if not _SKILL_NAME_RE.match(name):
+        if not _SKILL_NAME_RE.fullmatch(name):
             raise SkillSyncError(
                 f"skill name {name!r} in {skill_md.relative_to(staged)} must match {_SKILL_NAME_RE.pattern}"
             )

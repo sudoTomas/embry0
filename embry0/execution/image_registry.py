@@ -55,7 +55,7 @@ def strip_digest(image: str) -> str:
 
 
 def is_valid_digest(value: str) -> bool:
-    return bool(_DIGEST_RE.match(value))
+    return bool(_DIGEST_RE.fullmatch(value))
 
 
 def pushed_digest(push_output: str) -> str | None:
@@ -104,7 +104,7 @@ def parse_image_pins(text: str) -> dict[str, str]:
         if len(parts) != 2:
             raise ImagePinError(f"line {number}: expected '<name>:<tag> <digest>', got {line!r}")
         name, digest = parts
-        if not _PIN_NAME_RE.match(name) or is_registry_qualified(name):
+        if not _PIN_NAME_RE.fullmatch(name) or is_registry_qualified(name):
             raise ImagePinError(f"line {number}: {name!r} is not an unqualified '<name>:<tag>'")
         if not is_valid_digest(digest):
             raise ImagePinError(f"line {number}: {digest!r} is not a sha256 digest")
