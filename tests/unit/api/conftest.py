@@ -22,18 +22,19 @@ from embry0.config import Embry0Config
 from embry0.storage.database import DatabasePool
 from embry0.storage.encryption import FernetSecretsProvider
 from embry0.storage.migrations.runner import run_migrations
-from tests.fixtures.postgres import postgres_unavailable, reset_to_fresh
+from tests.fixtures.postgres import postgres_unavailable, quoted, server_and_database, start_clean
 
 
 @pytest.fixture
-async def api_client() -> AsyncIterator[AsyncClient]:
+async def api_client(request: pytest.FixtureRequest) -> AsyncIterator[AsyncClient]:
     """Async HTTP client backed by a real PostgreSQL test database.
 
     Mirrors the integration `app` fixture pattern (tests/integration/conftest.py).
     Provisions the dedicated `embry0_unit_api_test` database and resets it with
-    `reset_to_fresh`: migrated once, then emptied and given back what the
+    `start_clean`: migrated once, then emptied and given back what the
     migrations wrote before each test, so each test starts with those rows and
-    no earlier test's (#235). Skips cleanly when PostgreSQL is unavailable.
+    no earlier test's (#235); a test marked `changes_schema` gets the schema
+    migrated from empty. Skips cleanly when PostgreSQL is unavailable.
 
     Default headers include the `X-Requested-With` CSRF marker — tests should
     not need to set it on each mutating call.
@@ -45,15 +46,14 @@ async def api_client() -> AsyncIterator[AsyncClient]:
 
     # Ensure the test database exists and migrations are applied.
     try:
-        sys_url = database_url.rsplit("/", 1)[0] + "/postgres"
+        sys_url, db_name = server_and_database(database_url)
         sys_conn = await asyncpg.connect(sys_url)
-        db_name = database_url.rsplit("/", 1)[1]
         exists = await sys_conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", db_name)
         if not exists:
             try:
                 # Use template0 to avoid collation-version errors on systems
                 # whose template1 has a stale collation version recorded.
-                await sys_conn.execute(f"CREATE DATABASE {db_name} TEMPLATE template0")
+                await sys_conn.execute(f"CREATE DATABASE {quoted(db_name)} TEMPLATE template0")
             except asyncpg.DuplicateDatabaseError:
                 pass
         await sys_conn.close()
@@ -67,7 +67,7 @@ async def api_client() -> AsyncIterator[AsyncClient]:
     boot_db = DatabasePool(database_url)
     await boot_db.connect()
     try:
-        await reset_to_fresh(boot_db, database_url)
+        await start_clean(boot_db, database_url, request.node)
     finally:
         await boot_db.close()
 

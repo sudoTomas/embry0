@@ -34,9 +34,9 @@ jobs:
   backend:
     name: Backend Lint & Test
     runs-on: ubuntu-latest
-    # The unit suite alone takes 36-41 minutes on a hosted runner; 45 left
-    # too little room, and a slow run was cancelled part-way (#250).
-    timeout-minutes: 60
+    # The unit suite takes 8 to 15 minutes in four workers, depending on the
+    # runner (#260); a serial run took 33-49. 30 leaves room for a slow one.
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
@@ -54,8 +54,8 @@ jobs:
         ports:
           - 5432:5432
     env:
-      # The fixtures drop and recreate the public schema for each test, so
-      # this must be a database nothing else uses: here, the job's own service.
+      # The fixtures drop the public schema and empty every table, so this
+      # must be a database nothing else uses: here, the job's own service.
       TEST_DATABASE_URL: postgresql://embry0:embry0_ci@localhost:5432/embry0_unit_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,8 +78,12 @@ jobs:
       - name: Verify app imports
         run: uv run --no-sync python -c "from embry0.api.app import create_app; print('OK')"
 
+      # Four workers, one per vCPU of a hosted runner. Each runs on a database
+      # of its own, created next to TEST_DATABASE_URL's (tests/conftest.py).
+      # The four share one Postgres: on a slow runner the heaviest tests took
+      # 30 s, against 12-29 s serially, so a test may take 60 s, not 30.
       - name: Run unit tests
-        run: uv run --no-sync pytest tests/unit/ -v --tb=short --timeout=30
+        run: uv run --no-sync pytest tests/unit/ -n 4 -v --tb=short --timeout=60
 
   build-images:
     name: Docker image builds

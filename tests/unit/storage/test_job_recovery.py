@@ -112,6 +112,7 @@ async def test_launch_record_round_trips(jobs_repo: JobsRepository) -> None:
     assert [r["launch"] for r in rows if r["job_id"] == job_id] == [LAUNCH]
 
 
+@pytest.mark.changes_schema  # the checkpointer creates its tables
 async def test_boot_resumes_a_checkpointed_job_and_fails_an_orphan_without_state(
     db_with_migrations: DatabasePool, jobs_repo: JobsRepository
 ) -> None:
@@ -144,6 +145,7 @@ async def test_boot_resumes_a_checkpointed_job_and_fails_an_orphan_without_state
     assert deferred_row["interrupted_at"] is None, "recovery clears the drain stamp, so the next stop is judged anew"
 
 
+@pytest.mark.changes_schema  # the checkpointer creates its tables
 async def test_boot_stops_resuming_a_job_that_keeps_crashing_the_orchestrator(
     db_with_migrations: DatabasePool, jobs_repo: JobsRepository
 ) -> None:
@@ -167,6 +169,7 @@ async def test_boot_stops_resuming_a_job_that_keeps_crashing_the_orchestrator(
     assert row["finished_at"] is not None
 
 
+@pytest.mark.changes_schema  # the checkpointer creates its tables
 async def test_clean_drains_never_use_up_the_attempts(
     db_with_migrations: DatabasePool, jobs_repo: JobsRepository
 ) -> None:

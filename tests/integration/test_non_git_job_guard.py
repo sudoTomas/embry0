@@ -20,7 +20,8 @@ from embry0.storage.repositories.jobs import JobsRepository
 from embry0.workflows.issue_to_pr.graph import IssueToprWorkflow
 from embry0.workflows.registry import WorkflowRegistry
 
-pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
+# A workflow run starts the checkpointer, which creates its own tables.
+pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio, pytest.mark.changes_schema]
 
 
 @pytest.fixture

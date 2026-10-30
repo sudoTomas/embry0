@@ -378,6 +378,7 @@ async def test_every_column_that_holds_a_person_is_classified(db_with_migrations
 
 
 @pytest.mark.requires_postgres
+@pytest.mark.changes_schema
 async def test_the_column_inventory_fails_on_a_new_column_that_holds_a_person(db_with_migrations: Any) -> None:
     await db_with_migrations.execute("CREATE TABLE approvals_for_a_test (id INT, approved_by TEXT, approved_at TEXT)")
     found = await _person_columns(db_with_migrations)

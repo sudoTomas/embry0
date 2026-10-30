@@ -13,7 +13,7 @@ uv run ruff check .                # lint
 uv run ruff format .               # format
 ```
 
-Tests that need Postgres connect to `TEST_DATABASE_URL` (default `postgresql://embry0:embry0@localhost:5432/embry0_test`); without a database they skip or fail. **Point it only at a scratch database:** for each test the fixtures drop and recreate its `public` schema (`DROP SCHEMA public CASCADE`), and they create the database if it is missing, so everything in it is destroyed. Never use a deployment's database. [docs/ops/verification.md](docs/ops/verification.md) starts a throwaway Postgres container for this, and lists every gate CI runs.
+Tests that need Postgres connect to `TEST_DATABASE_URL` (default `postgresql://embry0:embry0@localhost:5432/embry0_test`); without a database they skip or fail. **Point it only at a scratch database:** the fixtures drop and recreate its `public` schema (`DROP SCHEMA public CASCADE`), empty every table between tests, and create the database if it is missing, so everything in it is destroyed. Never use a deployment's database. [docs/ops/verification.md](docs/ops/verification.md) starts a throwaway Postgres container for this, and lists every gate CI runs.
 
 Optional: `uv tool install pre-commit && pre-commit install` runs ruff and some basic file checks on each commit ([.pre-commit-config.yaml](.pre-commit-config.yaml)).
 

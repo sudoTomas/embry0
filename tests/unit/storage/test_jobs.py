@@ -269,6 +269,7 @@ async def test_fail_orphaned_stamps_finished_at_on_every_row_it_fails(jobs_repo:
 
 
 @pytest.mark.asyncio
+@pytest.mark.changes_schema
 async def test_paused_job_expiry_without_a_jobs_repo_stamps_finished_at(jobs_repo: JobsRepository):
     """#345: the reaper's raw-SQL expiry fallback is the other write path
     that sets a terminal status outside update()."""
