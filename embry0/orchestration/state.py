@@ -388,6 +388,12 @@ class JobState(TypedDict, total=False):
     # the developer prompt. MUST stay declared here — LangGraph's state-merge
     # reducer silently drops undeclared keys.
     dev_checks: Annotated[list[dict[str, Any]], FoldingLastValue]
+    # #182: the settings sections a coding job reads (done_when, salvage),
+    # resolved for its repository once, by _run_workflow, and read by every
+    # node through embry0.services.job_settings.job_section. Checkpointed, so
+    # a resume reads what the job started with. MUST stay declared here —
+    # LangGraph's state-merge reducer silently drops undeclared keys.
+    job_settings: Annotated[dict[str, Any] | None, FoldingLastValue]
     global_context: Annotated[str | None, FoldingLastValue]
     repo_context: Annotated[str | None, FoldingLastValue]
     additional_context: Annotated[str | None, FoldingLastValue]

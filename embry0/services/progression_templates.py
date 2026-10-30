@@ -15,8 +15,12 @@ refused when the pack is checked. The dashboard fills the same grammar in
 ``frontend/src/lib/gamePack.ts``, and ``docs/contracts/progression.json``
 carries cases both sides are tested against.
 
-Standard library only, so the vocabulary, the schema and the services can all
-import it.
+The salvage commit's subject template (the settings document's
+``salvage.commit_subject``, #182) is written in the same grammar and filled
+by the same :func:`render`.
+
+Standard library only, so the vocabulary, the schema, the services and the
+settings sections can all import it.
 """
 
 from __future__ import annotations

@@ -8,14 +8,14 @@ Analyzes the issue/task and determines:
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 import structlog
 
 from embry0.agents.model_policy import TIER_KEYS
 from embry0.orchestration.state import TriageDecision
-from embry0.services.done_when import DONE_WHEN_GUIDE
+from embry0.services.done_when import done_when_guide
 from embry0.services.slop import CLASSIFIER_GUIDE
 
 logger = structlog.get_logger(__name__)
@@ -23,6 +23,9 @@ logger = structlog.get_logger(__name__)
 # Where the model guidance goes in the template below. A plain marker, not a
 # str.format field: the prompt is full of literal JSON braces.
 _MODEL_GUIDANCE_SLOT = "<<MODEL_GUIDANCE>>"
+# Where the "Done when" section goes: it names the ticket headings of the
+# job's repository (the settings document's done_when.ticket_sections, #182).
+_DONE_WHEN_GUIDE_SLOT = "<<DONE_WHEN_GUIDE>>"
 
 # The triage instructions, minus the model guidance. That section names the
 # deployment's models, so it is built from configuration per job
@@ -238,9 +241,7 @@ action ends the job with ERR_TRIAGE_QA_ACTION_INVALID.
 Omit `qa_failure_action` entirely on the initial invocation (when QA
 hasn't run yet).
 
-Respond ONLY with the JSON object, no markdown fences or extra text.""".replace(
-    "<<SLOP_GUIDE>>", CLASSIFIER_GUIDE
-).replace("<<DONE_WHEN_GUIDE>>", DONE_WHEN_GUIDE)
+Respond ONLY with the JSON object, no markdown fences or extra text.""".replace("<<SLOP_GUIDE>>", CLASSIFIER_GUIDE)
 
 _SUB_AGENT_MODELS_NOTE = """\
 - The developer agent itself can dispatch sub-agents (via the Agent tool) for
@@ -289,14 +290,19 @@ def build_triage_model_guidance(*, default_model: str, tier_models: Mapping[str,
     )
 
 
-def build_triage_system_prompt(*, default_model: str, tier_models: Mapping[str, str]) -> str:
-    """The triage system prompt for one deployment configuration.
+def build_triage_system_prompt(
+    *, default_model: str, tier_models: Mapping[str, str], ticket_sections: Sequence[str]
+) -> str:
+    """The triage system prompt for one deployment configuration and one repository's ticket headings.
 
-    Identical for every job while the provider settings are unchanged, so the
-    CLI's prompt caching still covers it (EMB-35).
+    ``ticket_sections`` is the job's ``done_when.ticket_sections``. Identical
+    for every job of a repository while the provider settings and that
+    section are unchanged, so the CLI's prompt caching still covers it
+    (EMB-35).
     """
     guidance = build_triage_model_guidance(default_model=default_model, tier_models=tier_models)
-    return _TRIAGE_SYSTEM_PROMPT_TEMPLATE.replace(_MODEL_GUIDANCE_SLOT, guidance)
+    prompt = _TRIAGE_SYSTEM_PROMPT_TEMPLATE.replace(_MODEL_GUIDANCE_SLOT, guidance)
+    return prompt.replace(_DONE_WHEN_GUIDE_SLOT, done_when_guide(ticket_sections))
 
 
 def _extract_json_payload(raw: str) -> str:

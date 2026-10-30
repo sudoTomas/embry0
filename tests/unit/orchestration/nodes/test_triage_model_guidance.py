@@ -35,8 +35,13 @@ _MODEL_ID = re.compile(r"\b(?:claude|grok)-[a-z0-9]")
 
 def _prompt(default_model: str = "", tiers: dict[str, str] | None = None) -> str:
     from embry0.orchestration.nodes.triage import build_triage_system_prompt
+    from embry0.settings.sections.done_when import DONE_WHEN
 
-    return build_triage_system_prompt(default_model=default_model, tier_models=tiers if tiers is not None else _TIERS)
+    return build_triage_system_prompt(
+        default_model=default_model,
+        tier_models=tiers if tiers is not None else _TIERS,
+        ticket_sections=DONE_WHEN.defaults().ticket_sections,
+    )
 
 
 # ---------------------------------------------------------------------------

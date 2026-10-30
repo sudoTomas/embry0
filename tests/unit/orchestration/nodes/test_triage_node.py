@@ -436,5 +436,9 @@ def test_parse_triage_response_keeps_its_done_when_list():
     listed = {"items": [{"done": "The cause is written down", "shown_by": "a PR section"}], "out_of_scope": []}
     raw = json.dumps({"action": "proceed", "confidence": 0.8, "reasoning": "r", "done_when": listed})
     assert parse_triage_response(raw)["done_when"] == listed
-    prompt = build_triage_system_prompt(default_model="m", tier_models={})
+    from embry0.settings.sections.done_when import DONE_WHEN
+
+    prompt = build_triage_system_prompt(
+        default_model="m", tier_models={}, ticket_sections=DONE_WHEN.defaults().ticket_sections
+    )
     assert "## Done when" in prompt and "<<" not in prompt

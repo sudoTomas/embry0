@@ -1400,11 +1400,12 @@ The `IssueExecutor` (`embry0/services/issue_executor.py`) owns the lifecycle of 
 
 **Trace ID threading (Plan H).** Every job is assigned a `trace_id` (format `trc-<12hex>`) at creation; the id is bound to structlog contextvars for the duration of `_run_workflow` and persisted onto every `audit_log` row written in that span. Use it as a grep key to reconstruct an issue's full timeline across logs and audit events.
 
-**Done when (the finish line, spec 2026-10-26).** Triage writes `done_when` for a code job, and `plan_route` keeps it on state and on `jobs.done_when`. When triage gives none, the ticket's `## Acceptance criteria` serve, and a list a person set wins.
+**Done when (the finish line, spec 2026-10-26).** Triage writes `done_when` for a code job, and `plan_route` keeps it on state and on `jobs.done_when`. When triage gives none, the ticket's own criteria serve (`## Acceptance criteria` by default), and a list a person set wins.
+- **Its policy.** The ticket headings (`Acceptance criteria`) and the number of retries (one) are the settings document's `done_when` section (the first heading, in order, whose section lists bullets is read, by `done_when.ticket_criteria`, the one rule the ticket's list and review share), which an organization's or a repository's layer may override. `_run_workflow` reads it, with `salvage`, for the job's repository once, when the job starts, and keeps them on the checkpointed state (`job_settings`, `embry0.services.job_settings`). Triage's prompt, `plan_route`, the developer's contract, the check, the pause and review all read them from there, so a resumed job keeps what it started with and a change reaches the next job.
 - **Before the run.** `developer_node` reads the job row at the start of every run, so an edit counts from the next run. It appends the list as the run's contract (`embry0.services.done_when.contract`), and `run_agent_node` adds pacing in turns to the coding step's turn-budget note.
 - **After a run that pushed,** `nodes/_done_when.check_done_when` reads the report in the final JSON strictly:
   - all met → the route goes on;
-  - an item unmet or unreported → `developer` once more, with `done_when_followup` naming the unmet items (`done_when_retries`, one per job);
+  - an item unmet or unreported → `developer` again, with `done_when_followup` naming the unmet items, while `done_when_retries` is below the job's `done_when.retries`;
   - still unmet → `max_retries` at stage `done_when_unmet`.
 - **Review and QA.** The review prompt's finish line is the list plus the report, in place of the ticket's criteria section. QA adds the items after each app's own criteria when triage named none.
 
@@ -1437,7 +1438,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_SANDBOX_EXEC_STALLED` | `docker exec` never read the agent config from stdin; the exec was killed before any agent work. |
 | `ERR_DISPATCH_FAILED` | **API responses only, never `jobs.error_code`.** `POST /issues` (with `auto_triage`) or `POST /issues/{id}/triage` asked for a job and `execute()` raised before a job row existed. Returned as `dispatch_error_code` beside a fixed safe `dispatch_error`; the exception is only logged (#284). |
 | `ERR_DEV_BRANCH_NOT_PUSHED` | Developer finished without pushing the expected branch. |
-| `ERR_DEV_RUN_UNFINISHED` | A coding run stopped (its turn cap, any error) before committing; embry0 committed and pushed what it left as `wip: unfinished — <agent> stopped (<reason>)` so it survives (salvage, `docs/superpowers/specs/2026-10-25-salvage-unfinished-work-design.md`). The job pauses; `continue_retrying` tells the next run to finish that commit, not redo it. |
+| `ERR_DEV_RUN_UNFINISHED` | A coding run stopped (its turn cap, any error) before committing; embry0 committed and pushed what it left as `wip: unfinished — <agent> stopped (<reason>)` so it survives (salvage, `docs/superpowers/specs/2026-10-25-salvage-unfinished-work-design.md`); the subject is the settings document's `salvage.commit_subject` template, which an organization or a repository may set. The job pauses; `continue_retrying` tells the next run to finish that commit, not redo it. |
 | `ERR_AGENT_MAX_TURNS` | An agent hit its `max_turns` cap without finishing (and the decide-now recovery, where one exists, did not rescue it). |
 | `ERR_AGENT_PROCESS_FAILED` | The agent CLI subprocess exited non-zero ("Command failed with exit code N"). The cause is in the run's stored stderr tail — see below. |
 | `ERR_AGENT_IDLE` | The runner's idle watchdog killed an agent that produced no events. |

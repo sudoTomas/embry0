@@ -1415,6 +1415,13 @@ async def _run_workflow(
         # into the developer prompt for EVERY dispatch path.
         if pref and pref.get("dev_checks"):
             initial_state["dev_checks"] = pref["dev_checks"]
+        # #182: the done_when and salvage sections, read once for the job's
+        # repository and kept on its checkpointed state, so every node and a
+        # resume read what the job started with. getattr: unit tests build
+        # the executor via __new__ and set only what their path touches.
+        from embry0.services.job_settings import STATE_KEY, read_for_job
+
+        initial_state[STATE_KEY] = await read_for_job(getattr(self, "_settings", None), issue.get("repo") or "")
         if (job_row or {}).get("pipeline_template"):
             initial_state["pipeline_template_request"] = job_row["pipeline_template"]  # type: ignore[index]
         # #306: a watcher-found fix runs unattended, so it always gets review

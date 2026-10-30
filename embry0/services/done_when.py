@@ -2,11 +2,17 @@
 
 docs/superpowers/specs/2026-10-26-done-when-design.md. Triage drafts, for a
 code job, 2-5 checkable conditions with how each is shown, plus what is out of
-scope (``DONE_WHEN_GUIDE``); a ticket's own acceptance criteria are the base,
+scope (``done_when_guide``); a ticket's own acceptance criteria are the base,
 and the fallback when triage gives none. A person can replace the list on the
 job page. The developer (or the Slopmaster) gets it as its contract, with
 pacing, and ends its final JSON with a report on each item; embry0 reads that
 report strictly (``check_report``). Review and QA judge against the same list.
+
+Which ticket headings hold a ticket's criteria, and how many times an unmet
+report sends the work back, are the settings document's ``done_when`` section
+(``embry0.settings.sections.done_when``), as the job read it when it started
+(``embry0.services.job_settings``). The functions here take them as
+arguments, so none of them can fall back to a value of its own.
 
 The list is one JSON object, on ``jobs.done_when`` (migration 120) and on
 ``state["done_when"]``::
@@ -19,7 +25,7 @@ The list is one JSON object, on ``jobs.done_when`` (migration 120) and on
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -30,8 +36,6 @@ MAX_OUT_OF_SCOPE = 6
 #: Bounds on each written field, so a list stays a list.
 ITEM_CHARS = 300
 EVIDENCE_CHARS = 500
-#: How many times a run that left items unmet goes again before the job pauses.
-DONE_WHEN_RETRIES = 1
 #: The key of the developer's report in its final JSON.
 REPORT_KEY = "done_when"
 SOURCES = ("triage", "ticket", "person")
@@ -39,7 +43,7 @@ SOURCES = ("triage", "ticket", "person")
 _BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)]|\[[ xX]\])\s+(?:\[[ xX]\]\s+)?(?P<text>.+?)\s*$")
 _SHOWN_SPLIT = re.compile(r"\s+(?:—|–|--|\|)\s+")
 
-DONE_WHEN_GUIDE = """\
+_GUIDE_HEAD = """\
 ## Done when
 
 For every code job, set `done_when`: the finish line the developer works to,
@@ -54,7 +58,8 @@ Rules:
   the pull request, with how it is shown: a named test passes, a command
   prints something, a log line appears, a document says something, a written
   diagnosis names the cause with its evidence.
-- When the task has an "Acceptance criteria" section, those are your items:
+"""
+_GUIDE_TAIL = """\
   keep their meaning, add `shown_by`, add none of your own beyond what the
   task asks.
 - A diagnose or investigate task ends in a deliverable that can be reached,
@@ -65,6 +70,19 @@ Rules:
 - out_of_scope names the nearby work this job must not take on (other
   services, refactors, "while I'm here" changes), 0 to 4 lines.
 - Plain words, no ids. Omit `done_when` for jobs that are not code."""
+
+
+def _headings_phrase(ticket_sections: Sequence[str]) -> str:
+    """``"A"``, ``"A" or "B"``, ``"A", "B" or "C"``: the headings as triage is told them."""
+    quoted = [f'"{heading}"' for heading in ticket_sections]
+    return quoted[0] if len(quoted) == 1 else ", ".join(quoted[:-1]) + f" or {quoted[-1]}"
+
+
+def done_when_guide(ticket_sections: Sequence[str]) -> str:
+    """The triage prompt's "Done when" section, naming the ticket headings that hold a ticket's criteria."""
+    article = "an" if ticket_sections[0][:1].lower() in "aeiou" else "a"
+    line = f"- When the task has {article} {_headings_phrase(ticket_sections)} section, those are your items:\n"
+    return _GUIDE_HEAD + line + _GUIDE_TAIL
 
 
 def _text(value: Any, limit: int) -> str:
@@ -130,20 +148,39 @@ def parse_done_when(raw: Any, *, source: str = "triage") -> dict[str, Any] | Non
     }
 
 
-def from_ticket(task: str) -> dict[str, Any] | None:
-    """The ticket's own ``## Acceptance criteria`` bullets as a list (``source: ticket``), or None."""
-    from embry0.workflows.issue_to_pr.evidence import ticket_section
+def _has_bullet(section: str) -> bool:
+    return any(_BULLET.match(line) for line in section.splitlines())
 
-    section = ticket_section(task or "", "Acceptance criteria")
-    if not section:
-        return None
+
+def ticket_criteria(task: str, headings: Sequence[str]) -> str:
+    """The ticket's own criteria, as written: the one rule the ticket's list and review read them by.
+
+    ``headings`` are the job's ``done_when.ticket_sections``. The first
+    section, in the order of ``headings`` and then of the ticket, that lists
+    a bullet; else the first of them with any text (criteria written as
+    prose still reach review); else ``""``.
+    """
+    from embry0.workflows.issue_to_pr.evidence import sections_under
+
+    filled = ""
+    for heading in headings:
+        for section in sections_under(task or "", heading):
+            if _has_bullet(section):
+                return section
+            filled = filled or section
+    return filled
+
+
+def from_ticket(task: str, *, ticket_sections: Sequence[str]) -> dict[str, Any] | None:
+    """The bullets of the ticket's criteria (``ticket_criteria``) as a list (``source: ticket``), or None."""
+    section = ticket_criteria(task, ticket_sections)
     lines = [m.group("text") for line in section.splitlines() if (m := _BULLET.match(line))]
-    return parse_done_when({"items": lines}, source="ticket")
+    return parse_done_when({"items": lines}, source="ticket") if lines else None
 
 
-def resolve(triage_raw: Any, task: str) -> dict[str, Any] | None:
-    """Triage's list when it gave a usable one, else the ticket's acceptance criteria, else None."""
-    return parse_done_when(triage_raw, source="triage") or from_ticket(task)
+def resolve(triage_raw: Any, task: str, *, ticket_sections: Sequence[str]) -> dict[str, Any] | None:
+    """Triage's list when it gave a usable one, else the ticket's own criteria (``from_ticket``), else None."""
+    return parse_done_when(triage_raw, source="triage") or from_ticket(task, ticket_sections=ticket_sections)
 
 
 def edited(raw: Any, *, by: str, now: datetime | None = None) -> dict[str, Any] | None:
@@ -204,8 +241,27 @@ def _item_line(item: Mapping[str, Any]) -> str:
     return f"- [{item['id']}] {item['done']}{shown}"
 
 
-def contract(done_when: Any, *, followup: str | None = None) -> str:
-    """The developer's prompt section: the list as its contract, how it finishes, and the report it ends with."""
+def sent_back(retries: int) -> str:
+    """What an unmet report does, for ``retries`` retries: "sends the work back once, then pauses the job"."""
+    if retries <= 0:
+        return "pauses the job"
+    times = "once" if retries == 1 else f"up to {retries} times"
+    return f"sends the work back {times}, then pauses the job"
+
+
+def after_retries(retries: int) -> str:
+    """How a pause says the retries are spent: " after a retry", " after 2 retries", or nothing for none."""
+    if retries <= 0:
+        return ""
+    return " after a retry" if retries == 1 else f" after {retries} retries"
+
+
+def contract(done_when: Any, *, retries: int, followup: str | None = None) -> str:
+    """The developer's prompt section: the list as its contract, how it finishes, and the report it ends with.
+
+    ``retries`` is the job's ``done_when.retries``: how many times an unmet
+    report sends the work back before the job pauses.
+    """
     items = items_of(done_when)
     if not items:
         return ""
@@ -222,7 +278,7 @@ def contract(done_when: Any, *, followup: str | None = None) -> str:
         f'End your final JSON with "{REPORT_KEY}": one entry per item, '
         '[{"id": "d1", "met": true, "evidence": "<the test, command output, file or section that shows it>"}]. '
         "Say met: false, with what is missing, for any item you did not reach. embry0 checks this report: "
-        "an unmet or unreported item sends the work back once, then pauses the job.",
+        f"an unmet or unreported item {sent_back(retries)}.",
     ]
     if followup:
         lines += ["", followup]
@@ -283,7 +339,7 @@ def unmet_items(done_when: Any, report: Mapping[str, Any] | None) -> list[dict[s
 
 
 def followup_text(done_when: Any, report: Mapping[str, Any]) -> str:
-    """The one retry's instructions: the items still open, and the report to send again."""
+    """A retry's instructions: the items still open, and the report to send again."""
     open_items = unmet_items(done_when, report)
     lines = [
         "Done-when check: your last run pushed, but these items are not met"

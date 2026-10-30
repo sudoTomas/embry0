@@ -11,15 +11,24 @@ continues from it instead of starting over.
 
 A clean finish is not a stop: a run that ended without an error keeps #358's
 behaviour, where an empty branch means the agent produced nothing.
+
+The commit's subject is the job's ``salvage.commit_subject`` template (the
+settings document, as the job read it when it started; #182), filled with the
+agent and the reason, ``wip: unfinished — <agent> stopped (<reason>)`` unless
+an operator set another. A subject past ``MAX_SUBJECT_CHARS`` has only its
+reason shortened.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import structlog
 
 import embry0.workflows.issue_to_pr.nodes as _nodes
+from embry0.services.progression_templates import Field, parse, render
+from embry0.settings.sections.salvage import MAX_SUBJECT_CHARS
 
 logger = structlog.get_logger(__name__)
 
@@ -56,10 +65,26 @@ def stop_reason(result: dict[str, Any]) -> str | None:
     return f"error {code}" if code else "error"
 
 
-def commit_message(agent: str, reason: str) -> str:
+def commit_subject(agent: str, reason: str, *, template: str) -> str:
+    """The salvage commit's subject: the job's ``salvage.commit_subject`` ``template`` with ``agent`` and ``reason``.
+
+    A subject longer than ``MAX_SUBJECT_CHARS`` has only its reason
+    shortened, ending in ``…``, where the template names it; a shorter one
+    is never touched.
+    """
+    subject = render(template, {"agent": agent, "reason": reason})
+    over = len(subject) - MAX_SUBJECT_CHARS
+    named = sum(1 for part in parse(template) if isinstance(part, Field) and part.name == "reason")
+    if over <= 0 or not named or not reason:
+        return subject
+    keep = max(len(reason) - math.ceil(over / named) - 1, 0)
+    return render(template, {"agent": agent, "reason": reason[:keep].rstrip() + "…"})
+
+
+def commit_message(agent: str, reason: str, *, template: str) -> str:
     """The salvage commit's message: plainly unfinished, plainly embry0's."""
     return (
-        f"wip: unfinished — {agent} stopped ({reason})\n\n"
+        f"{commit_subject(agent, reason, template=template)}\n\n"
         f"Committed by embry0, not by the agent. The {agent} run stopped ({reason})\n"
         "before it committed, so this change is incomplete and was never\n"
         "self-reviewed. It is kept here so the work is not lost: the next run\n"
@@ -75,9 +100,12 @@ async def preserve_unfinished_work(
     job_id: str | None,
     agent: str,
     reason: str,
+    subject_template: str,
     diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Commit what a stopped run left uncommitted and push the branch.
+
+    ``subject_template`` is the job's ``salvage.commit_subject``.
 
     The record (``{branch, agent, reason, committed}``) when the branch is on
     origin with the run's work, ``committed`` saying whether embry0 made a
@@ -90,7 +118,7 @@ async def preserve_unfinished_work(
             container_id=container_id,
             branch=branch,
             job_id=job_id,
-            message=commit_message(agent, reason),
+            message=commit_message(agent, reason, template=subject_template),
         )
         pushed = await _nodes._rescue_push_branch(
             docker=docker, container_id=container_id, branch=branch, diagnostics=diagnostics
@@ -104,14 +132,25 @@ async def preserve_unfinished_work(
     return {"branch": branch, "agent": agent, "reason": reason, "committed": committed}
 
 
-def prompt_section(record: dict[str, Any] | None) -> str | None:
-    """What the next coding attempt is told about the unfinished commit; None without one."""
+def _subject_of(record: dict[str, Any], template: str) -> str:
+    """The subject the salvage commit of ``record`` was made with."""
+    return commit_subject(str(record.get("agent") or "developer"), str(record.get("reason") or ""), template=template)
+
+
+def prompt_section(record: dict[str, Any] | None, *, subject_template: str) -> str | None:
+    """What the next coding attempt is told about the unfinished commit; None without one.
+
+    ``subject_template`` is the job's ``salvage.commit_subject``, which the
+    commit was made with: the prompt quotes the commit's subject, filled from
+    the record exactly as the commit's was.
+    """
     if not record or not record.get("committed"):
         return None
     branch = record.get("branch") or "the job's branch"
+    subject = _subject_of(record, subject_template)
     return (
         f"\nUnfinished work from your earlier run:\nThat run stopped ({record.get('reason') or 'before it finished'}) "
-        f"before it committed. embry0 committed what it left in the working tree as `wip: unfinished …` "
+        f"before it committed. embry0 committed what it left in the working tree as `{subject}` "
         f"on {branch} and pushed it, so it is checked out here. Do not start over: review that commit "
         "against the task, finish what is missing, run the checks, then commit and push."
     )

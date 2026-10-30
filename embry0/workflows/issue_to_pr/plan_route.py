@@ -429,14 +429,21 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     jobs_repo = config["configurable"].get("jobs_repo")
 
     # Done when (spec 2026-10-26): a code job's finish line — triage's list,
-    # else the ticket's acceptance criteria, else none. A list a person set
-    # on the job (an early edit is on the row before triage runs) wins.
+    # else the ticket's acceptance criteria (under the headings of the job's
+    # done_when.ticket_sections, #182), else none. A list a person set on the
+    # job (an early edit is on the row before triage runs) wins.
     done_when = None
     if effective_kind == "code":
         from embry0.services.done_when import person_list, resolve
+        from embry0.services.job_settings import job_section
+        from embry0.settings.sections.done_when import DONE_WHEN
 
         done_when = await person_list(jobs_repo, str(state.get("job_id") or ""), state.get("done_when"))
-        done_when = done_when or resolve(decision.get("done_when"), str(state.get("task") or ""))
+        done_when = done_when or resolve(
+            decision.get("done_when"),
+            str(state.get("task") or ""),
+            ticket_sections=job_section(state, DONE_WHEN).ticket_sections,
+        )
     if jobs_repo is not None:
         try:
             await jobs_repo.update(

@@ -10,7 +10,6 @@ from embry0.workflows.issue_to_pr.evidence import (
     MAX_SAMPLE_LINE_CHARS,
     MAX_SAMPLE_LINES,
     MAX_SIGNATURE_CHARS,
-    acceptance_criteria_in,
     format_evidence_block,
     log_scope,
     resolve_case_evidence,
@@ -73,8 +72,12 @@ def test_section_absent() -> None:
 
 
 def test_acceptance_criteria() -> None:
-    assert acceptance_criteria_in(_TICKET) == "- [ ] a lead with 40 contacts extracts\n- [ ] the 502 stops recurring"
-    assert acceptance_criteria_in("no such section") == ""
+    from embry0.services.done_when import ticket_criteria
+    from embry0.settings.sections.done_when import DONE_WHEN
+
+    headings = DONE_WHEN.defaults().ticket_sections
+    assert ticket_criteria(_TICKET, headings) == "- [ ] a lead with 40 contacts extracts\n- [ ] the 502 stops recurring"
+    assert ticket_criteria("no such section", headings) == ""
 
 
 def test_services_are_only_allowlisted_names_as_whole_words() -> None:

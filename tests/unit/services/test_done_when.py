@@ -6,6 +6,11 @@ import json
 from datetime import UTC, datetime
 
 from embry0.services import done_when as dw
+from embry0.settings.sections.done_when import DONE_WHEN
+
+#: The headings and retries a job reads with nothing written.
+HEADINGS = DONE_WHEN.defaults().ticket_sections
+RETRIES = DONE_WHEN.defaults().retries
 
 NOW = datetime(2026, 10, 26, 3, 0, tzinfo=UTC)
 
@@ -46,7 +51,7 @@ def test_lines_split_into_condition_and_how_it_is_shown() -> None:
 
 def test_the_ticket_s_acceptance_criteria_are_the_fallback() -> None:
     task = "Fix the export\n\n## Acceptance criteria\n- [ ] CSV has a header row\n- Totals match the screen\n\n## Notes\n- not this"
-    assert dw.resolve(None, task) == {
+    assert dw.resolve(None, task, ticket_sections=HEADINGS) == {
         "items": [
             {"id": "d1", "done": "CSV has a header row", "shown_by": ""},
             {"id": "d2", "done": "Totals match the screen", "shown_by": ""},
@@ -57,8 +62,8 @@ def test_the_ticket_s_acceptance_criteria_are_the_fallback() -> None:
         "edited_at": None,
         "report": None,
     }
-    assert dw.resolve(TRIAGE, task)["source"] == "triage"
-    assert dw.resolve(None, "Fix the export") is None
+    assert dw.resolve(TRIAGE, task, ticket_sections=HEADINGS)["source"] == "triage"
+    assert dw.resolve(None, "Fix the export", ticket_sections=HEADINGS) is None
 
 
 def test_a_person_s_edit_drops_the_old_report_and_says_who() -> None:
@@ -69,13 +74,13 @@ def test_a_person_s_edit_drops_the_old_report_and_says_who() -> None:
 
 
 def test_the_contract_names_each_item_the_pacing_and_the_report() -> None:
-    text = dw.contract(dw.parse_done_when(TRIAGE))
+    text = dw.contract(dw.parse_done_when(TRIAGE), retries=RETRIES)
     assert "[d1] The boot failure's cause is logged in full (shown by: a test that boots with a bad config)" in text
     assert "Out of scope" in text and "Changing the deploy tooling" in text
     assert "by half of it commit" in text and "three quarters" in text
     assert '"done_when"' in text
-    assert dw.contract(None) == ""
-    assert "Finish d2" in dw.contract(dw.parse_done_when(TRIAGE), followup="Finish d2")
+    assert dw.contract(None, retries=RETRIES) == ""
+    assert "Finish d2" in dw.contract(dw.parse_done_when(TRIAGE), retries=RETRIES, followup="Finish d2")
     assert dw.pacing_line(40).startswith("Pacing (done when): by turn 20 commit") and "by turn 30" in dw.pacing_line(40)
 
 
@@ -128,3 +133,43 @@ def test_review_and_qa_read_the_same_list() -> None:
         "The cause is written down (shown by: a section in the pull request description)",
     ]
     assert dw.unmet_summary(list_, list_["report"]) == "The cause is written down"
+
+
+# --- #182 review: which ticket section a job's headings read -------------------------------------
+
+_PROSE_THEN_BULLETS = (
+    "Fix the export\n\n## Definition of done\nWhen the export works.\n\n"
+    "## Acceptance criteria\n- CSV has a header\n- Totals match\n"
+)
+
+
+def _ticket_items(task: str, headings: tuple[str, ...]) -> list[str]:
+    listed = dw.from_ticket(task, ticket_sections=headings)
+    return [item["done"] for item in (listed or {}).get("items", [])]
+
+
+def test_the_first_heading_whose_section_lists_bullets_is_the_ticket_s_list() -> None:
+    assert _ticket_items(_PROSE_THEN_BULLETS, ("Definition of done", "Acceptance criteria")) == [
+        "CSV has a header",
+        "Totals match",
+    ], "a filled-in section with no bullets must not hide the next heading's list"
+
+
+def test_a_heading_that_ends_in_a_hash_reads_its_section() -> None:
+    task = "Port the tool\n\n## Done in C#\n- builds with dotnet\n"
+    assert _ticket_items(task, ("Done in C#",)) == ["builds with dotnet"], (
+        "a ticket's trailing # marks are dropped from its heading, so the named heading must drop them too"
+    )
+
+
+def test_a_heading_matches_whole_words_only() -> None:
+    assert _ticket_items("Fix\n\n## Approach\n- rewrite everything\n", ("A",)) == [], "A must not read Approach"
+    assert _ticket_items("Fix\n\n## Done whenever\n- not this\n", ("Done when",)) == [], "nor Done when Done whenever"
+    for heading in (
+        "Acceptance criteria",
+        "Acceptance criteria (must)",
+        "acceptance CRITERIA:",
+        "Acceptance criteria ##",
+    ):
+        task = f"Fix\n\n### {heading}\n- the item\n"
+        assert _ticket_items(task, ("Acceptance criteria",)) == ["the item"], f"{heading!r} starts with the words"

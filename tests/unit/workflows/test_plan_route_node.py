@@ -555,3 +555,15 @@ async def test_a_list_a_person_set_before_triage_wins():
 async def test_a_job_that_is_not_code_has_no_list():
     out = await plan_route_node(_state(job_kind="research", done_when=_LIST), _config(_repo(), _RowJobs()))
     assert out["done_when"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_ticket_s_criteria_sit_under_the_job_s_headings():
+    """#182: the job's done_when.ticket_sections name the headings, the first the ticket fills in wins."""
+    task = "Fix it\n\n## Definition of done\n- The export has a header row\n\n## Acceptance criteria\n- old"
+    settings = {"job_settings": {"done_when": {"ticket_sections": ["Definition of done", "Acceptance criteria"]}}}
+    out = await plan_route_node({**_state(job_kind="code"), "task": task, **settings}, _config(_repo(), _RowJobs()))
+    assert out["done_when"] is not None and out["done_when"]["source"] == "ticket", out["done_when"]
+    assert [i["done"] for i in out["done_when"]["items"]] == ["The export has a header row"], (
+        f"the list must come from the job's first heading, Definition of done: {out['done_when']}"
+    )

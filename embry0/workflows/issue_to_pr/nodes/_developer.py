@@ -152,9 +152,13 @@ def _developer_delta_sections(state: dict[str, Any]) -> list[str]:
     if focus_files:
         parts.append("\nFocus files:\n" + "\n".join(f"- {f}" for f in focus_files))
     # Salvage: the earlier run stopped and embry0 committed what it left.
+    from embry0.services.job_settings import job_section
+    from embry0.settings.sections.salvage import SALVAGE
     from embry0.workflows.issue_to_pr.nodes._salvage import prompt_section
 
-    unfinished = prompt_section(state.get("unfinished_work"))
+    unfinished = prompt_section(
+        state.get("unfinished_work"), subject_template=job_section(state, SALVAGE).commit_subject
+    )
     if unfinished:
         parts.append(unfinished)
     return parts
@@ -530,7 +534,7 @@ async def _commit_unfinished_work(
     container_id: str | None,
     branch: str,
     job_id: str | None = None,
-    message: str | None = None,
+    message: str,
 ) -> bool:
     """Commit what the agent left in the worktree, so it can be pushed (#358).
 
@@ -549,7 +553,9 @@ async def _commit_unfinished_work(
     downstream may present it as completed work.
 
     Called for a run that stopped (``_salvage``): a turn cap, any error, the
-    job's budget. ``message`` names why; the default is #358's. The commit goes
+    job's budget. ``message`` is the salvage commit's (``_salvage.commit_message``,
+    its subject from the job's ``salvage.commit_subject``); there is no default
+    of its own, so no subject is written in the code (#182). The commit goes
     on ``branch``: when the agent never created it, a branch of that name is
     started where the worktree stands; when another branch is checked out and
     ``branch`` exists too, nothing is committed rather than guess. Returns True
@@ -582,12 +588,7 @@ async def _commit_unfinished_work(
                     "/workspace",
                     "commit",
                     "-m",
-                    message
-                    or "wip: unfinished work preserved after the developer hit its turn cap\n\n"
-                    "Committed by embry0, NOT by the agent. The developer run ended on its\n"
-                    "turn cap before it could commit, so this change is incomplete and was\n"
-                    "never self-reviewed. It is preserved here so the run is not lost;\n"
-                    "continue from this branch rather than starting over (embry0 #358).",
+                    message,
                 ],
             ),
             timeout=60,
@@ -1006,12 +1007,17 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     # a person's edit counts from the next run on, as this run's contract.
     from embry0.services.done_when import contract as done_when_contract
     from embry0.services.done_when import current as current_done_when
+    from embry0.services.job_settings import job_section
+    from embry0.settings.sections.done_when import DONE_WHEN
 
     done_when = await current_done_when(
         configurable.get("jobs_repo"), str(state.get("job_id") or ""), state.get("done_when")
     )
     if done_when:
-        prompt = f"{prompt}\n\n{done_when_contract(done_when, followup=state.get('done_when_followup'))}"
+        terms = done_when_contract(
+            done_when, retries=job_section(state, DONE_WHEN).retries, followup=state.get("done_when_followup")
+        )
+        prompt = f"{prompt}\n\n{terms}"
 
     # RAV-602: definition (model/tools/skills) from the DB row, per-step
     # template overrides from the current route step; triage's
@@ -1229,17 +1235,21 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     #   3. Budget overrun also diverts to max_retries.
     #   4. Otherwise proceed to review.
     from embry0.orchestration.routing.conditions import check_budget
+    from embry0.services.job_settings import job_section
+    from embry0.settings.sections.salvage import SALVAGE
     from embry0.workflows.issue_to_pr.nodes import _salvage
 
     # Salvage (spec 2026-10-25): a run that stops before it pushes keeps its
     # work. Every route below that ends the coding step without a verified
-    # push commits what the run left uncommitted and pushes it, unfinished.
+    # push commits what the run left uncommitted and pushes it, unfinished,
+    # under the commit_subject of the job's salvage section (#182).
     salvage: dict[str, Any] = {
         "docker": configurable.get("docker"),
         "container_id": state.get("sandbox_container_id"),
         "branch": branch,
         "job_id": state.get("job_id"),
         "agent": _salvage.coding_agent(result, state),
+        "subject_template": job_section(state, SALVAGE).commit_subject,
     }
 
     if updates.get("agent_questions_exhausted") or state.get("agent_questions_exhausted"):
