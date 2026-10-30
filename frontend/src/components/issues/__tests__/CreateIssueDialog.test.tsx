@@ -104,6 +104,27 @@ describe("CreateIssueDialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  // The picker closes its list 150 ms after it loses focus, and a click on
+  // an option lands inside that window. The pick must outlast it: the close
+  // used to put the filter typed to find the option back, and the dialog
+  // then created the issue on a repository named "wid" (#267).
+  it("creates the issue on the repository picked from the list, not on the filter typed to find it", async () => {
+    mockMutate.mockImplementation((_req, opts) => opts.onSuccess({ job_id: "job-1", dispatch_error_code: null, dispatch_error: null }));
+    render(<CreateIssueDialog onClose={vi.fn()} />);
+    const picker = screen.getByPlaceholderText("Select repository...");
+    await userEvent.type(picker, "wid");
+    await userEvent.click(screen.getByRole("button", { name: "acme/widgets" }));
+    expect(picker).toHaveValue("acme/widgets");
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Soft, so a regression also reports what the dialog then submits.
+    expect.soft(picker, "the pick outlasts the list's 150 ms close").toHaveValue("acme/widgets");
+
+    await userEvent.type(screen.getByLabelText(/title/i), "Fix the footer link");
+    await userEvent.click(screen.getByRole("button", { name: /create/i }));
+    expect(mockMutate).toHaveBeenCalledWith(expect.objectContaining({ repo: "acme/widgets" }), expect.anything());
+  });
+
   it("still offers a hidden repository it was opened for", async () => {
     render(<CreateIssueDialog onClose={vi.fn()} initialRepo="acme/hidden" />);
     expect(screen.getByPlaceholderText("Select repository...")).toHaveValue("acme/hidden");
