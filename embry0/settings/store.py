@@ -416,6 +416,9 @@ class Draft:
     #: Set once the block has written: the new revision, or None when the text did not change.
     revision_id: int | None = None
     dirty: bool = False
+    #: Why, as the revision records it, when the block learns it only once it has read the document;
+    #: None keeps the reason :meth:`SettingsStore.edit` was given.
+    reason: str | None = None
 
     def replace(self, yaml_text: str, data: dict[str, Any], schema_version: int) -> None:
         self.yaml_text, self.data, self.schema_version = yaml_text, data, schema_version
@@ -642,9 +645,14 @@ class SettingsStore:
                         after=_document(written),
                         actor=actor,
                         source=source,
-                        reason=reason,
+                        reason=draft.reason if draft.reason is not None else reason,
                     )
                 draft.generation = int(written["generation"])
+
+    async def inherited_now(self, draft: Draft) -> dict[str, dict[str, Any]] | None:
+        """What the document ``draft`` holds inherits now, per section, read inside its :meth:`edit` block, after
+        its holds; None for the deployment's."""
+        return await self._inherited_now(draft.conn, draft.scope)
 
     async def _inherited_now(self, conn: asyncpg.Connection, scope: Scope) -> dict[str, dict[str, Any]] | None:
         """What the document at ``scope`` inherits, read on ``conn`` inside :meth:`edit`, after its holds."""

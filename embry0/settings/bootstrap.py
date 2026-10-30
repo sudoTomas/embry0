@@ -29,6 +29,16 @@ apply`` of the file would put each key back to its default. So it warns
 (``settings_env_imported_into_file_document``), naming each key to copy into
 the file.
 
+**Values kept in the database before the document.** Some keys were not
+variables alone: the five fleet budget keys lived in the ``budget_config``
+row, which won over their variables once someone saved it. An
+:class:`EarlierSource` reads such a store inside the import's transaction.
+When it holds a record, each key it answers is imported from it, by the same
+rules (a value equal to its default is not written, a refused one is logged
+and skipped), and never from its variable; when it holds none, those keys are
+read from their variables as above. Either way the key is marked, so the
+record is read once.
+
 The ledger is per key, so a key a later release adds to a section that was
 imported before still gets its variable. All of it runs in one transaction
 holding the document's row lock, so two processes booting together import
@@ -38,6 +48,7 @@ once. After that, a variable that is still set is ignored:
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Final
@@ -66,9 +77,28 @@ class RefusedImport:
 
 
 @dataclass(frozen=True)
+class EarlierSource:
+    """Where some keys of one section were stored in the database before the settings document.
+
+    ``read`` is given the import's own connection, inside its transaction,
+    and the running config. It answers each key's value as that key's reader
+    read it, already in the section's form, or None when nothing is stored
+    there: those keys are then read from their variables. Each key it answers
+    is imported from it and never from its variable.
+    """
+
+    section: str
+    #: How the comment above the imported keys, the revision and the logs name it.
+    label: str
+    read: Callable[[Any, Any], Awaitable[Mapping[str, Any] | None]]
+
+
+@dataclass(frozen=True)
 class BootstrapResult:
     #: Section name to the keys and values imported into it.
     imported: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: The part of ``imported`` read from an :class:`EarlierSource`, not from the environment.
+    earlier: dict[str, dict[str, Any]] = field(default_factory=dict)
     refused: tuple[RefusedImport, ...] = ()
     #: Values accepted on their own and refused with the section's other values: not marked, tried again next boot.
     held: tuple[RefusedImport, ...] = ()
@@ -129,18 +159,61 @@ def _env_values(
             continue
         if clean != defaults.get(key):
             accepted[key] = clean
+    return _together(section, accepted, stored, held, lambda key: env_name(imports[key].attr))
+
+
+def _together(
+    section: Section[Any],
+    accepted: dict[str, Any],
+    stored: dict[str, Any],
+    held: list[RefusedImport],
+    named: Callable[[str], str],
+) -> dict[str, Any]:
+    """Of ``accepted``, the values the section takes together with the stored values it still accepts; each
+    key blamed for a refusal goes to ``held`` under the name ``named`` gives it."""
     base = _still_accepted(section, stored) if accepted else {}
     while accepted:
         try:
             section.validate({**base, **accepted})
             break
         except SectionRefused as exc:
-            named = {str(e["loc"][0]) for e in exc.errors if e.get("loc") and str(e["loc"][0]) in accepted}
-            blamed = named or set(accepted)
+            blamed_keys = {str(e["loc"][0]) for e in exc.errors if e.get("loc") and str(e["loc"][0]) in accepted}
+            blamed = blamed_keys or set(accepted)
             reason = _reason(exc)
-            held.extend(RefusedImport(section.name, key, env_name(imports[key].attr), reason) for key in sorted(blamed))
+            held.extend(RefusedImport(section.name, key, named(key), reason) for key in sorted(blamed))
             accepted = {k: v for k, v in accepted.items() if k not in blamed}
     return accepted
+
+
+def _earlier_values(
+    section: Section[Any],
+    source: EarlierSource,
+    found: Mapping[str, Any],
+    keys: list[str],
+    stored: dict[str, Any],
+    refused: list[RefusedImport],
+    held: list[RefusedImport],
+) -> dict[str, Any]:
+    """The values of ``keys`` that ``found`` holds, differ from their defaults and the section accepts.
+
+    The rules of :func:`_env_values`, for values an :class:`EarlierSource`
+    read: a key already stored keeps its stored value, a value refused on its
+    own is skipped and logged, and one refused only with the section's other
+    values is held.
+    """
+    defaults = section.defaults().model_dump(mode="json")
+    accepted: dict[str, Any] = {}
+    for key in keys:
+        if key in stored:
+            continue
+        try:
+            clean = section.validate({key: found[key]}).model_dump(mode="json", exclude_unset=True)[key]
+        except SectionRefused as exc:
+            refused.append(RefusedImport(section.name, key, f"{source.label}: {key}", _reason(exc)))
+            continue
+        if clean != defaults.get(key):
+            accepted[key] = clean
+    return _together(section, accepted, stored, held, lambda key: f"{source.label}: {key}")
 
 
 @dataclass(frozen=True)
@@ -154,12 +227,14 @@ class EnvValues:
     held: tuple[RefusedImport, ...] = ()
 
     def variables(self, catalog: Catalog, section: str) -> list[str]:
-        """The variables the values of ``section`` were read from, in the section's order."""
+        """The variables the values of ``section`` were read from, in the section's order, each named once."""
         found = catalog.get(section)
         if found is None:
             return []
         imports = found.imports()
-        return [env_name(imports[key].attr) for key in self.values.get(section, {}) if key in imports]
+        return list(
+            dict.fromkeys(env_name(imports[key].attr) for key in self.values.get(section, {}) if key in imports)
+        )
 
 
 def env_values(catalog: Catalog, config: Any) -> EnvValues:
@@ -181,13 +256,18 @@ def env_values(catalog: Catalog, config: Any) -> EnvValues:
     return EnvValues(values=values, refused=tuple(refused), held=tuple(held))
 
 
-async def import_env_once(store: SettingsStore, config: Any, *, today: date | None = None) -> BootstrapResult:
-    """Import the environment value of every section key not imported yet. See the module docstring."""
+async def import_env_once(
+    store: SettingsStore, config: Any, *, today: date | None = None, earlier: Sequence[EarlierSource] = ()
+) -> BootstrapResult:
+    """Import the environment value of every section key not imported yet, and what each of ``earlier``
+    stored. See the module docstring."""
+    sources = {source.section: source for source in earlier if store.catalog.get(source.section) is not None}
     pending = [f"{section.name}.{key}" for section in store.catalog for key in section.imports()]
-    if not pending:
+    if not pending and not sources:
         return BootstrapResult()
     day = (today or datetime.now(UTC).date()).isoformat()
     imported: dict[str, dict[str, Any]] = {}
+    from_earlier: dict[str, dict[str, Any]] = {}
     refused: list[RefusedImport] = []
     held: list[RefusedImport] = []
     async with store.edit(actor=BOOTSTRAP_ACTOR, source="bootstrap", reason="imported from the environment") as draft:
@@ -195,22 +275,44 @@ async def import_env_once(store: SettingsStore, config: Any, *, today: date | No
         text, data = draft.yaml_text, dict(draft.data)
         for section in store.catalog:
             keys = [key for key in section.imports() if f"{section.name}.{key}" in todo]
+            source = sources.get(section.name)
+            found: Mapping[str, Any] | None = None
+            if source is not None:
+                fields = section.model.model_fields
+                found = await source.read(draft.conn, config)
+                if found is not None:
+                    # What the source holds comes from it, never from a variable.
+                    earlier_keys = [
+                        key for key in found if key in fields and f"{section.name}.{key}" not in draft.bootstrapped
+                    ]
+                    todo.extend(f"{section.name}.{key}" for key in earlier_keys if f"{section.name}.{key}" not in todo)
+                    keys = [key for key in keys if key not in found]
+                    stored = mapping(data.get(section.name))
+                    values = _earlier_values(section, source, found, earlier_keys, stored, refused, held)
+                    if values:
+                        comment = f"Imported from {source.label} on {day}: {', '.join(values)}."
+                        text = with_section(text, data, section.name, values, comment)
+                        data = {**data, section.name: {**stored, **values}}
+                        from_earlier[section.name] = values
+                        imported[section.name] = dict(values)
             if not keys:
                 continue
             stored = mapping(data.get(section.name))
             values = _env_values(section, keys, config, stored, refused, held)
             if not values:
                 continue
-            variables = ", ".join(env_name(section.imports()[key].attr) for key in values)
+            # One variable may feed several keys (CONTEXT_AUDIT_JOB_BUDGET_USD fed three): named once.
+            variables = ", ".join(dict.fromkeys(env_name(section.imports()[key].attr) for key in values))
             comment = f"Imported from the environment on {day}: {variables}."
             text = with_section(text, data, section.name, values, comment)
             data = {**data, section.name: {**stored, **values}}
-            imported[section.name] = values
+            imported[section.name] = {**imported.get(section.name, {}), **values}
         in_file = data.get(MANAGED_BY_KEY) == MANAGED_BY_FILE
         if imported:
             # Each value was checked as its section when it was read; the rest
             # of the document is what is stored, checked when it was written.
             draft.replace(text, data, draft.schema_version)
+            draft.reason = _import_reason(sources, from_earlier, imported)
         waiting = {f"{item.section}.{item.key}" for item in held}
         marked = [path for path in todo if path not in waiting]
         draft.mark_bootstrapped(marked)
@@ -243,23 +345,40 @@ async def import_env_once(store: SettingsStore, config: Any, *, today: date | No
             ),
         )
     if imported:
+        details: dict[str, Any] = {
+            "sections": {name: sorted(values) for name, values in imported.items()},
+            "revision_id": draft.revision_id,
+        }
+        if from_earlier:
+            details["earlier"] = {name: sources[name].label for name in from_earlier}
         await emit_audit(
             store.db,
             "settings.bootstrapped",
             actor=BOOTSTRAP_ACTOR,
-            details={
-                "sections": {name: sorted(values) for name, values in imported.items()},
-                "revision_id": draft.revision_id,
-            },
+            details=details,
             audit_log_path=getattr(config, "audit_log_path", None),
         )
     return BootstrapResult(
         imported=imported,
+        earlier=from_earlier,
         refused=tuple(refused),
         held=tuple(held),
         marked=tuple(marked),
         revision_id=draft.revision_id,
     )
+
+
+def _import_reason(
+    sources: Mapping[str, EarlierSource],
+    from_earlier: Mapping[str, Mapping[str, Any]],
+    imported: Mapping[str, Mapping[str, Any]],
+) -> str:
+    """What the import's revision says it imported from."""
+    labels = [sources[name].label for name in from_earlier]
+    from_env = any(set(values) - set(from_earlier.get(name, {})) for name, values in imported.items())
+    if not labels:
+        return "imported from the environment"
+    return "imported from " + " and ".join([*labels, *(["the environment"] if from_env else [])])
 
 
 async def log_ignored_env(store: SettingsStore, config: Any) -> list[GovernedVariable]:
