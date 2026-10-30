@@ -14,6 +14,14 @@ export function RepoSelector({ value, onChange, repos, placeholder = "Select rep
   const [search, setSearch] = useState(value);
   const ref = useRef<HTMLDivElement>(null);
   const later = useComponentTimeout();
+  // The text and the value as they are now, for the commit a blur makes 150 ms
+  // later. A click on an option lands inside those 150 ms and sets both to
+  // the option; compared as they were at the blur, the commit would put the
+  // filter typed to find the option back (#267).
+  const latest = useRef({ search, value });
+  useEffect(() => {
+    latest.current = { search, value };
+  });
 
   useEffect(() => { setSearch(value); }, [value]);
 
@@ -36,8 +44,9 @@ export function RepoSelector({ value, onChange, repos, placeholder = "Select rep
         onBlur={() => {
           later(() => {
             setOpen(false);
-            if (search !== value) {
-              onChange(search);
+            const { search: typed, value: chosen } = latest.current;
+            if (typed !== chosen) {
+              onChange(typed);
             }
           }, 150);
         }}
