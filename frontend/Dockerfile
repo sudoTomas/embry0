@@ -1,5 +1,5 @@
 # Stage 1: Build the React SPA
-FROM node:26.11-alpine AS build
+FROM node:26.12-alpine AS build
 
 # Upgrade OS packages first: a pinned base tag can ship a CRITICAL whose fix
 # is already in the Alpine repos. A build reuses this layer from its cache, so
