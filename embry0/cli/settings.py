@@ -6,6 +6,7 @@
     embry0 settings export [-o FILE]         # the stored document as written, comments included
     embry0 settings export --default         # every section, every key at its default, as comments
     embry0 settings import-env [-o FILE]     # a document holding the policy variables this environment sets
+    embry0 settings set asks remind_hours=12 # change keys of one section; the rest stays as stored
     embry0 settings revisions [ID]           # the document's changes, newest first; or one, with its diff
     embry0 settings undo ID                  # put back what the newest change replaced
 
@@ -39,8 +40,19 @@ only with ``--allow-unset`` too, since a key the startup import wrote into
 the stored document (and not into the file) would be lost without a word.
 ``export --default`` and ``import-env`` run offline too.
 
+``set SECTION KEY=VALUE...`` changes some keys of one section and leaves the
+rest of the stored document as it is, comments included
+(``PATCH /config/settings/{section}``). A value is JSON when it is JSON:
+``12`` is a number, ``true`` a switch, ``["a", "b"]`` a list, and
+``KEY=null`` takes the key out, back to its default or, for a layer, to
+what it inherits. Anything else is text as written, such as ``08-17``, so
+``yes`` or ``010`` never turns into another value; a number written with a
+leading zero or a colon is refused as ambiguous. Like ``apply`` it reads the
+generation, shows what the change does against it, asks, and writes with
+``If-Match`` naming it (source ``person``).
+
 ``--org OWNER`` or ``--repo PATH`` (``group/name``, or a GitLab subgroup's
-``group/subgroup/name``) on ``check``, ``diff``, ``apply``,
+``group/subgroup/name``) on ``check``, ``diff``, ``apply``, ``set``,
 ``export`` and ``revisions`` names an organization's or a repository's layer
 instead of the deployment's document: a document of the same shape holding
 only what that organization or repository sets. ``check`` then also refuses
@@ -55,9 +67,11 @@ Exit codes, for scripts, the same as ``embry0 progression-pack``'s
     0  done: valid, applied, nothing to change, written, undone
     1  refused: the document has problems (the API's 422, or ``check``),
        a variable the environment sets is refused, or the answer was no
-    2  usage: a bad argument, a file that cannot be read or written,
-       ``apply`` or ``undo`` without a terminal to confirm on and without
-       ``--yes``, or ``apply --yes`` that would unset a key without
+    2  usage: a bad argument (a ``KEY=VALUE`` with no ``=`` or no value, a
+       number with a leading zero or a colon, or a list or mapping that is
+       not JSON), a file that cannot be read or written,
+       ``apply``, ``set`` or ``undo`` without a terminal to confirm on and
+       without ``--yes``, or ``apply --yes`` that would unset a key without
        ``--allow-unset``
     3  conflict: the document changed since it was read (409), or the
        change to undo is not the newest one, or no longer what is stored
@@ -69,11 +83,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
+from urllib.parse import quote
 
 import httpx
 
@@ -159,8 +175,12 @@ def _unknown(body: dict[str, Any]) -> str | None:
     return ", ".join(parts) or None
 
 
-def _show(preview: dict[str, Any]) -> None:
-    """A dry run: whether it would change, each key it changes, and the text diff."""
+def _show(preview: dict[str, Any], *, from_file: bool = True) -> None:
+    """A dry run: whether it would change, each key it changes, and the text diff.
+
+    ``from_file`` names the keys a file leaves out, which it unsets; a change
+    of keys names its own, so it says nothing more of them.
+    """
     changes = preview.get("changes") or []
     print(f"would change: {'yes' if preview.get('would_change') else 'no'}")
     if changes:
@@ -169,7 +189,7 @@ def _show(preview: dict[str, Any]) -> None:
             print(line)
     elif preview.get("would_change"):
         print("settings: none; only comments or layout change")
-    unset = _unset(changes)
+    unset = _unset(changes) if from_file else []
     if unset:
         print("unsets (set now, left out of the file, so back to the default):")
         for line in _change_lines(unset):
@@ -408,6 +428,111 @@ def _apply(args: argparse.Namespace, client: httpx.Client) -> int:
     return OK
 
 
+#: A number written with a leading zero (``010``) or with colons (``1:30``): YAML 1.1 reads them as an
+#: octal or a base-60 number, a person may mean text, so ``set`` takes neither.
+_AMBIGUOUS_NUMBER: Final = re.compile(
+    r"[-+]?0[0-9_]+(?:\.[0-9_]*)?(?:[eE][-+]?[0-9]+)?|[-+]?[0-9][0-9_]*(?::[0-9_]+)+(?:\.[0-9_]*)?"
+)
+
+
+class _NotFinite(ValueError):
+    """JSON's ``NaN`` or ``Infinity``, which no setting holds."""
+
+
+def _not_finite(_constant: str) -> float:
+    raise _NotFinite
+
+
+def _read_value(key: str, raw: str) -> Any:
+    """One ``KEY=VALUE``'s value: JSON when it is JSON, else the text as written.
+
+    JSON reads ``12``, ``2.5``, ``true``, ``false``, ``null``, ``"text"``,
+    ``["a", "b"]`` and ``{"a": 1}`` as what they say; anything else, such as
+    ``08-17`` or ``Europe/Berlin``, is text, and a section refuses text where
+    it wants a number or a switch (422). So ``yes``, ``on``, ``~`` or ``0x10``
+    is never another value. Refused, as a usage error naming the key: a
+    number with a leading zero or colons (``010``, ``1:30``), which could be
+    meant either way; a list or mapping that is not JSON; a JSON key written
+    twice; ``NaN`` and ``Infinity``.
+    """
+    from embry0.text_documents import DuplicateKey, refuse_duplicate_keys
+
+    text = raw.strip()
+    try:
+        return json.loads(text, object_pairs_hook=refuse_duplicate_keys, parse_constant=_not_finite)
+    except DuplicateKey:
+        _err(f"{key}: the value writes a key twice")
+        raise _Exit(USAGE) from None
+    except _NotFinite:
+        _err(f"{key}: use a finite number")
+        raise _Exit(USAGE) from None
+    except (json.JSONDecodeError, RecursionError):
+        pass
+    if _AMBIGUOUS_NUMBER.fullmatch(text):
+        _err(
+            f"{key}: a number written with a leading zero or a colon could be meant as text: write the number "
+            f"without them, such as {key}=10, or the text in JSON quotes, such as {key}='\"09:30\"'"
+        )
+        raise _Exit(USAGE)
+    if text[:1] in ("[", "{"):
+        _err(f'{key}: write a list or a mapping as JSON, such as {key}=\'["a", "b"]\'')
+        raise _Exit(USAGE)
+    return raw
+
+
+def _assignments(pairs: list[str]) -> dict[str, Any]:
+    """``KEY=VALUE`` arguments as ``{key: value}``, each value read by :func:`_read_value`; ``null`` takes the key out.
+
+    A bad one is a usage error naming its key, never its value.
+    """
+    values: dict[str, Any] = {}
+    for number, pair in enumerate(pairs, start=1):
+        key, sep, raw = pair.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            _err(f"argument {number}: write KEY=VALUE, or KEY=null to take the key out")
+            raise _Exit(USAGE)
+        if key in values:
+            _err(f"{key}: given twice")
+            raise _Exit(USAGE)
+        if not raw.strip():
+            _err(f"{key}: give it a value, or write {key}=null to take it out")
+            raise _Exit(USAGE)
+        values[key] = _read_value(key, raw)
+    return values
+
+
+def _set(args: argparse.Namespace, client: httpx.Client) -> int:
+    if len(args.reason) > MAX_REASON:
+        _err(f"--reason is longer than {MAX_REASON} characters")
+        return USAGE
+    values = _assignments(args.values)
+    layer = _layer(args)
+    path = f"{_SETTINGS}/{quote(args.section, safe='')}"
+    generation = _generation(client, layer)
+    guard = {"If-Match": f'"{generation}"'}
+    preview = _json(_send(client, "PATCH", path, params={"dry_run": 1, **layer}, json=values, headers=guard))
+    _show(preview, from_file=False)
+    if preview.get("managed_by") == "file":
+        print("the document is kept in a file (managed_by: file): this change lasts until that file is applied again")
+    if not preview.get("would_change"):
+        print("nothing to change: the stored document holds these values already, so no revision is recorded")
+        return OK
+    if not _confirmed(args, f"Store this change over generation {generation}?"):
+        _err("not changed")
+        return REFUSED
+    params: dict[str, Any] = dict(layer)
+    if args.reason:
+        params["reason"] = args.reason
+    # The generation the change above was shown against: a document changed since is refused, not written over.
+    result = _json(_send(client, "PATCH", path, params=params, json=values, headers=guard))
+    if result.get("revision_id") is None:
+        print("nothing changed, so no revision is recorded")
+    else:
+        print(f"changed: generation {result.get('generation')}, revision {result.get('revision_id')}")
+    return OK
+
+
 def _export_default(args: argparse.Namespace) -> int:
     from embry0.settings.example import render
     from embry0.settings.sections import CATALOG
@@ -583,7 +708,14 @@ def run(
         with httpx.Client(
             base_url=base_url, headers=headers, timeout=httpx.Timeout(60.0, connect=10.0), transport=transport
         ) as client:
-            verbs = {"diff": _diff, "apply": _apply, "export": _export, "revisions": _revisions, "undo": _undo}
+            verbs = {
+                "diff": _diff,
+                "apply": _apply,
+                "set": _set,
+                "export": _export,
+                "revisions": _revisions,
+                "undo": _undo,
+            }
             return verbs[args.action](args, client)
     except _Exit as done:
         return done.code
@@ -625,6 +757,21 @@ def add_parser(subparsers: Any) -> None:
         help="with --yes, also unset keys that are set now and that the file leaves out",
     )
     apply.add_argument("--reason", default="", help=f"why, for the revision history (at most {MAX_REASON} characters)")
+    set_ = verbs.add_parser(
+        "set", help="Change some keys of one section, leaving the rest of the stored document as it is"
+    )
+    set_.add_argument("section", help="the section, such as asks")
+    set_.add_argument(
+        "values",
+        nargs="+",
+        metavar="KEY=VALUE",
+        help=(
+            'a value is JSON when it is JSON (12, true, \'["a", "b"]\'), else text as written (08-17); '
+            "KEY=null takes the key out; quote a number with a leading zero or a colon as JSON text"
+        ),
+    )
+    set_.add_argument("--yes", action="store_true", help="store without asking (needed without a terminal)")
+    set_.add_argument("--reason", default="", help=f"why, for the revision history (at most {MAX_REASON} characters)")
     export = verbs.add_parser("export", help="Write the stored settings document as YAML (stdout, or -o FILE)")
     export.add_argument(
         "--default", action="store_true", help="every section with every key at its default instead (offline)"
@@ -640,13 +787,13 @@ def add_parser(subparsers: Any) -> None:
     undo = verbs.add_parser("undo", help="Put back what the newest change replaced (recorded as a restore)")
     undo.add_argument("id", type=int, help="the newest change's number, from `embry0 settings revisions`")
     undo.add_argument("--yes", action="store_true", help="undo without asking (needed without a terminal)")
-    for verb in (check, diff, apply, export, import_env, revisions):
+    for verb in (check, diff, apply, set_, export, import_env, revisions):
         layer = verb.add_mutually_exclusive_group()
         layer.add_argument("--org", default=None, metavar="OWNER", help="an organization's layer, by its forge owner")
         layer.add_argument(
             "--repo", default=None, metavar="PATH", help="a repository's layer: group/name, or group/subgroup/name"
         )
-    for verb in (diff, apply, export, revisions, undo):
+    for verb in (diff, apply, set_, export, revisions, undo):
         verb.add_argument(
             "--api-url", default=None, help="Orchestrator base URL (default: EMBRY0_API_URL or http://localhost:8200)"
         )

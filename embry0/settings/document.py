@@ -131,35 +131,55 @@ def load_yaml(text: str) -> dict[str, Any]:
     return loaded
 
 
+def _utf8(body: bytes, what: str) -> str:
+    if len(body) > MAX_TEXT_BYTES:
+        raise DocumentTooLarge(f"the settings document is larger than {MAX_TEXT_BYTES} bytes")
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        raise DocumentInvalid([Problem((), "encoding", f"The {what} must be UTF-8 text.")]) from None
+
+
+def _json_object(text: str, not_an_object: str) -> dict[str, Any]:
+    """``text`` as a JSON object; empty text is ``{}``. A key written twice is refused, not dropped."""
+    try:
+        values = json.loads(text, object_pairs_hook=refuse_duplicate_keys) if text.strip() else {}
+    except DuplicateKey as exc:
+        raise DocumentInvalid([Problem((), "duplicate_key", str(exc))]) from None
+    except json.JSONDecodeError as exc:
+        raise DocumentInvalid(
+            [Problem((), "json_syntax", f"The JSON cannot be read: line {exc.lineno}, column {exc.colno}")]
+        ) from None
+    except RecursionError:
+        raise DocumentInvalid([_TOO_DEEP]) from None
+    if not isinstance(values, dict):
+        raise DocumentInvalid([Problem((), "not_a_mapping", not_an_object)])
+    return values
+
+
 def parse_body(body: bytes, content_type: str) -> tuple[str | None, dict[str, Any]]:
     """A request body as ``(text, values)``.
 
     YAML (any content type but JSON) keeps its text; a JSON object has no
     text yet (``None``): the store writes the YAML it dumps to.
     """
-    if len(body) > MAX_TEXT_BYTES:
-        raise DocumentTooLarge(f"the settings document is larger than {MAX_TEXT_BYTES} bytes")
-    try:
-        text = body.decode("utf-8")
-    except UnicodeDecodeError:
-        raise DocumentInvalid([Problem((), "encoding", "The document must be UTF-8 text.")]) from None
+    text = _utf8(body, "document")
     if content_type.split(";", 1)[0].strip().lower() == "application/json":
-        try:
-            values = json.loads(text, object_pairs_hook=refuse_duplicate_keys) if text.strip() else {}
-        except DuplicateKey as exc:
-            raise DocumentInvalid([Problem((), "duplicate_key", str(exc))]) from None
-        except json.JSONDecodeError as exc:
-            raise DocumentInvalid(
-                [Problem((), "json_syntax", f"The JSON cannot be read: line {exc.lineno}, column {exc.colno}")]
-            ) from None
-        except RecursionError:
-            raise DocumentInvalid([_TOO_DEEP]) from None
-        if not isinstance(values, dict):
-            raise DocumentInvalid([Problem((), "not_a_mapping", "The document must be an object of sections.")])
-        return None, values
+        return None, _json_object(text, "The document must be an object of sections.")
     if "\x00" in text:
         raise DocumentInvalid([Problem((), "nul_character", "The document cannot hold the NUL character.")])
     return text, load_yaml(text)
+
+
+def parse_keys(body: bytes) -> dict[str, Any]:
+    """A request body naming keys of one section, a JSON object ``{key: value}``; empty is ``{}``.
+
+    ``null`` takes a key out (:func:`patch_section`). Refused as a document
+    body is: text that is not UTF-8 JSON, a key written twice, nesting too
+    deep, anything but an object, each a :class:`DocumentInvalid` at ``loc``
+    ``[]``; past :data:`MAX_TEXT_BYTES`, :class:`DocumentTooLarge`.
+    """
+    return _json_object(_utf8(body, "body"), "The body must be a JSON object of the section's keys.")
 
 
 # ---- checking a write -----------------------------------------------------------
@@ -463,6 +483,98 @@ def check(
     )
 
 
+def _patch_problems(
+    catalog: Catalog, name: str, keys: Mapping[str, Any], *, held: tuple[Mapping[str, Any], ...], layer: str
+) -> list[Problem]:
+    """What :func:`check` cannot see in a change of one section's keys: the section itself, and a key that
+    is taken out (``null``) where it is no setting of the section, or one this document may not set.
+
+    ``held`` is the stored document's values as its text has them and as they are stored: a key either
+    holds is taken out whatever it is, as a document that leaves it out takes it out.
+    """
+    if name in DOCUMENT_KEYS:
+        msg = f"'{name}' is a key of the document, not a section: change it in the whole document."
+        return [Problem((name,), "unknown_section", msg)]
+    section = catalog.get(name)
+    if section is None:
+        if any(name in values for values in held):
+            msg = f"'{name}' is not a section this embry0 knows, so it cannot change it."
+        else:
+            msg = f"'{name}' is not a settings section.{_close(name, catalog.names)}"
+        return [Problem((name,), "unknown_section", msg)]
+    problems: list[Problem] = []
+    stored = {key for values in held for key in mapping(values.get(name))}
+    for key, value in keys.items():
+        if key not in section.model.model_fields and key not in stored:
+            msg = f"'{key}' is not a setting of '{name}'.{_close(key, section.fields)}"
+            problems.append(Problem((name, key), "extra_forbidden", msg))
+        elif value is None and layer != "deployment" and key not in stored and key not in section.settable(layer):
+            problems.append(Problem((name, key), "not_overridable", _not_settable(section, layer, key)))
+        elif value is not None:
+            problems.extend(_json_problems(value, (name, key)))
+    return problems
+
+
+def patch_section(
+    catalog: Catalog,
+    name: str,
+    keys: Mapping[str, Any],
+    *,
+    stored: Mapping[str, Any],
+    stored_text: str = "",
+    layer: str = "deployment",
+    inherited: Mapping[str, Mapping[str, Any]] | None = None,
+) -> tuple[str, Checked]:
+    """The stored document with ``keys`` of section ``name`` set, ``None`` taking a key out: its new text
+    and what :func:`check` makes of it.
+
+    The change goes into the stored text (:func:`with_keys`), so its
+    comments and layout stay, and the document it makes meets every check a
+    whole document does, the rest of it included: a value this release now
+    refuses elsewhere in the document refuses the change too, as it would a
+    ``PUT`` of the same text. Raises :class:`DocumentInvalid` listing every
+    problem at once, before the text is touched: a section this release does
+    not have, a key the section does not have (taking out one a newer release
+    wrote is allowed, as leaving it out of a document is), a key the layer
+    may not set, and every problem :func:`check` finds. A key taken out that
+    is not written changes nothing, and nor does a value the section reads as
+    the one stored, such as ``12`` for a number stored as ``12.0``: its text
+    is left as written. No problem echoes a value.
+    """
+    as_text = _stored_text_values(stored_text)
+    problems = _patch_problems(catalog, name, keys, held=(as_text, stored), layer=layer)
+    if problems and not any(len(problem.loc) > 1 for problem in problems):
+        raise DocumentInvalid(problems)  # the section itself: there is nothing to check its keys against
+    bad = {problem.loc[1] for problem in problems if len(problem.loc) > 1}
+    good = {key: value for key, value in keys.items() if key not in bad}
+    raw = dict(as_text)
+    section = dict(mapping(raw.get(name)))
+    for key, value in good.items():
+        if value is None:
+            section.pop(key, None)
+        else:
+            section[key] = value
+    if section or name in raw:
+        raw[name] = section
+    try:
+        proposed = check(catalog, raw, stored=stored, stored_text=stored_text, layer=layer, inherited=inherited)
+    except DocumentInvalid as exc:
+        problems.extend(exc.problems)
+    if problems:
+        raise DocumentInvalid(problems)
+    # A key the text holds whose value the section reads as the one stored (12 for a stored 12.0) is
+    # left as written: rewriting it would record a revision that changes no setting.
+    written, kept, now = mapping(as_text.get(name)), mapping(stored.get(name)), mapping(proposed.data.get(name))
+    good = {
+        key: value
+        for key, value in good.items()
+        if value is None or not (key in written and key in kept and key in now and same(now[key], kept[key]))
+    }
+    text = with_keys(stored_text, stored, name, good)
+    checked = check(catalog, load_yaml(text), stored=stored, stored_text=stored_text, layer=layer, inherited=inherited)
+    return text, checked
+
+
 # ---- reading stored values ----------------------------------------------------------
 
 
@@ -660,10 +772,7 @@ def with_section(text: str, values: Mapping[str, Any], name: str, add: Mapping[s
         before = mapping(parsed.get(name))
         expected = {**parsed, name: {**before, **add}}
         if name not in parsed:
-            lead = text.rstrip("\r\n") + newline + newline if text.strip() else ""
-            candidate: str | None = (
-                lead + _comment(comment, "", newline) + _lines(dump_yaml({name: dict(add)}), "", newline)
-            )
+            candidate: str | None = _appended(text, name, add, comment, newline)
         else:
             candidate = _insert_into_section(text, name, add, comment)
         if candidate is not None:
@@ -672,15 +781,192 @@ def with_section(text: str, values: Mapping[str, Any], name: str, add: Mapping[s
                     return candidate
             except (DocumentInvalid, DocumentTooLarge):
                 pass
+    merged = {**values, name: {**(values.get(name) or {}), **add}}
+    return _written_again(text, merged, name, comment, newline)
+
+
+def _appended(text: str, name: str, add: Mapping[str, Any], comment: str, newline: str) -> str:
+    """``text`` with section ``name`` holding ``add`` written after everything it holds, under ``comment``."""
+    lead = text.rstrip("\r\n") + newline + newline if text.strip() else ""
+    return lead + _comment(comment, "", newline) + _lines(dump_yaml({name: dict(add)}), "", newline)
+
+
+def _written_again(text: str, merged: Mapping[str, Any], name: str, comment: str, newline: str) -> str:
+    """The whole document written again from ``merged``, its values, which loses its comments: the first
+    line says so, and ``settings_text_rewritten`` is logged."""
     if text.strip():
         logger.warning(
             "settings_text_rewritten",
             section=name,
             hint="the document was written again from its values, and its comments were lost",
         )
-    merged = {**values, name: {**(values.get(name) or {}), **add}}
     header = "# Written again by embry0, which could not keep this document's comments."
     return _lines(header, "", newline) + _comment(comment, "", newline) + _lines(dump_yaml(merged), "", newline)
+
+
+def _flow(value: Any) -> str | None:
+    """``value`` as YAML that fits on the line after ``key:``, or None when it needs more lines.
+
+    Dumped as the one item of a flow sequence, so text that would read as
+    something else (``'true'``, ``'a: b'``, ``'x, y'``) comes back quoted.
+    """
+    dumped = yaml.safe_dump([value], default_flow_style=True, width=math.inf, allow_unicode=True).rstrip("\n")
+    if "\n" in dumped or not (dumped.startswith("[") and dumped.endswith("]")):
+        return None
+    return dumped[1:-1]
+
+
+def _one_line(node: yaml.Node) -> bool:
+    """A value written on one line: a plain or quoted scalar, or a flow collection."""
+    if node.start_mark.line != node.end_mark.line:
+        return False
+    if isinstance(node, yaml.ScalarNode):
+        return node.style in (None, "'", '"')
+    return bool(getattr(node, "flow_style", False))
+
+
+def _entry_end(text: str, value: yaml.Node, column: int) -> int:
+    """Where a key's entry ends: the start of the line after its value, above the comments that follow it.
+
+    A block value ends at its last scalar (:func:`_last_scalar_end`), and
+    the blank and comment lines after it belong to what comes next.
+    """
+    if _one_line(value) or getattr(value, "flow_style", False):
+        return _after_line(text, int(value.end_mark.index))
+    return _insert_point(text, _last_scalar_end(value), column)
+
+
+def _key_in_section(text: str, name: str, key: str) -> tuple[yaml.Node, yaml.Node, int] | None:
+    """Section ``name``'s entry for ``key`` in a block-style section: its key node, its value node, and
+    where the key's line starts. None when the text holds it some other way."""
+    try:
+        root = _compose(text)
+    except DocumentInvalid:
+        return None
+    if not isinstance(root, yaml.MappingNode):
+        return None
+    for section_key, section in root.value:
+        if not (isinstance(section_key, yaml.ScalarNode) and section_key.value == name):
+            continue
+        if not (isinstance(section, yaml.MappingNode) and not section.flow_style):
+            return None
+        for node, value in section.value:
+            if isinstance(node, yaml.ScalarNode) and node.value == key:
+                index = int(node.start_mark.index)
+                start = text.rfind("\n", 0, index) + 1
+                # A key that does not begin its line (a tag, an anchor or a complex key before it) is left whole.
+                return (node, value, start) if not text[start:index].strip() else None
+        return None
+    return None
+
+
+def _set_key(text: str, name: str, key: str, value: Any, newline: str) -> str | None:
+    """``text`` with ``key`` of section ``name`` holding ``value``, where it stands.
+
+    A value written on one line is replaced on that line, so a comment after
+    it stays; a value on several lines (a block list, a ``|`` text) is
+    replaced with its entry, as block YAML at the key's indent.
+    """
+    found = _key_in_section(text, name, key)
+    if found is None:
+        return None
+    node, old, start = found
+    inline = _flow(value) if _one_line(old) else None
+    if inline is not None:
+        begin, end = int(old.start_mark.index), int(old.end_mark.index)
+        if begin == end and text[begin - 1 : begin] == ":":
+            inline = " " + inline  # the key was written with no value at all (`key:`)
+        return text[:begin] + inline + text[end:]
+    column = int(node.start_mark.column)
+    end = _entry_end(text, old, column)
+    return text[:start] + _lines(dump_yaml({key: value}), " " * column, newline) + text[end:]
+
+
+def _drop_key(text: str, name: str, key: str) -> str | None:
+    """``text`` without ``key``'s entry in section ``name``; the comments around it stay."""
+    found = _key_in_section(text, name, key)
+    if found is None:
+        return None
+    node, old, start = found
+    return text[:start] + text[_entry_end(text, old, int(node.start_mark.column)) :]
+
+
+def _without_empty(values: Mapping[str, Any]) -> dict[str, Any]:
+    """``values`` without the sections written as nothing, ``null`` or ``{}``, which all read alike."""
+    return {name: value for name, value in values.items() if not _empty(value)}
+
+
+def _keys_edited(text: str, parsed: Mapping[str, Any], name: str, keys: Mapping[str, Any], newline: str) -> str | None:
+    """``text`` with ``keys`` written into section ``name``, or None where it cannot be kept."""
+    if name not in parsed:
+        written = {key: value for key, value in keys.items() if value is not None}
+        return _appended(text, name, written, "", newline) if written else text
+    before = mapping(parsed.get(name))
+    edited: str | None = text
+    add: dict[str, Any] = {}
+    for key, value in keys.items():
+        if edited is None:
+            return None
+        if value is None:
+            edited = _drop_key(edited, name, key) if key in before else edited
+        elif key not in before:
+            add[key] = value
+        elif not same(before[key], value):
+            edited = _set_key(edited, name, key, value, newline)
+    if edited is not None and add:
+        edited = _insert_into_section(edited, name, add, "")
+    return edited
+
+
+def with_keys(text: str, values: Mapping[str, Any], name: str, keys: Mapping[str, Any]) -> str:
+    """``text`` with each of ``keys`` set in section ``name``, or taken out where it is None, comments kept where it can.
+
+    ``values`` is the stored document's values. A key the section holds keeps
+    its place: a value on one line is replaced on that line, so a comment
+    after it stays, and one on several lines is replaced with its entry. A
+    key taken out loses its own lines, and the comments around them stay; the
+    section's own key stays when nothing is left under it. A key the section
+    does not hold is written at the end of its block (:func:`_insert_into_section`),
+    and a section the text does not hold is appended. A key already holding
+    its value, type included, or taken out and not written, is left as it
+    is, so the text does not change. Else, as for a flow-style section or a
+    text that would not parse back to the values meant, the whole document is
+    written again from ``values``, as :func:`with_section` does, and
+    ``settings_text_rewritten`` is logged.
+    """
+    newline = "\r\n" if "\r\n" in text else "\n"
+    try:
+        parsed: dict[str, Any] | None = load_yaml(text)
+    except (DocumentInvalid, DocumentTooLarge):
+        parsed = None
+    if parsed is not None:
+        section = dict(mapping(parsed.get(name)))
+        for key, value in keys.items():
+            if value is None:
+                section.pop(key, None)
+            else:
+                section[key] = value
+        candidate = _keys_edited(text, parsed, name, keys, newline)
+        if candidate is not None:
+            if len(candidate.encode("utf-8")) > MAX_TEXT_BYTES:
+                return candidate  # too large however it is written: the caller refuses it
+            try:
+                if same(_without_empty(load_yaml(candidate)), _without_empty({**parsed, name: section})):
+                    return candidate
+            except DocumentInvalid:
+                pass
+    section = dict(mapping(values.get(name)))
+    for key, value in keys.items():
+        if value is None:
+            section.pop(key, None)
+        else:
+            section[key] = value
+    merged = dict(values)
+    if section:
+        merged[name] = section
+    else:
+        merged.pop(name, None)
+    return _written_again(text, merged, name, "", newline)
 
 
 def text_diff(before: str, after: str) -> str:

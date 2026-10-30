@@ -67,6 +67,7 @@ EXPECTED_TOOLS = {
     "settings_effective",
     "settings_schema",
     "settings_set",
+    "settings_set_keys",
     "settings_revisions",
     "settings_undo",
     "org_webhook_install",
@@ -119,6 +120,7 @@ CONFIRM_GATED = {
     "progression_pack_set",
     "progression_pack_reset",
     "settings_set",
+    "settings_set_keys",
     "settings_undo",
     "org_webhook_install",
     "org_act",
@@ -708,6 +710,28 @@ async def test_settings_tools_pass_the_layer_on(fake_client):
     ], "a settings tool dropped the layer it was given, so it would read or replace the deployment's document"
     assert refused.get("error") == "confirmation_required"
     assert "acme/widgets" in str(refused), "the confirmation names the layer it would replace"
+
+
+async def test_settings_set_keys_runs_a_dry_run_freely_and_needs_confirm_to_write(fake_client):
+    """A change of some keys of one section: a dry run stores nothing, so it needs no confirm; a write does,
+    and its refusal names the keys and the layer it would change."""
+    values = {"remind_hours": 12, "hours": None}
+    assert await server.settings_set_keys("asks", values, dry_run=True) == {"called": "settings_set_keys"}
+    refused = await server.settings_set_keys("asks", values, expected_generation=3, owner="acme")
+    assert refused.get("error") == "confirmation_required", "a real write must require confirm"
+    assert "change asks.remind_hours, asks.hours in the settings layer of acme" in refused["message"]
+    written = await server.settings_set_keys(
+        "asks", values, expected_generation=3, reason="a busy week", repo="acme/widgets", confirm=True
+    )
+    assert written == {"called": "settings_set_keys"}
+    assert fake_client.calls == [
+        ("settings_set_keys", ("asks", values), {"dry_run": True, "expected_generation": None, "reason": ""}),
+        (
+            "settings_set_keys",
+            ("asks", values),
+            {"expected_generation": 3, "reason": "a busy week", "repo": "acme/widgets"},
+        ),
+    ], "only the dry run and the confirmed write reach the API, each with its generation, reason and layer"
 
 
 def test_the_instructions_name_the_settings_document():
