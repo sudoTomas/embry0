@@ -544,7 +544,7 @@ def cmd_migrate_qa_config(args: argparse.Namespace) -> None:
     _info(
         f"migrated {args.qa_path} (v1 backed up to qa.v1.yaml.bak). "
         "Store the result in embry0 (target repos carry no config file): "
-        "PUT /api/v1/repos/<owner>/<repo>/qa-config with the migrated text, "
+        "PUT /api/v1/repos/<owner>/<repo>/-/qa-config with the migrated text, "
         "or paste it into the dashboard config editor."
     )
 
@@ -788,7 +788,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     if status == "completed":
         _info(
             f"onboard completed — the qa.yaml for {args.repo} is stored in the embry0 DB. "
-            f"Inspect: GET {base}/api/v1/repos/{args.repo}/qa-config"
+            f"Inspect: GET {base}/api/v1/repos/{args.repo}/-/qa-config"
         )
     else:
         _err(f"onboard {status}: {(job.get('error_message') or 'no detail')[:1000]}")
@@ -910,7 +910,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     _info("Next steps:")
     if result.get("qa_required") == "never":
         _info("  - QA is set to `never` (empty repo). Once there is an app to boot,")
-        _info(f"    edit the stored config (PUT /api/v1/repos/{result['repo']}/qa-config)")
+        _info(f"    edit the stored config (PUT /api/v1/repos/{result['repo']}/-/qa-config)")
         _info("    or run `embry0 onboard` to regenerate it, and flip qa_required to auto.")
     _info("  - File the first issue: label it `embry0` in Linear (team EMB), or")
     _info(f'    POST /api/v1/issues {{repo: "{result["repo"]}", auto_triage: true}} —')

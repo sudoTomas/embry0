@@ -2919,6 +2919,7 @@ def _register_routers(app: FastAPI) -> None:
         qa_images,
         queue,
         repo_history,
+        repo_old_paths,
         repo_preferences,
         repo_setup,
         repos,
@@ -3005,7 +3006,6 @@ def _register_routers(app: FastAPI) -> None:
     # Areas (spec 2026-10-25): a repository's areas file, and mapping it with an agent.
     app.include_router(areas.router, prefix="/api/v1", tags=["areas"], dependencies=auth_deps)
     # The Slop-O-Meter (spec 2026-10-26): a repository's score and weekly series.
-    # Before repos' catch-all /repos/{full_repo:repo}, like areas.
     app.include_router(slop_meter.router, prefix="/api/v1", tags=["slop-meter"], dependencies=auth_deps)
     # The world (spec 2026-10-25): the guild hall, the quest board and the quests' scrolls.
     app.include_router(world.router, prefix="/api/v1", tags=["world"], dependencies=auth_deps)
@@ -3040,12 +3040,14 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(repo_history.router, prefix="/api/v1", tags=["repo-history"], dependencies=auth_deps)
     # ADR 0019: start, review, apply and turn down a setup proposal (writes operator tier).
     app.include_router(repo_setup.router, prefix="/api/v1", tags=["repo-setup"], dependencies=auth_deps)
-    # MUST come after every router owning a /repos/{repo}/<suffix> route:
-    # repos exposes a `{full_repo:repo}` catch-all (#162, for GitLab nested
-    # subgroups) which would otherwise shadow them for a repository of three
-    # or more segments. Two segments are always the repository's own
-    # address, whatever the order (#243, embry0/api/repo_route.py). Pinned by
-    # tests/unit/api/test_repos_route_order.py.
+    # #257: a repository's sub-resources at their old paths, without the /-/
+    # separator, deprecated until repo_old_paths.OLD_PATHS_REMOVED_IN.
+    # MUST come before repos: its `{full_repo:repo}` detail routes (#162,
+    # for GitLab nested subgroups) would read an old path of three or more
+    # segments as a repository. A path with the separator never reaches the
+    # detail routes, whatever the order (embry0/api/repo_route.py). Pinned
+    # by tests/unit/api/test_repos_route_order.py.
+    app.include_router(repo_old_paths.deprecated_router, prefix="/api/v1", tags=["repos"], dependencies=auth_deps)
     app.include_router(repos.router, prefix="/api/v1", tags=["repos"], dependencies=auth_deps)
     app.include_router(organizations.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     app.include_router(org_needs.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)

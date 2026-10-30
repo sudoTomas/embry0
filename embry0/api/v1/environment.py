@@ -165,7 +165,7 @@ async def reveal_global_secret(key: str, request: Request) -> RevealResponse:
 # ----- Per-repo endpoints -----
 
 
-@router.get("/repos/{full_repo:repo}/environment", response_model=EnvironmentResponse)
+@router.get("/repos/{full_repo:repo}/-/environment", response_model=EnvironmentResponse)
 async def get_repo_environment(full_repo: str, request: Request) -> EnvironmentResponse:
     env_repo = request.app.state.env_repo
     rows = await env_repo.get_repo(full_repo)
@@ -173,7 +173,7 @@ async def get_repo_environment(full_repo: str, request: Request) -> EnvironmentR
     return EnvironmentResponse(variables=await _mask_vars(rows, provider))
 
 
-@router.get("/repos/{full_repo:repo}/environment/resolve", response_model=EnvironmentResponse)
+@router.get("/repos/{full_repo:repo}/-/environment/resolve", response_model=EnvironmentResponse)
 async def resolve_repo_environment(full_repo: str, request: Request) -> EnvironmentResponse:
     env_repo = request.app.state.env_repo
     merged: dict[str, dict[str, object]] = {}
@@ -185,7 +185,7 @@ async def resolve_repo_environment(full_repo: str, request: Request) -> Environm
     return EnvironmentResponse(variables=await _mask_vars(list(merged.values()), provider))
 
 
-@router.put("/repos/{full_repo:repo}/environment", response_model=EnvironmentResponse)
+@router.put("/repos/{full_repo:repo}/-/environment", response_model=EnvironmentResponse)
 async def set_repo_environment(full_repo: str, req: EnvironmentSetRequest, request: Request) -> EnvironmentResponse:
     provider = request.app.state.secrets_provider
     env_repo = request.app.state.env_repo
@@ -198,7 +198,7 @@ async def set_repo_environment(full_repo: str, req: EnvironmentSetRequest, reque
 
 
 @router.get(
-    "/repos/{full_repo:repo}/environment/{key}/reveal", response_model=RevealResponse, dependencies=[require_admin]
+    "/repos/{full_repo:repo}/-/environment/{key}/reveal", response_model=RevealResponse, dependencies=[require_admin]
 )
 async def reveal_repo_secret(full_repo: str, key: str, request: Request) -> RevealResponse:
     env_repo = request.app.state.env_repo
@@ -226,7 +226,7 @@ async def reveal_repo_secret(full_repo: str, key: str, request: Request) -> Reve
     return RevealResponse(key=var["key"], value=var["value"])
 
 
-@router.delete("/repos/{full_repo:repo}/environment/{key}", status_code=204, response_model=None)
+@router.delete("/repos/{full_repo:repo}/-/environment/{key}", status_code=204, response_model=None)
 async def delete_repo_env_var(full_repo: str, key: str, request: Request) -> None:
     env_repo = request.app.state.env_repo
     await env_repo.delete_repo_var(full_repo, key)
@@ -280,7 +280,7 @@ def _parse_env_file(content: str) -> list[dict[str, Any]]:
     return results
 
 
-@router.get("/repos/{full_repo:repo}/environment/detect", response_model=DetectResponse)
+@router.get("/repos/{full_repo:repo}/-/environment/detect", response_model=DetectResponse)
 async def detect_repo_environment(full_repo: str, request: Request) -> DetectResponse:
     full_repo = full_repo
     # Route by owner: fine-grained PATs are single-owner, so the default token

@@ -11,12 +11,13 @@ import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from httpx import ASGITransport, AsyncClient
 from prometheus_client.parser import text_string_to_metric_families
 
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
+from embry0.metrics.wiring import _slash_redirect_patterns
 from tests.fixtures.routes import app_routes
 
 _JOB_A = "0a1b2c3d-0000-4000-8000-00000000000a"
@@ -68,15 +69,71 @@ async def _request_samples(client: AsyncClient) -> list[dict[str, str]]:
     ]
 
 
-def test_no_route_path_ends_in_a_slash() -> None:
-    """The exclusion assumes a handler ending in ``/`` is never a real template.
+def _templates_the_exclusion_drops(app: FastAPI) -> list[str]:
+    """Route templates an exclusion pattern matches: their requests would drop out of /metrics unseen."""
+    patterns = [re.compile(pattern) for pattern in _slash_redirect_patterns(app)]
+    return sorted({route.path for route in app_routes(app) if any(p.match(route.path) for p in patterns)})
 
-    A route declared with a trailing slash would make that false: its own
-    template could then match a sibling route's exclusion pattern and drop
-    out of /metrics without anyone noticing.
+
+def test_no_route_template_is_excluded_from_the_metrics() -> None:
+    """The exclusion assumes a handler it matches is a redirect, never a real template.
+
+    A route declared with a trailing slash can make that false: its own
+    template can match a sibling route's exclusion pattern (``/items/{id}/``
+    against the pattern of ``/items/{id}``) and drop out of /metrics without
+    anyone noticing. A repository's own address after the separator,
+    ``/repos/{full_repo:repo}/-/`` (#257), ends in a slash and matches none: no
+    repository segment can be ``{``.
     """
-    slashed = [route.path for route in app_routes(_app()) if route.path.endswith("/")]
-    assert slashed == [], f"routes ending in '/' would break the #507 metrics exclusion: {slashed}"
+    dropped = _templates_the_exclusion_drops(_app())
+    assert dropped == [], f"route templates the #507 metrics exclusion would drop: {dropped}"
+
+
+def test_the_template_check_fires_on_a_slash_route_a_sibling_excludes() -> None:
+    app = _app()
+    planted = APIRouter()
+    planted.add_api_route("/planted/{item_id}", lambda: None, methods=["GET"])
+    planted.add_api_route("/planted/{item_id}/", lambda: None, methods=["GET"])
+    app.include_router(planted, prefix="/api/v1")
+    assert _templates_the_exclusion_drops(app) == ["/api/v1/planted/{item_id}/"]
+
+
+def _slash_routes_without_a_twin(app: FastAPI) -> list[str]:
+    """Parametrised routes ending in ``/`` whose path without the slash is not served for the same methods.
+
+    Starlette answers that path with a redirect to the slash, the instrumentator labels the redirect by its raw
+    path, and the exclusion covers only the other direction: one series per value, whatever the convertor.
+    """
+    methods: dict[str, set[str]] = {}
+    for route in app_routes(app):
+        if route.methods:
+            methods.setdefault(route.path, set()).update(route.methods)
+    return sorted(
+        path
+        for path, served in methods.items()
+        if "{" in path and path.endswith("/") and methods.get(path.removesuffix("/"), set()) != served
+    )
+
+
+def test_every_route_ending_in_a_slash_also_serves_its_path_without_it() -> None:
+    """Structural, so a typed convertor the request sweep cannot fill (``{n:int}``, ``{u:uuid}``) is covered too."""
+    lonely = _slash_routes_without_a_twin(_app())
+    assert lonely == [], f"routes ending in '/' whose slashless path Starlette would redirect: {lonely}"
+
+
+def test_the_twin_check_fires_on_slash_routes_with_typed_convertors() -> None:
+    app = _app()
+    planted = APIRouter()
+    planted.add_api_route("/planted/{n:int}/", lambda: None, methods=["GET"])
+    planted.add_api_route("/planted/{u:uuid}/", lambda: None, methods=["GET"])
+    planted.add_api_route("/twinned/{u:uuid}/", lambda: None, methods=["GET", "DELETE"])
+    planted.add_api_route("/twinned/{u:uuid}", lambda: None, methods=["GET"])
+    app.include_router(planted, prefix="/api/v1")
+    assert _slash_routes_without_a_twin(app) == [
+        "/api/v1/planted/{n:int}/",
+        "/api/v1/planted/{u:uuid}/",
+        "/api/v1/twinned/{u:uuid}/",
+    ]
 
 
 async def test_a_trailing_slash_redirect_never_puts_an_id_in_the_handler_label() -> None:
@@ -122,7 +179,10 @@ async def test_no_parametrised_route_leaks_a_literal_value_through_its_slash_red
     """Every parametrised HTTP route create_app() registers, not just /jobs.
 
     Catches a route added after the metrics are installed, which the
-    exclusion list (built at install time) would not know about.
+    exclusion list (built at install time) would not know about. A route
+    whose path ends in ``/`` is asked without it too: Starlette redirects that
+    the other way, which the exclusion does not cover, so such a route must
+    also serve the path without the slash (``/repos/{full_repo:repo}/-``, #257).
     """
     app = _app()
     tokens: list[str] = []
@@ -131,10 +191,11 @@ async def test_no_parametrised_route_leaks_a_literal_value_through_its_slash_red
         for n, route in enumerate(r for r in app_routes(app) if r.is_api_route and "{" in r.path):
             token = f"lit{n}x"
             tokens.append(token)
-            path = _filled(route.path, token) + "/"
+            filled = _filled(route.path, token)
             method = sorted((route.methods or set()) - {"HEAD"})[0]
-            response = await client.request(method, path)
-            redirected += response.status_code == 307
+            for path in (filled + "/", filled.removesuffix("/")) if filled.endswith("/") else (filled + "/",):
+                response = await client.request(method, path)
+                redirected += response.status_code == 307
         samples = await _request_samples(client)
 
     assert redirected > 0, "precondition: no request was answered with a trailing-slash redirect"

@@ -35,7 +35,7 @@ It is on by default. `SLOP_METER_INTERVAL_SECONDS=0` turns it off.
 
 ## Where it shows
 
-- `GET /api/v1/repos/{repo}/slop-meter` and the repository page: the score, the level and a week-by-week line of cost, capacity and slop ([api.md](api.md)).
+- `GET /api/v1/repos/{repo}/-/slop-meter` and the repository page: the score, the level and a week-by-week line of cost, capacity and slop ([api.md](api.md)).
 - The Slop Dungeons in the [world](world.md) carry each area's reading; an area at Spaghetti Bolognese or worse has a dungeon even with no open slop finding.
 - Triage is told the job's area's (else the repository's) level, and the Slopmaster how much of the area landed beyond human attention.
 

@@ -32,6 +32,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import APIRouter
 
+from embry0.api.route_table import ServedRoute
+from embry0.api.v1.repo_old_paths import OldPathRoute, successor_path
 from embry0.config import Embry0Config
 from tests.fixtures.routes import app_routes
 from tests.unit.api.test_actor_fields import HISTORY_ROUTES
@@ -112,14 +114,14 @@ NO_ACTOR_ROUTES: dict[str, tuple[str, ...]] = {
         "/api/v1/watcher/stacks/{owner}/{name}",
         "/api/v1/environment/global",
         "/api/v1/environment/global/{key}/reveal",
-        "/api/v1/repos/{full_repo:repo}/environment",
-        "/api/v1/repos/{full_repo:repo}/environment/resolve",
-        "/api/v1/repos/{full_repo:repo}/environment/{key}/reveal",
-        "/api/v1/repos/{full_repo:repo}/environment/detect",
-        "/api/v1/repos/{full_repo:repo}/preferences",
-        "/api/v1/repos/{full_repo:repo}/qa-config",
-        "/api/v1/repos/{full_repo:repo}/setup/cost",
-        "/api/v1/repos/{full_repo:repo}/readiness",
+        "/api/v1/repos/{full_repo:repo}/-/environment",
+        "/api/v1/repos/{full_repo:repo}/-/environment/resolve",
+        "/api/v1/repos/{full_repo:repo}/-/environment/{key}/reveal",
+        "/api/v1/repos/{full_repo:repo}/-/environment/detect",
+        "/api/v1/repos/{full_repo:repo}/-/preferences",
+        "/api/v1/repos/{full_repo:repo}/-/qa-config",
+        "/api/v1/repos/{full_repo:repo}/-/setup/cost",
+        "/api/v1/repos/{full_repo:repo}/-/readiness",
         "/api/v1/setup/proposals",
         "/api/v1/repos",
         "/api/v1/hosts",
@@ -169,8 +171,8 @@ NO_ACTOR_ROUTES: dict[str, tuple[str, ...]] = {
     "findings, areas and the agents' progression: no one named as having done anything (areas name their owners)": (
         "/api/v1/cases",
         "/api/v1/cases/{case_id}",
-        "/api/v1/repos/{full_repo:repo}/areas",
-        "/api/v1/repos/{full_repo:repo}/slop-meter",
+        "/api/v1/repos/{full_repo:repo}/-/areas",
+        "/api/v1/repos/{full_repo:repo}/-/slop-meter",
         "/api/v1/watcher/runs",
         "/api/v1/progression",
         "/api/v1/progression/preview",
@@ -226,13 +228,13 @@ ACTOR_COLUMNS: dict[str, tuple[str, str | tuple[str, ...]]] = {
         ),
     ),
     "merge_approvals.decided_by": (_HISTORY, ("/api/v1/merge-approvals", "/api/v1/merge-approvals/{approval_id}")),
-    "repo_config_revisions.actor": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/history",)),
+    "repo_config_revisions.actor": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/-/history",)),
     "repo_qa_configs.updated_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}",)),
-    "repo_setup_proposals.created_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/setup/proposal",)),
-    "repo_setup_proposals.decided_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/setup/proposal",)),
+    "repo_setup_proposals.created_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/-/setup/proposal",)),
+    "repo_setup_proposals.decided_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/-/setup/proposal",)),
     "credential_bindings.created_by": (
         _HISTORY,
-        ("/api/v1/credentials/bindings", "/api/v1/repos/{full_repo:repo}/credentials"),
+        ("/api/v1/credentials/bindings", "/api/v1/repos/{full_repo:repo}/-/credentials"),
     ),
     "organizations.created_by": (_HISTORY, ("/api/v1/orgs", "/api/v1/orgs/{owner}")),
     "standards.created_by": (
@@ -297,9 +299,16 @@ def _paths(groups: dict[str, tuple[str, ...]]) -> set[str]:
     return {path for paths in groups.values() for path in paths}
 
 
+def _classified_as(route: ServedRoute) -> str:
+    """A route's path; an old /repos path runs the handler of its path after /-/, and is classified as that (#257)."""
+    return successor_path(route.path) if isinstance(route.route, OldPathRoute) else route.path
+
+
 def unclassified_routes(app: Any) -> tuple[set[str], set[str], set[str]]:
     """GET routes of no kind, routes of more than one, and listed routes the app does not serve."""
-    served = {r.path for r in app_routes(app) if r.methods and "GET" in r.methods and r.path.startswith("/api/v1/")}
+    served = {
+        _classified_as(r) for r in app_routes(app) if r.methods and "GET" in r.methods and r.path.startswith("/api/v1/")
+    }
     kinds = [set(HISTORY_ROUTES), _paths(COLLABORATION_ROUTES), _paths(NO_ACTOR_ROUTES)]
     listed = set().union(*kinds)
     twice = {path for path in listed if sum(path in kind for kind in kinds) > 1}

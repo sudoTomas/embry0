@@ -40,7 +40,7 @@ async def test_bootstrap_happy_path_writes_db(api_client, monkeypatch) -> None:
     assert body["qa_required"] == "never"
     assert body["qa_config_path"] == "db:repo_qa_configs/acme/fresh"
     # The qa-config GET serves the stored document.
-    r2 = await api_client.get("/api/v1/repos/acme/fresh/qa-config")
+    r2 = await api_client.get("/api/v1/repos/acme/fresh/-/qa-config")
     assert r2.status_code == 200
     assert "version: 2" in r2.text
     # And the repo is registered.
@@ -76,7 +76,7 @@ async def test_bootstrap_asks_for_a_scheme_on_an_address(api_client, monkeypatch
     )
     assert r.status_code == 422, r.text
     assert "Start the address with http:// or https://" in r.text
-    assert (await api_client.get("/api/v1/repos/acme/widgets/qa-config")).status_code == 404
+    assert (await api_client.get("/api/v1/repos/acme/widgets/-/qa-config")).status_code == 404
 
 
 @pytest.mark.asyncio
@@ -88,7 +88,7 @@ async def test_bootstrap_stores_a_boot_command_with_quotes(api_client, monkeypat
         "/api/v1/repos/bootstrap", json={"repo": "acme/widgets", "app": "web", "boot_command": boot}
     )
     assert r.status_code == 200, r.text
-    stored = await api_client.get("/api/v1/repos/acme/widgets/qa-config")
+    stored = await api_client.get("/api/v1/repos/acme/widgets/-/qa-config")
     cfg = parse_qa_yaml_v2(stored.text)
     assert cfg.apps["web"].boot_command == boot
     assert cfg.defaults.sandbox_profile == "qa-external"
@@ -112,7 +112,7 @@ async def test_bootstrap_answers_422_when_the_setup_cannot_be_read(api_client, m
     detail = r.json()["detail"]
     assert detail.startswith("That setup could not be read: ")
     assert "\n" not in detail
-    assert (await api_client.get("/api/v1/repos/acme/widgets/qa-config")).status_code == 404
+    assert (await api_client.get("/api/v1/repos/acme/widgets/-/qa-config")).status_code == 404
 
 
 def test_the_unreadable_fixtures_raise_what_the_endpoint_maps():

@@ -1,4 +1,4 @@
-"""Smoke tests for /repos/{owner}/{repo}/preferences endpoints."""
+"""Smoke tests for /repos/{owner}/{repo}/-/preferences endpoints."""
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -79,7 +79,7 @@ def app():
 async def test_get_preferences_returns_null_when_absent(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/repos/acme/widgets/preferences")
+        resp = await client.get("/api/v1/repos/acme/widgets/-/preferences")
     assert resp.status_code == 200
     assert resp.json() is None
 
@@ -89,7 +89,7 @@ async def test_put_preferences_accepts_known_sandbox_profile(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={
                 "sandbox_profile": "python-3.12",
                 "language_hint": "python",
@@ -110,7 +110,7 @@ async def test_put_preferences_rejects_unknown_sandbox_profile(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"sandbox_profile": "no-such-profile"},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -124,7 +124,7 @@ async def test_put_preferences_allows_null_sandbox_profile(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"language_hint": "rust"},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -139,7 +139,7 @@ async def test_delete_preferences_returns_204(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.delete(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
     assert resp.status_code == 204
@@ -151,7 +151,7 @@ async def test_upsert_passes_execution_and_auth_modes(app) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widget/preferences",
+            "/api/v1/repos/acme/widget/-/preferences",
             json={"execution_mode": "sdk", "auth_mode": "api_key"},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -169,7 +169,7 @@ async def test_git_identity_round_trips(app) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widget/preferences",
+            "/api/v1/repos/acme/widget/-/preferences",
             json={"git_author_name": "Acme Bot", "git_author_email": "bot@example.com"},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -184,7 +184,7 @@ async def test_git_author_email_rejects_implausible_address(app) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widget/preferences",
+            "/api/v1/repos/acme/widget/-/preferences",
             json={"git_author_email": "not-an-email"},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -197,7 +197,7 @@ async def test_put_preferences_round_trips_dev_checks(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"dev_checks": [{"name": "python", "paths": ["ml/", "/shared"], "command": "cd ml && pytest -q"}]},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -212,12 +212,12 @@ async def test_put_preferences_rejects_malformed_dev_checks(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         no_command = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"dev_checks": [{"name": "x", "paths": []}]},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
         empty_path = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"dev_checks": [{"name": "x", "paths": ["  "], "command": "make"}]},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -230,7 +230,7 @@ async def test_put_preferences_accepts_a_base_branch(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/group/backend/preferences",
+            "/api/v1/repos/acme/group/backend/-/preferences",
             json={"base_branch": "dev"},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -245,7 +245,7 @@ async def test_put_preferences_accepts_a_slashed_base_branch(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"base_branch": "release/2026.09"},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -260,7 +260,7 @@ async def test_blank_base_branch_is_stored_as_null_not_empty_string(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"base_branch": "  "},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -276,7 +276,7 @@ async def test_put_preferences_rejects_shell_unsafe_base_branch(app, bad):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"base_branch": bad},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -304,7 +304,7 @@ async def test_get_preferences_returns_the_stored_base_branch(app):
     )
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/repos/acme/widgets/preferences")
+        resp = await client.get("/api/v1/repos/acme/widgets/-/preferences")
     assert resp.status_code == 200
     assert resp.json()["base_branch"] == "release/1.2"
 
@@ -316,7 +316,7 @@ async def test_put_without_base_branch_leaves_it_alone(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"language_hint": "rust"},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -331,7 +331,7 @@ async def _put(app, body: dict):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.put(
-            "/api/v1/repos/acme/widgets/preferences", json=body, headers={"X-Requested-With": "XMLHttpRequest"}
+            "/api/v1/repos/acme/widgets/-/preferences", json=body, headers={"X-Requested-With": "XMLHttpRequest"}
         )
 
 
@@ -373,7 +373,7 @@ async def test_get_tolerates_an_odd_stored_verification_object(app):
     app.state.repo_preferences_repo.get = AsyncMock(return_value=row)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/repos/acme/widgets/preferences")
+        resp = await client.get("/api/v1/repos/acme/widgets/-/preferences")
     assert resp.status_code == 200
     assert resp.json()["verification"] == {"test_targets": "not-a-list"}
 
@@ -383,7 +383,7 @@ async def test_put_pr_review_stores_the_whole_settings_object(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"pr_review": {"enabled": True}},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -411,7 +411,7 @@ async def test_put_pr_review_rejects_a_malformed_object(app, body):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"pr_review": body},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -426,7 +426,7 @@ async def test_put_pr_review_refuses_an_unpriced_model(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"pr_review": {"enabled": True, "model": "grok-0-unpriced"}},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -442,7 +442,7 @@ async def test_a_blank_pr_review_model_means_the_heavy_tier(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"pr_review": {"enabled": True, "model": "   "}},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -456,7 +456,7 @@ async def test_put_pr_review_stores_who_triggers_automatic_reviews(app, ready_au
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"pr_review": {"enabled": True, "ready_authors": ready_authors}},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -472,7 +472,7 @@ async def test_a_put_without_ready_authors_saves_the_team_default(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         await client.put(
-            "/api/v1/repos/acme/widgets/preferences",
+            "/api/v1/repos/acme/widgets/-/preferences",
             json={"pr_review": {"enabled": True}},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -480,7 +480,7 @@ async def test_a_put_without_ready_authors_saves_the_team_default(app):
             "acme/widgets", **app.state.repo_preferences_repo.upsert.call_args.kwargs
         )
         app.state.repo_preferences_repo.get = AsyncMock(return_value=saved)
-        resp = await client.get("/api/v1/repos/acme/widgets/preferences")
+        resp = await client.get("/api/v1/repos/acme/widgets/-/preferences")
     assert resp.status_code == 200, resp.text
     assert resp.json()["pr_review"].get("ready_authors") == "team", f"GET returned {resp.json()['pr_review']}"
 
@@ -498,9 +498,9 @@ async def test_get_fills_in_team_for_a_stored_pr_review_without_ready_authors(ap
     app.state.repo_preferences_repo = prefs_repo
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        legacy = (await client.get("/api/v1/repos/acme/widgets/preferences")).json()["pr_review"]
-        anyone = (await client.get("/api/v1/repos/acme/gadgets/preferences")).json()["pr_review"]
-        unset = (await client.get("/api/v1/repos/acme/tools/preferences")).json()["pr_review"]
+        legacy = (await client.get("/api/v1/repos/acme/widgets/-/preferences")).json()["pr_review"]
+        anyone = (await client.get("/api/v1/repos/acme/gadgets/-/preferences")).json()["pr_review"]
+        unset = (await client.get("/api/v1/repos/acme/tools/-/preferences")).json()["pr_review"]
     assert legacy == {"enabled": True, "depth": "targeted", "model": None, "ready_authors": "team"}, (
         f"GET returned {legacy}: a stored pr_review without ready_authors must read as team, other fields as stored"
     )

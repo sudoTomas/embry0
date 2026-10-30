@@ -1,4 +1,4 @@
-"""Tests for GET /repos/{owner}/{repo}/environment/detect token routing (RAV-1301).
+"""Tests for GET /repos/{owner}/{repo}/-/environment/detect token routing (RAV-1301).
 
 The detect endpoint reads .env templates via the GitHub contents API; it must
 route the token per-owner (fine-grained PATs are single-owner) instead of
@@ -71,7 +71,7 @@ async def _detect(app, owner_repo: str):
     _CapturingClient.captured_headers = []
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get(f"/api/v1/repos/{owner_repo}/environment/detect")
+        resp = await client.get(f"/api/v1/repos/{owner_repo}/-/environment/detect")
     assert resp.status_code == 200
     return _CapturingClient.captured_headers
 
@@ -101,7 +101,7 @@ async def test_detect_answers_409_when_the_pinned_credential_is_unavailable(app,
     app.state.credential_resolver = resolver
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/repos/acme/widgets/environment/detect")
+        resp = await client.get("/api/v1/repos/acme/widgets/-/environment/detect")
     assert resp.status_code == 409, resp.text
     assert "pinned" in resp.json()["detail"]
 

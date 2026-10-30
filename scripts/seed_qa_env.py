@@ -101,7 +101,7 @@ def main() -> int:
     ]
 
     owner, name = TARGET_REPO.split("/", 1)
-    url = f"{API_BASE}/api/v1/repos/{owner}/{name}/environment"
+    url = f"{API_BASE}/api/v1/repos/{owner}/{name}/-/environment"
     body = json.dumps({"variables": variables}).encode()
     req = urllib.request.Request(url, data=body, method="PUT")
     req.add_header("Content-Type", "application/json")

@@ -25,6 +25,17 @@ from embry0.storage.repositories.repos import SUPPORTED_FORGES
 
 router = APIRouter()
 
+#: What the repository's path without the separator answers while the old paths last (#257).
+_TWO_READINGS_RESPONSE: dict[int | str, dict[str, Any]] = {
+    409: {
+        "description": (
+            "Until the old paths without /-/ are removed: the path also names another repository's sub-resource "
+            "(acme/products/qa-config is also the QA config of acme/products) and both are registered. The detail "
+            "lists every reading with its path; /repos/{full_repo}/-/ always means the repository alone."
+        )
+    }
+}
+
 
 class RepoRegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -104,7 +115,14 @@ async def register_repo(req: RepoRegisterRequest, request: Request) -> dict[str,
     return row
 
 
-@router.get("/repos/{full_repo:repo}")
+# The repository's own address, and the same after the separator with nothing after it (#257): until the old paths
+# are removed (repo_old_paths.OLD_PATHS_REMOVED_IN), /repos/acme/products/qa-config is also the QA config of
+# acme/products and answers 409 when both are registered; /repos/acme/products/qa-config/-/ never means two things.
+# /-, without the final slash, is the same route rather than a redirect to it: the metrics label a redirect by its
+# raw path, one series per repository (#507).
+@router.get("/repos/{full_repo:repo}", responses=_TWO_READINGS_RESPONSE)
+@router.get("/repos/{full_repo:repo}/-/", name="get_repo_at_separator")
+@router.get("/repos/{full_repo:repo}/-", name="get_repo_at_separator_without_slash", include_in_schema=False)
 async def get_repo(full_repo: str, request: Request) -> dict[str, Any]:
     """Unified per-repo view: registry row + which repo-scoped config
     surfaces hold state for it (values live behind their own endpoints)."""
@@ -139,7 +157,7 @@ async def get_repo(full_repo: str, request: Request) -> dict[str, Any]:
     }
 
 
-@router.put("/repos/{full_repo:repo}/active")
+@router.put("/repos/{full_repo:repo}/-/active")
 async def set_repo_active(full_repo: str, req: RepoActiveRequest, request: Request) -> dict[str, Any]:
     repos_repo = request.app.state.repos_repo
     row: dict[str, Any] | None = await repos_repo.set_active(full_repo, req.active)
@@ -148,7 +166,7 @@ async def set_repo_active(full_repo: str, req: RepoActiveRequest, request: Reque
     return row
 
 
-@router.put("/repos/{full_repo:repo}/docker-access", dependencies=[require_admin])
+@router.put("/repos/{full_repo:repo}/-/docker-access", dependencies=[require_admin])
 async def set_repo_docker_access(full_repo: str, req: RepoDockerAccessRequest, request: Request) -> dict[str, Any]:
     """Grant or revoke the shared Docker daemon for one repo (#522).
 
@@ -174,7 +192,15 @@ async def set_repo_docker_access(full_repo: str, req: RepoDockerAccessRequest, r
     return row
 
 
-@router.delete("/repos/{full_repo:repo}", status_code=204, response_model=None)
+@router.delete("/repos/{full_repo:repo}", status_code=204, response_model=None, responses=_TWO_READINGS_RESPONSE)
+@router.delete("/repos/{full_repo:repo}/-/", status_code=204, response_model=None, name="delete_repo_at_separator")
+@router.delete(
+    "/repos/{full_repo:repo}/-",
+    status_code=204,
+    response_model=None,
+    name="delete_repo_at_separator_without_slash",
+    include_in_schema=False,
+)
 async def delete_repo(full_repo: str, request: Request) -> None:
     """Hard delete: registry row + QA config (CASCADE). Env vars and
     preferences are deliberately untouched — they predate the registry and

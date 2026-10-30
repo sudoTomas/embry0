@@ -39,5 +39,5 @@ embry0 reads the file with the repository's organization credential and keeps it
 
 The repository page's Areas section shows what the file names and starts **Map areas**: the `area-mapper` agent reads the repository (its tree, workspace manifests, docs, CODEOWNERS, compose and deploy configuration, and the LogQL the watcher reads its logs with) and reports the file; embry0 commits it on the job's branch and opens a pull request. Nothing changes until that merges; a map that writes the file the branch already has opens nothing. Mapping again starts from the file on the default branch. It runs with the model and key chosen beside the button ([run with](superpowers/specs/2026-10-25-run-with-design.md)), and only one map of a repository runs at a time.
 
-- `GET /api/v1/repos/{repo}/areas?fresh=` (read): `{repo, path, areas: [{name, slug, paths, logs, owners}], latest_job}`. `fresh=true` reads the file again instead of the hour-old copy.
-- `POST /api/v1/repos/{repo}/areas/map` (operate, `{"run_with": ...}` optional, 202): starts the map; 409 while one is live, 429 while the budget gate refuses.
+- `GET /api/v1/repos/{repo}/-/areas?fresh=` (read): `{repo, path, areas: [{name, slug, paths, logs, owners}], latest_job}`. `fresh=true` reads the file again instead of the hour-old copy.
+- `POST /api/v1/repos/{repo}/-/areas/map` (operate, `{"run_with": ...}` optional, 202): starts the map; 409 while one is live, 429 while the budget gate refuses.

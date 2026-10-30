@@ -27,6 +27,6 @@ async def test_repo_qa_scope_requires_prefix(api_client):
             {"key": "DB_URL", "value": "x", "var_type": "secret", "scope": "qa"},
         ]
     }
-    r = await api_client.put("/api/v1/repos/owner/proj/environment", json=payload)
+    r = await api_client.put("/api/v1/repos/owner/proj/-/environment", json=payload)
     assert r.status_code == 422
     assert "QA_" in r.text

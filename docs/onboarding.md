@@ -87,7 +87,7 @@ for its ready checks), then stores the draft as a setup proposal in
 `repo_setup_proposals` instead. The test setup stays as it was until a
 person applies the proposal. A run that ends without a working draft
 leaves a failed proposal that says why. A repository has at most one run
-going or proposal waiting. `POST /api/v1/repos/{repo}/setup/propose` starts
+going or proposal waiting. `POST /api/v1/repos/{repo}/-/setup/propose` starts
 propose mode, and the proposal is read, applied or turned down under the
 same `setup/` path ([API](api.md)). Applying is refused when the test setup
 was saved after the run started.
@@ -131,11 +131,11 @@ so in place of that step instead of failing; any other error is shown.
 
 ```bash
 curl -H "Authorization: Bearer $API_KEY" \
-  http://localhost:8200/api/v1/repos/<owner>/<repo>/qa-config          # read
+  http://localhost:8200/api/v1/repos/<owner>/<repo>/-/qa-config          # read
 # edit, then:
 curl -X PUT -H "Authorization: Bearer $API_KEY" \
   -H 'X-Requested-With: XMLHttpRequest' --data-binary @qa.yaml \
-  http://localhost:8200/api/v1/repos/<owner>/<repo>/qa-config          # write (schema-validated)
+  http://localhost:8200/api/v1/repos/<owner>/<repo>/-/qa-config          # write (schema-validated)
 ```
 
 Full field reference: [qa-yaml-reference.md](qa-yaml-reference.md).

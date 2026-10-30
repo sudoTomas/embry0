@@ -113,6 +113,18 @@ def _repo_path(repo: str) -> str:
     return repo
 
 
+def _repo_url(repo: str, sub_resource: str = "") -> str:
+    """The API path of ``repo``'s ``sub_resource`` after the ``/-/`` separator, or of the repository itself (#257).
+
+    The repository itself is the separator with nothing after it. Without the
+    separator, ``/repos/acme/products/qa-config`` is both the repository
+    ``acme/products/qa-config`` and the QA config of ``acme/products``; the
+    orchestrator refuses such a path (409) while it still answers the old
+    ones. No segment of a repository is ``-``.
+    """
+    return f"/api/v1/repos/{_repo_path(repo)}/-/{sub_resource}"
+
+
 class Embry0Client:
     """Async client over the embry0 REST API (``/api/v1``)."""
 
@@ -607,7 +619,7 @@ class Embry0Client:
     def _env_base(self, repo: str | None) -> str:
         if repo is None:
             return "/api/v1/environment/global"
-        return f"/api/v1/repos/{_repo_path(repo)}/environment"
+        return _repo_url(repo, "environment")
 
     async def env_list(self, *, repo: str | None = None) -> dict[str, Any]:
         return _as_dict(await self._request("GET", self._env_base(repo)))
@@ -912,7 +924,7 @@ class Embry0Client:
         return _as_list(await self._request("GET", "/api/v1/repos", params=params))
 
     async def repo_get(self, repo: str) -> dict[str, Any]:
-        return _as_dict(await self._request("GET", f"/api/v1/repos/{_repo_path(repo)}"))
+        return _as_dict(await self._request("GET", _repo_url(repo)))
 
     async def repo_register(self, repo: str, notes: str = "", forge: str = "") -> dict[str, Any]:
         """Register a repo. ``forge`` ("github" | "gitlab") decides the clone
@@ -931,14 +943,14 @@ class Embry0Client:
     async def qa_config_get(self, repo: str) -> str:
         """Raw stored qa.yaml text (the endpoint serves yaml, not JSON)."""
         # Through _request so the hosted MCP caller's bearer overrides the service key (#443).
-        return _as_text(await self._request("GET", f"/api/v1/repos/{_repo_path(repo)}/qa-config", raw=True))
+        return _as_text(await self._request("GET", _repo_url(repo, "qa-config"), raw=True))
 
     async def qa_config_set(self, repo: str, yaml_text: str) -> dict[str, Any]:
         """Schema-validated upsert of the stored qa.yaml (raw-text PUT)."""
         return _as_dict(
             await self._request(
                 "PUT",
-                f"/api/v1/repos/{_repo_path(repo)}/qa-config",
+                _repo_url(repo, "qa-config"),
                 content=yaml_text.encode("utf-8"),
                 headers={"Content-Type": "application/yaml"},
             )
@@ -953,7 +965,7 @@ class Embry0Client:
         return _as_dict(await self._request("GET", "/api/v1/credentials/resolve", params={"repo": repo, "role": role}))
 
     async def repo_credentials_get(self, repo: str) -> dict[str, Any]:
-        return _as_dict(await self._request("GET", f"/api/v1/repos/{_repo_path(repo)}/credentials"))
+        return _as_dict(await self._request("GET", _repo_url(repo, "credentials")))
 
     async def credential_bind(
         self, repo: str, credential_id: str, role: str = "forge", pinned: bool = False
@@ -970,7 +982,7 @@ class Embry0Client:
             if b.get("role") != role
         ]
         body = {"bindings": [*keep, {"credential_id": credential_id, "role": role, "pinned": pinned, "priority": 0}]}
-        return _as_dict(await self._request("PUT", f"/api/v1/repos/{_repo_path(repo)}/credentials", body=body))
+        return _as_dict(await self._request("PUT", _repo_url(repo, "credentials"), body=body))
 
 
 def _problem(item: Any) -> str | None:

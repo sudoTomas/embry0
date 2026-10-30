@@ -15,7 +15,7 @@ Code: `embry0/workflows/verification/` (pure logic + the sandbox runner),
 ## Configuration — in the embry0 database, never in the target repo
 
 `repo_preferences.verification` (JSONB), set through
-`PUT /api/v1/repos/{owner}/{repo}/preferences`:
+`PUT /api/v1/repos/{owner}/{repo}/-/preferences`:
 
 ```json
 {
@@ -51,7 +51,7 @@ the rest alone. Omit it to keep the stored value; send `{}` or `null` to clear
 it:
 
 ```bash
-API=http://localhost:8200/api/v1/repos/acme/backend/preferences
+API=http://localhost:8200/api/v1/repos/acme/backend/-/preferences
 AUTH=(-H "Authorization: Bearer $API_KEY" -H "X-Requested-With: XMLHttpRequest")
 jq '{verification: .}' verification.json \
   | curl -s -X PUT "${AUTH[@]}" -H 'Content-Type: application/json' -d @- "$API"

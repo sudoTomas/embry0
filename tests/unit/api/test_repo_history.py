@@ -25,9 +25,9 @@ from embry0.storage.repositories.repo_preferences import RepoPreferencesReposito
 from embry0.storage.repositories.repo_qa_configs import RepoQAConfigsRepository
 
 REPO = "acme/widgets"
-QA = f"/api/v1/repos/{REPO}/qa-config"
-PREFS = f"/api/v1/repos/{REPO}/preferences"
-HISTORY = f"/api/v1/repos/{REPO}/history"
+QA = f"/api/v1/repos/{REPO}/-/qa-config"
+PREFS = f"/api/v1/repos/{REPO}/-/preferences"
+HISTORY = f"/api/v1/repos/{REPO}/-/history"
 V1 = "version: 2\nqa_required: never\nworkspace_provider:\n  type: npm-workspaces-turbo\n"
 V2 = "version: 2\nqa_required: auto\nworkspace_provider:\n  type: npm-workspaces-turbo\n"
 
@@ -218,10 +218,10 @@ async def test_a_key_that_may_not_work_here_cannot_undo(client, db_with_migratio
 
 @pytest.mark.requires_postgres
 async def test_an_unknown_change_or_one_from_another_repo_is_404(client) -> None:
-    other = (await client.put("/api/v1/repos/acme/other/qa-config", content=V1)).json()["revision_id"]
+    other = (await client.put("/api/v1/repos/acme/other/-/qa-config", content=V1)).json()["revision_id"]
     assert (await client.post(f"{HISTORY}/{other}/undo")).status_code == 404
     assert (await client.post(f"{HISTORY}/999999/undo")).status_code == 404
-    assert (await client.get("/api/v1/repos/acme/other/qa-config")).text == V1
+    assert (await client.get("/api/v1/repos/acme/other/-/qa-config")).text == V1
 
 
 @pytest.mark.requires_postgres
@@ -298,7 +298,7 @@ async def test_who_made_each_change_is_shown_as_the_audit_log_shows_actors(clien
 @pytest.mark.requires_postgres
 async def test_the_app_wires_the_history_store(api_client) -> None:
     """Production's _init_app_state must hand the route its store."""
-    resp = await api_client.get("/api/v1/repos/acme/wired/history")
+    resp = await api_client.get("/api/v1/repos/acme/wired/-/history")
     assert resp.status_code == 200, resp.text
     assert resp.json()["entries"] == []
 

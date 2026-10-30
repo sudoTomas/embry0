@@ -1,4 +1,4 @@
-"""POST /api/v1/jobs pipeline='onboard' + /repos/{o}/{r}/qa-config (EMB-50)."""
+"""POST /api/v1/jobs pipeline='onboard' + /repos/{o}/{r}/-/qa-config (EMB-50)."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ async def test_post_jobs_unknown_pipeline_still_rejected(api_client) -> None:
 
 @pytest.mark.asyncio
 async def test_qa_config_get_404_when_absent(api_client) -> None:
-    r = await api_client.get("/api/v1/repos/acme/widgets/qa-config")
+    r = await api_client.get("/api/v1/repos/acme/widgets/-/qa-config")
     assert r.status_code == 404
 
 
@@ -55,12 +55,12 @@ async def test_qa_config_put_validates_and_round_trips(api_client) -> None:
         '      - http: "http://localhost:5173"\n'
     )
     r = await api_client.put(
-        "/api/v1/repos/acme/widgets/qa-config",
+        "/api/v1/repos/acme/widgets/-/qa-config",
         content=yaml_text,
         headers={"Content-Type": "application/yaml"},
     )
     assert r.status_code == 200, r.text
-    r2 = await api_client.get("/api/v1/repos/acme/widgets/qa-config")
+    r2 = await api_client.get("/api/v1/repos/acme/widgets/-/qa-config")
     assert r2.status_code == 200
     assert r2.text == yaml_text
 
@@ -68,12 +68,12 @@ async def test_qa_config_put_validates_and_round_trips(api_client) -> None:
 @pytest.mark.asyncio
 async def test_qa_config_put_rejects_invalid_schema(api_client) -> None:
     r = await api_client.put(
-        "/api/v1/repos/acme/widgets/qa-config",
+        "/api/v1/repos/acme/widgets/-/qa-config",
         content="version: 3\n",
         headers={"Content-Type": "application/yaml"},
     )
     assert r.status_code == 422
-    assert (await api_client.get("/api/v1/repos/acme/widgets/qa-config")).status_code == 404
+    assert (await api_client.get("/api/v1/repos/acme/widgets/-/qa-config")).status_code == 404
 
 
 @pytest.mark.asyncio
@@ -81,11 +81,11 @@ async def test_qa_config_delete_removes(api_client) -> None:
     """RAV-1251: DELETE removes the DB row — subsequent GET is 404."""
     yaml_text = "version: 2\nqa_required: never\nworkspace_provider:\n  type: npm-workspaces-turbo\n"
     put = await api_client.put(
-        "/api/v1/repos/acme/widgets/qa-config",
+        "/api/v1/repos/acme/widgets/-/qa-config",
         content=yaml_text,
         headers={"Content-Type": "application/yaml"},
     )
     assert put.status_code == 200
-    r = await api_client.delete("/api/v1/repos/acme/widgets/qa-config")
+    r = await api_client.delete("/api/v1/repos/acme/widgets/-/qa-config")
     assert r.status_code == 204
-    assert (await api_client.get("/api/v1/repos/acme/widgets/qa-config")).status_code == 404
+    assert (await api_client.get("/api/v1/repos/acme/widgets/-/qa-config")).status_code == 404

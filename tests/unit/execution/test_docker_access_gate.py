@@ -128,7 +128,7 @@ async def test_a_docker_profile_on_an_ungranted_repo_is_refused_before_anything_
     assert NOT_GRANTED in message and name in message, message
     # The refusal says what the grant would hand over, and who can give it.
     assert "credential proxies" in message and "admin" in message, message
-    assert f"PUT /api/v1/repos/{NOT_GRANTED}/docker-access" in message, message
+    assert f"PUT /api/v1/repos/{NOT_GRANTED}/-/docker-access" in message, message
     assert registry.asked == [NOT_GRANTED]
     docker.run_cmd.assert_not_called()
     proxy.enroll_sandbox.assert_not_called()

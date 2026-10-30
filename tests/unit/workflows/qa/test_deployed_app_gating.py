@@ -79,7 +79,7 @@ def _parse_app(app_yaml: str):
 
 def test_a_bad_glob_is_a_parse_error_not_a_run_time_crash():
     """Same contract as ConditionalWhen: bad globs are rejected at config-write
-    time (PUT /repos/../qa-config), never at QA-run time."""
+    time (PUT /repos/../-/qa-config), never at QA-run time."""
     with pytest.raises(ValueError, match="glob|pattern|segment"):
         _parse_app(
             "  quoting:\n"

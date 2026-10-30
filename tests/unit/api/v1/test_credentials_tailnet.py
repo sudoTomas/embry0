@@ -86,7 +86,7 @@ async def test_binds_at_global_scope_only(client: AsyncClient) -> None:
     )
     assert owner.status_code == 422 and "not valid for role 'tailnet'" in owner.text
     repo = await client.put(
-        "/api/v1/repos/acme/widgets/credentials", json={"bindings": [{"credential_id": cid, "role": "tailnet"}]}
+        "/api/v1/repos/acme/widgets/-/credentials", json={"bindings": [{"credential_id": cid, "role": "tailnet"}]}
     )
     assert repo.status_code == 422
     glob = await client.put(

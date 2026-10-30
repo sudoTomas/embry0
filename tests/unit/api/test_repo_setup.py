@@ -40,8 +40,8 @@ from embry0.storage.repositories.sandbox_profiles import SandboxProfilesReposito
 from embry0.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
 
 REPO = "acme/widgets"
-SETUP = f"/api/v1/repos/{REPO}/setup"
-QA = f"/api/v1/repos/{REPO}/qa-config"
+SETUP = f"/api/v1/repos/{REPO}/-/setup"
+QA = f"/api/v1/repos/{REPO}/-/qa-config"
 STALE = "Someone changed the test setup after embry0 made this proposal. Run embry0 again for a fresh one."
 MEDIUM = "claude-sonnet-5"
 
@@ -291,7 +291,7 @@ async def test_the_run_starts_from_the_branch_embry0_works_from(client, app) -> 
         RepoFacts(owner="acme", repo="Acme/Facts", default_branch="trunk"), run_id="run-1"
     )
     for repo in ("acme/prefs", "acme/facts", "acme/bare"):
-        resp = await client.post(f"/api/v1/repos/{repo}/setup/propose", json={"confirm_spend": True})
+        resp = await client.post(f"/api/v1/repos/{repo}/-/setup/propose", json={"confirm_spend": True})
         assert resp.status_code == 200, resp.text
     assert [c["branch"] for c in app.state.issue_executor.calls] == ["develop", "trunk", None], (
         "a repository with no setting and no discovery fact must leave the branch to the executor's resolver"
@@ -468,7 +468,7 @@ async def test_apply_writes_a_proposal_revision_that_undo_takes_back_to_the_base
         }
     ]
 
-    undo = await client.post(f"/api/v1/repos/{REPO}/history/{revision_id}/undo")
+    undo = await client.post(f"/api/v1/repos/{REPO}/-/history/{revision_id}/undo")
     assert undo.status_code == 200, undo.text
     assert (await client.get(QA)).text == V1
 
@@ -664,7 +664,7 @@ async def test_skip_testing_leaves_an_existing_setup_alone(client) -> None:
 
 # -- readiness -------------------------------------------------------------------------
 
-READINESS = f"/api/v1/repos/{REPO}/readiness"
+READINESS = f"/api/v1/repos/{REPO}/-/readiness"
 PR_URL = "https://github.com/acme/widgets/pull/7"
 
 
@@ -830,7 +830,7 @@ async def test_the_app_wires_the_proposal_store(api_client) -> None:
     resp = await api_client.get("/api/v1/setup/proposals")
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"proposals": []}
-    assert (await api_client.get("/api/v1/repos/acme/wired/setup/proposal")).status_code == 404
+    assert (await api_client.get("/api/v1/repos/acme/wired/-/setup/proposal")).status_code == 404
 
 
 @pytest.mark.requires_postgres
@@ -839,7 +839,7 @@ async def test_the_app_wires_readiness(api_client) -> None:
     answers readiness from stored facts without calling out."""
     await api_client.app.state.repos_repo.register("acme/wired-readiness")
     with _no_network() as tried:
-        resp = await api_client.get("/api/v1/repos/acme/wired-readiness/readiness")
+        resp = await api_client.get("/api/v1/repos/acme/wired-readiness/-/readiness")
     assert resp.status_code == 200, resp.text
     assert tried == []
     assert [r["key"] for r in resp.json()["rows"]] == [

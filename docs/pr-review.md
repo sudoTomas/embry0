@@ -2,7 +2,7 @@
 
 embry0 can review pull requests (GitHub) and merge requests (GitLab) on a registered repository and post what it finds on them. It is an **advisory reviewer**: it comments, and it never approves, never requests changes and sets no status check. The author and the human reviewers decide.
 
-Review is **off** for every repository until an operator turns it on (Repositories → the repository → *Pull request review*, or `PUT /api/v1/repos/{repo}/preferences` with a `pr_review` object: `enabled`, `depth`, `model`, `ready_authors`).
+Review is **off** for every repository until an operator turns it on (Repositories → the repository → *Pull request review*, or `PUT /api/v1/repos/{repo}/-/preferences` with a `pr_review` object: `enabled`, `depth`, `model`, `ready_authors`).
 
 `ready_authors` says who starts a review by opening or readying a pull request:
 

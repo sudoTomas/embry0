@@ -244,7 +244,7 @@ async def _init_orchestrator_node_impl(
         if not yaml_text:
             raise RuntimeError(
                 f"repo {repo!r} has no QA config stored in embry0 — store one via "
-                "PUT /repos/{owner}/{repo}/qa-config, the dashboard config editor, "
+                "PUT /repos/{owner}/{repo}/-/qa-config, the dashboard config editor, "
                 "the qa_config_set MCP tool, or onboarding"
             )
         # Phase-2 C3: read lockfile while bootstrap container is still alive.

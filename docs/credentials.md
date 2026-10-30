@@ -161,8 +161,8 @@ All under `/api/v1`. Reads need any authenticated principal; every mutation need
 | `POST /credentials/import-env` | admin | the importer above |
 | `POST /credentials/xai/device-login` | admin | body `{label}`. Starts an xAI device-code login. Returns `login_id`, `user_code`, `verification_uri_complete`, `interval`, `expires_at`. Does not return `device_code` |
 | `GET /credentials/xai/device-login/{login_id}` | admin | `{"status":"pending"}`, `{"status":"expired"}`, or `{"status":"done","credential":...}` after the `llm_oauth` row exists. The response never includes the refresh token |
-| `GET /repos/{repo}/credentials` | read | the repo's bindings plus the effective forge resolution |
-| `PUT /repos/{repo}/credentials` | admin | replace the repo's bindings; registers the repo if unknown, as the QA config write does |
+| `GET /repos/{repo}/-/credentials` | read | the repo's bindings plus the effective forge resolution |
+| `PUT /repos/{repo}/-/credentials` | admin | replace the repo's bindings; registers the repo if unknown, as the QA config write does |
 
 **There is no reveal endpoint.** A secret is write-only once created: responses carry `masked_preview` and never the secret; `verify` never echoes the token and reports a rejection as `HTTP <status>` only; a 422 on a `/credentials` path lists the failing fields without the submitted values; logs, audit details and error messages never contain a secret. Every create, rotate, import and delete also refreshes the log scrubbers' set, so a registry token that never entered the environment is still redacted from agent stderr.
 
@@ -175,7 +175,7 @@ curl -X POST http://localhost:8200/api/v1/credentials \
   -d '{"kind": "forge_token", "provider": "github", "label": "alice", "secret": "github_pat_...",
        "git_author_name": "Alice", "git_author_email": "alice@example.com"}'
 
-curl -X PUT http://localhost:8200/api/v1/repos/acme/widgets/credentials \
+curl -X PUT http://localhost:8200/api/v1/repos/acme/widgets/-/credentials \
   -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"bindings": [{"credential_id": "cred-0123456789ab", "role": "forge"}]}'

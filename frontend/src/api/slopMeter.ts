@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { repoPath } from "./repoPath";
 
 /** A Slop-O-Meter reading (spec 2026-10-26): how much of the code landed beyond human attention. */
 export interface SlopMeterReading {
@@ -34,6 +35,6 @@ export interface SlopMeter {
 }
 
 export async function fetchSlopMeter(fullRepo: string, area = ""): Promise<SlopMeter> {
-  const { data } = await api.get<SlopMeter>(`/repos/${fullRepo}/slop-meter`, { params: area ? { area } : {} });
+  const { data } = await api.get<SlopMeter>(repoPath(fullRepo, "slop-meter"), { params: area ? { area } : {} });
   return data;
 }

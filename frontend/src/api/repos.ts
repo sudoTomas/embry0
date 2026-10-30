@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { repoPath } from "./repoPath";
 import type { RepoStandardState } from "./standards";
 
 /** Registry row from GET /repos (RAV-1251; env counts added in RAV-1294). */
@@ -19,7 +20,7 @@ export interface RegisteredRepo {
   env_secret_count: number;
 }
 
-/** Unified per-repo view from GET /repos/{full_repo}. `repo` may contain
+/** Unified per-repo view from GET /repos/{full_repo}/-/. `repo` may contain
  *  more than two segments (GitLab nested subgroups, #162). */
 export interface RepoDetail extends RegisteredRepo {
   qa_config_updated_at: string | null;
@@ -37,7 +38,7 @@ export async function fetchRepos(includeInactive = false): Promise<RegisteredRep
 }
 
 export async function fetchRepoDetail(fullRepo: string): Promise<RepoDetail> {
-  const { data } = await api.get<RepoDetail>(`/repos/${fullRepo}`);
+  const { data } = await api.get<RepoDetail>(repoPath(fullRepo));
   return data;
 }
 
@@ -47,12 +48,12 @@ export async function registerRepo(repo: string, notes = "", forge: Forge = "git
 }
 
 export async function setRepoActive(fullRepo: string, active: boolean): Promise<RegisteredRepo> {
-  const { data } = await api.put<RegisteredRepo>(`/repos/${fullRepo}/active`, { active });
+  const { data } = await api.put<RegisteredRepo>(repoPath(fullRepo, "active"), { active });
   return data;
 }
 
 /** #522: grant or revoke the shared Docker daemon for one repo. Admin-tier. */
 export async function setRepoDockerAccess(fullRepo: string, enabled: boolean): Promise<RegisteredRepo> {
-  const { data } = await api.put<RegisteredRepo>(`/repos/${fullRepo}/docker-access`, { enabled });
+  const { data } = await api.put<RegisteredRepo>(repoPath(fullRepo, "docker-access"), { enabled });
   return data;
 }

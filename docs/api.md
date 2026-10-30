@@ -82,9 +82,9 @@ curl http://localhost:8200/api/v1/jobs/{job_id}/verification
 curl http://localhost:8200/api/v1/jobs/{job_id}/agents/developer/session
 ```
 
-A job's `area` (on the list and on `GET /jobs/{job_id}`) is the part of a monorepo the pull request embry0 opened for it changes, from the repository's `.embry0/areas.yml` ([areas](areas.md)); `null` when the repository names none or the change falls in none. `GET /repos/{repo}/areas` reads that file, and `POST /repos/{repo}/areas/map` starts the agent that writes it as a pull request ([map areas](areas.md#map-areas)).
+A job's `area` (on the list and on `GET /jobs/{job_id}`) is the part of a monorepo the pull request embry0 opened for it changes, from the repository's `.embry0/areas.yml` ([areas](areas.md)); `null` when the repository names none or the change falls in none. `GET /repos/{repo}/-/areas` reads that file, and `POST /repos/{repo}/-/areas/map` starts the agent that writes it as a pull request ([map areas](areas.md#map-areas)).
 
-`GET /repos/{repo}/slop-meter?area=` is the repository's [Slop-O-Meter](glossary.md#slop-o-meter) (after [Slop-O-Meter](https://github.com/slop-o-meter/slop-o-meter)'s published slop score algorithm): `meter` (the repository's `{score, level, name, provisional, computed_at}`, `null` before its first score), `areas` (each scored area's `{area, meter}`), `area` (the series' area, `null` for the repository), `weeks` (`{week, cost, capacity, slop, lines, score}` oldest first, in weighted lines; `score` cumulative) and `reading` (`{commits_read, commits_total, computed_at, error}`, how far the history is read). 404 for an unregistered repository or an area with no reading.
+`GET /repos/{repo}/-/slop-meter?area=` is the repository's [Slop-O-Meter](glossary.md#slop-o-meter) (after [Slop-O-Meter](https://github.com/slop-o-meter/slop-o-meter)'s published slop score algorithm): `meter` (the repository's `{score, level, name, provisional, computed_at}`, `null` before its first score), `areas` (each scored area's `{area, meter}`), `area` (the series' area, `null` for the repository), `weeks` (`{week, cost, capacity, slop, lines, score}` oldest first, in weighted lines; `score` cumulative) and `reading` (`{commits_read, commits_total, computed_at, error}`, how far the history is read). 404 for an unregistered repository or an area with no reading.
 
 `POST /jobs/{job_id}/resume` takes `{"choice": "continue_retrying"|"merge_as_is"|"abandon", "guidance", "extra_budget_usd"}`. On a job over its budget, `continue_retrying` lets it spend one more cap past what it has spent, or `extra_budget_usd` (at most 1,000) when given; the pause's `interrupt.summary.budget` says `{spent, cap, continue_adds}` ([per-job cap](architecture.md)).
 
@@ -125,7 +125,7 @@ While the settings document turns the game layer off (`ui.game: false`, [turning
 
 Every route that starts agent work takes an optional `run_with`: `{"model": "<model id>", "credential_id": "<stored LLM key>"}`, either or both ([the design](superpowers/specs/2026-10-25-run-with-design.md)). Every agent of the job runs the model, except one the request names itself in `agent_models`; the key serves its provider for the job ([precedence](credentials.md)). Leaving it out is the usual run.
 
-- Taken by `POST /jobs` (every pipeline), `POST /issues/{id}/triage`, `POST /cases/{id}/accept`, `POST /proposals/{id}/accept`, `POST /repos/{repo}/setup/propose`, `POST /standards/{owner}/{kind}/audit/{repo}`, `POST /orgs/{owner}/context-audit/run`, `POST /orgs/{owner}/actions` (onboard) and `POST /watcher/run`.
+- Taken by `POST /jobs` (every pipeline), `POST /issues/{id}/triage`, `POST /cases/{id}/accept`, `POST /proposals/{id}/accept`, `POST /repos/{repo}/-/setup/propose`, `POST /standards/{owner}/{kind}/audit/{repo}`, `POST /orgs/{owner}/context-audit/run`, `POST /orgs/{owner}/actions` (onboard) and `POST /watcher/run`.
 - Refused with 422, before anything starts, when the model is unpriced or disabled, the key is not a usable LLM key, it is not bound to the repository, its owner or the global pool, or it is not of the model's provider.
 - The job's `pipeline_config.run_with` says what was chosen (`model`, `credential_id`, `provider`, `credential_label`); the job page shows it.
 - `GET /api/v1/run-with/keys?repo=` (read): the keys a job on `repo` may use, `{"keys": [{"id", "label", "provider", "scope", "status"}]}`, each once from its most specific binding (`repo`, `owner`, `global`). Without `repo`, the global ones. Never a secret.
@@ -467,11 +467,11 @@ curl http://localhost:8200/api/v1/environment/global/DATABASE_URL/reveal \
   -H "X-Requested-With: XMLHttpRequest"
 
 # Per-repo environment (same pattern, scoped)
-curl http://localhost:8200/api/v1/repos/owner/repo/environment \
+curl http://localhost:8200/api/v1/repos/owner/repo/-/environment \
   -H "X-Requested-With: XMLHttpRequest"
 
 # Auto-detect env vars from repo's .env.example
-curl http://localhost:8200/api/v1/repos/owner/repo/environment/detect \
+curl http://localhost:8200/api/v1/repos/owner/repo/-/environment/detect \
   -H "X-Requested-With: XMLHttpRequest"
 ```
 
@@ -530,8 +530,8 @@ Forge accounts and their bindings ([`docs/credentials.md`](credentials.md)). Rea
 | `GET /api/v1/credentials/bindings?scope_kind=&scope_value=` | read |
 | `PUT /api/v1/credentials/bindings` | admin |
 | `POST /api/v1/credentials/import-env` | admin |
-| `GET /api/v1/repos/{repo}/credentials` | read |
-| `PUT /api/v1/repos/{repo}/credentials` | admin |
+| `GET /api/v1/repos/{repo}/-/credentials` | read |
+| `PUT /api/v1/repos/{repo}/-/credentials` | admin |
 
 ```bash
 # Create a GitHub account (the response carries masked_preview, never the secret)
@@ -686,7 +686,7 @@ An owner with the `context_audit_days` setting on has its instruction files audi
 - `hook` creates a GitHub webhook on the repository posting to `WEBHOOK_PUBLIC_URL` + `/api/v1/webhook` with `GITHUB_WEBHOOK_SECRET`, for issues, issue comments and pull requests ([webhooks.md](webhooks.md#github)). It runs only when the owner's probe found the credential can manage webhooks, and it is skipped while `WEBHOOK_PUBLIC_URL` is unset or a loopback address, or the secret is empty. A hook in the forge's live listing whose URL starts with `WEBHOOK_PUBLIC_URL` is `already`; a hook on the dashboard's origin is not, since that vhost answers 404 on the webhook paths. GitHub only in this release.
 - `onboard` starts the onboard job ([onboarding.md](onboarding.md)) on the repository's default branch through the function `POST /jobs {"pipeline": "onboard"}` uses, so it runs the same checks (the calling key's repository allowlist among them: a repository the key may not start work on is `failed` with `repo_not_allowed`) and starts it under the caller's actor, which its `onboard.job_created` audit row names. A repository that is not registered is skipped (the job would fail `ERR_REPO_UNREGISTERED`); a stored QA config or an onboard job in flight is `already`; a repository whose facts carry no boot hint is skipped. When the newest onboard job completed without storing a QA config, the repository is skipped with that job's id unless the body carries `"force": true`.
 - `watch` adds a watcher stack for the repository, disabled, filing to the organization's forge, with a placeholder LogQL selector to edit before enabling. It stores through the function `PUT /watcher/stacks/{owner}/{name}` uses and writes its `watcher_stack_updated` audit row. A stack under any case counts as `already`.
-- `deactivate` sets the repository's registry row inactive, the call `PUT /repos/{repo}/active` with `{"active": false}` makes: the row stays, hidden from listings, and the same route turns it back on. It answers the `repo_vanished` need, and it reaches an archived repository too: one archived when it was last listed and deleted since is what that need proposes. An inactive row, or no row at all, is `already`.
+- `deactivate` sets the repository's registry row inactive, the call `PUT /repos/{repo}/-/active` with `{"active": false}` makes: the row stays, hidden from listings, and the same route turns it back on. It answers the `repo_vanished` need, and it reaches an archived repository too: one archived when it was last listed and deleted since is what that need proposes. An inactive row, or no row at all, is `already`.
 
 The MCP tool `org_act(owner, action, repos, dry_run, force, confirm)` calls this endpoint; like every gated tool it needs `confirm=true` on every call, dry runs included.
 
@@ -698,15 +698,64 @@ curl -X POST http://localhost:8200/api/v1/orgs/acme/actions \
   -d '{"action": "register", "repos": ["acme/widgets", "acme/gadgets"], "dry_run": true}'
 ```
 
+## Repositories
+
+`GET /api/v1/repos` lists the registered repositories and `POST /api/v1/repos`
+registers one (`{"repo", "forge", "notes"}`). A repository's own address is
+`/api/v1/repos/<path>/-/`, however many segments the path has: `acme/widgets`
+on GitHub, `acme/products/shop` for a GitLab subgroup's project. `GET` reads
+it, with what is stored for it, and `DELETE` removes it from the registry.
+`/-` without the final slash answers the same, without a redirect.
+`/api/v1/repos/<path>`, without the separator, answers the same, except while
+the old paths below last: there it can also name another repository's
+sub-resource.
+
+What a repository holds follows the `/-/` separator, as on GitLab:
+`/api/v1/repos/acme/widgets/-/qa-config`, and the same for `preferences`,
+`environment`, `credentials`, `history`, `setup/...`, `readiness`, `areas`,
+`slop-meter`, `active` and `docker-access`. No segment of a repository is `-`,
+so `/api/v1/repos/acme/products/qa-config/-/history` is the history of the
+repository `acme/products/qa-config`, and `/api/v1/repos/acme/products/qa-config/-/`
+is that repository itself.
+
+```bash
+# The GitLab project acme/products/qa-config, and its QA config
+curl http://localhost:8200/api/v1/repos/acme/products/qa-config/-/ \
+  -H "X-Requested-With: XMLHttpRequest"
+curl http://localhost:8200/api/v1/repos/acme/products/qa-config/-/qa-config \
+  -H "X-Requested-With: XMLHttpRequest"
+```
+
+**Deprecated paths.** Until 0.2.0 each of those sub-resource routes also
+answers at its old path, without the separator
+(`/api/v1/repos/acme/widgets/qa-config`). It runs the same code and is marked
+`deprecated` in the OpenAPI schema. Every answer the route sends, a 404 or a
+422 included, carries `Deprecation: @1793318400` (RFC 9745) and, except the
+409 below, `Link: <the path with /-/>; rel="successor-version"`. A 405, for a
+method no route at that path takes, is the router's own and carries neither.
+
+An old path is refused with 409, before anything runs, when it also names a
+registered repository another way that takes the request's method. With
+`acme/products/qa-config` registered, `DELETE /api/v1/repos/acme/products/qa-config`
+is that repository as well as the QA config of `acme/products`; a `PUT` to the
+same path is not refused, since a repository is read and deleted at its own
+address but never written there, so it can only be the QA config. The 409's `detail` holds a `message` and
+`readings`, one `{"repo", "sub_resource", "path"}` for each meaning, with its
+path after the separator (`sub_resource` is `null` and the path ends in `/-/`
+for the repository itself); send the request again to the `path` you mean. An
+old path that names one thing keeps its old meaning. 0.2.0 removes the old
+paths, so move a client to `/-/` now; the dashboard, the CLI and the MCP
+server already use it, for a repository's own address too.
+
 ## Repository preferences
 
 ```bash
 # Get per-repo sandbox profile override
-curl http://localhost:8200/api/v1/repos/owner/repo/preferences \
+curl http://localhost:8200/api/v1/repos/owner/repo/-/preferences \
   -H "X-Requested-With: XMLHttpRequest"
 
 # Set sandbox profile + language hint for a repo
-curl -X PUT http://localhost:8200/api/v1/repos/owner/repo/preferences \
+curl -X PUT http://localhost:8200/api/v1/repos/owner/repo/-/preferences \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"sandbox_profile": "java-17", "language_hint": "Java", "notes": "Uses Maven"}'
@@ -723,8 +772,8 @@ names for every file. A login is validated and kept once, without its `@`.
 ## Repository history and undo
 
 Every change to a repository's stored test setup (`PUT` and `DELETE
-/repos/{repo}/qa-config`, bootstrap, onboarding) and to its preferences
-(`PUT` and `DELETE /repos/{repo}/preferences`) is recorded with who made it
+/repos/{repo}/-/qa-config`, bootstrap, onboarding) and to its preferences
+(`PUT` and `DELETE /repos/{repo}/-/preferences`) is recorded with who made it
 and how. The newest 100 changes of each are kept per repository. The API
 writes also add an audit row: `repo.qa_config_set`,
 `repo.qa_config_deleted`, `repo.preferences_set`,
@@ -732,8 +781,8 @@ writes also add an audit row: `repo.qa_config_set`,
 
 | Endpoint | Tier |
 |---|---|
-| `GET /api/v1/repos/{repo}/history?limit=50` | any authenticated principal |
-| `POST /api/v1/repos/{repo}/history/{revision_id}/undo` | operator |
+| `GET /api/v1/repos/{repo}/-/history?limit=50` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/-/history/{revision_id}/undo` | operator |
 
 `GET` answers `{"entries": [{"id", "surface", "what", "actor", "source",
 "created_at", "undoable", "why_not"}], "before_history": bool}`, newest
@@ -753,7 +802,7 @@ undone in turn. The `PUT /qa-config` response carries the new change's
 
 ```bash
 # Put back the test setup the newest change replaced
-curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/history/42/undo \
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/-/history/42/undo \
   -H "Authorization: Bearer $EMBRY0_API_KEY" \
   -H "X-Requested-With: XMLHttpRequest"
 # -> {"revision_id": 43}
@@ -769,14 +818,14 @@ setup until a person applies the proposal.
 
 | Endpoint | Tier |
 |---|---|
-| `GET /api/v1/repos/{repo}/setup/cost` | any authenticated principal |
-| `POST /api/v1/repos/{repo}/setup/propose` | operator |
-| `GET /api/v1/repos/{repo}/setup/proposal` | any authenticated principal |
-| `POST /api/v1/repos/{repo}/setup/proposal/{proposal_id}/apply` | operator |
-| `POST /api/v1/repos/{repo}/setup/proposal/{proposal_id}/reject` | operator |
-| `POST /api/v1/repos/{repo}/setup/skip-testing` | operator |
+| `GET /api/v1/repos/{repo}/-/setup/cost` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/-/setup/propose` | operator |
+| `GET /api/v1/repos/{repo}/-/setup/proposal` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/-/setup/proposal/{proposal_id}/apply` | operator |
+| `POST /api/v1/repos/{repo}/-/setup/proposal/{proposal_id}/reject` | operator |
+| `POST /api/v1/repos/{repo}/-/setup/skip-testing` | operator |
 | `GET /api/v1/setup/proposals?status=pending` | any authenticated principal |
-| `GET /api/v1/repos/{repo}/readiness` | any authenticated principal |
+| `GET /api/v1/repos/{repo}/-/readiness` | any authenticated principal |
 
 `GET .../setup/cost` answers `{"recorded_runs", "typical_cost_usd",
 "per_job_budget_usd", "model", "paid_from"}`: how many setup runs completed
@@ -801,7 +850,7 @@ none: `{"id", "repo", "status", "job_id", "job_status", "created_by",
 "created_at", "decided_by", "decided_at", "notes_md", "failure", "smoke",
 "proposed_yaml", "current_yaml", "check"}`. `status` is `running`,
 `pending` (waiting for a person), `applied`, `rejected`, `stale` or
-`failed`. `check` is the answer `POST /repos/{repo}/qa-config/check` gives
+`failed`. `check` is the answer `POST /repos/{repo}/-/qa-config/check` gives
 for `proposed_yaml`, `null` when there is none. A `running` proposal whose
 job has ended is stored as `failed` when it is read, with the job's error.
 
@@ -839,13 +888,13 @@ admin grants.
 
 ```bash
 # Start a setup run, then apply the proposal it leaves
-curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/setup/propose \
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/-/setup/propose \
   -H "Authorization: Bearer $EMBRY0_API_KEY" \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"confirm_spend": true}'
 # -> {"proposal_id": "prop-0123456789ab", "job_id": "job-0123456789ab"}
-curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/setup/proposal/prop-0123456789ab/apply \
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/-/setup/proposal/prop-0123456789ab/apply \
   -H "Authorization: Bearer $EMBRY0_API_KEY" \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
@@ -864,11 +913,11 @@ are root on the Docker host. A profile, a stored qa.yaml or a job cannot set it.
 
 | Endpoint | Tier |
 |---|---|
-| `PUT /api/v1/repos/{repo}/docker-access` | admin |
+| `PUT /api/v1/repos/{repo}/-/docker-access` | admin |
 
 ```bash
 # Grant (or {"enabled": false} to revoke). 404 for an unregistered repo.
-curl -X PUT http://localhost:8200/api/v1/repos/owner/repo/docker-access \
+curl -X PUT http://localhost:8200/api/v1/repos/owner/repo/-/docker-access \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"enabled": true}'
@@ -961,10 +1010,10 @@ other repository:
   repository), `POST /watcher/run` (the stack ticked; with none named, every watched
   stack, all checked before any ticks), `POST /qa/images/build` and
   `POST /repos/bootstrap`;
-- the steps of setting up testing: `POST /repos/{repo}/setup/propose`,
-  `POST /repos/{repo}/setup/proposal/{id}/apply` and `.../reject`,
-  `POST /repos/{repo}/setup/skip-testing` and
-  `POST /repos/{repo}/history/{id}/undo`;
+- the steps of setting up testing: `POST /repos/{repo}/-/setup/propose`,
+  `POST /repos/{repo}/-/setup/proposal/{id}/apply` and `.../reject`,
+  `POST /repos/{repo}/-/setup/skip-testing` and
+  `POST /repos/{repo}/-/history/{id}/undo`;
 - the [knowledge maps](#knowledge-maps), which belong to a forge owner: a
   key covers the owners of the repositories on its list. `PUT /maps/{slug}`,
   `POST /maps/{slug}/marks`, `POST /maps/{slug}/send`,
@@ -986,8 +1035,8 @@ Omitting the list, or sending an empty one, leaves the key unrestricted;
 every key minted before the allowlist existed is unrestricted. Beyond the
 routes above, the list does not narrow what the key may read (except the
 knowledge maps, which list and answer only the maps of covered owners), nor
-the settings routes its scope allows, `PUT /repos/{repo}/qa-config` and
-`PUT /repos/{repo}/preferences` among them. A restricted key may not mint
+the settings routes its scope allows, `PUT /repos/{repo}/-/qa-config` and
+`PUT /repos/{repo}/-/preferences` among them. A restricted key may not mint
 keys or change any key's allowlist, its own included, since a key it minted
 would carry no restriction. For an agent that should only dispatch, mint an
 `operate` key with the list.

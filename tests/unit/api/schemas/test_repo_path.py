@@ -63,3 +63,12 @@ def test_a_leading_dot_is_a_repository_but_dot_and_dot_dot_are_not():
     for value in ("acme/.", "acme/..", "acme/../widgets"):
         with pytest.raises(ValueError, match="group/subgroup/name"):
             validate_repo_path(value)
+
+
+@pytest.mark.parametrize("value", ["owner/-", "owner/-/name", "group/sub/-", "-/name"])
+def test_a_dash_is_never_a_repository_segment(value):
+    """``-`` is the separator before a repository's sub-resources (#257): a repository holding it could not be told
+    from one, so ``/repos/owner/-/name`` would be both the repository ``owner/-/name`` and ``name`` of ``owner``."""
+    assert REPO_PATH_PATTERN.match(value) is None, f"{value!r} must name no repository: '-' is the separator"
+    with pytest.raises(ValueError, match="group/subgroup/name"):
+        validate_repo_path(value)

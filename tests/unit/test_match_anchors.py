@@ -77,6 +77,9 @@ PARSERS: dict[tuple[str, str], str] = {
 #: (module path, the receiver as written) -> why the test cannot read the pattern, and what it is.
 UNCHECKED: dict[tuple[str, str], str] = {
     ("embry0/api/route_table.py", "entry.path_regex"): "a route's own path regex, matched the way Starlette matches it",
+    ("embry0/api/v1/repo_old_paths.py", "route.path_regex"): (
+        "an old path's own route regex, matched the way Starlette matches it, to list every route a path reaches"
+    ),
     ("embry0/services/areas.py", "_glob(p)"): "a path glob translated at run time; it ends in \\Z",
     ("embry0/services/instruction_files.py", "pattern"): "a path glob from _compile, which ends it in \\Z",
     ("embry0/services/slop_meter/weights.py", "_compiled(pattern)"): (

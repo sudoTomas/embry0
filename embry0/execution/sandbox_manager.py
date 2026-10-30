@@ -71,7 +71,7 @@ def docker_access_refusal(profile_name: str, repo: str | None) -> str:
         f"sandbox profile {profile_name!r} asks for Docker (dind_enabled), and repo {repo!r} "
         "has not been granted Docker access. That grant lets code from the repo control the "
         "shared Docker daemon, including the credential proxies holding your forge tokens, so "
-        f'only an admin can give it: PUT /api/v1/repos/{repo}/docker-access {{"enabled": true}}, '
+        f'only an admin can give it: PUT /api/v1/repos/{repo}/-/docker-access {{"enabled": true}}, '
         "or the repo page in the dashboard. Otherwise pick a profile without DinD."
     )
 

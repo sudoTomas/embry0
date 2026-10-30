@@ -475,8 +475,8 @@ async def test_env_set_replaces_existing_key():
 async def test_env_repo_scoped_paths_and_delete():
     handler = capture(
         {
-            ("GET", "/api/v1/repos/acme/app/environment"): {"variables": []},
-            ("DELETE", "/api/v1/repos/acme/app/environment/K"): (204, None),
+            ("GET", "/api/v1/repos/acme/app/-/environment"): {"variables": []},
+            ("DELETE", "/api/v1/repos/acme/app/-/environment/K"): (204, None),
         }
     )
     client = make_client(handler)
@@ -554,7 +554,7 @@ async def test_repo_list_and_get_paths():
     handler = capture(
         {
             ("GET", "/api/v1/repos"): [{"repo": "a/b", "active": True, "has_qa_config": False}],
-            ("GET", "/api/v1/repos/a/b"): {"repo": "a/b", "active": True, "has_qa_config": True},
+            ("GET", "/api/v1/repos/a/b/-/"): {"repo": "a/b", "active": True, "has_qa_config": True},
         }
     )
     client = make_client(handler)
@@ -593,19 +593,52 @@ async def test_repo_scoped_paths_carry_a_gitlab_subgroup_whole():
     nested = "acme/group/backend"
     handler = capture(
         {
-            ("GET", f"/api/v1/repos/{nested}"): {"repo": nested},
-            ("GET", f"/api/v1/repos/{nested}/environment"): {"variables": []},
+            ("GET", f"/api/v1/repos/{nested}/-/"): {"repo": nested},
+            ("GET", f"/api/v1/repos/{nested}/-/environment"): {"variables": []},
         }
     )
     client = make_client(handler)
     assert (await client.repo_get(nested))["repo"] == nested
     await client.env_list(repo=nested)
-    assert handler.seen[-1].url.path == f"/api/v1/repos/{nested}/environment"
+    assert handler.seen[-1].url.path == f"/api/v1/repos/{nested}/-/environment"
+
+
+async def test_every_repo_scoped_call_names_its_sub_resource_after_the_separator():
+    """#257: the repository ``acme/products/qa-config`` is read at ``/-/``; its path alone is also a QA config's."""
+    repo = "acme/products/qa-config"
+    base = f"/api/v1/repos/{repo}"
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        return httpx.Response(200, json={"repo": repo, "variables": [], "bindings": []})
+
+    client = make_client(handler)
+    await client.repo_get(repo)
+    await client.env_list(repo=repo)
+    await client.env_set("API_URL", "http://localhost", repo=repo)
+    await client.env_delete("API_URL", repo=repo)
+    await client.qa_config_get(repo)
+    await client.qa_config_set(repo, _V2_MIN)
+    await client.repo_credentials_get(repo)
+    await client.credential_bind(repo, "cred-000000000001")
+    assert seen == [
+        ("GET", f"{base}/-/"),
+        ("GET", f"{base}/-/environment"),
+        ("GET", f"{base}/-/environment"),
+        ("PUT", f"{base}/-/environment"),
+        ("DELETE", f"{base}/-/environment/API_URL"),
+        ("GET", f"{base}/-/qa-config"),
+        ("PUT", f"{base}/-/qa-config"),
+        ("GET", f"{base}/-/credentials"),
+        ("GET", f"{base}/-/credentials"),
+        ("PUT", f"{base}/-/credentials"),
+    ], f"a repo-scoped call left out the /-/ separator: {seen}"
 
 
 async def test_qa_config_get_returns_raw_text():
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/v1/repos/a/b/qa-config"
+        assert request.url.path == "/api/v1/repos/a/b/-/qa-config"
         return httpx.Response(200, text=_V2_MIN, headers={"Content-Type": "application/yaml"})
 
     client = make_client(handler)
@@ -624,7 +657,7 @@ async def test_qa_config_get_404_raises():
 async def test_qa_config_set_puts_raw_yaml():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "PUT"
-        assert request.url.path == "/api/v1/repos/a/b/qa-config"
+        assert request.url.path == "/api/v1/repos/a/b/-/qa-config"
         assert request.content.decode() == _V2_MIN
         assert request.headers["Content-Type"] == "application/yaml"
         return httpx.Response(200, json={"repo": "a/b", "updated_at": "now"})
@@ -652,10 +685,10 @@ async def test_repo_methods_reject_a_single_segment():
 
 async def test_a_repository_whose_name_starts_with_a_dot_goes_through():
     """An organization's ``.github`` repository is a repository: only ``.`` and ``..`` are refused."""
-    handler = capture({("GET", "/api/v1/repos/acme/.github"): {"repo": "acme/.github"}})
+    handler = capture({("GET", "/api/v1/repos/acme/.github/-/"): {"repo": "acme/.github"}})
     client = make_client(handler)
     assert (await client.repo_get("acme/.github"))["repo"] == "acme/.github"
-    assert handler.seen[-1].url.path == "/api/v1/repos/acme/.github"
+    assert handler.seen[-1].url.path == "/api/v1/repos/acme/.github/-/"
 
 
 @pytest.mark.parametrize(
@@ -726,8 +759,8 @@ async def test_qa_config_calls_forward_the_caller_bearer():
 
     handler = capture(
         {
-            ("GET", "/api/v1/repos/acme/widgets/qa-config"): {},
-            ("PUT", "/api/v1/repos/acme/widgets/qa-config"): {"repo": "acme/widgets"},
+            ("GET", "/api/v1/repos/acme/widgets/-/qa-config"): {},
+            ("PUT", "/api/v1/repos/acme/widgets/-/qa-config"): {"repo": "acme/widgets"},
         }
     )
     client = make_client(handler)
@@ -737,14 +770,14 @@ async def test_qa_config_calls_forward_the_caller_bearer():
         await client.qa_config_set("acme/widgets", "version: 2\n")
     finally:
         caller_bearer.reset(token)
-    assert handler.headers[("GET", "/api/v1/repos/acme/widgets/qa-config")]["authorization"] == "Bearer caller-key"
-    assert handler.headers[("PUT", "/api/v1/repos/acme/widgets/qa-config")]["authorization"] == "Bearer caller-key"
+    assert handler.headers[("GET", "/api/v1/repos/acme/widgets/-/qa-config")]["authorization"] == "Bearer caller-key"
+    assert handler.headers[("PUT", "/api/v1/repos/acme/widgets/-/qa-config")]["authorization"] == "Bearer caller-key"
 
 
 async def test_credential_bind_replaces_same_role_and_keeps_others():
     handler = capture(
         {
-            ("GET", "/api/v1/repos/acme/widgets/credentials"): {
+            ("GET", "/api/v1/repos/acme/widgets/-/credentials"): {
                 "repo": "acme/widgets",
                 "bindings": [
                     {"credential_id": "cred-000000000001", "role": "forge", "pinned": False, "priority": 0},
@@ -760,7 +793,7 @@ async def test_credential_bind_replaces_same_role_and_keeps_others():
                 ],
                 "effective": {},
             },
-            ("PUT", "/api/v1/repos/acme/widgets/credentials"): {
+            ("PUT", "/api/v1/repos/acme/widgets/-/credentials"): {
                 "repo": "acme/widgets",
                 "bindings": [],
                 "effective": {},
@@ -769,7 +802,7 @@ async def test_credential_bind_replaces_same_role_and_keeps_others():
     )
     client = make_client(handler)
     await client.credential_bind("acme/widgets", "cred-000000000009")
-    put = handler.seen[("PUT", "/api/v1/repos/acme/widgets/credentials")]
+    put = handler.seen[("PUT", "/api/v1/repos/acme/widgets/-/credentials")]
     assert put["bindings"] == [
         {"credential_id": "cred-000000000002", "role": "llm", "pinned": True, "priority": 0},
         {"credential_id": "cred-000000000009", "role": "forge", "pinned": False, "priority": 0},
@@ -779,7 +812,7 @@ async def test_credential_bind_replaces_same_role_and_keeps_others():
 async def test_credential_calls_forward_the_caller_bearer():
     from embry0.mcp_server.client import caller_bearer
 
-    handler = capture({("GET", "/api/v1/credentials"): [], ("GET", "/api/v1/repos/acme/widgets/qa-config"): {}})
+    handler = capture({("GET", "/api/v1/credentials"): [], ("GET", "/api/v1/repos/acme/widgets/-/qa-config"): {}})
     client = make_client(handler)
     token = caller_bearer.set("caller-key")
     try:
@@ -788,7 +821,7 @@ async def test_credential_calls_forward_the_caller_bearer():
     finally:
         caller_bearer.reset(token)
     assert handler.headers[("GET", "/api/v1/credentials")]["authorization"] == "Bearer caller-key"
-    assert handler.headers[("GET", "/api/v1/repos/acme/widgets/qa-config")]["authorization"] == "Bearer caller-key"
+    assert handler.headers[("GET", "/api/v1/repos/acme/widgets/-/qa-config")]["authorization"] == "Bearer caller-key"
 
 
 async def test_job_logs_pages_to_the_tail():

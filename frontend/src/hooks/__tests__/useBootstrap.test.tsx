@@ -51,15 +51,15 @@ describe("useBootstrapRepo", () => {
     await waitFor(() => expect(config.result.current.isSuccess).toBe(true));
     await waitFor(() => expect(prefs.result.current.isSuccess).toBe(true));
     const count = (path: string) => gets.filter((url) => url === path).length;
-    expect(count("/repos/acme/group/widgets/qa-config")).toBe(1);
-    expect(count("/repos/acme/group/widgets/preferences")).toBe(1);
+    expect(count("/repos/acme/group/widgets/-/qa-config")).toBe(1);
+    expect(count("/repos/acme/group/widgets/-/preferences")).toBe(1);
 
     const bootstrap = renderHook(() => useBootstrapRepo(), { wrapper });
     await act(async () => {
       await bootstrap.result.current.mutateAsync({ repo: "acme/group/widgets", app: "web" });
     });
 
-    await waitFor(() => expect(count("/repos/acme/group/widgets/qa-config")).toBe(2));
-    await waitFor(() => expect(count("/repos/acme/group/widgets/preferences")).toBe(2));
+    await waitFor(() => expect(count("/repos/acme/group/widgets/-/qa-config")).toBe(2));
+    await waitFor(() => expect(count("/repos/acme/group/widgets/-/preferences")).toBe(2));
   });
 });

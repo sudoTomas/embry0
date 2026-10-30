@@ -34,14 +34,14 @@ describe("repo setup API", () => {
     };
     get.mockResolvedValue({ data: cost });
     await expect(fetchSetupCost("group/sub/project")).resolves.toEqual(cost);
-    expect(get).toHaveBeenCalledWith("/repos/group/sub/project/setup/cost");
+    expect(get).toHaveBeenCalledWith("/repos/group/sub/project/-/setup/cost");
   });
 
   it("starts a setup run only with the spend confirmed, and leaves a refusal to the dialog", async () => {
     post.mockResolvedValue({ data: { proposal_id: "prop-abc", job_id: "job-1" } });
     await expect(startSetup("acme/widgets")).resolves.toEqual({ proposal_id: "prop-abc", job_id: "job-1" });
     expect(post).toHaveBeenCalledWith(
-      "/repos/acme/widgets/setup/propose",
+      "/repos/acme/widgets/-/setup/propose",
       { confirm_spend: true },
       { suppressValidationToast: true, suppressErrorToast: true },
     );
@@ -50,7 +50,7 @@ describe("repo setup API", () => {
   it("reads the latest proposal, and no proposal as null", async () => {
     get.mockResolvedValueOnce({ data: { id: "prop-abc", status: "pending" } });
     await expect(fetchProposal("acme/widgets")).resolves.toEqual({ id: "prop-abc", status: "pending" });
-    expect(get).toHaveBeenCalledWith("/repos/acme/widgets/setup/proposal");
+    expect(get).toHaveBeenCalledWith("/repos/acme/widgets/-/setup/proposal");
 
     get.mockRejectedValueOnce({ response: { status: 404, data: { detail: "No proposal" } } });
     await expect(fetchProposal("acme/widgets")).resolves.toBeNull();
@@ -68,7 +68,7 @@ describe("repo setup API", () => {
       revision_id: 12,
     });
     expect(post).toHaveBeenCalledWith(
-      "/repos/acme/widgets/setup/proposal/prop-abc/apply",
+      "/repos/acme/widgets/-/setup/proposal/prop-abc/apply",
       { acknowledged: ["deployed_target"] },
       { suppressValidationToast: true },
     );
@@ -77,7 +77,7 @@ describe("repo setup API", () => {
   it("turns a proposal down with no body", async () => {
     post.mockResolvedValue({ data: {} });
     await rejectProposal("group/sub/project", "prop-abc");
-    expect(post).toHaveBeenCalledWith("/repos/group/sub/project/setup/proposal/prop-abc/reject");
+    expect(post).toHaveBeenCalledWith("/repos/group/sub/project/-/setup/proposal/prop-abc/reject");
   });
 
   it("lists the setups waiting for review across every repository", async () => {

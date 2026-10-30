@@ -253,7 +253,7 @@ async def test_credential_mutations_invalidate_the_resolver_cache(client, app):
     after_create = calls["n"]
     assert after_create >= 1, "create did not invalidate the resolver cache"
     r = await client.put(
-        "/api/v1/repos/acme/widgets/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
+        "/api/v1/repos/acme/widgets/-/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
     )
     assert r.status_code == 200, r.text
     assert calls["n"] > after_create, "replacing repo bindings did not invalidate the resolver cache"
@@ -269,7 +269,7 @@ async def test_credential_mutations_invalidate_the_resolver_cache(client, app):
 async def test_bind_repo_then_resolve_explains(client, app):
     cid = (await _create(client)).json()["id"]
     r = await client.put(
-        "/api/v1/repos/acme/widgets/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
+        "/api/v1/repos/acme/widgets/-/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
     )
     assert r.status_code == 200, r.text
     assert r.json()["bindings"][0]["credential_id"] == cid
@@ -284,7 +284,7 @@ async def test_mixed_case_repo_binding_is_stored_lowercase(client, app):
     """The resolver looks the repo scope up lowercased; the API writes it that way."""
     cid = (await _create(client)).json()["id"]
     r = await client.put(
-        "/api/v1/repos/Acme/Widgets/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
+        "/api/v1/repos/Acme/Widgets/-/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
     )
     assert r.status_code == 200, r.text
     assert list(app.state.credentials_repo.bindings) == [("repo", "acme/widgets")]
@@ -300,7 +300,7 @@ async def test_bad_repo_path_is_422(client):
 async def test_bind_wrong_forge_is_422(client, app):
     cid = (await _create(client, provider="gitlab", label="gl")).json()["id"]
     r = await client.put(
-        "/api/v1/repos/acme/widgets/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
+        "/api/v1/repos/acme/widgets/-/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
     )
     assert r.status_code == 422 and "gitlab" in r.text
 
@@ -323,7 +323,7 @@ async def test_rotate_update_and_disable(client, app):
     assert r.status_code == 200 and r.json()["masked_preview"] == "ghp_••••••••zzzz"
     # Bind it first, so the 404 below is caused by the disable and not by a missing binding.
     await client.put(
-        "/api/v1/repos/acme/widgets/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
+        "/api/v1/repos/acme/widgets/-/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
     )
     r = await client.get("/api/v1/credentials/resolve", params={"repo": "acme/widgets", "role": "forge"})
     assert r.status_code == 200 and r.json()["id"] == cid
@@ -367,7 +367,7 @@ async def test_unregistered_repo_binding_registers_it(client, app):
     app.state.repos_repo.get = AsyncMock(return_value=None)
     cid = (await _create(client)).json()["id"]
     r = await client.put(
-        "/api/v1/repos/acme/widgets/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
+        "/api/v1/repos/acme/widgets/-/credentials", json={"bindings": [{"credential_id": cid, "role": "forge"}]}
     )
     assert r.status_code == 200
     app.state.repos_repo.register.assert_awaited()
@@ -389,6 +389,8 @@ def test_mutations_are_admin_tier_reads_are_not(app):
         ("POST", "/api/v1/credentials/{credential_id}/rotate"),
         ("DELETE", "/api/v1/credentials/{credential_id}"),
         ("POST", "/api/v1/credentials/{credential_id}/verify"),
+        ("PUT", "/api/v1/repos/{full_repo:repo}/-/credentials"),
+        # Its old path, without /-/, until repo_old_paths.OLD_PATHS_REMOVED_IN (#257).
         ("PUT", "/api/v1/repos/{full_repo:repo}/credentials"),
         ("PUT", "/api/v1/credentials/bindings"),
         ("POST", "/api/v1/credentials/import-env"),
@@ -398,6 +400,7 @@ def test_mutations_are_admin_tier_reads_are_not(app):
     operate = {
         ("GET", "/api/v1/credentials"),
         ("GET", "/api/v1/credentials/resolve"),
+        ("GET", "/api/v1/repos/{full_repo:repo}/-/credentials"),
         ("GET", "/api/v1/repos/{full_repo:repo}/credentials"),
         ("GET", "/api/v1/credentials/bindings"),
     }
@@ -540,7 +543,7 @@ async def test_resolve_llm_returns_the_pool_member(client):
     assert created.status_code == 201, created.text
     cid = created.json()["id"]
     bound = await client.put(
-        "/api/v1/repos/acme/widgets/credentials", json={"bindings": [{"credential_id": cid, "role": "llm"}]}
+        "/api/v1/repos/acme/widgets/-/credentials", json={"bindings": [{"credential_id": cid, "role": "llm"}]}
     )
     assert bound.status_code == 200, bound.text
     r = await client.get(
@@ -557,9 +560,9 @@ async def test_repo_credentials_effective_llm_omits_a_missing_provider(client):
     created = await _create(client, kind="llm_api_key", provider="anthropic", label="claude-a", secret=_ANTHROPIC_KEY)
     cid = created.json()["id"]
     await client.put(
-        "/api/v1/repos/acme/widgets/credentials", json={"bindings": [{"credential_id": cid, "role": "llm"}]}
+        "/api/v1/repos/acme/widgets/-/credentials", json={"bindings": [{"credential_id": cid, "role": "llm"}]}
     )
-    r = await client.get("/api/v1/repos/acme/widgets/credentials")
+    r = await client.get("/api/v1/repos/acme/widgets/-/credentials")
     assert r.status_code == 200, r.text
     llm = r.json()["effective"]["llm"]
     assert llm["anthropic"]["id"] == cid and llm["anthropic"]["label"] == "claude-a"
