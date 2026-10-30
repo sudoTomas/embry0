@@ -11,10 +11,9 @@ export interface ProviderConfig {
    * model's account is paused. Empty is off. Absent on an older backend. */
   fallback_models?: string[];
   /** Local models: how many agent runs the operator's own model server takes
-   * at once, and the custom/<model> the watcher's analyses run on first while
-   * one of its slots is free ("" is off). Absent on an older backend. */
+   * at once. Absent on an older backend. Which background work runs on which
+   * model is the settings document's `background_models` section (#164). */
   local_max_runs?: number;
-  watcher_local_model?: string;
   api_key_set: boolean;
   oauth_token_set: boolean;
 }
@@ -27,7 +26,6 @@ export interface ProviderConfigUpdate {
   disabled_models?: string[];
   fallback_models?: string[];
   local_max_runs?: number;
-  watcher_local_model?: string;
 }
 
 export interface ConnectionTestResult {

@@ -24,9 +24,21 @@ vi.mock("@/api/credentials", () => ({
   addProviderKey: (provider: string, body: unknown) => mockAddProviderKey(provider, body),
 }));
 
-// An admin session: the page reads only useIsAdmin (#101).
+const mockFetchEffectiveSettings = vi.fn();
+const mockFetchSettings = vi.fn();
+const mockSetSettingsKeys = vi.fn();
+
+// The background models card reads and writes the settings document (#164).
+vi.mock("@/api/settings", () => ({
+  fetchEffectiveSettings: () => mockFetchEffectiveSettings(),
+  fetchSettings: () => mockFetchSettings(),
+  setSettingsKeys: (request: unknown, layer: unknown) => mockSetSettingsKeys(request, layer),
+}));
+
+// An admin session unless a test says otherwise: the page reads only useIsAdmin (#101).
+let mockIsAdmin = true;
 vi.mock("@/stores/authStore", () => ({
-  useIsAdmin: () => true,
+  useIsAdmin: () => mockIsAdmin,
 }));
 
 import { ProvidersPage } from "../ProvidersPage";
@@ -83,8 +95,54 @@ function renderPage() {
   );
 }
 
+/** One key of `background_models` as `GET /config/settings/effective` answers it. */
+function backgroundKey(key: string, value: unknown, extra: Record<string, unknown> = {}) {
+  return {
+    key,
+    value,
+    default: null,
+    source: value === null ? "default" : "document",
+    set_by: null,
+    set_at: null,
+    env: null,
+    env_still_set: false,
+    overridable: ["organization"],
+    refused: null,
+    description: null,
+    ...extra,
+  };
+}
+
+/** Each key's default, as the section declares it: the scout is off until a model is named for it. */
+const BACKGROUND_DEFAULTS: Record<string, unknown> = { scout: false };
+
+function effectiveSettings(values: Record<string, unknown>, extra: Record<string, Record<string, unknown>> = {}) {
+  const keys = ["default", "watcher", "context_audit", "scout", "proposal_brief", "job_brief", "slop_judge"];
+  return {
+    generation: 7,
+    sections: [
+      {
+        name: "background_models",
+        summary: "",
+        keys: keys.map((key) => {
+          const fallback = BACKGROUND_DEFAULTS[key] ?? null;
+          const value = key in values ? values[key] : fallback;
+          const source = key in values ? "document" : "default";
+          return backgroundKey(key, value, { default: fallback, source, ...extra[key] });
+        }),
+      },
+    ],
+    unknown_sections: [],
+    unknown_keys: [],
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsAdmin = true;
+  mockFetchEffectiveSettings.mockResolvedValue(effectiveSettings({}));
+  mockFetchSettings.mockResolvedValue({ allowlist_covers: true });
+  mockSetSettingsKeys.mockResolvedValue({ generation: 8, revision_id: 3, changes: [], managed_by: null });
   mockFetchModelsCatalog.mockResolvedValue(CATALOG);
   mockFetchProviderConfig.mockResolvedValue(PROVIDER_CONFIG);
   mockUpdateProviderConfig.mockResolvedValue(PROVIDER_CONFIG);
@@ -405,12 +463,9 @@ describe("ProvidersPage keys and spend", () => {
     });
 
     it("offers the local model, which no catalogue lists, to end the order", async () => {
-      mockFetchProviderConfig.mockResolvedValue({
-        ...PROVIDER_CONFIG,
-        fallback_models: ["grok-4.7"],
-        local_max_runs: 1,
-        watcher_local_model: "custom/qwen",
-      });
+      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, fallback_models: ["grok-4.7"], local_max_runs: 1 });
+      // A model of the operator's own server is named by the background models (#164).
+      mockFetchEffectiveSettings.mockResolvedValue(effectiveSettings({ default: "custom/qwen" }));
       renderPage();
       const card = await screen.findByTestId("fallback-order");
       await userEvent.selectOptions(within(card).getByLabelText("Add a model"), "custom/qwen");
@@ -423,8 +478,8 @@ describe("ProvidersPage keys and spend", () => {
   });
 
   describe("local model", () => {
-    it("saves how many runs at once and the model log analyses run first on", async () => {
-      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, local_max_runs: 1, watcher_local_model: "" });
+    it("saves how many runs at once, and nothing about a model", async () => {
+      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, local_max_runs: 1 });
       renderPage();
       const card = await screen.findByTestId("local-model");
       const save = within(card).getByRole("button", { name: "Save" });
@@ -433,22 +488,14 @@ describe("ProvidersPage keys and spend", () => {
       const runs = within(card).getByLabelText("Runs at once");
       await userEvent.clear(runs);
       await userEvent.type(runs, "2");
-      await userEvent.type(within(card).getByLabelText("Log analyses run first on"), "custom/qwen");
       await userEvent.click(save);
-      await waitFor(() =>
-        expect(mockUpdateProviderConfig).toHaveBeenCalledWith({ local_max_runs: 2, watcher_local_model: "custom/qwen" }),
-      );
+      await waitFor(() => expect(mockUpdateProviderConfig).toHaveBeenCalledWith({ local_max_runs: 2 }));
     });
 
-    it("will not save a model of another server or a cap out of range", async () => {
-      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, local_max_runs: 1, watcher_local_model: "" });
+    it("will not save a cap out of range", async () => {
+      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, local_max_runs: 1 });
       renderPage();
       const card = await screen.findByTestId("local-model");
-      await userEvent.type(within(card).getByLabelText("Log analyses run first on"), "claude-sonnet-5");
-      expect(within(card).getByText("The model starts with custom/.")).toBeInTheDocument();
-      expect(within(card).getByRole("button", { name: "Save" })).toBeDisabled();
-
-      await userEvent.clear(within(card).getByLabelText("Log analyses run first on"));
       const runs = within(card).getByLabelText("Runs at once");
       await userEvent.clear(runs);
       await userEvent.type(runs, "65");
@@ -460,6 +507,123 @@ describe("ProvidersPage keys and spend", () => {
       renderPage();
       await screen.findByTestId("provider-card-anthropic");
       expect(screen.queryByTestId("local-model")).toBeNull();
+    });
+  });
+
+  describe("background models (#164)", () => {
+    const WRITTEN = { section: "background_models", generation: 7 };
+
+    it("writes the default with a change of that one key, never through the provider settings", async () => {
+      renderPage();
+      const card = await screen.findByTestId("background-models");
+      const field = within(card).getByLabelText("Background work runs on");
+      await userEvent.type(field, "custom/qwen");
+      await userEvent.click(within(card).getByRole("button", { name: "Save" }));
+      await waitFor(() =>
+        expect(mockSetSettingsKeys).toHaveBeenCalledWith(
+          { ...WRITTEN, values: { default: "custom/qwen" } },
+          { layer: "deployment" },
+        ),
+      );
+      expect(mockUpdateProviderConfig).not.toHaveBeenCalled();
+    });
+
+    it("sends null to take the default out when the field is emptied", async () => {
+      mockFetchEffectiveSettings.mockResolvedValue(effectiveSettings({ default: "custom/qwen" }));
+      renderPage();
+      const card = await screen.findByTestId("background-models");
+      const field = within(card).getByLabelText("Background work runs on");
+      expect(field).toHaveValue("custom/qwen");
+      await userEvent.clear(field);
+      await userEvent.click(within(card).getByRole("button", { name: "Save" }));
+      await waitFor(() =>
+        expect(mockSetSettingsKeys).toHaveBeenCalledWith({ ...WRITTEN, values: { default: null } }, { layer: "deployment" }),
+      );
+    });
+
+    it("shows where the value comes from and what each feature runs on", async () => {
+      mockFetchEffectiveSettings.mockResolvedValue(
+        effectiveSettings(
+          { default: "custom/qwen", scout: false, proposal_brief: "gpt-6-luna" },
+          { default: { set_by: "alex@example.com", set_at: "2026-10-30T09:00:00+00:00" } },
+        ),
+      );
+      renderPage();
+      const card = await screen.findByTestId("background-models");
+      expect(within(card).getByTestId("background-model-source")).toHaveTextContent(
+        /Set in the document · set by alex@example\.com on/,
+      );
+      expect(within(card).getByTestId("background-model-watcher")).toHaveTextContent("custom/qwen(the default)");
+      expect(within(card).getByTestId("background-model-scout")).toHaveTextContent("no model: it starts nothing(set to none)");
+      expect(within(card).getByTestId("background-model-proposal_brief")).toHaveTextContent("gpt-6-luna(its own)");
+    });
+
+    it("shows a read-only user the values, and no way to change them", async () => {
+      mockIsAdmin = false;
+      mockFetchEffectiveSettings.mockResolvedValue(effectiveSettings({ default: "custom/qwen" }));
+      renderPage();
+      const card = await screen.findByTestId("background-models");
+      const field = within(card).getByLabelText("Background work runs on");
+      expect(field).toHaveValue("custom/qwen");
+      expect(field).toBeDisabled();
+      expect(within(card).getByRole("button", { name: "Save" })).toBeDisabled();
+      expect(within(card).getByText("Only an admin can change the settings document.")).toBeInTheDocument();
+      expect(within(card).getByTestId("background-model-job_brief")).toHaveTextContent("custom/qwen(the default)");
+    });
+
+    it("shows a refused model next to the field, naming its key", async () => {
+      mockSetSettingsKeys.mockRejectedValue({
+        response: {
+          status: 422,
+          data: { detail: [{ loc: ["background_models", "default"], msg: "not a model this deployment offers" }] },
+        },
+      });
+      renderPage();
+      const card = await screen.findByTestId("background-models");
+      await userEvent.type(within(card).getByLabelText("Background work runs on"), "custom/nope");
+      await userEvent.click(within(card).getByRole("button", { name: "Save" }));
+      expect(await within(card).findByRole("alert")).toHaveTextContent(
+        "background_models.default: not a model this deployment offers",
+      );
+    });
+
+    it("offers and accepts only a model of your own server, as the API does (#287)", async () => {
+      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, fallback_models: ["grok-4.7", "custom/fallback"] });
+      mockFetchEffectiveSettings.mockResolvedValue(
+        effectiveSettings({ default: "custom/qwen", scout: "custom/scout", proposal_brief: "gpt-6-luna" }),
+      );
+      const { container } = renderPage();
+      const card = await screen.findByTestId("background-models");
+      const offered = [...container.querySelectorAll("#background_model_suggestions option")].map((o) =>
+        o.getAttribute("value"),
+      );
+      expect(offered.sort()).toEqual(["custom/fallback", "custom/qwen", "custom/scout"]);
+      expect(card).toHaveTextContent("The model of your own server, custom/<model>");
+      expect(card).toHaveTextContent("The scout runs only on a model named for it");
+
+      const field = within(card).getByLabelText("Background work runs on");
+      await userEvent.clear(field);
+      await userEvent.type(field, "gpt-6-luna");
+      expect(within(card).getByText("The default is a model of your own server, custom/<model>.")).toBeInTheDocument();
+      expect(within(card).getByRole("button", { name: "Save" })).toBeDisabled();
+      expect(mockSetSettingsKeys).not.toHaveBeenCalled();
+    });
+
+    it("says the scout is off until a model is named for it", async () => {
+      mockFetchEffectiveSettings.mockResolvedValue(effectiveSettings({ default: "custom/qwen" }));
+      renderPage();
+      const card = await screen.findByTestId("background-models");
+      expect(within(card).getByTestId("background-model-scout")).toHaveTextContent(
+        "no model: it starts nothing(until a model is named for it)",
+      );
+      expect(within(card).getByTestId("background-model-context_audit")).toHaveTextContent("custom/qwen(the default)");
+    });
+
+    it("is hidden against a backend without the section", async () => {
+      mockFetchEffectiveSettings.mockResolvedValue({ generation: 1, sections: [], unknown_sections: [], unknown_keys: [] });
+      renderPage();
+      await screen.findByTestId("provider-card-anthropic");
+      expect(screen.queryByTestId("background-models")).toBeNull();
     });
   });
 });

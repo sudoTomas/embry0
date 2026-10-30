@@ -8,8 +8,10 @@ import {
   fetchSettingsRevisions,
   previewSettings,
   saveSettings,
+  setSettingsKeys,
   undoSettingsChange,
   type SaveSettingsRequest,
+  type SetSettingsKeysRequest,
 } from "@/api/settings";
 import { DEPLOYMENT_LAYER, layerKey, writeAccess, type PolicyLayer, type WriteAccess } from "@/lib/settingsLayer";
 import { useIsAdmin } from "@/stores/authStore";
@@ -92,6 +94,20 @@ export function useSaveSettings(layer: PolicyLayer = DEPLOYMENT_LAYER) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (request: SaveSettingsRequest) => saveSettings(request, layer),
+    onSuccess: () => refreshAll(qc),
+    onError: (error) => (isConflict(error) ? refreshAll(qc) : undefined),
+  });
+}
+
+/**
+ * Change some keys of one section, for a form field outside the Policy tab.
+ * A success refreshes every view, as a save does; so does a 409 (the document
+ * moved since `generation` was read), before the caller's own `onError`.
+ */
+export function useSetSettingsKeys(layer: PolicyLayer = DEPLOYMENT_LAYER) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (request: SetSettingsKeysRequest) => setSettingsKeys(request, layer),
     onSuccess: () => refreshAll(qc),
     onError: (error) => (isConflict(error) ? refreshAll(qc) : undefined),
   });
