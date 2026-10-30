@@ -3,10 +3,11 @@
 A coding run that pushed its branch ends its final JSON with a report on each
 item of the job's done-when list (``embry0.services.done_when``). This reads
 that report strictly and decides what comes next: every item met → the route
-goes on (review, QA); an item unmet → the coding step runs once more with the
-unmet items named; still unmet after that → the job pauses (``max_retries``,
-stage ``done_when_unmet``) naming them. The report is kept on the list, on
-state and on the job row, so review and the job page see it.
+goes on (review, QA); an item unmet → the coding step runs again with the
+unmet items named, up to the job's ``done_when.retries`` times (once unless an
+operator set another; #182); still unmet after that → the job pauses
+(``max_retries``, stage ``done_when_unmet``) naming them. The report is kept on
+the list, on state and on the job row, so review and the job page see it.
 """
 
 from __future__ import annotations
@@ -18,18 +19,20 @@ import structlog
 
 from embry0.execution import events
 from embry0.services.done_when import (
-    DONE_WHEN_RETRIES,
+    after_retries,
     check_report,
     followup_text,
     items_of,
     unmet_summary,
 )
+from embry0.services.job_settings import job_section
+from embry0.settings.sections.done_when import DONE_WHEN
 
 logger = structlog.get_logger(__name__)
 
 #: The stage a job pauses at when its done-when items stay unmet after the retry.
 UNMET_STAGE = "done_when_unmet"
-#: The stage of the coding step's one done-when retry.
+#: The stage of a done-when retry of the coding step.
 RETRY_STAGE = "developer_done_when_retry"
 
 
@@ -72,7 +75,8 @@ async def check_done_when(
         writer(events.progress(message=f"Done when: all {total} items met.", node="developer"))
         return updates, None
     retries = int(state.get("done_when_retries") or 0)
-    if retries < DONE_WHEN_RETRIES:
+    allowed = job_section(state, DONE_WHEN).retries
+    if retries < allowed:
         writer(
             events.progress(
                 message=f"Done when: {len(unmet)} of {total} items not met; {agent} goes again on them.",
@@ -88,11 +92,12 @@ async def check_done_when(
         )
         return updates, "developer"
     summary = unmet_summary(checked, report)
-    writer(events.progress(message=f"Done when: still not met after a retry: {summary}", node="developer"))
+    after = after_retries(allowed)
+    writer(events.progress(message=f"Done when: still not met{after}: {summary}", node="developer"))
     updates.update(
         {
             "current_stage": UNMET_STAGE,
-            "errors": (state.get("errors") or []) + [f"Done-when items still not met after a retry: {summary}"],
+            "errors": (state.get("errors") or []) + [f"Done-when items still not met{after}: {summary}"],
         }
     )
     return updates, "max_retries"

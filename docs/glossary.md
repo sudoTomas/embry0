@@ -66,9 +66,9 @@ The one lifecycle record for a finding, from detection to a healed verdict (#278
 
 ### Done when
 A code job's finish line (`jobs.done_when`, migration 120; spec `docs/superpowers/specs/2026-10-26-done-when-design.md`): 2–5 checkable conditions, each with how it is shown (a test passes, a command prints something, a written diagnosis names the cause), plus what is out of scope.
-- **Who sets it.** Triage drafts it for every code job, from the ticket's own acceptance criteria when it has them. Those criteria are also the fallback. A person can replace it on the job page.
+- **Who sets it.** Triage drafts it for every code job, from the ticket's own acceptance criteria when it has them. Those criteria are also the fallback. A person can replace it on the job page. The headings a ticket's criteria sit under are the settings document's `done_when.ticket_sections`, `Acceptance criteria` by default.
 - **The developer's contract.** The developer, or the [Slopmaster](#slopmaster), gets it as its contract, with pacing: by half its turns it commits; by three quarters it finishes against the list. It ends its final JSON with a report, each item met or not with evidence.
-- **The check.** embry0 reads the report strictly. An item unmet or unreported sends the coding step once more with the unmet items named. Still unmet, the job pauses (`done_when_unmet`), naming them.
+- **The check.** embry0 reads the report strictly. An item unmet or unreported sends the coding step back with the unmet items named, once unless `done_when.retries` says otherwise. Still unmet, the job pauses (`done_when_unmet`), naming them.
 - **Review and QA** judge the change against the same list. (2026-10)
 
 ### Delivery state

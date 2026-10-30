@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from embry0.api.events.bus import EventBus
     from embry0.metrics import LoopMetrics
     from embry0.orchestration.budget_gate import DispatchDecision
+    from embry0.settings.store import SettingsStore
     from embry0.storage.repositories.environment import EnvironmentRepository
     from embry0.storage.repositories.repo_preferences import RepoPreferencesRepository
 
@@ -127,8 +128,13 @@ class IssueExecutor:
         # LoopMetrics: counts job events that could not be persisted. None in
         # tests / legacy callers: the failure is still logged.
         metrics: LoopMetrics | None = None,
+        # SettingsStore: the settings document a coding job reads its
+        # done_when and salvage sections from when it starts (#182). None in
+        # tests / legacy callers: every job runs on the sections' defaults.
+        settings: SettingsStore | None = None,
     ) -> None:
         self._metrics = metrics
+        self._settings = settings
         self._case_recorder = case_recorder
         self._credential_resolver = credential_resolver
         # Where the PRs it opens read a monorepo's areas (spec 2026-10-25).

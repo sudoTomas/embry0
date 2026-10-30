@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import importlib.util
 import pkgutil
 import sys
 from pathlib import Path
@@ -271,6 +272,11 @@ def test_the_catalog_lists_one_section_per_line_sorted_by_name() -> None:
 
 
 _ALLOWED_IMPORTS = frozenset({"__future__", "pydantic", "embry0.settings.registry"})
+#: Modules of embry0 a section may import because they import nothing of embry0 themselves, so no
+#: import cycle can pass through them (``test_the_leaves_a_section_may_import_import_nothing_of_embry0``):
+#: the content pack's template grammar, which the salvage subject is written in, and the one rule a
+#: named heading matches a ticket's heading by, which the done_when section checks its headings with.
+LEAF_IMPORTS = frozenset({"embry0.services.progression_templates", "embry0.ticket_headings"})
 #: The package itself: ``CATALOG`` imports each section module, and those are held to the same rule.
 _SECTIONS = "embry0.settings.sections"
 
@@ -292,13 +298,14 @@ def _imported_names(node: ast.AST) -> list[str]:
 
 def impure_imports(source: str) -> list[str]:
     """Imports a section module may not have: anything but the registry, pydantic, the
-    standard library and a sibling section module."""
+    standard library, a sibling section module and a module of :data:`LEAF_IMPORTS`."""
     out: list[str] = []
     for node in ast.walk(ast.parse(source)):
         for name in _imported_names(node):
             top = name.split(".")[0]
             allowed = (
                 name in _ALLOWED_IMPORTS
+                or name in LEAF_IMPORTS
                 or name.startswith(("pydantic.", f"{_SECTIONS}."))
                 or (top in sys.stdlib_module_names and top != "embry0")
             )
@@ -331,3 +338,29 @@ def test_section_modules_import_only_the_registry_pydantic_and_the_standard_libr
         if (impure := impure_imports(path.read_text(encoding="utf-8")))
     }
     assert found == {}, f"a section module must not import these (import cycles): {found}"
+
+
+def embry0_imports(source: str) -> list[str]:
+    """The modules of embry0 that ``source`` imports, a relative import counted as one."""
+    return [
+        name
+        for node in ast.walk(ast.parse(source))
+        for name in _imported_names(node)
+        if name.split(".")[0] == "embry0" or name.startswith(".")
+    ]
+
+
+def test_the_check_for_a_leaf_that_imports_embry0_can_fail() -> None:
+    source = "import re\nfrom embry0.settings.store import SettingsStore\nfrom .sibling import X\n"
+    assert embry0_imports(source) == ["embry0.settings.store", "embry0.settings.sections.sibling"]
+    assert embry0_imports("import re\nfrom collections.abc import Mapping\n") == []
+
+
+def test_the_leaves_a_section_may_import_import_nothing_of_embry0() -> None:
+    found = {}
+    for name in sorted(LEAF_IMPORTS):
+        spec = importlib.util.find_spec(name)
+        assert spec is not None and spec.origin is not None, f"{name} is not a module"
+        if imported := embry0_imports(Path(spec.origin).read_text(encoding="utf-8")):
+            found[name] = imported
+    assert found == {}, f"a module a section may import must import nothing of embry0 (import cycles): {found}"

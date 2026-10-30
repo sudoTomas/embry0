@@ -275,3 +275,97 @@ async def test_a_budget_pause_says_so_and_where_the_work_is():
     assert "Review failed" not in summary["message"]
     assert "budget" in summary["message"] and "$60.00" in summary["message"]
     assert _BRANCH in summary["message"]
+
+
+CONVENTIONAL = "chore(wip): {agent} stopped, {reason}"
+
+
+def _default_subject() -> str:
+    from embry0.settings.sections.salvage import SALVAGE
+
+    template = getattr(SALVAGE.defaults(), "commit_subject", None)
+    if template is None:
+        pytest.fail("the salvage section has no commit_subject template: the subject is a prefix and the code's words")
+    return str(template)
+
+
+def _subject(agent: str, reason: str, template: str) -> str:
+    import inspect
+
+    from embry0.workflows.issue_to_pr.nodes import _salvage
+
+    if "template" not in inspect.signature(_salvage.commit_subject).parameters:
+        pytest.fail("the salvage subject is not rendered from the section's commit_subject template")
+    return str(_salvage.commit_subject(agent, reason, template=template))
+
+
+def _reasons() -> list[str]:
+    """Every reason a salvage commit names: the turn cap, budget, question rounds, and an error with or without a code."""
+    from embry0.safety.error_codes import ErrorCode
+    from embry0.workflows.issue_to_pr.nodes import _salvage
+
+    return ["turn cap", _salvage.BUDGET, _salvage.QUESTIONS, "error"] + [f"error {code.value}" for code in ErrorCode]
+
+
+def test_the_default_subject_is_the_old_one_for_every_reason():
+    from embry0.workflows.issue_to_pr.nodes import _salvage
+
+    template = _default_subject()
+    for agent in sorted(_salvage.CODING_AGENTS):
+        for reason in _reasons():
+            old = f"wip: unfinished — {agent} stopped ({reason})"
+            assert _subject(agent, reason, template) == old, f"the default must render the code's old subject: {old!r}"
+
+
+def test_a_subject_over_100_characters_shortens_only_its_reason():
+    template = "chore(salvage): unfinished work kept by embry0 — {agent} stopped ({reason})"
+    full = template.format(agent="slopmaster", reason="error ERR_SANDBOX_AGENT_START_FAILED")
+    assert len(full) == 106, len(full)
+    subject = _subject("slopmaster", "error ERR_SANDBOX_AGENT_START_FAILED", template)
+    assert subject == (
+        "chore(salvage): unfinished work kept by embry0 — slopmaster stopped (error ERR_SANDBOX_AGENT_START…)"
+    ), f"only the reason is shortened, ending in an ellipsis: {subject!r}"
+    assert len(subject) == 100
+    # A subject of exactly 100 characters is kept whole; one more and its reason is shortened.
+    exactly = "x" * (100 - len(template.format(agent="developer", reason="")))
+    assert _subject("developer", exactly, template) == template.format(agent="developer", reason=exactly)
+    one_more = _subject("developer", exactly + "y", template)
+    assert len(one_more) == 100 and one_more.endswith("…)"), one_more
+    # Named twice, the reason is shortened in both places and the subject still fits.
+    twice = _subject("developer", "error " + "E" * 60, "{reason}: {agent} stopped ({reason})")
+    assert len(twice) <= 100 and twice.count("…") == 2, twice
+
+
+@pytest.mark.asyncio
+async def test_the_salvage_commit_reads_the_job_s_commit_subject():
+    """#182: a repository whose commit rules refuse wip: names the subject they accept in its salvage section."""
+    sandbox = _Sandbox()
+    await _run(
+        _stopped("Reached maximum number of turns", error_code="ERR_AGENT_MAX_TURNS"),
+        sandbox,
+        job_settings={"salvage": {"commit_subject": CONVENTIONAL}},
+    )
+    assert sandbox.messages, "the stopped run's work was never committed"
+    assert sandbox.messages[0].splitlines()[0] == "chore(wip): developer stopped, turn cap", (
+        f"the subject must be the job's salvage.commit_subject: {sandbox.messages[0].splitlines()[0]!r}"
+    )
+
+
+def test_the_next_attempt_is_told_the_commit_by_its_subject():
+    from embry0.workflows.issue_to_pr.nodes import _developer_delta_sections
+
+    record = {"branch": _BRANCH, "agent": "developer", "reason": "turn cap", "committed": True}
+    state = _make_state(unfinished_work=record, job_settings={"salvage": {"commit_subject": CONVENTIONAL}})
+    text = "\n".join(_developer_delta_sections(state))
+    assert "as `chore(wip): developer stopped, turn cap`" in text, f"the prompt must name the commit it made:\n{text}"
+
+
+def test_the_commit_helper_has_no_subject_of_its_own():
+    import inspect
+
+    from embry0.workflows.issue_to_pr.nodes import _commit_unfinished_work
+
+    message = inspect.signature(_commit_unfinished_work).parameters["message"]
+    assert message.default is inspect.Parameter.empty, (
+        "the salvage commit's message must come from the job's salvage.commit_subject, never a wip: default in code"
+    )

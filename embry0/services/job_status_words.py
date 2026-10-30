@@ -37,7 +37,9 @@ _PAUSE_WORDS: dict[str, str] = {
     "review_unparseable": "the review gave no verdict embry0 can act on.",
     "review_toolchain_missing": "the sandbox has no compiler or test runner, so the review could not run the tests.",
     "review_retries_exhausted": "the reviewer still asked for changes after every retry.",
-    "done_when_unmet": "the branch is pushed, but items of its done-when list are still not met after a retry.",
+    # How many retries ran is the job's done_when.retries (#182), which the
+    # row does not hold; the pause's own message says it.
+    "done_when_unmet": "the branch is pushed, but items of its done-when list are still not met.",
 }
 
 _OPTION_WORDS = {"continue_retrying": "continue", "merge_as_is": "merge it as it is", "abandon": "stop"}

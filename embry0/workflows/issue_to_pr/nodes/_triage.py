@@ -238,7 +238,16 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # sets one default model for every agent. Same text for every job until
     # those settings change, so it still caches.
     default_model, tier_models = await load_triage_model_settings(config)
-    triage_system_prompt = build_triage_system_prompt(default_model=default_model, tier_models=tier_models)
+    # #182: the "Done when" section names the ticket headings the job's
+    # repository writes its criteria under, as the job read them at its start.
+    from embry0.services.job_settings import job_section
+    from embry0.settings.sections.done_when import DONE_WHEN
+
+    triage_system_prompt = build_triage_system_prompt(
+        default_model=default_model,
+        tier_models=tier_models,
+        ticket_sections=job_section(state, DONE_WHEN).ticket_sections,
+    )
 
     triage_fallback: dict[str, Any] = {
         "model": model,

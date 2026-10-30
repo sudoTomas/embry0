@@ -34,6 +34,7 @@ import structlog
 
 from embry0.execution.proxy.container_allowlist import ContainerAllowlist
 from embry0.safety.redaction import redact_bounded, redact_log_text
+from embry0.ticket_headings import heading_matches
 
 logger = structlog.get_logger(__name__)
 
@@ -72,13 +73,16 @@ class CaseEvidence:
         }
 
 
-def ticket_section(text: str, heading: str) -> str | None:
-    """Body of the markdown section whose heading starts with ``heading``, or None.
+def sections_under(text: str, heading: str) -> list[str]:
+    """Body of every markdown section whose heading matches ``heading``, in the ticket's order.
 
-    The section runs to the next heading of any level. A ``#`` line inside a
-    code fence is content (log excerpts and shell comments start with ``#``).
+    A heading matches by :func:`embry0.ticket_headings.heading_matches`: its
+    words start the ticket's heading, at a word boundary, in any case, with
+    trailing ``#`` marks ignored on both sides. A section runs to the next
+    heading of any level. A ``#`` line inside a code fence is content (log
+    excerpts and shell comments start with ``#``).
     """
-    wanted = heading.strip().lower()
+    bodies: list[str] = []
     collected: list[str] | None = None
     in_fence = False
     for line in (text or "").splitlines():
@@ -86,18 +90,20 @@ def ticket_section(text: str, heading: str) -> str | None:
             in_fence = not in_fence
         elif not in_fence and (match := _HEADING_RE.match(line)):
             if collected is not None:
-                break
-            if match.group(1).strip().lower().startswith(wanted):
-                collected = []
+                bodies.append("\n".join(collected).strip())
+            collected = [] if heading_matches(match.group(1), heading) else None
             continue
         if collected is not None:
             collected.append(line)
-    return None if collected is None else "\n".join(collected).strip()
+    if collected is not None:
+        bodies.append("\n".join(collected).strip())
+    return bodies
 
 
-def acceptance_criteria_in(text: str) -> str:
-    """The ticket's ``## Acceptance criteria`` section, or ``""``."""
-    return ticket_section(text, "Acceptance criteria") or ""
+def ticket_section(text: str, heading: str) -> str | None:
+    """Body of the first markdown section whose heading matches ``heading`` (:func:`sections_under`), or None."""
+    found = sections_under(text, heading)
+    return found[0] if found else None
 
 
 def services_named_in(text: str, allowlist: Sequence[str]) -> list[str]:

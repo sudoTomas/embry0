@@ -74,14 +74,20 @@ def format_review_task(state: dict[str, Any], *, failure_step_number: int = 7) -
     not become a new path for raw log lines (#294).
     """
     from embry0.safety.redaction import redact_bounded
-    from embry0.workflows.issue_to_pr.evidence import acceptance_criteria_in, format_evidence_block
+    from embry0.services.done_when import ticket_criteria
+    from embry0.services.job_settings import job_section
+    from embry0.settings.sections.done_when import DONE_WHEN
+    from embry0.workflows.issue_to_pr.evidence import format_evidence_block
 
     raw_task = str(state.get("task") or "").strip()
     # Bound BEFORE redacting: an issue body has no length cap at the API.
     task = redact_bounded(raw_task, REVIEW_TASK_CHARS_CAP)
     if len(raw_task) > REVIEW_TASK_CHARS_CAP:
         task += "\n… [task truncated]"
-    criteria = redact_bounded(acceptance_criteria_in(raw_task), REVIEW_TASK_CHARS_CAP // 3)
+    # #182: the ticket's criteria sit under the job's done_when.ticket_sections,
+    # read by the rule the ticket's own done-when list is (ticket_criteria).
+    headings = job_section(state, DONE_WHEN).ticket_sections
+    criteria = redact_bounded(ticket_criteria(raw_task, headings), REVIEW_TASK_CHARS_CAP // 3)
     parts = [f"Task the developer was given:\n{task or '(none recorded)'}"]
     # Done when (spec 2026-10-26): the job's own finish line, with the
     # developer's report on it, replaces the ticket's criteria section.

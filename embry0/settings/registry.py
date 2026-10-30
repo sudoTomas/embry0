@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 import typing
+import unicodedata
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
@@ -103,6 +104,25 @@ class SectionModel(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+#: The Unicode categories a one-line text value may not hold: controls (``Cc``: a line break, a
+#: tab, NUL, NEL), format characters (``Cf``: bidirectional overrides, zero-width marks) and the
+#: line and paragraph separators (``Zl``, ``Zp``), which Python's ``splitlines`` splits on.
+UNPRINTABLE_CATEGORIES: Final = frozenset({"Cc", "Cf", "Zl", "Zp"})
+
+
+def refuse_unprintable(text: str, *, what: str) -> None:
+    """For a section's validator of a one-line text: raise :class:`ValueError` when ``text`` holds a
+    character of :data:`UNPRINTABLE_CATEGORIES`.
+
+    ``what`` names the value in the message ("a heading"), which never
+    repeats the text.
+    """
+    if any(unicodedata.category(char) in UNPRINTABLE_CATEGORIES for char in text):
+        raise ValueError(
+            f"{what} is one line of plain text, with no line break, tab, control, format or separator character"
+        )
 
 
 #: Each (model, field) as a model of that field alone, built once: :func:`field_alone`.

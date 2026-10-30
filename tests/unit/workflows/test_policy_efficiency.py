@@ -146,15 +146,18 @@ def _sessions_repo(prior_row):
 async def test_triage_system_prompt_moves_to_agent_definition(monkeypatch):
     from embry0.config import Embry0Config
     from embry0.orchestration.nodes.triage import build_triage_system_prompt
+    from embry0.settings.sections.done_when import DONE_WHEN
     from embry0.workflows.issue_to_pr.nodes import triage_node
 
     # #465: the prompt is built per deployment configuration. No DB and no
     # embry0_config in this configurable, so the tiers are the config defaults.
+    # #182: a job that read no settings has the default ticket headings.
     expected_system_prompt = build_triage_system_prompt(
         default_model="",
         tier_models={
             tier: Embry0Config.model_fields[tier].default for tier in ("model_heavy", "model_medium", "model_light")
         },
+        ticket_sections=DONE_WHEN.defaults().ticket_sections,
     )
 
     captured = {}
@@ -322,3 +325,36 @@ async def test_review_scoping_respects_base_branch():
     state = {**REVIEW_STATE, "base_branch": "develop"}
     await _run_review(state, {"docker": object()}, ["a.py"], captured)
     assert "git diff develop...HEAD" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_triage_is_told_the_job_s_ticket_headings():
+    """#182: triage keeps the ticket's own criteria under the headings the job's repository uses."""
+    from embry0.workflows.issue_to_pr.nodes import triage_node
+
+    captured = {}
+
+    async def _run(*args, **kwargs):
+        captured["agent_definition"] = kwargs.get("agent_definition")
+        return _triage_result()
+
+    headings = {"done_when": {"ticket_sections": ["Definition of done", "User story"]}}
+    with (
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+    ):
+        await triage_node(
+            {**TRIAGE_STATE, "job_settings": headings},
+            {
+                "configurable": {
+                    "agent_runner": object(),
+                    "credentials": {},
+                    "agent_sessions_repo": _sessions_repo(None),
+                }
+            },
+        )
+    prompt = captured["agent_definition"]["system_prompt"]
+    assert '- When the task has a "Definition of done" or "User story" section, those are your items:' in prompt, (
+        "triage must be told the job's ticket headings, not the code's"
+    )
+    assert '"Acceptance criteria" section' not in prompt

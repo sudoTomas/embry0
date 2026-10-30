@@ -1032,6 +1032,8 @@ async def _init_app_state(
         tracker_channels=app.state.tracker_channels,
         webhook_notifier=webhook_notifier,
         case_recorder=app.state.case_recorder,
+        # #182: a coding job reads its done_when and salvage sections when it starts.
+        settings=app.state.settings,
         **executor_kwargs,
     )
 

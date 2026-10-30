@@ -53,6 +53,41 @@ asks:
   # person a decision now waits on.
   # tick_seconds: 120.0
 
+# Where a ticket states a code job's finish line, and how often a coding run
+# goes back to unmet items.
+done_when:
+  # How many times a coding run that reports a done-when item unmet, or none,
+  # goes again on the unmet items before the job pauses at stage
+  # done_when_unmet. 0 pauses at the first such report. Each retry is another
+  # coding run, inside the job's budget.
+  # retries: 1
+
+  # The ticket headings under which a ticket states its finish line, at least
+  # one and each named once. Triage keeps the bullets there as a code job's
+  # done-when items, they are the list when triage drafts none, and review
+  # reads them when a job has no list. The first section, in this order, that
+  # lists bullets is read; when none does, review reads the first with any
+  # text. A heading matches a ticket heading that starts with its words, at a
+  # word boundary and in any case, with trailing # marks ignored: Acceptance
+  # criteria matches Acceptance criteria (must), and A does not match
+  # Approach. Write them without the leading # marks. A heading that an
+  # earlier one already matches can never be read, so list the longer one
+  # first.
+  # ticket_sections:
+  # - Acceptance criteria
+
+# The subject of the commit that keeps the work of a coding run that stopped
+# before it committed.
+salvage:
+  # The subject of the commit that keeps a stopped coding run's work. {agent}
+  # is the coding agent that stopped (developer or slopmaster) and {reason}
+  # why (turn cap, an error with its code, budget reached, question rounds
+  # used up); write {{ and }} for a literal brace. One line, not starting with
+  # #. A subject longer than 100 characters has only its {reason} shortened to
+  # fit, ending in …. Set it to what the repository's commit rules accept,
+  # such as `chore(wip): unfinished — {agent} stopped ({reason})`.
+  # commit_subject: 'wip: unfinished — {agent} stopped ({reason})'
+
 # What the scout runs, how often it comes back to a repository, and how much
 # it may start and spend.
 scout:

@@ -72,9 +72,9 @@ def _allowed(prop: dict[str, Any]) -> str:
     parts: list[str] = []
     for option in prop.get("anyOf", [prop]):
         if "enum" in option:
-            parts.append("one of " + ", ".join(f"`{json.dumps(v)}`" for v in option["enum"]))
+            parts.append("one of " + ", ".join(f"`{json.dumps(v, ensure_ascii=False)}`" for v in option["enum"]))
         if "const" in option:
-            parts.append(f"`{json.dumps(option['const'])}`")
+            parts.append(f"`{json.dumps(option['const'], ensure_ascii=False)}`")
         for word, sign in (
             ("minimum", "≥"),
             ("exclusiveMinimum", ">"),
@@ -124,7 +124,7 @@ def _section_table(section: Section[Any]) -> list[str]:
         cells = [
             f"`{key}`",
             _type(prop),
-            f"`{_cell(json.dumps(defaults.get(key)))}`",
+            f"`{_cell(json.dumps(defaults.get(key), ensure_ascii=False))}`",
             _allowed(prop),
             ", ".join(layers),
             f"`{env_name(imported.attr)}`" if imported is not None else "",

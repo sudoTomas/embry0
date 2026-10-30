@@ -165,11 +165,15 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             )
         elif arrival_stage == "done_when_unmet":
             # Done when (spec 2026-10-26): the branch is pushed, but the run's
-            # report left items of the job's finish line unmet after one retry.
-            from embry0.services.done_when import unmet_summary
+            # report left items of the job's finish line unmet after the job's
+            # done_when.retries (#182).
+            from embry0.services.done_when import after_retries, unmet_summary
+            from embry0.services.job_settings import job_section
+            from embry0.settings.sections.done_when import DONE_WHEN
 
             _list = state.get("done_when") or {}
-            message = "Done-when items still not met after a retry: " + (
+            _after = after_retries(job_section(state, DONE_WHEN).retries)
+            message = f"Done-when items still not met{_after}: " + (
                 unmet_summary(_list, _list.get("report")) or "see the job's done-when list"
             )
         elif arrival_stage == "review_retries_exhausted":
