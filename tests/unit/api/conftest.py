@@ -22,7 +22,7 @@ from embry0.config import Embry0Config
 from embry0.storage.database import DatabasePool
 from embry0.storage.encryption import FernetSecretsProvider
 from embry0.storage.migrations.runner import run_migrations
-from tests.fixtures.postgres import postgres_unavailable
+from tests.fixtures.postgres import postgres_unavailable, reset_to_fresh
 
 
 @pytest.fixture
@@ -30,9 +30,10 @@ async def api_client() -> AsyncIterator[AsyncClient]:
     """Async HTTP client backed by a real PostgreSQL test database.
 
     Mirrors the integration `app` fixture pattern (tests/integration/conftest.py).
-    Provisions/migrates the dedicated `embry0_unit_api_test` database, then
-    TRUNCATEs the tables that API unit tests touch so each test starts clean.
-    Skips cleanly when PostgreSQL is unavailable.
+    Provisions the dedicated `embry0_unit_api_test` database and resets it with
+    `reset_to_fresh`: migrated once, then emptied and given back what the
+    migrations wrote before each test, so each test starts with those rows and
+    no earlier test's (#235). Skips cleanly when PostgreSQL is unavailable.
 
     Default headers include the `X-Requested-With` CSRF marker — tests should
     not need to set it on each mutating call.
@@ -60,16 +61,15 @@ async def api_client() -> AsyncIterator[AsyncClient]:
         postgres_unavailable(exc)
         return
 
-    # Truncate tables touched by API unit tests so each test starts clean,
-    # while keeping the schema/migration state intact.
+    # Start from the migrations alone. A list of tables to empty left every
+    # other table as the last test left it, and the next test to read one saw
+    # its rows (#235).
     boot_db = DatabasePool(database_url)
     await boot_db.connect()
-    await run_migrations(boot_db)
-    await boot_db.execute(
-        "TRUNCATE TABLE sandbox_profiles, global_environment, repo_environment, repos, repo_qa_configs, "
-        "progression_rollups RESTART IDENTITY CASCADE"
-    )
-    await boot_db.close()
+    try:
+        await reset_to_fresh(boot_db, database_url)
+    finally:
+        await boot_db.close()
 
     @asynccontextmanager
     async def test_lifespan(app):
@@ -115,8 +115,8 @@ async def builtin_profile_seeded(api_client: AsyncClient) -> AsyncIterator[None]
 
     Use in tests that depend on 'slim' or 'qa-jvm' being present.
 
-    Depends on `api_client` so the test DB exists, has migrations applied, and
-    has had `sandbox_profiles` truncated. Opens a short-lived DatabasePool to
+    Depends on `api_client` so the test DB exists, as the migrations leave it,
+    with no sandbox profile in it. Opens a short-lived DatabasePool to
     the same TEST_DATABASE_URL and runs the seed against it; the test app's
     own pool sees the seeded rows because they share one Postgres database.
     """
