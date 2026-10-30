@@ -2669,10 +2669,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # waits on, for a chat assistant to send. The loop always runs and reads
     # the settings document's `asks` section every tick (spec 2026-10-28), so
     # turning asks on, or changing their hours, needs no restart; it does
-    # nothing while `asks.enabled` is false.
+    # nothing while `asks.enabled` is false. It reads the section per
+    # repository (spec 2026-10-29), so each ask follows its decision's
+    # organization's layer.
     from embry0.api.v1.decisions import list_decisions as _ask_decisions
     from embry0.services.ask_loop import AskLoop
     from embry0.settings.sections.asks import ASKS as _ASKS
+    from embry0.settings.store import scoped_reader as _scoped_reader
 
     async def _asked_decisions() -> list[dict[str, Any]]:
         listed = await _ask_decisions(
@@ -2693,7 +2696,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         return {str(u.github_login).lower(): u.email.lower() for u in await users.people() if u.github_login}
 
     app.state.ask_loop = AskLoop(
-        settings=_section_reader(app.state.settings, _ASKS),
+        settings=_scoped_reader(app.state.settings, _ASKS),
         asks=app.state.asks_repo,
         decisions=_asked_decisions,
         people=_ask_people,

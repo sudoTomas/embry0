@@ -15,8 +15,10 @@ press back (``POST /asks/answer``). No model turns a reply into an answer.
 
 The policy is the ``asks`` section of the settings document
 (:mod:`embry0.settings.sections.asks`), read by the loop every tick and by
-the feed on every request; :func:`ask_settings` turns it into the forms used
-here, so this module stays pure.
+the feed on every request. An organization's layer may set when and how often
+its people are asked about its decisions, so each ask is held to the values of
+its decision's organization (:class:`AskPolicy`); :func:`ask_settings` turns
+them into the forms used here, so this module stays pure.
 """
 
 from __future__ import annotations
@@ -26,9 +28,10 @@ import hashlib
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Any
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
+from embry0.settings.scope import organization_of
 from embry0.settings.sections.asks import AsksSettings, parse_hours, parse_weekdays
 
 #: The states of an ask still waiting on its person.
@@ -51,7 +54,8 @@ class AskSettings:
     remind_hours: float
     expire_days: float
     tick_seconds: float
-    #: Unanswered asks one person holds at once; the next is sent as one is answered or expires.
+    #: Unanswered asks one person holds at once about one organization's decisions; the next is
+    #: sent as one is answered or expires.
     max_open_per_person: int
 
 
@@ -74,6 +78,50 @@ def ask_settings(section: AsksSettings) -> AskSettings:
     )
 
 
+class PerRepository(Protocol):
+    """The ``asks`` section of one settings snapshot, read per repository: ``Scoped[AsksSettings]``."""
+
+    def deployment(self) -> AsksSettings: ...
+
+    def repo(self, repo: str | None) -> AsksSettings: ...
+
+
+class AskPolicy:
+    """The ``asks`` section of one settings snapshot, as each decision's asks are held to it.
+
+    An ask follows its decision's organization: the values that
+    organization's layer sets, and the deployment's for the rest. An ask
+    about a decision with no repository, or one not among ``decisions``,
+    follows the deployment's. Each repository is resolved once, in memory, so
+    a tick or a feed over many decisions reads nothing more.
+    """
+
+    def __init__(self, section: PerRepository, decisions: Iterable[Mapping[str, Any]]) -> None:
+        self._section = section
+        #: The deployment's values: what an ask about a decision with no repository is held to.
+        self.deployment = ask_settings(section.deployment())
+        self._repos = {str(d["id"]): str(d.get("repo") or "") for d in decisions}
+        self._by_repo: dict[str, tuple[str, AskSettings]] = {}
+
+    def _of(self, decision_id: str) -> tuple[str, AskSettings]:
+        repo = self._repos.get(decision_id, "")
+        if not repo:
+            return "", self.deployment
+        found = self._by_repo.get(repo)
+        if found is None:
+            found = self._by_repo[repo] = (organization_of(repo), ask_settings(self._section.repo(repo)))
+        return found
+
+    def settings(self, decision_id: str) -> AskSettings:
+        """The values an ask about ``decision_id`` is held to."""
+        return self._of(decision_id)[1]
+
+    def organization(self, decision_id: str) -> str:
+        """The organization whose ``max_open_per_person`` an ask about ``decision_id`` counts against;
+        empty for a decision with no repository, or one not among the decisions."""
+        return self._of(decision_id)[0]
+
+
 def next_working_time(now: datetime, s: AskSettings) -> datetime:
     """``now`` when it is within working hours, else the next start of them."""
     tz = ZoneInfo(s.timezone)
@@ -90,6 +138,11 @@ def next_working_time(now: datetime, s: AskSettings) -> datetime:
         if local < opens:
             return opens.astimezone(now.tzinfo)
     return now
+
+
+def working(now: datetime, s: AskSettings) -> bool:
+    """Whether ``now`` is within the working hours of ``s``."""
+    return next_working_time(now, s) == now
 
 
 def code_for(decision_id: str, taken: Collection[str]) -> str:
@@ -144,21 +197,35 @@ def plan(
 
 
 def release(
-    live: Sequence[Mapping[str, Any]], order: Mapping[str, int], now: datetime, s: AskSettings, *, working: bool
+    live: Sequence[Mapping[str, Any]], order: Mapping[str, int], now: datetime, policy: AskPolicy
 ) -> list[tuple[Mapping[str, Any], bool]]:
-    """The asks to send now, ``(ask, is_reminder)``: due reminders, then queued ones, worst first, while
-    their person holds fewer than ``max_open_per_person`` unanswered asks."""
-    held: dict[str, int] = {}
+    """The asks to send now, ``(ask, is_reminder)``: due reminders, then queued ones, worst first.
+
+    Each ask is held to its decision's organization's values (``policy``): a
+    reminder goes only within that organization's working hours, and a queued
+    ask only while its person holds fewer than that organization's
+    ``max_open_per_person`` unanswered asks about its decisions. A person asked
+    about two organizations' decisions holds each one's number.
+    """
+
+    def counted(a: Mapping[str, Any]) -> tuple[str, str]:
+        return str(a["recipient"]).lower(), policy.organization(str(a["decision_id"]))
+
+    held: dict[tuple[str, str], int] = {}
     for a in live:
         if a.get("state") in ("sent", "reminded"):
-            held[str(a["recipient"]).lower()] = held.get(str(a["recipient"]).lower(), 0) + 1
-    out: list[tuple[Mapping[str, Any], bool]] = [(a, True) for a in live if working and reminder_due(a, now, s)]
+            held[counted(a)] = held.get(counted(a), 0) + 1
+    out: list[tuple[Mapping[str, Any], bool]] = []
+    for a in live:
+        s = policy.settings(str(a["decision_id"]))
+        if reminder_due(a, now, s) and working(now, s):
+            out.append((a, True))
     queued = [a for a in live if a.get("state") == "queued" and a["due_at"] <= now]
     for a in sorted(queued, key=lambda a: (order.get(str(a["decision_id"]), 1_000_000), a.get("created_at") or now)):
-        who = str(a["recipient"]).lower()
-        if held.get(who, 0) < s.max_open_per_person:
+        key = counted(a)
+        if held.get(key, 0) < policy.settings(str(a["decision_id"])).max_open_per_person:
             out.append((a, False))
-            held[who] = held.get(who, 0) + 1
+            held[key] = held.get(key, 0) + 1
     return out
 
 

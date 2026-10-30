@@ -62,7 +62,7 @@ from embry0.settings.document import (
 )
 from embry0.settings.layers import LayerRefusal, Resolved, resolve, settable_values
 from embry0.settings.registry import DOCUMENT_KEYS, MANAGED_BY_KEY, SCHEMA_VERSION, Catalog, Section, SectionModel
-from embry0.settings.scope import DEPLOYMENT, Scope, ScopeError, current, owner_of, stored_rows
+from embry0.settings.scope import DEPLOYMENT, Scope, ScopeError, current, organization_of, stored_rows
 from embry0.storage import repo_renames
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.config_revisions import ConfigRevisionsRepository, RevisionSource
@@ -109,7 +109,7 @@ def _layer_scopes(owner: str | None, repo: str | None) -> tuple[Scope | None, Sc
             repo_scope = Scope.repository(repo)
         except ScopeError:
             repo_scope = None
-        owner = repo_scope.owner if repo_scope is not None else owner_of(repo)
+        owner = organization_of(repo)
     org_scope: Scope | None = None
     if owner:
         try:

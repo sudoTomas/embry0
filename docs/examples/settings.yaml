@@ -43,8 +43,9 @@ asks:
   # person is not asked about that decision again.
   # expire_days: 7.0
 
-  # Unanswered asks one person holds at once; the next, worst first, is
-  # released as one is answered or expires.
+  # Unanswered asks one person holds at once about one organization's
+  # decisions; the next, worst first, is released as one is answered or
+  # expires.
   # max_open_per_person: 3
 
   # How often the ask loop runs: it expires asks past `expire_days`, withdraws

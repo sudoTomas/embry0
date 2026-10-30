@@ -130,8 +130,8 @@ class AsksSettings(SectionModel):
         default=3,
         ge=1,
         description=(
-            "Unanswered asks one person holds at once; the next, worst first, "
-            "is released as one is answered or expires."
+            "Unanswered asks one person holds at once about one organization's decisions; the next, "
+            "worst first, is released as one is answered or expires."
         ),
     )
     tick_seconds: float = Field(
@@ -166,9 +166,11 @@ ASKS = Section(
     name="asks",
     model=AsksSettings,
     summary="When and how often embry0 asks a person about a decision that waits on them.",
-    # What an organization may set for its own people (#161 resolves them):
-    # when and how often they are asked. Whether asks run at all, and how
-    # often the one loop ticks, stay the deployment's.
+    # What an organization may set for asks about its own decisions: when and
+    # how often its people are asked, and how many asks about its decisions
+    # one person holds. The ask loop and GET /asks/due read each ask by its
+    # decision's organization. Whether asks run at all, and how often the one
+    # loop ticks, stay the deployment's.
     org_keys=frozenset({"hours", "weekdays", "timezone", "remind_hours", "expire_days", "max_open_per_person"}),
     repo_keys=frozenset(),
     env={
