@@ -16,6 +16,10 @@ from embry0.storage.repositories.gate_refusal import gate_refusal_sql
 # total_cost_usd`` is only written when a job reaches a terminal state, so a
 # burst of running jobs would otherwise read as zero spend and sail past the
 # cap. Traces land per agent turn, so they carry the accruing cost.
+#
+# What background features spend outside any job (the briefs, the
+# Slop-O-Meter's judgments: ``background_spend``, #164) counts against the
+# same caps, call by call.
 _ROLLUP_SQL = """
 SELECT
     COALESCE(SUM(c.cost) FILTER (WHERE c.ts >= date_trunc('day', NOW())), 0)   AS daily,
@@ -28,6 +32,10 @@ FROM (
     LEFT JOIN (
         SELECT job_id, SUM(cost_usd) AS trace_cost FROM traces GROUP BY job_id
     ) t ON t.job_id = j.job_id
+    UNION ALL
+    SELECT b.at AS ts, b.cost_usd AS cost
+    FROM background_spend b
+    WHERE b.at >= date_trunc('month', NOW())
 ) c
 """
 
@@ -53,13 +61,13 @@ WHERE dispatched_by = $1
 
 
 class BudgetSpendRepository:
-    """Read-only aggregates over ``jobs`` and ``traces``."""
+    """Read-only aggregates over ``jobs``, ``traces`` and ``background_spend``."""
 
     def __init__(self, db: DatabasePool) -> None:
         self._db = db
 
     async def spend_rollup(self) -> dict[str, float]:
-        """Spend since midnight and since the start of the month, in USD."""
+        """Spend since midnight and since the start of the month, in USD: jobs' and background calls'."""
         row = await self._db.fetchrow(_ROLLUP_SQL)
         if not row:
             return {"daily": 0.0, "monthly": 0.0}

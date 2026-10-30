@@ -22,7 +22,9 @@ value: one the code refuses reads as its default, or as the inherited value
 for a layer.
 
 **Writing.** Every write locks its document, checks the whole document
-(:func:`embry0.settings.document.check`), a layer together with the values
+(:func:`embry0.settings.document.check`) with the store's write context
+(:mod:`embry0.settings.write_context`: what the deployment offers, such as
+its model catalogue), a layer together with the values
 it inherits, read under the locks of the documents it inherits from so a
 concurrent write to them commits first, stores the text and its values,
 and appends a
@@ -63,6 +65,7 @@ from embry0.settings.document import (
 from embry0.settings.layers import LayerRefusal, Resolved, resolve, settable_values
 from embry0.settings.registry import DOCUMENT_KEYS, MANAGED_BY_KEY, SCHEMA_VERSION, Catalog, Section, SectionModel
 from embry0.settings.scope import DEPLOYMENT, Scope, ScopeError, current, organization_of, stored_rows
+from embry0.settings.write_context import WriteContext, deployment_context
 from embry0.storage import repo_renames
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.config_revisions import ConfigRevisionsRepository, RevisionSource
@@ -518,12 +521,16 @@ def _ancestors(scope: Scope) -> list[Scope]:
 class SettingsStore:
     """Every settings document of the deployment, for every reader and writer in this process."""
 
-    def __init__(self, db: DatabasePool, catalog: Catalog | None = None) -> None:
+    def __init__(
+        self, db: DatabasePool, catalog: Catalog | None = None, *, write_context: WriteContext | None = None
+    ) -> None:
         if catalog is None:
             from embry0.settings.sections import CATALOG
 
             catalog = CATALOG
         self._catalog = catalog
+        #: Built for each write: what the deployment offers now (the model catalogue moves while it runs).
+        self._write_context: WriteContext = write_context if write_context is not None else deployment_context
         self._documents = SettingsDocumentsRepository(db)
         self._revisions = ConfigRevisionsRepository(db)
         self._db = db
@@ -748,7 +755,13 @@ class SettingsStore:
             stored_text: str, stored: Mapping[str, Any], inherited: Mapping[str, Mapping[str, Any]] | None
         ) -> tuple[str, Checked]:
             checked = check(
-                self._catalog, values, stored=stored, stored_text=stored_text, layer=scope.layer, inherited=inherited
+                self._catalog,
+                values,
+                stored=stored,
+                stored_text=stored_text,
+                layer=scope.layer,
+                inherited=inherited,
+                context=self._write_context(),
             )
             return (text if text is not None else dump_yaml(values)), checked
 
@@ -768,6 +781,7 @@ class SettingsStore:
                 stored_text=stored_text,
                 layer=scope.layer,
                 inherited=inherited,
+                context=self._write_context(),
             )
 
         return propose
@@ -910,6 +924,7 @@ class SettingsStore:
                     stored_text=draft.yaml_text,
                     layer=scope.layer,
                     inherited=inherited,
+                    context=self._write_context(),
                 )
             except DocumentInvalid as exc:
                 raise RevisionInvalid([problem, *exc.problems]) from None

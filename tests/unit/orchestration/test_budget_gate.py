@@ -5,6 +5,7 @@ The caps are the settings document's ``budget`` section, which the gate asks
 for at every check (#171).
 """
 
+import pathlib
 from datetime import UTC, datetime, timedelta
 
 import asyncpg
@@ -236,17 +237,28 @@ async def test_an_allowed_decision_has_no_public_message():
 # --- one place builds a gate (#171 review) -----------------------------------
 
 
-def _gate_constructions() -> list[tuple[str, str]]:
-    """Every call that constructs a BudgetGate in the embry0 package: (module path, enclosing function)."""
+#: The one module that may name ``BudgetGate``, relative to the package's parent.
+_GATE_MODULE = "embry0/orchestration/budget_gate.py"
+
+
+def _gate_constructions(root: pathlib.Path | None = None) -> list[tuple[str, str]]:
+    """Every place in the embry0 package under ``root`` (its parent directory; the installed package's by
+    default) that builds, or could build, a BudgetGate: (module path, where).
+
+    A call of the class, under its own name, an alias it was imported under, or as an attribute
+    (``bg.BudgetGate(...)``), names its enclosing function. Outside the gate's own module, any import of
+    the class, whatever it is bound to, and any ``.BudgetGate`` attribute is reported too (``imports
+    BudgetGate`` and ``names .BudgetGate``, with the line), since either hands the class to code that
+    could build a gate past ``build_budget_gate`` (#287 review)."""
     import ast
-    import pathlib
 
     import embry0
 
-    root = pathlib.Path(embry0.__file__).parent
+    root = root or pathlib.Path(embry0.__file__).parent.parent
     found: list[tuple[str, str]] = []
-    for path in sorted(root.rglob("*.py")):
+    for path in sorted((root / "embry0").rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
+        relative = path.relative_to(root).as_posix()
         names = {"BudgetGate"} | {
             alias.asname
             for node in ast.walk(tree)
@@ -256,6 +268,11 @@ def _gate_constructions() -> list[tuple[str, str]]:
         }
         functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
         for node in ast.walk(tree):
+            if relative != _GATE_MODULE:
+                if isinstance(node, ast.ImportFrom) and any(alias.name == "BudgetGate" for alias in node.names):
+                    found.append((relative, f"imports BudgetGate at line {node.lineno}"))
+                elif isinstance(node, ast.Attribute) and node.attr == "BudgetGate":
+                    found.append((relative, f"names .BudgetGate at line {node.lineno}"))
             if not isinstance(node, ast.Call):
                 continue
             callee = node.func
@@ -265,7 +282,7 @@ def _gate_constructions() -> list[tuple[str, str]]:
             if name not in names:
                 continue
             enclosing = [f.name for f in functions if f.lineno <= node.lineno <= (f.end_lineno or f.lineno)]
-            found.append((path.relative_to(root.parent).as_posix(), enclosing[-1] if enclosing else "<module>"))
+            found.append((relative, enclosing[-1] if enclosing else "<module>"))
     return found
 
 
@@ -274,9 +291,37 @@ def test_only_build_budget_gate_constructs_a_gate():
     the budget policy and a change to the constructor is made once. A second builder (one over the database,
     say) would read the section's defaults while the import is pending."""
     found = _gate_constructions()
-    assert found == [("embry0/orchestration/budget_gate.py", "build_budget_gate")], (
+    assert found == [(_GATE_MODULE, "build_budget_gate")], (
         f"a BudgetGate is built somewhere other than build_budget_gate: {found}"
     )
+
+
+@pytest.mark.parametrize(
+    ("plant", "reported"),
+    [
+        (
+            "import embry0.orchestration.budget_gate as bg\n\ndef build(db):\n    return bg.BudgetGate(db, db)\n",
+            "build",
+        ),
+        (
+            "from embry0.orchestration.budget_gate import BudgetGate as Gate\n\ndef build(db):\n    return Gate(db, db)\n",
+            "build",
+        ),
+        ("import embry0.orchestration.budget_gate as bg\n\nGATE = bg.BudgetGate\n", "names .BudgetGate"),
+    ],
+    ids=["module-alias", "class-alias", "attribute-kept"],
+)
+def test_the_one_builder_check_catches_a_gate_built_under_another_name(tmp_path, plant, reported):
+    """The #287 reviewer's plants: a gate built through a module alias or an aliased import, and the class
+    kept from a module alias to build later. Each is reported, and the factory is not."""
+    (tmp_path / "embry0" / "services").mkdir(parents=True)
+    (tmp_path / "embry0" / "services" / "planted.py").write_text(plant)
+    gate = tmp_path / _GATE_MODULE
+    gate.parent.mkdir(parents=True)
+    gate.write_text("class BudgetGate:\n    pass\n\n\ndef build_budget_gate(policy):\n    return BudgetGate()\n")
+    planted = [where for path, where in _gate_constructions(tmp_path) if path == "embry0/services/planted.py"]
+    assert planted and any(reported in where for where in planted), planted
+    assert (_GATE_MODULE, "build_budget_gate") in _gate_constructions(tmp_path)
 
 
 @pytest.mark.asyncio

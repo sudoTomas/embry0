@@ -1380,6 +1380,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 132 | jobs: a partial index on `pr_url` (rows that have one), so the `first_try` achievement fact finds a pull request's earlier jobs through indexes instead of scanning `jobs` once per merged job (#208) | `idx_jobs_pr_url` |
 | 133 | knowledge maps: each map's owner (its repository's owner, lowercased; none for a map without one, an admin's alone), keyed by slug and owner with a unique index that treats no owner as one owner (`NULLS NOT DISTINCT`, so PostgreSQL 15 or later), so two owners can each have a map of a slug; marks, sends and the maps' weed leads carry their map's owner. The stored graph text is not read or rewritten ([maps.md](maps.md#who-owns-a-map)) | `knowledge_maps.owner`, `uq_knowledge_maps_slug_owner`, `knowledge_map_marks.map_owner`, `uq_knowledge_map_marks_part`, `knowledge_map_sends.map_owner` |
 | 134 | settings documents: a layer per organization (`organization:<owner>`) and per repository (`repository:<owner>/<name>`) beside the deployment's document, each created by its first write; the deployment's row is unchanged (spec 2026-10-29, #161) | `settings_documents` (scope check widened) |
+| 135 | background spend: one row per model call a background feature makes outside a job (the briefs, the Slop-O-Meter's judge), with the feature, the model, the repository, the tokens and their price; counted by the budget caps and `/stats` (#164) | `background_spend` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 
@@ -1595,6 +1596,20 @@ gate itself refused, so an in-run hard stop counts (#331). Reaching a cap fails 
 job with `ERR_BUDGET_REFUSED`, writes a `job.budget_refused` audit row naming
 the limit, returns the issue to `open` so a later trigger still works, and
 posts the outcome to the originating tracker. A cap of `0` means unlimited.
+
+**Background calls outside a job (#164).** The proposal and job briefs and the
+Slop-O-Meter's judgments ask their model directly, through
+`embry0.services.background_models.BackgroundCalls`. A call to a hosted model
+asks a gate built by the same factory as the executor's, over the same
+budget policy (`build_budget_gate(app.state.budget_policy)`; `check()`
+without an actor, so layer 3 does not apply)
+and is not sent past a cap; the feature logs `background_model_refused` and
+its loop goes on. Each call's usage is priced as a job's run is and stored in
+`background_spend`, which the rollup adds to this month's spend, so the caps
+count it, and `/stats` adds it to the lifetime, daily and monthly totals and
+reports it per feature for today and this month. A
+call whose row cannot be stored fails closed: the feature's hosted calls are
+refused until it is ([providers.md](providers.md#background-models)).
 
 The refusal stored on the job row is deliberately figure-free (`dispatch
 refused: budget cap reached`). `jobs.error_message` is echoed verbatim onto the

@@ -225,7 +225,7 @@ A `job.<status>` event's `data` holds `job_id`, `issue_id`, `title`, `kind`,
 `repo`, `pr_url`, `summary` (a one-line summary), `result_summary` (the raw
 result, at most 1,000 characters), `deliverable_count`, `total_cost_usd`,
 `error_code` and `error_message`. `title` is the job's brief title once a
-model has written its [brief](configuration.md) (`JOB_BRIEF_MODEL`), else the
+model has written its [brief](providers.md#background-models) (`background_models.job_brief`), else the
 first line of the task; the task's own first line is not sent separately. The
 watcher's hourly analysis jobs send nothing; the daily digest counts them.
 

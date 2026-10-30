@@ -19,7 +19,7 @@ from embry0.services.job_briefs import (
     user_prompt,
     write_job_brief,
 )
-from embry0.services.proposal_briefs import RETRY_SECONDS, Endpoint
+from embry0.services.proposal_briefs import RETRY_SECONDS
 
 GOOD = {
     "title": "Find why the worker crash-looped and stop it",
@@ -111,9 +111,11 @@ async def test_a_local_model_is_held_to_the_job_brief_schema_without_thinking() 
         sent.append(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(GOOD)}}]})
 
+    from embry0.services.background_models import Endpoint
+
     endpoint = Endpoint("custom/local-27b", "http://models.test/v1", "k", "local-27b", local=True)
     async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
-        brief = await write_job_brief(_job(), endpoint, client)
+        brief = await write_job_brief(_job(), endpoint, client, _calls())
     assert brief.size == "medium"
     [body] = sent
     assert body["response_format"]["json_schema"]["name"] == "job_brief"
@@ -148,6 +150,23 @@ class FakeResolver:
         return SimpleNamespace(secret="k", metadata={"base_url": "http://models.test/v1"})
 
 
+class NoSpend:
+    async def record(self, **kwargs: Any) -> None:
+        return None
+
+
+class OpenGate:
+    async def check(self, **kwargs: Any) -> Any:
+        return SimpleNamespace(allowed=True)
+
+
+def _calls() -> Any:
+    """The metered call path (#164), imported here so this file still collects on a tree without it."""
+    from embry0.services.background_models import BackgroundCalls
+
+    return BackgroundCalls(resolver=FakeResolver(), spend=NoSpend(), gate=OpenGate())
+
+
 def _writer(
     store: FakeStore, answers: list[Any], *, model: str = "custom/local-27b", clock: Any = None, per_tick: int = 3
 ) -> JobBriefWriter:
@@ -157,13 +176,13 @@ def _writer(
             return content
         return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
 
-    async def chosen() -> str:
-        return model
+    async def chosen() -> Any:
+        return lambda repo: model
 
     return JobBriefWriter(
         store=store,
-        model=chosen,
-        resolver=FakeResolver(),
+        models=chosen,
+        calls=_calls(),
         per_tick=per_tick,
         client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),
         clock=clock or (lambda: 0.0),

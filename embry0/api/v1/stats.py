@@ -1,12 +1,14 @@
 """Stats API — aggregated metrics compatible with frontend dashboard."""
 
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, Request
 
 from embry0.api.deps import get_db
 from embry0.cache.prebaked_staleness import summarize_prebuilt_images
+from embry0.orchestration import dispatch_actors
 from embry0.safety.error_codes import failure_categories
 from embry0.storage.database import DatabasePool
 
@@ -65,6 +67,69 @@ async def _credentials_summary(request: Request) -> dict[str, object] | None:
         return None
 
 
+#: The service actors whose jobs are a background feature's (#164): their spend is that feature's.
+_BACKGROUND_JOB_ACTORS: dict[str, str] = {
+    dispatch_actors.WATCHER: "watcher",
+    dispatch_actors.CONTEXT_AUDIT: "context_audit",
+    dispatch_actors.SCOUT: "scout",
+}
+
+# The jobs the background features dispatched this month, read as a range of
+# idx_jobs_dispatched_by_created_at (dispatched_by, created_at): a job counts
+# in the month, and the day, it was created in.
+_BACKGROUND_JOBS_SQL = """
+SELECT
+    dispatched_by,
+    COUNT(*) AS jobs,
+    COALESCE(SUM(total_cost_usd) FILTER (WHERE created_at >= date_trunc('day', NOW())), 0) AS daily_usd,
+    COALESCE(SUM(total_cost_usd), 0) AS monthly_usd
+FROM jobs
+WHERE dispatched_by = ANY($1::text[]) AND created_at >= date_trunc('month', NOW())
+GROUP BY dispatched_by
+"""
+
+
+# Every background call's spend since the table began, for the lifetime total: a
+# scalar subquery of the stats query, so it costs no round-trip of its own, and
+# an index-only scan of idx_background_spend_at, which INCLUDEs cost_usd. The
+# table gets a row per brief or judgment, a few a day.
+_BACKGROUND_TOTAL_SQL = "(SELECT COALESCE(SUM(b.cost_usd), 0) FROM background_spend b)"
+
+
+async def _background_spend(db: DatabasePool) -> dict[str, Any]:
+    """What each background feature spent today and this month (#164), the windows the budget caps count.
+
+    ``daily_usd`` and ``monthly_usd`` are the calls the briefs and the
+    Slop-O-Meter's judge made outside any job (``background_spend``), which
+    the day's and the month's totals add to what jobs spent. ``features``
+    lists every feature's spend: those calls, and the jobs the watcher, the
+    context audit and the scout dispatched, which the totals already count
+    as jobs (``source`` says which). Both reads are bounded by the month, so
+    they stay a range of an index however long the history grows. The
+    lifetime total is read with the stats query (:data:`_BACKGROUND_TOTAL_SQL`).
+    """
+    from embry0.storage.repositories.background_spend import BackgroundSpendRepository
+
+    calls = await BackgroundSpendRepository(db).this_month()
+    job_rows = await db.fetch(_BACKGROUND_JOBS_SQL, list(_BACKGROUND_JOB_ACTORS))
+    features = [{**c, "source": "calls"} for c in calls]
+    features += [
+        {
+            "feature": _BACKGROUND_JOB_ACTORS[str(r["dispatched_by"])],
+            "source": "jobs",
+            "jobs": int(r["jobs"]),
+            "daily_usd": float(r["daily_usd"]),
+            "monthly_usd": float(r["monthly_usd"]),
+        }
+        for r in job_rows
+    ]
+    return {
+        "daily_usd": sum(c["daily_usd"] for c in calls),
+        "monthly_usd": sum(c["monthly_usd"] for c in calls),
+        "features": sorted(features, key=lambda f: (-f["monthly_usd"], f["feature"], f["source"])),
+    }
+
+
 @router.get("/stats")
 async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dict[str, object]:
     # Aggregate job counts + lifetime cost + live state
@@ -104,7 +169,11 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
             ), 0) AS daily_cost,
             COALESCE(SUM(total_cost_usd) FILTER (
                 WHERE started_at >= date_trunc('month', NOW())
-            ), 0) AS monthly_cost
+            ), 0) AS monthly_cost,
+            -- #164: what background calls spent outside any job, ever.
+            """
+        + _BACKGROUND_TOTAL_SQL
+        + """ AS background_total
         FROM jobs
         """
     )
@@ -116,9 +185,14 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
     queued = row["queued"] if row else 0
     awaiting_input = row["awaiting_input"] if row else 0
     paused = row["paused"] if row else 0
-    total_cost = float(row["total_cost"] if row else 0.0)
-    daily_cost = float(row["daily_cost"] if row else 0.0)
-    monthly_cost = float(row["monthly_cost"] if row else 0.0)
+    background = await _background_spend(db)
+    # #164: what background features spent outside any job counts in every
+    # spend reported: the lifetime total, and the day's and the month's, as
+    # the budget caps count them.
+    background["total_usd"] = float((row.get("background_total") if row else 0.0) or 0.0)
+    total_cost = float(row["total_cost"] if row else 0.0) + background["total_usd"]
+    daily_cost = float(row["daily_cost"] if row else 0.0) + background["daily_usd"]
+    monthly_cost = float(row["monthly_cost"] if row else 0.0) + background["monthly_usd"]
     # #280: two outcomes, reported apart. How the JOB ended — `pr_merged` and
     # `pr_closed` are completed jobs whose PR was later merged / closed, so
     # they count as the job succeeding (the old `completed / total` dropped a
@@ -335,6 +409,7 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
         "total_cost_usd": total_cost,
         "daily_cost_usd": daily_cost,
         "monthly_cost_usd": monthly_cost,
+        "background_spend": background,
         "queue_depth": queued + running,
         "failure_categories": failures_by_category,
         "recent_issues": recent_issues,

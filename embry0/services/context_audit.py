@@ -1045,9 +1045,10 @@ async def start_context_audit_job(
     the findings feed never offers its report. A job any other actor
     dispatches is an audit.
     ``run_with`` is the model and key a person chose (embry0/services/run_with.py).
-    ``local_first_model`` is a model on the operator's own server the job
-    prefers while it has a free slot (``CONTEXT_AUDIT_LOCAL_MODEL``); a model
-    a person chose with ``run_with`` is a pin and wins over it.
+    ``local_first_model`` is the model the job prefers
+    (``background_models.context_audit`` of the settings document, #164),
+    for a local one while it has a free slot; a model a person chose with
+    ``run_with`` is a pin and wins over it.
     """
     rows = await templates.list_all() if templates is not None else []
     if not any(row.get("name") == TEMPLATE for row in rows):

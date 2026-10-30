@@ -343,26 +343,21 @@ def _check_fallback_order(order: list[str], disabled: set[str], *, changed: bool
         )
 
 
-def _check_watcher_local_model(updates: dict[str, Any]) -> None:
-    """422 for a watcher local-first model that is not one of the operator's own server (local models).
+def _refuse_watcher_local_model(updates: dict[str, Any]) -> None:
+    """422 for ``watcher_local_model``, which moved to the settings document (#164).
 
-    "" turns local-first off. Anything else must be a ``custom/<id>`` the
-    enabled custom provider serves: local-first is for the local server, and
-    a cloud model there would quietly move the watcher's spend.
+    The model the watcher's analyses prefer is ``background_models.watcher``,
+    and the default every background feature runs on ``.default``. Refused
+    rather than dropped, so a client written for the old field learns where
+    it went instead of losing the change.
     """
-    from embry0.agents.providers import is_custom_model
-
-    model = updates.get("watcher_local_model")
-    if model is None:
-        return
-    model = str(model).strip()
-    updates["watcher_local_model"] = model
-    if model and not is_custom_model(model):
+    if "watcher_local_model" in updates:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"watcher_local_model must be a custom/<model> of the local model server, with the custom "
-                f"provider enabled (OPENAI_COMPATIBLE_PROVIDERS), or empty: {model!r} (docs/providers.md)"
+                "watcher_local_model moved to the settings document's background_models section: "
+                'PATCH /api/v1/config/settings/background_models with {"default": "<model>"} for every '
+                'background feature, or {"watcher": "<model>"} for the watcher alone (docs/providers.md)'
             ),
         )
 
@@ -376,6 +371,7 @@ async def update_provider(
     repo: ProviderConfigRepository = Depends(get_provider_repo),
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    _refuse_watcher_local_model(updates)
     if updates:
         # RAV-1297 interlock: the enablement set and the tier assignments
         # must stay mutually consistent — a disabled model in a tier slot
@@ -441,7 +437,6 @@ async def update_provider(
             disabled,
             changed="fallback_models" in updates,
         )
-        _check_watcher_local_model(updates)
         result = await repo.update(**updates)
         db = getattr(request.app.state, "db", None)
         config = getattr(request.app.state, "config", None)

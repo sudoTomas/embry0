@@ -108,6 +108,17 @@ def _history(n: int) -> tuple[dict[str, str], list[str]]:
     return {s: _record(s, START + timedelta(hours=3 * i), [("src/a.py", 20, 0)]) for i, s in enumerate(order)}, order
 
 
+class FakeCalls:
+    """Every model it is asked about can be called; the judge itself is replaced where a test asks one."""
+
+    def __init__(self) -> None:
+        self.endpoints: list[tuple[str, str, str | None]] = []
+
+    async def endpoint(self, feature: str, model: str, repo: str | None) -> object:
+        self.endpoints.append((feature, model, repo))
+        return object()
+
+
 def _loop(
     mirror: FakeMirror,
     store: FakeStore,
@@ -116,6 +127,7 @@ def _loop(
     per_tick: int = 3,
     model: str = "",
     owner_bots: tuple[str, ...] = (),
+    calls: Any = None,
 ) -> SlopMeterLoop:
     async def repos() -> list[str]:
         return [REPO]
@@ -129,8 +141,8 @@ def _loop(
     async def client_for(repo: str) -> Any:
         return client
 
-    async def model_fn() -> str:
-        return model
+    async def models() -> Any:
+        return lambda repo: model
 
     return SlopMeterLoop(
         repos=repos,
@@ -138,9 +150,9 @@ def _loop(
         mirror=mirror,
         token_for=token_for,
         client_for=client_for,
-        model=model_fn,
+        models=models,
         bots=bots,
-        resolver=None,
+        calls=calls if calls is not None else FakeCalls(),
         settings=SlopMeterSettings(commits_per_tick=per_tick),
         clock=lambda: START + timedelta(days=60),
     )
@@ -243,17 +255,17 @@ async def test_an_outlier_is_judged_by_the_model_and_kept(monkeypatch: pytest.Mo
     store = FakeStore()
     asked: list[str] = []
 
-    async def endpoint(model: str, resolver: Any) -> object:
-        return object()
-
-    async def judge(repo: str, outlier: Outlier, ep: Any, client: Any) -> tuple[bool, str]:
+    async def judge(repo: str, outlier: Outlier, ep: Any, client: Any, calls: Any) -> tuple[bool, str]:
         asked.append(outlier.commit.sha)
         return False, "a vendored parser"
 
-    monkeypatch.setattr("embry0.services.proposal_briefs.resolve_endpoint", endpoint)
     monkeypatch.setattr("embry0.services.slop_meter.judge.judge", judge)
-    loop = _loop(FakeMirror(records, order), store, per_tick=100, model="custom/local")
+    calls = FakeCalls()
+    loop = _loop(FakeMirror(records, order), store, per_tick=100, model="custom/local", calls=calls)
     await loop.tick()
+    assert calls.endpoints == [("slop_judge", "custom/local", REPO)], (
+        "the judge's endpoint is resolved for its own feature and with the repository, so its key bindings apply"
+    )
     assert asked == ["big"] and store.judged[(REPO, "big")] is False
     assert store.stored[REPO][""].provisional is False
     await loop.tick()
@@ -432,8 +444,8 @@ async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
     async def client_for(repo: str) -> Any:
         return forges[repo]
 
-    async def no_model() -> str:
-        return ""
+    async def no_model() -> Any:
+        return lambda repo: ""
 
     loop = SlopMeterLoop(
         repos=repos,
@@ -441,9 +453,9 @@ async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
         mirror=mirror,
         token_for=token_for,
         client_for=client_for,
-        model=no_model,
+        models=no_model,
         bots=lambda repo: _no_bots(),
-        resolver=None,
+        calls=FakeCalls(),
         settings=SlopMeterSettings(commits_per_tick=10, event_pages=100, api_calls_per_tick=16, rate_reserve=0),
         clock=lambda: START + timedelta(days=60),
     )
@@ -589,8 +601,8 @@ async def test_each_credential_keeps_its_own_budget() -> None:
     async def client_for(repo: str) -> Any:
         return forges[repo]
 
-    async def no_model() -> str:
-        return ""
+    async def no_model() -> Any:
+        return lambda repo: ""
 
     async def no_bots(repo: str) -> tuple[str, ...]:
         return ()
@@ -601,9 +613,9 @@ async def test_each_credential_keeps_its_own_budget() -> None:
         mirror=FakeMirror(records, order),
         token_for=token_for,
         client_for=client_for,
-        model=no_model,
+        models=no_model,
         bots=no_bots,
-        resolver=None,
+        calls=FakeCalls(),
         settings=SlopMeterSettings(commits_per_tick=10, event_pages=100, api_calls_per_tick=8, rate_reserve=100),
         clock=lambda: START + timedelta(days=60),
     )

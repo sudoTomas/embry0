@@ -1,7 +1,7 @@
 """Production wires the scout loop (spec 2026-10-27) to its settings and starts it.
 
 A loop built without its gate or its job starter, or never started, constructs
-happily and scouts nothing, which looks exactly like "SCOUT_MODEL is empty".
+happily and scouts nothing, which looks exactly like "no model is set".
 A loop built with its section read once would run, and ignore every change to
 it. Read from the AST of ``lifespan``, as test_context_audit_wiring.py does;
 ``tests/unit/api/test_scout_settings.py`` runs the real lifespan.
@@ -40,7 +40,10 @@ def test_the_loop_reads_its_settings_and_its_collaborators_and_is_started() -> N
     assert passed.get("settings") == "_section_reader(app.state.settings, _SCOUT)", (
         "the scout reads the settings document's scout section every tick, through a reader of the store"
     )
-    assert passed.get("model") == "scout_model(config)", "the model stays SCOUT_MODEL until #164"
+    assert passed.get("models") == "background_model(app.state.settings, 'scout')", (
+        "the scout's model is read from the settings document's background_models section every tick (#164), "
+        "not SCOUT_MODEL read once at startup"
+    )
     assert passed.get("leads") == "app.state.leads_repo", "harvested cracks and weeds go where every lead goes"
     assert passed.get("jobs") == "app.state.jobs_repo"
     assert passed.get("ask_gate") == "_scout_gate" and passed.get("submit") == "_scout_submit"

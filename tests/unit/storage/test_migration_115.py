@@ -25,9 +25,12 @@ async def test_one_run_at_a_time_and_no_local_first_by_default(db_with_migration
     db = db_with_migrations
     await db.execute("INSERT INTO provider_config (id) VALUES ('default') ON CONFLICT (id) DO NOTHING")
     row = await ProviderConfigRepository(db).get()
-    assert (row["local_max_runs"], row["watcher_local_model"]) == (1, "")
-    updated = await ProviderConfigRepository(db).update(local_max_runs=2, watcher_local_model="custom/qwen")
-    assert (updated["local_max_runs"], updated["watcher_local_model"]) == (2, "custom/qwen")
+    assert row["local_max_runs"] == 1
+    assert await db.fetchval("SELECT watcher_local_model FROM provider_config WHERE id = 'default'") == ""
+    updated = await ProviderConfigRepository(db).update(local_max_runs=2)
+    assert updated["local_max_runs"] == 2
+    # #164: the column stays, for a rollback, and is no longer part of the provider settings.
+    assert "watcher_local_model" not in updated
     with pytest.raises(Exception, match="local_max_runs"):
         await db.execute("UPDATE provider_config SET local_max_runs = 0 WHERE id = 'default'")
 

@@ -25,7 +25,7 @@ A ticket that already carries the trigger label, or that embry0 already tracks, 
 
 ## The scout: cracks and weeds
 
-The scout keeps a model on the operator's own server busy finding work around the clock. It is off until `SCOUT_MODEL` names that model (`custom/<model>`, see [providers.md](providers.md)).
+The scout keeps a model busy finding work around the clock, usually one on the operator's own server. Its model is `background_models.scout` of the [settings document](configuration.md#settings-document) ([background models](providers.md#background-models)), `false` until a model is named for it, so the scout starts nothing until then; `scout: null` runs it on the section's `default`. An organization may set its own for its repositories.
 
 Its policy is the `scout` section of the [settings document](configuration.md#settings-document), which the scout reads every tick, so a change applies within 5 minutes with no restart:
 
@@ -39,9 +39,9 @@ scout:
   max_jobs_per_day: null
 ```
 
-Those are the defaults. `SCOUT_MODEL`, `SCOUT_REPOS` and `SCOUT_EXCLUDE` stay environment variables, read at startup, until the one map of background models (#164) and the one repository scope rule (#165) move them.
+Those are the defaults. `SCOUT_REPOS` and `SCOUT_EXCLUDE` stay environment variables, read at startup, until the one repository scope rule (#165) moves them.
 
-- **What it runs.** Every 5 minutes it starts read-only jobs while fewer than `scout.max_in_flight` are out: `garden` (one provable weed) and `kintsugi-trace` (a ledger of graded cracks), the templates `scout.templates` names. Each job is pinned to `SCOUT_MODEL`: a pinned run waits for a free local slot and never moves to a hosted model, so the scout spends nothing.
+- **What it runs.** Every 5 minutes it starts read-only jobs while fewer than `scout.max_in_flight` are out: `garden` (one provable weed) and `kintsugi-trace` (a ledger of graded cracks), the templates `scout.templates` names. Each job is pinned to its repository's scout model, read at that tick: a pinned run waits for its model (a free slot, for a local one) and never moves to another. On a local model the scout spends nothing; on a hosted one each job is metered and capped like any job.
 - **Where.** The repositories the world map shows, plus `SCOUT_REPOS` and minus `SCOUT_EXCLUDE`, and each area of one that declares [areas](areas.md) (the job is told to look only under the area's paths). A unit, one repository or area and one template, is scouted again after `scout.revisit_hours`; never-scouted units go first, then the longest ago. A model reads the same code differently run to run, and the lead id of what it found before keeps a repeat from becoming a second lead.
 - **What becomes a lead.** When a job finishes, its deliverable is read once: each ledger row a `crack`, a weed card a `weed`, at most `scout.max_leads_per_job` a job, the worst first. A failed job yields nothing.
 - **What reaches chat.** Only a crack graded `break` (high) is asked in chat; every other crack and every weed stays on the page, so a scout running all day does not fill the chat.

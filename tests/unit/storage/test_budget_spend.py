@@ -206,3 +206,23 @@ async def test_actor_count_sql_respects_the_window(db_with_migrations):
     )
     since = datetime.now(UTC) - timedelta(hours=1)
     assert await BudgetSpendRepository(db).dispatch_count_since("alex", since) == 0
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_rollup_counts_what_background_calls_spent_outside_any_job(db_with_migrations):
+    """#164: a brief or a judgment on a hosted model spends outside any job; the caps count it all the same."""
+    db = db_with_migrations
+    assert await db.fetchval("SELECT to_regclass('background_spend')") is not None, "a table of background spend"
+    await _seed_job(db, "job-today", cost=5.0)
+    await db.execute("INSERT INTO background_spend (feature, model, cost_usd) VALUES ('proposal_brief', 'm', 0.4)")
+    await db.execute(
+        "INSERT INTO background_spend (feature, model, cost_usd, at) "
+        "VALUES ('job_brief', 'm', 9.0, date_trunc('month', NOW()) - INTERVAL '1 day')"
+    )
+    rollup = await BudgetSpendRepository(db).spend_rollup()
+    assert rollup["daily"] == pytest.approx(5.4), "the job and today's background call"
+    on_the_first = await db.fetchval("SELECT date_trunc('day', NOW()) = date_trunc('month', NOW())")
+    assert rollup["monthly"] == pytest.approx(5.4), (
+        f"last month's background call is outside the month (first of the month: {on_the_first})"
+    )

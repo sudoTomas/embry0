@@ -764,11 +764,11 @@ class Embry0Config(BaseSettings):
     # so it reads as the default, never as unlimited.
     context_audit_job_budget_usd: float = 2.0
     context_audit_max_jobs_per_tick: int = Field(default=3, ge=0)
-    # CONTEXT_AUDIT_LOCAL_MODEL: a model on the operator's own server
-    # (custom/<model>) that scheduled audits prefer, as the watcher's analyses
-    # prefer provider_config.watcher_local_model. A preference, never a pin:
-    # with every local slot taken the audit runs on its usual model. Empty, or a
-    # model no enabled provider serves, for none.
+    # The model scheduled audits prefer is the settings document's
+    # background_models.context_audit now (#164). CONTEXT_AUDIT_LOCAL_MODEL is
+    # only its import source: read once, at the first start of the release
+    # that added the section, and ignored after that. It is removed in the
+    # next release; nothing else reads it.
     context_audit_local_model: str = ""
 
     # Leads (spec 2026-10-25): work embry0 finds by itself on the repositories
@@ -792,11 +792,13 @@ class Embry0Config(BaseSettings):
     leads_flaky_commits: int = Field(default=10, ge=1, le=50)
 
     # Scout (docs/leads.md, "The scout"): read-only scouting jobs (garden, kintsugi-trace)
-    # pinned to SCOUT_MODEL, a model on the operator's own server, rotating
-    # through the world map's repositories (plus SCOUT_REPOS, minus
+    # rotating through the world map's repositories (plus SCOUT_REPOS, minus
     # SCOUT_EXCLUDE, comma-separated) and each area of one that declares areas.
-    # Off while SCOUT_MODEL is empty. These three stay variables until the
-    # background-model map (#164) and the repository scope rule (#165).
+    # These two stay variables until the repository scope rule (#165). The
+    # model its jobs are pinned to is the settings document's
+    # background_models.scout now (#164): SCOUT_MODEL is only its import
+    # source, read once at the first start of the release that added the
+    # section and ignored after that, and removed in the next release.
     scout_model: Annotated[str, NOT_SECRET] = ""
     scout_repos: Annotated[str, NOT_SECRET] = ""
     scout_exclude: Annotated[str, NOT_SECRET] = ""
@@ -831,16 +833,18 @@ class Embry0Config(BaseSettings):
 
     # Owner proposals in plain words (spec 2026-10-25, proposal briefs). A
     # backlog ticket is asked in chat only at this readiness and up; the page
-    # shows the rest folded. Each proposal's brief is written on
-    # PROPOSAL_BRIEF_MODEL, else on the watcher's local-first model
-    # (provider_config.watcher_local_model); with neither, none is written.
+    # shows the rest folded. The model each brief is written on is the
+    # settings document's background_models.proposal_brief now (#164).
     proposals_ticket_min_readiness: int = Field(default=60, ge=0, le=100)
+    # PROPOSAL_BRIEF_MODEL and JOB_BRIEF_MODEL are only the import source of
+    # background_models.proposal_brief and .job_brief (#164): read once, at the
+    # first start of the release that added the section, and ignored after
+    # that. They are removed in the next release; nothing else reads them.
     proposal_brief_model: Annotated[str, NOT_SECRET] = ""
     proposal_brief_interval_seconds: float = Field(default=60.0, gt=0)
     proposal_briefs_per_tick: int = Field(default=3, ge=1, le=20)
-    # Jobs in plain words (spec 2026-10-26, job briefs): each job's brief is
-    # written on JOB_BRIEF_MODEL, else on the proposal brief model, else on the
-    # watcher's local-first model; with none, no job brief is written.
+    # Jobs in plain words (spec 2026-10-26, job briefs), on
+    # background_models.job_brief.
     job_brief_model: Annotated[str, NOT_SECRET] = ""
     job_brief_interval_seconds: float = Field(default=60.0, gt=0)
     job_briefs_per_tick: int = Field(default=3, ge=1, le=20)

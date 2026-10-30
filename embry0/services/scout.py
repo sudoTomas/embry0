@@ -3,9 +3,13 @@
 The loop rotates through the repositories the world map shows, and each area of
 one that declares areas, starting a read-only scouting job on each in turn:
 ``garden`` (one provable weed) and ``kintsugi-trace`` (a ledger of graded
-cracks). Every job is pinned to the operator's local model (``SCOUT_MODEL``),
-so the loop never spends on a hosted model: a pinned run waits for a free local
-slot instead of moving to one.
+cracks). Every job is pinned to the scout's model, ``background_models.scout``
+of the settings document (``false`` until a model is named for it), read
+every tick for each repository (an organization may set its own): a pinned
+run waits for its model, a free slot of the operator's own server for a
+local one, instead of moving to another. A repository whose organization
+runs the scout on no model is not scouted. A hosted model is metered and capped like any job,
+and each job is held to ``scout.job_budget_usd``.
 
 Its policy is the settings document's ``scout`` section
 (:mod:`embry0.settings.sections.scout`), read at the top of every tick, so a
@@ -61,11 +65,6 @@ _FILE_EXTENSIONS = frozenset(
     "yml yaml json jsonc toml ini cfg conf env lock sh bash ps1 html htm css scss sass less vue svelte xml "
     "gradle properties tf hcl proto graphql csv ipynb dockerfile".split()
 )
-
-
-def scout_model(config: Any) -> str:
-    """The model every scouting job is pinned to (``SCOUT_MODEL``); empty turns the loop off."""
-    return str(getattr(config, "scout_model", "") or "").strip()
 
 
 def warn_retired_tick(config: Any) -> bool:
@@ -326,8 +325,9 @@ class _Leads(Protocol):
 
 @dataclass
 class ScoutLoop:
-    #: The model every scouting job is pinned to: ``scout_model(config)``. Empty turns the loop off.
-    model: str
+    #: ``repo -> model`` every scouting job of that repository is pinned to, read at the top of every
+    #: tick: ``background_model(store, "scout")`` in production. '' for a repository leaves it unscouted.
+    models: Callable[[], Awaitable[Callable[[str | None], str]]]
     #: The ``scout`` section, read at the top of every tick: ``section_reader(store, SCOUT)`` in production.
     settings: Callable[[], Awaitable[ScoutSettings]]
     runs: _Runs
@@ -344,6 +344,8 @@ class ScoutLoop:
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     #: Whether the last tick could start jobs (``max_in_flight`` above 0); None before the first.
     _starting: bool | None = field(default=None, init=False, repr=False)
+    #: Whether the last dispatch found a model for any repository in scope; None before the first.
+    _modelled: bool | None = field(default=None, init=False, repr=False)
 
     async def harvest(self, policy: ScoutSettings | None = None) -> int:
         """Turn every finished scouting job into leads, once; how many leads were stored."""
@@ -374,11 +376,16 @@ class ScoutLoop:
             logger.info("scout_harvested", job_id=run["job_id"], status=status or "gone", leads=len(found))
         return stored
 
-    async def dispatch(self, policy: ScoutSettings | None = None) -> list[str]:
+    async def dispatch(
+        self, policy: ScoutSettings | None = None, lookup: Callable[[str | None], str] | None = None
+    ) -> list[str]:
         """Start the most overdue units while fewer than ``max_in_flight`` scouting jobs are out,
-        and fewer than ``max_jobs_per_day`` started in the last 24 hours."""
+        and fewer than ``max_jobs_per_day`` started in the last 24 hours, each pinned to its
+        repository's model; a repository with none is not scouted."""
         if policy is None:
             policy = await self.settings()
+        if lookup is None:
+            lookup = await self.models()
         in_flight = len(await self.runs.unharvested())
         room = policy.max_in_flight - in_flight
         if room <= 0:
@@ -388,8 +395,18 @@ class ScoutLoop:
             room = min(room, policy.max_jobs_per_day - await self.runs.dispatched_since(now - timedelta(days=1)))
             if room <= 0:
                 return []
+        modelled = {repo: lookup(repo).strip() for repo in await self.repos()}
+        modelled = {repo: model for repo, model in modelled.items() if model}
+        if bool(modelled) != self._modelled:
+            if self._modelled is not None or not modelled:
+                logger.info(
+                    "scout_models" if modelled else "scout_no_model",
+                    repos=len(modelled),
+                    reason="background_models.scout names no model for them",
+                )
+            self._modelled = bool(modelled)
         candidates: list[Unit] = []
-        for repo in await self.repos():
+        for repo in modelled:
             try:
                 areas = await self.areas_for(repo)
             except Exception:  # noqa: BLE001 - a repository we cannot read is scouted whole
@@ -403,11 +420,11 @@ class ScoutLoop:
             if refusal is not None:
                 logger.info("scout_gate_refused", reason=getattr(refusal, "message", str(refusal))[:200])
                 break
-            job_id = await self._start(unit, now, policy)
+            job_id = await self._start(unit, now, policy, modelled[unit.repo])
             started.append(job_id)
         return started
 
-    async def _start(self, unit: Unit, now: datetime, policy: ScoutSettings) -> str:
+    async def _start(self, unit: Unit, now: datetime, policy: ScoutSettings, model: str) -> str:
         text = task(unit)
         job_id = await self.jobs.create(
             repo=unit.repo,
@@ -416,7 +433,7 @@ class ScoutLoop:
             pipeline_template=unit.template,
             pipeline_config={
                 # A pin, not a preference: with every local slot taken the run waits for one.
-                "agent_models_override": {"*": self.model},
+                "agent_models_override": {"*": model},
                 "max_budget_usd": policy.job_budget_usd,
                 "budget_overrun_mode": "hard",
                 "actor": ACTOR,
@@ -427,17 +444,18 @@ class ScoutLoop:
         await self.jobs.update(job_id, job_kind="analysis", **({"area": unit.area} if unit.area else {}))
         await self.runs.record(job_id=job_id, repo=unit.repo, area=unit.area, template=unit.template, now=now)
         await self.submit(job_id, unit, text)
-        logger.info("scout_started", job_id=job_id, repo=unit.repo, area=unit.area, template=unit.template)
+        logger.info("scout_started", job_id=job_id, repo=unit.repo, area=unit.area, template=unit.template, model=model)
         return job_id
 
     async def tick(self, policy: ScoutSettings | None = None) -> dict[str, Any]:
-        """One pass with the policy read now (or ``policy``, read by the caller this tick).
+        """One pass with the policy and the models read now (or ``policy``, read by the caller this tick).
 
         Finished jobs are read into leads whatever the policy; new jobs start
-        only with a model and ``max_in_flight`` above 0.
+        only with ``max_in_flight`` above 0, and only on a repository with a model.
         """
         if policy is None:
             policy = await self.settings()
+        lookup = await self.models()
         starting = policy.max_in_flight > 0
         if starting != self._starting:
             # The first tick says only a pause: start() has said the scout is on.
@@ -445,15 +463,12 @@ class ScoutLoop:
                 logger.info("scout_starting" if starting else "scout_paused", reason="scout.max_in_flight")
             self._starting = starting
         harvested = await self.harvest(policy)
-        started = await self.dispatch(policy) if self.model and starting else []
+        started = await self.dispatch(policy, lookup) if starting else []
         return {"harvested_leads": harvested, "started": started}
 
     async def start(self) -> None:  # pragma: no cover - exercised by the app
-        """Tick for ever while a model is set; the section is read every tick, so its changes need no restart."""
-        if not self.model:
-            logger.info("scout_off", reason="SCOUT_MODEL is empty")
-            return
-        logger.info("scout_on", model=self.model)
+        """Tick for ever; the sections are read every tick, so a change to either needs no restart."""
+        logger.info("scout_on", models="background_models.scout, read every tick")
         while True:
             try:
                 await self.tick()
