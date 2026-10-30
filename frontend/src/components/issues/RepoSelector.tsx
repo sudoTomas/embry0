@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Input } from "@/components/ui/Input";
+import { useComponentTimeout } from "@/hooks/useComponentTimeout";
 
 interface RepoSelectorProps {
   value: string;
@@ -12,6 +13,7 @@ export function RepoSelector({ value, onChange, repos, placeholder = "Select rep
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState(value);
   const ref = useRef<HTMLDivElement>(null);
+  const later = useComponentTimeout();
 
   useEffect(() => { setSearch(value); }, [value]);
 
@@ -32,7 +34,7 @@ export function RepoSelector({ value, onChange, repos, placeholder = "Select rep
         onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onBlur={() => {
-          setTimeout(() => {
+          later(() => {
             setOpen(false);
             if (search !== value) {
               onChange(search);

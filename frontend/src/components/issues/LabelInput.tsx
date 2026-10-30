@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/Input";
+import { useComponentTimeout } from "@/hooks/useComponentTimeout";
 import { X } from "lucide-react";
 
 interface LabelInputProps {
@@ -11,6 +12,7 @@ interface LabelInputProps {
 export function LabelInput({ value, onChange, suggestions = [] }: LabelInputProps) {
   const [input, setInput] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const later = useComponentTimeout();
 
   const addLabel = (label: string) => {
     const trimmed = label.trim().toLowerCase();
@@ -43,7 +45,7 @@ export function LabelInput({ value, onChange, suggestions = [] }: LabelInputProp
       <div className="relative">
         <Input aria-label="Add a label" value={input} onChange={(e) => { setInput(e.target.value); setShowSuggestions(true); }}
           onKeyDown={handleKeyDown} onFocus={() => setShowSuggestions(true)}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)} placeholder="Type and press Enter..." />
+          onBlur={() => later(() => setShowSuggestions(false), 150)} placeholder="Type and press Enter..." />
         {showSuggestions && filtered.length > 0 && (
           <div className="absolute z-50 mt-1 max-h-32 w-full overflow-auto rounded-md border border-border bg-card shadow-lg">
             {filtered.map((s) => (

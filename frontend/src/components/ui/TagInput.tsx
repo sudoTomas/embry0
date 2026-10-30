@@ -1,6 +1,7 @@
 import { useState, type KeyboardEvent } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useComponentTimeout } from "@/hooks/useComponentTimeout";
 
 interface TagInputProps {
   /** The text box's id, so a `<Label htmlFor>` names it. */
@@ -18,6 +19,7 @@ interface TagInputProps {
 export function TagInput({ id, value, onChange, placeholder = "Add...", suggestions, className, disabled = false, commitOnBlur = false }: TagInputProps) {
   const [input, setInput] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const later = useComponentTimeout();
 
   const addTag = (tag: string) => {
     if (disabled) return;
@@ -77,7 +79,7 @@ export function TagInput({ id, value, onChange, placeholder = "Add...", suggesti
           onFocus={() => setShowSuggestions(true)}
           onBlur={() => {
             if (commitOnBlur && input.trim()) addTag(input);
-            setTimeout(() => setShowSuggestions(false), 150);
+            later(() => setShowSuggestions(false), 150);
           }}
           placeholder={value.length === 0 ? placeholder : ""}
           disabled={disabled}

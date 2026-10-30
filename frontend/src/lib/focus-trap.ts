@@ -42,10 +42,12 @@ export function createFocusTrap(container: HTMLElement): () => void {
   const active = document.activeElement as HTMLElement | null;
   const saved = active && active !== document.body ? active : lastPressed;
 
-  // Move focus into the container on the next tick (avoids flicker).
+  // Move focus into the container on the next tick (avoids flicker). A modal
+  // closed before that tick cancels it, so no timer outlives the trap.
   const initial = container.querySelector<HTMLElement>("[data-autofocus]") ?? getFocusable(container)[0];
+  let focusTimer: ReturnType<typeof setTimeout> | undefined;
   if (initial) {
-    setTimeout(() => initial.focus(), 0);
+    focusTimer = setTimeout(() => initial.focus(), 0);
   } else if (import.meta.env.DEV) {
     console.warn("createFocusTrap: no focusable elements found in container");
   }
@@ -72,6 +74,7 @@ export function createFocusTrap(container: HTMLElement): () => void {
   container.addEventListener("keydown", onKeyDown);
 
   return () => {
+    clearTimeout(focusTimer);
     container.removeEventListener("keydown", onKeyDown);
     if (saved && typeof saved.focus === "function") {
       saved.focus();

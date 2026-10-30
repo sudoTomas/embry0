@@ -214,6 +214,24 @@ describe("createFocusTrap", () => {
     blank.remove();
   });
 
+  // A dialog that opens and closes inside one tick, as a test that renders
+  // it and returns does, must not leave the initial focus behind: a timer
+  // still pending when Vitest tears jsdom down fires with no window (#256).
+  it("cancels the initial focus when released before it lands", () => {
+    vi.useFakeTimers();
+    try {
+      const container = document.body.appendChild(document.createElement("div"));
+      container.innerHTML = `<button>Close</button>`;
+      const release = createFocusTrap(container);
+      expect(vi.getTimerCount(), "the trap focuses its first control on the next tick").toBe(1);
+      release();
+      expect(vi.getTimerCount(), "the initial focus outlived the trap").toBe(0);
+      container.remove();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // React focuses an autoFocus field while it commits the dialog, before the
   // effect that creates the trap, so the trap saved that field as the opener
   // and on close sent focus to an element no longer in the page: <body>.
