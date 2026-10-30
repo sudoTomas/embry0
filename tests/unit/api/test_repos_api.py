@@ -383,6 +383,115 @@ def test_docker_access_writes_are_admin_tier() -> None:
         for method in route.methods or ():
             if _admin_dependency in calls:
                 admin.add((method, route.path))
-    assert ("PUT", "/api/v1/repos/{full_repo:path}/docker-access") in admin, (
+    assert ("PUT", "/api/v1/repos/{full_repo:repo}/docker-access") in admin, (
         f"PUT /repos/{{repo}}/docker-access must carry require_admin; admin routes under /repos: {sorted(admin)}"
     )
+
+
+# The names a sub-resource route ends in that GET or DELETE /repos/{owner}/{name} answered for (#243).
+_SHADOWED_ON_GET = (
+    "areas",
+    "credentials",
+    "environment",
+    "history",
+    "preferences",
+    "qa-config",
+    "readiness",
+    "slop-meter",
+)
+_SHADOWED_ON_DELETE = ("preferences", "qa-config")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", _SHADOWED_ON_GET)
+async def test_a_repository_named_like_a_sub_resource_is_read_at_its_address(api_client, name: str) -> None:
+    """#243: ``GET /repos/acme/history`` answered with the history of a repository called ``acme``."""
+    repo = f"acme/{name}"
+    assert (await api_client.post("/api/v1/repos", json={"repo": repo})).status_code == 201
+    r = await api_client.get(f"/api/v1/repos/{repo}")
+    body = r.json() if "json" in r.headers.get("content-type", "") else r.text
+    assert r.status_code == 200 and isinstance(body, dict) and body.get("repo") == repo, (
+        f"GET /repos/{repo} must answer with the repository {repo}, got {r.status_code}: {str(body)[:200]}"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", _SHADOWED_ON_DELETE)
+async def test_a_repository_named_like_a_sub_resource_is_deleted_at_its_address(api_client, name: str) -> None:
+    """#243: ``DELETE /repos/acme/qa-config`` deleted the QA config of a repository called ``acme``."""
+    repo = f"acme/{name}"
+    assert (await api_client.post("/api/v1/repos", json={"repo": repo})).status_code == 201
+    r = await api_client.delete(f"/api/v1/repos/{repo}")
+    listed = [row["repo"] for row in (await api_client.get("/api/v1/repos")).json()]
+    assert r.status_code == 204 and repo not in listed, (
+        f"DELETE /repos/{repo} must delete the repository {repo}; got {r.status_code} and it is still listed: "
+        f"{repo in listed}"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ("history", "preferences", "qa-config"))
+async def test_a_repository_named_like_a_sub_resource_keeps_its_sub_resources(api_client, name: str) -> None:
+    """#243: the repository ``acme/history`` still has a QA config, preferences and a history of its own."""
+    repo = f"acme/{name}"
+    put = await api_client.put(f"/api/v1/repos/{repo}/qa-config", content=_V2_MIN)
+    assert put.status_code == 200 and put.json()["repo"] == repo, put.text
+    assert (await api_client.get(f"/api/v1/repos/{repo}/qa-config")).text == _V2_MIN
+    prefs = await api_client.put(f"/api/v1/repos/{repo}/preferences", json={"base_branch": "dev"})
+    assert prefs.status_code == 200, prefs.text
+    assert (await api_client.get(f"/api/v1/repos/{repo}/preferences")).json()["base_branch"] == "dev"
+    history = (await api_client.get(f"/api/v1/repos/{repo}/history")).json()
+    assert {e["surface"] for e in history["entries"]} == {"qa_config", "preferences"}, history
+    detail = (await api_client.get(f"/api/v1/repos/{repo}")).json()
+    assert isinstance(detail, dict) and detail.get("repo") == repo and detail.get("has_qa_config") is True, (
+        f"GET /repos/{repo} must answer with the repository {repo} and its QA config: {str(detail)[:200]}"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "acme/widgets%0A",  # a newline ending a segment
+        "acme%0Aevil/widgets",  # a newline inside one
+        "acme/%2E",  # a `.` segment
+        "acme/%2E%2E",  # a `..` segment
+        "acme/%2E%2E/widgets",
+    ],
+)
+async def test_a_path_post_repos_would_refuse_names_no_repository(api_client, path: str) -> None:
+    """#243: a /repos route reads only a repository ``POST /repos`` would register, one segment rule for both."""
+    r = await api_client.put(f"/api/v1/repos/{path}/qa-config", content=_V2_MIN)
+    listed = [row["repo"] for row in (await api_client.get("/api/v1/repos")).json()]
+    assert r.status_code == 404 and listed == [], (
+        f"PUT /repos/{path}/qa-config must name no repository; got {r.status_code} and registered {listed!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_repository_whose_name_starts_with_a_dot_is_registered_and_reached(api_client) -> None:
+    """An organization's ``.github`` repository: GitHub and GitLab allow a leading dot, only ``.``/``..`` not."""
+    repo = "acme/.github"
+    registered = await api_client.post("/api/v1/repos", json={"repo": repo})
+    assert registered.status_code == 201, (
+        f"POST /repos must register {repo}: {registered.status_code} {registered.text}"
+    )
+    detail = await api_client.get(f"/api/v1/repos/{repo}")
+    assert detail.status_code == 200 and detail.json().get("repo") == repo, (
+        f"GET /repos/{repo} must answer with the repository: {detail.status_code} {detail.text[:200]}"
+    )
+    put = await api_client.put(f"/api/v1/repos/{repo}/qa-config", content=_V2_MIN)
+    assert put.status_code == 200 and put.json()["repo"] == repo, put.text
+    assert (await api_client.get(f"/api/v1/repos/{repo}/qa-config")).text == _V2_MIN
+    prefs = await api_client.put(f"/api/v1/repos/{repo}/preferences", json={"base_branch": "dev"})
+    assert prefs.status_code == 200, prefs.text
+    history = (await api_client.get(f"/api/v1/repos/{repo}/history")).json()
+    assert {e["surface"] for e in history["entries"]} == {"qa_config", "preferences"}, history
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repo", ["acme/.", "acme/..", "acme/../widgets"])
+async def test_a_dot_or_dot_dot_segment_is_not_registered(api_client, repo: str) -> None:
+    r = await api_client.post("/api/v1/repos", json={"repo": repo})
+    listed = [row["repo"] for row in (await api_client.get("/api/v1/repos")).json()]
+    assert r.status_code == 422 and listed == [], f"POST /repos must refuse {repo!r}: {r.status_code}, {listed!r}"
