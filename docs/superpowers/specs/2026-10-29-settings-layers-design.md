@@ -1,6 +1,6 @@
 # Settings layers: organization and repository overrides of the settings document
 
-Status: decided (2026-10-29; section 15, each on its recommended option). Pull request 1 is the `POST /orgs` fix, pull request 2 the layers (sections 2 to 7 and 10, as built in section 16), pull request 3 the dashboard (section 8, as built in section 17); 4 follows. Refs #159, #161; builds on #160 (`docs/superpowers/specs/2026-10-28-settings-documents-design.md`, ADR 0026). Line numbers are at `343b4030`.
+Status: decided (2026-10-29; section 15, each on its recommended option). Pull request 1 is the `POST /orgs` fix, pull request 2 the layers (sections 2 to 7 and 10, as built in section 16), pull request 3 the dashboard (section 8, as built in section 17), pull request 4 the asks section read per organization (section 11, as built in section 18). Refs #159, #161; builds on #160 (`docs/superpowers/specs/2026-10-28-settings-documents-design.md`, ADR 0026). Line numbers are at `343b4030`.
 
 **Why.** One deployment can serve several organizations, and their working hours, caps, label vocabularies and conventions differ. The settings document of #160 is one per deployment, so every key in it is global. The registry already lets a section name the keys an organization or a repository may override (`Section.org_keys`, `Section.repo_keys`, `embry0/settings/registry.py:114-131`), and the effective view already lists them (`embry0/settings/effective.py:63-67`), but nothing resolves them: "nothing resolves them until the organization and repository layers exist" (`registry.py:118-123`). Meanwhile the two per-owner and per-repository layers that do exist validate differently (section 1).
 
@@ -347,6 +347,15 @@ Where the code settled a detail this spec left open, or differs from it:
 - **The picker** is one list: Deployment, then the organizations and repositories the lists show (a removed organization and an inactive repository are hidden from lists, as everywhere) and every stored layer, each marked with how many keys its layer sets and, for a renamed repository, the slug it is still kept under. The layer the URL names is always offered. A hand-written URL with both parameters reads `repo`.
 - **Values in effect** words a layer's view as section 6 does: "Overrides "09-18" from the deployment" (or "from acme", or "the default"), "Inherited from acme", "The default: nothing sets it", and, dimmed, "it is the deployment's" or "it is set per organization" for a key the layer may not set.
 - **`layers_refused`** is listed after a preview, a save and an undo. Once the change is stored each layer links to open it; a preview's list does not link, since leaving would drop the edit it previews. Picking another layer while an edit is unsaved asks first.
+
+## 18. As built (pull request 4)
+
+- **One policy object per tick or request.** `AskPolicy` (`embry0/services/asks.py`) takes the section of one snapshot, read per repository (`Scoped`, through the `PerRepository` protocol so the module stays pure), and the open decisions, and answers per decision the values its asks are held to and the organization they count in. Each repository is resolved once.
+- **Which organization.** `organization_of` (`embry0/settings/scope.py`): the owner of the repository's current slug, `REPO_RENAMES` applied, the rule `Snapshot.get(repo=)` follows, so an ask counts in the organization whose layer it reads.
+- **No repository.** An ask about a decision with no repository reads the deployment's values, and counts apart from every organization's asks toward `max_open_per_person`.
+- **An ask whose decision is no longer open is withdrawn, never expired.** Section 11 read such an ask by the deployment's values, expecting the same tick to withdraw it. But a tick expires before it withdraws, so an ask past the deployment's `expire_days` would be expired instead, and its person never asked again if the decision came back: with an organization's `expire_days` longer than the deployment's, that happened to asks still within their own window. The loop expires only asks whose decision is open, and withdraws the rest in the same tick.
+- **`release()`** takes the policy rather than a callable from an ask to its settings, since it needs each ask's organization as well; whether it is working time, for a reminder, is decided per ask, so its `working` flag is gone. A queued ask is still released once due, without a working-hours check (#276).
+- **Upgrade.** With no layer stored, every value reads as before; what changes is the count: a person asked about two organizations' decisions may now hold `max_open_per_person` asks in each, not in all.
 
 ## Out of scope
 

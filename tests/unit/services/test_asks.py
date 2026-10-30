@@ -9,6 +9,7 @@ import pytest
 
 from embry0.services.ask_loop import AskLoop
 from embry0.services.asks import (
+    AskPolicy,
     ask_settings,
     code_for,
     expired,
@@ -19,6 +20,9 @@ from embry0.services.asks import (
     reminder_due,
 )
 from embry0.settings.sections.asks import AsksSettings
+from embry0.settings.store import Scoped
+from embry0.storage import repo_renames
+from tests.fixtures.asks import asks_read
 
 ON = AsksSettings(enabled=True, timezone="America/Chicago")
 S = ask_settings(ON)
@@ -82,8 +86,8 @@ def test_the_section_reads_as_hours_days_and_zone() -> None:
     assert S.hours == (9, 18) and S.weekdays == frozenset(range(5)), "the defaults: 09-18, mon-fri"
 
 
-async def _read(section: AsksSettings) -> AsksSettings:
-    return section
+async def _read(section: AsksSettings) -> Scoped[AsksSettings]:
+    return asks_read(section)
 
 
 class FakeAsks:
@@ -161,8 +165,43 @@ def test_a_person_holds_at_most_three_unanswered_asks_and_the_worst_go_first() -
 
     live = [a(1, "sent"), a(2), a(3), a(4), a(5, who="bo@example.com"), a(6, due_at=TUE_10 + timedelta(hours=1))]
     order = {"d4": 0, "d2": 1, "d3": 2, "d5": 3}
-    released = release(live, order, TUE_10, S, working=True)
+    policy = AskPolicy(asks_read(ON), [])
+    released = release(live, order, TUE_10, policy)
     assert [(x["id"], r) for x, r in released] == [("a4", False), ("a2", False), ("a5", False)]
     reminder = a(7, "sent", sent_at=TUE_10 - timedelta(hours=30))
-    assert release([reminder], {}, TUE_10, S, working=True) == [(reminder, True)]
-    assert release([reminder], {}, TUE_10, S, working=False) == [], "a reminder waits for working hours"
+    assert release([reminder], {}, TUE_10, policy) == [(reminder, True)]
+    evening = datetime(2026, 10, 27, 23, 30, tzinfo=UTC)  # 18:30 in Chicago
+    assert release([reminder], {}, evening, policy) == [], "a reminder waits for working hours"
+
+
+def test_an_ask_under_a_renamed_slug_counts_against_its_new_organization(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``acme/widgets`` moved to globex: an ask about a decision still stored under the old slug reads
+    globex's layer and counts among globex's asks, as its layers read it (``organization_of``)."""
+    monkeypatch.setattr(repo_renames, "REPO_RENAMES", {"acme/widgets": "globex/widgets"})
+    section = asks_read(
+        {"enabled": True, "hours": "00-24", "weekdays": "mon-sun"}, {"globex": {"max_open_per_person": 1}}
+    )
+    decisions = [
+        {"id": "d-gizmos", "repo": "globex/gizmos"},
+        {"id": "d-widgets", "repo": "acme/widgets"},
+        {"id": "d-gadgets", "repo": "acme/gadgets"},
+    ]
+
+    def a(ask_id: str, decision_id: str, state: str = "queued") -> dict[str, Any]:
+        return {
+            "id": ask_id,
+            "decision_id": decision_id,
+            "recipient": "ada@example.com",
+            "state": state,
+            "due_at": TUE_10,
+            "created_at": TUE_10,
+            "sent_at": TUE_10,
+            "reminders": 0,
+        }
+
+    live = [a("held", "d-gizmos", "sent"), a("widgets", "d-widgets"), a("gadgets", "d-gadgets")]
+    released = release(live, {}, TUE_10, AskPolicy(section, decisions))
+    assert [x["id"] for x, _ in released] == ["gadgets"], (
+        "ada holds one globex ask, globex's limit: the ask under the old acme/widgets slug counts as globex's "
+        f"and waits; acme/gadgets is still acme's and goes: {[x['id'] for x, _ in released]}"
+    )

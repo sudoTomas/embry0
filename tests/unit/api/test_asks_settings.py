@@ -5,6 +5,8 @@
 - The first boot imports a non-default ``ASK*`` value once; a second boot does not.
 - The real lifespan builds the ask loop with a reader of the document, not a value read once.
 
+Per organization, through the organization layers: ``test_asks_per_organization.py``.
+
 The section is taken from the application's catalog by name, so each test
 fails with its own message on a tree that has no asks section.
 """
@@ -29,7 +31,7 @@ from embry0.settings.bootstrap import BOOTSTRAP_ACTOR, import_env_once, log_igno
 from embry0.settings.document import load_yaml
 from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
-from embry0.settings.store import SettingsStore, section_reader
+from embry0.settings.store import SettingsStore, scoped_reader
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
@@ -141,7 +143,7 @@ async def test_a_put_reaches_the_next_tick_of_the_running_loop(app: Any, client:
         return {"ada": "ada@example.com"}
 
     loop = AskLoop(
-        settings=section_reader(app.state.settings, section),
+        settings=scoped_reader(app.state.settings, section),
         asks=asks,
         decisions=decisions,
         people=people,
@@ -255,13 +257,17 @@ async def test_the_lifespan_builds_the_ask_loop_with_a_reader_of_the_document(
         assert callable(loop.settings), (
             "the ask loop is built with a reader of the settings document, not a value read once at startup"
         )
-        assert (await loop.settings()).remind_hours == 12.0, "the boot imported ASK_REMIND_HOURS into what it reads"
+        assert (await loop.settings()).deployment().remind_hours == 12.0, (
+            "the boot imported ASK_REMIND_HOURS into what it reads"
+        )
         text = "asks:\n  remind_hours: 3\n"
         await first.state.settings.save(text, load_yaml(text), actor="alex@example.com")
-        assert (await loop.settings()).remind_hours == 3.0, "a write reaches the running loop's reader"
+        assert (await loop.settings()).deployment().remind_hours == 3.0, "a write reaches the running loop's reader"
         kept = len(await first.state.settings.revisions())
 
     second = create_app(config)
     async with lifespan(second):
-        assert (await second.state.ask_loop.settings()).remind_hours == 3.0, "a second boot imports nothing again"
+        assert (await second.state.ask_loop.settings()).deployment().remind_hours == 3.0, (
+            "a second boot imports nothing again"
+        )
         assert len(await second.state.settings.revisions()) == kept

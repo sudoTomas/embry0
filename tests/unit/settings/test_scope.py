@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from embry0.settings.scope import Scope, ScopeError, current, owner_of, stored_rows
+from embry0.settings.scope import Scope, ScopeError, current, organization_of, owner_of, stored_rows
 from embry0.storage import repo_renames
 
 
@@ -51,6 +51,15 @@ def test_a_renamed_repository_reads_its_new_slug(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(repo_renames, "REPO_RENAMES", {"acme/old-widgets": "Acme/Widgets"})
     assert Scope.repository("acme/old-widgets").name == "acme/widgets"
     assert Scope.parse("repository:acme/old-widgets").name == "acme/old-widgets", "a stored scope is read as stored"
+
+
+def test_a_repository_s_organization_is_the_owner_of_its_current_slug(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What an ask about a decision in that repository counts against, as its layers read it."""
+    monkeypatch.setattr(repo_renames, "REPO_RENAMES", {"acme/widgets": "Globex/Widgets"})
+    assert organization_of("Acme/Widgets") == "globex", "moved to globex: it reads, and counts in, globex's layer"
+    assert organization_of("acme/gadgets") == "acme"
+    assert organization_of("group/sub/project") == "group"
+    assert organization_of("Not A Slug") == "not a slug", "a name no layer can have falls back to its first segment"
 
 
 def test_the_view_names_the_layer() -> None:

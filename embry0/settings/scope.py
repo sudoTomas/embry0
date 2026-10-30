@@ -135,6 +135,18 @@ class Scope:
         }
 
 
+def organization_of(repo: str) -> str:
+    """The organization whose layer ``repo`` reads: the owner of its current slug, ``REPO_RENAMES`` applied.
+
+    A name that cannot be a repository's slug falls back to its first
+    segment, lowercase, as :func:`owner_of` reads it.
+    """
+    try:
+        return owner_of(Scope.repository(repo).name)
+    except ScopeError:
+        return owner_of(repo)
+
+
 def current(scope: Scope) -> Scope:
     """``scope`` under its repository's current slug, with ``REPO_RENAMES`` as installed now; any other as it is.
 

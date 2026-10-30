@@ -3,7 +3,7 @@
 - ``GET /asks/due``: the asks to send now, each with its decision rendered,
   its code and the actions a chat may offer; a reminder is marked as one.
   Empty while ``asks.enabled`` is false in the settings document, which is
-  read on every request.
+  read on every request, each ask by its decision's organization's values.
 - ``POST /asks/{id}/sent``: the assistant sent it (``message_ref`` names the message).
 - ``POST /asks/answer``: a button was pressed: the code, the action and the
   person who pressed it. The answer goes through the paths the dashboard
@@ -23,9 +23,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.schemas.person_name import PersonName
-from embry0.services.asks import ask_settings, next_working_time, release
+from embry0.services.asks import AskPolicy, release
 from embry0.settings.sections.asks import ASKS, AsksSettings
-from embry0.settings.store import SettingsStore
+from embry0.settings.store import Scoped, SettingsStore
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -43,12 +43,12 @@ def _repo(request: Request, name: str) -> Any:
     return repo
 
 
-async def ask_policy(request: Request) -> AsksSettings:
-    """The ``asks`` section of the settings document as it stands now."""
+async def ask_policy(request: Request) -> Scoped[AsksSettings]:
+    """The ``asks`` section of the settings document as it stands now, read per repository."""
     store: SettingsStore | None = getattr(request.app.state, "settings", None)
     if store is None:
         raise HTTPException(status_code=503, detail="settings storage not initialized")
-    return (await store.snapshot()).get(ASKS)
+    return (await store.snapshot()).scoped(ASKS)
 
 
 def _iso(value: Any) -> Any:
@@ -93,24 +93,25 @@ async def open_decisions(request: Request) -> list[dict[str, Any]]:
 @router.get("/asks/due")
 async def asks_due(request: Request, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
     """The asks to send now: due reminders, then queued ones, worst first, while their person holds
-    fewer than ``asks.max_open_per_person`` unanswered asks. An empty list while ``asks.enabled`` is
-    false in the settings document, whatever is stored; ``enabled`` says which."""
-    policy = await ask_policy(request)
-    if not policy.enabled:
+    fewer than ``asks.max_open_per_person`` unanswered asks about that organization's decisions. Each
+    ask is held to its decision's organization's values: its working hours for a reminder, its
+    ``remind_hours`` and its limit. An empty list while ``asks.enabled`` is false in the settings
+    document, whatever is stored; ``enabled`` says which."""
+    section = await ask_policy(request)
+    if not section.deployment().enabled:
         return {"asks": [], "count": 0, "enabled": False}
-    settings = ask_settings(policy)
     asks = _repo(request, "asks_repo")
     now = datetime.now(UTC)
     decisions = await open_decisions(request)
+    policy = AskPolicy(section, decisions)
     by_id = {str(d["id"]): d for d in decisions}
     order = {str(d["id"]): i for i, d in enumerate(decisions)}
     # Only what the caller may read is sent. An ask whose decision is not listed here may have been
     # answered, or may sit in a repo the caller's key does not cover: the ask loop, which reads every
     # decision, is what withdraws it.
     live = [a for a in await asks.live() if str(a["decision_id"]) in by_id]
-    working = next_working_time(now, settings) == now
     out: list[dict[str, Any]] = []
-    for ask, reminder in release(live, order, now, settings, working=working):
+    for ask, reminder in release(live, order, now, policy):
         decision = by_id[str(ask["decision_id"])]
         out.append(
             {

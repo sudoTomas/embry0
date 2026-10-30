@@ -17,10 +17,14 @@ from embry0.api.v1 import proposals as proposals_api
 from embry0.config import Embry0Config
 from embry0.settings.document import read_sections
 from embry0.settings.sections import CATALOG
+from embry0.settings.sections.asks import DAYS
 from embry0.settings.store import Snapshot
+from tests.fixtures.asks import asks_snapshot
 
 HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 NOW = datetime.now(UTC)
+#: Working hours that hold whenever the test runs: NOW is the real time.
+ALWAYS = {"hours": "00-24", "weekdays": "mon-sun"}
 
 
 class FakeAsks:
@@ -129,6 +133,16 @@ class FakeSettings:
         return Snapshot(generation=self.reads, data=self.data, sections=read_sections(CATALOG, self.data))
 
 
+class LayeredSettings:
+    """The settings store as the feed reads it, with organization layers: owner to its ``asks`` values."""
+
+    def __init__(self, deployment: dict[str, Any], organizations: dict[str, dict[str, Any]]) -> None:
+        self.snapshots = asks_snapshot(deployment, organizations)
+
+    async def snapshot(self) -> Snapshot:
+        return self.snapshots
+
+
 class FakeNotifier:
     def __init__(self) -> None:
         self.sent: list[tuple[str, dict[str, Any]]] = []
@@ -180,10 +194,8 @@ async def call(app: Any, method: str, url: str, **kw: Any) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_the_feed_gives_each_due_ask_its_card_code_person_and_chat_actions(
-    app: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(asks_api, "next_working_time", lambda now, _s: now)
+async def test_the_feed_gives_each_due_ask_its_card_code_person_and_chat_actions(app: Any) -> None:
+    app.state.settings = FakeSettings({"asks": {"enabled": True, **ALWAYS}})
     app.state.asks_repo.rows = [
         ask("a1", "offer:crack:1", "ada@example.com"),
         ask("a2", "done:job-1", "github:bo"),
@@ -209,22 +221,19 @@ async def test_the_feed_gives_each_due_ask_its_card_code_person_and_chat_actions
 
 
 @pytest.mark.asyncio
-async def test_the_feed_is_empty_while_asks_are_off_even_with_live_asks_stored(
-    app: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(asks_api, "next_working_time", lambda now, _s: now)
+async def test_the_feed_is_empty_while_asks_are_off_even_with_live_asks_stored(app: Any) -> None:
     app.state.asks_repo.rows = [
         ask("a1", "offer:crack:1", "ada@example.com"),
         ask("a2", "done:job-1", "github:bo", state="sent", sent_at=NOW - timedelta(days=2)),
     ]
-    app.state.settings = FakeSettings({"asks": {"enabled": False}})
+    app.state.settings = FakeSettings({"asks": {"enabled": False, **ALWAYS}})
     off = await call(app, "GET", "/api/v1/asks/due")
     assert off.status_code == 200, off.text
     assert off.json()["asks"] == [], "asks off means none is handed to a chat to send, queued or due a reminder"
     assert off.json()["enabled"] is False
     assert [r["state"] for r in app.state.asks_repo.rows] == ["queued", "sent"], "they wait, untouched"
 
-    app.state.settings.data = {"asks": {"enabled": True}}
+    app.state.settings.data = {"asks": {"enabled": True, **ALWAYS}}
     on = (await call(app, "GET", "/api/v1/asks/due")).json()
     assert [a["id"] for a in on["asks"]] == ["a2", "a1"] and on["enabled"] is True, (
         "the same app, turned on in the document: the next request serves them, the reminder first"
@@ -236,7 +245,7 @@ async def test_the_feed_reads_the_document_on_each_request(app: Any) -> None:
     app.state.asks_repo.rows = [
         ask("a1", "offer:crack:1", "ada@example.com", state="sent", sent_at=NOW - timedelta(hours=30))
     ]
-    always = {"enabled": True, "hours": "00-24", "weekdays": "mon-sun"}
+    always = {"enabled": True, **ALWAYS}
     app.state.settings = FakeSettings({"asks": {**always, "remind_hours": 48}})
     assert (await call(app, "GET", "/api/v1/asks/due")).json()["asks"] == [], "sent 30 hours ago, reminded after 48"
     assert app.state.settings.reads == 1, "one snapshot per request"
@@ -313,3 +322,72 @@ async def test_a_chat_cannot_take_an_action_the_dashboard_keeps(app: Any) -> Non
         app, "POST", "/api/v1/asks/answer", json={"code": "WXYZ", "action": "merge", "person": "ada@example.com"}
     )
     assert resp.status_code == 409 and "not open on that quest from a chat" in resp.text
+
+
+def _decide(app: Any, *decisions: tuple[str, str]) -> None:
+    """Make ``(decision id, repository)`` the open decisions, in that order (worst first), each with a code."""
+    app.state.open_decisions.clear()
+    for i, (decision_id, repo) in enumerate(decisions):
+        app.state.open_decisions[decision_id] = {**CRACK, "id": decision_id, "repo": repo}
+        app.state.asks_repo.codes[decision_id] = f"C{i:03d}"
+
+
+@pytest.mark.asyncio
+async def test_a_person_s_open_asks_count_per_organization(app: Any) -> None:
+    """Spec 2026-10-29, section 11: a person asked about two organizations' decisions holds each one's number."""
+    _decide(
+        app,
+        ("offer:acme:1", "acme/web"),
+        ("offer:acme:2", "acme/api"),
+        ("offer:globex:1", "globex/gizmos"),
+        ("offer:none:1", ""),
+    )
+    app.state.settings = LayeredSettings({"enabled": True, **ALWAYS, "max_open_per_person": 1}, {})
+    app.state.asks_repo.rows = [
+        ask("held", "offer:acme:1", "ada@example.com", state="sent", sent_at=NOW - timedelta(hours=1)),
+        ask("acme", "offer:acme:2", "ada@example.com"),
+        ask("globex", "offer:globex:1", "ada@example.com"),
+        ask("none", "offer:none:1", "ada@example.com"),
+    ]
+    due = (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]
+    assert [a["id"] for a in due] == ["globex", "none"], (
+        "ada holds acme's one unanswered ask, so acme's next waits; globex's, and the one about a decision "
+        f"with no repository, each count apart and go out: {[a['id'] for a in due]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_feed_holds_each_ask_to_its_organization_s_layer(app: Any) -> None:
+    """Reminder hours, the reminder delay and the per-person limit each come from the ask's organization.
+
+    The queued asks are all within their organization's working hours: a queued
+    ask is released once due, whatever the hour, which is a known gap (#276).
+    """
+    elsewhere = DAYS[(NOW.weekday() + 3) % 7]
+    _decide(
+        app,
+        ("offer:acme:1", "acme/web"),
+        ("offer:acme:2", "acme/web"),
+        ("offer:globex:1", "globex/gizmos"),
+        ("offer:initech:1", "initech/tools"),
+        ("offer:none:1", ""),
+    )
+    app.state.settings = LayeredSettings(
+        {"enabled": True, **ALWAYS, "remind_hours": 24, "max_open_per_person": 3},
+        {"acme": {"remind_hours": 48, "max_open_per_person": 1}, "globex": {"weekdays": elsewhere}},
+    )
+    sent = {"state": "sent", "sent_at": NOW - timedelta(hours=30)}
+    app.state.asks_repo.rows = [
+        ask("remind-acme", "offer:acme:1", "ada@example.com", **sent),
+        ask("remind-globex", "offer:globex:1", "ada@example.com", **sent),
+        ask("remind-none", "offer:none:1", "ada@example.com", **sent),
+        ask("queued-acme", "offer:acme:2", "ada@example.com"),
+        ask("queued-initech", "offer:initech:1", "ada@example.com"),
+    ]
+    due = (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]
+    assert [(a["id"], a["reminder"]) for a in due] == [("remind-none", True), ("queued-initech", False)], (
+        "sent 30 hours ago: acme reminds after 48 hours, and today is not one of globex's working days, so "
+        "only the ask with no repository is reminded, by the deployment's 24 hours; acme's limit of one is "
+        "held, and initech, with no layer, counts its own asks against the deployment's three: "
+        f"{[(a['id'], a['reminder']) for a in due]}"
+    )
