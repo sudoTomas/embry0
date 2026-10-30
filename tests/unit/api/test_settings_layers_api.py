@@ -249,6 +249,38 @@ async def test_only_an_admin_writes_a_layer_and_an_allowlist_only_its_repositori
     assert (read.status_code, read.json()["data"]) == (200, {"sample": {"mode": "on"}})
 
 
+async def test_each_document_says_whether_the_key_s_allowlist_lets_it_write_there_as_a_put_decides(app: Any) -> None:
+    """``allowlist_covers`` is the allowlist half of a PUT's check, so the dashboard offers no write it refuses."""
+    targets: list[dict[str, str]] = [{}, {"owner": "acme"}, {"repo": "acme/widgets"}, {"repo": "acme/gadgets"}]
+    answered: dict[tuple[str, str], bool | None] = {}
+    refused: dict[tuple[str, str], bool] = {}
+    async with _client(app) as admin, _client(app, WIDGETS_ONLY) as one, _client(app, READER) as reader:
+        for who, client in (("admin", admin), ("widgets-only", one)):
+            for params in targets:
+                where = next(iter(params.values()), "deployment")
+                got = await client.get(URL, params=params)
+                assert got.status_code == 200, got.text
+                answered[(who, where)] = got.json().get("allowlist_covers")
+                refused[(who, where)] = (await _put(client, "", dry_run="1", **params)).status_code == 403
+        read = (await reader.get(URL, params={"owner": "acme"})).json()
+    assert answered == {
+        ("admin", "deployment"): True,
+        ("admin", "acme"): True,
+        ("admin", "acme/widgets"): True,
+        ("admin", "acme/gadgets"): True,
+        ("widgets-only", "deployment"): False,
+        ("widgets-only", "acme"): False,
+        ("widgets-only", "acme/widgets"): True,
+        ("widgets-only", "acme/gadgets"): False,
+    }, f"allowlist_covers does not say where a key limited to acme/widgets may write: {answered}"
+    assert {where: not covers for where, covers in answered.items()} == refused, (
+        "allowlist_covers disagrees with what a PUT of the same document by the same key refuses"
+    )
+    assert read.get("allowlist_covers") is True, (
+        "a key with no allowlist is covered everywhere; its tier is checked apart"
+    )
+
+
 async def test_undo_is_authorized_for_the_document_it_changes(app: Any) -> None:
     async with _client(app) as admin, _client(app, WIDGETS_ONLY) as one:
         org = (await _put(admin, "sample:\n  per_tick: 6\n", owner="acme")).json()

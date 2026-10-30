@@ -33,7 +33,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.document_requests import if_match_versions, read_capped_body
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_repo_allowlist, refusal_detail
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.settings.document import (
@@ -119,9 +119,19 @@ def _not_registered(scope: Scope) -> HTTPException:
     return HTTPException(status_code=404, detail=f"No repository {scope.name} is registered; register it first.")
 
 
+def _allowlist_target(scope: Scope) -> str | None:
+    """What a key's repository allowlist is checked against to write ``scope``.
+
+    A repository's layer is checked against its repository. Every other
+    document is checked against no repository, which only an unrestricted
+    key covers: the deployment's and an organization's govern many.
+    """
+    return scope.name if scope.layer == "repository" else None
+
+
 async def _may_write(request: Request, scope: Scope) -> None:
     """A repository's layer takes a key whose allowlist covers it; every other document an unrestricted key."""
-    await enforce_repo_allowlist(request, scope.name if scope.layer == "repository" else None, action=_WRITE_ACTION)
+    await enforce_repo_allowlist(request, _allowlist_target(scope), action=_WRITE_ACTION)
 
 
 def _settable(catalog: Catalog, scope: Scope) -> dict[str, list[str]]:
@@ -171,6 +181,9 @@ async def get_settings(
     generation, for ``If-Match`` on a later PUT; a layer nobody wrote is
     generation 0. ``managed_by`` is ``"file"`` when the document says it is
     kept in a file, else null: each layer says so for itself.
+    ``allowlist_covers`` says whether the calling key's repository allowlist
+    lets it write this document, by the check a PUT makes; the admin tier is
+    checked apart, as for every write.
     """
     store = _store(request)
     scope = _scope(owner, repo)
@@ -198,6 +211,9 @@ async def get_settings(
         "unknown_keys": unknown_keys,
         # "file" when the document is kept in a file (`embry0 settings apply`): the dashboard only shows it.
         "managed_by": row["data"].get(MANAGED_BY_KEY),
+        # The allowlist half of what a PUT checks, answered without logging a refusal, so the
+        # dashboard offers no write the key can only have refused. Always true without an allowlist.
+        "allowlist_covers": refusal_detail(request, _allowlist_target(scope), action=_WRITE_ACTION) is None,
     }
 
 
