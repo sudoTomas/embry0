@@ -91,7 +91,8 @@ describe("QAAcceptanceResults evidence (#541)", () => {
     expect(screen.getByRole("button", { name: "1-login.png" })).toBeInTheDocument();
   });
 
-  it("fetches the evidence of its own attempt and opens it as a blob URL", async () => {
+  it("fetches the evidence of its own attempt, opens it as a blob URL and revokes it a minute later", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     mockGet.mockResolvedValue({ data: new Blob(["png"], { type: "image/png" }) });
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
       expect(this.href).toMatch(/^blob:/);
@@ -105,5 +106,12 @@ describe("QAAcceptanceResults evidence (#541)", () => {
       responseType: "blob",
     });
     click.mockRestore();
+
+    // The new tab keeps the URL a minute, then the page frees the bytes.
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:http://localhost/frame-1");
   });
 });
