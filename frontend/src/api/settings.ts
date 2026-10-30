@@ -3,6 +3,8 @@ import { DEPLOYMENT_LAYER, layerParams, type PolicyLayer } from "@/lib/settingsL
 import type {
   EffectiveSettings,
   SettingsDocument,
+  SettingsKeysPreview,
+  SettingsKeysResult,
   SettingsLayerRow,
   SettingsPreview,
   SettingsRevision,
@@ -74,6 +76,72 @@ export async function saveSettings(
     headers: { ...YAML_BODY.headers, "If-Match": `"${generation}"` },
     params: Object.keys(params).length > 0 ? params : undefined,
   });
+  return data;
+}
+
+export interface SetSettingsKeysRequest {
+  /** The section, such as `asks`. */
+  section: string;
+  /**
+   * Each key's new value. `null` takes the key out, so it reads its default,
+   * or for a layer what the layer inherits.
+   */
+  values: Record<string, unknown>;
+  /**
+   * The generation read, if any: the change is refused with 409 when the
+   * document moved since. Without it the keys go into whatever is stored now,
+   * which loses no other change, since only these keys are written.
+   */
+  generation?: number;
+  /** Why, recorded with the revision; optional, and not sent with a dry run. */
+  reason?: string;
+}
+
+function keysRequest({ section, generation, reason }: SetSettingsKeysRequest, layer: PolicyLayer, dryRun: boolean) {
+  const trimmed = reason?.trim();
+  const params = {
+    ...layerParams(layer),
+    ...(dryRun ? { dry_run: 1 } : {}),
+    ...(trimmed && !dryRun ? { reason: trimmed } : {}),
+  };
+  return {
+    url: `/config/settings/${encodeURIComponent(section)}`,
+    config: {
+      ...(generation === undefined ? {} : { headers: { "If-Match": `"${generation}"` } }),
+      ...(Object.keys(params).length > 0 ? { params } : {}),
+      // A 422 names each refused key; the form shows it next to the field.
+      suppressValidationToast: true,
+    },
+  };
+}
+
+/**
+ * What changing some keys of one section would do, storing nothing: the
+ * same checks, 422 and 409 as a real change. Admin only.
+ */
+export async function previewSettingsKeys(
+  request: SetSettingsKeysRequest,
+  layer: PolicyLayer = DEPLOYMENT_LAYER,
+): Promise<SettingsKeysPreview> {
+  const { url, config } = keysRequest(request, layer, true);
+  const { data } = await api.patch<SettingsKeysPreview>(url, request.values, config);
+  return data;
+}
+
+/**
+ * Change some keys of one section, for a form field that edits one setting
+ * outside the Policy tab. The rest of the document stays as stored, its
+ * comments included, and the change is recorded as a revision like a save.
+ * 422 names each refused key, never its value; 409 when `generation` is no
+ * longer the stored one. Admin only; a key with a repository allowlist
+ * writes only the layers of the repositories it covers.
+ */
+export async function setSettingsKeys(
+  request: SetSettingsKeysRequest,
+  layer: PolicyLayer = DEPLOYMENT_LAYER,
+): Promise<SettingsKeysResult> {
+  const { url, config } = keysRequest(request, layer, false);
+  const { data } = await api.patch<SettingsKeysResult>(url, request.values, config);
   return data;
 }
 

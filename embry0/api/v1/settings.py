@@ -4,8 +4,11 @@ GET reads the stored document, the effective value of every setting with
 where it came from, the JSON Schema, and the revisions. PUT replaces the
 whole document, YAML or a JSON object, and answers 422 listing every bad key
 in FastAPI's own error shape (``loc``, ``type``, ``msg``, never the rejected
-value). ``?dry_run=1`` answers what would change and stores nothing. Undo
-puts back what the newest change replaced.
+value). PATCH on ``/config/settings/{section}`` sets some keys of one section,
+``null`` taking a key out, in the stored text, so a form field on another
+page can change one setting without sending the document; it is checked,
+recorded and refused as PUT is. ``?dry_run=1`` answers what would change and
+stores nothing. Undo puts back what the newest change replaced.
 
 **Layers** (spec 2026-10-29). ``?owner=acme`` or ``?repo=acme/widgets`` on
 the document, its revisions and the effective view names an organization's
@@ -25,7 +28,8 @@ it is read in full, with or without a ``Content-Length``.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
@@ -42,6 +46,7 @@ from embry0.settings.document import (
     DocumentTooLarge,
     changes,
     parse_body,
+    parse_keys,
     unknown_parts,
 )
 from embry0.settings.effective import effective_view, iso
@@ -52,8 +57,10 @@ from embry0.settings.store import (
     WHY_NOT,
     GenerationMismatch,
     NotUndoable,
+    Preview,
     RevisionInvalid,
     RevisionNotFound,
+    SaveResult,
     SettingsStore,
 )
 
@@ -165,6 +172,70 @@ async def _audit(request: Request, action: AuditAction, details: dict[str, Any])
     )
 
 
+@contextmanager
+def _write_refusals() -> Iterator[None]:
+    """A write's refusals as their statuses: 413 too large, 422 every problem, 409 a newer generation."""
+    try:
+        yield
+    except DocumentTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from None
+    except DocumentInvalid as exc:
+        raise _unprocessable(exc) from None
+    except GenerationMismatch as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"The settings changed since you read them (now generation {exc.current}). "
+            "Read them again and apply your change to the new version.",
+        ) from None
+
+
+def _previewed(scope: Scope, preview: Preview) -> dict[str, Any]:
+    return {
+        "scope": scope.view(),
+        "would_change": preview.would_change,
+        "text_diff": preview.text_diff,
+        "changes": preview.changes,
+        "unknown_sections": list(preview.unknown_sections),
+        "unknown_keys": list(preview.unknown_keys),
+        "layers_refused": preview.layers_refused,
+        "layers_refused_total": preview.layers_refused_total,
+    }
+
+
+def _saved(scope: Scope, result: SaveResult) -> dict[str, Any]:
+    return {
+        "scope": scope.view(),
+        "generation": result.generation,
+        "revision_id": result.revision_id,
+        "changes": result.changes,
+        "unknown_sections": list(result.unknown_sections),
+        "unknown_keys": list(result.unknown_keys),
+        "layers_refused": result.layers_refused,
+        "layers_refused_total": result.layers_refused_total,
+    }
+
+
+def _updated(scope: Scope, result: SaveResult, *, source: str, reason: str) -> dict[str, Any]:
+    """The ``settings.updated`` audit row's details: one shape for a whole document and for some keys."""
+    return {
+        "scope": str(scope),
+        "revision_id": result.revision_id,
+        "generation": result.generation,
+        "keys": [change["key"] for change in result.changes],
+        "source": source,
+        "reason": reason,
+    }
+
+
+async def _writable(request: Request, owner: str | None, repo: str | None) -> Scope:
+    """The document a write names, once the key may write it and its organization or repository is registered."""
+    scope = _scope(owner, repo)
+    await _may_write(request, scope)
+    if scope.layer != "deployment" and not await _registered(request, scope):
+        raise _not_registered(scope)
+    return scope
+
+
 @router.get("/config/settings", response_model=None)
 async def get_settings(
     request: Request,
@@ -240,29 +311,16 @@ async def put_settings(
     would change. ``layers_refused`` lists the values of the layers under the
     document that the change makes read as inherited.
     """
-    scope = _scope(owner, repo)
-    await _may_write(request, scope)
-    if scope.layer != "deployment" and not await _registered(request, scope):
-        raise _not_registered(scope)
+    scope = await _writable(request, owner, repo)
     store = _store(request)
     expected = if_match_versions(if_match)
     body = await read_capped_body(
         request, MAX_TEXT_BYTES, f"the settings document is larger than {MAX_TEXT_BYTES} bytes"
     )
-    try:
+    with _write_refusals():
         text, values = parse_body(body, request.headers.get("content-type", ""))
         if dry_run:
-            preview = await store.preview(text, values, if_generation=expected, scope=scope)
-            return {
-                "scope": scope.view(),
-                "would_change": preview.would_change,
-                "text_diff": preview.text_diff,
-                "changes": preview.changes,
-                "unknown_sections": list(preview.unknown_sections),
-                "unknown_keys": list(preview.unknown_keys),
-                "layers_refused": preview.layers_refused,
-                "layers_refused_total": preview.layers_refused_total,
-            }
+            return _previewed(scope, await store.preview(text, values, if_generation=expected, scope=scope))
         result = await store.save(
             text,
             values,
@@ -272,39 +330,56 @@ async def put_settings(
             if_generation=expected,
             scope=scope,
         )
-    except DocumentTooLarge as exc:
-        raise HTTPException(status_code=413, detail=str(exc)) from None
-    except DocumentInvalid as exc:
-        raise _unprocessable(exc) from None
-    except GenerationMismatch as exc:
-        raise HTTPException(
-            status_code=409,
-            detail=f"The settings changed since you read them (now generation {exc.current}). "
-            "Read them again and apply your change to the new version.",
-        ) from None
     if result.revision_id is not None:
-        await _audit(
-            request,
-            "settings.updated",
-            {
-                "scope": str(scope),
-                "revision_id": result.revision_id,
-                "generation": result.generation,
-                "keys": [change["key"] for change in result.changes],
-                "source": source,
-                "reason": reason,
-            },
+        await _audit(request, "settings.updated", _updated(scope, result, source=source, reason=reason))
+    return _saved(scope, result)
+
+
+@router.patch("/config/settings/{section}", dependencies=[require_admin])
+async def patch_settings_section(
+    section: str,
+    request: Request,
+    dry_run: bool = False,
+    reason: str = Query(default="", max_length=500),
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    owner: str | None = _OWNER,
+    repo: str | None = _REPO,
+) -> dict[str, Any]:
+    """Set some keys of one section of a settings document, the deployment's or with ``owner`` or ``repo``
+    that layer, and leave the rest of it as stored.
+
+    The body is a JSON object of the section's keys, ``{"remind_hours": 12}``;
+    ``null`` takes a key out, so it reads its default, or for a layer what
+    the layer inherits. The change is made to the stored text, so its
+    comments and layout stay (the whole text is written again only where
+    embry0's own key writes do so too, logged as ``settings_text_rewritten``),
+    and the document it makes meets every check a ``PUT`` does. It is then
+    recorded as a revision with source ``person`` and ``reason``, and audited.
+    422 lists every problem, each at its key, never its value: a section this
+    release does not have, a key the section does not have, a key the layer
+    may not set, and whatever the document it makes is refused for; 404 for a
+    layer of an organization or repository that is not registered; 409 when
+    ``If-Match`` names no generation that is stored. Without ``If-Match`` the
+    keys go into whatever is stored now. A document kept in a file is written
+    as a ``PUT`` writes it, and keeps saying so: the answer's ``managed_by``
+    tells the caller. With ``dry_run`` nothing is stored and the answer says
+    what would change; otherwise it answers as a ``PUT`` does.
+    """
+    scope = await _writable(request, owner, repo)
+    store = _store(request)
+    expected = if_match_versions(if_match)
+    body = await read_capped_body(request, MAX_TEXT_BYTES, f"the body is larger than {MAX_TEXT_BYTES} bytes")
+    with _write_refusals():
+        keys = parse_keys(body)
+        if dry_run:
+            preview = await store.preview_keys(section, keys, if_generation=expected, scope=scope)
+            return {**_previewed(scope, preview), "managed_by": preview.managed_by}
+        result = await store.set_keys(
+            section, keys, actor=request_actor(request), reason=reason, if_generation=expected, scope=scope
         )
-    return {
-        "scope": scope.view(),
-        "generation": result.generation,
-        "revision_id": result.revision_id,
-        "changes": result.changes,
-        "unknown_sections": list(result.unknown_sections),
-        "unknown_keys": list(result.unknown_keys),
-        "layers_refused": result.layers_refused,
-        "layers_refused_total": result.layers_refused_total,
-    }
+    if result.revision_id is not None:
+        await _audit(request, "settings.updated", _updated(scope, result, source="person", reason=reason))
+    return {**_saved(scope, result), "managed_by": result.managed_by}
 
 
 @router.get("/config/settings/effective")
@@ -513,13 +588,4 @@ async def undo_settings_revision(revision_id: int, request: Request) -> dict[str
             "generation": result.generation,
         },
     )
-    return {
-        "scope": scope.view(),
-        "generation": result.generation,
-        "revision_id": result.revision_id,
-        "changes": result.changes,
-        "unknown_sections": list(result.unknown_sections),
-        "unknown_keys": list(result.unknown_keys),
-        "layers_refused": result.layers_refused,
-        "layers_refused_total": result.layers_refused_total,
-    }
+    return _saved(scope, result)

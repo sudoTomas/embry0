@@ -132,6 +132,60 @@ describe("settings api", () => {
     expect(captured.config?.url).toBe("/config/settings/layers");
   });
 
+  it("changes some keys of one section with a PATCH, null kept, the guard, the reason and the layer named", async () => {
+    const captured = await capturing({ generation: 4, revision_id: 9, changes: [], managed_by: null });
+    const { setSettingsKeys } = await import("../settings");
+
+    const result = await setSettingsKeys({
+      section: "asks",
+      values: { remind_hours: 12, hours: null },
+      generation: 3,
+      reason: "  a busy week  ",
+    }, { layer: "organization", owner: "acme" });
+
+    expect(result).toEqual({ generation: 4, revision_id: 9, changes: [], managed_by: null });
+    expect(captured.config?.method).toBe("patch");
+    expect(captured.config?.url).toBe("/config/settings/asks");
+    // JSON, so a null goes as null: it takes the key out.
+    expect(JSON.parse(captured.config?.data)).toEqual({ remind_hours: 12, hours: null });
+    expect(captured.config?.headers["If-Match"]).toBe('"3"');
+    expect(captured.config?.headers["X-Requested-With"]).toBe("XMLHttpRequest");
+    expect(captured.config?.params).toEqual({ owner: "acme", reason: "a busy week" });
+    // The form shows a 422 next to its field.
+    expect(captured.config?.suppressValidationToast).toBe(true);
+  });
+
+  it("changes keys over whatever is stored when no generation was read, the section one path segment", async () => {
+    const captured = await capturing({ generation: 2, revision_id: null, changes: [] });
+    const { setSettingsKeys } = await import("../settings");
+
+    await setSettingsKeys({ section: "a/b", values: {}, reason: "   " });
+
+    expect(captured.config?.url).toBe("/config/settings/a%2Fb");
+    expect(captured.config?.headers["If-Match"]).toBeUndefined();
+    expect(captured.config?.params).toBeUndefined();
+    expect(JSON.parse(captured.config?.data)).toEqual({});
+  });
+
+  it("previews a change of keys with a dry run of a layer, against the generation read", async () => {
+    const captured = await capturing({ would_change: true, text_diff: "", changes: [], managed_by: "file" });
+    const { previewSettingsKeys } = await import("../settings");
+
+    const preview = await previewSettingsKeys({
+      section: "sample",
+      values: { mode: "on" },
+      generation: 0,
+      reason: "not sent with a dry run",
+    }, { layer: "repository", repo: "acme/widgets" });
+
+    expect(preview.managed_by).toBe("file");
+    expect(captured.config?.method).toBe("patch");
+    expect(captured.config?.url).toBe("/config/settings/sample");
+    expect(captured.config?.params).toEqual({ repo: "acme/widgets", dry_run: 1 });
+    expect(captured.config?.headers["If-Match"]).toBe('"0"');
+    expect(captured.config?.suppressValidationToast).toBe(true);
+  });
+
   it("undoes with a POST to the revision, the 422 left to the caller", async () => {
     const captured = await capturing({ generation: 5, revision_id: 10, changes: [] });
     const { undoSettingsChange } = await import("../settings");

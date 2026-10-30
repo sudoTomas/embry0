@@ -859,6 +859,35 @@ class Embry0Client:
             )
         )
 
+    async def settings_set_keys(
+        self,
+        section: str,
+        values: dict[str, Any],
+        *,
+        dry_run: bool = False,
+        expected_generation: int | None = None,
+        reason: str = "",
+        owner: str = "",
+        repo: str = "",
+    ) -> dict[str, Any]:
+        """Set some keys of one section, a None value taking its key out (``PATCH /config/settings/{section}``).
+
+        The rest of the document stays as stored, comments included. The
+        deployment's, or with ``owner`` or ``repo`` that layer;
+        ``expected_generation``, when given, goes in ``If-Match``.
+        """
+        params: dict[str, Any] = dict(self._layer(owner, repo))
+        if dry_run:
+            params["dry_run"] = 1
+        if reason:
+            params["reason"] = reason
+        headers = {"If-Match": f'"{int(expected_generation)}"'} if expected_generation is not None else None
+        return _as_dict(
+            await self._request(
+                "PATCH", f"/api/v1/config/settings/{_seg(section)}", params=params, body=values, headers=headers
+            )
+        )
+
     async def settings_revisions(self, *, limit: int = 20, owner: str = "", repo: str = "") -> dict[str, Any]:
         params: dict[str, Any] = {"limit": limit, **self._layer(owner, repo)}
         return _as_dict(await self._request("GET", "/api/v1/config/settings/revisions", params=params))

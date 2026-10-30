@@ -13,9 +13,10 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``skill_source_remove``, ``inline_skill_put``, ``inline_skill_remove``,
 ``agent_skill_add``, ``agent_skill_remove``, ``standard_set``,
 ``standard_audit``, ``progression_pack_set``, ``progression_pack_reset``,
-``settings_set``, ``settings_undo``) require ``confirm=true``; without it they
-return an instructive refusal instead of acting. ``progression_pack_set``
-and ``settings_set`` with ``dry_run=true`` store nothing and run without it.
+``settings_set``, ``settings_set_keys``, ``settings_undo``) require
+``confirm=true``; without it they return an instructive refusal instead of
+acting. ``progression_pack_set``, ``settings_set`` and ``settings_set_keys``
+with ``dry_run=true`` store nothing and run without it.
 """
 
 from __future__ import annotations
@@ -53,8 +54,8 @@ mcp = MCPServer(
         "game layer shows, one YAML document per deployment (get it, set it with a dry run first, reset it to "
         "the shipped default), "
         "and the settings document: the deployment's operator policy, one YAML document with a section per "
-        "feature (read it, the values in effect and its schema; set it with a dry run first; list its changes "
-        "and undo the newest). "
+        "feature (read it, the values in effect and its schema; set it, or change a few keys of one section, "
+        "with a dry run first; list its changes and undo the newest). "
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '
@@ -1274,6 +1275,44 @@ async def settings_set(
         what = f"the settings layer of {owner or repo}" if owner or repo else "the deployment's settings document"
         return _confirmation_refusal("settings_set", f"replace {what}")
     return await _get_client().settings_set(text, **common)
+
+
+@_tool
+async def settings_set_keys(
+    section: str,
+    values: dict[str, Any],
+    expected_generation: int | None = None,
+    dry_run: bool = False,
+    reason: str = "",
+    owner: str = "",
+    repo: str = "",
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Change one setting, or a few of one section, without sending the whole settings document: ``values``
+    maps each key of ``section`` to its new value, ``{"remind_hours": 12}``, and null takes a key out, so it
+    reads its default, or for a layer what the layer inherits. The rest of the document stays as stored, its
+    comments included. Use this instead of settings_set when the user asks to change a key or two; read the
+    keys a section has with settings_schema or settings_effective. Checked as the whole document would be: a
+    422 names every bad key (``asks.hours: ...``), never its value, and stores nothing. Pass the ``generation``
+    settings_get returned as ``expected_generation`` to refuse a change made in between (409); without it the
+    keys go into whatever is stored now. With ``dry_run=true`` nothing is stored and no confirm is needed: the
+    answer says whether it would change, each key it changes (stored before and after, and the value loops
+    would read) and the text diff. A real write applies on each loop's next tick, is recorded as a revision
+    with ``reason``, and can be undone with settings_undo; a value equal to the stored one records nothing.
+    When a dry run's ``managed_by`` is "file", the operator keeps the document in a file: say so, and write
+    only if the user still wants to (the next `embry0 settings apply` of that file puts it back). With
+    ``owner`` or ``repo`` (never both) it changes that organization's or repository's layer; a key the layer
+    may not set is a 422 ``not_overridable``. Needs an admin key, without a repository allowlist except for
+    a repository's layer, which takes a key whose allowlist covers that repository. Requires confirm=true for
+    a real write."""
+    common: dict[str, Any] = {"expected_generation": expected_generation, "reason": reason, **_layer(owner, repo)}
+    if dry_run:
+        return await _get_client().settings_set_keys(section, values, dry_run=True, **common)
+    if not confirm:
+        where = f"the settings layer of {owner or repo}" if owner or repo else "the deployment's settings document"
+        keys = ", ".join(f"{section}.{key}" for key in values) or "nothing"
+        return _confirmation_refusal("settings_set_keys", f"change {keys} in {where}")
+    return await _get_client().settings_set_keys(section, values, **common)
 
 
 @_tool

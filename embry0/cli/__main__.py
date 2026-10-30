@@ -846,7 +846,7 @@ def cmd_progression_pack(args: argparse.Namespace) -> None:
 
 
 def cmd_settings(args: argparse.Namespace) -> None:
-    """Handle ``embry0 settings check|diff|apply|export|import-env|revisions|undo`` (#162).
+    """Handle ``embry0 settings check|diff|apply|set|export|import-env|revisions|undo`` (#162).
 
     ``check``, ``import-env`` and ``export --default`` run offline; the other
     verbs are thin clients of ``/api/v1/config/settings`` on the running

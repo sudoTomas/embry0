@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -103,3 +105,30 @@ async def test_settings_name_an_organization_s_or_a_repository_s_layer() -> None
         {},
     ], "the layer was not named in the query, so the deployment's document would be read or replaced"
     assert seen[2].headers["If-Match"] == '"0"', "a layer nobody wrote is generation 0"
+
+
+async def test_settings_set_keys_patches_one_section_with_a_json_object() -> None:
+    """``PATCH /config/settings/{section}``: the keys as JSON, null kept, the layer and the guard as for a PUT."""
+    seen: list[httpx.Request] = []
+    client = _client(seen)
+    values = {"remind_hours": 12, "hours": None}
+    await client.settings_set_keys("asks", values, dry_run=True)
+    await client.settings_set_keys("asks", values, expected_generation=7, reason="a busy week", owner="acme")
+    await client.settings_set_keys("a/b", {})
+    assert [(r.method, r.url.raw_path.split(b"?")[0]) for r in seen] == [
+        ("PATCH", b"/api/v1/config/settings/asks"),
+        ("PATCH", b"/api/v1/config/settings/asks"),
+        ("PATCH", b"/api/v1/config/settings/a%2Fb"),
+    ], "the section must be one path segment"
+    assert [dict(r.url.params) for r in seen] == [
+        {"dry_run": "1"},
+        {"owner": "acme", "reason": "a busy week"},
+        {},
+    ]
+    assert [r.headers.get("If-Match") for r in seen] == [None, '"7"', None], (
+        "the generation read must guard the write; without one the keys go into what is stored"
+    )
+    for request in seen[:2]:
+        assert request.headers["Content-Type"] == "application/json"
+        assert json.loads(request.content) == values, "a null goes as null: it takes the key out"
+    assert json.loads(seen[2].content) == {}, "an empty change still sends an object"

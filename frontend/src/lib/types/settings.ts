@@ -113,6 +113,23 @@ export interface SettingsSaveResult extends LayersRefused {
   unknown_keys: string[];
 }
 
+/** What a change of keys answers beyond a whole document's: which document, and whether it is kept in a file. */
+interface SettingsKeysExtras {
+  scope: SettingsScope;
+  /**
+   * `"file"` when the document is kept in a file and stored with
+   * `embry0 settings apply`: the change is written all the same, and lasts
+   * until the file is applied again, so say so where it was made.
+   */
+  managed_by: "file" | null;
+}
+
+/** `PATCH /config/settings/{section}?dry_run=1`: what changing the keys would do, nothing stored. */
+export type SettingsKeysPreview = SettingsPreview & SettingsKeysExtras;
+
+/** `PATCH /config/settings/{section}`. `revision_id` is null when no value changed and nothing was recorded. */
+export type SettingsKeysResult = SettingsSaveResult & SettingsKeysExtras;
+
 /** Where an effective value comes from: the deployment's (`default`, `document`, `bootstrap`) or a layer's. */
 export type SettingSource = "default" | "document" | "bootstrap" | "organization" | "repository";
 

@@ -27,6 +27,9 @@ it inherits, read under the locks of the documents it inherits from so a
 concurrent write to them commits first, stores the text and its values,
 and appends a
 ``config_revisions`` row in the same transaction when the text changed. A
+write of some keys of one section (:meth:`SettingsStore.set_keys`) is made
+to the text it finds under that lock, so it keeps the text's comments and
+loses no write made in between, and is checked as a whole document. A
 write that cannot be recorded does not happen. Undo reverses only the newest
 change of a document, and only while its stored text is still what that
 change wrote (ADR 0019's rule); it is recorded too, with source ``restore``.
@@ -44,6 +47,7 @@ import structlog
 
 from embry0.settings.document import (
     Change,
+    Checked,
     DocumentInvalid,
     DocumentTooLarge,
     Problem,
@@ -52,11 +56,12 @@ from embry0.settings.document import (
     check,
     dump_yaml,
     load_yaml,
+    patch_section,
     read_sections,
     text_diff,
 )
 from embry0.settings.layers import LayerRefusal, Resolved, resolve, settable_values
-from embry0.settings.registry import DOCUMENT_KEYS, SCHEMA_VERSION, Catalog, Section, SectionModel
+from embry0.settings.registry import DOCUMENT_KEYS, MANAGED_BY_KEY, SCHEMA_VERSION, Catalog, Section, SectionModel
 from embry0.settings.scope import DEPLOYMENT, Scope, ScopeError, current, owner_of, stored_rows
 from embry0.storage import repo_renames
 from embry0.storage.database import DatabasePool
@@ -436,6 +441,8 @@ class SaveResult:
     #: :data:`MAX_LAYERS_REFUSED`; ``layers_refused_total`` counts them all.
     layers_refused: list[dict[str, Any]] = field(default_factory=list)
     layers_refused_total: int = 0
+    #: ``"file"`` when the document, as stored now, says it is kept in a file; else None.
+    managed_by: str | None = None
 
 
 @dataclass(frozen=True)
@@ -447,6 +454,14 @@ class Preview:
     unknown_keys: tuple[str, ...] = ()
     layers_refused: list[dict[str, Any]] = field(default_factory=list)
     layers_refused_total: int = 0
+    #: ``"file"`` when the document, as the change would store it, says it is kept in a file; else None.
+    managed_by: str | None = None
+
+
+#: What a write makes of the document it replaces: from the stored text, the stored values and what the
+#: document inherits (None for the deployment's), the text to store and its checked values. Raises
+#: :class:`DocumentInvalid` listing every problem.
+Proposal = Callable[[str, Mapping[str, Any], Mapping[str, Mapping[str, Any]] | None], tuple[str, Checked]]
 
 
 def _matches(expected: int | Collection[int] | None, generation: int) -> bool:
@@ -666,20 +681,92 @@ class SettingsStore:
         An unchanged text stores nothing and records nothing.
         """
         scope = scope or Scope.deployment()
+        return await self._write(
+            self._whole(text, values, scope),
+            actor=actor,
+            source=source,
+            reason=reason,
+            if_generation=if_generation,
+            scope=scope,
+        )
+
+    async def set_keys(
+        self,
+        section: str,
+        keys: Mapping[str, Any],
+        *,
+        actor: str,
+        source: RevisionSource = "person",
+        reason: str = "",
+        if_generation: int | Collection[int] | None = None,
+        scope: Scope | None = None,
+    ) -> SaveResult:
+        """Set ``keys`` of ``section`` in the document at ``scope``, a None value taking its key out, and
+        leave the rest of the document as stored, its comments included (:func:`patch_section`).
+
+        Checked, stored, recorded and refused as :meth:`save` is, the whole
+        document it makes included; the change is made to the text stored
+        under the document's lock, so a write in between is never lost, and
+        ``if_generation`` refuses one made since the caller read it.
+        """
+        scope = scope or Scope.deployment()
+        return await self._write(
+            self._keys(section, keys, scope),
+            actor=actor,
+            source=source,
+            reason=reason,
+            if_generation=if_generation,
+            scope=scope,
+        )
+
+    def _whole(self, text: str | None, values: Mapping[str, Any], scope: Scope) -> Proposal:
+        """A write of the whole document: ``values``, kept as ``text`` (or the YAML a JSON object dumps to)."""
+
+        def propose(
+            stored_text: str, stored: Mapping[str, Any], inherited: Mapping[str, Mapping[str, Any]] | None
+        ) -> tuple[str, Checked]:
+            checked = check(
+                self._catalog, values, stored=stored, stored_text=stored_text, layer=scope.layer, inherited=inherited
+            )
+            return (text if text is not None else dump_yaml(values)), checked
+
+        return propose
+
+    def _keys(self, section: str, keys: Mapping[str, Any], scope: Scope) -> Proposal:
+        """A write of some keys of one section, into the stored text."""
+
+        def propose(
+            stored_text: str, stored: Mapping[str, Any], inherited: Mapping[str, Mapping[str, Any]] | None
+        ) -> tuple[str, Checked]:
+            return patch_section(
+                self._catalog,
+                section,
+                keys,
+                stored=stored,
+                stored_text=stored_text,
+                layer=scope.layer,
+                inherited=inherited,
+            )
+
+        return propose
+
+    async def _write(
+        self,
+        propose: Proposal,
+        *,
+        actor: str,
+        source: RevisionSource,
+        reason: str,
+        if_generation: int | Collection[int] | None,
+        scope: Scope,
+    ) -> SaveResult:
+        """Store what ``propose`` makes of the locked document, when its text changes."""
         async with self.edit(actor=actor, source=source, reason=reason, scope=scope) as draft:
             if not _matches(if_generation, draft.generation):
                 raise GenerationMismatch(draft.generation)
             before = draft.data
             inherited = await self._inherited_now(draft.conn, scope)
-            checked = check(
-                self._catalog,
-                values,
-                stored=draft.data,
-                stored_text=draft.yaml_text,
-                layer=scope.layer,
-                inherited=inherited,
-            )
-            new_text = text if text is not None else dump_yaml(values)
+            new_text, checked = propose(draft.yaml_text, draft.data, inherited)
             if new_text != draft.yaml_text:
                 draft.replace(new_text, checked.data, checked.schema_version)
         refused: tuple[list[dict[str, Any]], int] = ([], 0)
@@ -693,6 +780,7 @@ class SettingsStore:
             unknown_keys=checked.unknown_keys,
             layers_refused=refused[0],
             layers_refused_total=refused[1],
+            managed_by=draft.data.get(MANAGED_BY_KEY),
         )
 
     async def preview(
@@ -705,21 +793,31 @@ class SettingsStore:
     ) -> Preview:
         """What :meth:`save` would change, storing nothing. Raises as :meth:`save` does, ``If-Match`` included."""
         scope = scope or Scope.deployment()
+        return await self._dry_run(self._whole(text, values, scope), if_generation=if_generation, scope=scope)
+
+    async def preview_keys(
+        self,
+        section: str,
+        keys: Mapping[str, Any],
+        *,
+        if_generation: int | Collection[int] | None = None,
+        scope: Scope | None = None,
+    ) -> Preview:
+        """What :meth:`set_keys` would change, storing nothing. Raises as it does, ``If-Match`` included."""
+        scope = scope or Scope.deployment()
+        return await self._dry_run(self._keys(section, keys, scope), if_generation=if_generation, scope=scope)
+
+    async def _dry_run(
+        self, propose: Proposal, *, if_generation: int | Collection[int] | None, scope: Scope
+    ) -> Preview:
+        """What ``propose`` would make of the stored document, storing nothing."""
         snapshot = await self.snapshot()
         inherited = snapshot.inherited(scope)
         stored = await self._stored(scope)
         row = await self._documents.get(str(stored)) or _empty(stored)
         if not _matches(if_generation, int(row["generation"])):
             raise GenerationMismatch(int(row["generation"]))
-        checked = check(
-            self._catalog,
-            values,
-            stored=row["data"],
-            stored_text=row["yaml_text"],
-            layer=scope.layer,
-            inherited=inherited,
-        )
-        new_text = text if text is not None else dump_yaml(values)
+        new_text, checked = propose(row["yaml_text"], row["data"], inherited)
         would_change = new_text != row["yaml_text"]
         refused: tuple[list[dict[str, Any]], int] = ([], 0)
         if would_change and scope.layer != "repository":
@@ -733,6 +831,7 @@ class SettingsStore:
             unknown_keys=checked.unknown_keys,
             layers_refused=refused[0],
             layers_refused_total=refused[1],
+            managed_by=checked.data.get(MANAGED_BY_KEY),
         )
 
     # ---- history ------------------------------------------------------------
