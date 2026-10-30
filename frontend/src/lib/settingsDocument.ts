@@ -4,10 +4,16 @@
 
 import type { SettingSource, SettingsRevisionSource } from "@/lib/types/settings";
 
-/** One problem of a refused document: the key it belongs to (null for the whole text) and why. */
+/**
+ * One problem of a refused document: the key it belongs to (null for the
+ * whole text), why, and the server's `type` for it when it sent one, such as
+ * `not_overridable` (a key the layer may not set) or
+ * `conflicts_with_inherited`.
+ */
 export interface DocumentProblem {
   key: string | null;
   msg: string;
+  type?: string;
 }
 
 /**
@@ -24,11 +30,13 @@ export function documentProblems(error: unknown): DocumentProblem[] | null {
   if (!Array.isArray(detail)) return [{ key: null, msg: "The document was refused." }];
   return detail.flatMap((item): DocumentProblem[] => {
     if (!item || typeof item !== "object") return [];
-    const { loc, msg } = item as { loc?: unknown; msg?: unknown };
+    const { loc, msg, type } = item as { loc?: unknown; msg?: unknown; type?: unknown };
     if (typeof msg !== "string" || !msg.trim()) return [];
     const path = Array.isArray(loc) ? loc.map(String).join(".") : "";
     // pydantic prefixes a validator's ValueError with "Value error, ".
-    return [{ key: path || null, msg: msg.trim().replace(/^Value error, /, "") }];
+    const problem: DocumentProblem = { key: path || null, msg: msg.trim().replace(/^Value error, /, "") };
+    if (typeof type === "string" && type) problem.type = type;
+    return [problem];
   });
 }
 
@@ -53,6 +61,8 @@ export const SOURCE_LABELS: Record<SettingSource, string> = {
   default: "Default",
   document: "Set in the document",
   bootstrap: "Imported from the environment",
+  organization: "Set by the organization",
+  repository: "Set by the repository",
 };
 
 export const REVISION_SOURCE_LABELS: Record<SettingsRevisionSource, string> = {

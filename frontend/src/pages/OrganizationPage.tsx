@@ -12,6 +12,7 @@ import { OrgCredential } from "@/components/orgs/OrgCredential";
 import { OrgNeedsList } from "@/components/orgs/OrgNeedsList";
 import { OrgReposTable } from "@/components/orgs/OrgReposTable";
 import { OrgSettingsTab } from "@/components/orgs/OrgSettingsTab";
+import { PolicyLayerLink } from "@/components/settings/PolicyLayerLink";
 import { RediscoverSetting } from "@/components/orgs/RediscoverSetting";
 import { OrgStandardSummary } from "@/components/standards/OrgStandardSummary";
 import { PageError } from "@/components/PageError";
@@ -209,7 +210,8 @@ export function OrganizationPage() {
         <TabsContent value="context-audit" className="mt-6">
           <ContextAuditTab owner={o.owner} days={contextAuditDays(o)} />
         </TabsContent>
-        <TabsContent value="settings" className="mt-6">
+        <TabsContent value="settings" className="mt-6 space-y-4">
+          <PolicyLayerLink layer={{ layer: "organization", owner: o.owner }} />
           <OrgSettingsTab org={o} isAdmin={isAdmin} />
         </TabsContent>
       </Tabs>

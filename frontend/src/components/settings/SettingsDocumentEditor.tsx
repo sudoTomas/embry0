@@ -2,20 +2,28 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AdminButton } from "@/components/auth/AdminButton";
 import { PageError } from "@/components/PageError";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { Textarea } from "@/components/ui/Textarea";
-import { apiErrorMessage, isConflict } from "@/api/errorDetail";
+import { apiErrorMessage, isConflict, isNotFound } from "@/api/errorDetail";
 import { toastApiError } from "@/api/errorToast";
-import { usePreviewSettings, useSaveSettings, useSettingsDocument } from "@/hooks/useSettingsDocument";
+import {
+  usePreviewSettings,
+  useSaveSettings,
+  useSettingsDocument,
+  useSettingsWriteAccess,
+} from "@/hooks/useSettingsDocument";
+import { actorInText } from "@/lib/actors";
 import { documentProblems, unknownParts, type DocumentProblem } from "@/lib/settingsDocument";
+import { DEPLOYMENT_LAYER, LAYER_NOUNS, layerName, type PolicyLayer } from "@/lib/settingsLayer";
 import { parseUnifiedDiff } from "@/lib/textDiff";
 import { TextDiff } from "@/components/documents/TextDiff";
-import type { SettingsPreview } from "@/lib/types/settings";
+import type { SettingsDocument, SettingsPreview, SettingsSaveResult } from "@/lib/types/settings";
 import { formatDateTime } from "@/lib/utils";
-import { useIsAdmin } from "@/stores/authStore";
+import { LayersRefusedList } from "./LayersRefusedList";
 import { SettingsChangeList } from "./SettingsChangeList";
 
 const PLACEHOLDER = "# Every key is optional; a key you leave out takes its default.\nversion: 1\n";
@@ -35,7 +43,15 @@ function ManagedByFile() {
   );
 }
 
-function Problems({ problems }: { problems: DocumentProblem[] }) {
+/** The words a layer's own refusals carry beside their key: why the server's `type` refused it. */
+function layerRule(problem: DocumentProblem, layer: PolicyLayer): string | null {
+  if (layer.layer === "deployment") return null;
+  if (problem.type === "not_overridable") return `Not settable by ${LAYER_NOUNS[layer.layer].toLowerCase()}`;
+  if (problem.type === "conflicts_with_inherited") return "Conflicts with the inherited values";
+  return null;
+}
+
+function Problems({ problems, layer }: { problems: DocumentProblem[]; layer: PolicyLayer }) {
   return (
     <div
       role="alert"
@@ -44,14 +60,90 @@ function Problems({ problems }: { problems: DocumentProblem[] }) {
     >
       <p className="font-semibold">The document was refused. Fix these, then preview again:</p>
       <ul className="list-disc space-y-0.5 pl-5 [overflow-wrap:anywhere]">
-        {problems.map((problem, index) => (
-          <li key={index} data-testid="settings-problem">
-            {problem.key && <code className="font-mono">{problem.key}</code>}
-            {problem.key ? `: ${problem.msg}` : problem.msg}
+        {problems.map((problem, index) => {
+          const rule = layerRule(problem, layer);
+          return (
+            <li key={index} data-testid="settings-problem" data-type={problem.type}>
+              {problem.key && <code className="font-mono">{problem.key}</code>}
+              {rule && (
+                <>
+                  {" "}
+                  <Badge tone="error">{rule}</Badge>
+                </>
+              )}
+              {problem.key ? `: ${problem.msg}` : problem.msg}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/** Per section, the keys a layer may set; the deployment's document sets every key, so it lists its sections instead. */
+function Settable({ doc, layer }: { doc: SettingsDocument; layer: PolicyLayer }) {
+  if (layer.layer === "deployment" || !doc.settable) {
+    if (doc.sections.length === 0) {
+      return (
+        <p className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-fg-secondary" data-testid="settings-no-sections">
+          No feature keeps its policy in this document yet, so it can hold only comments and{" "}
+          <code className="font-mono text-xs">version</code>. Each feature that moves in adds a section.
+        </p>
+      );
+    }
+    return (
+      <p className="text-sm text-fg-secondary [overflow-wrap:anywhere]" data-testid="settings-sections">
+        {"Sections: "}
+        {doc.sections.map((name, index) => (
+          <span key={name}>
+            {index > 0 && ", "}
+            <code className="font-mono text-xs">{name}</code>
+          </span>
+        ))}
+      </p>
+    );
+  }
+  const noun = LAYER_NOUNS[layer.layer];
+  const sections = Object.entries(doc.settable).filter(([, keys]) => keys.length > 0);
+  if (sections.length === 0) {
+    return (
+      <p className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-fg-secondary" data-testid="settings-settable">
+        {`${noun} cannot set any key yet: no section lets it. Every value here is inherited.`}
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-1 text-sm text-fg-secondary" data-testid="settings-settable">
+      <p>{`${noun} can set only these keys; every other key is inherited, and setting one is refused:`}</p>
+      <ul className="list-disc space-y-0.5 pl-5 [overflow-wrap:anywhere]">
+        {sections.map(([section, keys]) => (
+          <li key={section} data-testid="settings-settable-section">
+            <code className="font-mono text-xs">{section}</code>
+            {": "}
+            {keys.map((key, index) => (
+              <span key={key}>
+                {index > 0 && ", "}
+                <code className="font-mono text-xs">{key}</code>
+              </span>
+            ))}
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+/** When the document was written and by whom; a layer nobody wrote says it inherits everything. */
+function documentMeta(doc: SettingsDocument, layer: PolicyLayer): string {
+  if (doc.generation === 0) {
+    return layer.layer === "deployment"
+      ? "Nothing is stored yet, so every key takes its default."
+      : `${layerName(layer)} has no layer yet, so it inherits every key. Write the keys it sets and save to start one.`;
+  }
+  return (
+    `Generation ${doc.generation}, last changed by ${actorInText(doc.updated_by)}` +
+    (doc.updated_at ? ` on ${formatDateTime(doc.updated_at)}` : "") +
+    "."
   );
 }
 
@@ -71,25 +163,41 @@ function PreviewResult({ result }: { result: SettingsPreview }) {
           {`Kept as stored, but not read by this release: ${unknown}.`}
         </p>
       )}
+      <LayersRefusedList
+        result={result}
+        testId="settings-preview-layers-refused"
+        intro="Saving would make these layer values read as inherited, since they are refused together with this change:"
+      />
       {result.text_diff && <TextDiff lines={parseUnifiedDiff(result.text_diff)} label="Text changes" />}
     </>
   );
 }
 
 /**
- * The settings document as YAML text. A change is previewed first (a dry
- * run: each key it changes, and the text diff), then saved. Both name the
- * generation the edit started from, so a change over someone else's newer
- * one is refused (409) instead of overwriting it; the new version is then
- * read in and the person's text kept. A refused document lists every
- * problem by key. Only an admin can preview or save, and nobody can while
- * the document says it is kept in a file (`managed_by: file`).
+ * One settings document as YAML text: the deployment's, or an organization's
+ * or a repository's layer. A change is previewed first (a dry run: each key
+ * it changes, the text diff, and the layer values it would make read as
+ * inherited), then saved. Both name the generation the edit started from (0
+ * for a layer nobody wrote, which the save creates), so a change over
+ * someone else's newer one is refused (409) instead of overwriting it; the
+ * new version is then read in and the person's text kept. A refused document
+ * lists every problem by key, a key the layer may not set marked as such.
+ * Only an admin can preview or save, a key with a repository allowlist only
+ * a repository's layer it covers, and nobody can while the document says it
+ * is kept in a file (`managed_by: file`). `onDirtyChange` hears whether an
+ * edit is open, so the page can ask before it is dropped.
  */
-export function SettingsDocumentEditor() {
-  const doc = useSettingsDocument();
-  const preview = usePreviewSettings();
-  const save = useSaveSettings();
-  const isAdmin = useIsAdmin();
+export function SettingsDocumentEditor({
+  layer = DEPLOYMENT_LAYER,
+  onDirtyChange,
+}: {
+  layer?: PolicyLayer;
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
+  const doc = useSettingsDocument(layer);
+  const preview = usePreviewSettings(layer);
+  const save = useSaveSettings(layer);
+  const access = useSettingsWriteAccess(layer);
 
   // null: showing the stored text; a string: the person's edit.
   const [draft, setDraft] = useState<string | null>(null);
@@ -101,6 +209,8 @@ export function SettingsDocumentEditor() {
   );
   const [reason, setReason] = useState("");
   const [conflict, setConflict] = useState<string | null>(null);
+  // The last save's answer, kept until the next edit: which layer values it made read as inherited.
+  const [saved, setSaved] = useState<SettingsSaveResult | null>(null);
 
   const stored = doc.data?.yaml_text ?? "";
   // A document kept in a file is only shown: an edit begun before it said so is not.
@@ -120,6 +230,10 @@ export function SettingsDocumentEditor() {
   }, [doc.data, draft]);
 
   useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
     if (!dirty) return;
     function handleBeforeUnload(e: BeforeUnloadEvent) {
       e.preventDefault();
@@ -128,7 +242,11 @@ export function SettingsDocumentEditor() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [dirty]);
 
-  if (doc.isError) return <PageError message="Could not load the settings document" onRetry={() => void doc.refetch()} />;
+  if (doc.isError) {
+    // A layer of an organization or repository nothing registers: retrying cannot help, the server says what can.
+    if (isNotFound(doc.error)) return <PageError message={apiErrorMessage(doc.error)} />;
+    return <PageError message="Could not load the settings document" onRetry={() => void doc.refetch()} />;
+  }
   if (!doc.data) return <Skeleton className="h-64 w-full" />;
   const current = doc.data;
 
@@ -139,6 +257,7 @@ export function SettingsDocumentEditor() {
     if (draft === null) setBase(current.generation);
     setDraft(value);
     setPreviewed(null);
+    setSaved(null);
     preview.reset();
     save.reset();
   }
@@ -148,6 +267,7 @@ export function SettingsDocumentEditor() {
     setBase(null);
     setPreviewed(null);
     setConflict(null);
+    setSaved(null);
     preview.reset();
     save.reset();
   }
@@ -164,6 +284,7 @@ export function SettingsDocumentEditor() {
     // After a conflict there is no base until now: this preview is of the new version.
     const generation = base ?? current.generation;
     save.reset();
+    setSaved(null);
     preview.mutate(
       { yamlText: sent, generation },
       {
@@ -188,6 +309,7 @@ export function SettingsDocumentEditor() {
         onSuccess: (result) => {
           setPreviewed(null);
           setReason("");
+          setSaved(result);
           toast.success(
             result.revision_id === null
               ? "Nothing changed, so nothing was recorded."
@@ -212,46 +334,30 @@ export function SettingsDocumentEditor() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-fg-muted" data-testid="settings-document-meta">
-        {current.generation === 0
-          ? "Nothing is stored yet, so every key takes its default."
-          : `Generation ${current.generation}` +
-            (current.updated_by ? `, last changed by ${current.updated_by}` : "") +
-            (current.updated_at ? ` on ${formatDateTime(current.updated_at)}` : "") +
-            "."}
+        {documentMeta(current, layer)}
       </p>
-      {current.sections.length === 0 ? (
-        <p className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-fg-secondary" data-testid="settings-no-sections">
-          No feature keeps its policy in this document yet, so it can hold only comments and{" "}
-          <code className="font-mono text-xs">version</code>. Each feature that moves in adds a section.
-        </p>
-      ) : (
-        <p className="text-sm text-fg-secondary [overflow-wrap:anywhere]" data-testid="settings-sections">
-          {"Sections: "}
-          {current.sections.map((name, index) => (
-            <span key={name}>
-              {index > 0 && ", "}
-              <code className="font-mono text-xs">{name}</code>
-            </span>
-          ))}
-        </p>
-      )}
+      <Settable doc={current} layer={layer} />
 
       <Textarea
         value={text}
         onChange={(e) => edit(e.target.value)}
-        readOnly={!isAdmin || inFile}
+        readOnly={!access.canWrite || inFile}
         spellCheck={false}
         // Indentation is the structure of YAML: a long line scrolls inside the box rather than wrap to column 0.
         wrap="off"
         placeholder={PLACEHOLDER}
-        aria-label="Settings document (YAML)"
+        aria-label={layer.layer === "deployment" ? "Settings document (YAML)" : `${layerName(layer)}'s layer (YAML)`}
         className="min-h-[280px] font-mono text-sm"
         data-testid="settings-textarea"
       />
       {inFile ? (
         <ManagedByFile />
       ) : (
-        !isAdmin && <p className="text-xs text-fg-muted">Only an admin can change the settings document.</p>
+        access.reason && (
+          <p className="text-xs text-fg-muted" data-testid="settings-read-only">
+            {access.reason}
+          </p>
+        )
       )}
 
       {conflict && (
@@ -259,11 +365,16 @@ export function SettingsDocumentEditor() {
           {`${conflict} Your text is still in the editor and the new version has been read: preview again to see what your text changes in it, or Revert to start from it.`}
         </div>
       )}
-      {problems && <Problems problems={problems} />}
+      {problems && <Problems problems={problems} layer={layer} />}
 
       {!inFile && (
         <div className="flex flex-wrap items-center gap-2">
-          <AdminButton variant="secondary" onClick={runPreview} disabled={!dirty || busy} data-testid="settings-preview-button">
+          <AdminButton
+            variant="secondary"
+            onClick={runPreview}
+            disabled={!dirty || busy || !access.canWrite}
+            data-testid="settings-preview-button"
+          >
             {preview.isPending ? "Previewing…" : "Preview"}
           </AdminButton>
           <Button variant="outline" onClick={revert} disabled={draft === null || busy} data-testid="settings-revert">
@@ -288,12 +399,21 @@ export function SettingsDocumentEditor() {
                   placeholder="Why, for the history"
                 />
               </div>
-              <AdminButton onClick={runSave} disabled={busy} data-testid="settings-save">
+              <AdminButton onClick={runSave} disabled={busy || !access.canWrite} data-testid="settings-save">
                 {save.isPending ? "Saving…" : "Save"}
               </AdminButton>
             </div>
           )}
         </section>
+      )}
+
+      {saved && (
+        <LayersRefusedList
+          result={saved}
+          testId="settings-saved-layers-refused"
+          linked
+          intro="Saved. These layer values now read as inherited, since they are refused together with this change:"
+        />
       )}
     </div>
   );

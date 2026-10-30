@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router";
 import { toast } from "sonner";
+import { DEPLOYMENT_LAYER } from "@/lib/settingsLayer";
 import { useAuthStore } from "@/stores/authStore";
 import type {
   EffectiveSettings,
@@ -20,8 +22,18 @@ const api = vi.hoisted(() => ({
   fetchSettingsRevisions: vi.fn(),
   fetchSettingsRevision: vi.fn(),
   undoSettingsChange: vi.fn(),
+  fetchSettingsLayers: vi.fn(),
 }));
 vi.mock("@/api/settings", () => api);
+// The layer picker's lists; these tests are of the deployment's document.
+vi.mock("@/api/orgs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/orgs")>()),
+  fetchOrganizations: vi.fn().mockResolvedValue([]),
+}));
+vi.mock("@/api/repos", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/repos")>()),
+  fetchRepos: vi.fn().mockResolvedValue([]),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 import PolicyTab from "../PolicyTab";
@@ -155,7 +167,9 @@ function renderTab() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <PolicyTab />
+      <MemoryRouter initialEntries={["/settings?tab=policy"]}>
+        <PolicyTab />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -172,6 +186,7 @@ beforeEach(() => {
   api.fetchSettings.mockResolvedValue(DOC);
   api.fetchEffectiveSettings.mockResolvedValue(EFFECTIVE);
   api.fetchSettingsRevisions.mockResolvedValue(REVISIONS);
+  api.fetchSettingsLayers.mockResolvedValue([]);
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   asAdmin();
@@ -214,7 +229,7 @@ describe("PolicyTab", () => {
     await userEvent.click(screen.getByRole("button", { name: "Preview" }));
 
     // The dry run names the version the edit started from: a stale one is a 409 there too.
-    expect(api.previewSettings).toHaveBeenCalledWith(EDITED, 3);
+    expect(api.previewSettings).toHaveBeenCalledWith(EDITED, 3, DEPLOYMENT_LAYER);
     const preview = await screen.findByTestId("settings-preview");
     const change = within(preview).getByTestId("settings-change");
     expect(change).toHaveTextContent("sample.per_tick");
@@ -228,7 +243,7 @@ describe("PolicyTab", () => {
     api.fetchSettings.mockResolvedValue({ ...DOC, yaml_text: EDITED, generation: 4 });
     await userEvent.click(within(preview).getByRole("button", { name: "Save" }));
 
-    expect(api.saveSettings).toHaveBeenCalledWith({ yamlText: EDITED, generation: 3, reason: "fewer at a time" });
+    expect(api.saveSettings).toHaveBeenCalledWith({ yamlText: EDITED, generation: 3, reason: "fewer at a time" }, DEPLOYMENT_LAYER);
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Settings saved. Each loop reads them on its next tick."));
     expect(screen.queryByTestId("settings-preview")).not.toBeInTheDocument();
     // Read back: the stored text is the saved one and there is no edit left.
@@ -321,10 +336,10 @@ describe("PolicyTab", () => {
 
     api.saveSettings.mockResolvedValue({ generation: 5, revision_id: 11, changes: [], unknown_sections: [], unknown_keys: [] });
     await userEvent.click(screen.getByRole("button", { name: "Preview" }));
-    expect(api.previewSettings).toHaveBeenLastCalledWith(EDITED, 4);
+    expect(api.previewSettings).toHaveBeenLastCalledWith(EDITED, 4, DEPLOYMENT_LAYER);
     expect(screen.queryByTestId("settings-conflict")).not.toBeInTheDocument();
     await userEvent.click(await screen.findByRole("button", { name: "Save" }));
-    expect(api.saveSettings).toHaveBeenLastCalledWith({ yamlText: EDITED, generation: 4, reason: "" });
+    expect(api.saveSettings).toHaveBeenLastCalledWith({ yamlText: EDITED, generation: 4, reason: "" }, DEPLOYMENT_LAYER);
   });
 
   it("previews an edit against the version it started from, even when the page already shows a newer one", async () => {
@@ -332,7 +347,9 @@ describe("PolicyTab", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
-        <PolicyTab />
+        <MemoryRouter initialEntries={["/settings?tab=policy"]}>
+          <PolicyTab />
+        </MemoryRouter>
       </QueryClientProvider>,
     );
     fireEvent.change(await textarea(), { target: { value: EDITED } });
@@ -342,7 +359,7 @@ describe("PolicyTab", () => {
     await waitFor(() => expect(screen.getByTestId("settings-document-meta")).toHaveTextContent("Generation 4"));
 
     await userEvent.click(screen.getByRole("button", { name: "Preview" }));
-    expect(api.previewSettings).toHaveBeenCalledWith(EDITED, 3);
+    expect(api.previewSettings).toHaveBeenCalledWith(EDITED, 3, DEPLOYMENT_LAYER);
     expect(await screen.findByTestId("settings-conflict")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
@@ -370,10 +387,10 @@ describe("PolicyTab", () => {
     api.previewSettings.mockResolvedValue(PREVIEW);
     api.saveSettings.mockResolvedValue({ generation: 5, revision_id: 11, changes: [], unknown_sections: [], unknown_keys: [] });
     await userEvent.click(screen.getByRole("button", { name: "Preview" }));
-    expect(api.previewSettings).toHaveBeenLastCalledWith(EDITED, 4);
+    expect(api.previewSettings).toHaveBeenLastCalledWith(EDITED, 4, DEPLOYMENT_LAYER);
     expect(screen.queryByTestId("settings-conflict")).not.toBeInTheDocument();
     await userEvent.click(await screen.findByRole("button", { name: "Save" }));
-    expect(api.saveSettings).toHaveBeenLastCalledWith({ yamlText: EDITED, generation: 4, reason: "" });
+    expect(api.saveSettings).toHaveBeenLastCalledWith({ yamlText: EDITED, generation: 4, reason: "" }, DEPLOYMENT_LAYER);
   });
 
   it("says why a document too large to read was refused", async () => {
