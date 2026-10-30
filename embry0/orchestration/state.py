@@ -420,6 +420,18 @@ class JobState(TypedDict, total=False):
     # How much past its cap a person let the job spend, by continuing it from
     # a budget pause (orchestration.budget.resolve_job_cap adds it on top).
     budget_allowance_usd: Annotated[float, max_value]
+    # The cap the agent node enforced at its last check of the per-job cap,
+    # and the spend it counted there (#283). Soft-mode routing compares the
+    # two, so a cap the node bounds (a lowered ceiling, or a ceiling a
+    # continue may not pass) holds for a job a person already continued. The
+    # cap is the latest one, lowered as well as raised; the spend only grows.
+    # Optional, so the channel has no value until a node writes one: a
+    # reducer over a plain float would start at 0.0, and a job checkpointed
+    # by a release without these keys would resume with a recorded cap of 0
+    # (over budget, so a continue would grant an allowance the release
+    # before did not). Routing trusts the cap only once one is recorded.
+    budget_cap_usd: Annotated[float | None, last_value]
+    budget_spent_usd: Annotated[float | None, max_value]
     branch_name: Annotated[str | None, FoldingLastValue]
     # base_branch is the repo's integration branch: the ref the clone fetches,
     # the orchestrator's git-diff bases on, and the MR/PR targets. Resolved

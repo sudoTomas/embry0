@@ -24,7 +24,6 @@ from embry0.storage.migrations.runner import run_migrations
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 from embry0.storage.repositories.api_keys import ApiKeysRepository
 from embry0.storage.repositories.audit import AuditRepository
-from embry0.storage.repositories.budget_config import BudgetConfigRepository
 from embry0.storage.repositories.context_config import ContextConfigRepository
 from embry0.storage.repositories.deliverables import DeliverablesRepository
 from embry0.storage.repositories.environment import EnvironmentRepository
@@ -795,7 +794,6 @@ async def _init_app_state(
     app.state.deliverables_repo = DeliverablesRepository(db)
     app.state.profiles_repo = SandboxProfilesRepository(db)
     app.state.context_repo = ContextConfigRepository(db)
-    app.state.budget_repo = BudgetConfigRepository(db)
     app.state.agent_defs_repo = AgentDefinitionsRepository(db)
     app.state.skill_sources_repo = SkillSourcesRepository(db)
     app.state.inline_skills_repo = InlineSkillsRepository(db)
@@ -811,6 +809,20 @@ async def _init_app_state(
         from embry0.settings.store import SettingsStore
 
         app.state.settings = SettingsStore(db)
+    # The budget every reader enforces (#171): the settings document's
+    # section, and the old readers for a key the import has not imported,
+    # which it tries again while it runs.
+    if not hasattr(app.state, "budget_policy"):
+        from embry0.services.budget_policy import BudgetPolicy
+        from embry0.services.organizations import MOVED_SETTINGS
+        from embry0.settings.earlier import EARLIER_SOURCES
+
+        app.state.budget_policy = BudgetPolicy(
+            app.state.settings,
+            getattr(app.state, "config", None),
+            earlier=EARLIER_SOURCES,
+            moved=MOVED_SETTINGS,
+        )
     # The lifespan builds these before SandboxManager (which needs the
     # resolver); bare-bones callers that skip the lifespan get them here.
     if not hasattr(app.state, "credentials_repo"):
@@ -1034,6 +1046,7 @@ async def _init_app_state(
         case_recorder=app.state.case_recorder,
         # #182: a coding job reads its done_when and salvage sections when it starts.
         settings=app.state.settings,
+        budget_policy=app.state.budget_policy,
         **executor_kwargs,
     )
 
@@ -1072,17 +1085,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # The settings document (spec 2026-10-28): before any loop reads a
     # section, import the environment value of each section key not imported
-    # yet, once, and load the first snapshot. A failed import is retried at
-    # the next boot (its ledger is not written) and never stops this one:
-    # every section reads as its defaults meanwhile.
+    # yet, once, and what a release kept in the database before the document
+    # (the budget_config row, which won over its variables), and load the
+    # first snapshot. Then copy each organization's settings that moved into
+    # a section into its layer, once (spec 2026-10-29, section 9). A failed
+    # import is retried at the next boot (its ledger is not written) and
+    # never stops this one: every section reads as its defaults meanwhile,
+    # except the budget. Its policy reads each key not imported as the
+    # release before did and tries the import again while this one runs.
     from embry0.settings.bootstrap import import_env_once, log_ignored_env
+    from embry0.settings.earlier import EARLIER_SOURCES
+    from embry0.settings.org_import import import_org_settings_once
     from embry0.settings.store import SettingsStore
 
     app.state.settings = SettingsStore(db)
     try:
-        await import_env_once(app.state.settings, config)
+        await import_env_once(app.state.settings, config, earlier=EARLIER_SOURCES)
     except Exception:
         logger.critical("settings_bootstrap_failed", exc_info=True)
+    try:
+        from embry0.services.organizations import MOVED_SETTINGS
+        from embry0.storage.repositories.organizations import OrganizationsRepository
+
+        await import_org_settings_once(
+            app.state.settings,
+            [(org.owner, org.settings) for org in await OrganizationsRepository(db).list_all(include_removed=True)],
+            MOVED_SETTINGS,
+            audit_log_path=config.audit_log_path,
+        )
+    except Exception:
+        logger.critical("settings_org_import_failed", exc_info=True)
     try:
         await app.state.settings.snapshot()
         await log_ignored_env(app.state.settings, config)
@@ -2239,7 +2271,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from embry0.api.v1.organizations import app_request as _audit_request
         from embry0.api.v1.organizations import org_forge_client
         from embry0.services.context_audit import ACTOR as _CONTEXT_AUDIT_ACTOR
-        from embry0.services.context_audit import ContextAuditLoop, job_budget_usd, start_context_audit_job
+        from embry0.services.context_audit import ContextAuditLoop, start_context_audit_job
         from embry0.services.context_audit import RepoContext as _RepoContext
         from embry0.services.organizations import Organization as _AuditedOrganization
 
@@ -2276,10 +2308,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             client_for=_context_audit_client,
             start_job=_start_context_audit,
             ask_gate=_context_audit_gate,
-            # The deployment's caps: an organization's own settings take their
-            # place for its repositories.
-            max_jobs_per_tick=config.context_audit_max_jobs_per_tick,
-            budget_usd=job_budget_usd(config),
+            # The caps are the settings document's `budget` section, each
+            # organization's layer over the deployment's, read every tick
+            # through the budget policy (an organization's own settings until
+            # its layer imported them).
+            budget=app.state.budget_policy.view,
         )
         context_audit_task = asyncio.create_task(app.state.context_audit.start())
         app.state.background_tasks.add(context_audit_task)

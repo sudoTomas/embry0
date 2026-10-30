@@ -19,7 +19,11 @@ environment import:
 
 A key is marked once the organization's value was copied, refused, or found
 already set in the layer (written there since, which wins), so a value taken
-out of the layer later is never copied back. Nothing to copy marks nothing. The old key is left in
+out of the layer later is never copied back. Nothing to copy marks nothing.
+One organization's failure is logged at error level and stops no other: its
+transaction rolls back, nothing of it is marked, and the next attempt
+(:class:`embry0.services.budget_policy.BudgetPolicy` tries again while it
+runs) copies it; meanwhile its readers read its own settings. The old key is left in
 ``organizations.settings``, read by nothing: a rollback to the release before
 the move finds it as it was.
 """
@@ -65,6 +69,8 @@ class OrgImportResult:
     imported: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     #: ``(owner, section.key, reason)`` of each value not copied because it was refused.
     refused: tuple[tuple[str, str, str], ...] = ()
+    #: The organizations whose copy failed: nothing of theirs is marked, so they are tried again.
+    failed: tuple[str, ...] = ()
 
 
 async def import_org_settings_once(
@@ -79,6 +85,7 @@ async def import_org_settings_once(
     day = (today or datetime.now(UTC).date()).isoformat()
     imported: dict[str, dict[str, dict[str, Any]]] = {}
     refused: list[tuple[str, str, str]] = []
+    failed: list[str] = []
     for owner, settings in organizations:
         # What the old reader used: anything it read as the deployment's is nothing to copy.
         present = [m for m in moved if m.read(settings) is not None and store.catalog.get(m.section) is not None]
@@ -89,7 +96,14 @@ async def import_org_settings_once(
         except ScopeError:
             logger.warning("settings_org_import_skipped", owner=owner, reason="not a name a layer can have")
             continue
-        copied, not_copied = await _import_one(store, scope, settings, present, day)
+        try:
+            copied, not_copied = await _import_one(store, scope, settings, present, day)
+        except Exception:
+            # One organization's failure (its transaction rolled back, nothing of it marked) is its own: the
+            # others go on, and its readers read its own settings until a retry copies them.
+            logger.error("settings_org_import_failed", owner=scope.name, exc_info=True)
+            failed.append(scope.name)
+            continue
         refused.extend((owner, path, reason) for path, reason in not_copied)
         for path, reason in not_copied:
             logger.warning(
@@ -114,7 +128,7 @@ async def import_org_settings_once(
                 details={"scope": str(scope), "sections": {name: sorted(values) for name, values in copied.items()}},
                 audit_log_path=audit_log_path,
             )
-    return OrgImportResult(imported=imported, refused=tuple(refused))
+    return OrgImportResult(imported=imported, refused=tuple(refused), failed=tuple(failed))
 
 
 async def _import_one(

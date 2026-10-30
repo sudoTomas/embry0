@@ -1,9 +1,10 @@
 """Pre-dispatch budget gate — daily/monthly caps and a per-actor rate limit.
 
 Layers 2 and 3 of the three cost-protection layers (``docs/architecture.md``).
-Both are fleet-wide policies read from ``budget_config``, so they belong at
-dispatch rather than inside the graph: one check per job, before any agent
-burns a token.
+Both are fleet-wide policies, the settings document's ``budget`` section
+(``daily_cap_usd``, ``monthly_cap_usd``, ``rate_limit_per_author_per_hour``),
+read again at every check, so they belong at dispatch rather than inside the
+graph: one check per job, before any agent burns a token.
 
 Fail-open, but only for a degraded database. The caps live in the same
 Postgres as the jobs table, so a connection or timeout failure means the
@@ -18,15 +19,19 @@ row + ``ERR_BUDGET_REFUSED``).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import asyncpg
 import structlog
 
 from embry0.orchestration.dispatch_actors import is_rate_limit_exempt
+
+if TYPE_CHECKING:
+    from embry0.services.budget_policy import BudgetPolicy
+    from embry0.settings.sections.budget import BudgetSettings
 
 logger = structlog.get_logger(__name__)
 
@@ -75,17 +80,20 @@ class BudgetGate:
     """Decides whether a new job may be dispatched.
 
     Both collaborators are injected and the clock is a plain callable, so the
-    whole policy is exercisable without Postgres.
+    whole policy is exercisable without Postgres. ``settings`` returns the
+    ``budget`` section as it is now (:func:`embry0.settings.store.section_reader`):
+    it is called at every check, so a change to a cap holds from the next
+    dispatch.
     """
 
     def __init__(
         self,
-        budget_config_repo: Any,
+        settings: Callable[[], Awaitable[BudgetSettings]],
         spend_repo: Any,
         *,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
-        self._config_repo = budget_config_repo
+        self._settings = settings
         self._spend_repo = spend_repo
         self._clock = clock or (lambda: datetime.now(UTC))
 
@@ -105,19 +113,19 @@ class BudgetGate:
         ``RATE_LIMIT_PER_AUTHOR_PER_HOUR`` jobs an hour run, not one fewer (#116).
         """
         try:
-            config = await self._config_repo.get()
+            policy = await self._settings()
             rollup = await self._spend_repo.spend_rollup()
         except _TRANSIENT_DB_ERRORS:
             logger.warning("budget_gate_read_failed", exc_info=True)
             return DispatchDecision(allowed=True)
 
-        daily_cap = _positive(config.get("daily_cap_usd"))
-        monthly_cap = _positive(config.get("monthly_cap_usd"))
+        daily_cap = _positive(policy.daily_cap_usd)
+        monthly_cap = _positive(policy.monthly_cap_usd)
         daily = float(rollup.get("daily", 0.0) or 0.0)
         monthly = float(rollup.get("monthly", 0.0) or 0.0)
 
-        # A cap of 0 (or absent) means "unlimited" — the settings UI uses the
-        # same convention, and a literal zero cap would block every dispatch.
+        # A cap of 0 means "unlimited", as the budget section documents it: a
+        # literal zero cap would block every dispatch.
         if daily_cap and daily >= daily_cap:
             return DispatchDecision(
                 allowed=False,
@@ -135,7 +143,7 @@ class BudgetGate:
                 details={"spent_usd": monthly, "cap_usd": monthly_cap},
             )
 
-        rate_limit = int(config.get("rate_limit_per_author_per_hour") or 0)
+        rate_limit = int(policy.rate_limit_per_author_per_hour or 0)
         if actor and rate_limit > 0 and not is_rate_limit_exempt(actor):
             since = self._clock() - timedelta(hours=1)
             try:
@@ -163,3 +171,20 @@ def _positive(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return parsed if parsed > 0 else 0.0
+
+
+def build_budget_gate(policy: BudgetPolicy) -> BudgetGate:
+    """The gate over the budget policy: the one place a gate is built.
+
+    ``policy`` is a :class:`embry0.services.budget_policy.BudgetPolicy`, the
+    application's own (``app.state.budget_policy``) or one a caller built over
+    the settings store. The gate reads the caps through ``policy.settings`` at
+    every check, so a cap the import has not imported yet is read as the
+    release before read it, never as a code default; the spend is counted
+    over the policy's store's database. Every caller that needs a gate asks
+    this function, so a change to what the gate reads, or to its constructor,
+    is made once, and a test pins that nothing else builds one.
+    """
+    from embry0.storage.repositories.budget_spend import BudgetSpendRepository
+
+    return BudgetGate(policy.settings, BudgetSpendRepository(policy.store.db))

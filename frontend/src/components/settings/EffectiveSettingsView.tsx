@@ -5,7 +5,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useEffectiveSettings } from "@/hooks/useSettingsDocument";
 import { actorInText } from "@/lib/actors";
-import { SOURCE_LABELS, formatSettingValue, unknownParts } from "@/lib/settingsDocument";
+import { SOURCE_LABELS, formatSettingValue, notImportedText, unknownParts } from "@/lib/settingsDocument";
 import { DEPLOYMENT_LAYER, LAYER_NOUNS, layerName, type PolicyLayer } from "@/lib/settingsLayer";
 import type { EffectiveLayerEntry, EffectiveSection, EffectiveSetting, SettingSource } from "@/lib/types/settings";
 import { cn, formatDateTime } from "@/lib/utils";
@@ -14,15 +14,18 @@ const SOURCE_TONES: Record<SettingSource, BadgeTone> = {
   default: "neutral",
   document: "info",
   bootstrap: "purple",
+  not_imported: "warning",
   organization: "success",
   repository: "success",
 };
 
 const LAYERS: Record<string, string> = { organization: "an organization", repository: "a repository" };
 
-/** Where the value comes from, in the deployment's view: the default, its document, or the import. */
+/** Where the value comes from, in the deployment's view: the default, its document, the import, or, until
+ * the import succeeds, where the value enforced meanwhile is read from. */
 function sourceLabel(setting: EffectiveSetting): string {
   if (setting.source === "bootstrap" && setting.env) return `Imported from ${setting.env}`;
+  if (setting.source === "not_imported") return notImportedText(setting.not_imported);
   return SOURCE_LABELS[setting.source] ?? setting.source;
 }
 

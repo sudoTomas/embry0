@@ -24,9 +24,9 @@ from embry0.config import Embry0Config
 from embry0.services.bootstrap import render_starter_qa_yaml
 from embry0.services.credentials.resolver import CredentialMissingError
 from embry0.services.org_discovery import RepoFacts
+from embry0.settings.store import SettingsStore
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
-from embry0.storage.repositories.budget_config import BudgetConfigRepository
 from embry0.storage.repositories.environment import EnvironmentRepository
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.org_repos import OrgReposRepository
@@ -128,7 +128,7 @@ async def app(db_with_migrations: DatabasePool) -> Any:
     state.env_repo = EnvironmentRepository(db)
     state.repos_repo = ReposRepository(db, default_forge="github")
     state.org_repos_repo = OrgReposRepository(db)
-    state.budget_repo = BudgetConfigRepository(db)
+    state.settings = SettingsStore(db)
     state.provider_repo = ProviderConfigRepository(db)
     state.profiles_repo = SandboxProfilesRepository(db)
     await seed_builtin_sandbox_profiles(state.profiles_repo)
@@ -303,7 +303,8 @@ async def test_the_run_starts_from_the_branch_embry0_works_from(client, app) -> 
 
 @pytest.mark.requires_postgres
 async def test_cost_with_no_recorded_run_says_so(client, app) -> None:
-    await app.state.budget_repo.update(max_budget_per_job_usd=7.5)
+    # The per-job ceiling is the settings document's budget section (#171).
+    await app.state.settings.set_keys("budget", {"max_budget_per_job_usd": 7.5}, actor="alex@example.com")
     resp = await client.get(f"{SETUP}/cost")
     assert resp.status_code == 200, resp.text
     assert resp.json() == {

@@ -111,8 +111,12 @@ class IssueExecutor:
         # agent.question events. None in tests / legacy callers.
         webhook_notifier: Any = None,
         # #246: pre-dispatch daily/monthly cap + per-author rate limit.
-        # Lazily built from the shared pool when absent; injected in tests.
+        # Lazily built from the settings store when absent; injected in tests.
         budget_gate: Any = None,
+        # BudgetPolicy: the `budget` section the gate and every run read
+        # their caps through, one snapshot per check, the old readers for a
+        # key not imported yet. Built over the store when absent.
+        budget_policy: Any = None,
         # #278: CaseRecorder — reports job links and PRs to the healing-case
         # ledger, fail-open. None in tests / legacy callers.
         case_recorder: Any = None,
@@ -185,6 +189,7 @@ class IssueExecutor:
         self._slack_channel = slack_channel
         self._webhook_notifier = webhook_notifier
         self._budget_gate = budget_gate
+        self._budget = budget_policy
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._tasks_by_job: dict[str, asyncio.Task[Any]] = {}
         # #583: MAX_RUNNING_JOBS. A test double for config has no int here,
@@ -202,21 +207,40 @@ class IssueExecutor:
     def draining(self) -> bool:
         return getattr(self, "_draining", False)
 
-    def _get_budget_gate(self) -> Any:
-        """The dispatch-time BudgetGate, built from the shared pool on first
-        use. None when there is no DB (unit tests, legacy callers) — the
-        dispatch guard then treats every job as within budget."""
-        gate = getattr(self, "_budget_gate", None)
-        if gate is not None:
-            return gate
+    def _budget_policy(self) -> Any:
+        """The budget policy: the app's, else one over the settings document the executor was given, or one
+        over the shared pool, built once. None without a DB (unit tests, legacy callers), as the gate needs
+        one to count the spend: the dispatch guard then treats every job as within budget."""
+        policy = getattr(self, "_budget", None)
+        if policy is not None:
+            return policy
         db = getattr(self, "_db", None)
         if db is None:
             return None
-        from embry0.orchestration.budget_gate import BudgetGate
-        from embry0.storage.repositories.budget_config import BudgetConfigRepository
-        from embry0.storage.repositories.budget_spend import BudgetSpendRepository
+        store = getattr(self, "_settings", None)
+        if store is None:
+            from embry0.settings.store import SettingsStore
 
-        self._budget_gate = BudgetGate(BudgetConfigRepository(db), BudgetSpendRepository(db))
+            store = SettingsStore(db)
+        from embry0.services.budget_policy import BudgetPolicy
+
+        self._budget = BudgetPolicy(store, getattr(self, "_config", None), retry_seconds=None)
+        return self._budget
+
+    def _get_budget_gate(self) -> Any:
+        """The dispatch-time BudgetGate, reading the `budget` section through the budget policy on every
+        check, built on first use by :func:`~embry0.orchestration.budget_gate.build_budget_gate`. None when
+        there is no DB (unit tests, legacy callers) — the dispatch guard then treats every job as within
+        budget."""
+        gate = getattr(self, "_budget_gate", None)
+        if gate is not None:
+            return gate
+        policy = self._budget_policy()
+        if policy is None:
+            return None
+        from embry0.orchestration.budget_gate import build_budget_gate
+
+        self._budget_gate = build_budget_gate(policy)
         return self._budget_gate
 
     async def dispatch_refusal(self, *, actor: str | None = None) -> DispatchDecision | None:
@@ -345,6 +369,10 @@ class IssueExecutor:
                 "job_verifications_repo": job_verifications_repo,
                 "pr_reviews_repo": pr_reviews_repo,
                 "db": self._db,
+                # load_budget_settings reads the job's cap through it at every
+                # check (the `budget` section, the old readers for a key not
+                # imported yet).
+                "budget_policy": self._budget_policy(),
                 "repo_preferences_repo": self._repo_prefs,
                 # getattr: unit tests build the executor via __new__ and set
                 # only what their path touches (same reason as _github_token).

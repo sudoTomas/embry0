@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router";
 import { Plus } from "lucide-react";
 import { useJobs } from "@/hooks/useJobs";
 import { useQueue } from "@/hooks/useQueue";
-import { useConfig } from "@/hooks/useConfig";
+import { useBudgetSettings } from "@/hooks/useBudgetSettings";
 import { useGlide } from "@/hooks/useGlide";
 import { useJobInputs, useJobInputsAnswered } from "@/hooks/useInputs";
 import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
@@ -90,7 +90,7 @@ export function ConsolePage() {
   const jobs = useJobs(jobFilters, BOARD_POLL_MS);
   const { data, isLoading, isError, refetch, dataUpdatedAt } = jobs;
   const { data: queue } = useQueue();
-  const { data: config } = useConfig();
+  const { data: config } = useBudgetSettings();
 
   const visibleJobs = useMemo(() => data?.jobs ?? [], [data]);
 

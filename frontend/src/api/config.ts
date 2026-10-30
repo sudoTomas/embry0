@@ -1,17 +1,8 @@
 import { api } from "./client";
-import type { ConfigResponse, ConfigUpdateRequest } from "@/lib/types/config";
 
-export type { ConfigResponse, ConfigUpdateRequest };
-
-export async function fetchConfig(): Promise<ConfigResponse> {
-  const { data } = await api.get<ConfigResponse>("/config/budget");
-  return data;
-}
-
-export async function updateConfig(config: ConfigUpdateRequest): Promise<ConfigResponse> {
-  const { data } = await api.put<ConfigResponse>("/config/budget", config);
-  return data;
-}
+// The budget is the settings document's `budget` section (#171): read it with
+// fetchEffectiveSettings and change it with setSettingsKeys (api/settings.ts),
+// as hooks/useBudgetSettings.ts does. GET and PUT /config/budget are deprecated.
 
 // Context config
 export interface ContextConfig {

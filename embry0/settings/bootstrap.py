@@ -122,6 +122,18 @@ def _env_value(section: Section[Any], key: str, imported: EnvImport, config: Any
     return section.validate({key: value}).model_dump(mode="json", exclude_unset=True)[key]
 
 
+def env_value(section: Section[Any], key: str, config: Any) -> Any:
+    """``key``'s value as the import would read it from ``config`` now, or None when its variable is not set
+    or the section refuses it: what a reader of a key not imported yet reads in its place."""
+    imported = section.imports().get(key)
+    if imported is None or not is_set(config, imported.attr):
+        return None
+    try:
+        return _env_value(section, key, imported, config)
+    except SectionRefused:
+        return None
+
+
 def _still_accepted(section: Section[Any], stored: dict[str, Any]) -> dict[str, Any]:
     """The section's stored values this release still accepts; one it refuses reads as its default,
     and must not stand in the way of a value the import brings."""

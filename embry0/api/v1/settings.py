@@ -49,7 +49,7 @@ from embry0.settings.document import (
     parse_keys,
     unknown_parts,
 )
-from embry0.settings.effective import effective_view, iso
+from embry0.settings.effective import NotImported, effective_view, iso
 from embry0.settings.env import env_name
 from embry0.settings.registry import MANAGED_BY_KEY, Catalog
 from embry0.settings.scope import Scope, ScopeError, current, owner_of
@@ -236,6 +236,34 @@ async def _writable(request: Request, owner: str | None, repo: str | None) -> Sc
     return scope
 
 
+async def set_section_keys(
+    request: Request,
+    section: str,
+    keys: Mapping[str, Any],
+    *,
+    owner: str | None = None,
+    reason: str = "",
+    if_generation: int | None = None,
+) -> SaveResult:
+    """Set ``keys`` of ``section``, ``None`` taking a key out, in the deployment's document or ``owner``'s
+    layer, as the caller of ``request``, with every rule of ``PATCH /config/settings/{section}``: the
+    key's allowlist, a registered organization, the whole document checked (422 naming each key), the
+    revision with source ``person`` and the ``settings.updated`` audit row.
+
+    For a route that stands in for that one for a release: ``PUT /config/budget``,
+    and a moved setting on ``PATCH /orgs/{owner}``. The admin tier is the
+    route's to check.
+    """
+    scope = await _writable(request, owner, None)
+    with _write_refusals():
+        result = await _store(request).set_keys(
+            section, keys, actor=request_actor(request), reason=reason, if_generation=if_generation, scope=scope
+        )
+    if result.revision_id is not None:
+        await _audit(request, "settings.updated", _updated(scope, result, source="person", reason=reason))
+    return result
+
+
 @router.get("/config/settings", response_model=None)
 async def get_settings(
     request: Request,
@@ -382,6 +410,26 @@ async def patch_settings_section(
     return {**_saved(scope, result), "managed_by": result.managed_by}
 
 
+async def _not_imported(
+    request: Request, org_scope: Scope | None
+) -> Mapping[str, Mapping[tuple[str, str], NotImported]]:
+    """The keys the budget policy reads the old way because the import has not imported them yet, so the
+    view shows the caps that are enforced (#171): the deployment's, and the organization's own settings of
+    the organization in view. Nothing without the application's budget policy."""
+    policy = getattr(request.app.state, "budget_policy", None)
+    if policy is None:
+        return {}
+    org = None
+    if org_scope is not None:
+        organizations = getattr(request.app.state, "organizations_repo", None)
+        org = await organizations.get(org_scope.name) if organizations is not None else None
+    budget = await policy.view([org] if org is not None else [])
+    found: Mapping[str, Mapping[tuple[str, str], NotImported]] = (
+        budget.not_imported(org.owner, org.settings) if org is not None else budget.not_imported()
+    )
+    return found
+
+
 @router.get("/config/settings/effective")
 async def get_effective_settings(
     request: Request, owner: str | None = _OWNER, repo: str | None = _REPO
@@ -421,6 +469,7 @@ async def get_effective_settings(
         request.app.state.config,
         owner=org_scope.name if org_scope is not None and repo_scope is None else None,
         repo=repo_scope.name if repo_scope is not None else None,
+        not_imported=await _not_imported(request, org_scope),
     )
     shown = await actor_shown(request)
     for section in view["sections"]:

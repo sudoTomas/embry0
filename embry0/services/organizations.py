@@ -11,10 +11,10 @@ there. Discovery, the needs list and the wizard build on it.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol, TypeGuard
+from typing import Any, Final, Protocol, TypeGuard
 from urllib.parse import quote
 
 import structlog
@@ -34,12 +34,10 @@ STATUSES = ("active", "paused", "removed")
 # owner's registered repositories on a schedule, when they change and when the
 # newest audit is this many days old and the branch moved since (ADR 0020);
 # null, the default, leaves the owner off the schedule.
-# context_audit_budget_usd: the hard cap, in USD, of each context-audit job
-# started for the owner; null, the default, is the deployment's
-# CONTEXT_AUDIT_JOB_BUDGET_USD.
-# context_audit_max_jobs_per_tick: the most context-audit jobs one tick of the
-# schedule starts for the owner, 0 starting none; null, the default, is the
-# deployment's CONTEXT_AUDIT_MAX_JOBS_PER_TICK.
+# context_audit_budget_usd and context_audit_max_jobs_per_tick: moved into the
+# settings document (MOVED_SETTINGS below). PATCH /orgs still takes them until
+# MOVED_SETTINGS_REMOVED_IN and writes them into the organization's layer of
+# the `budget` section; nothing reads them here any more.
 # context_audit_open_prs: a context audit that finds outdated claims opens a
 # pull request from the patch it checked, for a person to review and merge
 # (ADR 0022); false, the default, leaves its findings in the job's report.
@@ -164,6 +162,34 @@ def context_audit_max_jobs_per_tick(settings: Mapping[str, Any]) -> int | None:
     return value if type(value) is int and low <= value <= high else None
 
 
+@dataclass(frozen=True)
+class MovedSetting:
+    """A setting an organization kept here until its feature's section of the settings document took it over.
+
+    ``read`` is how this module read it: the value, or None for a value read
+    as the deployment's default (null, or out of the range it took). At the
+    first start of the release that moved it, each organization's value is
+    copied into its layer of ``section`` as ``key``, once
+    (:mod:`embry0.settings.org_import`). Until :data:`MOVED_SETTINGS_REMOVED_IN`,
+    ``PATCH /orgs/{owner}`` and ``POST /orgs`` still take it, checked as
+    before, and write it into that layer instead.
+    """
+
+    legacy: str
+    section: str
+    key: str
+    read: Callable[[Mapping[str, Any]], Any]
+
+    @property
+    def path(self) -> str:
+        """The key as the settings document names it: ``section.key``."""
+        return f"{self.section}.{self.key}"
+
+
+#: The release that refuses a moved setting on PATCH /orgs and POST /orgs, with a hint naming its new key.
+MOVED_SETTINGS_REMOVED_IN: Final = "0.2.0"
+
+
 def context_audit_open_prs(settings: Mapping[str, Any]) -> bool:
     """Whether the owner's context audits open a pull request from the patch they checked.
 
@@ -171,6 +197,16 @@ def context_audit_open_prs(settings: Mapping[str, Any]) -> bool:
     before ``POST /orgs`` checked its settings may hold, reads as off.
     """
     return settings.get("context_audit_open_prs") is True
+
+
+#: The settings the `budget` section took over (#171): an organization's own caps of its context audits.
+MOVED_SETTINGS: Final[tuple[MovedSetting, ...]] = (
+    MovedSetting("context_audit_budget_usd", "budget", "context_audit_job_usd", context_audit_budget_usd),
+    MovedSetting(
+        "context_audit_max_jobs_per_tick", "budget", "context_audit_max_jobs_per_tick", context_audit_max_jobs_per_tick
+    ),
+)
+MOVED: Final[dict[str, MovedSetting]] = {moved.legacy: moved for moved in MOVED_SETTINGS}
 
 
 @dataclass
@@ -194,7 +230,8 @@ class Organization:
             "forge": self.forge,
             "credential_id": self.credential_id,
             "display_name": self.display_name,
-            "settings": dict(self.settings),
+            # A moved setting is the organization's layer's now; the value left here is read by nothing.
+            "settings": {key: value for key, value in self.settings.items() if key not in MOVED},
             "access": dict(self.access),
             "repo_count": self.repo_count,
             "discovered_at": self.discovered_at.isoformat() if self.discovered_at else None,

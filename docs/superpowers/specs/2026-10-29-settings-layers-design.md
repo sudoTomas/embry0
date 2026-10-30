@@ -357,10 +357,20 @@ Where the code settled a detail this spec left open, or differs from it:
 - **`release()`** takes the policy rather than a callable from an ask to its settings, since it needs each ask's organization as well; whether it is working time, for a reminder, is decided per ask, so its `working` flag is gone. A queued ask is still released once due, without a working-hours check (#276).
 - **Upgrade.** With no layer stored, every value reads as before; what changes is the count: a person asked about two organizations' decisions may now hold `max_open_per_person` asks in each, not in all.
 
+## 19. As built: the first moved organization settings (#171)
+
+The `budget` section moved `context_audit_budget_usd` and `context_audit_max_jobs_per_tick` out of `organizations.settings`, so it built section 9's machinery, as section 9 asked of the first feature to move a key. Where it departs from section 9:
+
+- **The declaration lives beside the old reader, not on the section.** Section modules import only the registry, pydantic and the standard library, so `MOVED_SETTINGS` sits in `embry0/services/organizations.py`, each entry naming the legacy key, the section and key it moved to, and the function that read it (`MovedSetting`). A test pins that each lands on one of its section's `org_keys`. The import is `embry0/settings/org_import.py`, run by the lifespan after the environment import.
+- **What is copied is what the old reader used.** A value it read as the deployment's (null, or out of the range it took, which `POST /orgs` could once store unchecked) is nothing to copy: no layer row is written and nothing is logged, as the old reader said nothing. A value the section refuses is logged (`settings_org_value_refused`) and marked. A key already set in the layer wins and is marked, so a value taken out of the layer later is never copied back.
+- **The old routes stop storing the moved keys.** For one release `PATCH /orgs/{owner}` and `POST /orgs` check them as before and write them into the layer through the same code as `PATCH /config/settings/{section}?owner=` (`set_section_keys`), and `POST /orgs` refuses a key with a repository allowlist before it registers anything. They are no longer written to `organizations.settings`, and `Organization.to_dict` leaves them out, so the row's frozen copy, kept for a rollback, is shown nowhere. `MOVED_SETTINGS_REMOVED_IN` and a test name the release that refuses them.
+- **A failed copy.** Each organization's copy is its own transaction: one that fails is logged at error level (`settings_org_import_failed`), marks nothing and stops no other. Until its layer's ledger names a moved key, the organization's readers read its old setting (`BudgetView.organization`), and the budget policy tries its copy again while it runs (`embry0/services/budget_policy.py`). The organization's and its repositories' effective views show that old setting, with source `not_imported` and `read_from: organization`, as the value in force.
+- **Bounds.** The layer takes the section's own bounds; `context_audit_max_jobs_per_tick` keeps the old bound of 50 as a typo guard. The old fixed bound of 50 USD went: every job's cap, an organization's too, is bounded where it runs by the deployment's `budget.max_budget_per_job_usd`, read at every check, so lowering the ceiling lowers every organization's at once and refuses nothing stored. A cross-key check against the ceiling was rejected, because a deployment whose stored ceiling sat below the unattended default would have had its whole import held.
+
 ## Out of scope
 
 - Moving any feature's keys onto layers other than asks: `organizations.settings` (#169, #170, #171, and a new issue for `auto_register` and `rediscover_hours`), watcher stack overrides, `repo_preferences` columns.
-- The legacy-key import machinery (section 9), built with the first key that moves.
+- The legacy-key import machinery (section 9), built with the first key that moves (section 19).
 - Delegating an organization's layer to anyone below admin.
 - Per-person working hours (#179's `people` document); asks keep organization-level hours until then.
 - A form generated from the schema; the Policy tab stays a text editor per layer.

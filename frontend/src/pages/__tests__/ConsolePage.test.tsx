@@ -3,7 +3,6 @@ import { act, render, screen, fireEvent, waitFor, within } from "@testing-librar
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route, useLocation, useParams } from "react-router";
 import type {
-  ConfigResponse,
   JobFilters,
   JobInput,
   JobListResponse,
@@ -11,6 +10,7 @@ import type {
   QueueResponse,
 } from "@/lib/types";
 import type { GitHubRepoListResponse } from "@/api/github";
+import type { EffectiveSettings } from "@/lib/types/settings";
 import { makeJob, makeSummary } from "@/components/console/__tests__/fixtures";
 
 // Mock the api boundary (the TasksPage pattern) so the page runs its real
@@ -29,10 +29,11 @@ vi.mock("@/api/queue", () => ({
   fetchQueue: () => mockFetchQueue(),
 }));
 
-const mockFetchConfig = vi.fn<() => Promise<ConfigResponse>>();
-vi.mock("@/api/config", () => ({
-  fetchConfig: () => mockFetchConfig(),
-  updateConfig: vi.fn(),
+// The per-job budget the running cards show is the settings document's budget section (#171).
+const mockFetchEffectiveSettings = vi.fn<() => Promise<EffectiveSettings>>();
+vi.mock("@/api/settings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/settings")>()),
+  fetchEffectiveSettings: () => mockFetchEffectiveSettings(),
 }));
 
 const mockFetchGitHubRepos = vi.fn<() => Promise<GitHubRepoListResponse>>();
@@ -110,12 +111,35 @@ beforeEach(() => {
     awaiting_input: 0,
     paused: 0,
   });
-  mockFetchConfig.mockResolvedValue({
-    max_budget_per_job_usd: 10,
-    daily_cap_usd: 100,
-    monthly_cap_usd: 1000,
-    rate_limit_per_author_per_hour: 10,
-    overrun_mode: "soft",
+  mockFetchEffectiveSettings.mockResolvedValue({
+    generation: 1,
+    unknown_sections: [],
+    unknown_keys: [],
+    sections: [
+      {
+        name: "budget",
+        summary: "",
+        keys: Object.entries({
+          max_budget_per_job_usd: 10,
+          daily_cap_usd: 100,
+          monthly_cap_usd: 1000,
+          rate_limit_per_author_per_hour: 10,
+          overrun_mode: "soft",
+        }).map(([key, value]) => ({
+          key,
+          value,
+          default: value,
+          source: "default" as const,
+          set_by: null,
+          set_at: null,
+          env: null,
+          env_still_set: false,
+          overridable: [],
+          refused: null,
+          description: "",
+        })),
+      },
+    ],
   });
   mockFetchGitHubRepos.mockResolvedValue({
     repos: [

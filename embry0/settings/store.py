@@ -148,6 +148,19 @@ class Snapshot:
     _logged: set[tuple[str, str, str]] = field(default_factory=set, compare=False, repr=False)
     #: ``[the REPO_RENAMES it was built with, current repository scope -> stored scope]``.
     _rows: list[Any] = field(default_factory=list, compare=False, repr=False)
+    #: Each stored scope string to its document's import ledger (``bootstrapped_keys``): the
+    #: ``section.key`` entries already imported, from the environment or a store kept before the document.
+    ledgers: Mapping[str, frozenset[str]] = field(default_factory=dict, compare=False, repr=False)
+
+    def imported(self, path: str, scope: Scope | None = None) -> bool:
+        """Whether ``path`` (``section.key``) is in the import ledger of the document at ``scope``, the deployment's
+        when None: a reader of a key moved from older storage reads that storage until it is."""
+        if scope is None or scope.layer == DEPLOYMENT:
+            return path in self.ledgers.get(DEPLOYMENT, frozenset())
+        if scope.layer == "repository":
+            stored = self._repository_rows().get(str(current(scope)))
+            return stored is not None and path in self.ledgers.get(stored, frozenset())
+        return path in self.ledgers.get(str(scope), frozenset())
 
     def get[M: SectionModel](self, section: Section[M], *, owner: str | None = None, repo: str | None = None) -> M:
         """``section``'s settings: the deployment's stored values over its defaults, then those of the
@@ -305,6 +318,7 @@ def build_snapshot(
         layers=layers,
         log=log,
         catalog=catalog,
+        ledgers={str(row["scope"]): frozenset(row.get("bootstrapped_keys") or ()) for row in rows},
     )
 
 

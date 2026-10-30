@@ -31,6 +31,7 @@ import { sentenceCase } from "./status";
  * `RETIRED_AUDIT_ACTIONS`). Such a row reads as its replacement; it is not a filter of its own, because the
  * audit API's filter by the new name finds it too. */
 export const RETIRED_ACTIONS: Record<string, string> = {
+  budget_config_updated: "settings.updated",
   "quest.evaluated": "job.review.evaluated",
   "quest.sent_back": "job.review.sent_back",
   "quest.rejected": "job.review.rejected",
@@ -58,9 +59,9 @@ export const ACTION_ICONS: Record<string, LucideIcon> = {
   "apikey.revoked": X,
   "environment.secret_revealed": Eye,
   "job.cancelled": X,
+  "job.budget_raised": ArrowRight,
   "merge.decided": GitMerge,
   provider_config_updated: Settings,
-  budget_config_updated: Settings,
   integration_config_updated: Settings,
   context_config_updated: Settings,
   context_config_deleted: X,
@@ -99,9 +100,9 @@ export const ACTION_LABELS: Record<string, string> = {
   "apikey.revoked": "API key revoked",
   "environment.secret_revealed": "Secret revealed",
   "job.cancelled": "Job cancelled",
+  "job.budget_raised": "Job budget raised",
   "merge.decided": "Merge decided",
   provider_config_updated: "Provider config updated",
-  budget_config_updated: "Budget config updated",
   integration_config_updated: "Integrations updated",
   context_config_updated: "Context updated",
   context_config_deleted: "Context deleted",

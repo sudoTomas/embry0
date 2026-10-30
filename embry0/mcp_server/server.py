@@ -1019,10 +1019,11 @@ async def org_update(
     context_audit_days (integer 1 to 365, or null for off): audit the files that steer a coding agent
     (CLAUDE.md, AGENTS.md, skills, rules) in each registered repository on a schedule, when they
     change and this many days after the newest audit once the branch moved.
-    context_audit_budget_usd (number more than 0 and at most 50, or null for the deployment's
-    default): the hard cap in USD of each context-audit job started for the owner.
-    context_audit_max_jobs_per_tick (integer 0 to 50, or null for the deployment's default): the most
-    context-audit jobs one tick of the schedule (every 15 minutes) starts for the owner; 0 starts none.
+    context_audit_budget_usd and context_audit_max_jobs_per_tick: deprecated. They are the
+    organization's layer of the settings document's budget section now (context_audit_job_usd and
+    context_audit_max_jobs_per_tick): set them with settings_set_keys(section="budget", owner=...).
+    Until 0.2.0 this tool still takes them (a number more than 0 and at most 50, an integer 0 to 50,
+    or null for the deployment's) and writes them into that layer; the answer's deprecated says so.
     context_audit_open_prs (boolean, default false): a context audit that finds outdated claims opens
     a pull request from the patch it checked, one at a time per repository, for a person to merge.
     slop_meter_bots (list of up to 100 strings): the owner's own bots, as commit names, addresses
@@ -1062,12 +1063,12 @@ async def context_audit_run(
 ) -> dict[str, Any]:
     """Start an organization's due context audits now, whether or not its schedule is on, through the
     schedule's own start, so the schedule counts them and does not repeat them. Without repo: every
-    due repository, at most limit (1 to 50; default the organization's
-    context_audit_max_jobs_per_tick). With repo ("group/name", one of the owner's active registered
+    due repository, at most limit (1 to 50; default budget.context_audit_max_jobs_per_tick as the
+    organization reads it). With repo ("group/name", one of the owner's active registered
     repositories): that one when it is due, or whatever the due rule says with force=true; force
     needs repo. With the schedule off no interval applies: due is no audit yet, or changed files.
     Never while a context-audit job of the repository is live, force or not. Each job's hard cap is
-    the organization's context_audit_budget_usd, else the deployment's default. Returns started (repo, job_id, reason) and
+    the settings document's budget.context_audit_job_usd as the organization reads it. Returns started (repo, job_id, reason) and
     skipped (repo, reason: live, current, limit, refused, gated, unread or no_instruction_files, and
     detail; gated means the budget gate refused, no job was written and the repository stays due);
     follow a job with job_wait and job_deliverables. Use this rather than

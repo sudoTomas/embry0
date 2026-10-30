@@ -9,8 +9,9 @@ every :data:`TICK_SECONDS`, reads the default branch of each active
 registered repository under each such owner with the organization's
 credential, and starts a :data:`TEMPLATE` job for each repository that is
 due (:func:`due_reason`), at most the owner's cap per wake, each job with the
-owner's hard budget (:meth:`ContextAuditLoop.jobs_per_tick`,
-:meth:`ContextAuditLoop.budget_usd`).
+owner's hard budget: the settings document's ``budget`` section, its
+``context_audit_max_jobs_per_tick`` and ``context_audit_job_usd`` as the
+owner's layer resolves them, read at the top of every wake.
 
 A person can start the same jobs at once (:meth:`ContextAuditLoop.run`,
 ``POST /orgs/{owner}/context-audit/run``), through the same start, so a job
@@ -40,13 +41,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import math
 import re
 import uuid
-from collections.abc import Awaitable, Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 import structlog
 
@@ -57,13 +57,14 @@ from embry0.services.instruction_files import instruction_files
 from embry0.services.loop_schedule import seconds_until_next_run
 from embry0.services.organizations import (
     Organization,
-    context_audit_budget_usd,
     context_audit_days,
-    context_audit_max_jobs_per_tick,
     context_audit_open_prs,
 )
 from embry0.services.run_with import apply_run_with
 from embry0.storage.schemas import FINISHED_WELL_STATUSES
+
+if TYPE_CHECKING:
+    from embry0.settings.sections.budget import BudgetSettings
 
 logger = structlog.get_logger(__name__)
 
@@ -89,10 +90,6 @@ FIX_ACTOR = dispatch_actors.PROPOSALS
 #: repository and its tree when the head moved, so it is longer than
 #: rediscovery's, and still short against an interval of days.
 TICK_SECONDS = 900
-
-#: The per-job cap when ``CONTEXT_AUDIT_JOB_BUDGET_USD`` is unset or invalid,
-#: the watcher's cap for an analysis job, a job of the same size.
-DEFAULT_JOB_BUDGET_USD = 2.0
 
 #: Files the task names one by one; past it the task says how many more.
 TASK_FILE_LIMIT = 200
@@ -531,10 +528,25 @@ class _Refusal(Protocol):
 AskGate = Callable[[], Awaitable[_Refusal | None]]
 
 
+class _BudgetView(Protocol):
+    def organization(self, owner: str, settings: Mapping[str, Any] | None = None) -> BudgetSettings: ...
+
+
+#: The ``budget`` section at one moment, read for these organizations
+#: (:meth:`embry0.services.budget_policy.BudgetPolicy.view`): each one's caps,
+#: its own settings read for a moved key its layer has not imported yet.
+BudgetReader = Callable[[Sequence[Organization]], Awaitable[_BudgetView]]
+
+
 def _detail(exc: Exception) -> str:
     """What a refusal says: an HTTPException's detail, else the exception's text, else its type."""
     text = str(getattr(exc, "detail", "") or "") or str(exc)
     return (text or type(exc).__name__)[:200]
+
+
+def _caps(policy: BudgetSettings) -> tuple[int, float]:
+    """The most context-audit jobs one tick starts for an organization, and each one's hard cap in USD."""
+    return policy.context_audit_max_jobs_per_tick, policy.context_audit_job_usd
 
 
 class ContextAuditLoop:
@@ -549,8 +561,7 @@ class ContextAuditLoop:
         client_for: ClientFor,
         start_job: StartJob,
         ask_gate: AskGate,
-        max_jobs_per_tick: int,
-        budget_usd: float,
+        budget: BudgetReader,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         tick_seconds: float = TICK_SECONDS,
     ) -> None:
@@ -562,9 +573,9 @@ class ContextAuditLoop:
         # Required, not optional: without it every start past a spend cap
         # becomes a failed job that anchors its repository for an interval.
         self._ask_gate = ask_gate
-        # The deployment's caps, for an owner whose settings name none.
-        self._max_jobs_per_tick = max_jobs_per_tick
-        self._budget_usd = budget_usd
+        # The caps, read from the settings document at the top of each tick
+        # and each run, as each owner's layer resolves them.
+        self._budget = budget
         self._clock = clock
         self._tick_seconds = tick_seconds
         # Each repository's last start refused before a job row existed, the
@@ -585,15 +596,11 @@ class ContextAuditLoop:
         # the tick and a start by hand run in this one process.
         self._starting = asyncio.Lock()
 
-    def jobs_per_tick(self, org: Organization) -> int:
-        """The most jobs one tick starts for ``org``: its ``context_audit_max_jobs_per_tick``, else the deployment's."""
-        own = context_audit_max_jobs_per_tick(org.settings)
-        return self._max_jobs_per_tick if own is None else own
-
-    def budget_usd(self, org: Organization) -> float:
-        """The hard cap in USD of each job ``org`` gets: its ``context_audit_budget_usd``, else the deployment's."""
-        own = context_audit_budget_usd(org.settings)
-        return self._budget_usd if own is None else own
+    async def caps(self, org: Organization) -> tuple[int, float]:
+        """The most jobs one tick starts for ``org``, and the hard cap in USD of each: the ``budget`` section's
+        ``context_audit_max_jobs_per_tick`` and ``context_audit_job_usd``, the organization's layer over the
+        deployment's, read now."""
+        return _caps((await self._budget([org])).organization(org.owner, org.settings))
 
     async def _read(self, client: _Forge, repo: str) -> RepoContext | None:
         head = await read_head(client, repo)
@@ -742,9 +749,10 @@ class ContextAuditLoop:
         """Start a job for every due repository, at most each owner's cap, and return the repositories started.
 
         Only active owners with ``context_audit_days`` set are read. Each
-        owner's cap is :meth:`jobs_per_tick`: its due repositories past it
-        wait for the next tick, and an owner whose cap is 0 is not read. Each
-        job gets the owner's :meth:`budget_usd`. An owner that cannot be read
+        owner's cap is its ``context_audit_max_jobs_per_tick`` (:meth:`caps`,
+        read once per tick): its due repositories past it wait for the next
+        tick, and an owner whose cap is 0 is not read. Each job gets the
+        owner's ``context_audit_job_usd``. An owner that cannot be read
         (a forge whose trees are not read this way, a credential that cannot
         be resolved) and a repository that cannot be read are skipped, each
         with one log line until the reason changes. The budget gate is asked
@@ -757,11 +765,13 @@ class ContextAuditLoop:
         """
         now = self._clock()
         started: list[str] = []
-        for org in await self._organizations.list_all():
+        organizations = await self._organizations.list_all()
+        budgets = await self._budget(organizations)
+        for org in organizations:
             days = context_audit_days(org.settings)
             if org.status != "active" or days is None:
                 continue
-            cap = self.jobs_per_tick(org)
+            cap, budget = _caps(budgets.organization(org.owner, org.settings))
             if cap < 1:
                 continue
             try:
@@ -774,7 +784,6 @@ class ContextAuditLoop:
                 continue
             self._noted.pop(org.owner, None)
             self._note_unread(org.owner, survey.unread)
-            budget = self.budget_usd(org)
             open_pr = context_audit_open_prs(org.settings)
             count = 0
             for state in survey.repos:
@@ -862,7 +871,7 @@ class ContextAuditLoop:
         """Start the due context audits of ``org`` now, whatever its schedule says, and say what started and what not.
 
         Without ``repo``, every due repository, at most ``limit`` of them, the
-        owner's :meth:`jobs_per_tick` when None. With ``repo``, that one when
+        owner's cap per tick (:meth:`caps`) when None. With ``repo``, that one when
         it is due, or when ``force`` is true whatever the due rule says. Due
         is :func:`due_reason` with ``by_hand``: the setting may be off, and
         then no interval applies. Never while a context-audit job of the
@@ -871,7 +880,7 @@ class ContextAuditLoop:
         anchors on, and a refused start is remembered as the tick remembers
         its own. A start the budget gate refuses is :data:`GATED`, and so is
         every repository the run would have started after it; none of them
-        counts as an attempt. Each job gets the owner's :meth:`budget_usd`,
+        counts as an attempt. Each job gets the owner's ``context_audit_job_usd``,
         and ``run_with``, the model and key the person chose, when given.
 
         Raises :class:`UnsupportedForge` as :meth:`survey` does, what
@@ -888,8 +897,8 @@ class ContextAuditLoop:
                 raise UnknownRepository(f"{repo} is not an active registered repository of {org.owner}")
         now = self._clock()
         survey = await self._survey(org, repos, now=now, by_hand=True)
-        cap = 1 if repo is not None else limit if limit is not None else self.jobs_per_tick(org)
-        budget = self.budget_usd(org)
+        per_tick, budget = await self.caps(org)
+        cap = 1 if repo is not None else limit if limit is not None else per_tick
         open_pr = context_audit_open_prs(org.settings)
         started: list[Started] = []
         skipped: list[Skipped] = []
@@ -981,23 +990,6 @@ class _Executor(Protocol):
 
 class _Templates(Protocol):
     async def list_all(self) -> list[dict[str, Any]]: ...
-
-
-def job_budget_usd(config: Any) -> float:
-    """The deployment's per-job cap: ``CONTEXT_AUDIT_JOB_BUDGET_USD`` when positive and finite, else the default.
-
-    An organization's ``context_audit_budget_usd`` takes its place for that
-    organization's jobs (:meth:`ContextAuditLoop.budget_usd`).
-
-    0 means unlimited elsewhere in the budget config, and ``inf`` amounts to
-    the same; an unattended job never gets that reading.
-    """
-    value: Any = getattr(config, "context_audit_job_budget_usd", None)
-    try:
-        cap = float(value)
-    except (TypeError, ValueError):
-        return DEFAULT_JOB_BUDGET_USD
-    return cap if math.isfinite(cap) and cap > 0 else DEFAULT_JOB_BUDGET_USD
 
 
 def audit_task(context: RepoContext) -> str:

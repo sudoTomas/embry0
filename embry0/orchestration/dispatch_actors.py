@@ -13,7 +13,7 @@ so impersonating it gains nothing.)
 
 Rate limit
 ----------
-``budget_config.rate_limit_per_author_per_hour`` is a per-HUMAN throttle
+``budget.rate_limit_per_author_per_hour`` (the settings document) is a per-HUMAN throttle
 (layer 3 of the budget gate). An actor in :data:`RATE_LIMIT_EXEMPT` skips that
 one layer — the daily and monthly spend caps still apply to every job:
 

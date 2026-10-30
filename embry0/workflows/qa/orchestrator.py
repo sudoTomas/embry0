@@ -1201,6 +1201,8 @@ async def _qa_orchestrator_node_impl(
     # Results are persisted above first, so the per-app verdicts survive.
     update: dict[str, Any] = {"qa": qa_state}
     cap_check = await evaluate_job_cap(state, config, float(state.get("total_cost_usd") or 0.0))
+    update["budget_cap_usd"] = cap_check.cap
+    update["budget_spent_usd"] = cap_check.total
     if cap_check.decision.overrun > 0:
         update["budget_overrun_usd"] = cap_check.decision.overrun
         logger.warning(

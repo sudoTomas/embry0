@@ -7,6 +7,7 @@ Who made a binding (``created_by``) is shown as ``GET /audit`` shows actors
 from __future__ import annotations
 
 import json
+import math
 import re
 import secrets
 from collections.abc import Mapping
@@ -143,6 +144,17 @@ def _xai_oauth_secret(refresh_token: str, client_id: str, token_endpoint: str) -
 _NO_ECHO_PATH_MARKERS: tuple[str, ...] = ("/credentials", "/environment")
 
 
+def _not_json(value: Any) -> bool:
+    """Whether ``value`` holds a float JSON cannot write (NaN, Infinity), at any depth."""
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(_not_json(v) for v in value.values())
+    if isinstance(value, list | tuple):
+        return any(_not_json(v) for v in value)
+    return False
+
+
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """FastAPI's 422 echoes the offending ``input``, which for a credential body is the secret.
 
@@ -152,7 +164,15 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     ``create_app`` (handlers cannot be per-router).
     """
     if not any(marker in request.url.path for marker in _NO_ECHO_PATH_MARKERS):
-        return await request_validation_exception_handler(request, exc)
+        if not any(_not_json(err.get("input")) for err in exc.errors()):
+            return await request_validation_exception_handler(request, exc)
+        # A JSON body may hold NaN or Infinity, which no JSON answer can echo: FastAPI's own handler then
+        # failed with a 500. Such an input is left out, as a secret's is, and the 422 stands.
+        errors = [
+            {k: v for k, v in err.items() if k != "input"} if _not_json(err.get("input")) else err
+            for err in exc.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
     errors = [{k: v for k, v in err.items() if k not in ("input", "ctx")} for err in exc.errors()]
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 

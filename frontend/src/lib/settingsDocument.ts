@@ -2,7 +2,7 @@
 // words for a value and a source. The line diff of two texts is shared with
 // the Game content tab (@/lib/textDiff).
 
-import type { SettingSource, SettingsRevisionSource } from "@/lib/types/settings";
+import type { NotImportedFrom, SettingSource, SettingsRevisionSource } from "@/lib/types/settings";
 
 /**
  * One problem of a refused document: the key it belongs to (null for the
@@ -61,9 +61,19 @@ export const SOURCE_LABELS: Record<SettingSource, string> = {
   default: "Default",
   document: "Set in the document",
   bootstrap: "Imported from the environment",
+  not_imported: "Not imported yet",
   organization: "Set by the organization",
   repository: "Set by the repository",
 };
+
+/**
+ * A key the import has not imported yet, in a person's words: the value shown is the one enforced
+ * meanwhile, read as the release before read it, and this says from where.
+ */
+export function notImportedText(from: NotImportedFrom | null | undefined): string {
+  if (!from || from.read_from === "default") return "Not imported yet: the default";
+  return `Not imported yet: read from ${from.label}`;
+}
 
 export const REVISION_SOURCE_LABELS: Record<SettingsRevisionSource, string> = {
   person: "Dashboard or API",

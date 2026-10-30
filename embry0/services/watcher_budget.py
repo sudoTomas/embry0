@@ -2,7 +2,7 @@
 
 Watcher ticks run unattended, so nobody is there to notice a soft-mode
 warning: their cap is always a hard stop, whatever the fleet-wide
-``budget_config.overrun_mode`` says. The cap itself is a watcher setting
+``budget.overrun_mode`` (the settings document) says. The cap itself is a watcher setting
 (``WATCHER_JOB_BUDGET_USD``); ``repo_config`` is the seam for a per-repo
 watcher config row (#297) to supply its own.
 """

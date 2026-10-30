@@ -1,7 +1,9 @@
 """Per-job budget cap enforced inside run_agent_node (#246).
 
 `soft` records the overrun and lets the caller's routing stop the pipeline;
-`hard` aborts the run at the ceiling with ERR_BUDGET_OVERRUN.
+`hard` aborts the run at the ceiling with ERR_BUDGET_OVERRUN. The ceiling and
+the mode are the settings document's ``budget`` section, read from the store
+the graph config carries at every check (#171).
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ from embry0.execution.agent_runner import AgentOutput
 from embry0.orchestration.budget import BudgetOverrunError
 from embry0.orchestration.nodes.agent import load_budget_policy, run_agent_node
 from embry0.safety.error_codes import ErrorCode, error_code_for_exception
+from embry0.settings.sections import CATALOG
+from embry0.settings.store import Snapshot, build_snapshot
 
 
 class _Runner:
@@ -24,14 +28,22 @@ class _Runner:
         return AgentOutput(agent_type="developer", output="done", cost_usd=self._cost)
 
 
-class _Settings:
-    def __init__(self, mode: str, ceiling: float = 0.0) -> None:
-        self.budget_overrun_mode = mode
-        self.max_budget_usd = ceiling
+class _Store:
+    """The settings store as a job's graph config carries it: its ``budget`` section is what it was told."""
+
+    def __init__(self, **budget: Any) -> None:
+        self.budget = budget
+        self.reads = 0
+
+    async def snapshot(self) -> Snapshot:
+        self.reads += 1
+        row = {"scope": "deployment", "data": {"budget": dict(self.budget)}, "generation": 1, "updated_at": None}
+        return build_snapshot(CATALOG, [row], token=(), log=False)
 
 
-def _config(mode: str, db: Any = None, ceiling: float = 0.0) -> dict[str, Any]:
-    return {"configurable": {"job_id": "J", "embry0_config": _Settings(mode, ceiling), "db": db}}
+def _config(mode: str, store: _Store | None = None, ceiling: float = 0.0) -> dict[str, Any]:
+    store = store or _Store(overrun_mode=mode, max_budget_per_job_usd=ceiling)
+    return {"configurable": {"job_id": "J", "settings_store": store}}
 
 
 async def _run(
@@ -40,7 +52,7 @@ async def _run(
     spent: float,
     cost: float,
     cap: float = 10.0,
-    db: Any = None,
+    store: _Store | None = None,
     job_mode: str | None = None,
 ) -> dict[str, Any]:
     state: dict[str, Any] = {
@@ -56,7 +68,7 @@ async def _run(
         agent_type="developer",
         prompt="implement",
         credentials={"api_key": "", "oauth_token": "oauth-xyz"},
-        config=_config(mode, db),
+        config=_config(mode, store),
     )
 
 
@@ -89,7 +101,7 @@ async def test_a_job_pinned_to_hard_aborts_under_a_soft_fleet_mode() -> None:
     with pytest.raises(BudgetOverrunError):
         await _run("soft", spent=9.5, cost=1.0, job_mode="hard")
     with pytest.raises(BudgetOverrunError):
-        await _run("soft", spent=9.5, cost=1.0, job_mode="hard", db=_ConfigRow("soft"))
+        await _run("soft", spent=9.5, cost=1.0, job_mode="hard", store=_Store(overrun_mode="soft"))
 
 
 async def _run_watcher_shaped(*, spent: float, cost: float, cap: float, ceiling: float = 0.0) -> dict[str, Any]:
@@ -149,61 +161,54 @@ def test_budget_overrun_error_maps_to_the_error_code() -> None:
     assert error_code_for_exception(BudgetOverrunError(11.0, 10.0)) is ErrorCode.BUDGET_OVERRUN
 
 
-class _ConfigRow:
-    """Stands in for the DatabasePool BudgetConfigRepository reads through."""
-
-    def __init__(self, mode: str | None, ceiling: float = 0.0) -> None:
-        self._mode = mode
-        self._ceiling = ceiling
-
-    async def fetchrow(self, *_args: Any) -> dict[str, Any] | None:
-        if self._mode is None:
-            return None
-        return {"id": "default", "overrun_mode": self._mode, "max_budget_per_job_usd": self._ceiling}
-
-
 @pytest.mark.asyncio
-async def test_policy_prefers_the_operator_edited_row() -> None:
-    """budget_config is what the settings UI writes — it wins over env."""
-    ceiling, mode = await load_budget_policy(_config("soft", db=_ConfigRow("hard", 4.0)))
+async def test_policy_is_the_budget_section_of_the_settings_document() -> None:
+    """The section is what the settings document, PATCH /config/settings/budget and the General tab write."""
+    ceiling, mode = await load_budget_policy(
+        _config("soft", store=_Store(overrun_mode="hard", max_budget_per_job_usd=4.0))
+    )
     assert (ceiling, mode) == (4.0, "hard")
 
 
 @pytest.mark.asyncio
-async def test_policy_falls_back_to_the_app_config(monkeypatch) -> None:
-    """No DB (tests, legacy callers) → Settings.{max_budget_usd,budget_overrun_mode}."""
-    monkeypatch.delenv("BUDGET_OVERRUN_MODE", raising=False)
-    assert await load_budget_policy(_config("hard", db=None, ceiling=3.0)) == (3.0, "hard")
+async def test_policy_reads_the_section_at_every_check() -> None:
+    """A cap changed while a job runs holds from its next check: nothing is cached across a change."""
+    store = _Store(overrun_mode="soft", max_budget_per_job_usd=4.0)
+    assert await load_budget_policy(_config("soft", store=store)) == (4.0, "soft")
+    store.budget = {"overrun_mode": "hard", "max_budget_per_job_usd": 2.5}
+    assert await load_budget_policy(_config("soft", store=store)) == (2.5, "hard")
+    assert store.reads == 2
 
 
 @pytest.mark.asyncio
-async def test_policy_uses_the_env_defaults_when_no_row_is_saved(monkeypatch) -> None:
-    """budget_config.get() already resolves the env defaults for an empty table."""
-    monkeypatch.setenv("BUDGET_OVERRUN_MODE", "hard")
-    monkeypatch.setenv("MAX_BUDGET_USD", "6.0")
-    assert await load_budget_policy(_config("soft", db=_ConfigRow(None))) == (6.0, "hard")
+async def test_policy_without_a_store_is_the_section_defaults() -> None:
+    """No store and no DB (tests, legacy callers): the defaults, a $10 ceiling and soft, never no cap."""
+    assert await load_budget_policy({"configurable": {}}) == (10.0, "soft")
+    assert await load_budget_policy(None) == (10.0, "soft")
 
 
 @pytest.mark.asyncio
-async def test_policy_defaults_to_soft_and_no_ceiling_without_config() -> None:
-    assert await load_budget_policy({"configurable": {}}) == (0.0, "soft")
-    assert await load_budget_policy(None) == (0.0, "soft")
+async def test_policy_falls_back_to_the_defaults_when_the_store_cannot_be_read() -> None:
+    class _Broken(_Store):
+        async def snapshot(self) -> Snapshot:
+            raise ConnectionResetError("pool is down")
+
+    assert await load_budget_policy(_config("hard", store=_Broken())) == (10.0, "soft")
 
 
 @pytest.mark.asyncio
 async def test_the_fleet_ceiling_bounds_a_larger_per_job_cap() -> None:
     """An operator lowering max_budget_per_job_usd must outrank triage's pick."""
     with pytest.raises(BudgetOverrunError) as excinfo:
-        await _run("hard", spent=3.5, cost=1.0, cap=50.0, db=_ConfigRow("hard", 4.0))
+        await _run("hard", spent=3.5, cost=1.0, cap=50.0, store=_Store(overrun_mode="hard", max_budget_per_job_usd=4.0))
     assert excinfo.value.max_budget == pytest.approx(4.0)
 
 
 @pytest.mark.asyncio
-async def test_db_row_drives_the_hard_abort(monkeypatch) -> None:
-    """End to end: the row alone flips enforcement, with app config on soft."""
-    monkeypatch.delenv("BUDGET_OVERRUN_MODE", raising=False)
+async def test_the_section_alone_drives_the_hard_abort() -> None:
+    """End to end: the section's overrun_mode flips enforcement."""
     with pytest.raises(BudgetOverrunError):
-        await _run("soft", spent=9.5, cost=1.0, db=_ConfigRow("hard"))
+        await _run("soft", spent=9.5, cost=1.0, store=_Store(overrun_mode="hard", max_budget_per_job_usd=0.0))
 
 
 @pytest.mark.asyncio

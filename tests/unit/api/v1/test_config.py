@@ -5,24 +5,16 @@ from httpx import ASGITransport, AsyncClient
 
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
+from tests.fixtures.budget_settings import BudgetStore
 
 
 @pytest.fixture
 def app():
     config = Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True)
     app = create_app(config)
-    mock_budget = MagicMock()
-    mock_budget.get = AsyncMock(
-        return_value={
-            "max_budget_per_job_usd": 10.0,
-            "daily_cap_usd": 100.0,
-            "monthly_cap_usd": 500.0,
-            "rate_limit_per_author_per_hour": 5,
-            "overrun_mode": "soft",
-        }
-    )
-    mock_budget.update = AsyncMock()
-    app.state.budget_repo = mock_budget
+    # GET /config/budget reads the settings document's budget section (#171); its writes, now through
+    # the section, are proven on a real database in tests/unit/api/test_budget_settings.py.
+    app.state.settings = BudgetStore({"max_budget_per_job_usd": 12.5})
     mock_context = MagicMock()
     mock_context.get_global = AsyncMock(return_value={"system_context": "global", "assistant_context": ""})
     mock_context.set_global = AsyncMock()
@@ -134,19 +126,13 @@ async def test_get_budget(app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/v1/config/budget")
     assert resp.status_code == 200
-    assert resp.json()["max_budget_per_job_usd"] == 10.0
-
-
-@pytest.mark.asyncio
-async def test_update_budget(app):
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.put(
-            "/api/v1/config/budget",
-            json={"max_budget_per_job_usd": 25.0},
-            headers={"X-Requested-With": "XMLHttpRequest"},
-        )
-    assert resp.status_code == 200
+    assert resp.json() == {
+        "max_budget_per_job_usd": 12.5,
+        "daily_cap_usd": 100.0,
+        "monthly_cap_usd": 500.0,
+        "rate_limit_per_author_per_hour": 5,
+        "overrun_mode": "soft",
+    }, "the section's values of the route's five keys, the defaults where nothing is set"
 
 
 @pytest.mark.asyncio

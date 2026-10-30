@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from embry0.api.v1 import proposals as proposals_api
 from embry0.services.context_audit import FIX_ACTOR
 from embry0.services.proposals import Decision
+from tests.fixtures.budget_settings import BudgetStore
 
 T0 = datetime(2026, 10, 24, 12, tzinfo=UTC)
 REPORT = "## Findings\n\n| Severity | Location | Claim | Evidence | Fix |\n|---|---|---|---|---|\n| misleads | AGENTS.md:3 | Run make check | no target | say make test |\n"
@@ -216,7 +217,9 @@ async def test_a_finding_fix_is_an_audit_job_on_its_one_file_that_opens_a_pull_r
     refusal: list[Any] = [None]
     app.state.issue_executor = SimpleNamespace(dispatch_refusal=lambda actor: _resolved(refusal[0]))
     app.state.jobs_repo = app.state.templates_repo = object()
-    app.state.config = SimpleNamespace(audit_log_path=None, context_audit_job_budget_usd=2.0)
+    app.state.config = SimpleNamespace(audit_log_path=None)
+    # The fix job's hard cap is the budget section's fix_job_usd, as the repository's organization reads it.
+    app.state.settings = BudgetStore({"fix_job_usd": 1.5, "context_audit_job_usd": 9.0})
 
     async with await _client(app) as client:
         finding_id = next(
@@ -230,6 +233,7 @@ async def test_a_finding_fix_is_an_audit_job_on_its_one_file_that_opens_a_pull_r
     assert accepted.status_code == 202 and accepted.json()["job_id"] == "job-fix"
     assert started["context"].files == ("AGENTS.md",) and started["context"].head_sha == "abc123"
     assert started["open_pr"] is True and started["dispatched_by"] == "embry0:proposals"
+    assert started["budget_usd"] == 1.5, "a finding's fix gets budget.fix_job_usd, not the audit's cap"
     assert started["dispatched_by"] == FIX_ACTOR, "the actor the schedule and the feed read as no audit (#222)"
     assert "The claim at AGENTS.md:3: Run make check" in started["task"]
 

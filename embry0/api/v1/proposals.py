@@ -230,8 +230,9 @@ async def get_proposal(proposal_id: str, request: Request) -> dict[str, Any]:
 
 async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | None = None) -> str:
     """A context-audit job narrowed to the finding's file, opening a pull request: the owner asked for this one."""
+    from embry0.api.budget import unattended_cap
     from embry0.api.v1.organizations import org_forge_client
-    from embry0.services.context_audit import RepoContext, job_budget_usd, read_head, start_context_audit_job
+    from embry0.services.context_audit import RepoContext, read_head, start_context_audit_job
 
     config = request.app.state.config
     org = await _state(request, "organizations_repo").get(proposal.repo.split("/", 1)[0])
@@ -245,13 +246,14 @@ async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | N
     if refusal is not None:
         raise HTTPException(status_code=429, detail=refusal.public_message)
     context = RepoContext(proposal.repo, head[0], (str(proposal.extra["path"]),), f"{ACTOR}:{proposal.id}")
+    budget_usd = await unattended_cap(request, proposal.repo, "fix_job_usd")
     try:
         return await start_context_audit_job(
             context,
             jobs=request.app.state.jobs_repo,
             executor=executor,
             templates=request.app.state.templates_repo,
-            budget_usd=job_budget_usd(config),
+            budget_usd=budget_usd,
             open_pr=True,
             db=getattr(request.app.state, "db", None),
             audit_log_path=getattr(config, "audit_log_path", None),

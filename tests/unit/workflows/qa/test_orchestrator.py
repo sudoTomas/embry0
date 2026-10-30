@@ -2690,8 +2690,19 @@ def _budget_harness(monkeypatch, *, trace_total: float):
     traces.total_cost_for_job = AsyncMock(side_effect=lambda job_id: next(calls, trace_total))
 
     def config(mode: str) -> dict:
-        settings = SimpleNamespace(budget_overrun_mode=mode, max_budget_usd=0.0, qa_browser_backend_default=None)
-        return {"configurable": {"job_id": "job-qa", "traces_repo": traces, "embry0_config": settings}}
+        from tests.fixtures.budget_settings import BudgetStore
+
+        settings = SimpleNamespace(qa_browser_backend_default=None)
+        # The overrun mode and the ceiling are the settings document's budget section (#171).
+        budget = BudgetStore({"overrun_mode": mode, "max_budget_per_job_usd": 0.0})
+        return {
+            "configurable": {
+                "job_id": "job-qa",
+                "traces_repo": traces,
+                "embry0_config": settings,
+                "settings_store": budget,
+            }
+        }
 
     state = {
         "job_id": "job-qa",
@@ -2725,6 +2736,21 @@ async def test_a_qa_heavy_job_records_a_soft_overrun(monkeypatch):
         f"the QA fan-out's spend must reach the job's overrun; got {out.get('budget_overrun_usd')}"
     )
     assert out["qa"]["final_status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_a_qa_run_records_the_cap_it_enforced_and_the_spend_it_counted(monkeypatch):
+    """#283: soft-mode routing decides on the cap the node enforced, so the QA fan-out records it as an
+    agent turn does: the $5 cap, and the $7 its traces counted that the state never sees."""
+    from embry0.orchestration.routing.conditions import check_budget
+
+    state, config, _ = _budget_harness(monkeypatch, trace_total=7.0)
+    out = await qa_orchestrator_node(state, config("soft"))
+    assert (out.get("budget_cap_usd"), out.get("budget_spent_usd")) == (pytest.approx(5.0), pytest.approx(7.0)), (
+        f"the QA fan-out records the cap it enforced and the spend it counted: {out.get('budget_cap_usd')}, "
+        f"{out.get('budget_spent_usd')}"
+    )
+    assert check_budget({**state, **out}) == "over_budget"
 
 
 @pytest.mark.asyncio

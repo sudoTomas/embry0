@@ -18,6 +18,7 @@ import structlog
 
 from embry0.services.bootstrap import render_starter_qa_yaml
 from embry0.services.qa_config_check import check_qa_config
+from embry0.settings.sections.budget import BUDGET
 from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES
 from embry0.storage.repositories.repo_qa_configs import SetupChanged
 
@@ -69,12 +70,13 @@ async def cost_facts(app_state: Any, repo: str) -> dict[str, Any]:
         _COST_RUNS,
     )
     costs = [float(row["total_cost_usd"]) for row in rows]
-    budget = await app_state.budget_repo.get()
+    policy = getattr(app_state, "budget_policy", None)
+    budget = await policy.settings() if policy is not None else (await app_state.settings.snapshot()).get(BUDGET)
     model = await medium_model(app_state)
     return {
         "recorded_runs": int(recorded_runs or 0),
         "typical_cost_usd": statistics.median(costs) if costs else None,
-        "per_job_budget_usd": float(budget["max_budget_per_job_usd"]),
+        "per_job_budget_usd": float(budget.max_budget_per_job_usd),
         "model": model,
         "paid_from": await _paid_from(app_state, repo, model),
     }

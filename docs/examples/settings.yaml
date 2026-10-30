@@ -53,6 +53,65 @@ asks:
   # person a decision now waits on.
   # tick_seconds: 120.0
 
+# What embry0 may spend: each job's ceiling, the daily and monthly caps, the
+# unattended jobs' caps, and how far a person may continue a job past its cap.
+budget:
+  # The most one job may spend, in US dollars: the ceiling of the cap triage
+  # or a job's own max_budget_usd picks, and of every unattended job's cap
+  # below, checked after every agent turn. 0 sets no ceiling. A person's
+  # continue past the cap goes on top of it unless continue_may_exceed_ceiling
+  # is false.
+  # max_budget_per_job_usd: 10.0
+
+  # No job is dispatched once today's spend reaches this, in US dollars. 0
+  # sets no daily cap.
+  # daily_cap_usd: 100.0
+
+  # No job is dispatched once this month's spend reaches this, in US dollars.
+  # 0 sets no monthly cap.
+  # monthly_cap_usd: 500.0
+
+  # Jobs one person may dispatch in any hour. 0 sets no limit. embry0's own
+  # watcher and the continuations of a job a person already started are
+  # exempt; the spend caps still apply to them.
+  # rate_limit_per_author_per_hour: 5
+
+  # What a job does on crossing its cap: soft lets the step finish, then
+  # pauses for a person to continue, merge or stop it; hard fails it with
+  # ERR_BUDGET_OVERRUN. A job may pin itself to hard, and the unattended jobs
+  # always do.
+  # overrun_mode: soft
+
+  # The hard cap of one job the context audit schedule starts, or a person
+  # starts with POST /orgs/{owner}/context-audit/run, in US dollars.
+  # context_audit_job_usd: 2.0
+
+  # Most context-audit jobs one round of the schedule (every 15 minutes)
+  # starts for an organization; the due repositories past it wait for the next
+  # round. 0 starts none.
+  # context_audit_max_jobs_per_tick: 3
+
+  # The hard cap of one job that maps a repository's areas (POST
+  # /repos/{repo}/-/areas/map), in US dollars.
+  # area_map_job_usd: 2.0
+
+  # The hard cap of the job that fixes one context-audit finding an owner
+  # accepted from the proposals, in US dollars.
+  # fix_job_usd: 2.0
+
+  # The most a person may name as extra_budget_usd when they continue a job
+  # past its cap (POST /jobs/{id}/resume), in US dollars.
+  # continue_extra_max_usd: 1000.0
+
+  # Whether a person's continue may take a job past max_budget_per_job_usd.
+  # false makes the ceiling a hard limit: a continue adds only what is left
+  # under it, and a job already at it cannot be continued.
+  # continue_may_exceed_ceiling: true
+
+  # How much more a continue lets a job spend when the person names no amount,
+  # in US dollars; null is one more cap. At most continue_extra_max_usd.
+  # continue_default_extra_usd: null
+
 # Where a ticket states a code job's finish line, and how often a coding run
 # goes back to unmet items.
 done_when:

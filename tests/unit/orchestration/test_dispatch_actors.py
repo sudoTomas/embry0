@@ -8,7 +8,7 @@ import pytest
 
 from embry0.orchestration import dispatch_actors
 from embry0.trackers.models import actor_of
-from tests.unit.orchestration.test_budget_gate import FakeConfigRepo, FakeSpendRepo, _gate
+from tests.unit.orchestration.test_budget_gate import FakeSettings, FakeSpendRepo, _gate
 
 _EMBRY0 = Path(__file__).resolve().parents[3] / "embry0"
 
@@ -19,7 +19,7 @@ async def test_exempt_service_actors_are_never_rate_limited(actor):
     """limit=1 is the starvation case: the count includes the job being
     checked, so a non-exempt watcher would refuse every one of its own ticks."""
     spend = FakeSpendRepo(actor_count=500)
-    decision = await _gate(FakeConfigRepo(rate_limit_per_author_per_hour=1), spend).check(actor=actor)
+    decision = await _gate(FakeSettings(rate_limit_per_author_per_hour=1), spend).check(actor=actor)
     assert decision.allowed is True
     assert spend.actor_calls == []
 
@@ -40,7 +40,7 @@ async def test_everything_else_is_rate_limited(actor):
     """Exemption is an exact closed set: an autonomous actor (the reconciler)
     keeps the limit as a brake, and a new `embry0:` name is not exempt by
     accident."""
-    decision = await _gate(FakeConfigRepo(rate_limit_per_author_per_hour=5), FakeSpendRepo(actor_count=5)).check(
+    decision = await _gate(FakeSettings(rate_limit_per_author_per_hour=5), FakeSpendRepo(actor_count=5)).check(
         actor=actor
     )
     assert decision.allowed is False

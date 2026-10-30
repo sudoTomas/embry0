@@ -18,6 +18,7 @@ from embry0.config import Embry0Config
 from embry0.services.context_audit import ContextAuditLoop, RepoContext
 from embry0.services.organizations import Organization
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
+from tests.fixtures.budget_settings import budget_reader
 
 HEAD = "1" * 40
 NOW = datetime(2026, 10, 2, tzinfo=UTC)
@@ -111,7 +112,7 @@ def make_app(monkeypatch: pytest.MonkeyPatch, **config: Any) -> Any:
     app = create_app(Embry0Config(_env_file=None, **settings))
     app.state.organizations_repo = FakeOrgsRepo(
         # The schedule is off: a start by hand does not read the switch.
-        Organization(owner="acme", forge="github", settings={"context_audit_budget_usd": 4.0}),
+        Organization(owner="acme", forge="github"),
         Organization(owner="lab", forge="gitlab"),
         Organization(owner="paused", forge="github", status="paused"),
     )
@@ -145,8 +146,10 @@ def make_app(monkeypatch: pytest.MonkeyPatch, **config: Any) -> Any:
         client_for=client_for,
         start_job=start_job,
         ask_gate=open_gate,
-        max_jobs_per_tick=3,
-        budget_usd=2.0,
+        # The organization's own cap is its layer of the budget section (#171).
+        budget=budget_reader(
+            {"context_audit_max_jobs_per_tick": 3, "context_audit_job_usd": 2.0}, acme={"context_audit_job_usd": 4.0}
+        ),
         clock=lambda: NOW,
     )
     audits: list[tuple[str, str, dict[str, Any]]] = []

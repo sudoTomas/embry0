@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from embry0.settings.registry import Catalog
 from embry0.settings.sections.asks import ASKS
+from embry0.settings.sections.budget import BUDGET
 from embry0.settings.sections.done_when import DONE_WHEN
 from embry0.settings.sections.salvage import SALVAGE
 from embry0.settings.sections.scout import SCOUT
@@ -24,6 +25,7 @@ from embry0.settings.sections.ui import UI
 CATALOG: Catalog = Catalog(
     [
         ASKS,
+        BUDGET,
         DONE_WHEN,
         SALVAGE,
         SCOUT,

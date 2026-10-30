@@ -818,7 +818,7 @@ graph TB
     end
 
     subgraph Configuration
-        BG["/config/budget · /config/context ·<br/>/config/provider · /config/integrations"]
+        BG["/config/settings · /config/context ·<br/>/config/provider · /config/integrations"]
         SP["/sandbox-profiles · /pipeline-templates ·<br/>/agents · /repos/{repo}/-/preferences ·<br/>/environments"]
     end
 
@@ -1499,24 +1499,39 @@ WebSocket fan-out is managed by `embry0.api.events.EventBus` — a concurrency-s
 
 ## Budget Controls
 
-Three layers of cost protection. All five settings live in the `budget_config`
-table, are edited via `GET/PUT /api/v1/config/budget` (and the Settings UI), and
-fall back to the environment variable below when no row has been saved:
+Three layers of cost protection. Every limit is a key of the settings
+document's `budget` section ([configuration.md](configuration.md#settings-document)),
+edited on the General tab, the Policy tab or `PATCH /api/v1/config/settings/budget`,
+admin only, and read again at every check: the dispatch gate reads the section
+at each dispatch and a job at each check of its cap, from the store's snapshot,
+which is read again whenever the document changed. Before #171 they were the
+`budget_config` row, falling back to the variables below until a row was saved;
+the first start of that release imported the row once (or the variables), so a
+deployment kept its caps:
 
-| Control | Config Variable | Default | Enforced |
-|---------|----------------|---------|----------|
-| Per-job budget | `MAX_BUDGET_USD` | $10.00 | Layer 1 — after every agent turn |
-| Overrun mode | `BUDGET_OVERRUN_MODE` | `soft` | Layer 1 — how a crossing is handled |
-| Daily cap | `DAILY_BUDGET_CAP_USD` | $100.00 | Layer 2 — at dispatch |
-| Monthly cap | `MONTHLY_BUDGET_CAP_USD` | $500.00 | Layer 2 — at dispatch |
-| Rate limit | `RATE_LIMIT_PER_AUTHOR_PER_HOUR` | 5 | Layer 3 — at dispatch, per actor |
+| Control | `budget` key | Imported from | Default | Enforced |
+|---------|--------------|---------------|---------|----------|
+| Per-job ceiling | `max_budget_per_job_usd` | `MAX_BUDGET_USD` | $10.00 | Layer 1 — after every agent turn |
+| Overrun mode | `overrun_mode` | `BUDGET_OVERRUN_MODE` | `soft` | Layer 1 — how a crossing is handled |
+| Daily cap | `daily_cap_usd` | `DAILY_BUDGET_CAP_USD` | $100.00 | Layer 2 — at dispatch |
+| Monthly cap | `monthly_cap_usd` | `MONTHLY_BUDGET_CAP_USD` | $500.00 | Layer 2 — at dispatch |
+| Rate limit | `rate_limit_per_author_per_hour` | `RATE_LIMIT_PER_AUTHOR_PER_HOUR` | 5 | Layer 3 — at dispatch, per actor |
+
+For each of the four numbers, `0` is no limit; `null` is refused, so an empty
+value never lifts one. The same section holds the unattended jobs' hard caps
+(`context_audit_job_usd`, `area_map_job_usd`, `fix_job_usd`, each settable per
+organization) and the continue policy below.
 
 **Layer 1 — per-job cap (`embry0/orchestration/budget.py`).** `run_agent_node`
 is where every agent turn ends, so the cap is evaluated there after each turn
 (`evaluate_job_cap`). The spend it compares is the sum of the job's trace rows
 (`resolve_job_total_cost`), with the parent state's `total_cost_usd` as a floor.
 
-**Continuing past the cap.** A job that crossed its cap in `soft` mode pauses (`max_retries`), and the pause's summary carries `budget`: `{spent, cap, continue_adds}`. Answering it with `continue_retrying` is a person deciding to spend more. The job then gets `budget_allowance_usd`, so it may spend what it has spent plus one more cap, or plus `extra_budget_usd` from the resume body. `resolve_job_cap` adds the allowance on top of the fleet ceiling, because the ceiling bounds what triage or a job-create field picks, not a person's continue. An allowance is never lowered, and a continue within budget grants none.
+**Continuing past the cap.** A job that crossed its cap in `soft` mode pauses (`max_retries`), and the pause's summary carries `budget`: `{spent, cap, continue_adds}`. Answering it with `continue_retrying` is a person deciding to spend more. The job then gets `budget_allowance_usd`, so it may spend what it has spent plus one more cap (`budget.continue_default_extra_usd` when set), or plus `extra_budget_usd` from the resume body; whichever it is, at most `budget.continue_extra_max_usd` (1,000 by default). `resolve_job_cap` adds the allowance on top of the fleet ceiling, because the ceiling bounds what triage or a job-create field picks, not a person's continue: **a continue can take a job past `max_budget_per_job_usd`**, and may repeat up to `USER_RETRY_ROUNDS_CAP` times, unless `budget.continue_may_exceed_ceiling` is false. Then the ceiling bounds the allowance too: a continue adds at most what is left under it, and a job at it is not offered one. An allowance is never lowered, and a continue within budget grants none. Each raise writes a `job.budget_raised` audit row naming who continued the job, what it had spent, and its cap before and after; the settings document's revisions record changes to the caps themselves.
+
+**The cap in force decides the soft-mode route (#283).** Every check of the per-job cap records the cap it enforced and the spend it counted on the job's state (`budget_cap_usd`, `budget_spent_usd`), and `check_budget` compares the two. So a continued job stops at the cap its pause promised even when triage picked more than the ceiling, and a lowered ceiling, or one a continue may no longer pass, holds for a job already continued, from its next agent turn. The two keys are optional and have no value until a check records one, so a job a release without them checkpointed resumes with no recorded cap and routes as before (its overrun verdict and allowance decide) until its next turn; a reducer over a plain number would have started them at 0, an over-budget cap that a continue would have raised.
+
+**A cap the import has not imported yet** is read as the release before read it (`embry0/services/budget_policy.py`): the saved `budget_config` row, else its variable; an organization's audit caps from its own settings until its layer imported them. So a first start whose import failed never runs on the code defaults. The import is tried again while the orchestrator runs, and logged at error level until it succeeds. `GET /config/settings/effective`, and so the General and Policy tabs, show each such key with the value enforced and source `not_imported`, naming where it is read from, so an operator changes the cap that holds, not a default. The dispatch gate is built in one place, `build_budget_gate(policy)` (`embry0/orchestration/budget_gate.py`), over the budget policy; a test pins that nothing else constructs one.
 
 **What layer 1 covers:** every agent turn of the job, the QA fan-out included.
 QA sub-task agents run in sub-graphs whose cost never reaches the parent
@@ -1531,7 +1546,7 @@ anywhere else. Layers 2 and 3 roll up from the same trace rows.
 
 The cap in force is triage's
 `pipeline_config.budget_usd` (or a `POST /jobs` `max_budget_usd` override),
-bounded by the fleet-wide `max_budget_per_job_usd` — an operator lowering the
+bounded by the fleet-wide `budget.max_budget_per_job_usd` — an operator lowering the
 fleet cap is never outvoted by an LLM's pick. On a crossing:
 
 - `overrun_mode=hard` raises `BudgetOverrunError` immediately, so the graph

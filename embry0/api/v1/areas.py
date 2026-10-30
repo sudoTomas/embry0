@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
+from embry0.api.budget import unattended_cap
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
@@ -102,8 +103,7 @@ async def map_areas(full_repo: str, request: Request, body: MapBody | None = Non
         raise HTTPException(status_code=429, detail=refusal.public_message)
     stacks = getattr(state, "watcher_stacks_repo", None)
     stack = await stacks.get(repo) if stacks is not None else None
-    from embry0.services.context_audit import job_budget_usd
-
+    budget_usd = await unattended_cap(request, repo, "area_map_job_usd")
     try:
         existing = await _read_file(request, repo)
     except Exception:  # noqa: BLE001 - the agent reads the file in its clone too
@@ -116,7 +116,7 @@ async def map_areas(full_repo: str, request: Request, body: MapBody | None = Non
             executor=executor,
             templates=getattr(state, "templates_repo", None),
             task=task,
-            budget_usd=job_budget_usd(state.config),
+            budget_usd=budget_usd,
             dispatched_by=actor,
             run_with=run_with,
             db=getattr(state, "db", None),

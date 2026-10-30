@@ -22,7 +22,8 @@ from structlog.testing import capture_logs
 from embry0.orchestration.budget_gate import BudgetGate, DispatchDecision
 from embry0.services.linear_reconciler import ACTOR, LinearDispatchReconciler, ReconcilerSettings
 from embry0.services.linear_sync import LinearSyncService
-from embry0.storage.repositories.budget_config import BudgetConfigRepository
+from embry0.settings.sections.budget import BUDGET
+from embry0.settings.store import SettingsStore, section_reader
 from embry0.storage.repositories.budget_spend import BudgetSpendRepository
 from embry0.storage.repositories.dispatch_ledger import DispatchLedgerRepository
 from embry0.storage.repositories.issues import IssuesRepository
@@ -133,7 +134,7 @@ async def test_three_shadow_sweeps_change_no_table_and_send_no_mutation(db_with_
     issues, jobs = IssuesRepository(db), JobsRepository(db)
     await _seed(db, issues, jobs)
     linear = _Linear()
-    executor = _GatedExecutor(BudgetGate(BudgetConfigRepository(db), BudgetSpendRepository(db)))
+    executor = _GatedExecutor(BudgetGate(section_reader(SettingsStore(db), BUDGET), BudgetSpendRepository(db)))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(linear)) as http:
         sync = LinearSyncService("lin_api_key", {}, http_client=http)
