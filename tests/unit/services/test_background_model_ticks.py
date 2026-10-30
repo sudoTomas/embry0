@@ -185,19 +185,22 @@ async def test_the_slop_judge_reads_its_model_at_every_tick() -> None:
 
 
 async def test_the_scout_pins_each_job_to_the_model_read_at_its_tick() -> None:
-    _takes_a_reader(ScoutLoop)
     from tests.unit.services import test_scout as fakes
 
+    assert "models" not in inspect.signature(ScoutLoop).parameters, (
+        "the scout reads its model with its section, from one snapshot a tick (TickSettings), not by a reader of its own"
+    )
     loop, _, jobs, _, _ = fakes.make_loop(repos=["acme/a", "acme/b"], max_in_flight=4, templates=("garden",))
-    loop.models.set({"acme/a": "custom/first"})
+    models = loop.settings.models
+    models.set({"acme/a": "custom/first"})
     first = (await loop.tick())["started"]
     assert [jobs.rows[j]["created_with"]["repo"] for j in first] == ["acme/a"], (
         "a repository with no model is not scouted"
     )
-    loop.models.set({"acme/a": "custom/first", "acme/b": "custom/second"})
+    models.set({"acme/a": "custom/first", "acme/b": "custom/second"})
     second = (await loop.tick())["started"]
     assert [
         (jobs.rows[j]["created_with"]["repo"], jobs.rows[j]["created_with"]["pipeline_config"]["agent_models_override"])
         for j in second
     ] == [("acme/b", {"*": "custom/second"})], "the next tick pins its job to the model its repository reads now"
-    assert loop.models.reads == 2, "one read of the section per tick"
+    assert models.reads == 2, "one read of the section per tick"

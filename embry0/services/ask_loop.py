@@ -26,7 +26,8 @@ from typing import Any, Protocol
 
 import structlog
 
-from embry0.services.asks import AskPolicy, PerRepository, expired, next_working_time, plan
+from embry0.services.asks import AskPolicy, expired, next_working_time, plan
+from embry0.settings.layers import PerRepository
 from embry0.settings.sections.asks import AsksSettings
 
 logger = structlog.get_logger(__name__)
@@ -44,7 +45,7 @@ class _Asks(Protocol):
 class AskLoop:
     #: The ``asks`` section of the current snapshot, read per repository at the top of every tick:
     #: ``scoped_reader(store, ASKS)`` in production.
-    settings: Callable[[], Awaitable[PerRepository]]
+    settings: Callable[[], Awaitable[PerRepository[AsksSettings]]]
     asks: _Asks
     #: The open decisions, with owners, held and assigned_to (the decisions API's shape).
     decisions: Callable[[], Awaitable[list[dict[str, Any]]]]
@@ -54,7 +55,7 @@ class AskLoop:
     #: Whether the last tick found asks on; None before the first.
     _enabled: bool | None = field(default=None, init=False, repr=False)
 
-    async def tick(self, section: PerRepository | None = None) -> dict[str, int]:
+    async def tick(self, section: PerRepository[AsksSettings] | None = None) -> dict[str, int]:
         """One pass with the policy read now (or ``section``, read by the caller this tick).
 
         While asks are off it reads and changes nothing.
@@ -69,7 +70,7 @@ class AskLoop:
             return {"expired": 0, "withdrawn": 0, "queued": 0}
         return await self._pass(section)
 
-    async def _pass(self, section: PerRepository) -> dict[str, int]:
+    async def _pass(self, section: PerRepository[AsksSettings]) -> dict[str, int]:
         now = self.clock()
         # The decisions first: an ask is held to its decision's organization's values.
         decisions = await self.decisions()

@@ -17,6 +17,7 @@ from embry0.services.areas import Area
 from embry0.services.scout import (
     ACTOR,
     ScoutLoop,
+    TickSettings,
     Unit,
     crack_leads,
     due,
@@ -28,6 +29,7 @@ from embry0.services.scout import (
     weed_leads,
 )
 from embry0.settings.sections.scout import ScoutSettings
+from tests.fixtures.scout import scout_read
 
 T0 = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
 LOCAL = "custom/qwen3-27b"
@@ -116,7 +118,11 @@ def test_the_task_names_the_template_s_deliverable_and_an_area_s_paths() -> None
 def test_never_scouted_units_go_first_then_the_longest_ago_and_a_recent_one_waits() -> None:
     a, b, c = (Unit("acme/a", "", "garden"), Unit("acme/b", "", "garden"), Unit("acme/c", "", "garden"))
     last = {a.key: T0 - timedelta(hours=30), c.key: T0 - timedelta(hours=2)}
-    assert due([a, b, c], last, T0, timedelta(hours=24)) == [b, a]
+    day = {u.repo: timedelta(hours=24) for u in (a, b, c)}
+    assert due([a, b, c], last, T0, day) == [b, a]
+    assert due([a, b, c], last, T0, {**day, "acme/c": timedelta(hours=1)}) == [b, a, c], (
+        "each unit waits its own repository's revisit: acme/c, scouted 2 hours ago, comes back after 1"
+    )
 
 
 def _retired_tick_warnings(**env: str) -> tuple[bool, list[dict[str, Any]]]:
@@ -262,18 +268,21 @@ class Models:
 
 
 class Policy:
-    """The ``scout`` section as a test hands it to the loop: ``set`` replaces it before the next tick."""
+    """What a tick reads, as a test hands it to the loop: the ``scout`` section of one snapshot, read per
+    repository, and ``models``. ``set`` replaces the deployment's values before the next tick; ``reads``
+    counts the reads, one a tick."""
 
-    def __init__(self, **values: Any) -> None:
+    def __init__(self, models: Models, **values: Any) -> None:
+        self.models = models
         self.set(**values)
         self.reads = 0
 
     def set(self, **values: Any) -> None:
-        self.current = ScoutSettings(**values)
+        self.current = scout_read(ScoutSettings(**values))
 
-    async def __call__(self) -> ScoutSettings:
+    async def __call__(self) -> TickSettings:
         self.reads += 1
-        return self.current
+        return TickSettings(section=self.current, models=await self.models())
 
 
 def make_loop(*, repos: list[str], areas: dict[str, list[Area]] | None = None, refuse: Any = None, **settings: Any):
@@ -293,8 +302,7 @@ def make_loop(*, repos: list[str], areas: dict[str, list[Area]] | None = None, r
         submitted.append((job_id, unit, text))
 
     loop = ScoutLoop(
-        models=Models(LOCAL),
-        settings=Policy(**settings),
+        settings=Policy(Models(LOCAL), **settings),
         runs=runs,
         jobs=jobs,
         leads=leads,
@@ -361,7 +369,7 @@ async def test_a_job_s_leads_are_capped_the_worst_first() -> None:
 @pytest.mark.asyncio
 async def test_without_a_model_the_loop_harvests_but_starts_nothing() -> None:
     loop, runs, jobs, _, submitted = make_loop(repos=["acme/a"])
-    loop.models.set("")
+    loop.settings.models.set("")
     assert await loop.tick() == {"harvested_leads": 0, "started": []}
     assert submitted == []
 

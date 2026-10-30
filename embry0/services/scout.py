@@ -15,7 +15,15 @@ Its policy is the settings document's ``scout`` section
 (:mod:`embry0.settings.sections.scout`), read at the top of every tick, so a
 change applies on the next one: which templates run, how many jobs are out at
 once and start in a day, each job's hard cap, how often a unit comes back and
-how many leads a job adds.
+how many leads a job adds. A tick takes one snapshot of the settings
+documents and reads both this section and the scout's model from it, so a
+write that lands during a tick cannot hand it two versions of them
+(:func:`tick_settings`). It reads the section per repository: which
+templates run on a repository, how often it is scouted again and how
+many leads one of its jobs adds follow its organization's layer, and the
+deployment's document for the rest. How many jobs are out at once, how many
+start in a day and each job's hard cap are the deployment's alone: they bound
+what the scout starts and spends across every organization.
 
 When a job finishes, its deliverable becomes leads: one ``weed`` per weed card
 and one ``crack`` per ledger row, the worst first and at most
@@ -33,7 +41,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -42,8 +50,10 @@ import structlog
 
 from embry0.orchestration import dispatch_actors
 from embry0.services.areas import Area
+from embry0.services.background_models import ModelLookup, model_lookup
 from embry0.services.leads import Lead, by_severity
-from embry0.settings.sections.scout import ScoutSettings
+from embry0.settings.layers import PerRepository
+from embry0.settings.sections.scout import SCOUT, ScoutSettings
 
 logger = structlog.get_logger(__name__)
 
@@ -134,11 +144,15 @@ def task(unit: Unit) -> str:
 
 
 def due(
-    candidates: Iterable[Unit], last: dict[tuple[str, str, str], datetime], now: datetime, revisit: timedelta
+    candidates: Iterable[Unit],
+    last: dict[tuple[str, str, str], datetime],
+    now: datetime,
+    revisit: Mapping[str, timedelta],
 ) -> list[Unit]:
-    """The units to scout, never-scouted first, then the longest ago; one scouted within ``revisit`` waits."""
+    """The units to scout, never-scouted first, then the longest ago; one scouted within its
+    repository's ``revisit`` (keyed by ``Unit.repo``) waits."""
     never = datetime.min.replace(tzinfo=UTC)
-    waiting = [u for u in candidates if last.get(u.key) is None or now - last[u.key] >= revisit]
+    waiting = [u for u in candidates if last.get(u.key) is None or now - last[u.key] >= revisit[u.repo]]
     return sorted(waiting, key=lambda u: last.get(u.key) or never)
 
 
@@ -323,13 +337,33 @@ class _Leads(Protocol):
     ) -> None: ...
 
 
+@dataclass(frozen=True)
+class TickSettings:
+    """What one tick of the scout reads, all from one snapshot of the settings documents."""
+
+    #: The ``scout`` section, read per repository.
+    section: PerRepository[ScoutSettings]
+    #: ``repo -> model`` every scouting job of that repository is pinned to (``background_models.scout``,
+    #: per repository); '' leaves the repository unscouted.
+    models: ModelLookup
+
+
+def tick_settings(store: Any) -> Callable[[], Awaitable[TickSettings]]:
+    """The reader the scout is built with: each call takes one snapshot of the settings documents
+    (``store.snapshot()``) and reads both the ``scout`` section and ``background_models.scout`` from it."""
+
+    async def read() -> TickSettings:
+        snapshot = await store.snapshot()
+        return TickSettings(section=snapshot.scoped(SCOUT), models=model_lookup(snapshot, "scout"))
+
+    return read
+
+
 @dataclass
 class ScoutLoop:
-    #: ``repo -> model`` every scouting job of that repository is pinned to, read at the top of every
-    #: tick: ``background_model(store, "scout")`` in production. '' for a repository leaves it unscouted.
-    models: Callable[[], Awaitable[Callable[[str | None], str]]]
-    #: The ``scout`` section, read at the top of every tick: ``section_reader(store, SCOUT)`` in production.
-    settings: Callable[[], Awaitable[ScoutSettings]]
+    #: What a tick reads, from one snapshot of the settings documents, at the top of every tick:
+    #: ``tick_settings(store)`` in production.
+    settings: Callable[[], Awaitable[TickSettings]]
     runs: _Runs
     jobs: _Jobs
     leads: _Leads
@@ -347,10 +381,11 @@ class ScoutLoop:
     #: Whether the last dispatch found a model for any repository in scope; None before the first.
     _modelled: bool | None = field(default=None, init=False, repr=False)
 
-    async def harvest(self, policy: ScoutSettings | None = None) -> int:
-        """Turn every finished scouting job into leads, once; how many leads were stored."""
-        if policy is None:
-            policy = await self.settings()
+    async def harvest(self, read: TickSettings | None = None) -> int:
+        """Turn every finished scouting job into leads, once, at most its repository's
+        ``max_leads_per_job`` each; how many leads were stored."""
+        if read is None:
+            read = await self.settings()
         stored = 0
         now = self.clock()
         for run in await self.runs.unharvested():
@@ -366,7 +401,7 @@ class ScoutLoop:
                     str(run.get("area") or ""),
                     str(run["job_id"]),
                     job.get("result_summary"),
-                    policy.max_leads_per_job,
+                    read.section.repo(str(run["repo"])).max_leads_per_job,
                 )
             if found:
                 area = str(run.get("area") or "") or None
@@ -376,16 +411,15 @@ class ScoutLoop:
             logger.info("scout_harvested", job_id=run["job_id"], status=status or "gone", leads=len(found))
         return stored
 
-    async def dispatch(
-        self, policy: ScoutSettings | None = None, lookup: Callable[[str | None], str] | None = None
-    ) -> list[str]:
+    async def dispatch(self, read: TickSettings | None = None) -> list[str]:
         """Start the most overdue units while fewer than ``max_in_flight`` scouting jobs are out,
-        and fewer than ``max_jobs_per_day`` started in the last 24 hours, each pinned to its
-        repository's model; a repository with none is not scouted."""
-        if policy is None:
-            policy = await self.settings()
-        if lookup is None:
-            lookup = await self.models()
+        and fewer than ``max_jobs_per_day`` started in the last 24 hours (the deployment's), each
+        pinned to its repository's model; a repository with none is not scouted. Each repository
+        runs its own ``templates`` and waits its own ``revisit_hours``."""
+        if read is None:
+            read = await self.settings()
+        section, lookup = read.section, read.models
+        policy = section.deployment()
         in_flight = len(await self.runs.unharvested())
         room = policy.max_in_flight - in_flight
         if room <= 0:
@@ -406,14 +440,17 @@ class ScoutLoop:
                 )
             self._modelled = bool(modelled)
         candidates: list[Unit] = []
+        revisit: dict[str, timedelta] = {}
         for repo in modelled:
+            own = section.repo(repo)
             try:
                 areas = await self.areas_for(repo)
             except Exception:  # noqa: BLE001 - a repository we cannot read is scouted whole
                 areas = []
-            candidates += units(repo, areas, policy.templates)
+            candidates += units(repo, areas, own.templates)
+            revisit[repo] = timedelta(hours=own.revisit_hours)
         started: list[str] = []
-        for unit in due(candidates, await self.runs.last_dispatched(), now, timedelta(hours=policy.revisit_hours)):
+        for unit in due(candidates, await self.runs.last_dispatched(), now, revisit):
             if len(started) >= room:
                 break
             refusal = await self.ask_gate()
@@ -447,23 +484,24 @@ class ScoutLoop:
         logger.info("scout_started", job_id=job_id, repo=unit.repo, area=unit.area, template=unit.template, model=model)
         return job_id
 
-    async def tick(self, policy: ScoutSettings | None = None) -> dict[str, Any]:
-        """One pass with the policy and the models read now (or ``policy``, read by the caller this tick).
+    async def tick(self, read: TickSettings | None = None) -> dict[str, Any]:
+        """One pass with the policy and the models read now (or ``read``, read by the caller this
+        tick): one snapshot of the settings documents, which harvest and dispatch read per repository.
 
         Finished jobs are read into leads whatever the policy; new jobs start
-        only with ``max_in_flight`` above 0, and only on a repository with a model.
+        only with the deployment's ``max_in_flight`` above 0, and only on a
+        repository with a model.
         """
-        if policy is None:
-            policy = await self.settings()
-        lookup = await self.models()
-        starting = policy.max_in_flight > 0
+        if read is None:
+            read = await self.settings()
+        starting = read.section.deployment().max_in_flight > 0
         if starting != self._starting:
             # The first tick says only a pause: start() has said the scout is on.
             if self._starting is not None or not starting:
                 logger.info("scout_starting" if starting else "scout_paused", reason="scout.max_in_flight")
             self._starting = starting
-        harvested = await self.harvest(policy)
-        started = await self.dispatch(policy, lookup) if starting else []
+        harvested = await self.harvest(read)
+        started = await self.dispatch(read) if starting else []
         return {"harvested_leads": harvested, "started": started}
 
     async def start(self) -> None:  # pragma: no cover - exercised by the app

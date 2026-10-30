@@ -11,15 +11,36 @@ it was written can be refused later, together with what it inherits, once
 the layer below changes. The values that combine are kept; the keys a
 refusal names are dropped from the layer that set them, which then reads the
 inherited value instead. A read never raises because of it.
+
+A loop or a request that works per repository takes one section of one
+snapshot as a :class:`PerRepository`, so the service never imports the store.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from embry0.settings.registry import Section, SectionModel, SectionRefused
+
+
+@runtime_checkable
+class PerRepository[M: SectionModel](Protocol):
+    """One section of one settings snapshot, read per repository.
+
+    ``deployment()`` is the deployment's values: what a loop decides once for
+    every repository. ``repo(repo)`` is what one repository reads: the
+    deployment's values, then those of its organization's layer and its own
+    where the section lets them set a key; ``None`` reads the deployment's.
+    Each answer is worked out in memory. ``scoped_reader`` hands one out per
+    call (:class:`embry0.settings.store.Scoped`), so a loop built with it
+    takes this type and never imports the store.
+    """
+
+    def deployment(self) -> M: ...
+
+    def repo(self, repo: str | None) -> M: ...
 
 
 @dataclass(frozen=True)

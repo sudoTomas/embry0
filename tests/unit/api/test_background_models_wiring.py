@@ -24,8 +24,10 @@ READERS = {
     "ProposalBriefWriter": ("models", "background_model(app.state.settings, 'proposal_brief')"),
     "JobBriefWriter": ("models", "background_model(app.state.settings, 'job_brief')"),
     "SlopMeterLoop": ("models", "background_model(app.state.settings, 'slop_judge')"),
-    "ScoutLoop": ("models", "background_model(app.state.settings, 'scout')"),
 }
+#: The scout reads its model with its own section, from one snapshot a tick: ``tick_settings`` reads
+#: ``background_models.scout`` (``tests/unit/api/test_scout_per_organization.py`` runs it).
+SCOUT_READER = ("settings", "tick_settings(app.state.settings)")
 #: The variables and the provider setting the features read before #164; app.py reads none of them now.
 RETIRED = ("proposal_brief_model", "job_brief_model", "scout_model", "context_audit_local_model", "watcher_local_model")
 
@@ -52,6 +54,15 @@ def test_each_loop_reads_its_own_key_of_the_section_every_tick(loop: str) -> Non
     assert passed.get(keyword) == reader, (
         f"{loop} must read its model from background_models every tick, through its own key (#164); "
         f"got {keyword}={passed.get(keyword)!r}"
+    )
+
+
+def test_the_scout_reads_its_model_and_its_section_from_one_snapshot() -> None:
+    keyword, reader = SCOUT_READER
+    passed = _keywords(_construction("ScoutLoop"))
+    assert passed.get(keyword) == reader and "models" not in passed, (
+        "the scout reads background_models.scout and its scout section from one snapshot a tick, through one "
+        f"reader, so a write during a tick cannot mix two versions; got {passed}"
     )
 
 

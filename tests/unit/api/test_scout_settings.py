@@ -15,6 +15,7 @@ has no scout section.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
@@ -28,12 +29,12 @@ from structlog.testing import capture_logs
 from embry0.api.app import create_app, lifespan
 from embry0.api.deps import bust_api_key_cache
 from embry0.config import Embry0Config
-from embry0.services.scout import ScoutLoop
+from embry0.services.scout import ScoutLoop, TickSettings, tick_settings
 from embry0.settings.bootstrap import BOOTSTRAP_ACTOR, import_env_once, log_ignored_env
 from embry0.settings.document import load_yaml
 from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
-from embry0.settings.store import SettingsStore, section_reader
+from embry0.settings.store import SettingsStore
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 from embry0.storage.repositories.scout import ScoutRunsRepository
@@ -135,12 +136,14 @@ def _loop(store: SettingsStore, db: DatabasePool, jobs: FakeJobs, clock: list[da
 
     leads = MagicMock(upsert=AsyncMock())
 
-    async def models() -> Any:
-        return lambda repo: LOCAL
+    production = tick_settings(store)
+
+    async def settings() -> TickSettings:
+        # The store's scout section, as production reads it; every repository on the local model.
+        return dataclasses.replace(await production(), models=lambda repo: LOCAL)
 
     return ScoutLoop(
-        models=models,
-        settings=section_reader(store, _scout()),
+        settings=settings,
         runs=ScoutRunsRepository(db),
         jobs=jobs,
         leads=leads,
@@ -318,12 +321,14 @@ async def test_the_lifespan_builds_the_scout_loop_with_a_reader_of_the_document(
             assert callable(loop.settings), (
                 "the scout loop is built with a reader of the settings document, not a value read once at startup"
             )
-            assert (await loop.settings()).revisit_hours == 12.0, (
+            assert (await loop.settings()).section.deployment().revisit_hours == 12.0, (
                 "the boot imported SCOUT_REVISIT_HOURS into what it reads"
             )
             text = "scout:\n  revisit_hours: 3\n"
             await first.state.settings.save(text, load_yaml(text), actor="alex@example.com")
-            assert (await loop.settings()).revisit_hours == 3.0, "a write reaches the running loop's reader"
+            assert (await loop.settings()).section.deployment().revisit_hours == 3.0, (
+                "a write reaches the running loop's reader"
+            )
             kept = len(await first.state.settings.revisions())
     retired = [e.get("variable") for e in logs if e["event"] == "settings_env_retired"]
     assert retired == ["SCOUT_TICK_SECONDS"], (
@@ -332,5 +337,7 @@ async def test_the_lifespan_builds_the_scout_loop_with_a_reader_of_the_document(
 
     second = create_app(config)
     async with lifespan(second):
-        assert (await second.state.scout.settings()).revisit_hours == 3.0, "a second boot imports nothing again"
+        assert (await second.state.scout.settings()).section.deployment().revisit_hours == 3.0, (
+            "a second boot imports nothing again"
+        )
         assert len(await second.state.settings.revisions()) == kept

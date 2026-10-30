@@ -364,11 +364,16 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
     app = create_app(config)
     async with lifespan(app):
         state = app.state
+
+        async def scout() -> Any:
+            # The scout reads its model with its section, from one snapshot a tick.
+            return (await state.scout.settings()).models
+
         readers = {
             "proposal_brief": state.proposal_brief_writer._models,  # noqa: SLF001
             "job_brief": state.job_brief_writer._models,  # noqa: SLF001
             "slop_judge": state.slop_meter._models,  # noqa: SLF001
-            "scout": state.scout.models,
+            "scout": scout,
         }
 
         async def read() -> dict[str, str]:

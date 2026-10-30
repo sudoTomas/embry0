@@ -3,8 +3,10 @@
 A loop built without its gate or its job starter, or never started, constructs
 happily and scouts nothing, which looks exactly like "no model is set".
 A loop built with its section read once would run, and ignore every change to
-it. Read from the AST of ``lifespan``, as test_context_audit_wiring.py does;
-``tests/unit/api/test_scout_settings.py`` runs the real lifespan.
+it; one built with the deployment's values alone would ignore every
+organization's layer. Read from the AST of ``lifespan``, as
+test_context_audit_wiring.py does; ``tests/unit/api/test_scout_settings.py``
+and ``tests/unit/api/test_scout_per_organization.py`` run the real lifespan.
 """
 
 from __future__ import annotations
@@ -37,13 +39,11 @@ def _function(name: str) -> ast.AsyncFunctionDef:
 
 def test_the_loop_reads_its_settings_and_its_collaborators_and_is_started() -> None:
     passed = {kw.arg: ast.unparse(kw.value) for kw in _construction("ScoutLoop").keywords if kw.arg}
-    assert passed.get("settings") == "_section_reader(app.state.settings, _SCOUT)", (
-        "the scout reads the settings document's scout section every tick, through a reader of the store"
+    assert passed.get("settings") == "tick_settings(app.state.settings)", (
+        "the scout reads its scout section, per repository (#278), and its model (background_models.scout, "
+        "#164) every tick, both from one snapshot of the store"
     )
-    assert passed.get("models") == "background_model(app.state.settings, 'scout')", (
-        "the scout's model is read from the settings document's background_models section every tick (#164), "
-        "not SCOUT_MODEL read once at startup"
-    )
+    assert "models" not in passed, "no second reader: a tick that read the store twice could mix two versions"
     assert passed.get("leads") == "app.state.leads_repo", "harvested cracks and weeds go where every lead goes"
     assert passed.get("jobs") == "app.state.jobs_repo"
     assert passed.get("ask_gate") == "_scout_gate" and passed.get("submit") == "_scout_submit"
