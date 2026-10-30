@@ -15,15 +15,15 @@ describe("documentProblems", () => {
       ]),
     );
     expect(problems).toEqual([
-      { key: "sample.per_tick", msg: "Input should be less than or equal to 20" },
-      { key: "sample.enabled", msg: "Input should be a valid boolean" },
-      { key: "smaple", msg: "'smaple' is not a settings section. Did you mean 'sample'?" },
+      { key: "sample.per_tick", msg: "Input should be less than or equal to 20", type: "less_than_equal" },
+      { key: "sample.enabled", msg: "Input should be a valid boolean", type: "bool_type" },
+      { key: "smaple", msg: "'smaple' is not a settings section. Did you mean 'sample'?", type: "unknown_section" },
     ]);
   });
 
   it("gives a YAML syntax error, whose loc is empty, no key", () => {
     expect(documentProblems(refused(422, [{ loc: [], type: "yaml_syntax", msg: "Line 2, column 3: bad indent" }]))).toEqual([
-      { key: null, msg: "Line 2, column 3: bad indent" },
+      { key: null, msg: "Line 2, column 3: bad indent", type: "yaml_syntax" },
     ]);
   });
 
@@ -35,7 +35,7 @@ describe("documentProblems", () => {
     expect(JSON.stringify(problems)).not.toContain("s3cret-value");
   });
 
-  it("reads every kind of refusal the same way: by its loc, whatever its type", () => {
+  it("reads every kind of refusal the same way: by its loc, with its type", () => {
     const problems = documentProblems(
       refused(422, [
         { loc: ["sample", "per_tick"], type: "duplicate_key", msg: "'per_tick' is written twice, on lines 3 and 5; YAML would keep only the second. Keep one." },
@@ -47,12 +47,33 @@ describe("documentProblems", () => {
       ]),
     );
     expect(problems).toEqual([
-      { key: "sample.per_tick", msg: "'per_tick' is written twice, on lines 3 and 5; YAML would keep only the second. Keep one." },
-      { key: "sample", msg: "Aliases (*name) are not supported in a settings document." },
-      { key: null, msg: "Line 4: merge keys (<<) are not supported." },
-      { key: null, msg: "The document is nested too deeply." },
-      { key: null, msg: "The document cannot hold the NUL character." },
-      { key: "sample.hours.0", msg: "The check of this value failed (ValueError)" },
+      {
+        key: "sample.per_tick",
+        msg: "'per_tick' is written twice, on lines 3 and 5; YAML would keep only the second. Keep one.",
+        type: "duplicate_key",
+      },
+      { key: "sample", msg: "Aliases (*name) are not supported in a settings document.", type: "yaml_alias" },
+      { key: null, msg: "Line 4: merge keys (<<) are not supported.", type: "yaml_merge" },
+      { key: null, msg: "The document is nested too deeply.", type: "too_deep" },
+      { key: null, msg: "The document cannot hold the NUL character.", type: "nul_character" },
+      { key: "sample.hours.0", msg: "The check of this value failed (ValueError)", type: "check_failed" },
+    ]);
+  });
+
+  it("keeps the type of a layer's refusal, so the editor can say the key is not settable there", () => {
+    const problems = documentProblems(
+      refused(422, [
+        {
+          loc: ["asks", "enabled"],
+          type: "not_overridable",
+          msg: "'enabled' is the deployment's; an organization can set hours in 'asks'.",
+        },
+        { loc: ["window"], type: "conflicts_with_inherited", msg: "high must not be below low" },
+      ]),
+    );
+    expect(problems?.map((problem) => problem.type), "a refusal's type was dropped").toEqual([
+      "not_overridable",
+      "conflicts_with_inherited",
     ]);
   });
 

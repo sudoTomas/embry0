@@ -27,6 +27,8 @@ import {
   useUndoSettingsChange,
 } from "../useSettingsDocument";
 
+const DEPLOYMENT_LAYER = { layer: "deployment" } as const;
+
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const invalidate = vi.spyOn(client, "invalidateQueries");
@@ -48,7 +50,7 @@ describe("useSaveSettings", () => {
     const { wrapper, invalidate } = setup();
     const { result } = renderHook(() => useSaveSettings(), { wrapper });
     await act(() => result.current.mutateAsync({ yamlText: "version: 1\n", generation: 3 }));
-    expect(mockSaveSettings).toHaveBeenCalledWith({ yamlText: "version: 1\n", generation: 3 });
+    expect(mockSaveSettings).toHaveBeenCalledWith({ yamlText: "version: 1\n", generation: 3 }, DEPLOYMENT_LAYER);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: SETTINGS_KEY });
   });
 
@@ -94,7 +96,7 @@ describe("usePreviewSettings", () => {
     const { wrapper, invalidate } = setup();
     const { result } = renderHook(() => usePreviewSettings(), { wrapper });
     await act(() => result.current.mutateAsync({ yamlText: "x: 1\n", generation: 3 }));
-    expect(mockPreview).toHaveBeenCalledWith("x: 1\n", 3);
+    expect(mockPreview).toHaveBeenCalledWith("x: 1\n", 3, DEPLOYMENT_LAYER);
     expect(invalidate).not.toHaveBeenCalled();
   });
 
@@ -150,5 +152,36 @@ describe("useSettingsRevision", () => {
     rerender({ id: 7 });
     await waitFor(() => expect(result.current.data).toEqual({ id: 7 }));
     expect(mockFetchRevision).toHaveBeenCalledWith(7);
+  });
+});
+
+describe("layers", () => {
+  const acme = { layer: "organization", owner: "acme" } as const;
+
+  it("keeps each layer's document apart, and saves a layer as that layer", async () => {
+    mockFetchSettings.mockImplementation(async (layer: { layer: string }) => ({ generation: layer.layer === "deployment" ? 3 : 0 }));
+    mockSaveSettings.mockResolvedValue({ generation: 1, revision_id: 4, changes: [], unknown_sections: [] });
+    const { wrapper, invalidate } = setup();
+    const { result } = renderHook(
+      () => ({ deployment: useSettingsDocument(), acme: useSettingsDocument(acme), save: useSaveSettings(acme) }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.acme.data).toEqual({ generation: 0 }));
+    expect(result.current.deployment.data, "one layer's document was read as another's").toEqual({ generation: 3 });
+    expect(mockFetchSettings).toHaveBeenCalledWith(acme);
+    expect(mockFetchSettings).toHaveBeenCalledWith(DEPLOYMENT_LAYER);
+
+    await act(() => result.current.save.mutateAsync({ yamlText: "asks:\n  hours: 08-17\n", generation: 0 }));
+    expect(mockSaveSettings).toHaveBeenCalledWith({ yamlText: "asks:\n  hours: 08-17\n", generation: 0 }, acme);
+    // A layer's change can change what the layers under it read: every view is read again.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: SETTINGS_KEY });
+  });
+
+  it("previews a layer as that layer", async () => {
+    mockPreview.mockResolvedValue({ would_change: true, text_diff: "", changes: [], unknown_sections: [], unknown_keys: [] });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => usePreviewSettings(acme), { wrapper });
+    await act(() => result.current.mutateAsync({ yamlText: "x: 1\n", generation: 2 }));
+    expect(mockPreview).toHaveBeenCalledWith("x: 1\n", 2, acme);
   });
 });

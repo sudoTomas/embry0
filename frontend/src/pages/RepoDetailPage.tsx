@@ -22,6 +22,7 @@ import { HistoryPanel } from "@/components/repos/HistoryPanel";
 import { SlopMeterSection } from "@/components/repos/SlopMeterSection";
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
 import { PullRequestReviewCard } from "@/components/environments/PullRequestReviewCard";
+import { PolicyLayerLink } from "@/components/settings/PolicyLayerLink";
 import { PageError } from "@/components/PageError";
 import { isNotFound } from "@/api/errorDetail";
 import { TableSkeleton } from "@/components/TableSkeleton";
@@ -143,6 +144,7 @@ export function RepoDetailPage() {
           <p className="text-sm text-fg-muted">
             Exact controls for people who know the values. Most repositories never need them.
           </p>
+          <PolicyLayerLink layer={{ layer: "repository", repo: full.toLowerCase() }} />
         </div>
 
         <AdvancedSection setting="testSetup">

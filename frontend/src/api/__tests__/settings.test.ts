@@ -90,6 +90,48 @@ describe("settings api", () => {
     expect(captured.config?.params).toBeUndefined();
   });
 
+  it("names a layer on every route that takes one, as ?owner= or ?repo=", async () => {
+    const captured = await capturing({ revisions: [], layers: [] });
+    const settings = await import("../settings");
+    const acme = { layer: "organization", owner: "acme" } as const;
+    const widgets = { layer: "repository", repo: "acme/widgets" } as const;
+
+    await settings.fetchSettings(acme);
+    expect([captured.config?.url, captured.config?.params]).toEqual(["/config/settings", { owner: "acme" }]);
+    await settings.fetchEffectiveSettings(widgets);
+    expect([captured.config?.url, captured.config?.params]).toEqual(["/config/settings/effective", { repo: "acme/widgets" }]);
+    await settings.fetchSettingsRevisions(acme);
+    expect([captured.config?.url, captured.config?.params]).toEqual(["/config/settings/revisions", { owner: "acme", limit: 50 }]);
+    await settings.previewSettings(YAML, 0, widgets);
+    expect(captured.config?.params).toEqual({ repo: "acme/widgets", dry_run: 1 });
+    expect(captured.config?.headers["If-Match"]).toBe('"0"');
+
+    await settings.fetchSettings();
+    expect(captured.config?.params, "the deployment's document names no layer").toBeUndefined();
+  });
+
+  it("saves a layer with If-Match naming the generation it read, 0 creating it, and the reason", async () => {
+    const captured = await capturing({ generation: 1, revision_id: 3, changes: [], unknown_sections: [] });
+    const { saveSettings } = await import("../settings");
+
+    await saveSettings({ yamlText: YAML, generation: 0, reason: " first hours " }, { layer: "organization", owner: "acme" });
+
+    expect(captured.config?.method).toBe("put");
+    expect(captured.config?.url).toBe("/config/settings");
+    expect(captured.config?.headers["If-Match"]).toBe('"0"');
+    expect(captured.config?.params).toEqual({ owner: "acme", reason: "first hours" });
+    expect(captured.config?.data).toBe(YAML);
+  });
+
+  it("lists the stored layers, unwrapped", async () => {
+    const layers = [{ layer: "organization", owner: "acme", repo: null, keys: ["asks.hours"] }];
+    const captured = await capturing({ layers });
+    const { fetchSettingsLayers } = await import("../settings");
+
+    await expect(fetchSettingsLayers()).resolves.toEqual(layers);
+    expect(captured.config?.url).toBe("/config/settings/layers");
+  });
+
   it("undoes with a POST to the revision, the 422 left to the caller", async () => {
     const captured = await capturing({ generation: 5, revision_id: 10, changes: [] });
     const { undoSettingsChange } = await import("../settings");
