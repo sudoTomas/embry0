@@ -1,13 +1,13 @@
-"""Configuration API — budget controls and context injection settings."""
+"""Configuration API — model, provider and integration settings, context injection, and the deprecated budget route."""
 
 import os
-from typing import Any
+from typing import Any, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from embry0.agents.model_policy import usable_default_model
+from embry0.api.budget import budget_settings
 from embry0.api.deps import (
-    get_budget_repo,
     get_config,
     get_context_repo,
     get_integration_repo,
@@ -22,10 +22,10 @@ from embry0.api.schemas import (
     IntegrationConfigUpdate,
     ProviderConfigUpdate,
 )
+from embry0.api.v1.settings import set_section_keys
 from embry0.audit.helpers import emit_audit
 from embry0.config import Embry0Config
 from embry0.services.provider_readiness import PROBE_AUDIT_ACTION, catalog_provider_for_model, readiness_by_provider
-from embry0.storage.repositories.budget_config import BudgetConfigRepository
 from embry0.storage.repositories.context_config import ContextConfigRepository
 from embry0.storage.repositories.integration_config import _SECRET_FIELDS, IntegrationConfigRepository
 from embry0.storage.repositories.provider_config import ProviderConfigRepository
@@ -151,30 +151,44 @@ async def refresh_openrouter_catalog(request: Request) -> dict[str, Any]:
     return dict(status)
 
 
-@router.get("/config/budget")
-async def get_budget(budget: BudgetConfigRepository = Depends(get_budget_repo)) -> BudgetConfigResponse:
-    config = await budget.get()
-    return BudgetConfigResponse(**{k: v for k, v in config.items() if k not in ("id", "updated_at")})
+#: The release that removes ``GET`` and ``PUT /config/budget``: the settings document's ``budget`` section
+#: replaced the ``budget_config`` row they read and wrote (#171).
+BUDGET_ROUTE_REMOVED_IN: Final = "0.2.0"
+#: The five keys the route has always read and written, each the ``budget`` section's key of the same name.
+BUDGET_ROUTE_KEYS: Final = tuple(BudgetConfigResponse.model_fields)
+_BUDGET_DEPRECATED: Final = (
+    f"Deprecated, and removed in {BUDGET_ROUTE_REMOVED_IN}: the budget is the settings document's `budget` "
+    "section now. Read it with GET /api/v1/config/settings/effective"
+)
 
 
-@router.put("/config/budget")
-async def update_budget(
-    req: BudgetConfigRequest,
-    request: Request,
-    budget: BudgetConfigRepository = Depends(get_budget_repo),
-) -> dict[str, Any]:
+@router.get(
+    "/config/budget",
+    deprecated=True,
+    summary="Read the fleet budget (deprecated)",
+    description=f"{_BUDGET_DEPRECATED}. Answers the section's values of its five keys, as before.",
+)
+async def get_budget(request: Request) -> BudgetConfigResponse:
+    policy = await budget_settings(request)
+    return BudgetConfigResponse(**{key: getattr(policy, key) for key in BUDGET_ROUTE_KEYS})
+
+
+@router.put(
+    "/config/budget",
+    deprecated=True,
+    dependencies=[require_admin],
+    summary="Change the fleet budget (deprecated)",
+    description=(
+        f"{_BUDGET_DEPRECATED}; change it with PATCH /api/v1/config/settings/budget. Sets the keys it is given "
+        "in the `budget` section, as that PATCH does: admin only, with a key that has no repository allowlist, "
+        "recorded as a revision and a settings.updated audit row. Its own checks are kept: a cap above 0, a rate "
+        "limit of 1 or more, so this route still cannot lift one."
+    ),
+)
+async def update_budget(req: BudgetConfigRequest, request: Request) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     if updates:
-        await budget.update(**updates)
-        db = getattr(request.app.state, "db", None)
-        config = getattr(request.app.state, "config", None)
-        await emit_audit(
-            db,
-            "budget_config_updated",
-            actor=request_actor(request),
-            details=updates,
-            audit_log_path=getattr(config, "audit_log_path", None),
-        )
+        await set_section_keys(request, "budget", updates, reason="PUT /config/budget")
     return {"status": "updated"}
 
 

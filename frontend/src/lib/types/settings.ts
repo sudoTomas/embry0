@@ -130,8 +130,20 @@ export type SettingsKeysPreview = SettingsPreview & SettingsKeysExtras;
 /** `PATCH /config/settings/{section}`. `revision_id` is null when no value changed and nothing was recorded. */
 export type SettingsKeysResult = SettingsSaveResult & SettingsKeysExtras;
 
-/** Where an effective value comes from: the deployment's (`default`, `document`, `bootstrap`) or a layer's. */
-export type SettingSource = "default" | "document" | "bootstrap" | "organization" | "repository";
+/**
+ * Where an effective value comes from: the deployment's (`default`, `document`, `bootstrap`), a layer's, or
+ * `not_imported`: a key moved from older storage that the import has not imported yet, read meanwhile as
+ * the release before read it (`EffectiveSetting.not_imported` says from where).
+ */
+export type SettingSource = "default" | "document" | "bootstrap" | "not_imported" | "organization" | "repository";
+
+/** Where a key the import has not imported yet is read from meanwhile. */
+export interface NotImportedFrom {
+  /** `row`: a record kept in the database before the document; `variable`; `default`; `organization`: its own settings. */
+  read_from: "row" | "variable" | "default" | "organization";
+  /** It, named for a person: the table, the variable, or the organization's settings. */
+  label: string;
+}
 
 /** A layer that can override a key, as its section declares. */
 export type SettingOverrideLayer = "organization" | "repository";
@@ -157,6 +169,8 @@ export interface EffectiveSetting {
   value: unknown;
   default: unknown;
   source: SettingSource;
+  /** Set when `source` is `not_imported`: where the value enforced meanwhile is read from. */
+  not_imported?: NotImportedFrom | null;
   /**
    * Who and when last changed it, from the kept history; both null for a
    * default or older history. `set_by` alone is null when it was someone

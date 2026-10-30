@@ -34,7 +34,6 @@ AuditAction = Literal[
     "apikey.repo_refused",
     "dev_mode_enabled",
     # Settings
-    "budget_config_updated",
     "provider_config_updated",
     "provider_config_tested",
     "provider_connection_tested",
@@ -114,6 +113,8 @@ AuditAction = Literal[
     "onboard.job_created",
     "pr_review.job_created",
     "job.budget_refused",
+    # A person continued a job past its cap, letting it spend more (#171).
+    "job.budget_raised",
     "job.skipped_duplicate_pr",
     "job.cancelled",
     # Done when (spec 2026-10-26): a person replaced a job's finish line.
@@ -153,7 +154,6 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "apikey.allowed_repos_changed": "API key repositories changed",
     "apikey.repo_refused": "API key refused a repository",
     "dev_mode_enabled": "Dev mode enabled",
-    "budget_config_updated": "Budget config updated",
     "provider_config_updated": "Provider config updated",
     "provider_config_tested": "Provider tested",
     "provider_connection_tested": "Provider connection tested",
@@ -226,6 +226,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "onboard.job_created": "Onboard job created",
     "pr_review.job_created": "Review job created",
     "job.budget_refused": "Job refused by budget",
+    "job.budget_raised": "Job budget raised",
     "job.skipped_duplicate_pr": "Job skipped as a duplicate",
     "job.cancelled": "Job cancelled",
     "job.done_when_edited": "Job done-when list edited",
@@ -251,8 +252,10 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))
 
 #: Names that older rows carry and nothing writes any more, each with the name that replaced it.
-#: Reviewing a job was the world's (the game layer's) until it moved under /jobs/{job_id}.
+#: Reviewing a job was the world's (the game layer's) until it moved under /jobs/{job_id}; the fleet
+#: budget was the budget_config row until it moved into the settings document (#171).
 RETIRED_AUDIT_ACTIONS: Final[dict[str, AuditAction]] = {
+    "budget_config_updated": "settings.updated",
     "quest.evaluated": "job.review.evaluated",
     "quest.sent_back": "job.review.sent_back",
     "quest.rejected": "job.review.rejected",

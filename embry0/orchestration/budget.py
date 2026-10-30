@@ -65,15 +65,17 @@ def effective_overrun_mode(fleet_mode: str, job_mode: Any) -> str:
     return "hard" if job_mode == "hard" else fleet_mode
 
 
-def resolve_job_cap(state: dict[str, Any], *, ceiling: float = 0.0) -> float:
+def resolve_job_cap(state: dict[str, Any], *, ceiling: float = 0.0, may_exceed_ceiling: bool = True) -> float:
     """The per-job cap in force for ``state``.
 
     Triage folds a job-create ``max_budget_usd`` over ``budget_usd`` when it
     writes ``pipeline_config``, so that key wins once it exists; before triage
     has run the raw override is the only signal. ``ceiling`` is the fleet-wide
-    ``budget_config.max_budget_per_job_usd`` — it bounds the result so a
-    per-job choice can go under the operator's cap but never over it. 0 (the
-    default) means no ceiling.
+    ``budget.max_budget_per_job_usd`` of the settings document — it bounds the
+    result so a per-job choice can go under the operator's cap but never over
+    it. 0 (the default) means no ceiling. A person's continue past the cap
+    goes on top of the ceiling unless ``may_exceed_ceiling`` is false
+    (``budget.continue_may_exceed_ceiling``): then the ceiling bounds it too.
     """
     pipeline = state.get("pipeline_config") or {}
     if isinstance(pipeline, dict) and pipeline.get("budget_usd") is not None:
@@ -84,8 +86,10 @@ def resolve_job_cap(state: dict[str, Any], *, ceiling: float = 0.0) -> float:
         cap = DEFAULT_JOB_BUDGET_USD
     bounded = min(cap, ceiling) if ceiling > 0 else cap
     # A person who continued the job past its cap let it spend more: an
-    # operator's choice, so it goes on top of the ceiling, not under it.
-    return bounded + budget_allowance(state)
+    # operator's choice, so it goes on top of the ceiling, not under it,
+    # unless the deployment made the ceiling a hard limit.
+    total = bounded + budget_allowance(state)
+    return min(total, ceiling) if ceiling > 0 and not may_exceed_ceiling else total
 
 
 def budget_allowance(state: dict[str, Any]) -> float:
@@ -97,13 +101,61 @@ def budget_allowance(state: dict[str, Any]) -> float:
     return allowance if allowance > 0 else 0.0
 
 
-def allowance_to_continue(state: dict[str, Any], *, ceiling: float = 0.0, extra: float | None = None) -> float:
-    """The allowance that lets a job over its cap spend ``extra`` more than it has.
+def continue_adds(
+    state: dict[str, Any],
+    *,
+    ceiling: float = 0.0,
+    extra: float | None = None,
+    default_extra: float | None = None,
+    may_exceed_ceiling: bool = True,
+    extra_max: float | None = None,
+) -> float:
+    """How much more than it has spent a continue lets a job spend.
 
-    ``extra`` defaults to one more cap. The job may then spend up to what it
-    has spent plus ``extra``; an allowance it already holds is never lowered.
+    ``extra`` is what the person named; without it ``default_extra``
+    (``budget.continue_default_extra_usd``), and without that one more cap.
+    Whichever it is, at most ``extra_max`` (``budget.continue_extra_max_usd``),
+    so the default never adds more than a person could name. When the
+    ceiling is a hard limit, at most what is left under it too: 0 for a job
+    already at it, which a continue cannot help.
     """
     base = resolve_job_cap({**state, "budget_allowance_usd": 0.0}, ceiling=ceiling)
-    more = float(extra) if extra and extra > 0 else base
+    if extra and extra > 0:
+        more = float(extra)
+    elif default_extra and default_extra > 0:
+        more = float(default_extra)
+    else:
+        more = base
+    if extra_max is not None and extra_max > 0:
+        more = min(more, float(extra_max))
+    if ceiling > 0 and not may_exceed_ceiling:
+        spent = float(state.get("total_cost_usd") or 0.0)
+        more = min(more, max(0.0, ceiling - spent))
+    return more
+
+
+def allowance_to_continue(
+    state: dict[str, Any],
+    *,
+    ceiling: float = 0.0,
+    extra: float | None = None,
+    default_extra: float | None = None,
+    may_exceed_ceiling: bool = True,
+    extra_max: float | None = None,
+) -> float:
+    """The allowance that lets a job over its cap spend :func:`continue_adds` more than it has.
+
+    The job may then spend up to what it has spent plus that; an allowance it
+    already holds is never lowered.
+    """
+    base = resolve_job_cap({**state, "budget_allowance_usd": 0.0}, ceiling=ceiling)
+    more = continue_adds(
+        state,
+        ceiling=ceiling,
+        extra=extra,
+        default_extra=default_extra,
+        may_exceed_ceiling=may_exceed_ceiling,
+        extra_max=extra_max,
+    )
     spent = float(state.get("total_cost_usd") or 0.0)
     return max(budget_allowance(state), round(spent - base + more, 2))

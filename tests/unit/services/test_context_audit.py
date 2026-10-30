@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from structlog.testing import capture_logs
 
 from embry0.services import context_audit
+from embry0.services.budget_policy import BudgetView
 from embry0.services.context_audit import (
     ACTOR,
     AGED,
@@ -36,13 +37,14 @@ from embry0.services.context_audit import (
     audit_task,
     due_reason,
     fingerprint,
-    job_budget_usd,
     read_blobs,
     read_head,
     report_counts,
     start_context_audit_job,
 )
-from embry0.services.organizations import Organization
+from embry0.services.organizations import MOVED_SETTINGS, Organization
+from embry0.settings.sections import CATALOG
+from embry0.settings.store import build_snapshot
 
 T0 = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 FP = "f" * 64
@@ -224,6 +226,11 @@ class Refusal:
     message: str
 
 
+async def _deployment_budget(organizations: Any = ()) -> BudgetView:
+    """The budget section with nothing written: every cap at its default."""
+    return BudgetView(build_snapshot(CATALOG, [], token=(), log=False))
+
+
 def org(
     owner: str = "acme", days: Any = 7, *, forge: str = "github", status: str = "active", **settings: Any
 ) -> Organization:
@@ -245,6 +252,8 @@ class World:
         repos: tuple[dict[str, Any], ...] = (),
         cap: int = 3,
         budget: float = 2.0,
+        layers: dict[str, dict[str, Any]] | None = None,
+        imported: frozenset[str] = frozenset(),
         templates: tuple[str, ...] = (TEMPLATE,),
         credential_error: Exception | None = None,
         rate_limit: int | None = None,
@@ -289,6 +298,32 @@ class World:
                 open_pr=open_pr,
             )
 
+        # The settings document's budget section: the deployment's caps, and
+        # each organization's layer over them, read as the loop reads them
+        # (BudgetPolicy.view). An organization in `imported` had its moved
+        # settings copied into its layer; any other still reads its own.
+        self.cap, self.budget = cap, budget
+        self.layers = dict(layers or {})
+        self.imported = set(imported)
+        moved_paths = [f"{m.section}.{m.key}" for m in MOVED_SETTINGS]
+
+        async def budget_reader(organizations: Any = ()) -> BudgetView:
+            deployment = {"context_audit_max_jobs_per_tick": self.cap, "context_audit_job_usd": self.budget}
+            rows = [{"scope": "deployment", "data": {"budget": deployment}, "generation": 1, "updated_at": None}]
+            for owner in sorted(set(self.layers) | self.imported):
+                ledger = moved_paths if owner in self.imported else []
+                values = self.layers.get(owner, {})
+                rows.append(
+                    {
+                        "scope": f"organization:{owner}",
+                        "data": {"budget": values} if values else {},
+                        "generation": 1,
+                        "updated_at": None,
+                        "bootstrapped_keys": ledger,
+                    }
+                )
+            return BudgetView(build_snapshot(CATALOG, rows, token=(), log=False), moved=MOVED_SETTINGS)
+
         self.loop = ContextAuditLoop(
             organizations=FakeOrgs(*orgs),
             registry=FakeRegistry(*repos),
@@ -296,8 +331,7 @@ class World:
             client_for=client_for,
             start_job=start_job,
             ask_gate=ask_gate,
-            max_jobs_per_tick=cap,
-            budget_usd=budget,
+            budget=budget_reader,
             clock=self.clock,
         )
 
@@ -543,25 +577,77 @@ async def test_the_cap_holds_per_owner_per_tick_and_the_rest_wait_for_the_next()
 
 @pytest.mark.asyncio
 async def test_an_owners_own_caps_take_the_place_of_the_deployments() -> None:
-    repos = (reg("acme/a"), reg("acme/b"), reg("beta/a"), reg("beta/b"), reg("quiet/a"), reg("text/a"))
+    """An organization's layer of the budget section sets its own caps (#171). Its old keys in
+    organizations.settings are read until its layer imported them, and then no more."""
+    repos = (
+        reg("acme/a"),
+        reg("acme/b"),
+        reg("beta/a"),
+        reg("beta/b"),
+        reg("quiet/a"),
+        reg("moved/a"),
+        reg("waiting/a"),
+        reg("waiting/b"),
+    )
     world = World(
-        org("acme", context_audit_max_jobs_per_tick=1, context_audit_budget_usd=7.5),
+        org("acme"),
         org("beta"),
-        org("quiet", context_audit_max_jobs_per_tick=0),
-        # What POST /orgs could have stored unvalidated reads as the deployment's caps.
-        org("text", context_audit_max_jobs_per_tick="1", context_audit_budget_usd=True),
+        org("quiet"),
+        org("moved", context_audit_max_jobs_per_tick=0, context_audit_budget_usd=9.0),
+        org("waiting", context_audit_max_jobs_per_tick=1, context_audit_budget_usd=0.5),
         repos=repos,
         cap=2,
         budget=2.0,
+        layers={
+            "acme": {"context_audit_max_jobs_per_tick": 1, "context_audit_job_usd": 7.5},
+            "quiet": {"context_audit_max_jobs_per_tick": 0},
+        },
+        imported=frozenset({"moved"}),
     )
     for row in repos:
         world.forge.put(row["repo"], HEAD, {"CLAUDE.md": "a" * 40})
-    assert await world.loop.tick() == ["acme/a", "beta/a", "beta/b", "text/a"]
+    assert await world.loop.tick() == ["acme/a", "beta/a", "beta/b", "moved/a", "waiting/a"], (
+        "an organization whose layer imported its settings no longer reads its old 0; one not imported yet "
+        "still reads its old 1"
+    )
     assert not any(c.startswith("/repos/quiet/") for c in world.forge.calls), "an owner capped at 0 is not read"
     budgets = {row["repo"]: row["created_with"]["pipeline_config"]["max_budget_usd"] for row in world.jobs.rows}
-    assert budgets == {"acme/a": 7.5, "beta/a": 2.0, "beta/b": 2.0, "text/a": 2.0}
+    assert budgets == {"acme/a": 7.5, "beta/a": 2.0, "beta/b": 2.0, "moved/a": 2.0, "waiting/a": 0.5}
     world.clock.now = T0 + timedelta(minutes=15)
-    assert await world.loop.tick() == ["acme/b"], "past an owner's cap is the next tick"
+    assert await world.loop.tick() == ["acme/b", "waiting/b"], "past an owner's cap is the next tick"
+
+
+@pytest.mark.asyncio
+async def test_a_run_by_hand_reads_an_organizations_own_caps_until_its_layer_imported_them() -> None:
+    """POST /orgs/{owner}/context-audit/run starts through ContextAuditLoop.run, which reads the caps with
+    caps(org): an organization whose layer has not imported its settings reads them there too, as the tick
+    does (#171)."""
+    repos = (reg("waiting/a"), reg("waiting/b"))
+    waiting = org("waiting", context_audit_max_jobs_per_tick=1, context_audit_budget_usd=0.5)
+    world = World(waiting, repos=repos, cap=3, budget=2.0)
+    for row in repos:
+        world.forge.put(row["repo"], HEAD, {"CLAUDE.md": "a" * 40})
+    result = await world.loop.run(waiting)
+    assert ([s.repo for s in result.started], result.limit, result.budget_usd) == (["waiting/a"], 1, 0.5), (
+        "a run by hand reads the organization's own 1 job and $0.50 until its layer imported them, not the "
+        "deployment's 3 and $2"
+    )
+    assert {row["created_with"]["pipeline_config"]["max_budget_usd"] for row in world.jobs.rows} == {0.5}
+
+
+@pytest.mark.asyncio
+async def test_a_cap_changed_in_the_document_holds_from_the_next_tick() -> None:
+    """The caps are read at the top of every tick: a change needs no restart."""
+    repos = tuple(reg(f"acme/r{i}") for i in range(3))
+    world = World(org("acme"), repos=repos, cap=1, budget=2.0)
+    for row in repos:
+        world.forge.put(row["repo"], HEAD, {"AGENTS.md": "a" * 40})
+    assert await world.loop.tick() == ["acme/r0"]
+    world.layers["acme"] = {"context_audit_max_jobs_per_tick": 2, "context_audit_job_usd": 3.25}
+    world.clock.now = T0 + timedelta(minutes=15)
+    assert await world.loop.tick() == ["acme/r1", "acme/r2"]
+    budgets = {row["repo"]: row["created_with"]["pipeline_config"]["max_budget_usd"] for row in world.jobs.rows}
+    assert budgets == {"acme/r0": 2.0, "acme/r1": 3.25, "acme/r2": 3.25}
 
 
 @pytest.mark.asyncio
@@ -1105,8 +1191,7 @@ async def test_the_jobs_table_s_read_never_anchors_on_a_fix_job_and_a_running_on
         client_for=client_for,
         start_job=start_job,
         ask_gate=ask_gate,
-        max_jobs_per_tick=3,
-        budget_usd=2.0,
+        budget=_deployment_budget,
     )
     survey = await loop.survey(org("acme", days=7))
     read = {s.context.repo: ((s.newest_job or {}).get("job_id"), s.reason) for s in survey.repos}
@@ -1217,20 +1302,6 @@ def test_the_task_names_the_commit_and_every_file_up_to_the_limit(monkeypatch: p
     assert "Instruction files (3):\n- a/CLAUDE.md\n- b/CLAUDE.md\n- and 1 more" + command in long, "past the limit too"
 
 
-class Config:
-    def __init__(self, value: Any) -> None:
-        self.context_audit_job_budget_usd = value
-
-
-@pytest.mark.parametrize(
-    ("value", "cap"),
-    [(1.5, 1.5), ("3", 3.0), (0, 2.0), (-1, 2.0), (float("inf"), 2.0), (float("nan"), 2.0), ("x", 2.0), (None, 2.0)],
-)
-def test_the_budget_is_the_setting_when_positive_and_finite(value: Any, cap: float) -> None:
-    assert job_budget_usd(Config(value)) == cap
-    assert job_budget_usd(object()) == 2.0
-
-
 # ---- a start by hand ----
 
 
@@ -1265,8 +1336,10 @@ async def test_a_run_starts_the_due_repositories_with_the_schedule_off_and_says_
 @pytest.mark.asyncio
 async def test_a_run_starts_at_most_its_limit_else_the_owners_cap() -> None:
     repos = tuple(reg(f"acme/r{i}") for i in range(4))
-    acme = org("acme", context_audit_max_jobs_per_tick=2, context_audit_budget_usd=4.0)
-    world = World(acme, repos=repos, cap=3)
+    acme = org("acme")
+    world = World(
+        acme, repos=repos, cap=3, layers={"acme": {"context_audit_max_jobs_per_tick": 2, "context_audit_job_usd": 4.0}}
+    )
     for row in repos:
         world.forge.put(row["repo"], HEAD, {"AGENTS.md": "a" * 40})
 
@@ -1284,7 +1357,8 @@ async def test_a_run_starts_at_most_its_limit_else_the_owners_cap() -> None:
         ("acme/r3", LIMIT),
     ]
 
-    none = await world.loop.run(org("acme", context_audit_max_jobs_per_tick=0))
+    world.layers["acme"] = {"context_audit_max_jobs_per_tick": 0}
+    none = await world.loop.run(acme)
     assert none.started == () and none.limit == 0
     assert [(s.repo, s.reason) for s in none.skipped] == [
         ("acme/r0", LIVE),

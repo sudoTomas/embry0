@@ -13,6 +13,7 @@ from embry0.api.app import create_app
 from embry0.api.v1 import areas as areas_api
 from embry0.config import Embry0Config
 from embry0.services.areas import AreaReader
+from tests.fixtures.budget_settings import BudgetStore
 
 HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 FILE = 'areas:\n  - name: Billing\n    paths: ["services/billing/**"]\n    owners: ["octo"]\n'
@@ -33,6 +34,8 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     st.issue_executor = MagicMock()
     st.issue_executor.dispatch_refusal = AsyncMock(return_value=None)
     st.watcher_stacks_repo = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(logql='{container=~"web-.*"}')))
+    # The map's hard cap is the budget section's area_map_job_usd, as the repository's organization reads it.
+    st.settings = BudgetStore({"area_map_job_usd": 1.5}, acme={"area_map_job_usd": 0.75})
 
     async def read_file(request: Any, repo: str) -> str | None:
         return FILE
@@ -74,6 +77,7 @@ async def test_mapping_starts_the_agent_with_what_the_repository_already_says(ap
     assert created["pipeline_template"] == "map-areas" and created["context"] == {"type": "git", "repo": "acme/web"}
     config = created["pipeline_config"]
     assert config["open_pr"] is True and config["budget_overrun_mode"] == "hard"
+    assert config["max_budget_usd"] == 0.75, "the cap is budget.area_map_job_usd of the repository's organization"
     assert config["agent_models_override"] == {"*": "claude-sonnet-5"}
     task = created["task"]
     assert task.startswith("Map the areas of acme/web")

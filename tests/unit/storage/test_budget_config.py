@@ -1,89 +1,114 @@
+"""The ``budget_config`` row as the settings import reads it once (#171): each value as its reader read it.
+
+Before the settings document's ``budget`` section, the dispatch gate read the
+daily and monthly caps and the rate limit from the row, a value at or below 0
+being no limit; the agent node read the ceiling from the row, one at or below
+0 as ``MAX_BUDGET_USD``'s, and the overrun mode from the row, an empty one as
+``BUDGET_OVERRUN_MODE``'s and a word but soft or hard as soft.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
 
 from embry0.storage.database import DatabasePool
-from embry0.storage.migrations.runner import run_migrations
-from embry0.storage.repositories.budget_config import BudgetConfigRepository
+from embry0.storage.repositories import budget_config
 
-pytestmark = pytest.mark.requires_postgres
+pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
 
-
-@pytest.fixture
-async def budget_repo() -> BudgetConfigRepository:
-    import os
-
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
-    db = DatabasePool(url)
-    await db.connect()
-    await run_migrations(db)
-    # Reset table state so tests that check env-fallback (no DB row) pass in any order.
-    await db.execute("DELETE FROM budget_config")
-    yield BudgetConfigRepository(db)
-    await db.close()
+CONFIG = SimpleNamespace(max_budget_usd=6.0, budget_overrun_mode="hard")
 
 
-@pytest.mark.asyncio
-async def test_get_defaults(budget_repo: BudgetConfigRepository, monkeypatch):
-    # budget_config has no seed row, so get() always falls through to env defaults.
-    # Clear env so the hardcoded fallbacks are exercised.
-    for var in (
-        "MAX_BUDGET_USD",
-        "DAILY_BUDGET_CAP_USD",
-        "MONTHLY_BUDGET_CAP_USD",
-        "RATE_LIMIT_PER_AUTHOR_PER_HOUR",
-        "BUDGET_OVERRUN_MODE",
-    ):
-        monkeypatch.delenv(var, raising=False)
-    config = await budget_repo.get()
-    assert config["max_budget_per_job_usd"] == 10.0
-    assert config["daily_cap_usd"] == 100.0
-    assert config["monthly_cap_usd"] == 500.0
-    assert config["overrun_mode"] == "soft"
+async def _row(db: DatabasePool, **columns: Any) -> None:
+    names = ", ".join(["id", *columns])
+    marks = ", ".join(f"${i}" for i in range(1, len(columns) + 2))
+    await db.execute(f"INSERT INTO budget_config ({names}) VALUES ({marks})", "default", *columns.values())
 
 
-@pytest.mark.asyncio
-async def test_update_budget(budget_repo: BudgetConfigRepository, monkeypatch):
-    monkeypatch.delenv("DAILY_BUDGET_CAP_USD", raising=False)
-    await budget_repo.update(max_budget_per_job_usd=25.0, overrun_mode="hard")
-    config = await budget_repo.get()
-    assert config["max_budget_per_job_usd"] == 25.0
-    assert config["overrun_mode"] == "hard"
-    assert config["daily_cap_usd"] == 100.0
+async def _read(db: DatabasePool, config: Any = CONFIG) -> dict[str, Any] | None:
+    read_row = getattr(budget_config, "read_row", None)
+    assert read_row is not None, "the settings import reads the saved row through budget_config.read_row"
+    async with db.transaction() as conn:
+        return await read_row(conn, config)
 
 
-# --- Env-derived defaults ---
+async def test_no_saved_row_is_nothing_to_read(db_with_migrations: DatabasePool) -> None:
+    assert await _read(db_with_migrations) is None, "without a row the import reads the variables instead"
 
 
-@pytest.mark.asyncio
-async def test_get_reads_from_env_when_no_row(budget_repo: BudgetConfigRepository, monkeypatch):
-    monkeypatch.setenv("MAX_BUDGET_USD", "42.5")
-    monkeypatch.setenv("DAILY_BUDGET_CAP_USD", "250.0")
-    monkeypatch.setenv("MONTHLY_BUDGET_CAP_USD", "1500.0")
-    monkeypatch.setenv("RATE_LIMIT_PER_AUTHOR_PER_HOUR", "12")
-    monkeypatch.setenv("BUDGET_OVERRUN_MODE", "hard")
-
-    config = await budget_repo.get()
-    assert config["max_budget_per_job_usd"] == 42.5
-    assert config["daily_cap_usd"] == 250.0
-    assert config["monthly_cap_usd"] == 1500.0
-    assert config["rate_limit_per_author_per_hour"] == 12
-    assert config["overrun_mode"] == "hard"
-
-
-@pytest.mark.asyncio
-async def test_get_invalid_env_falls_back(budget_repo: BudgetConfigRepository, monkeypatch):
-    monkeypatch.setenv("MAX_BUDGET_USD", "not-a-number")
-    monkeypatch.setenv("BUDGET_OVERRUN_MODE", "explosive")
-    monkeypatch.delenv("DAILY_BUDGET_CAP_USD", raising=False)
-    config = await budget_repo.get()
-    # Falls back to hardcoded defaults on parse failure
-    assert config["max_budget_per_job_usd"] == 10.0
-    assert config["overrun_mode"] == "soft"
+async def test_a_saved_row_reads_as_its_values(db_with_migrations: DatabasePool) -> None:
+    await _row(
+        db_with_migrations,
+        max_budget_per_job_usd=25.0,
+        daily_cap_usd=40.0,
+        monthly_cap_usd=900.0,
+        rate_limit_per_author_per_hour=2,
+        overrun_mode="soft",
+    )
+    assert await _read(db_with_migrations) == {
+        "max_budget_per_job_usd": 25.0,
+        "daily_cap_usd": 40.0,
+        "monthly_cap_usd": 900.0,
+        "rate_limit_per_author_per_hour": 2,
+        "overrun_mode": "soft",
+    }
 
 
-@pytest.mark.asyncio
-async def test_db_row_overrides_env(budget_repo: BudgetConfigRepository, monkeypatch):
-    monkeypatch.setenv("MAX_BUDGET_USD", "999.9")
-    await budget_repo.update(max_budget_per_job_usd=20.0)
-    config = await budget_repo.get()
-    # DB wins
-    assert config["max_budget_per_job_usd"] == 20.0
+async def test_a_row_saved_with_one_field_holds_the_column_defaults_for_the_rest(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """PUT /config/budget created the row with the table's own defaults, not the variables, and the readers
+    read those from then on."""
+    await _row(db_with_migrations, daily_cap_usd=40.0)
+    assert await _read(db_with_migrations, SimpleNamespace(max_budget_usd=99.0, budget_overrun_mode="hard")) == {
+        "max_budget_per_job_usd": 10.0,
+        "daily_cap_usd": 40.0,
+        "monthly_cap_usd": 500.0,
+        "rate_limit_per_author_per_hour": 5,
+        "overrun_mode": "soft",
+    }
+
+
+async def test_values_no_api_could_save_read_as_their_readers_read_them(db_with_migrations: DatabasePool) -> None:
+    """Only SQL could store these: a cap at or below 0 or not finite was no limit, a ceiling at or below 0 was
+    MAX_BUDGET_USD's, an empty mode BUDGET_OVERRUN_MODE's."""
+    await _row(
+        db_with_migrations,
+        max_budget_per_job_usd=0.0,
+        daily_cap_usd=-5.0,
+        monthly_cap_usd=float("inf"),
+        rate_limit_per_author_per_hour=-1,
+        overrun_mode="",
+    )
+    assert await _read(db_with_migrations) == {
+        "max_budget_per_job_usd": 6.0,
+        "daily_cap_usd": 0.0,
+        "monthly_cap_usd": 0.0,
+        "rate_limit_per_author_per_hour": 0,
+        "overrun_mode": "hard",
+    }
+
+
+async def test_a_mode_but_soft_or_hard_reads_as_soft(db_with_migrations: DatabasePool) -> None:
+    await _row(db_with_migrations, overrun_mode="HARD")
+    found = await _read(db_with_migrations)
+    assert found is not None and found["overrun_mode"] == "soft"
+
+
+async def test_a_ceiling_of_zero_with_no_variable_is_no_ceiling(db_with_migrations: DatabasePool) -> None:
+    await _row(db_with_migrations, max_budget_per_job_usd=0.0)
+    found = await _read(db_with_migrations, SimpleNamespace(max_budget_usd=0.0, budget_overrun_mode="soft"))
+    assert found is not None and found["max_budget_per_job_usd"] == 0.0
+
+
+async def test_an_infinite_saved_ceiling_reads_as_the_variables_not_as_no_ceiling(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """Pinned on purpose: the old reader took an infinite ceiling as no ceiling. The document holds no
+    infinite value and a move never loosens a cap, so it reads as MAX_BUDGET_USD's (10 USD by default)."""
+    await _row(db_with_migrations, max_budget_per_job_usd=float("inf"))
+    found = await _read(db_with_migrations, SimpleNamespace(max_budget_usd=10.0, budget_overrun_mode="soft"))
+    assert found is not None and found["max_budget_per_job_usd"] == 10.0

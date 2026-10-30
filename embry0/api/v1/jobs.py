@@ -613,6 +613,9 @@ async def resume_job(
         executor.go_on_after_account_wait(job)
         return {"job_id": job_id, "status": "resuming", "choice": "account_ready"}
 
+    if req.extra_budget_usd is not None:
+        await _check_extra_budget(request, req.extra_budget_usd)
+
     # issue_id is None for issue-less, API-submitted jobs (POST /jobs with a
     # task string). The workflow tolerates that on first run (submit_job
     # dispatches with a null issue_id from create_job) and
@@ -628,11 +631,31 @@ async def resume_job(
             "choice": req.choice,
             "guidance": req.guidance,
             **({"extra_budget_usd": req.extra_budget_usd} if req.extra_budget_usd else {}),
+            # Who continued it, for the job.budget_raised audit row a raise writes.
+            "actor": request_actor(request),
         },
         kind="resume_via_api",
     )
 
     return {"job_id": job_id, "status": "resuming", "choice": req.choice}
+
+
+async def _check_extra_budget(request: Request, extra: float) -> None:
+    """422 when ``extra`` is more than the settings document's ``budget.continue_extra_max_usd``, read now."""
+    from embry0.api.budget import budget_settings
+
+    most = (await budget_settings(request)).continue_extra_max_usd
+    if extra > most:
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {
+                    "loc": ["body", "extra_budget_usd"],
+                    "type": "less_than_equal",
+                    "msg": f"Input should be less than or equal to {most:g} (budget.continue_extra_max_usd)",
+                }
+            ],
+        )
 
 
 @router.put("/jobs/{job_id}/done-when")

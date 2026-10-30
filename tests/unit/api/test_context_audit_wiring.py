@@ -47,12 +47,10 @@ def _started(attr: str) -> bool:
 def test_the_loop_reads_its_caps_and_its_collaborators_and_is_started() -> None:
     call = _construction("ContextAuditLoop")
     passed = {kw.arg: ast.unparse(kw.value) for kw in call.keywords if kw.arg}
-    assert passed.get("max_jobs_per_tick") == "config.context_audit_max_jobs_per_tick", (
-        "ContextAuditLoop is not given CONTEXT_AUDIT_MAX_JOBS_PER_TICK"
+    assert passed.get("budget") == "app.state.budget_policy.view", (
+        "ContextAuditLoop is not given the budget policy's reader of the budget section (#171)"
     )
-    assert passed.get("budget_usd") == "job_budget_usd(config)", (
-        "ContextAuditLoop is not given CONTEXT_AUDIT_JOB_BUDGET_USD"
-    )
+    assert "max_jobs_per_tick" not in passed and "budget_usd" not in passed, "no cap is read once at startup"
     assert passed.get("organizations") == "app.state.organizations_repo"
     assert passed.get("registry") == "app.state.repos_repo", "the loop reads the registered repositories"
     assert passed.get("jobs") == "app.state.jobs_repo", "the loop anchors on the recorded jobs"

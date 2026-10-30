@@ -148,6 +148,19 @@ class Snapshot:
     _logged: set[tuple[str, str, str]] = field(default_factory=set, compare=False, repr=False)
     #: ``[the REPO_RENAMES it was built with, current repository scope -> stored scope]``.
     _rows: list[Any] = field(default_factory=list, compare=False, repr=False)
+    #: Each stored scope string to its document's import ledger (``bootstrapped_keys``): the
+    #: ``section.key`` entries already imported, from the environment or a store kept before the document.
+    ledgers: Mapping[str, frozenset[str]] = field(default_factory=dict, compare=False, repr=False)
+
+    def imported(self, path: str, scope: Scope | None = None) -> bool:
+        """Whether ``path`` (``section.key``) is in the import ledger of the document at ``scope``, the deployment's
+        when None: a reader of a key moved from older storage reads that storage until it is."""
+        if scope is None or scope.layer == DEPLOYMENT:
+            return path in self.ledgers.get(DEPLOYMENT, frozenset())
+        if scope.layer == "repository":
+            stored = self._repository_rows().get(str(current(scope)))
+            return stored is not None and path in self.ledgers.get(stored, frozenset())
+        return path in self.ledgers.get(str(scope), frozenset())
 
     def get[M: SectionModel](self, section: Section[M], *, owner: str | None = None, repo: str | None = None) -> M:
         """``section``'s settings: the deployment's stored values over its defaults, then those of the
@@ -305,6 +318,7 @@ def build_snapshot(
         layers=layers,
         log=log,
         catalog=catalog,
+        ledgers={str(row["scope"]): frozenset(row.get("bootstrapped_keys") or ()) for row in rows},
     )
 
 
@@ -416,6 +430,9 @@ class Draft:
     #: Set once the block has written: the new revision, or None when the text did not change.
     revision_id: int | None = None
     dirty: bool = False
+    #: Why, as the revision records it, when the block learns it only once it has read the document;
+    #: None keeps the reason :meth:`SettingsStore.edit` was given.
+    reason: str | None = None
 
     def replace(self, yaml_text: str, data: dict[str, Any], schema_version: int) -> None:
         self.yaml_text, self.data, self.schema_version = yaml_text, data, schema_version
@@ -642,9 +659,14 @@ class SettingsStore:
                         after=_document(written),
                         actor=actor,
                         source=source,
-                        reason=reason,
+                        reason=draft.reason if draft.reason is not None else reason,
                     )
                 draft.generation = int(written["generation"])
+
+    async def inherited_now(self, draft: Draft) -> dict[str, dict[str, Any]] | None:
+        """What the document ``draft`` holds inherits now, per section, read inside its :meth:`edit` block, after
+        its holds; None for the deployment's."""
+        return await self._inherited_now(draft.conn, draft.scope)
 
     async def _inherited_now(self, conn: asyncpg.Connection, scope: Scope) -> dict[str, dict[str, Any]] | None:
         """What the document at ``scope`` inherits, read on ``conn`` inside :meth:`edit`, after its holds."""

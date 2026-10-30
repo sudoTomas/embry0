@@ -23,6 +23,7 @@ from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.api.v1.run_with import checked_run_with
+from embry0.api.v1.settings import set_section_keys
 from embry0.audit.helpers import emit_audit
 from embry0.services import org_discovery, org_maintain, org_webhooks
 from embry0.services import organizations as org_service
@@ -143,6 +144,40 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
     return await org_service.probe_github(owner, token)
 
 
+def _split_moved(settings: dict[str, Any]) -> dict[str, Any]:
+    """Take the settings that moved into the settings document out of ``settings``, and return them."""
+    return {key: settings.pop(key) for key in list(settings) if key in org_service.MOVED}
+
+
+async def _write_moved(request: Request, owner: str, moved: dict[str, Any]) -> list[dict[str, Any]]:
+    """Write each moved setting into the organization's layer, as ``PATCH /config/settings/{section}?owner=``
+    would, and say so: one note per setting, naming its key now and the release that stops taking it here.
+
+    A null takes the key out of the layer, so the organization reads the deployment's value again, as a
+    null here always meant.
+    """
+    sections: dict[str, dict[str, Any]] = {}
+    for key, value in moved.items():
+        target = org_service.MOVED[key]
+        sections.setdefault(target.section, {})[target.key] = value
+    for section, keys in sections.items():
+        legacy = ", ".join(key for key in moved if org_service.MOVED[key].section == section)
+        await set_section_keys(request, section, keys, owner=owner, reason=f"{legacy} on the organization (deprecated)")
+    return [
+        {
+            "setting": key,
+            "moved_to": org_service.MOVED[key].path,
+            "removed_in": org_service.MOVED_SETTINGS_REMOVED_IN,
+            "detail": (
+                f"Deprecated: {key} is the settings document's {org_service.MOVED[key].path} now, set in the "
+                f"organization's layer (PATCH /api/v1/config/settings/{org_service.MOVED[key].section}?owner={owner}). "
+                f"It was written there; this route stops taking it in {org_service.MOVED_SETTINGS_REMOVED_IN}."
+            ),
+        }
+        for key in moved
+    ]
+
+
 def _org_view(org: Organization, shown: Shown) -> dict[str, Any]:
     """An owner as a reader sees it: who registered it, as ``GET /audit`` shows actors."""
     return {**org.to_dict(), "created_by": shown(org.created_by)}
@@ -198,6 +233,10 @@ async def register_organization(body: OrganizationBody, request: Request) -> dic
         settings = org_service.validate_settings(body.settings)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    moved = _split_moved(settings)
+    if moved:
+        # Refused before anything is stored: the organization's layer takes a key without an allowlist.
+        await enforce_repo_allowlist(request, None, action="change the settings document")
     access: dict[str, Any] = {}
     repo_count: int | None = None
     if body.probe:
@@ -226,6 +265,9 @@ async def register_organization(body: OrganizationBody, request: Request) -> dic
         actor=request_actor(request),
         details={"owner": owner, "forge": body.forge, "credential_id": body.credential_id, "probed": body.probe},
     )
+    if moved:
+        # The layer is written once the organization is registered: a layer belongs to a registered one.
+        return {**org.to_dict(), "deprecated": await _write_moved(request, org.owner, moved)}
     return org.to_dict()
 
 
@@ -259,25 +301,36 @@ async def patch_organization(owner: str, body: PatchBody, request: Request) -> d
     Settings merge: the keys given are set, the rest stay. Only the keys in
     :data:`embry0.services.organizations.SETTINGS` are accepted, with their
     types, so a typo cannot sit in the row as a setting nothing reads.
+
+    A setting that moved into the settings document
+    (:data:`embry0.services.organizations.MOVED_SETTINGS`) is still taken, checked
+    as before, until it is removed: it is written into the organization's
+    layer instead, by the rules of ``PATCH /config/settings/{section}?owner=``,
+    and the answer's ``deprecated`` names its key there.
     """
     repository = _repo(request)
     org = await repository.get(owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
     settings: dict[str, Any] | None = None
+    moved: dict[str, Any] = {}
     if body.settings is not None:
         try:
             settings = org_service.validate_settings(body.settings)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-    updated = await repository.patch(org.owner, display_name=body.display_name, settings=settings)
+        moved = _split_moved(settings)
+    # The layer first: a write it refuses changes nothing here either.
+    notes = await _write_moved(request, org.owner, moved) if moved else []
+    updated = await repository.patch(org.owner, display_name=body.display_name, settings=settings or None)
     await emit_audit(
         getattr(request.app.state, "db", None),
         "organization.patch",
         actor=request_actor(request),
         details={"owner": org.owner, "settings": settings, "display_name": body.display_name},
     )
-    return (updated or org).to_dict()
+    answer = (updated or org).to_dict()
+    return {**answer, "deprecated": notes} if notes else answer
 
 
 @router.put("/orgs/{owner}/status", dependencies=[require_admin])

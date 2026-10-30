@@ -6,7 +6,7 @@ import os
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -38,6 +38,9 @@ from embry0.orchestration.budget import (
 from embry0.orchestration.state import AgentOutputEntry
 from embry0.safety.error_codes import ErrorCode
 from embry0.safety.redaction import redact_bounded, redact_secrets, secret_env_values
+
+if TYPE_CHECKING:
+    from embry0.settings.sections.budget import BudgetSettings
 
 logger = structlog.get_logger(__name__)
 
@@ -255,43 +258,50 @@ async def load_triage_model_settings(config: Any) -> tuple[str, dict[str, str]]:
     return default_model, resolve_tier_models(cfg, _graph_configurable(config).get("embry0_config"))
 
 
-async def load_budget_policy(config: Any) -> tuple[float, str]:
-    """``(per-job ceiling, overrun mode)`` for the job this node belongs to.
+async def load_budget_settings(config: Any) -> BudgetSettings:
+    """The budget as the job this node belongs to reads it now: its ceiling, overrun mode and continue policy.
 
-    ``budget_config`` is the source of truth: its ``get()`` already resolves
-    the operator-edited row over the ``MAX_BUDGET_USD`` / ``BUDGET_OVERRUN_MODE``
-    env defaults. ``Settings`` covers the no-DB callers (unit tests, legacy
-    setups). Best-effort like ``load_agent_definition`` — an unreadable row
-    degrades to the config defaults, never to no cap.
+    Read through the application's budget policy the graph config carries
+    (``budget_policy``, :class:`embry0.services.budget_policy.BudgetPolicy`),
+    one snapshot per call, so a cap changed while the job runs holds from its
+    next check, and a key not imported yet reads as the release before read
+    it. Without one: a settings store the config carries (tests), else a
+    policy over ``db``. When none can be read, the variables the release
+    before fell back to (``embry0_config``), never no cap.
+    """
+    from embry0.services.budget_policy import BudgetPolicy, env_budget
+    from embry0.settings.sections.budget import BUDGET
+
+    configurable = _graph_configurable(config)
+    app_config = configurable.get("embry0_config")
+    try:
+        policy = configurable.get("budget_policy")
+        if policy is not None:
+            settings: BudgetSettings = await policy.settings()
+            return settings
+        store = configurable.get("settings_store")
+        if store is not None:
+            settings = (await store.snapshot()).get(BUDGET)
+            return settings
+        if configurable.get("db") is not None:
+            from embry0.settings.store import SettingsStore
+
+            settings = await BudgetPolicy(SettingsStore(configurable["db"]), app_config, retry_seconds=None).settings()
+            return settings
+    except Exception:
+        logger.warning("budget_policy_load_failed", exc_info=True, hint="read from the variables instead")
+    return env_budget(app_config)
+
+
+async def load_budget_policy(config: Any) -> tuple[float, str]:
+    """``(per-job ceiling, overrun mode)`` for the job this node belongs to (:func:`load_budget_settings`).
 
     The ceiling bounds whatever triage (or a job-create override) picked: an
     operator who lowers the fleet-wide per-job cap must not be outvoted by an
-    LLM's ``budget_usd``. 0 means unlimited, matching the settings UI.
+    LLM's ``budget_usd``. 0 means unlimited.
     """
-    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
-    app_config = configurable.get("embry0_config")
-    ceiling = _as_float(getattr(app_config, "max_budget_usd", 0.0))
-    mode = getattr(app_config, "budget_overrun_mode", "soft")
-    db = configurable.get("db")
-    if db is not None:
-        try:
-            from embry0.storage.repositories.budget_config import BudgetConfigRepository
-
-            row = await BudgetConfigRepository(db).get()
-        except Exception:
-            logger.warning("budget_policy_load_failed", exc_info=True)
-        else:
-            ceiling = _as_float(row.get("max_budget_per_job_usd")) or ceiling
-            mode = row.get("overrun_mode") or mode
-    return ceiling, (mode if mode in ("soft", "hard") else "soft")
-
-
-def _as_float(value: Any) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return parsed if parsed > 0 else 0.0
+    settings = await load_budget_settings(config)
+    return settings.max_budget_per_job_usd, settings.overrun_mode
 
 
 @dataclass(frozen=True)
@@ -325,9 +335,13 @@ async def evaluate_job_cap(state: dict[str, Any], config: Any, state_total: floa
             total = max(state_total, await resolve_job_total_cost(traces_repo, job_id, state_total))
         except Exception:
             logger.warning("job_cost_sum_failed", job_id=job_id, exc_info=True)
-    ceiling, overrun_mode = await load_budget_policy(config)
-    overrun_mode = effective_overrun_mode(overrun_mode, state.get("budget_overrun_mode_override"))
-    cap = resolve_job_cap(state, ceiling=ceiling)
+    settings = await load_budget_settings(config)
+    overrun_mode = effective_overrun_mode(settings.overrun_mode, state.get("budget_overrun_mode_override"))
+    cap = resolve_job_cap(
+        state,
+        ceiling=settings.max_budget_per_job_usd,
+        may_exceed_ceiling=settings.continue_may_exceed_ceiling,
+    )
     return JobCapCheck(total=total, cap=cap, mode=overrun_mode, decision=check_budget(total, cap, overrun_mode))
 
 
@@ -1262,6 +1276,10 @@ async def run_agent_node(
     # trace sum, which counts QA sub-task turns as well (#264).
     cap_check = await evaluate_job_cap(state, config, new_total)
     decision = cap_check.decision
+    # The cap in force and what it was checked against: soft-mode routing
+    # decides on these, not on the cap triage picked plus an allowance (#283).
+    updates["budget_cap_usd"] = cap_check.cap
+    updates["budget_spent_usd"] = cap_check.total
     if decision.overrun > 0:
         updates["budget_overrun_usd"] = decision.overrun
         logger.warning(

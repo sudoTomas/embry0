@@ -14,6 +14,7 @@ from embry0.api.v1 import organizations as organizations_api
 from embry0.config import Embry0Config
 from embry0.services.context_audit import TEMPLATE, ContextAuditLoop, RepoContext, fingerprint
 from embry0.services.organizations import Organization
+from tests.fixtures.budget_settings import budget_reader
 
 HEAD = "1" * 40
 
@@ -126,8 +127,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
         client_for=client_for,
         start_job=start_job,
         ask_gate=open_gate,
-        max_jobs_per_tick=3,
-        budget_usd=2.0,
+        budget=budget_reader({"context_audit_max_jobs_per_tick": 3, "context_audit_job_usd": 2.0}),
         clock=lambda: datetime(2026, 10, 2, tzinfo=UTC),
     )
     app.state.forge, app.state.tokens = forge, tokens

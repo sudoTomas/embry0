@@ -52,14 +52,17 @@ class SettingsDocumentsRepository:
         return token_of(row)
 
     async def all(self) -> list[dict[str, Any]]:
-        """Every document's values in one statement, so a snapshot's rows belong together; never the text."""
+        """Every document's values and import ledger in one statement, so a snapshot's rows belong together;
+        never the text."""
         rows = await self._db.fetch(
-            "SELECT scope, data, schema_version, generation, updated_by, updated_at FROM settings_documents"
+            "SELECT scope, data, schema_version, generation, bootstrapped_keys, updated_by, updated_at "
+            "FROM settings_documents"
         )
         out = []
         for record in rows:
             row = dict(record)
             row["data"] = dict(row.get("data") or {})
+            row["bootstrapped_keys"] = list(row.get("bootstrapped_keys") or [])
             out.append(row)
         return out
 

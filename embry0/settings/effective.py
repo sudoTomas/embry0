@@ -2,9 +2,11 @@
 
 ``source`` is ``default`` (nothing stored for the key), ``document``
 (stored in the deployment's document), ``bootstrap`` (stored there by the
-environment import and not changed since), or, for a view of an organization
-or a repository (spec 2026-10-29), ``organization`` or ``repository`` when
-that layer supplies it. Who set a stored key and when come from the newest
+environment import and not changed since), ``not_imported`` (a key moved from
+older storage that the import has not imported yet, read meanwhile as the
+release before read it; ``not_imported`` says from where), or, for a view of
+an organization or a repository (spec 2026-10-29), ``organization`` or
+``repository`` when that layer supplies it. Who set a stored key and when come from the newest
 kept revision of the supplying document that changed it; a key last changed
 before the kept history has neither. A stored value the running code refuses
 reads as its default, or as the inherited value in a layer, and says why.
@@ -18,6 +20,7 @@ what.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -27,6 +30,23 @@ from embry0.settings.layers import Resolved
 from embry0.settings.registry import Catalog, Section
 from embry0.settings.scope import LAYER_NOUNS, Scope, owner_of
 from embry0.settings.store import Snapshot
+
+
+@dataclass(frozen=True)
+class NotImported:
+    """A key the import has not imported into a document yet, as its reader reads it meanwhile.
+
+    ``read_from`` is where from, as a code (``row``: a record kept in the
+    database before the document; ``variable``; ``default``; ``organization``:
+    the organization's own settings), and ``label`` names it for a person.
+    """
+
+    value: Any
+    read_from: str
+    label: str
+
+    def view(self) -> dict[str, str]:
+        return {"read_from": self.read_from, "label": self.label}
 
 
 def provenance(revisions: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str], Mapping[str, Any]]:
@@ -83,12 +103,19 @@ def effective_view(
     *,
     owner: str | None = None,
     repo: str | None = None,
+    not_imported: Mapping[str, Mapping[tuple[str, str], NotImported]] | None = None,
 ) -> dict[str, Any]:
     """The effective settings of every section, key by key, as the deployment, ``owner`` or ``repo`` reads them.
 
     ``revisions`` maps each document's scope string to its revisions, newest
-    first; a plain list is the deployment's.
+    first; a plain list is the deployment's. ``not_imported`` maps a
+    document's scope string (``deployment``, an organization's) to each
+    ``(section, key)`` its readers read the old way because the import has not
+    imported it yet: where that document neither stores the key nor has a
+    layer under the view that sets it, the view shows that value, with source
+    ``not_imported``, so it shows what is enforced and not a default.
     """
+    pending = not_imported or {}
     by_scope: Mapping[str, Iterable[Mapping[str, Any]]] = (
         revisions if isinstance(revisions, Mapping) else {"deployment": revisions}
     )
@@ -151,6 +178,28 @@ def effective_view(
                 if entry["set"]:
                     source = scope.layer
                     revision = changed_by.get(str(scope), {}).get((section.name, key))
+            value = values.get(key)
+            inherited_value = inherited.get(key)
+            waiting: NotImported | None = None
+            sets = {entry["layer"] for entry in layers[1:] if entry["set"]}
+            org_waiting = pending.get(str(org_scope), {}).get((section.name, key)) if org_scope else None
+            dep_waiting = None if in_force else pending.get("deployment", {}).get((section.name, key))
+            if org_waiting is not None and not sets:
+                # The organization's own settings, until its layer imported them: what its readers enforce.
+                waiting = org_waiting
+            elif dep_waiting is not None and not sets:
+                waiting = dep_waiting
+            if waiting is not None:
+                value, source, revision = waiting.value, "not_imported", None
+            # What a layer view's override overrides: the deployment's value as it is enforced, or the
+            # organization's own setting for a repository of an organization not imported yet.
+            if view.layer == "organization" and dep_waiting is not None:
+                inherited_value = dep_waiting.value
+            elif view.layer == "repository" and "organization" not in sets:
+                if org_waiting is not None:
+                    inherited_value = org_waiting.value
+                elif dep_waiting is not None:
+                    inherited_value = dep_waiting.value
             imported = imports.get(key)
             overridable = [
                 layer
@@ -159,9 +208,10 @@ def effective_view(
             ]
             entry_out: dict[str, Any] = {
                 "key": key,
-                "value": values.get(key),
+                "value": value,
                 "default": defaults.get(key),
                 "source": source,
+                "not_imported": waiting.view() if waiting is not None else None,
                 "set_by": revision.get("actor") if revision is not None else None,
                 "set_at": iso(revision.get("created_at")) if revision is not None else None,
                 "env": env_name(imported.attr) if imported is not None else None,
@@ -171,7 +221,7 @@ def effective_view(
                 "description": section.model.model_fields[key].description,
             }
             if view.layer != "deployment":
-                entry_out["inherited"] = inherited.get(key)
+                entry_out["inherited"] = inherited_value
                 entry_out["layers"] = layers
             keys.append(entry_out)
         sections.append({"name": section.name, "summary": section.summary, "keys": keys})

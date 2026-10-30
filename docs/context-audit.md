@@ -63,26 +63,28 @@ The organization must be `active` and its credential must be able to read the re
 
 ## What it may spend
 
-Two settings on the organization bound what its audits may spend. An organization that sets neither gets the deployment's two variables ([ADR 0021](adr/0021-context-audit-caps-per-organization.md)):
+Two keys of the [settings document](configuration.md#settings-document)'s `budget` section bound what the audits may spend. The deployment's document sets them for every organization, and an organization's layer for its own ([ADR 0021](adr/0021-context-audit-caps-per-organization.md)); the schedule reads them at every tick, so a change needs no restart:
 
-| Setting | Variable, for an organization without the setting | What it bounds |
+| `budget` key | Default | What it bounds |
 |---|---|---|
-| `context_audit_budget_usd`: more than 0 and at most 50, or `null` | `CONTEXT_AUDIT_JOB_BUDGET_USD`, default `2.0` | Each job's cap in USD, always a hard stop (`ERR_BUDGET_OVERRUN`) whatever `BUDGET_OVERRUN_MODE` says: nobody watches a scheduled job. For the variable, `0`, non-finite or invalid values fall back to `2.0` |
-| `context_audit_max_jobs_per_tick`: 0 to 50, or `null` | `CONTEXT_AUDIT_MAX_JOBS_PER_TICK`, default `3` | Jobs one tick starts for the organization. Its due repositories left over wait for the next tick; `0` starts none |
+| `context_audit_job_usd`: more than 0 | `2.0` | Each job's cap in USD, always a hard stop (`ERR_BUDGET_OVERRUN`) whatever `budget.overrun_mode` says: nobody watches a scheduled job. Never unlimited, and bounded by `budget.max_budget_per_job_usd` where the job runs |
+| `context_audit_max_jobs_per_tick`: 0 to 50 | `3` | Jobs one tick starts for the organization. Its due repositories left over wait for the next tick; `0` starts none |
 
-They are set the way the interval is, with the `admin` tier, and `null` hands a cap back to the deployment. The dashboard has no field for them in this release:
+They are written with the `admin` tier, as the rest of the document is; taking a key out of the organization's layer (`null`) hands it back to the deployment. On the dashboard, the organization's page links to its layer on the Settings → Policy tab:
 
 ```bash
-curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
+curl -X PATCH "http://localhost:8200/api/v1/config/settings/budget?owner=acme" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
-  -d '{"settings": {"context_audit_budget_usd": 5, "context_audit_max_jobs_per_tick": 2}}'
+  -d '{"context_audit_job_usd": 5, "context_audit_max_jobs_per_tick": 2}'
 ```
+
+Until #171 the two were the organization's own settings, `context_audit_budget_usd` and `context_audit_max_jobs_per_tick` (`PATCH /orgs/{owner}`), with `CONTEXT_AUDIT_JOB_BUDGET_USD` and `CONTEXT_AUDIT_MAX_JOBS_PER_TICK` for an organization without them. The first start of that release copied each organization's values into its layer and the variables into the deployment's document, once; until an organization's copy succeeds, its audits read its old settings, and the copy is tried again while the orchestrator runs. `PATCH /orgs/{owner}` still takes the old names until 0.2.0 and writes them into the layer ([api.md](api.md#organizations)).
 
 Each organization's cap is its own: one that reached its cap does not hold back another, so one tick starts at most the sum of the caps of the organizations on the schedule.
 
-The fleet-wide caps still apply to every job: `MAX_BUDGET_USD`, `DAILY_BUDGET_CAP_USD` and `MONTHLY_BUDGET_CAP_USD` ([configuration.md](configuration.md)). `RATE_LIMIT_PER_AUTHOR_PER_HOUR` does not: the schedule's actor `embry0:context-audit` is exempt from it (`RATE_LIMIT_EXEMPT` in `embry0/orchestration/dispatch_actors.py`), so the per-tick cap, one live job per repository and the per-job cap are what pace it. The schedule asks the gate before each start and stops at its first refusal, which counts as no attempt.
+The fleet-wide caps still apply to every job: the `budget` section's `max_budget_per_job_usd`, `daily_cap_usd` and `monthly_cap_usd` ([configuration.md](configuration.md#settings-reference)). Its `rate_limit_per_author_per_hour` does not: the schedule's actor `embry0:context-audit` is exempt from it (`RATE_LIMIT_EXEMPT` in `embry0/orchestration/dispatch_actors.py`), so the per-tick cap, one live job per repository and the per-job cap are what pace it. The schedule asks the gate before each start and stops at its first refusal, which counts as no attempt.
 
 ## Reading what it sees
 
@@ -139,7 +141,7 @@ One is open per repository at a time: while an earlier audit's pull request is o
 
 ## Findings offered to owners
 
-Each row of an audit's findings table is also offered to the repository's owners as an [owner proposal](api.md#owner-proposals) of kind `finding`; accepting one starts a job narrowed to that file, which opens a pull request for that claim. The findings offered are those of the repository's newest audit that finished its work:
+Each row of an audit's findings table is also offered to the repository's owners as an [owner proposal](api.md#owner-proposals) of kind `finding`; accepting one starts a job narrowed to that file, which opens a pull request for that claim, with the hard cap `budget.fix_job_usd` (2 USD by default; an organization may set its own). The findings offered are those of the repository's newest audit that finished its work:
 
 - **Its pull request merged:** none, until the repository's next audit finishes. The pull request may have fixed any of them, so they are not offered, and an older audit's findings are never offered in their place: they may be fixed too. A merge changes the instruction files, so with the schedule on the repository is due again at once.
 - **Another audit's pull request merged after it started:** none either, until an audit that started after that merge finishes. It read the instruction files before the merge, so the merge may have fixed what it found. That happens when it ran while an earlier audit's pull request merged, and when it started before an audit that finished and merged ahead of it. A merge counts from when the forge says it merged; one recorded without the forge's time counts from its job's last change, which is no earlier.
@@ -157,8 +159,8 @@ The embry0 MCP server (`embry0-mcp`) does all of it. A tool that changes somethi
 | To | Call |
 |---|---|
 | Turn it on for an owner, every 7 days | `org_update(owner="acme", settings={"context_audit_days": 7}, confirm=true)` |
-| Set the caps: 5 USD a job, 2 jobs a tick | `org_update(owner="acme", settings={"context_audit_budget_usd": 5, "context_audit_max_jobs_per_tick": 2}, confirm=true)` |
-| Hand the caps back to the deployment | `org_update(owner="acme", settings={"context_audit_budget_usd": null, "context_audit_max_jobs_per_tick": null}, confirm=true)` |
+| Set the caps: 5 USD a job, 2 jobs a tick | `settings_set_keys(section="budget", values={"context_audit_job_usd": 5, "context_audit_max_jobs_per_tick": 2}, owner="acme", confirm=true)` |
+| Hand the caps back to the deployment | `settings_set_keys(section="budget", values={"context_audit_job_usd": null, "context_audit_max_jobs_per_tick": null}, owner="acme", confirm=true)` |
 | Read what it sees, and why each repository is due or not | `context_audit_status(owner="acme")` |
 | Run one repository now, when it is due | `context_audit_run(owner="acme", repo="acme/widgets", confirm=true)` |
 | Run one repository now, whatever the due rule says | `context_audit_run(owner="acme", repo="acme/widgets", force=true, confirm=true)` |
@@ -166,7 +168,7 @@ The embry0 MCP server (`embry0-mcp`) does all of it. A tool that changes somethi
 | Open a pull request from each audit's fixes | `org_update(owner="acme", settings={"context_audit_open_prs": true}, confirm=true)` |
 | Turn it off | `org_update(owner="acme", settings={"context_audit_days": null}, confirm=true)` |
 
-`org_update` needs an admin-scope key and `context_audit_run` an operate-scope key; `context_audit_status` reads. `org_update` merges: the settings it names change and the rest stay. Each job a run starts is a job like any other: follow it with `job_wait(job_id=...)` and read its report with `job_deliverables(job_id=...)`.
+`org_update` and `settings_set_keys` need an admin-scope key and `context_audit_run` an operate-scope key; `context_audit_status` reads. `org_update` merges: the settings it names change and the rest stay. Each job a run starts is a job like any other: follow it with `job_wait(job_id=...)` and read its report with `job_deliverables(job_id=...)`.
 
 `job_create(task=..., repo="acme/widgets", pipeline_template="context-audit")` runs the auditor on a repository too, but the schedule does not see that job's fingerprint: it records none, names no instruction files in its task and has a hard cap only if given one, so a file changed after it is not compared with it. `context_audit_run` is the way to run one by hand.
 
@@ -182,4 +184,4 @@ curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
   -d '{"settings": {"context_audit_days": null}}'
 ```
 
-In the dashboard, press **Turn off** beside the field, then Save. No new job starts for the organization from the next tick; a job already running finishes. Pausing the organization (`PUT /api/v1/orgs/{owner}/status`) stops it too, and so does `context_audit_max_jobs_per_tick: 0`. `CONTEXT_AUDIT_MAX_JOBS_PER_TICK=0` stops it for every organization that sets no cap of its own.
+In the dashboard, press **Turn off** beside the field, then Save. No new job starts for the organization from the next tick; a job already running finishes. Pausing the organization (`PUT /api/v1/orgs/{owner}/status`) stops it too, and so does `budget.context_audit_max_jobs_per_tick: 0` in its layer; in the deployment's document, that stops it for every organization that sets no cap of its own.

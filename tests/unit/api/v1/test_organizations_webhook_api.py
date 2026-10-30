@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -173,9 +174,22 @@ async def test_patch_sets_and_clears_the_context_audit_interval(app: Any) -> Non
     assert app.state.organizations_repo.orgs["acme"].settings == {"context_audit_days": None}
 
 
+class _Layers:
+    """The settings store as PATCH /orgs writes a moved setting into an organization's layer."""
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def set_keys(self, section: str, keys: dict[str, Any], **kw: Any) -> Any:
+        self.writes.append((str(kw["scope"]), section, dict(keys)))
+        return SimpleNamespace(revision_id=None)
+
+
 @pytest.mark.asyncio
 async def test_patch_sets_and_clears_the_context_audit_caps(app: Any) -> None:
-    """An organization's own caps for the context audit; null hands them back to the deployment."""
+    """An organization's own caps for the context audit, in its layer of the budget section now (#171); null
+    hands them back to the deployment. The old route checks them as it did, for the release it stays."""
+    app.state.settings = layers = _Layers()
     async with _client(app) as client:
         on = await client.patch(
             "/api/v1/orgs/acme",
@@ -196,9 +210,16 @@ async def test_patch_sets_and_clears_the_context_audit_caps(app: Any) -> None:
             )
         ]
     assert on.status_code == 200, on.text
-    assert on.json()["settings"] == {"context_audit_budget_usd": 5.0, "context_audit_max_jobs_per_tick": 0}
+    assert [note["moved_to"] for note in on.json()["deprecated"]] == [
+        "budget.context_audit_job_usd",
+        "budget.context_audit_max_jobs_per_tick",
+    ]
     assert off.status_code == 200
-    assert off.json()["settings"] == {"context_audit_budget_usd": None, "context_audit_max_jobs_per_tick": None}
+    assert layers.writes == [
+        ("organization:acme", "budget", {"context_audit_job_usd": 5.0, "context_audit_max_jobs_per_tick": 0}),
+        ("organization:acme", "budget", {"context_audit_job_usd": None, "context_audit_max_jobs_per_tick": None}),
+    ]
+    assert app.state.organizations_repo.orgs["acme"].settings == {}, "a moved setting is not stored here any more"
     assert [r.status_code for r in refused] == [422] * 5
     assert "must be more than 0 and at most 50 or null" in refused[0].json()["detail"]
     assert "must be a number or null" in refused[2].json()["detail"]

@@ -1,7 +1,8 @@
 """Continuing a job from a budget pause lets it spend more (the person deciding is the one paying).
 
 The fleet ceiling bounds a cap triage or a job-create field picks; a person's
-continue goes on top of it. Without the raise, a job over its cap went
+continue goes on top of it, unless the deployment's ``budget`` section makes
+the ceiling a hard limit (#171). Without the raise, a job over its cap went
 straight back to the pause after every continued run.
 """
 
@@ -15,6 +16,7 @@ import pytest
 import embry0.workflows.issue_to_pr.nodes as nodes_module
 from embry0.orchestration.budget import allowance_to_continue, resolve_job_cap
 from embry0.orchestration.routing.conditions import check_budget
+from embry0.settings.sections.budget import BudgetSettings
 
 OVER = {"pipeline_config": {"budget_usd": 10.0}, "total_cost_usd": 11.49, "budget_overrun_usd": 1.49}
 
@@ -40,21 +42,24 @@ def test_the_raised_cap_decides_once_a_person_granted_an_allowance() -> None:
     assert check_budget({**raised, "total_cost_usd": 21.6}) == "over_budget"
 
 
-def _run(state: dict[str, Any], answer: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+def _run(
+    state: dict[str, Any], answer: Any, budget: BudgetSettings | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
     seen: dict[str, Any] = {}
+    section = budget or BudgetSettings(max_budget_per_job_usd=10.0)
 
     def _interrupt(summary: dict[str, Any]) -> Any:
         seen.update(summary)
         return answer
 
-    async def _policy(config: Any) -> tuple[float, str]:
-        return 10.0, "soft"
+    async def _settings(config: Any) -> BudgetSettings:
+        return section
 
     async def go() -> dict[str, Any]:
         with (
             patch.object(nodes_module, "get_stream_writer", return_value=lambda _: None),
             patch.object(nodes_module, "interrupt", new=_interrupt),
-            patch("embry0.workflows.issue_to_pr.nodes._interrupts.load_budget_policy", new=_policy),
+            patch("embry0.workflows.issue_to_pr.nodes._interrupts.load_budget_settings", new=_settings),
         ):
             return await nodes_module.max_retries_node(state, config=None)
 

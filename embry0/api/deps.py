@@ -501,11 +501,6 @@ def get_profiles_repo(request: Request) -> Any:
     return request.app.state.profiles_repo
 
 
-def get_budget_repo(request: Request) -> Any:
-    """Return the BudgetConfigRepository from request state."""
-    return request.app.state.budget_repo
-
-
 def get_context_repo(request: Request) -> Any:
     """Return the ContextConfigRepository from request state."""
     return request.app.state.context_repo

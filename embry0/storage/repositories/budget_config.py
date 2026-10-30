@@ -1,109 +1,72 @@
-"""Budget config repository — API-managed budget controls.
+"""The ``budget_config`` row: where the fleet budget lived before the settings document.
 
-Defaults are derived from environment variables on every read, so changes
-to ``.env`` flow through to the Settings UI on a fresh DB. Once the user
-saves changes via the UI a row exists in ``budget_config`` and that row
-takes precedence forever.
+Until the settings document's ``budget`` section (:mod:`embry0.settings.sections.budget`),
+the per-job ceiling, the daily and monthly caps, the per-person rate limit
+and the overrun mode were one row here, edited with ``PUT /config/budget``.
+Its environment variables were the defaults until someone saved the row, and
+then the row won for good.
+
+:func:`read_row` reads that row once, at the first start of the release that
+moved the five keys, inside the settings import's transaction
+(:class:`embry0.settings.bootstrap.EarlierSource`): each value as the budget's
+readers read it, so a deployment keeps the caps it had. Without a row, the
+import reads the variables instead. Nothing else reads or writes the table
+now; it is kept so that a rollback to the release before finds the row as it
+was at the move.
 """
 
-import os
-from typing import Any
+from __future__ import annotations
 
-import structlog
+import math
+from typing import Any, Final
 
-from embry0.storage.database import DatabasePool
+#: How the settings import names this table in the comment above what it imported.
+LABEL: Final = "the budget_config table"
 
-logger = structlog.get_logger(__name__)
-
-_FALLBACK_MAX_BUDGET: float = 10.0
-_FALLBACK_DAILY_CAP: float = 100.0
-_FALLBACK_MONTHLY_CAP: float = 500.0
-_FALLBACK_RATE_LIMIT: int = 5
-_FALLBACK_OVERRUN_MODE: str = "soft"
-
-_HARDCODED_FALLBACKS: dict[str, Any] = {
-    "max_budget_per_job_usd": _FALLBACK_MAX_BUDGET,
-    "daily_cap_usd": _FALLBACK_DAILY_CAP,
-    "monthly_cap_usd": _FALLBACK_MONTHLY_CAP,
-    "rate_limit_per_author_per_hour": _FALLBACK_RATE_LIMIT,
-    "overrun_mode": _FALLBACK_OVERRUN_MODE,
-}
-
-_UPDATABLE_FIELDS = frozenset(_HARDCODED_FALLBACKS.keys())
+_ROW_SQL: Final = (
+    "SELECT max_budget_per_job_usd, daily_cap_usd, monthly_cap_usd, rate_limit_per_author_per_hour, overrun_mode "
+    "FROM budget_config WHERE id = 'default'"
+)
 
 
-def _env_float(name: str, fallback: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None or raw == "":
-        return fallback
+def _positive(value: Any) -> float:
+    """A cap as the dispatch gate and the agent node read one: a positive, finite number, else 0, no cap."""
     try:
-        return float(raw)
-    except ValueError:
-        logger.warning("env_var_parse_failed", var=name, value=raw, fallback=fallback)
-        return fallback
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) and number > 0 else 0.0
 
 
-def _env_int(name: str, fallback: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None or raw == "":
-        return fallback
+async def read_row(conn: Any, config: Any) -> dict[str, Any] | None:
+    """The saved row's five values as their readers read them, or None when no row was ever saved.
+
+    The dispatch gate read the daily and monthly caps and the rate limit
+    straight from the row, 0 or less (or not finite) being no limit. The
+    agent node read the ceiling from the row, and a ceiling at or below 0
+    there as ``MAX_BUDGET_USD``'s; the overrun mode from the row, an empty one
+    as ``BUDGET_OVERRUN_MODE``'s, and any word but soft or hard as soft. The
+    API never saved a 0, an infinite value or a bad word: only SQL could.
+
+    One reading is tighter than the old one: a ceiling at or below 0, **or
+    not finite**, reads as ``MAX_BUDGET_USD``'s. The old reader took an
+    infinite ceiling as no ceiling; the document cannot hold one, and a cap
+    is never loosened by the move, so it takes the variable's (10 USD by
+    default) instead.
+    """
+    row = await conn.fetchrow(_ROW_SQL)
+    if row is None:
+        return None
+    ceiling = _positive(row["max_budget_per_job_usd"]) or _positive(getattr(config, "max_budget_usd", 0.0))
+    mode = row["overrun_mode"] or getattr(config, "budget_overrun_mode", "soft")
     try:
-        return int(raw)
-    except ValueError:
-        logger.warning("env_var_parse_failed", var=name, value=raw, fallback=fallback)
-        return fallback
-
-
-def _env_overrun_mode(fallback: str) -> str:
-    raw = os.environ.get("BUDGET_OVERRUN_MODE", fallback)
-    if raw not in ("soft", "hard"):
-        logger.warning("env_var_invalid_overrun_mode", value=raw, fallback=fallback)
-        return fallback
-    return raw
-
-
-def _env_derived_defaults() -> dict[str, Any]:
-    """Read defaults from env at call time, falling back to hardcoded values."""
+        limit = int(row["rate_limit_per_author_per_hour"] or 0)
+    except (TypeError, ValueError):
+        limit = 0
     return {
-        "max_budget_per_job_usd": _env_float("MAX_BUDGET_USD", _FALLBACK_MAX_BUDGET),
-        "daily_cap_usd": _env_float("DAILY_BUDGET_CAP_USD", _FALLBACK_DAILY_CAP),
-        "monthly_cap_usd": _env_float("MONTHLY_BUDGET_CAP_USD", _FALLBACK_MONTHLY_CAP),
-        "rate_limit_per_author_per_hour": _env_int("RATE_LIMIT_PER_AUTHOR_PER_HOUR", _FALLBACK_RATE_LIMIT),
-        "overrun_mode": _env_overrun_mode(_FALLBACK_OVERRUN_MODE),
+        "max_budget_per_job_usd": ceiling,
+        "daily_cap_usd": _positive(row["daily_cap_usd"]),
+        "monthly_cap_usd": _positive(row["monthly_cap_usd"]),
+        "rate_limit_per_author_per_hour": max(limit, 0),
+        "overrun_mode": mode if mode in ("soft", "hard") else "soft",
     }
-
-
-class BudgetConfigRepository:
-    """CRUD for budget configuration."""
-
-    def __init__(self, db: DatabasePool) -> None:
-        self._db = db
-
-    async def get(self) -> dict[str, Any]:
-        """Get current budget config. Returns env-derived defaults if no row exists."""
-        row = await self._db.fetchrow("SELECT * FROM budget_config WHERE id = 'default'")
-        if row:
-            return dict(row)
-        return {**_env_derived_defaults(), "id": "default"}
-
-    async def update(self, **fields: Any) -> None:
-        """Update budget config fields. Creates default row if needed."""
-        valid = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
-        if not valid:
-            return
-        await self._db.execute(
-            "INSERT INTO budget_config (id) VALUES ('default') ON CONFLICT (id) DO NOTHING",
-        )
-        sets: list[str] = []
-        args: list[Any] = []
-        idx = 1
-        for key, value in valid.items():
-            sets.append(f"{key} = ${idx}")
-            args.append(value)
-            idx += 1
-        sets.append("updated_at = NOW()")
-        await self._db.execute(
-            f"UPDATE budget_config SET {', '.join(sets)} WHERE id = 'default'",
-            *args,
-        )
-        logger.info("budget_config_updated", fields=list(valid.keys()))

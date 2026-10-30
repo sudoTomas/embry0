@@ -440,6 +440,33 @@ describe("PolicyTab", () => {
     expect(perTick).not.toHaveTextContent("replaces SAMPLE_PER_TICK");
   });
 
+  it("shows a key the import has not imported yet with the value enforced and where it is read from", async () => {
+    const [first, second] = EFFECTIVE.sections[0].keys;
+    api.fetchEffectiveSettings.mockResolvedValue({
+      ...EFFECTIVE,
+      sections: [
+        {
+          ...EFFECTIVE.sections[0],
+          keys: [
+            {
+              ...first,
+              value: 2,
+              source: "not_imported",
+              set_by: null,
+              set_at: null,
+              not_imported: { read_from: "row", label: "the sample table" },
+            },
+            second,
+          ],
+        },
+      ],
+    });
+    renderTab();
+    const [perTick] = await screen.findAllByTestId("effective-key");
+    expect(within(perTick).getByTestId("effective-value")).toHaveTextContent("2");
+    expect(perTick).toHaveTextContent("Not imported yet: read from the sample table");
+  });
+
   it("offers Undo only on the newest change and says why on the others", async () => {
     renderTab();
     const [newest, older] = await screen.findAllByTestId("settings-revision");

@@ -379,9 +379,9 @@ class Embry0Config(BaseSettings):
 
     # Rate limiting — defaults sized for trusted self-hosted operation
     # (RAV-605); tighten via env for anything internet-facing.
-    # Fallback only, like max_budget_usd below: budget_config (DB row > env)
-    # is what the dispatch gate reads. Kept equal to that repository's own
-    # RATE_LIMIT_PER_AUTHOR_PER_HOUR fallback.
+    # The per-person dispatch limit is the settings document's
+    # budget.rate_limit_per_author_per_hour now, like the budget below: this
+    # is only its import source (embry0/settings/sections/budget.py).
     rate_limit_per_author_per_hour: int = 5
     api_rate_limit_per_minute: int = 300
     # IP-keyed throttle for the unauthenticated webhook endpoints (RAV-1070).
@@ -411,10 +411,14 @@ class Embry0Config(BaseSettings):
     # before. See embry0/services/provider_readiness.py, docs/providers.md.
     agent_model_provider_check: bool = False
 
-    # Budget
-    # Fallback only: budget_config (DB row > env) is the source of truth
-    # for every budget setting. Kept equal to that repository's own
-    # MAX_BUDGET_USD fallback so a no-DB caller sees the same ceiling.
+    # Budget: the settings document's `budget` section now
+    # (embry0/settings/sections/budget.py). These four and
+    # RATE_LIMIT_PER_AUTHOR_PER_HOUR are only its import source: read once, at
+    # the first start of the release that added the section, and only when no
+    # budget_config row was ever saved (a saved row won over them, and is
+    # imported instead); ignored after that, but for a key the import has not
+    # imported yet (embry0.services.budget_policy reads it as the release
+    # before did). An operator keeps them while a rollback may read them.
     max_budget_usd: float = 10.0
     daily_budget_cap_usd: float = 100.0
     monthly_budget_cap_usd: float = 500.0
@@ -750,14 +754,14 @@ class Embry0Config(BaseSettings):
     qa_image_retention_days: int | None = Field(default=None, gt=0, le=3650)
 
     # Context audit on a schedule (ADR 0020), off until an organization sets
-    # settings.context_audit_days. Nobody watches a scheduled audit, so its
-    # per-job cap is always a hard stop, as the watcher's is
-    # (embry0.services.context_audit); 0, non-finite or invalid falls back to
-    # the default, never to unlimited. One tick starts at most this many jobs
-    # for each organization, and the due repositories left over wait for the
-    # next tick; 0 starts none. Both are the defaults: an organization's
-    # settings.context_audit_budget_usd and context_audit_max_jobs_per_tick
-    # take their place for it (ADR 0021).
+    # settings.context_audit_days. Its caps are the settings document's
+    # `budget` section now (context_audit_job_usd, area_map_job_usd and
+    # fix_job_usd, all three imported from CONTEXT_AUDIT_JOB_BUDGET_USD, and
+    # context_audit_max_jobs_per_tick), an organization's layer over the
+    # deployment's. These two are only their import source: read once, at the
+    # first start of the release that added the section, and ignored after
+    # that; removed in the next release. 0 or an invalid cap is not imported,
+    # so it reads as the default, never as unlimited.
     context_audit_job_budget_usd: float = 2.0
     context_audit_max_jobs_per_tick: int = Field(default=3, ge=0)
     # CONTEXT_AUDIT_LOCAL_MODEL: a model on the operator's own server

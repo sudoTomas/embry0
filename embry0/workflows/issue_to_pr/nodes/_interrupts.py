@@ -16,10 +16,10 @@ from langgraph.types import Command
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
-from embry0.orchestration.budget import allowance_to_continue, resolve_job_cap
+from embry0.orchestration.budget import allowance_to_continue, continue_adds, resolve_job_cap
 from embry0.orchestration.nodes.agent import (
     USER_RETRY_ROUNDS_CAP,
-    load_budget_policy,
+    load_budget_settings,
 )
 from embry0.orchestration.routing.conditions import check_budget
 
@@ -185,11 +185,11 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             # (resolve_job_cap is the module's own import: a local one here
             # would make the name local to the whole function, unbound for
             # the budget line below whenever this branch is not taken.)
-            pause_ceiling, _mode = await load_budget_policy(config)
-            message = (
-                f"The job reached its budget (${float(state.get('total_cost_usd') or 0):.2f} of "
-                f"${resolve_job_cap(state, ceiling=pause_ceiling):.2f})"
+            pause = await load_budget_settings(config)
+            pause_cap = resolve_job_cap(
+                state, ceiling=pause.max_budget_per_job_usd, may_exceed_ceiling=pause.continue_may_exceed_ceiling
             )
+            message = f"The job reached its budget (${float(state.get('total_cost_usd') or 0):.2f} of ${pause_cap:.2f})"
         elif retry_count:
             message = f"Review failed after {retry_count} attempts"
         else:
@@ -206,24 +206,47 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         else:
             options = ["continue_retrying", "merge_as_is", "abandon"]
 
-    summary = {
+    # A job over its cap: continuing it lets it spend one more cap (or what
+    # the deployment's budget section says), so the pause says how much (the
+    # person deciding is the one paying). The section is read here, at the
+    # pause, and again when the person answers, since a resume runs this node
+    # again from the top.
+    over_budget = check_budget(state) == "over_budget"
+    budget = await load_budget_settings(config) if over_budget else None
+    at_ceiling = False
+    budget_summary: dict[str, float] | None = None
+    if budget is not None:
+        ceiling = budget.max_budget_per_job_usd
+        hard_ceiling = not budget.continue_may_exceed_ceiling
+        adds = continue_adds(
+            state,
+            ceiling=ceiling,
+            default_extra=budget.continue_default_extra_usd,
+            may_exceed_ceiling=not hard_ceiling,
+            extra_max=budget.continue_extra_max_usd,
+        )
+        budget_summary = {
+            "spent": round(float(state.get("total_cost_usd") or 0.0), 2),
+            "cap": round(resolve_job_cap(state, ceiling=ceiling, may_exceed_ceiling=not hard_ceiling), 2),
+            "continue_adds": round(adds, 2),
+        }
+        # A deployment whose ceiling is a hard limit: a job at it cannot be continued, so it is not offered.
+        at_ceiling = hard_ceiling and ceiling > 0 and adds <= 0
+        if at_ceiling and "continue_retrying" in options:
+            options = [option for option in options if option != "continue_retrying"]
+            message += (
+                f". It has reached this deployment's ceiling of ${ceiling:.2f} per job, which a continue may "
+                "not pass (budget.continue_may_exceed_ceiling is false)"
+            )
+    summary: dict[str, Any] = {
         "message": message,
         "reason": reason,
         "pr_url": pr_url,
         "retry_count": retry_count,
         "options": options,
     }
-    # A job over its cap: continuing it lets it spend one more cap, so the
-    # pause says how much (the person deciding is the one paying).
-    over_budget = check_budget(state) == "over_budget"
-    ceiling = 0.0
-    if over_budget:
-        ceiling, _mode = await load_budget_policy(config)
-        summary["budget"] = {
-            "spent": round(float(state.get("total_cost_usd") or 0.0), 2),
-            "cap": round(resolve_job_cap(state, ceiling=ceiling), 2),
-            "continue_adds": round(resolve_job_cap({**state, "budget_allowance_usd": 0.0}, ceiling=ceiling), 2),
-        }
+    if budget_summary is not None:
+        summary["budget"] = budget_summary
 
     outputs = state.get("agent_outputs", [])
     review_outputs = [o for o in outputs if o.get("agent_type") == "review"]
@@ -242,14 +265,17 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
     user_choice = _nodes.interrupt(summary)
 
     extra_budget: float | None = None
+    # Who answered, when the answer came through the API (POST /jobs/{id}/resume).
+    answered_by = ""
     if isinstance(user_choice, str):
         choice = user_choice
         guidance = ""
     elif isinstance(user_choice, dict):
         choice = user_choice.get("choice", "abandon")
         guidance = user_choice.get("guidance", "")
+        answered_by = str(user_choice.get("actor") or "")
         raw_extra = user_choice.get("extra_budget_usd")
-        if isinstance(raw_extra, int | float) and raw_extra > 0:
+        if isinstance(raw_extra, int | float) and not isinstance(raw_extra, bool) and raw_extra > 0:
             extra_budget = float(raw_extra)
     else:
         choice = "abandon"
@@ -270,6 +296,10 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             job_id=state.get("job_id"),
         )
         choice = "abandon"
+    if at_ceiling and choice == "continue_retrying":
+        # Not offered: the deployment's ceiling is a hard limit and the job is at it.
+        logger.warning("continue_retrying_rejected_at_ceiling", job_id=state.get("job_id"))
+        choice = "abandon"
 
     if choice == "continue_retrying":
         user_rounds = int(state.get("user_retry_rounds", 0) or 0)
@@ -287,18 +317,15 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         }
         if over_budget or extra_budget:
             # Continuing past the cap is the person's call: the job may spend
-            # what it has spent plus one more cap (or what they named).
-            if not over_budget:
-                ceiling, _mode = await load_budget_policy(config)
-            allowance = allowance_to_continue(state, ceiling=ceiling, extra=extra_budget)
-            updates["budget_allowance_usd"] = allowance
-            logger.info(
-                "budget_raised_on_continue",
-                job_id=state.get("job_id"),
-                spent=state.get("total_cost_usd"),
-                allowance=allowance,
-                cap=resolve_job_cap({**state, "budget_allowance_usd": allowance}, ceiling=ceiling),
-            )
+            # what it has spent plus one more cap (or what they named, at most
+            # the section's continue_extra_max_usd).
+            policy = budget if budget is not None else await load_budget_settings(config)
+            if extra_budget is not None:
+                extra_budget = min(extra_budget, policy.continue_extra_max_usd)
+            raised = await _raise_budget(state, config, policy, extra_budget, answered_by)
+            if raised is not None:
+                # The raised cap is the one in force until the next agent turn checks it again (#283).
+                updates["budget_allowance_usd"], updates["budget_cap_usd"] = raised
         if guidance:
             existing = state.get("additional_context", "") or ""
             updates["additional_context"] = existing + f"\n\nUser guidance:\n{guidance}"
@@ -311,6 +338,60 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         return {"current_stage": "completed"}
     else:
         return {"current_stage": "abandoned", "errors": [f"Abandoned after {retry_count} retries"]}
+
+
+async def _raise_budget(
+    state: dict[str, Any], config: RunnableConfig, policy: Any, extra: float | None, actor: str
+) -> tuple[float, float] | None:
+    """Let a continued job spend more: its new allowance and cap, recorded in a ``job.budget_raised`` audit row.
+
+    None when the allowance it holds already covers it (a continue within budget
+    grants none). The row names who continued it, what it had spent, and its
+    cap before and after: the person deciding is the one paying, and the
+    settings revisions only record changes to the caps themselves.
+    """
+    from embry0.audit.helpers import emit_audit
+    from embry0.orchestration.budget import budget_allowance
+
+    ceiling = policy.max_budget_per_job_usd
+    may_exceed = policy.continue_may_exceed_ceiling
+    allowance = allowance_to_continue(
+        state,
+        ceiling=ceiling,
+        extra=extra,
+        default_extra=policy.continue_default_extra_usd,
+        may_exceed_ceiling=may_exceed,
+        extra_max=policy.continue_extra_max_usd,
+    )
+    before = resolve_job_cap(state, ceiling=ceiling, may_exceed_ceiling=may_exceed)
+    after = resolve_job_cap(
+        {**state, "budget_allowance_usd": allowance}, ceiling=ceiling, may_exceed_ceiling=may_exceed
+    )
+    if allowance <= budget_allowance(state) and after <= before:
+        return None
+    spent = round(float(state.get("total_cost_usd") or 0.0), 2)
+    job_id = str(state.get("job_id") or "")
+    logger.info("budget_raised_on_continue", job_id=job_id, spent=spent, allowance=allowance, cap=after)
+    configurable = (config or {}).get("configurable") or {}
+    app_config = configurable.get("embry0_config")
+    try:
+        await emit_audit(
+            configurable.get("db"),
+            "job.budget_raised",
+            actor=actor or "unknown",
+            details={
+                "job_id": job_id,
+                "spent_usd": spent,
+                "cap_before_usd": round(before, 2),
+                "cap_after_usd": round(after, 2),
+                **({"extra_usd": extra} if extra is not None else {}),
+            },
+            audit_log_path=getattr(app_config, "audit_log_path", None),
+            issue_id=state.get("issue_id") or None,
+        )
+    except Exception:  # noqa: BLE001 - a lost audit row never stops the job the person continued
+        logger.warning("budget_raised_audit_failed", job_id=job_id, exc_info=True)
+    return allowance, after
 
 
 # Resume target per asking node — answers must re-enter the node that asked

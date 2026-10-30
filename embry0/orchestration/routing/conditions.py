@@ -201,14 +201,19 @@ def check_budget(state: dict[str, Any]) -> Literal["within_budget", "over_budget
     """Soft-mode routing gate: has the job's per-job cap been crossed?
 
     Only ``soft`` overrun mode ever reaches this — ``hard`` aborts the run
-    inside the agent node the moment the ceiling is crossed. ``budget_overrun_usd``
-    is that node's verdict against the fully-resolved cap (including the
-    fleet-wide ceiling it reads from the DB); the direct comparison is the
-    fallback for states no agent node has written yet. Once a person let the
-    job spend past its cap (``budget_allowance_usd``), that verdict predates
-    the allowance and only ever grows (its reducer keeps the max), so the
-    comparison against the raised cap decides.
+    inside the agent node the moment the ceiling is crossed. The agent node
+    records the cap it enforced (``budget_cap_usd``: triage's cap bounded by
+    the fleet ceiling, plus an allowance a person granted, bounded again when
+    the ceiling is a hard limit) and the spend it counted (``budget_spent_usd``,
+    the job's traces included); with them, that cap decides (#283). States no
+    agent node has checked since this was recorded fall back to the node's
+    overrun verdict, and once a person let the job spend past its cap, to the
+    comparison against the raised cap.
     """
+    cap = state.get("budget_cap_usd")
+    if isinstance(cap, int | float) and not isinstance(cap, bool):
+        spent = max(float(state.get("total_cost_usd") or 0.0), float(state.get("budget_spent_usd") or 0.0))
+        return "over_budget" if spent > cap else "within_budget"
     if state.get("budget_overrun_usd", 0.0) > 0 and budget_allowance(state) <= 0:
         return "over_budget"
     cost = state.get("total_cost_usd", 0.0)

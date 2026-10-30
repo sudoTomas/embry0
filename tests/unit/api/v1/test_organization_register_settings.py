@@ -96,16 +96,17 @@ async def test_post_refuses_a_setting_with_the_same_422_as_patch(app: Any, setti
 
 
 async def test_post_stores_the_settings_as_the_check_writes_them(app: Any) -> None:
+    """A setting that moved into the settings document goes to the organization's layer instead
+    (tests/unit/api/test_budget_settings.py)."""
     body = {
         "owner": "acme",
         "probe": False,
-        "settings": {"context_audit_budget_usd": 5, "slop_meter_bots": [" ci-bot ", ""]},
+        "settings": {"rediscover_hours": 6, "slop_meter_bots": [" ci-bot ", ""]},
     }
     async with _client(app) as client:
         resp = await client.post("/api/v1/orgs", json=body)
     assert resp.status_code == 201, resp.text
     stored = app.state.organizations_repo.orgs["acme"].settings
-    assert stored == {"context_audit_budget_usd": 5.0, "slop_meter_bots": ["ci-bot"]}, (
+    assert stored == {"rediscover_hours": 6, "slop_meter_bots": ["ci-bot"]}, (
         f"POST /orgs stored the body as sent, not as PATCH would: {stored!r}"
     )
-    assert type(stored["context_audit_budget_usd"]) is float
