@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.audit.helpers import emit_audit
 from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack, check_settings
 from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
@@ -92,6 +93,7 @@ async def put_stack(owner: str, name: str, body: StackBody, request: Request) ->
     dropped rather than stored — the response shows what was kept. A known key
     with a wrong type or a value out of range is a 422 naming it (#172): the
     stored value is what every tick reads."""
+    await enforce_repo_allowlist(request, f"{owner}/{name}", action="change a watched stack")
     repo = f"{owner}/{name}"
     unknown = sorted(set(body.settings) - SETTING_KEYS)
     try:
@@ -117,6 +119,7 @@ async def put_stack(owner: str, name: str, body: StackBody, request: Request) ->
 async def delete_stack(owner: str, name: str, request: Request) -> dict[str, Any]:
     """Stop watching a stack. Its runs, signatures and cases stay: they are
     the record of what it found."""
+    await enforce_repo_allowlist(request, f"{owner}/{name}", action="change a watched stack")
     repo = f"{owner}/{name}"
     if not await _repo(request).delete(repo):
         raise HTTPException(status_code=404, detail=f"no watched stack {repo}")

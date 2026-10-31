@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from embry0.api.deps import request_actor
+from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services.qa_config_check import check_qa_config
@@ -47,6 +48,7 @@ async def get_qa_config(full_repo: str, request: Request) -> Response:
 
 @router.put("/repos/{full_repo:repo}/-/qa-config")
 async def put_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
+    await enforce_repo_allowlist(request, full_repo, action="change a repository's test setup")
     from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 
     text = (await request.body()).decode("utf-8", errors="replace")
@@ -71,6 +73,7 @@ async def put_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
 
 @router.delete("/repos/{full_repo:repo}/-/qa-config", status_code=204, response_model=None)
 async def delete_qa_config(full_repo: str, request: Request) -> None:
+    await enforce_repo_allowlist(request, full_repo, action="change a repository's test setup")
     configs_repo = request.app.state.qa_configs_repo
     revision_id = await configs_repo.delete_recorded(full_repo, actor=request_actor(request))
     if revision_id is not None:

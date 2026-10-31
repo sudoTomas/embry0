@@ -1,14 +1,19 @@
 """Per-API-key repository allowlist.
 
-An API key may carry ``allowed_repos``: the repositories it may start,
+An API key may carry ``allowed_repos``: the repositories it may change and start,
 continue or stop work on. ``None`` — every key minted before the column existed, and
 every key minted without a list — is unrestricted. Sessions and the master
 key are never restricted.
 
 Each route that starts, continues or stops work (cancelling a job, deleting
-an issue), and each step of setting up testing (apply or turn down a setup
-proposal, skip testing, undo a change), calls :func:`enforce_repo_allowlist`
-with the repository it is about to act on. The check lives in the API, not in
+an issue), each step of setting up testing (apply or turn down a setup
+proposal, skip testing, undo a change), and each route that changes a
+repository's registration or configuration (its variables, preferences,
+test setup, credentials, agent context, standard or watched stack) calls
+:func:`enforce_repo_allowlist` with the repository it is about to act on,
+before it reads anything, so the answer is the same whether the repository
+is registered or not. Each route that changes an organization calls
+:func:`enforce_owner_allowlist`. The check lives in the API, not in
 a client: the MCP server reaches embry0 through these routes with the
 caller's own key, so a client that holds a restricted key cannot route
 around it.
@@ -22,7 +27,8 @@ structured ``api_key_repo_refused`` log line naming the key (never its
 secret) and the refused repository, and an ``apikey.repo_refused`` audit row.
 
 Something that belongs to a forge owner rather than to one repository (a
-knowledge map) is checked with :func:`enforce_owner_allowlist`: a key covers
+knowledge map, an organization and its needs) is checked with
+:func:`enforce_owner_allowlist`: a key covers
 the owners of the repositories on its list, and the refusal is the same,
 naming ``<owner>/*``.
 
@@ -99,6 +105,13 @@ def key_covers(request: Request, repo: str | None) -> bool:
     return principal is None or repo_allowed(principal.allowed_repos, repo)
 
 
+def key_covers_owner(request: Request, owner: str | None) -> bool:
+    """Whether the caller's key covers ``owner``: one of its repositories is under it. As :func:`key_covers`,
+    always for sessions, the master key, AUTH_DEV_MODE and keys without an allowlist; logs and audits nothing."""
+    principal = getattr(request.state, "principal", None)
+    return principal is None or owner_allowed(principal.allowed_repos, owner)
+
+
 def covered_slugs(request: Request) -> list[str] | None:
     """The lower-cased slugs a stored row may carry for a repository the caller's key covers, with each
     one's old names from ``REPO_RENAMES``: what a list that pages in SQL narrows its query to. None when the
@@ -170,8 +183,15 @@ async def hide_unless_covered(
     """
     if key_covers(request, repo):
         return
+    await answer_as_missing(request, repo or "(no repository)", missing, action=action)
+
+
+async def answer_as_missing(request: Request, shown: str, missing: HTTPException, *, action: str | None) -> NoReturn:
+    """Raise ``missing`` for an item the caller's key does not cover, as :func:`hide_unless_covered` does, once the
+    caller has decided it does not: an action is logged and audited naming ``shown`` (a repository, or an owner's
+    ``owner/*``), a read is not."""
     if action is not None:
-        await _record_refusal(request, repo or "(no repository)", action)
+        await _record_refusal(request, shown, action)
     raise missing
 
 

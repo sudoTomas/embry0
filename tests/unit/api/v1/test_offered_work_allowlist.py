@@ -203,3 +203,33 @@ async def test_asks_about_closed_decisions_are_listed_by_the_repository_read_bac
     assert all("decision_repo" not in a for a in (await get(app, "/api/v1/asks", LIMITED)).json()["asks"]), (
         "the answer's shape is unchanged"
     )
+
+
+class _Meters:
+    """The Slop-O-Meter store, with a sloppy ``engine`` area in each repository: a dungeon of its own."""
+
+    async def scores(self, repo: str | None = None) -> list[dict[str, Any]]:
+        return [
+            {"repo": r, "area": "engine", "score": 0.8, "level": 3, "name": "Spaghetti Bolognese"}
+            for r in (COVERED, UNCOVERED)
+        ]
+
+
+@pytest.mark.asyncio
+async def test_the_world_shows_a_key_the_meter_dungeons_of_its_repositories_only(app: Any) -> None:
+    """A dungeon can come from a meter alone, with no open finding: those of a repository the key does not cover
+    are left out with the rest of that repository's world."""
+    app.state.slop_meter_repo = _Meters()
+
+    def metered(body: dict[str, Any]) -> set[tuple[str, str]]:
+        return {(d["repo"], d["area"]) for d in body["dungeons"] if d["meter"] is not None}
+
+    limited = await get(app, "/api/v1/world", LIMITED)
+    assert limited.status_code == 200, limited.text
+    assert metered(limited.json()) == {(COVERED, "engine")}, (
+        f"the limited key is shown its repository's meter dungeon and no other's: {sorted(metered(limited.json()))}"
+    )
+    open_ = await get(app, "/api/v1/world", OPEN)
+    assert metered(open_.json()) == {(COVERED, "engine"), (UNCOVERED, "engine")}, (
+        f"a key without an allowlist is shown both: {sorted(metered(open_.json()))}"
+    )

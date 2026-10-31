@@ -1007,7 +1007,8 @@ proposals (read, and answer proposals: `POST /proposals/{id}/accept`,
 A key may be limited to a list of repositories with `allowed_repos`. A
 restricted key is refused, with a 403 whose detail starts with
 `repo_not_allowed:`, whenever it would start, continue or stop work on any
-other repository:
+other repository, or change its registration, its configuration or its
+organization:
 
 - `POST /jobs` (every pipeline; a job with no repository, such as an `http`
   or `none` context, is refused too), `POST /jobs/{id}/resume`,
@@ -1028,6 +1029,23 @@ other repository:
   `POST /repos/{repo}/-/setup/proposal/{id}/apply` and `.../reject`,
   `POST /repos/{repo}/-/setup/skip-testing` and
   `POST /repos/{repo}/-/history/{id}/undo`;
+- changing a repository's registration or configuration:
+  `DELETE /repos/{repo}`, `PUT /repos/{repo}/-/active`, `/-/docker-access`,
+  `/-/credentials` and `/-/environment`,
+  `DELETE /repos/{repo}/-/environment/{key}`, `PUT` and
+  `DELETE /repos/{repo}/-/preferences` and `/-/qa-config`, `PUT` and
+  `DELETE /config/context/repos/{repo}`,
+  `PUT /standards/{owner}/{kind}/repos/{repo}` and `PUT` and
+  `DELETE /watcher/stacks/{owner}/{name}` (the stack's repository). The
+  repository is the one the path names, checked before anything is read, so
+  the answer is the same whether it is registered or not;
+- changing an organization: `PATCH /orgs/{owner}`,
+  `PUT /orgs/{owner}/status`, `POST /orgs/{owner}/probe`, `/discover`,
+  `/webhook` and `/actions` (and each repository its `repos` names),
+  `POST /orgs/{owner}/needs/{id}/dismiss` and `/reopen`, and
+  `PUT /standards/{owner}/{kind}`. A key covers the owners of the
+  repositories on its list; an owner it does not cover is refused naming
+  `<owner>/*`;
 - the [knowledge maps](#knowledge-maps), which belong to a forge owner: a
   key covers the owners of the repositories on its list. `PUT /maps/{slug}`,
   `POST /maps/{slug}/marks`, `POST /maps/{slug}/send`,
@@ -1063,8 +1081,10 @@ one rule (`key_covers` in `embry0/api/repo_allowlist.py`):
   item that does not exist: `POST /proposals/{id}/accept`, `/decline` and
   `/snooze` and `POST /decisions/{id}/send-to` with 404,
   `POST /handoffs/{id}/return` and `/cancel` with 404,
-  `POST /asks/{id}/sent` with 409 and `POST /asks/answer` with 404. So no
-  answer tells whether the item exists.
+  `POST /asks/{id}/sent` with 409, `POST /asks/answer` with 404 and
+  `POST /cases/{id}/close` with 404 (a case an organization need filed on
+  its owner is checked against the owner, and its refusal names
+  `<owner>/*`). So no answer tells whether the item exists.
 
 A list or a read is narrowed, not refused, so it logs and audits nothing.
 An action is refused: it logs `api_key_repo_refused` and writes an
@@ -1082,8 +1102,8 @@ Omitting the list, or sending an empty one, leaves the key unrestricted;
 every key minted before the allowlist existed is unrestricted. Beyond the
 routes above, the list does not narrow what the key may read (except the
 knowledge maps, which list and answer only the maps of covered owners), nor
-the settings routes its scope allows, `PUT /repos/{repo}/-/qa-config` and
-`PUT /repos/{repo}/-/preferences` among them. A restricted key may not mint
+what belongs to the deployment rather than to a repository or an owner,
+which its scope allows. A restricted key may not mint
 keys or change any key's allowlist, its own included, since a key it minted
 would carry no restriction. For an agent that should only dispatch, mint an
 `operate` key with the list.

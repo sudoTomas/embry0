@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 
 from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas.credentials import (
     BindingsSet,
     CredentialCreate,
@@ -662,6 +663,7 @@ async def get_repo_credentials(full_repo: str, request: Request) -> dict[str, An
 async def set_repo_credentials(full_repo: str, req: BindingsSet, request: Request) -> dict[str, Any]:
     st = _state(request)
     full_repo = _repo_path(full_repo)
+    await enforce_repo_allowlist(request, full_repo, action="bind credentials to a repository")
     row = await st.repos_repo.get(full_repo)
     if row is None:
         try:

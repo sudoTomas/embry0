@@ -36,7 +36,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import ensure_admin, get_healing_cases_repo, request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import answer_as_missing, enforce_repo_allowlist, key_covers, key_covers_owner
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.cases import CaseDetailResponse, CaseListResponse, CaseSummary
 from embry0.api.schemas.person_name import PersonName
@@ -177,6 +177,9 @@ def _github_issues(request: Request) -> Any:
     )
 
 
+CLOSE_A_CASE = "close a case"
+
+
 @router.post("/cases/{case_id}/close")
 async def close_case(
     case_id: str,
@@ -195,11 +198,21 @@ async def close_case(
     (403, as dismissing the need is), is already closed (409), or names no
     ``resolution_path`` and has none of its own (422). The path must be one
     the ledger knows; anything else is 422 rather than a row the database
-    would reject at write time.
+    would reject at write time. A case in a repository the caller's key does
+    not cover answers as a case that does not exist, and the refusal is
+    logged and audited.
     """
+    missing = HTTPException(status_code=404, detail="case not found")
     case = await cases.get(case_id)
     if case is None:
-        raise HTTPException(status_code=404, detail="case not found")
+        raise missing
+    filed_on = str(case.get("repo") or "")
+    if filed_on and "/" not in filed_on:
+        # An organization need's case covering several repositories is filed on its owner.
+        if not key_covers_owner(request, filed_on):
+            await answer_as_missing(request, f"{filed_on}/*", missing, action=CLOSE_A_CASE)
+    elif not key_covers(request, filed_on):
+        await answer_as_missing(request, filed_on or "(no repository)", missing, action=CLOSE_A_CASE)
     if str(case.get("origin")) == Origin.ORG:
         # Closing it dismisses the organization need, which is admin work.
         await ensure_admin(request)

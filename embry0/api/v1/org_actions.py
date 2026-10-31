@@ -16,6 +16,7 @@ A run that changed anything starts a rediscovery the way
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 import structlog
@@ -23,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist, refusal_detail
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1 import jobs as jobs_api
 from embry0.api.v1.organizations import _facts_repo, _repo, _token_for, start_discovery
@@ -95,6 +97,18 @@ async def _forge_client(request: Request, owner: str, forge: str, credential_id:
     return GitHubClient(default_token=token, max_attempts=2)
 
 
+async def _refusal(request: Request, action: str, repo: str, *, dry_run: bool) -> str | None:
+    """What the caller's key is refused with on ``repo``, or None. A real run logs and audits the refusal,
+    as every route that refuses a repository does; a dry run only says what it would be."""
+    if dry_run:
+        return refusal_detail(request, repo, action=action)
+    try:
+        await enforce_repo_allowlist(request, repo, action=action)
+    except HTTPException as exc:
+        return str(exc.detail)
+    return None
+
+
 async def _rediscover(request: Request, org: Organization) -> str | None:
     """Start a discovery run for ``org``; None when one is already running or it cannot start."""
     if await _facts_repo(request).running_run(org.owner) is not None:
@@ -119,6 +133,7 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
     changes nothing. ``rediscovery`` is the discovery run a real call that
     changed something started, or null.
     """
+    await enforce_owner_allowlist(request, owner, action=f"run the {body.action} action")
     org = await _repo(request).get(owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
@@ -151,6 +166,7 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
         webhook_url=webhook_url,
         webhook_secret=webhook_secret,
         force=body.force,
+        refusal=partial(_refusal, request, f"run the {body.action} action", dry_run=body.dry_run),
     )
     results = await org_actions.run_action(ctx, body.action, body.repos, dry_run=body.dry_run)
     rediscovery = None

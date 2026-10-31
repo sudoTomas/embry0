@@ -15,6 +15,7 @@ from embry0.api.deps import (
     request_actor,
     require_admin,
 )
+from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas import (
     BudgetConfigRequest,
     BudgetConfigResponse,
@@ -235,6 +236,7 @@ async def set_repo_context(
     request: Request,
     context: ContextConfigRepository = Depends(get_context_repo),
 ) -> dict[str, Any]:
+    await enforce_repo_allowlist(request, repo, action="change a repository's agent context")
     await context.set_repo(repo=repo, system_context=req.system_context, assistant_context=req.assistant_context)
     db = getattr(request.app.state, "db", None)
     config = getattr(request.app.state, "config", None)
@@ -580,6 +582,7 @@ async def delete_repo_context(
     request: Request,
     context: ContextConfigRepository = Depends(get_context_repo),
 ) -> dict[str, Any]:
+    await enforce_repo_allowlist(request, repo, action="change a repository's agent context")
     await context.delete_repo(repo)
     db = getattr(request.app.state, "db", None)
     config = getattr(request.app.state, "config", None)

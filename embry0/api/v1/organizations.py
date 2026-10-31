@@ -19,7 +19,7 @@ from starlette.types import Scope
 
 from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.api.v1.run_with import checked_run_with
@@ -274,6 +274,7 @@ async def register_organization(body: OrganizationBody, request: Request) -> dic
 @router.post("/orgs/{owner}/probe", dependencies=[require_admin])
 async def reprobe_organization(owner: str, request: Request) -> dict[str, Any]:
     """Ask the forge again what the stored credential can do at this owner."""
+    await enforce_owner_allowlist(request, owner, action="probe an organization")
     repository = _repo(request)
     org = await repository.get(owner)
     if org is None:
@@ -308,6 +309,7 @@ async def patch_organization(owner: str, body: PatchBody, request: Request) -> d
     layer instead, by the rules of ``PATCH /config/settings/{section}?owner=``,
     and the answer's ``deprecated`` names its key there.
     """
+    await enforce_owner_allowlist(request, owner, action="change an organization")
     repository = _repo(request)
     org = await repository.get(owner)
     if org is None:
@@ -335,6 +337,7 @@ async def patch_organization(owner: str, body: PatchBody, request: Request) -> d
 
 @router.put("/orgs/{owner}/status", dependencies=[require_admin])
 async def set_organization_status(owner: str, body: StatusBody, request: Request) -> dict[str, Any]:
+    await enforce_owner_allowlist(request, owner, action="change an organization")
     org = await _repo(request).set_status(owner, body.status)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
@@ -569,6 +572,7 @@ async def discover_organization(owner: str, request: Request) -> dict[str, Any]:
     Runs in the orchestrator process and returns the run at once; poll
     ``GET /orgs/{owner}/runs`` for progress. One run per owner at a time.
     """
+    await enforce_owner_allowlist(request, owner, action="discover an organization")
     org = await _repo(request).get(owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
@@ -686,6 +690,7 @@ async def install_organization_webhook(owner: str, request: Request) -> dict[str
     webhook secret. Refused unless the probe found the credential can manage
     hooks. Idempotent: a hook already pointing here is ``already``.
     """
+    await enforce_owner_allowlist(request, owner, action="install an organization's webhook")
     org, client = await _org_for_hooks(request, owner)
     if org.status != "active":
         raise HTTPException(status_code=409, detail=f"organization {owner} is {org.status}")

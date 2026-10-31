@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from embry0.api.deps import request_actor
+from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas.repo_preferences import (
     RepoPreferencesResponse,
     RepoPreferencesUpdateRequest,
@@ -51,6 +52,7 @@ async def put_repo_preferences(
 ) -> RepoPreferencesResponse:
     # Validate sandbox_profile exists if provided. The orchestrator attaches
     # the repository as ``profiles_repo`` on app.state (see embry0/api/app.py).
+    await enforce_repo_allowlist(request, full_repo, action="change a repository's preferences")
     if req.sandbox_profile:
         profiles_repo = getattr(request.app.state, "profiles_repo", None)
         if profiles_repo is not None:
@@ -89,6 +91,7 @@ async def put_repo_preferences(
 
 @router.delete("/repos/{full_repo:repo}/-/preferences", status_code=204, response_model=None)
 async def delete_repo_preferences(full_repo: str, request: Request) -> None:
+    await enforce_repo_allowlist(request, full_repo, action="change a repository's preferences")
     prefs_repo = request.app.state.repo_preferences_repo
     revision_id = await prefs_repo.delete_recorded(full_repo, actor=request_actor(request))
     if revision_id is not None:
