@@ -1382,6 +1382,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 134 | settings documents: a layer per organization (`organization:<owner>`) and per repository (`repository:<owner>/<name>`) beside the deployment's document, each created by its first write; the deployment's row is unchanged (spec 2026-10-29, #161) | `settings_documents` (scope check widened) |
 | 135 | background spend: one row per model call a background feature makes outside a job (the briefs, the Slop-O-Meter's judge), with the feature, the model, the repository, the tokens and their price; counted by the budget caps and `/stats` (#164) | `background_spend` |
 | 136 | background scope exits: when a repository left a background feature's scope, so the Slop-O-Meter removes what it kept of it only `background.prune_after_days` later, and not at all if it comes back first (#165, [what the background features keep](ops/background-data.md)) | `background_scope_exits` |
+| 137 | asks: when the feed first handed an ask out, set once in the statement that hands it out, so an ask never reported sent expires `expire_days` after it and keeps its person from being asked again for another `expire_days` only (#295) | `asks.handed_out_at` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

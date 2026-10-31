@@ -38,8 +38,10 @@ class FakeAsks:
     async def live(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.rows if r["state"] in ("queued", "sent", "reminded")]
 
-    async def expired_pairs(self) -> set[tuple[str, str]]:
-        return {(r["decision_id"], r["recipient"]) for r in self.rows if r["state"] == "expired"}
+    async def expired_pairs(self) -> dict[tuple[str, str], Any]:
+        return {
+            (r["decision_id"], r["recipient"]): None for r in self.rows if r["state"] == "expired" and r.get("sent_at")
+        }
 
     async def code(self, decision_id: str) -> str:
         return "ABCD"
@@ -104,8 +106,8 @@ async def test_each_tick_reads_the_section_again() -> None:
     assert (await loop.tick())["queued"] == 0
     current["section"] = _section(enabled=True)
     assert (await loop.tick())["queued"] == 1, "turned on: the next tick queues"
-    asks.rows[0]["created_at"] = NOW - timedelta(days=2)
-    assert (await loop.tick())["expired"] == 0, "two days old, inside expire_days 7"
+    asks.rows[0].update(state="sent", sent_at=NOW - timedelta(days=2), created_at=NOW - timedelta(days=2))
+    assert (await loop.tick())["expired"] == 0, "sent two days ago, inside expire_days 7"
     current["section"] = _section(enabled=True, expire_days=1)
     assert (await loop.tick())["expired"] == 1, "expire_days 1: the next tick expires it"
 

@@ -413,7 +413,7 @@ When and how often embry0 asks a person about a decision that waits on them.
 | `weekdays` | text | `"mon-fri"` | at most 64 characters | organization | `ASK_WEEKDAYS` | The days asks go out: a day name (mon to sun), a range such as mon-fri or sun-thu, or a list such as mon,wed,fri. |
 | `timezone` | text | `"UTC"` | at most 64 characters | organization | `ASK_TIMEZONE` | The IANA time zone `hours` and `weekdays` are read in, such as Europe/Berlin. |
 | `remind_hours` | number | `24.0` | > 0, ≤ 8760 | organization | `ASK_REMIND_HOURS` | Hours an ask waits unanswered before its one reminder. |
-| `expire_days` | number | `7.0` | > 0, ≤ 365 | organization | `ASK_EXPIRE_DAYS` | Days after which an unanswered ask expires. That answers nothing, and the person is not asked about that decision again. |
+| `expire_days` | number | `7.0` | > 0, ≤ 365 | organization | `ASK_EXPIRE_DAYS` | Days after it was sent that an unanswered ask expires. That answers nothing, and the person is not asked about that decision again. One handed out but never reported sent expires this many days after it was handed out, and its person may be asked again this many days later. An ask still queued does not expire. |
 | `max_open_per_person` | whole number | `3` | ≥ 1 | organization | `ASK_MAX_OPEN_PER_PERSON` | Unanswered asks one person holds at once about one organization's decisions; the next, worst first, is released as one is answered or expires. |
 | `tick_seconds` | number | `120.0` | ≥ 30, ≤ 86400 |  | `ASK_TICK_SECONDS` | How often the ask loop runs: it expires asks past `expire_days`, withdraws those whose decision was answered or moved on, and queues one for each person a decision now waits on. |
 

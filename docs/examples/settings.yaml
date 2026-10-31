@@ -39,8 +39,11 @@ asks:
   # Hours an ask waits unanswered before its one reminder.
   # remind_hours: 24.0
 
-  # Days after which an unanswered ask expires. That answers nothing, and the
-  # person is not asked about that decision again.
+  # Days after it was sent that an unanswered ask expires. That answers
+  # nothing, and the person is not asked about that decision again. One handed
+  # out but never reported sent expires this many days after it was handed
+  # out, and its person may be asked again this many days later. An ask still
+  # queued does not expire.
   # expire_days: 7.0
 
   # Unanswered asks one person holds at once about one organization's

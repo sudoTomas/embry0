@@ -120,12 +120,45 @@ class AsksRepository:
         )
         return dict(row) if row else None
 
-    async def expired_pairs(self) -> set[tuple[str, str]]:
-        """(decision, person) pairs whose ask expired: not asked about that decision again."""
+    async def expired_pairs(self) -> dict[tuple[str, str], datetime | None]:
+        """Each (decision, person) pair an expired ask keeps from being asked again, with until when.
+
+        ``None``: an ask that reached its person and expired keeps them from
+        being asked about that decision for good. A time: an ask the feed
+        handed out that was never reported sent expired then (#295), and keeps
+        them from being asked again until ``expire_days`` after it; the ask
+        loop reads the organization's ``expire_days``. An ask that expired
+        without being handed out or sent, which a release before #295 did to
+        an ask that waited in the queue, keeps no one from being asked.
+        """
         rows = await self._db.fetch(
-            "SELECT DISTINCT decision_id, LOWER(recipient) AS r FROM asks WHERE state = 'expired'"
+            """
+            SELECT decision_id, LOWER(recipient) AS r, bool_or(sent_at IS NOT NULL) AS sent,
+                   max(closed_at) FILTER (WHERE sent_at IS NULL) AS cooling_since
+            FROM asks
+            WHERE state = 'expired' AND (sent_at IS NOT NULL OR handed_out_at IS NOT NULL)
+            GROUP BY decision_id, LOWER(recipient)
+            """
         )
-        return {(str(r["decision_id"]), str(r["r"])) for r in rows}
+        return {(str(r["decision_id"]), str(r["r"])): None if r["sent"] else r["cooling_since"] for r in rows}
+
+    async def hand_out(self, ask_ids: Iterable[str], *, now: datetime) -> dict[str, datetime]:
+        """Record that the feed handed these queued asks out: ``now`` the first time, kept after that.
+
+        One statement stamps and answers, so two polls that hand the same ask
+        out at once keep the same, earlier time. The ids of the asks still
+        queued, each with the time it was first handed out.
+        """
+        ids = sorted(set(ask_ids))
+        if not ids:
+            return {}
+        rows = await self._db.fetch(
+            "UPDATE asks SET handed_out_at = COALESCE(handed_out_at, $2) "
+            "WHERE id = ANY($1::text[]) AND state = 'queued' RETURNING id, handed_out_at",
+            ids,
+            now,
+        )
+        return {str(r["id"]): r["handed_out_at"] for r in rows}
 
     async def recent(self, *, limit: int = 100) -> list[dict[str, Any]]:
         rows = await self._db.fetch("SELECT * FROM asks ORDER BY created_at DESC LIMIT $1", limit)
