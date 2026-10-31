@@ -2731,22 +2731,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # nothing while `asks.enabled` is false. It reads the section per
     # repository (spec 2026-10-29), so each ask follows its decision's
     # organization's layer.
-    from embry0.api.v1.decisions import list_decisions as _ask_decisions
+    from embry0.api.v1.asks import open_decisions as _ask_decisions
     from embry0.services.ask_loop import AskLoop
     from embry0.settings.sections.asks import ASKS as _ASKS
     from embry0.settings.store import scoped_reader as _scoped_reader
 
     async def _asked_decisions() -> list[dict[str, Any]]:
-        listed = await _ask_decisions(
-            _slop_meter_request(app),
-            stage="all",
-            owner=None,
-            repo=None,
-            include_held=True,
-            for_="all",
-            limit=500,
-        )
-        return list(listed["decisions"])
+        # Every open decision, none cut off by a page's limit (#273): the feed reads the same. Quests to review
+        # are the inbox's newest 30 (#296).
+        return await _ask_decisions(app)
 
     async def _ask_people() -> dict[str, str]:
         users = getattr(app.state, "users_repo", None)
