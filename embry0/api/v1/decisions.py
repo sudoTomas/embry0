@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import structlog
@@ -62,6 +62,18 @@ def _allowed(request: Request, repo: str | None) -> bool:
     """Whether the caller's key may read ``repo``'s decisions. A list hides the rest without a refusal:
     nothing was refused, so nothing is logged or audited (a chat reads the feed every minute)."""
     return refusal_detail(request, repo, action="read a decision") is None
+
+
+def listed_to(request: Request, decision: Mapping[str, Any]) -> bool:
+    """Whether :func:`list_decisions` lists ``decision`` to the caller, by the key rule it applies.
+
+    :func:`_reviews` leaves out a quest to review in a repository the caller's
+    key does not cover; :func:`_offers` leaves out nothing by key. For a reader
+    that took every decision whatever the caller's key, such as the asks feed,
+    which counts a person's asks toward their limit before it hands out the
+    ones the caller may read (#272).
+    """
+    return decision.get("stage") != "done" or _allowed(request, decision.get("repo"))
 
 
 async def done_inputs(request: Request, rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:

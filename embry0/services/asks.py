@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from typing import Any
@@ -190,7 +190,11 @@ def plan(
 
 
 def release(
-    live: Sequence[Mapping[str, Any]], order: Mapping[str, int], now: datetime, policy: AskPolicy
+    live: Sequence[Mapping[str, Any]],
+    order: Mapping[str, int],
+    now: datetime,
+    policy: AskPolicy,
+    shown: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> list[tuple[Mapping[str, Any], bool]]:
     """The asks to send now, ``(ask, is_reminder)``: due reminders, then queued ones, worst first.
 
@@ -199,6 +203,11 @@ def release(
     ask only while its person holds fewer than that organization's
     ``max_open_per_person`` unanswered asks about its decisions. A person asked
     about two organizations' decisions holds each one's number.
+
+    ``shown`` says which asks the caller may be handed, every one when None:
+    only those are released. Every unanswered ask in ``live`` counts toward
+    its person's limit whether it is shown or not, so a caller that sees only
+    some of a person's asks never releases one past the limit (#272).
     """
 
     def counted(a: Mapping[str, Any]) -> tuple[str, str]:
@@ -208,12 +217,13 @@ def release(
     for a in live:
         if a.get("state") in ("sent", "reminded"):
             held[counted(a)] = held.get(counted(a), 0) + 1
+    handed = [a for a in live if shown is None or shown(a)]
     out: list[tuple[Mapping[str, Any], bool]] = []
-    for a in live:
+    for a in handed:
         s = policy.settings(str(a["decision_id"]))
         if reminder_due(a, now, s) and working(now, s):
             out.append((a, True))
-    queued = [a for a in live if a.get("state") == "queued" and a["due_at"] <= now]
+    queued = [a for a in handed if a.get("state") == "queued" and a["due_at"] <= now]
     for a in sorted(queued, key=lambda a: (order.get(str(a["decision_id"]), 1_000_000), a.get("created_at") or now)):
         key = counted(a)
         if held.get(key, 0) < policy.settings(str(a["decision_id"])).max_open_per_person:

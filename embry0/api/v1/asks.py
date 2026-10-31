@@ -15,6 +15,7 @@ A ``propose`` key does all of these: no model sits between a press and its answe
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -82,11 +83,20 @@ async def _person(request: Request, who: str) -> dict[str, Any]:
     }
 
 
-async def open_decisions(request: Request) -> list[dict[str, Any]]:
-    """Every open decision, worst first, read once for a whole feed."""
-    from embry0.api.v1.decisions import list_decisions
+async def open_decisions(app: Any) -> list[dict[str, Any]]:
+    """Every open decision, worst first, read once for a whole feed, whatever the caller's key may read.
 
-    listed = await list_decisions(request, stage="all", owner=None, repo=None, include_held=True, for_="all", limit=500)
+    A person's unanswered asks count toward their limit whether or not the
+    caller's key covers their decisions, and each counts in its decision's
+    organization, so the feed reads every decision, as the ask loop does, and
+    hands out only those the key may read (#272).
+    """
+    from embry0.api.v1.decisions import list_decisions
+    from embry0.api.v1.organizations import app_request
+
+    listed = await list_decisions(
+        app_request(app), stage="all", owner=None, repo=None, include_held=True, for_="all", limit=500
+    )
     return list(listed["decisions"])
 
 
@@ -95,23 +105,30 @@ async def asks_due(request: Request, limit: int = Query(default=50, ge=1, le=200
     """The asks to send now: due reminders, then queued ones, worst first, while their person holds
     fewer than ``asks.max_open_per_person`` unanswered asks about that organization's decisions. Each
     ask is held to its decision's organization's values: its working hours for a reminder, its
-    ``remind_hours`` and its limit. An empty list while ``asks.enabled`` is false in the settings
-    document, whatever is stored; ``enabled`` says which."""
+    ``remind_hours`` and its limit. Only asks whose decision the caller's key may read are handed
+    out, but every unanswered ask counts toward its person's limit. An empty list while
+    ``asks.enabled`` is false in the settings document, whatever is stored; ``enabled`` says which."""
+    from embry0.api.v1.decisions import listed_to
+
     section = await ask_policy(request)
     if not section.deployment().enabled:
         return {"asks": [], "count": 0, "enabled": False}
     asks = _repo(request, "asks_repo")
     now = datetime.now(UTC)
-    decisions = await open_decisions(request)
+    decisions = await open_decisions(request.app)
     policy = AskPolicy(section, decisions)
     by_id = {str(d["id"]): d for d in decisions}
     order = {str(d["id"]): i for i, d in enumerate(decisions)}
-    # Only what the caller may read is sent. An ask whose decision is not listed here may have been
-    # answered, or may sit in a repo the caller's key does not cover: the ask loop, which reads every
-    # decision, is what withdraws it.
+    # An ask whose decision is not open any more was answered or moved on: the ask loop withdraws it.
+    # The rest count toward their person's limit, the ones in repositories the caller's key does not
+    # cover too; only what the caller may read is handed out.
     live = [a for a in await asks.live() if str(a["decision_id"]) in by_id]
+
+    def shown(ask: Mapping[str, Any]) -> bool:
+        return listed_to(request, by_id[str(ask["decision_id"])])
+
     out: list[dict[str, Any]] = []
-    for ask, reminder in release(live, order, now, policy):
+    for ask, reminder in release(live, order, now, policy, shown):
         decision = by_id[str(ask["decision_id"])]
         out.append(
             {
