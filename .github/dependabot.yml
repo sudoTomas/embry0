@@ -26,7 +26,10 @@ updates:
       npm-minor-and-patch:
         update-types: [minor, patch]
 
-  # Base images in infra/Dockerfile.* and frontend/Dockerfile.
+  # Base images in infra/Dockerfile.* and frontend/Dockerfile. The `uv` stage
+  # of Dockerfile.orchestrator and Dockerfile.proxy moves with UV_VERSION in
+  # ci.yml, which Dependabot does not track: its pull request for that stage
+  # fails tests/unit/infra/test_image_lockfile.py until UV_VERSION matches.
   - package-ecosystem: docker
     directories:
       - /infra
