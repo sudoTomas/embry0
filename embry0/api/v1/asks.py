@@ -15,7 +15,7 @@ A ``propose`` key does all of these: no model sits between a press and its answe
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -23,6 +23,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers, restricted_key_name
 from embry0.api.schemas.person_name import PersonName
 from embry0.services.asks import AskPolicy, release
 from embry0.settings.sections.asks import ASKS, AsksSettings
@@ -152,12 +153,34 @@ class SentBody(BaseModel):
     message_ref: str = Field(default="", max_length=500)
 
 
+async def decision_repos(request: Request, decision_ids: Sequence[str]) -> dict[str, str]:
+    """Each decision's repository: read back from the row it comes from, else from the open decisions, which
+    alone name an audit finding's. A decision in neither is left out, and a key with an allowlist reads it as
+    one in a repository it does not cover."""
+    found: dict[str, str] = await _repo(request, "asks_repo").decision_repos(decision_ids)
+    if any(d not in found for d in decision_ids):
+        found |= {str(d["id"]): str(d.get("repo") or "") for d in await open_decisions(request.app)}
+    return found
+
+
+def _not_waiting() -> HTTPException:
+    return HTTPException(status_code=409, detail="that ask is not waiting to be sent")
+
+
 @router.post("/asks/{ask_id}/sent")
 async def ask_sent(ask_id: str, body: SentBody, request: Request) -> dict[str, Any]:
-    """The assistant sent the ask (or its reminder)."""
-    row = await _repo(request, "asks_repo").sent(ask_id, message_ref=body.message_ref, now=datetime.now(UTC))
+    """The assistant sent the ask (or its reminder). An ask about a decision in a repository the caller's key
+    does not cover answers as one that is not waiting to be sent."""
+    asks = _repo(request, "asks_repo")
+    if restricted_key_name(request) is not None:
+        ask = await asks.get(ask_id)
+        if ask is None:
+            raise _not_waiting()
+        repo = (await decision_repos(request, [str(ask["decision_id"])])).get(str(ask["decision_id"]))
+        await hide_unless_covered(request, repo, _not_waiting(), action="report an ask sent")
+    row = await asks.sent(ask_id, message_ref=body.message_ref, now=datetime.now(UTC))
     if row is None:
-        raise HTTPException(status_code=409, detail="that ask is not waiting to be sent")
+        raise _not_waiting()
     return {k: _iso(v) for k, v in row.items()}
 
 
@@ -235,6 +258,14 @@ async def answer_ask(body: AnswerBody, request: Request) -> dict[str, Any]:
     decision_id = await asks.decision_of(body.code.strip().upper())
     if decision_id is None:
         raise HTTPException(status_code=404, detail="no decision has that code")
+    if restricted_key_name(request) is not None:
+        # A decision in a repository the key does not cover, open or answered, answers as a code no decision has.
+        await hide_unless_covered(
+            request,
+            (await decision_repos(request, [decision_id])).get(decision_id),
+            HTTPException(status_code=404, detail="no decision has that code"),
+            action="answer an ask",
+        )
     last = await asks.last_answer(decision_id)
     try:
         decision = await get_decision(decision_id, request)
@@ -269,5 +300,20 @@ async def answer_ask(body: AnswerBody, request: Request) -> dict[str, Any]:
 
 @router.get("/asks")
 async def list_asks(request: Request, limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
-    rows = await _repo(request, "asks_repo").recent(limit=limit)
+    """The latest asks. Through a key with a repository allowlist, only those about decisions in the repositories
+    it covers. An ask names only its decision, whose repository is read back at the time from the row the decision
+    comes from (a finished job, an issue, a watcher case, a lead, an answered proposal), else from the open
+    decisions; an ask about an audit finding that is no longer offered and was never answered has no repository
+    to read back, so such a key does not see it."""
+    from embry0.api.v1.decisions import listed_to
+
+    asks = _repo(request, "asks_repo")
+    if restricted_key_name(request) is None:
+        rows = await asks.recent(limit=limit)
+    else:
+        listed = {str(d["id"]) for d in await open_decisions(request.app) if listed_to(request, d)}
+        rows = await asks.recent(limit=limit, repos=covered_slugs(request) or [], decision_ids=listed)
+        rows = [r for r in rows if r["decision_id"] in listed or key_covers(request, r.get("decision_repo"))]
+    for r in rows:
+        r.pop("decision_repo", None)
     return {"asks": [{k: _iso(v) for k, v in r.items()} for r in rows], "count": len(rows)}

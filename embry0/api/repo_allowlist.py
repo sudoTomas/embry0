@@ -25,6 +25,16 @@ Something that belongs to a forge owner rather than to one repository (a
 knowledge map) is checked with :func:`enforce_owner_allowlist`: a key covers
 the owners of the repositories on its list, and the refusal is the same,
 naming ``<owner>/*``.
+
+A route that lists or reads a repository's decisions and the work offered
+on it (quests to review, quests on offer, proposals, leads, asks, hand-offs)
+and the game layer's view of its work asks :func:`key_covers`: a list leaves
+out what the key does not cover, and reading one such item answers as an
+item that does not exist does (:func:`hide_unless_covered`). Nothing was
+refused, so nothing is logged or audited. A route that acts on one such item
+answers the same, and logs and audits the refusal. A list that pages in SQL
+narrows its query to :func:`covered_slugs` and still keeps only what
+:func:`key_covers` passes.
 """
 
 from __future__ import annotations
@@ -82,6 +92,23 @@ def owner_allowed(allowed_repos: Iterable[str] | None, owner: str | None) -> boo
     return any(target in _owners(entry) for entry in allowed_repos)
 
 
+def key_covers(request: Request, repo: str | None) -> bool:
+    """Whether the caller's key covers ``repo``: always for sessions, the master key, AUTH_DEV_MODE and
+    keys without an allowlist; for a key with one, whether ``repo`` is on it. Logs and audits nothing."""
+    principal = getattr(request.state, "principal", None)
+    return principal is None or repo_allowed(principal.allowed_repos, repo)
+
+
+def covered_slugs(request: Request) -> list[str] | None:
+    """The lower-cased slugs a stored row may carry for a repository the caller's key covers, with each
+    one's old names from ``REPO_RENAMES``: what a list that pages in SQL narrows its query to. None when the
+    key covers every repository. A row it selects is one :func:`key_covers` passes."""
+    principal = getattr(request.state, "principal", None)
+    if principal is None or principal.allowed_repos is None:
+        return None
+    return sorted({v.lower() for entry in principal.allowed_repos for v in repo_slug_variants(entry.strip())})
+
+
 def restricted_key_name(request: Request) -> str | None:
     """The key's name when the caller is a key with an allowlist, else None."""
     principal = getattr(request.state, "principal", None)
@@ -102,10 +129,9 @@ def refusal_detail(request: Request, repo: str | None, *, action: str) -> str | 
 
     For a caller that wants the answer without the refusal, such as a dry run.
     """
-    principal = getattr(request.state, "principal", None)
-    if principal is None or repo_allowed(principal.allowed_repos, repo):
+    if key_covers(request, repo):
         return None
-    return _detail(principal, repo or "(no repository)", action)
+    return _detail(request.state.principal, repo or "(no repository)", action)
 
 
 async def enforce_repo_allowlist(request: Request, repo: str | None, *, action: str) -> None:
@@ -129,8 +155,34 @@ async def enforce_owner_allowlist(request: Request, owner: str | None, *, action
         await _refuse(request, f"{owner}/*" if owner else "(no owner)", action)
 
 
+async def hide_unless_covered(
+    request: Request, repo: str | None, missing: HTTPException, *, action: str | None = None
+) -> None:
+    """Answer ``missing``, what the route answers for an item that does not exist, when the calling key does not
+    cover ``repo``, the repository of the one item the route reads or acts on.
+
+    The answer is the same either way, so it never tells whether the item
+    exists. A read (``action`` None) logs and audits nothing, as a list that
+    leaves the item out does not. An action logs and audits the refusal as
+    :func:`enforce_repo_allowlist` does, so a key that tries to act outside its
+    list is still on record. No-op for sessions, the master key, AUTH_DEV_MODE
+    and unrestricted keys.
+    """
+    if key_covers(request, repo):
+        return
+    if action is not None:
+        await _record_refusal(request, repo or "(no repository)", action)
+    raise missing
+
+
 async def _refuse(request: Request, shown: str, action: str) -> NoReturn:
     """Log, audit and raise the refusal of ``action`` on ``shown`` (a repository, or an owner's ``owner/*``)."""
+    await _record_refusal(request, shown, action)
+    raise HTTPException(status_code=403, detail=_detail(request.state.principal, shown, action))
+
+
+async def _record_refusal(request: Request, shown: str, action: str) -> None:
+    """Log and audit the refusal of ``action`` on ``shown``: ``api_key_repo_refused`` and ``apikey.repo_refused``."""
     principal = request.state.principal
     logger.warning(
         "api_key_repo_refused",
@@ -150,4 +202,3 @@ async def _refuse(request: Request, shown: str, action: str) -> NoReturn:
         details={"key_id": principal.key_id, "key_name": principal.key_name, "repo": shown, "action": action},
         audit_log_path=getattr(config, "audit_log_path", None),
     )
-    raise HTTPException(status_code=403, detail=_detail(principal, shown, action))

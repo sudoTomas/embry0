@@ -31,6 +31,8 @@ class FakeAsks:
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
         self.codes = {"offer:crack:1": "ABCD", "done:job-1": "WXYZ"}
+        #: Each decision's repository as the table would read it back from the row the decision comes from.
+        self.repos: dict[str, str] = {}
 
     async def live(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.rows if r["state"] in ("queued", "sent", "reminded")]
@@ -69,8 +71,24 @@ class FakeAsks:
         done = [r for r in self.rows if r["decision_id"] == decision_id and r["state"] == "answered"]
         return dict(done[-1]) if done else None
 
-    async def recent(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        return [dict(r) for r in self.rows][:limit]
+    async def recent(self, *, limit: int = 100, repos: Any = None, decision_ids: Any = ()) -> list[dict[str, Any]]:
+        """As the table narrows them: by the decision's repository, read back from ``self.repos``, or by id."""
+        rows = [dict(r) for r in self.rows]
+        if repos is not None:
+            named = set(decision_ids)
+            rows = [
+                {**r, "decision_repo": self.repos.get(r["decision_id"])}
+                for r in rows
+                if r["decision_id"] in named or str(self.repos.get(r["decision_id"], "")).lower() in set(repos)
+            ]
+        return rows[:limit]
+
+    async def decision_repos(self, decision_ids: Any) -> dict[str, str]:
+        """Each decision's repository as the table reads it back: ``self.repos``, set by a test."""
+        return {d: self.repos[d] for d in decision_ids if d in self.repos}
+
+    async def get(self, ask_id: str) -> dict[str, Any] | None:
+        return next((dict(r) for r in self.rows if r["id"] == ask_id), None)
 
 
 def ask(ask_id: str, decision_id: str, recipient: str, **over: Any) -> dict[str, Any]:

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from embry0.api.deps import require_admin
 from embry0.api.v1.ui import require_game
+from embry0.api.v1.world import covered_entries
 
 # The game's reads: 404 while the settings document turns the game layer off (ui.game, #177).
 # The content pack's routes (progression_pack.py) are its configuration and stay.
@@ -37,6 +38,9 @@ async def read_progression(request: Request) -> dict[str, Any]:
     """
     progression = await _service(request).read()
     result: dict[str, Any] = progression.to_dict()
+    # A repository's diary, and the tiers it completed among the latest unlocks, only to a key that covers it.
+    result["diaries"] = covered_entries(request, result.get("diaries", []))
+    result["recent"] = covered_entries(request, result.get("recent", []))
     packs = getattr(request.app.state, "progression_packs", None)
     if packs is not None:
         # The stored version it comes from (0: nothing stored) and whether it is the shipped default's.
