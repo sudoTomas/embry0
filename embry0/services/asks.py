@@ -195,8 +195,8 @@ def release(
     """The asks to send now, ``(ask, is_reminder)``: due reminders, then queued ones, worst first.
 
     Each ask is held to its decision's organization's values (``policy``): a
-    reminder goes only within that organization's working hours, and a queued
-    ask only while its person holds fewer than that organization's
+    reminder goes only within that organization's working hours, and so does a
+    queued ask, only while its person holds fewer than that organization's
     ``max_open_per_person`` unanswered asks about its decisions. A person asked
     about two organizations' decisions holds each one's number.
     """
@@ -215,8 +215,10 @@ def release(
             out.append((a, True))
     queued = [a for a in live if a.get("state") == "queued" and a["due_at"] <= now]
     for a in sorted(queued, key=lambda a: (order.get(str(a["decision_id"]), 1_000_000), a.get("created_at") or now)):
+        # Outside working hours a queued ask waits, its slot freed or not, for the next working time (#276).
+        s = policy.settings(str(a["decision_id"]))
         key = counted(a)
-        if held.get(key, 0) < policy.settings(str(a["decision_id"])).max_open_per_person:
+        if working(now, s) and held.get(key, 0) < s.max_open_per_person:
             out.append((a, False))
             held[key] = held.get(key, 0) + 1
     return out

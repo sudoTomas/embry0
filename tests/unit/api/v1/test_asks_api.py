@@ -360,8 +360,8 @@ async def test_a_person_s_open_asks_count_per_organization(app: Any) -> None:
 async def test_the_feed_holds_each_ask_to_its_organization_s_layer(app: Any) -> None:
     """Reminder hours, the reminder delay and the per-person limit each come from the ask's organization.
 
-    The queued asks are all within their organization's working hours: a queued
-    ask is released once due, whatever the hour, which is a known gap (#276).
+    The queued asks are all within their organization's working hours, which
+    they need to go out (#276).
     """
     elsewhere = DAYS[(NOW.weekday() + 3) % 7]
     _decide(
@@ -391,3 +391,47 @@ async def test_the_feed_holds_each_ask_to_its_organization_s_layer(app: Any) -> 
         "held, and initech, with no layer, counts its own asks against the deployment's three: "
         f"{[(a['id'], a['reminder']) for a in due]}"
     )
+
+
+class FrozenClock(datetime):
+    """``datetime`` whose ``now()`` is :attr:`at`: the feed reads the real clock."""
+
+    at = NOW
+
+    @classmethod
+    def now(cls, tz: Any = None) -> Any:
+        return cls.at.astimezone(tz) if tz is not None else cls.at
+
+
+@pytest.mark.asyncio
+async def test_a_queued_ask_freed_outside_working_hours_stays_queued_until_the_next_working_time(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#276: ada answers acme's one ask at night in Tokyo; the ask behind it goes out on the next working morning."""
+    monkeypatch.setattr(asks_api, "datetime", FrozenClock)
+    _decide(app, ("offer:acme:1", "acme/web"), ("offer:acme:2", "acme/web"))
+    app.state.settings = LayeredSettings(
+        {"enabled": True, "max_open_per_person": 1}, {"acme": {"timezone": "Asia/Tokyo"}}
+    )
+    friday_10_jst = datetime(2026, 10, 30, 1, 0, tzinfo=UTC)
+    held = ask("held", "offer:acme:1", "ada@example.com", state="sent", sent_at=friday_10_jst, due_at=friday_10_jst)
+    behind = ask("behind", "offer:acme:2", "ada@example.com", due_at=friday_10_jst, created_at=friday_10_jst)
+    app.state.asks_repo.rows = [held, behind]
+
+    FrozenClock.at = datetime(2026, 10, 30, 7, 0, tzinfo=UTC)  # Friday 16:00 in Tokyo
+    due = [a["id"] for a in (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]]
+    assert due == [], f"ada holds acme's one ask, so the ask behind it waits: {due}"
+
+    held["state"] = "answered"
+    app.state.open_decisions.pop("offer:acme:1")
+    FrozenClock.at = datetime(2026, 10, 30, 17, 0, tzinfo=UTC)  # Saturday 02:00 in Tokyo
+    due = [a["id"] for a in (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]]
+    assert due == [], (
+        "ada answered at 02:00 on Saturday in Tokyo, freeing her slot outside acme's working hours: "
+        f"the ask behind it was due on Friday but waits for acme's working time: {due}"
+    )
+    assert behind["state"] == "queued", "it stays queued"
+
+    FrozenClock.at = datetime(2026, 11, 2, 0, 0, tzinfo=UTC)  # Monday 09:00 in Tokyo
+    due = [a["id"] for a in (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]]
+    assert due == ["behind"], f"it goes out at acme's next working time, 09:00 on Monday in Tokyo: {due}"
