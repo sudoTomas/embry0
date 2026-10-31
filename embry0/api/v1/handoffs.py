@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import ensure_admin, request_actor
+from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers
 from embry0.api.session import request_session
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
@@ -125,9 +126,9 @@ async def hand_off(request: Request, decision_id: str, *, to: str, note: str, ac
     The dashboard's Send to, and a chat's (where ``actor`` is the person who
     pressed the button, not the assistant's key).
     """
-    from embry0.api.v1.decisions import get_decision
+    from embry0.api.v1.decisions import read_decision
 
-    decision = await get_decision(decision_id, request)
+    decision = await read_decision(request, decision_id, action="hand off a decision")
     users = _repo(request, "users_repo")
     person = await users.get_by_email(to.strip())
     if person is None or person.disabled or person.tier not in _SIGNED_IN:
@@ -164,8 +165,9 @@ async def list_handoffs(
     if for_ == "me":
         rows = await repo.open_to(request_actor(request))
     else:
-        rows = await repo.recent(limit=limit)
-    shown = [view(r) for r in rows[:limit]]
+        rows = await repo.recent(limit=limit, repos=covered_slugs(request))
+    # A hand-off carries its decision's repository and title: a key sees those of the repositories it covers.
+    shown = [view(r) for r in rows if key_covers(request, r.get("repo"))][:limit]
     return {"handoffs": shown, "count": len(shown)}
 
 
@@ -183,6 +185,13 @@ async def _close(
     row = await repo.get(handoff_id)
     if row is None or row.get("state") != "open":
         raise HTTPException(status_code=404, detail="no open hand-off with that id")
+    # A hand-off in a repository the caller's key does not cover answers as one that is not open.
+    await hide_unless_covered(
+        request,
+        row.get("repo"),
+        HTTPException(status_code=404, detail="no open hand-off with that id"),
+        action=f"{'return' if state == 'returned' else 'cancel'} a hand-off",
+    )
     actor = request_actor(request).lower()
     if actor not in {str(row.get(k) or "").lower() for k in who}:
         await ensure_admin(request)

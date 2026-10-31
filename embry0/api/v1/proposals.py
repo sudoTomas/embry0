@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import get_healing_cases_repo, get_issue_executor, get_issues_repo, request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import hide_unless_covered, key_covers
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.person_name import PersonName
 from embry0.api.v1.run_with import checked_run_with
@@ -178,10 +179,33 @@ async def feed(request: Request) -> list[Proposal]:
     return sorted(with_owners(proposals, owners, areas), key=lambda p: p.created_at, reverse=True)
 
 
+#: What reading a proposal that is not open answers, and one in a repository the caller's key does not cover.
+_NOT_OPEN = "no open proposal with that id: answered, moved on, or never asked"
+
+
 async def _open(request: Request, proposal_id: str) -> Proposal:
     found = next((p for p in await feed(request) if p.id == proposal_id), None)
     if found is None:
-        raise HTTPException(status_code=404, detail="no open proposal with that id: answered, moved on, or never asked")
+        raise not_open()
+    return found
+
+
+def readable(request: Request, proposals: Iterable[Proposal]) -> list[Proposal]:
+    """The proposals in repositories the caller's key covers: every list of offered work keeps only these."""
+    return [p for p in proposals if key_covers(request, p.repo)]
+
+
+def not_open() -> HTTPException:
+    """What reading or answering a proposal that is not open answers."""
+    return HTTPException(status_code=404, detail=_NOT_OPEN)
+
+
+async def readable_proposal(request: Request, proposal_id: str, *, action: str | None = None) -> Proposal:
+    """One open proposal the caller may read or, naming ``action``, answer. One in a repository the caller's key
+    does not cover answers as one that is not open does, so neither tells whether it exists; an action's
+    refusal is logged and audited (:func:`~embry0.api.repo_allowlist.hide_unless_covered`)."""
+    found = await _open(request, proposal_id)
+    await hide_unless_covered(request, found.repo, not_open(), action=action)
     return found
 
 
@@ -222,7 +246,7 @@ async def list_proposals(
     """The proposals still asked, newest first: what an assistant reads to message owners."""
     if kind is not None and kind not in KINDS:
         raise HTTPException(status_code=422, detail=f"kind is one of {', '.join(KINDS)}")
-    proposals = for_owner(await feed(request), owner)
+    proposals = for_owner(readable(request, await feed(request)), owner)
     if kind is not None:
         proposals = [p for p in proposals if p.kind == kind]
     if since is not None:
@@ -236,7 +260,7 @@ async def list_proposals(
 
 @router.get("/proposals/{proposal_id}")
 async def get_proposal(proposal_id: str, request: Request) -> dict[str, Any]:
-    return (await _shown(request, [await _open(request, proposal_id)]))[0]
+    return (await _shown(request, [await readable_proposal(request, proposal_id)]))[0]
 
 
 async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | None = None) -> str:
@@ -345,8 +369,7 @@ async def record_lead_accept(request: Request, row: dict[str, Any], *, by: str, 
 @router.post("/proposals/{proposal_id}/accept", status_code=202)
 async def accept_proposal(proposal_id: str, body: AcceptBody, request: Request) -> dict[str, Any]:
     """Start it, through the path its kind already has; the answer is recorded only once the start worked."""
-    proposal = await _open(request, proposal_id)
-    await enforce_repo_allowlist(request, proposal.repo, action="accept a proposal")
+    proposal = await readable_proposal(request, proposal_id, action="accept a proposal")
     # Checked before anything starts; the case and issue paths check it again as their routes do.
     run_with = await checked_run_with(request, body.run_with, proposal.repo)
     native = proposal.id.split(":", 1)[1]
@@ -384,8 +407,7 @@ async def accept_proposal(proposal_id: str, body: AcceptBody, request: Request) 
 @router.post("/proposals/{proposal_id}/decline")
 async def decline_proposal(proposal_id: str, body: AnswerBody, request: Request) -> dict[str, Any]:
     """Not this: recorded with the reason, and not asked again."""
-    proposal = await _open(request, proposal_id)
-    await enforce_repo_allowlist(request, proposal.repo, action="decline a proposal")
+    proposal = await readable_proposal(request, proposal_id, action="decline a proposal")
     return await _answer(request, proposal, "decline", body)
 
 
@@ -395,6 +417,5 @@ async def snooze_proposal(proposal_id: str, body: SnoozeBody, request: Request) 
     until = body.until if body.until.tzinfo else body.until.replace(tzinfo=UTC)
     if until <= datetime.now(UTC):
         raise HTTPException(status_code=422, detail="until must be in the future")
-    proposal = await _open(request, proposal_id)
-    await enforce_repo_allowlist(request, proposal.repo, action="snooze a proposal")
+    proposal = await readable_proposal(request, proposal_id, action="snooze a proposal")
     return await _answer(request, proposal, "snooze", body, until=until)

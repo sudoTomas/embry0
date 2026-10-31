@@ -20,7 +20,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from embry0.api.deps import request_actor
-from embry0.api.repo_allowlist import refusal_detail
+from embry0.api.repo_allowlist import key_covers
 from embry0.api.v1.ui import ui_settings
 from embry0.services.decisions import Decision, done, offered, ordered
 from embry0.settings.layers import PerRepository
@@ -53,11 +53,11 @@ def _offered(p: dict[str, Any], leads: PerRepository[LeadsSettings]) -> Decision
 
 
 async def _offers(request: Request, *, owner: str | None, repo: str | None) -> list[Decision]:
-    from embry0.api.v1.proposals import _shown, feed, leads_policy
+    from embry0.api.v1.proposals import _shown, feed, leads_policy, readable
     from embry0.services.proposals import for_owner
 
     try:
-        proposals = for_owner(await feed(request), owner)
+        proposals = for_owner(readable(request, await feed(request)), owner)
     except HTTPException:
         return []
     if repo:
@@ -66,22 +66,18 @@ async def _offers(request: Request, *, owner: str | None, repo: str | None) -> l
     return [_offered(p, leads) for p in await _shown(request, proposals, leads)]
 
 
-def _allowed(request: Request, repo: str | None) -> bool:
-    """Whether the caller's key may read ``repo``'s decisions. A list hides the rest without a refusal:
-    nothing was refused, so nothing is logged or audited (a chat reads the feed every minute)."""
-    return refusal_detail(request, repo, action="read a decision") is None
-
-
 def listed_to(request: Request, decision: Mapping[str, Any]) -> bool:
-    """Whether :func:`list_decisions` lists ``decision`` to the caller, by the key rule it applies.
+    """Whether :func:`list_decisions` lists ``decision``, or the row it is built from, to the caller: only when
+    the caller's key covers its repository (:func:`~embry0.api.repo_allowlist.key_covers`), whatever its stage,
+    a stage this module does not know included.
 
-    :func:`_reviews` leaves out a quest to review in a repository the caller's
-    key does not cover; :func:`_offers` leaves out nothing by key. For a reader
-    that took every decision whatever the caller's key, such as the asks feed,
-    which counts a person's asks toward their limit before it hands out the
-    ones the caller may read (#272).
+    A list hides the rest without a refusal: nothing was refused, so nothing is
+    logged or audited (a chat reads the feed every minute). :func:`_reviews`
+    filters by it, and so does a reader that took every decision whatever the
+    caller's key, such as the asks feed, which counts a person's asks toward
+    their limit before it hands out the ones the caller may read (#272).
     """
-    return decision.get("stage") != "done" or _allowed(request, decision.get("repo"))
+    return key_covers(request, decision.get("repo"))
 
 
 async def done_inputs(request: Request, rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -174,7 +170,8 @@ async def _reviews(request: Request, *, repo: str | None) -> list[Decision]:
     rows = await world.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS))
     if repo:
         rows = [r for r in rows if str(r.get("repo") or "").lower() == repo.lower()]
-    rows = [r for r in rows if _allowed(request, r.get("repo"))]
+    # The feed's own rule (listed_to), so what the list shows and what the feed hands out cannot drift apart.
+    rows = [r for r in rows if listed_to(request, r)]
     inputs, owners = await asyncio.gather(done_inputs(request, rows), owners_of(request, rows))
     return [done({**q, "owners": owners.get(str(q["job_id"]), [])}, game=game) for q in inputs]
 
@@ -249,18 +246,31 @@ async def list_decisions(
 
 @router.get("/decisions/{decision_id:path}")
 async def get_decision(decision_id: str, request: Request) -> dict[str, Any]:
-    """One decision by its id: ``offer:<proposal id>`` or ``done:<job id>``."""
+    """One decision by its id: ``offer:<proposal id>`` or ``done:<job id>``. One in a repository the caller's key
+    does not cover answers as one that does not exist."""
+    return await read_decision(request, decision_id)
+
+
+async def read_decision(request: Request, decision_id: str, *, action: str | None = None) -> dict[str, Any]:
+    """One decision by its id, for a read or, naming ``action``, for a route that acts on it.
+
+    A decision in a repository the caller's key does not cover answers as one
+    that does not exist (:func:`~embry0.api.repo_allowlist.hide_unless_covered`):
+    a quest on offer as a proposal that is not open, a quest to review as a
+    quest that is not there. An action's refusal is logged and audited.
+    """
     stage, _, ref = decision_id.partition(":")
     if stage == "offer" and ref:
-        from embry0.api.v1.proposals import _open, _shown, leads_policy
+        from embry0.api.v1.proposals import _shown, leads_policy, readable_proposal
 
         leads = await leads_policy(request)
-        found = _offered((await _shown(request, [await _open(request, ref)], leads))[0], leads).to_dict()
+        proposal = await readable_proposal(request, ref, action=action)
+        found = _offered((await _shown(request, [proposal], leads))[0], leads).to_dict()
         return (await with_assignees(request, [found]))[0]
     if stage == "done" and ref:
         from embry0.api.v1.world import _quest_or_404
 
-        quest = await _quest_or_404(request, ref)
+        quest = await _quest_or_404(request, ref, action=action)
         game = (await ui_settings(request)).game
         found = done((await done_inputs(request, [quest]))[0], game=game).to_dict()
         return (await with_assignees(request, [found]))[0]

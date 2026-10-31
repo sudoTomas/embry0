@@ -128,14 +128,24 @@ class LeadsRepository:
         return _row(row) if row else None
 
     async def list(
-        self, *, repo: str | None = None, kind: str | None = None, state: str | None = "open", limit: int = 200
+        self,
+        *,
+        repo: str | None = None,
+        kind: str | None = None,
+        state: str | None = "open",
+        limit: int = 200,
+        repos: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
+        """The leads, most recently seen first; ``repos`` (lower-cased slugs) narrows them to those repositories."""
         clauses: list[str] = []
         args: list[Any] = []
         for column, value in (("lower(repo)", repo.lower() if repo else None), ("kind", kind), ("state", state)):
             if value is not None:
                 args.append(value)
                 clauses.append(f"{column} = ${len(args)}")
+        if repos is not None:
+            args.append(list(repos))
+            clauses.append(f"lower(repo) = ANY(${len(args)}::text[])")
         args.append(limit)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = await self._db.fetch(
