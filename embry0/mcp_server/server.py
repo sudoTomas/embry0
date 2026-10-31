@@ -762,19 +762,33 @@ async def case_get(case_id: str) -> dict[str, Any]:
 
 
 @_tool
+async def lead_kinds() -> dict[str, Any]:
+    """Every kind of work embry0 offers a repository's owners, from its one lead-kind catalogue, in its order:
+    {kinds: [{id, label, plural, about, found_by, lead}]}. id is what a proposal's kind and the prefix of its
+    id say; label and plural are how to name it to a person; about is what it is; found_by is what brings it
+    in; lead is true for a kind embry0 found by itself and stores as a lead.
+    Read it to name a proposal's kind in a message, or to learn a kind the descriptions here do not list."""
+    return await _get_client().lead_kinds()
+
+
+@_tool
 async def proposal_list(owner: str | None = None, kind: str | None = None, since: str | None = None) -> dict[str, Any]:
     """The proposals still asked: work a repository's owners could start, newest first.
 
     Each is {id, kind, repo, area, owners, title, summary, details, action, url, created_at,
     brief, held}. brief is the proposal in plain words, {title, problem, fix, size}, or null
-    until it is written; held is a backlog ticket below the readiness floor (left out here).
+    until it is written; held is one shown on the page but not asked in chat (left out here):
+    a backlog ticket below the readiness floor, or a lead of a severity the settings
+    document's leads.ask_severities does not ask (by default a weed, or a crack below high).
     kind is "case" (a problem the watcher keeps seeing in production), "issue" (an issue
     open and not started), "finding" (one claim the context auditor thinks is wrong in
     a file that steers coding agents: ask the owner whether it is what they want), or a
     lead embry0 found by itself, with severity and effort: "ticket" (a backlog ticket
     nobody sent to embry0 that reads as ready), "ci" (a check failing on the default
     branch), "alert" (a dependency or code-scanning alert), "flaky" (a check that failed
-    and then passed on the same commit) or "review" (review threads nobody answered).
+    and then passed on the same commit), "review" (review threads nobody answered),
+    "crack" (a crack the scout found in the code) or "weed" (dead or duplicated code the
+    scout or a knowledge map found). The tool lead_kinds names every kind and how to say it.
     owner: a GitHub login, only its repositories' proposals. since: an ISO time, only
     proposals asked after it. Message an owner with the brief (its title, problem and fix)
     when there is one, else the summary; keep the id for the answer, which is
@@ -785,8 +799,8 @@ async def proposal_list(owner: str | None = None, kind: str | None = None, since
 @_tool
 async def proposal_get(proposal_id: str) -> dict[str, Any]:
     """One proposal still asked, by id ("case:...", "issue:...", "finding:...", or a lead's
-    "ticket:...", "ci:...", "alert:...", "flaky:...", "review:..."): read it again
-    before acting on a reply, since a chat may not hold the message that asked."""
+    "ticket:...", "ci:...", "alert:...", "flaky:...", "review:...", "crack:...", "weed:..."):
+    read it again before acting on a reply, since a chat may not hold the message that asked."""
     return await _get_client().proposal_get(proposal_id)
 
 
@@ -794,8 +808,8 @@ async def proposal_get(proposal_id: str) -> dict[str, Any]:
 async def proposal_accept(proposal_id: str, by: str, confirm: bool = False) -> dict[str, Any]:
     """Start a proposal an owner said yes to: a case runs its fix pipeline, an issue goes to
     triage, a finding gets a fix job that opens a pull request for that one claim, a ticket
-    runs through its tracker's own path, a ci, alert or flaky lead becomes a fix job, and a
-    review lead a follow-up job on the pull request's branch. by: the
+    runs through its tracker's own path, a ci, alert, flaky, crack or weed lead becomes a fix
+    job, and a review lead a follow-up job on the pull request's branch. by: the
     GitHub login of the owner who said yes. Returns the job_id it started. Requires
     confirm=true, given only for the owner's own yes."""
     if not confirm:

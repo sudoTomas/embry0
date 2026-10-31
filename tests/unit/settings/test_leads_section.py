@@ -53,6 +53,9 @@ def test_the_section_reads_as_an_operator_writes_it() -> None:
         "  flaky_commits: 20\n"
         "  offer_min: 50\n"
         "  ask_min: 70\n"
+        "  ask_severities:\n"
+        "    crack: [medium, high, critical]\n"
+        "    weed: []\n"
     )
     data = _stored(load_yaml(text))
     assert data == {
@@ -66,6 +69,7 @@ def test_the_section_reads_as_an_operator_writes_it() -> None:
             "flaky_commits": 20,
             "offer_min": 50,
             "ask_min": 70,
+            "ask_severities": {"crack": ["medium", "high", "critical"], "weed": []},
         }
     }, f"the leads section is stored as written: {data}"
     assert _read(data) == data["leads"], "and read back the same by a tick"
@@ -82,9 +86,11 @@ def test_nothing_written_is_how_leads_ran_before_the_section_but_off() -> None:
         "flaky_commits": 10,
         "offer_min": 40,
         "ask_min": 60,
+        "ask_severities": {"crack": ["high", "critical"], "weed": ["high", "critical"]},
     }, (
         "every default is the value the LEADS_* variables and PROPOSALS_TICKET_MIN_READINESS had, "
-        "except enabled: leads are opt-in now"
+        "except enabled: leads are opt-in now; and which severities of a crack or a weed are asked in "
+        "chat is what the code held before (#166)"
     )
 
 
@@ -143,6 +149,97 @@ def test_every_bad_value_is_named_at_once_and_none_is_repeated_back() -> None:
     for _, msg in found:
         for value in ("9999", "777", "-42"):
             assert value not in msg, f"a refusal never repeats the value it refused: {msg!r}"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"omen-kind": ["high"]},
+        {"crack": ["urgent-ish"]},
+        {"crack": ["high", "high"]},
+        {"slop": ["high"]},
+        {"finding": ["high"]},
+        {"issue": []},
+        {"crack": ["warning"]},
+        {"crack": "high"},
+        {"crack": [3]},
+        {"omen-kind": "high"},
+        {"omen-kind": [7]},
+        ["crack"],
+    ],
+)
+def test_ask_severities_names_only_kinds_that_carry_a_severity_and_their_severities(value: Any) -> None:
+    """Which leads reach chat is the operator's (#166). Refused, naming the key and nothing below it: a kind the
+    catalogue does not have, one whose proposals carry no severity (an open issue, a context audit finding, slop),
+    a severity its kind cannot carry, a severity twice, or a value of another shape. The 422's loc never holds
+    the operator's own kind, and its message never repeats what was written."""
+    leads_section()
+    assert _problems({"ask_severities": {"crack": ["high"]}}) == [], "ask_severities is a key of the leads section"
+    found = _problems({"ask_severities": value})
+    assert found and all(loc == ("leads", "ask_severities") for loc, _ in found), (
+        f"{value!r} must be refused as leads.ask_severities, and nothing below it: {found}"
+    )
+    for _, msg in found:
+        for written in ("omen-kind", "urgent-ish"):
+            assert written not in msg, f"a refusal never repeats the value it refused: {msg!r}"
+
+
+def test_ask_severities_takes_each_kind_that_carries_a_severity_and_an_empty_list() -> None:
+    leads_section()
+    assert _problems({"ask_severities": {"crack": ["high"]}}) == [], "ask_severities is a key of the leads section"
+    rated = lead_kinds.rated()
+    assert set(rated) == {"case", *lead_kinds.ids(lead=True)}, "the watcher's cases and the leads carry a severity"
+    for kind, severities in rated.items():
+        assert _problems({"ask_severities": {kind: list(severities)}}) == [], f"{kind} may be named"
+    assert _problems({"ask_severities": {"case": ["warning", "unrated"]}}) == [], "a case's own severities"
+    assert _problems({"ask_severities": {"weed": []}}) == [], "weed: [] asks no weed in chat"
+    assert _problems({"ask_severities": {}}) == [], "an empty mapping asks every kind at every severity"
+
+
+def _lead(kind: str, repo: str, severity: str) -> Any:
+    from embry0.services.proposals import lead_proposal
+
+    return lead_proposal(
+        {"id": f"{kind}:1", "kind": kind, "repo": repo, "title": "t", "first_seen": None, "severity": severity}
+    )
+
+
+def test_an_organization_s_layer_says_which_severities_its_people_are_asked_about() -> None:
+    from embry0.services.proposal_briefs import held_by
+    from tests.fixtures.leads import leads_policy
+
+    policy = leads_policy(organizations={"acme": {"ask_severities": {"crack": ["medium", "high", "critical"]}}})
+    assert held_by(_lead("crack", "acme/web", "medium"), policy) is False, "acme's layer asks its medium cracks"
+    assert held_by(_lead("crack", "globex/api", "medium"), policy) is True, "every other repository keeps the default"
+    assert held_by(_lead("crack", "acme/web", "low"), policy) is True, "and a low crack is still held in acme"
+
+
+def test_an_organization_s_layer_overrides_only_the_kinds_it_names() -> None:
+    """The reviewer's probe: an organization that restricts alerts must not reopen the deployment's cracks and
+    weeds. Its layer is merged kind by kind over the deployment's mapping, its default included; every other
+    key of a layer still replaces the inherited value whole."""
+    from embry0.services.proposal_briefs import held_by
+    from tests.fixtures.leads import leads_policy
+
+    policy = leads_policy(organizations={"acme": {"ask_severities": {"alert": ["critical"]}}})
+    acme = policy.repo("acme/web").ask_severities
+    assert acme == {"crack": ("high", "critical"), "weed": ("high", "critical"), "alert": ("critical",)}, (
+        f"acme reads its own alert entry and the deployment's crack and weed entries: {acme}"
+    )
+    held = {
+        f"{kind} {severity}": held_by(_lead(kind, "acme/web", severity), policy)
+        for kind, severity in (("crack", "medium"), ("weed", "low"), ("alert", "high"), ("alert", "critical"))
+    }
+    assert held == {"crack medium": True, "weed low": True, "alert high": True, "alert critical": False}, held
+
+    written = leads_policy(
+        {"ask_severities": {"crack": ["critical"]}},
+        organizations={"acme": {"ask_severities": {"weed": [], "ci": ["high", "critical"]}}},
+    )
+    assert written.repo("acme/web").ask_severities == {"crack": ("critical",), "weed": (), "ci": ("high", "critical")}
+    assert written.repo("globex/api").ask_severities == {"crack": ("critical",)}, (
+        "the deployment's document writes its whole mapping; only a layer merges"
+    )
 
 
 def test_no_finder_and_thresholds_in_either_order_are_accepted() -> None:
@@ -224,10 +321,12 @@ def test_what_an_organization_may_override_and_where_each_key_came_from() -> Non
         "flaky_commits",
         "offer_min",
         "ask_min",
+        "ask_severities",
     }, (
         "an organization chooses what one of its repositories' passes does: its finders, its daily cap, "
-        "when a review is stale, how far flakiness is read, and which tickets are offered and asked; "
-        "whether the one loop runs and how often stay the deployment's"
+        "when a review is stale, how far flakiness is read, which tickets are offered and asked, and which "
+        "severities of a kind its people are asked about in chat; whether the one loop runs and how often "
+        "stay the deployment's"
     )
     assert section.repo_keys == frozenset(), "which repositories leads read is the repository scope rule's (#165)"
     assert {key: env_name(imported.attr) for key, imported in section.imports().items()} == {

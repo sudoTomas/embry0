@@ -434,15 +434,17 @@ async def test_with_none_in_flight_allowed_the_loop_still_harvests_and_starts_ag
 def test_only_a_break_reaches_the_chat_the_rest_stay_on_the_page() -> None:
     from embry0.services.proposal_briefs import held
     from embry0.services.proposals import lead_proposal
+    from embry0.settings.sections.leads import LeadsSettings
 
     def proposal(kind: str, severity: str) -> Any:
         return lead_proposal(
             {"id": f"{kind}:1", "kind": kind, "repo": "acme/a", "title": "t", "first_seen": T0, "severity": severity}
         )
 
-    assert held(proposal("crack", "high"), 60) is False
-    assert held(proposal("crack", "medium"), 60) is True
-    assert held(proposal("weed", "low"), 60) is True
+    policy = LeadsSettings()
+    assert held(proposal("crack", "high"), policy) is False
+    assert held(proposal("crack", "medium"), policy) is True
+    assert held(proposal("weed", "low"), policy) is True
 
 
 def test_a_yes_on_a_crack_or_a_weed_starts_work_with_its_evidence() -> None:

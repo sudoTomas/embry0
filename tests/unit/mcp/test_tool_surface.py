@@ -57,6 +57,7 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
         "tools: array|null = null",
     ],
     "case_accept": ["accepted_by: string", "case_id: string", "confirm: boolean = false"],
+    "lead_kinds": [],
     "proposal_list": ["kind: string|null = null", "owner: string|null = null", "since: string|null = null"],
     "proposal_get": ["proposal_id: string"],
     "proposal_accept": ["by: string", "confirm: boolean = false", "proposal_id: string"],

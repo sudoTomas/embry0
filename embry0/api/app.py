@@ -3034,6 +3034,7 @@ def _register_routers(app: FastAPI) -> None:
         job_review,
         jobs,
         knowledge_maps,
+        lead_kinds,
         leads,
         logs,
         merge_approvals,
@@ -3135,6 +3136,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(proposals.router, prefix="/api/v1", tags=["proposals"], dependencies=auth_deps)
     # Leads (spec 2026-10-25): what the finders found, and a pass by hand.
     app.include_router(leads.router, prefix="/api/v1", tags=["leads"], dependencies=auth_deps)
+    # The lead-kind catalogue (#166): what each kind of work on offer is called, the game on or off.
+    app.include_router(lead_kinds.router, prefix="/api/v1", tags=["leads"], dependencies=auth_deps)
     # Areas (spec 2026-10-25): a repository's areas file, and mapping it with an agent.
     app.include_router(areas.router, prefix="/api/v1", tags=["areas"], dependencies=auth_deps)
     # The Slop-O-Meter (spec 2026-10-26): a repository's score and weekly series.

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import type { LeadKind } from "@/api/leadKinds";
 import type { Dungeon, Lead, Party, Region, WorldCharacter } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
-import { STATE_POSE, placeOf } from "@/lib/world";
+import { kindLabel, STATE_POSE, placeOf } from "@/lib/world";
 import { buildTileMap, hash, leadSpot, TERRAINS, type TileMap } from "@/lib/worldTiles";
 import { ArtSprite } from "./art/ArtSprite";
 import { Torchlight } from "./art/Nightfall";
@@ -22,6 +23,8 @@ interface WorldMapProps {
   characters: readonly WorldCharacter[];
   /** Slop Dungeons (spec 2026-10-25): each repository's or area's open slop and its score. */
   dungeons?: readonly Dungeon[];
+  /** The lead-kind catalogue by id (GET /lead-kinds): what a creature drawn as its glyph is called. */
+  kinds?: ReadonlyMap<string, LeadKind>;
   onPickLead: (lead: Lead) => void;
   onPickCharacter: (agentType: string) => void;
 }
@@ -33,6 +36,9 @@ function dungeonSpot(map: TileMap, dungeon: Dungeon): { x: number; y: number } |
   const town = dungeon.area ? region.towns.find((t) => t.name === dungeon.area) : undefined;
   return town ? { x: town.x + 26, y: town.y - 4 } : { x: region.label.x + 44, y: region.label.y + 8 };
 }
+
+/** No catalogue read yet: each kind reads as its id. */
+const NO_KINDS: ReadonlyMap<string, LeadKind> = new Map();
 
 /** How long a party walks between the hall and its quest. */
 const WALK_MS = 4_000;
@@ -97,7 +103,7 @@ function PartyOnMap({ map, art, party, onPick }: { map: TileMap; art: ArtManifes
  * everything on it is a button. It is night (Nightfall, art/relight.ts):
  * light falls at the hall's door and travels with every party out.
  */
-export function WorldMap({ art, regions, quests, parties, characters, dungeons = [], onPickLead, onPickCharacter }: WorldMapProps) {
+export function WorldMap({ art, regions, quests, parties, characters, dungeons = [], kinds = NO_KINDS, onPickLead, onPickCharacter }: WorldMapProps) {
   const lookup = useIdentityLookup();
   const map = useMemo(() => buildTileMap(regions, art.tileSize), [regions, art.tileSize]);
   const layers = useMemo(() => TERRAINS.map((t) => ({ terrain: t, mask: map.masks[t] })), [map]);
@@ -187,7 +193,7 @@ export function WorldMap({ art, regions, quests, parties, characters, dungeons =
               if (!found || !atlas)
                 return (
                   <button key={q.id} {...label} onClick={() => onPickLead(q)} style={{ ...anchored(spot.x, spot.y, { x: 12, y: 24 }), width: 24, height: 24 }}>
-                    <CreatureIcon kind={q.kind} creature={q.creature} size={24} />
+                    <CreatureIcon kind={q.kind} creature={q.creature} size={24} label={kindLabel(kinds, q.kind)} />
                   </button>
                 );
               const [name, c] = found;

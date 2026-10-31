@@ -275,8 +275,11 @@ _ALLOWED_IMPORTS = frozenset({"__future__", "pydantic", "embry0.settings.registr
 #: Modules of embry0 a section may import because they import nothing of embry0 themselves, so no
 #: import cycle can pass through them (``test_the_leaves_a_section_may_import_import_nothing_of_embry0``):
 #: the content pack's template grammar, which the salvage subject is written in, and the one rule a
-#: named heading matches a ticket's heading by, which the done_when section checks its headings with.
-LEAF_IMPORTS = frozenset({"embry0.services.progression_templates", "embry0.ticket_headings"})
+#: named heading matches a ticket's heading by, which the done_when section checks its headings with, and
+#: the lead-kind catalogue, whose kinds and severities the leads section's ask_severities names.
+LEAF_IMPORTS = frozenset(
+    {"embry0.services.lead_kinds", "embry0.services.progression_templates", "embry0.ticket_headings"}
+)
 #: The package itself: ``CATALOG`` imports each section module, and those are held to the same rule.
 _SECTIONS = "embry0.settings.sections"
 
