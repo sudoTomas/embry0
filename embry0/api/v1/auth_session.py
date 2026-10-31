@@ -204,8 +204,8 @@ async def callback(request: Request, code: str = "", state: str = "") -> Redirec
     if not id_token:
         raise HTTPException(status_code=400, detail="No id_token in token response")
 
-    # #506: joserfc, not the deprecated authlib.jose. decode() checks the
-    # signature; the registry checks iss, aud and the time claims.
+    # #506: joserfc's decode() checks the signature; the registry checks
+    # iss, aud and the time claims.
     registry = JWTClaimsRegistry(
         iss={"essential": True, "value": _issuer(config)},
         aud={"essential": True, "value": config.auth0_client_id},

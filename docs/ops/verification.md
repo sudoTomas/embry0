@@ -114,7 +114,10 @@ The token is `contents: read` for every job, checkout keeps no credentials,
 and the only secret is `EMBRY0_DENYLIST`. Actions are pinned to commit shas
 and the Postgres image to a digest; `tests/unit/test_ci_workflow.py` fails if
 any of that changes. Python dependencies come from `uv.lock`
-(`uv sync --locked`), with the uv version set in the workflow.
+(`uv sync --locked`), with the uv version set in the workflow. The
+orchestrator and proxy images install the same versions from the same lock,
+with the same uv, and their builds fail when what they installed differs
+from it ([deploy.md](deploy.md#images-registry-pins-and-rebuilds)).
 
 Dependabot is configured by `.github/dependabot.yml` in the public repository
 only. The private development repository leaves the file out, so that
