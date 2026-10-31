@@ -129,8 +129,16 @@ updates:
       - dependency-name: python
         update-types: [version-update:semver-major, version-update:semver-minor]
     groups:
+      # The `uv` stage of infra/Dockerfile.orchestrator and Dockerfile.proxy
+      # moves with UV_VERSION in ci.yml, which Dependabot does not track. It
+      # gets a pull request of its own, which fails
+      # tests/unit/infra/test_image_lockfile.py until UV_VERSION is raised in
+      # it, so a uv bump never holds back the base images' patch updates.
+      uv:
+        patterns: ["*astral-sh/uv"]
       docker-minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns: ["*astral-sh/uv"]
 
   - package-ecosystem: github-actions
     directory: /

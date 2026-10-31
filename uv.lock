@@ -877,6 +877,13 @@ dev = [
     { name = "types-pyyaml" },
 ]
 
+[package.dev-dependencies]
+proxy = [
+    { name = "aiohttp" },
+    { name = "httpx" },
+    { name = "structlog" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.4,<4" },
@@ -910,6 +917,13 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54,<0.55" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+proxy = [
+    { name = "aiohttp" },
+    { name = "httpx" },
+    { name = "structlog" },
+]
 
 [[package]]
 name = "execnet"

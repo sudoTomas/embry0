@@ -1,3 +1,8 @@
+# The uv that reads uv.lock: CI's UV_VERSION (.github/workflows/ci.yml), by
+# digest. RUN steps below mount its one binary; it is never copied into the
+# image.
+FROM ghcr.io/astral-sh/uv:0.11.17@sha256:03bdc89bb9798628846e60c3a9ad19006c8c3c724ccd2985a33145c039a0577b AS uv
+
 FROM python:3.12.15-slim-bookworm
 
 # Upgrade OS packages first: a pinned base tag can ship a CRITICAL whose fix
@@ -19,8 +24,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# Python dependencies. Only pyproject + a stub package are copied here so this
-# layer caches across source changes; the full source lands further down.
+# Python dependencies, at exactly the versions uv.lock pins (#286): the ones
+# CI tests. Installing from pyproject's ranges gave each build whatever was
+# newest inside them, so an image could run a version CI never ran. uv
+# exports the lock (--locked refuses one that no longer matches pyproject)
+# and pip installs it with every hash checked. The export holds the
+# project's dependencies only: the dev extra needs --extra dev, and no
+# dependency group is a default one (the proxy group is not), which
+# tests/unit/infra/test_image_lockfile.py keeps true. psycopg[binary] comes
+# from pyproject through the lock like the rest. pip, not `uv sync`, stays the installer: the layout, the bytecode it
+# compiles and the editable install below are what they were. A dependency
+# bump reaches the image only as a change to uv.lock.
+#
+# Only pyproject, the lock and a stub package are copied here so this layer
+# caches across source changes; the full source lands further down.
 #
 # EDITABLE install (#334): `pip install .` at this point copied the STUB into
 # site-packages (embry0/__init__.py and nothing else). Console scripts put
@@ -35,10 +52,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # metadata and fails if the file is missing. The real one is not in the build
 # context (.dockerignore drops *.md), and copying it would re-run this layer
 # on every docs edit. The image never shows the long description.
-COPY pyproject.toml /app/
+#
+# `--no-deps -e .` installs the project and nothing else: its dependencies are
+# all in the lock, and the drift check at the end of this file fails the
+# build if the two ever disagree.
+COPY pyproject.toml uv.lock /app/
 COPY embry0/__init__.py /app/embry0/__init__.py
 WORKDIR /app
-RUN touch README.md && pip install --no-cache-dir -e . psycopg[binary]
+RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
+    /opt/uv/uv export --locked --no-emit-project --no-cache --quiet \
+        --output-file /tmp/requirements.lock.txt \
+    && pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock.txt \
+    && rm /tmp/requirements.lock.txt \
+    && touch README.md && pip install --no-cache-dir --no-deps -e .
 
 # Install Node.js. No Claude CLI here (#497): the orchestrator never runs an
 # agent — every query() runs in a sandbox image, on the CLI bundled in that
@@ -86,6 +112,17 @@ assert embry0.__file__ == '/app/embry0/__init__.py', embry0.__file__; \
 assert embry0.mcp_server.__file__ == '/app/embry0/mcp_server/__init__.py', embry0.mcp_server.__file__; \
 sp = pathlib.Path(sysconfig.get_paths()['purelib']); \
 assert not (sp / 'embry0').exists(), 'package copy in site-packages'"
+
+# Drift check (#286), after the last install: every installed distribution
+# must be the version uv.lock pins, every pin must be installed, and nothing
+# may come from outside the lock but pip (the base image's) and embry0 (the
+# /app tree above).
+RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
+    --mount=type=bind,source=infra/scripts/check-image-lock.py,target=/opt/check-image-lock.py \
+    /opt/uv/uv export --project /app --frozen --no-emit-project --no-hashes --no-cache --quiet \
+        --output-file /tmp/requirements.lock.txt \
+    && python /opt/check-image-lock.py /tmp/requirements.lock.txt --allow pip --allow embry0 \
+    && rm /tmp/requirements.lock.txt
 WORKDIR /app
 
 EXPOSE 8000

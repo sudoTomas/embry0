@@ -83,6 +83,13 @@ dev = [
     "types-PyYAML>=6,<7",
 ]
 
+[dependency-groups]
+# What infra/Dockerfile.proxy installs: three of the dependencies above, so
+# `uv export --only-group proxy` gives the image their locked versions and
+# hashes, with everything they need. Not a default group: `uv sync` and the
+# orchestrator image leave it out (its packages are dependencies anyway).
+proxy = ["aiohttp", "httpx", "structlog"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["embry0"]
 
