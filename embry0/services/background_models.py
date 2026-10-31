@@ -4,7 +4,9 @@
 (:mod:`embry0.settings.sections.background_models`): a ``default`` and one
 key per feature, and no feature falls back on another. A feature reads it
 at the top of every tick through :func:`background_model`, one snapshot a
-tick, and then per repository: an organization may set its own.
+tick, and then per repository: an organization may set its own. A loop that
+reads other sections in the same tick takes one snapshot and reads its model
+from it with :func:`model_lookup`, as the scout does.
 
 **A call outside a job.** The briefs and the Slop-O-Meter's judgments ask a
 model directly over chat completions. Each goes through
@@ -77,22 +79,38 @@ RECORD_FAILED_LOG_SECONDS = 60.0
 LEDGER: Final = f"{BACKGROUND_MODELS.name}.default"
 
 
+def _feature(feature: str) -> str:
+    if feature not in FEATURES:
+        raise ValueError(f"{feature!r} is not a key of background_models")
+    return feature
+
+
+def model_lookup(snapshot: Any, feature: str) -> ModelLookup:
+    """``repo -> model`` for ``feature`` from ``snapshot``, a snapshot of the settings documents the caller took.
+
+    What a call of :func:`background_model`'s reader returns, for a loop that
+    reads other sections of the same snapshot, so a write between two reads
+    cannot hand one tick two versions of the documents.
+    """
+    _feature(feature)
+    scoped = snapshot.scoped(BACKGROUND_MODELS)
+
+    def lookup(repo: str | None) -> str:
+        return model_of(scoped.repo(repo or None), feature)
+
+    return lookup
+
+
 def background_model(store: Any, feature: str) -> Callable[[], Awaitable[ModelLookup]]:
     """A callable a feature is built with: each call reads the section once and returns ``repo -> model``.
 
     The model is the feature's own, else the default, for the repository's
     organization where it set one; '' for none.
     """
-    if feature not in FEATURES:
-        raise ValueError(f"{feature!r} is not a key of background_models")
+    _feature(feature)
 
     async def read() -> ModelLookup:
-        scoped = (await store.snapshot()).scoped(BACKGROUND_MODELS)
-
-        def lookup(repo: str | None) -> str:
-            return model_of(scoped.repo(repo or None), feature)
-
-        return lookup
+        return model_lookup(await store.snapshot(), feature)
 
     return read
 
@@ -636,5 +654,6 @@ __all__ = [
     "background_model",
     "import_provider_settings_once",
     "legacy_values",
+    "model_lookup",
     "resolve_endpoint",
 ]

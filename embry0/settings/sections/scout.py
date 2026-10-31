@@ -100,12 +100,12 @@ SCOUT = Section(
     name="scout",
     model=ScoutSettings,
     summary="What the scout runs, how often it comes back to a repository, and how much it may start and spend.",
-    # What an organization may set for its own repositories once layers
-    # exist (#161): which templates run on them, how often they are
-    # scouted again, and how many leads one job may add. Every scouting job
-    # shares the deployment's one local model server, so how many run at
-    # once, how many start a day and the hard cap of each stay the
-    # deployment's.
+    # What an organization may set for its own repositories, which the
+    # scout reads per repository: which templates run on them, how often
+    # they are scouted again, and how many leads one job may add. How many
+    # run at once, how many start a day and the hard cap of each bound what
+    # the scout starts and spends across every organization, so they stay
+    # the deployment's.
     org_keys=frozenset({"templates", "revisit_hours", "max_leads_per_job"}),
     repo_keys=frozenset(),
     env={

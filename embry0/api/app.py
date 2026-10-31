@@ -2665,15 +2665,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # rotating through the world map's repositories and their areas; each
     # finished job's cracks and weeds become leads. Its model is the settings
     # document's background_models.scout (#164) and its policy the `scout`
-    # section, both read every tick, so a change to either needs no restart;
-    # a repository with no model is not scouted.
+    # section, both read every tick from one snapshot, so a change to either
+    # needs no restart and a tick never mixes two versions; a repository with
+    # no model is not scouted.
     from embry0.audit.helpers import emit_audit as _scout_audit
     from embry0.orchestration import dispatch_actors as _scout_actors
     from embry0.services.areas import AREAS as _SCOUT_AREAS
     from embry0.services.areas import read_contents as _scout_read_contents
-    from embry0.services.scout import ScoutLoop, warn_retired_tick
-    from embry0.settings.sections.scout import SCOUT as _SCOUT
-    from embry0.settings.store import section_reader as _section_reader
+    from embry0.services.scout import ScoutLoop, tick_settings, warn_retired_tick
     from embry0.storage.repositories.scout import ScoutRunsRepository
 
     async def _scout_repos() -> list[str]:
@@ -2712,8 +2711,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     warn_retired_tick(config)
     app.state.scout = ScoutLoop(
-        models=background_model(app.state.settings, "scout"),
-        settings=_section_reader(app.state.settings, _SCOUT),
+        settings=tick_settings(app.state.settings),
         runs=ScoutRunsRepository(db),
         jobs=app.state.jobs_repo,
         leads=app.state.leads_repo,

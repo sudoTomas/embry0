@@ -28,9 +28,10 @@ import hashlib
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Any, Protocol
+from typing import Any
 from zoneinfo import ZoneInfo
 
+from embry0.settings.layers import PerRepository
 from embry0.settings.scope import organization_of
 from embry0.settings.sections.asks import AsksSettings, parse_hours, parse_weekdays
 
@@ -78,14 +79,6 @@ def ask_settings(section: AsksSettings) -> AskSettings:
     )
 
 
-class PerRepository(Protocol):
-    """The ``asks`` section of one settings snapshot, read per repository: ``Scoped[AsksSettings]``."""
-
-    def deployment(self) -> AsksSettings: ...
-
-    def repo(self, repo: str | None) -> AsksSettings: ...
-
-
 class AskPolicy:
     """The ``asks`` section of one settings snapshot, as each decision's asks are held to it.
 
@@ -96,7 +89,7 @@ class AskPolicy:
     a tick or a feed over many decisions reads nothing more.
     """
 
-    def __init__(self, section: PerRepository, decisions: Iterable[Mapping[str, Any]]) -> None:
+    def __init__(self, section: PerRepository[AsksSettings], decisions: Iterable[Mapping[str, Any]]) -> None:
         self._section = section
         #: The deployment's values: what an ask about a decision with no repository is held to.
         self.deployment = ask_settings(section.deployment())
