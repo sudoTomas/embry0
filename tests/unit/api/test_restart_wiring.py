@@ -25,6 +25,7 @@ from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # no
 pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
 
 
+@pytest.mark.changes_schema  # the boot creates the checkpointer's tables
 async def test_boot_recovers_jobs_and_shutdown_drains(
     db_with_migrations: DatabasePool,
     stub_container_runtime: dict[str, MagicMock],  # noqa: F811 — the imported fixture

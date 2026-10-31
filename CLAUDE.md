@@ -32,13 +32,13 @@ So:
 .venv/bin/python -m pytest tests/unit -q
 ```
 
-A clean checkout with **`TEST_DATABASE_URL` unset** and no Postgres on the default `postgresql://embry0:embry0@localhost:5432/embry0_test` gives **9 failed, 52 errors and about 945 skipped** (`ConnectionRefused`). About 930 of those skips are database tests reporting `PostgreSQL unavailable`: they measured nothing. That is the expected floor for a bare local run — anything beyond it is yours. Confirm by running the same suite on `origin/main` and diffing the failure sets.
+A clean checkout with **`TEST_DATABASE_URL` unset** and no Postgres on the default `postgresql://embry0:embry0@localhost:5432/embry0_test` gives **9 failed, 74 errors and about 1,790 skipped** (`ConnectionRefused`). About 1,770 of those skips are database tests reporting `PostgreSQL unavailable`: they measured nothing. That is the expected floor for a bare local run — anything beyond it is yours. Confirm by running the same suite on `origin/main` and diffing the failure sets.
 
-**Set `TEST_DATABASE_URL` and an unreachable database fails instead of skipping** (#509, one helper: `tests/fixtures/postgres.py`): pointed at a dead port the run reports about 880 errors and 14 skips, so a misconfigured or slow database can never pass as a green run with the SQL layer silently skipped. Any run that is meant to test SQL, and every CI run, sets it.
+**Set `TEST_DATABASE_URL` and an unreachable database fails instead of skipping** (#509, one helper: `tests/fixtures/postgres.py`): pointed at a dead port the run reports about 1,835 errors, 17 failures and 21 skips, so a misconfigured or slow database can never pass as a green run with the SQL layer silently skipped. Any run that is meant to test SQL, and every CI run, sets it.
 
-**Given a database, the suite is fully green: 9938 passed, 13 skipped, 0 failed** (measured 2026-10-14 on `main`; the 9 failed, 52 errors floor was re-measured the same day). So those 9 failures and 52 errors are entirely the missing-Postgres condition, not latent breakage — which also means CI (#272) needs a Postgres service container, not test repairs.
+**Given a database, the suite is fully green: 15365 passed, 21 skipped, 0 failed** (measured 2026-10-31 with `DOCKER_HOST=unix:///nonexistent.sock`, as every local run should be: 15 of the skips are Docker-backed infra tests; the bare and dead-port numbers above were measured the same day). So those 9 failures and 74 errors are entirely the missing-Postgres condition, not latent breakage — which also means CI (#272) needs a Postgres service container, not test repairs.
 
-`db_with_migrations` runs `DROP SCHEMA public CASCADE` per test, so point the suite at a **throwaway Postgres**, never a deployment's database. One server on tmpfs with `fsync` off serves any number of runs, each in a database of its own:
+The database fixtures run `DROP SCHEMA public CASCADE` and empty every table between tests, so point the suite at a **throwaway Postgres**, never a deployment's database. One server on tmpfs with `fsync` off serves any number of runs, each in a database of its own:
 
 ```bash
 # Once: a throwaway server on tmpfs, on loopback only, with a random password passed by name
@@ -61,9 +61,13 @@ docker rm -f embry0-test-pg
 
 No password appears on a command line, so none shows in `ps` (#513): `-e POSTGRES_PASSWORD` without a value makes `docker run` read it from its environment, `createdb` and `dropdb` use the container's local socket, and `TEST_DATABASE_URL` sits only in pytest's environment. Do not use the stack's own Postgres instead: it shares its WAL and disk with production, and with several suites running its checkpointer turns fsync-bound, so a `DROP DATABASE` waits minutes behind a checkpoint. [`docs/ops/verification.md`](docs/ops/verification.md) has the single-database setup the CI gates use.
 
-Worth the ~6 minutes when a change touches SQL: an upsert that binds one placeholder to both a `BIGINT` and an `INTEGER` column reads perfectly and Postgres refuses to prepare it (#289).
+Worth the ~16 minutes serially, or ~5 with `-n 4` (below), when a change touches SQL: an upsert that binds one placeholder to both a `BIGINT` and an `INTEGER` column reads perfectly and Postgres refuses to prepare it (#289).
 
-`db_with_migrations` runs `DROP SCHEMA public CASCADE` per test, so two concurrent runs against one database destroy each other and it looks like a broken branch. Use a private database name, not just a private port.
+**In parallel:** add `-n 4` (pytest-xdist, in the dev extra: `uv sync --extra dev` first). Each worker runs on a database of its own, named after `TEST_DATABASE_URL`'s with its id appended (`unit_123_gw0`, `unit_123_gw1`, …), which it creates when it starts and drops when it ends (`tests/conftest.py`). A distributed run (`-n`, `--tx` or `--dist`) without `TEST_DATABASE_URL` is refused, since every worker would share the default database, and so is a database name too long to take a worker's id within Postgres's 63 bytes. The run drops every `<name>_gw<N>` when it ends, so a worker killed outright leaves nothing behind. CI runs `-n 4`. Each worker holds up to about 10 connections, so stay well below the server's `max_connections` (100 by default) across all the runs sharing it.
+
+**A test that changes the schema is marked `@pytest.mark.changes_schema`** (every test of a `test_migration*` module is, by name). The database fixtures reset the database without migrating it again and check a digest of the schema after every database test: an unmarked test that changes it fails, naming itself (`tests/fixtures/postgres.py`).
+
+The database fixtures drop the schema and empty every table between tests, so two concurrent runs against one database destroy each other and it looks like a broken branch. Use a private database name, not just a private port.
 
 ### Merge hazards, each from a real incident
 

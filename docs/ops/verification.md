@@ -21,7 +21,7 @@ Then the Postgres the suites connect to:
     uv run ruff check .
     uv run ruff format --check .
     uv run mypy embry0
-    uv run pytest tests/unit/ -v --tb=short --timeout=30
+    uv run pytest tests/unit/ -n 4 -v --tb=short --timeout=60
     docker build -f infra/Dockerfile.proxy -t embry0-proxy:latest .
     TEST_DATABASE_URL=postgresql://embry0:embry0_ci@localhost:5432/embry0_integration_test \
       uv run pytest tests/integration/ -v --tb=short --timeout=120

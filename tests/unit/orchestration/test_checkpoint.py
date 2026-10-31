@@ -33,7 +33,8 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import run_migrations
 from embry0.workflows.issue_to_pr.nodes import _extract_ask_user_events, ask_user_interrupt
 
-pytestmark = pytest.mark.requires_postgres
+# The checkpointer creates its own tables in the schema the migrations made.
+pytestmark = [pytest.mark.requires_postgres, pytest.mark.changes_schema]
 
 # The tables purge_thread clears, all written by the saver.
 CHECKPOINT_TABLES = ("checkpoints", "checkpoint_blobs", "checkpoint_writes")

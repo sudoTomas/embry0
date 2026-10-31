@@ -11,6 +11,17 @@ async def test_migrations_list_is_ordered():
     assert versions == list(range(1, len(MIGRATIONS) + 1))
 
 
+def test_every_migration_test_gets_a_schema_migrated_from_empty(request: pytest.FixtureRequest) -> None:
+    """tests/conftest.py marks every test of a test_migration* module changes_schema: db_with_migrations
+    drops its schema and migrates it, and the next test's too, because a migration test may leave the
+    schema in a state the reset's digest does not see (tests/fixtures/postgres.py). Every such test this
+    run collected is checked, this one included."""
+    collected = [item for item in request.session.items if item.path.name.startswith("test_migration")]
+    assert request.node in collected
+    unmarked = [item.nodeid for item in collected if item.get_closest_marker("changes_schema") is None]
+    assert not unmarked, f"tests of a test_migration* module that would get a reset database: {unmarked[:10]}"
+
+
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_run_migrations_creates_tables():
