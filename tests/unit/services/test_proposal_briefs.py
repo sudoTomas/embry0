@@ -23,6 +23,7 @@ from embry0.services.proposal_briefs import (
     write_brief,
 )
 from embry0.services.proposals import Proposal
+from tests.fixtures.leads import MemorySettings, brief_reader, leads_policy, leads_section
 
 T0 = datetime(2026, 10, 25, 12, tzinfo=UTC)
 GOOD = {
@@ -107,10 +108,10 @@ def test_a_ticket_below_the_floor_is_held_and_nothing_else_is() -> None:
 def test_the_feed_shows_a_brief_only_while_it_matches_the_proposal() -> None:
     p = _proposal()
     row = {"input_hash": input_hash(p), "model": "custom/local", "written_at": T0, **GOOD}
-    [shown] = with_briefs([p], {p.id: row}, 60)
+    [shown] = with_briefs([p], {p.id: row}, leads_policy())
     assert shown["brief"]["title"] == GOOD["title"] and shown["brief"]["written_at"] == T0.isoformat()
     assert shown["held"] is False and shown["summary"] == p.summary
-    [stale] = with_briefs([p], {p.id: {**row, "input_hash": "old"}}, 60)
+    [stale] = with_briefs([p], {p.id: {**row, "input_hash": "old"}}, leads_policy())
     assert stale["brief"] is None
 
 
@@ -184,6 +185,7 @@ def _writer(
     model: str = "custom/local-27b",
     clock: Any = None,
     per_tick: int = 3,
+    settings: MemorySettings | None = None,
 ) -> ProposalBriefWriter:
     def answer(request: httpx.Request) -> httpx.Response:
         content = answers.pop(0) if answers else json.dumps(GOOD)
@@ -199,10 +201,9 @@ def _writer(
 
     return ProposalBriefWriter(
         proposals=feed,
-        models=chosen,
+        settings=brief_reader(chosen, settings),
         briefs=briefs,
         calls=_calls(),
-        min_readiness=60,
         per_tick=per_tick,
         client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),
         clock=clock or (lambda: 0.0),
@@ -228,6 +229,35 @@ async def test_the_writer_fills_missing_briefs_a_few_a_tick_cases_first(custom_e
     assert "case:gone" not in briefs.rows, "a proposal no longer asked loses its brief"
     assert await writer.tick() == ["finding:f1", "ticket:held"], "held tickets come last"
     assert await writer.tick() == [], "every brief matches: nothing to write"
+
+
+async def test_held_tickets_come_last_by_the_ask_min_the_section_holds_at_each_tick(custom_enabled: None) -> None:
+    """A ticket ready 70 is held under ask_min 80 and asked under 60; the writer reads the section every tick."""
+    leads_section()
+    proposals = [
+        _proposal("ticket:t70", "ticket", source={"readiness": 70}),
+        _proposal("finding:f1", "finding"),
+        _proposal("finding:f2", "finding"),
+    ]
+    settings = MemorySettings({"ask_min": 80})
+    writer = _writer(FakeBriefs(), proposals, [], per_tick=1, settings=settings)
+    assert await writer.tick() == ["finding:f1"], "ask_min 80: the ticket is held, so its brief waits behind the rest"
+    settings.deployment["ask_min"] = 60
+    assert await writer.tick() == ["ticket:t70"], (
+        "ask_min 60 by the next tick: the ticket is asked now, so it goes before the finding left"
+    )
+
+
+async def test_held_tickets_come_last_by_their_organization_s_ask_min(custom_enabled: None) -> None:
+    """The deployment asks from 80, acme's layer from 60: acme's ticket ready 70 is asked, so it goes first."""
+    leads_section()
+    proposals = [_proposal("finding:f1", "finding"), _proposal("ticket:t70", "ticket", source={"readiness": 70})]
+    assert {p.repo for p in proposals} == {"acme/api"}
+    settings = MemorySettings({"ask_min": 80}, {"acme": {"ask_min": 60}})
+    writer = _writer(FakeBriefs(), proposals, [], per_tick=1, settings=settings)
+    assert await writer.tick() == ["ticket:t70"], (
+        "the ticket's repository's organization asks from 60: not held, so it is written before the finding"
+    )
 
 
 async def test_a_changed_proposal_gets_a_new_brief(custom_enabled: None) -> None:
@@ -268,11 +298,69 @@ def test_a_new_proposal_is_due_and_a_written_one_is_not() -> None:
     p, q = _proposal("case:a"), _proposal("case:b")
     writer = _writer(FakeBriefs(), [], [])
     stored = {p.id: {"input_hash": input_hash(p)}}
-    assert [x.id for x in writer.due([p, q], stored)] == ["case:b"]
+    assert [x.id for x in writer.due([p, q], stored, leads_policy())] == ["case:b"]
 
 
 def test_newest_first_within_a_kind() -> None:
     old = Proposal(**{**_proposal("case:old").__dict__, "created_at": T0 - timedelta(days=1)})
     new = _proposal("case:new")
     writer = _writer(FakeBriefs(), [], [])
-    assert [x.id for x in writer.due([old, new], {})] == ["case:new", "case:old"]
+    assert [x.id for x in writer.due([old, new], {}, leads_policy())] == ["case:new", "case:old"]
+
+
+class ChangingDocuments:
+    """A settings store whose documents change after every read: as if a write lands between two reads."""
+
+    VERSIONS = (
+        {"background_models": {"proposal_brief": "custom/first"}, "leads": {"ask_min": 80}},
+        {"background_models": {"proposal_brief": "custom/second"}, "leads": {"ask_min": 60}},
+    )
+
+    def __init__(self) -> None:
+        self.reads = 0
+
+    async def snapshot(self) -> Any:
+        from embry0.settings.scope import DEPLOYMENT
+        from embry0.settings.sections import CATALOG
+        from embry0.settings.store import build_snapshot
+
+        data = self.VERSIONS[min(self.reads, len(self.VERSIONS) - 1)]
+        self.reads += 1
+        rows = [{"scope": DEPLOYMENT, "data": data, "generation": self.reads, "updated_at": None}]
+        return build_snapshot(CATALOG, rows, token=(), log=False)
+
+
+async def test_a_tick_reads_its_model_and_its_leads_from_one_version_of_the_documents(custom_enabled: None) -> None:
+    """Version 1 writes on custom/first and asks from 80; version 2, written between two reads, on custom/second
+    from 60. One tick takes version 1 whole: the ticket ready 70 is held, so the finding goes first, on first."""
+    from embry0.services import proposal_briefs
+
+    leads_section()
+    reader = getattr(proposal_briefs, "brief_settings", None)
+    assert reader is not None, "the brief writer's reader takes one snapshot of the settings documents per tick"
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content)["model"])
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(GOOD)}}]})
+
+    async def feed() -> list[Proposal]:
+        return [_proposal("ticket:t70", "ticket", source={"readiness": 70}), _proposal("finding:f1", "finding")]
+
+    store = ChangingDocuments()
+    writer = ProposalBriefWriter(
+        proposals=feed,
+        settings=reader(store),
+        briefs=FakeBriefs(),
+        calls=_calls(),
+        per_tick=1,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),
+    )
+
+    written = await writer.tick()
+
+    assert store.reads == 1, f"one tick reads the settings documents once: {store.reads}"
+    assert (written, sent) == (["finding:f1"], ["first"]), (
+        "the model and ask_min of one version: the ticket is held under 80, so the finding is written first, "
+        f"on custom/first: {written}, {sent}"
+    )

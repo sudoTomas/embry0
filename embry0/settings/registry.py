@@ -18,7 +18,7 @@ import json
 import re
 import typing
 import unicodedata
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -172,17 +172,48 @@ def field_alone(model: type[BaseModel], key: str) -> type[BaseModel]:
 
 
 @dataclass(frozen=True)
+class ReliedOn:
+    """A value a deployment keeps when it relied on it before a release turned the key's default.
+
+    The import never imports a code default, so a section whose default
+    differs from what an unset variable meant changes the value for every
+    deployment that never set the variable. Where those deployments relied
+    on the old meaning, as on a feature that ran by default and is now off
+    until an operator turns it on, the section declares the ``value`` such a
+    deployment keeps and how to tell it from a new one. ``check`` is given a
+    ``DeploymentHistory`` (``embry0.storage.repositories.deployment_history``)
+    read on the import's own connection, at most once per key (the import's
+    ledger) and only while the variable is not set; when it answers true,
+    ``value`` is imported as if the variable had been set to it. ``evidence``
+    says, as a clause, what a true answer means: the comment written above
+    the value, the log line and ``embry0 settings import-env`` all carry it.
+    The section's own checks must accept ``value``, and it must differ from
+    the key's default, or there is nothing to keep.
+    """
+
+    value: Any
+    check: Callable[[Any], Awaitable[bool]]
+    evidence: str
+
+
+@dataclass(frozen=True)
 class EnvImport:
     """Where a section field's value came from before the document existed.
 
     ``attr`` is the ``Embry0Config`` attribute (its variable is the
     attribute's name in capitals, or its alias). ``convert`` turns the
     config value into the field's form, for a field whose shape differs, such
-    as a comma-separated string that became a list.
+    as a comma-separated string that became a list. ``dropped`` names the
+    parts of the variable's value ``convert`` leaves out, such as a name the
+    field does not know, which the import names in a warning. ``relied_on``
+    is for a field whose default differs from what the unset variable meant
+    on purpose (:class:`ReliedOn`).
     """
 
     attr: str
     convert: Callable[[Any], Any] | None = None
+    dropped: Callable[[Any], Sequence[str]] | None = None
+    relied_on: ReliedOn | None = None
 
 
 @dataclass(frozen=True)
@@ -195,7 +226,8 @@ class Section[M: SectionModel]:
     else.
     ``env`` maps a field to the ``Embry0Config`` attribute its value is
     imported from, once (``embry0.settings.bootstrap``): a string is the
-    attribute, an :class:`EnvImport` adds a converter.
+    attribute, an :class:`EnvImport` adds a converter, the parts it drops, or a
+    :class:`ReliedOn`.
     """
 
     name: str
@@ -330,6 +362,26 @@ def _section_problems(section: Section[Any]) -> list[str]:
             problems.append(f"{label} names no field of the model: {unknown}")
     if not problems:
         problems.extend(_default_problems(section))
+    if not problems:
+        problems.extend(_relied_on_problems(section))
+    return problems
+
+
+def _relied_on_problems(section: Section[Any]) -> list[str]:
+    """A ``ReliedOn`` value the section refuses, or one equal to the default, would keep nothing."""
+    problems: list[str] = []
+    defaults = section.model().model_dump(mode="json")
+    for key, imported in section.env.items():
+        relied = imported.relied_on if isinstance(imported, EnvImport) else None
+        if relied is None:
+            continue
+        try:
+            kept = section.validate({key: relied.value}).model_dump(mode="json")[key]
+        except SectionRefused as exc:
+            problems.append(f"the value env[{key!r}].relied_on keeps is refused by the section: {exc}")
+            continue
+        if kept == defaults.get(key):
+            problems.append(f"env[{key!r}].relied_on keeps the key's default: there is nothing to keep")
     return problems
 
 

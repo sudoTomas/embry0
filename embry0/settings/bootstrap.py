@@ -9,7 +9,23 @@ that is not yet in the document's ``bootstrapped_keys`` ledger
 - imports the variable when an operator set it (in the environment or
   ``.env``) and its value differs from the key's default. A code default is
   never imported: a section may change a default on purpose, and the old one
-  must not be frozen into every existing document;
+  must not be frozen into every existing document. The one exception is a
+  key whose section declares a value deployments relied on
+  (``EnvImport.relied_on``): while the variable is not set, the section's
+  check asks this deployment's records (``DeploymentHistory``, on the
+  import's connection, in a savepoint) whether it existed before, and when
+  it did, that value is imported under a comment saying why
+  (``settings_default_kept``). Only records older than the moment this
+  release first asked about the key count: the import records that moment
+  once in the ledger (``section.key@<time>``, see :func:`_first_asked`), so
+  a record made while a check waits for its retry, or before the next
+  start, is never taken for the deployment's past. A check that raises
+  holds its key, logs ``settings_bootstrap_check_failed`` at error level,
+  and is asked again in the same run by :func:`settle_unchecked`, which the
+  lifespan starts, and at the next boot if the run ends first;
+- names in a warning each part of a variable the section's conversion
+  leaves out, such as a name the key does not know
+  (``settings_env_value_dropped``);
 - skips a value the section refuses, whatever its check raises, with a
   warning, and goes on: a bad variable never stops a boot. The value is
   checked against the stored values this release still accepts, so a stored
@@ -48,6 +64,7 @@ once. After that, a variable that is still set is ignored:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -59,13 +76,27 @@ from embry0.audit.helpers import emit_audit
 from embry0.orchestration import dispatch_actors
 from embry0.settings.document import mapping, read_sections, with_section
 from embry0.settings.env import GovernedVariable, env_name, governed_variables, is_set
-from embry0.settings.registry import MANAGED_BY_FILE, MANAGED_BY_KEY, Catalog, EnvImport, Section, SectionRefused
+from embry0.settings.registry import (
+    MANAGED_BY_FILE,
+    MANAGED_BY_KEY,
+    Catalog,
+    EnvImport,
+    ReliedOn,
+    Section,
+    SectionRefused,
+)
 from embry0.settings.store import SettingsStore
+from embry0.storage.repositories.deployment_history import DeploymentHistory
 
 logger = structlog.get_logger(__name__)
 
 #: The actor of every revision and audit row the import writes.
 BOOTSTRAP_ACTOR: Final = dispatch_actors.SETTINGS_BOOTSTRAP
+#: Seconds :func:`settle_unchecked` waits before each new try, the last repeated: a minute, doubling to fifteen.
+SETTLE_DELAYS: Final[tuple[float, ...]] = (60.0, 120.0, 240.0, 480.0, 900.0)
+#: Joins a ``ReliedOn`` key to the moment this release first asked about it, in a ledger entry:
+#: ``leads.enabled@2026-10-30T12:00:00+00:00``. Never a key of its own: no key holds the character.
+ASKED_AT: Final = "@"
 
 
 @dataclass(frozen=True)
@@ -94,6 +125,27 @@ class EarlierSource:
 
 
 @dataclass(frozen=True)
+class DroppedParts:
+    """Parts of a variable's value the section's conversion leaves out (``EnvImport.dropped``)."""
+
+    section: str
+    key: str
+    variable: str
+    parts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class KeptValue:
+    """A key whose variable is not set and whose section declares a value deployments relied on."""
+
+    section: str
+    key: str
+    variable: str
+    value: Any
+    evidence: str
+
+
+@dataclass(frozen=True)
 class BootstrapResult:
     #: Section name to the keys and values imported into it.
     imported: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -105,6 +157,11 @@ class BootstrapResult:
     #: The keys (``section.key``) added to the ledger by this run.
     marked: tuple[str, ...] = ()
     revision_id: int | None = None
+    #: The imported keys (``section.key``) whose variable is not set: its default, which this deployment relied on.
+    kept: tuple[str, ...] = ()
+    #: Keys whose check of whether the deployment relied on the default raised: not marked, asked again.
+    unchecked: tuple[RefusedImport, ...] = ()
+    dropped: tuple[DroppedParts, ...] = ()
 
 
 def _reason(exc: SectionRefused) -> str:
@@ -142,6 +199,105 @@ def _still_accepted(section: Section[Any], stored: dict[str, Any]) -> dict[str, 
     return {} if "" in refused else {k: v for k, v in known.items() if k not in refused}
 
 
+def _asked_at(bootstrapped: list[str], path: str) -> datetime | None:
+    """The earliest moment the ledger records for ``path`` (``path@<time>``); None when it records none."""
+    found: list[datetime] = []
+    for entry in bootstrapped:
+        key, sep, at = entry.partition(ASKED_AT)
+        if sep and key == path:
+            try:
+                found.append(datetime.fromisoformat(at))
+            except ValueError:
+                continue
+    return min(found) if found else None
+
+
+async def _first_asked(store: SettingsStore, started: datetime | None) -> dict[str, datetime]:
+    """When this release first asked about each ``ReliedOn`` key the ledger does not mark yet.
+
+    The first time a key is asked, the moment is written to the ledger as
+    ``section.key@<time>``: ``started``, when the process that asks began
+    (the lifespan reads the database's clock right after connecting, before
+    the migrations run), else the database's clock now. It is written in a
+    transaction of its own, before the import's, so it stays even when the
+    import then fails; every later try, in this run or after a restart,
+    reads the earliest one. So only what the deployment held before this
+    release first started counts as its past, and a new deployment, whose
+    tables are created after that moment, can never show any.
+    """
+    relied = [
+        f"{section.name}.{key}"
+        for section in store.catalog
+        for key, imported in section.imports().items()
+        if imported.relied_on is not None
+    ]
+    if not relied:
+        return {}
+    found: dict[str, datetime] = {}
+    async with store.edit(actor=BOOTSTRAP_ACTOR, source="bootstrap", reason="first asked") as draft:
+        now = started
+        for path in relied:
+            if path in draft.bootstrapped:
+                continue
+            at = _asked_at(draft.bootstrapped, path)
+            if at is None:
+                if now is None:
+                    now = await draft.conn.fetchval("SELECT now()")
+                at = now
+                draft.mark_bootstrapped([f"{path}{ASKED_AT}{at.isoformat()}"])
+            found[path] = at
+    return found
+
+
+async def _relied_on(
+    section: Section[Any],
+    keys: list[str],
+    config: Any,
+    stored: dict[str, Any],
+    conn: Any,
+    asked: dict[str, datetime],
+    unchecked: list[RefusedImport],
+) -> dict[str, ReliedOn]:
+    """The keys among ``keys`` whose variable is not set and whose ``ReliedOn`` check finds this
+    deployment relied on them, each with its declaration (:class:`~embry0.settings.registry.ReliedOn`).
+
+    Each check reads a :class:`DeploymentHistory` of what the deployment held
+    before the key was first asked about (``asked``, :func:`_first_asked`),
+    on the import's own connection, in a savepoint of its transaction, so one
+    that raises leaves the rest of the import standing; its key goes to
+    ``unchecked``, is not marked, and is asked again (:func:`settle_unchecked`,
+    then the next boot). A key the operator has set in the document is never
+    asked: their value stands.
+    """
+    found: dict[str, ReliedOn] = {}
+    imports = section.imports()
+    for key in keys:
+        relied = imports[key].relied_on
+        if relied is None or key in stored or is_set(config, imports[key].attr):
+            continue
+        try:
+            async with conn.transaction():
+                before = asked.get(f"{section.name}.{key}") or await conn.fetchval("SELECT now()")
+                answer = await relied.check(DeploymentHistory(conn, before=before))
+        except Exception as exc:  # noqa: BLE001 - a failed check never stops a boot
+            reason = f"the check whether this deployment relied on it failed ({type(exc).__name__})"
+            unchecked.append(RefusedImport(section.name, key, env_name(imports[key].attr), reason))
+            continue
+        if answer:
+            found[key] = relied
+    return found
+
+
+def _dropped_parts(imported: EnvImport, config: Any) -> tuple[str, ...]:
+    """What ``imported.dropped`` names of the variable's value; nothing when it has none or it raises."""
+    if imported.dropped is None:
+        return ()
+    try:
+        return tuple(str(part) for part in imported.dropped(getattr(config, imported.attr)))
+    except Exception:  # noqa: BLE001 - the conversion's own check reports a value it cannot read
+        return ()
+
+
 def _env_values(
     section: Section[Any],
     keys: list[str],
@@ -149,25 +305,39 @@ def _env_values(
     stored: dict[str, Any],
     refused: list[RefusedImport],
     held: list[RefusedImport],
+    relied: Mapping[str, ReliedOn] | None = None,
+    dropped: list[DroppedParts] | None = None,
 ) -> dict[str, Any]:
     """The values of ``keys`` that ``config`` was given, differ from their defaults and the section accepts.
 
-    A value the section refuses on its own goes to ``refused``: it is marked
-    imported and never read again. A value accepted on its own but refused
-    together with the section's other values goes to ``held``: its key is not
-    marked, so the next boot tries it again, once the other values may have
-    changed.
+    A key in ``relied`` counts as given although its variable is not set: its
+    ``ReliedOn.value`` is the value (:func:`_relied_on`). A part of a set
+    variable that the conversion drops goes to ``dropped``. A value the
+    section refuses on its own goes to ``refused``: it is marked imported and
+    never read again. A value accepted on its own but refused together with
+    the section's other values goes to ``held``: its key is not marked, so
+    the next boot tries it again, once the other values may have changed.
     """
     defaults = section.defaults().model_dump(mode="json")
     imports = section.imports()
     accepted: dict[str, Any] = {}
     for key in keys:
-        if key in stored or not is_set(config, imports[key].attr):
+        if key in stored:
             continue
+        imported = imports[key]
+        kept = (relied or {}).get(key)
         try:
-            clean = _env_value(section, key, imports[key], config)
+            if kept is not None:
+                clean = section.validate({key: kept.value}).model_dump(mode="json", exclude_unset=True)[key]
+            elif is_set(config, imported.attr):
+                parts = _dropped_parts(imported, config)
+                if parts and dropped is not None:
+                    dropped.append(DroppedParts(section.name, key, env_name(imported.attr), parts))
+                clean = _env_value(section, key, imported, config)
+            else:
+                continue
         except SectionRefused as exc:
-            refused.append(RefusedImport(section.name, key, env_name(imports[key].attr), _reason(exc)))
+            refused.append(RefusedImport(section.name, key, env_name(imported.attr), _reason(exc)))
             continue
         if clean != defaults.get(key):
             accepted[key] = clean
@@ -237,6 +407,11 @@ class EnvValues:
     refused: tuple[RefusedImport, ...] = ()
     #: Values accepted on their own and refused together with the section's other values.
     held: tuple[RefusedImport, ...] = ()
+    #: Parts of a set variable the section's conversion leaves out.
+    dropped: tuple[DroppedParts, ...] = ()
+    #: Keys whose variable is not set and whose section declares a value a deployment that relied on it keeps:
+    #: what the running deployment's first start of the release keeps, which this environment alone cannot say.
+    kept: tuple[KeptValue, ...] = ()
 
     def variables(self, catalog: Catalog, section: str) -> list[str]:
         """The variables the values of ``section`` were read from, in the section's order, each named once."""
@@ -256,32 +431,56 @@ def env_values(catalog: Catalog, config: Any) -> EnvValues:
     whose value differs from its key's default and which the section
     accepts. Neither the document nor the import's ledger is read, so this
     is what the environment says now, whatever was imported before: what
-    ``embry0 settings import-env`` writes out.
+    ``embry0 settings import-env`` writes out. A key whose variable is not set
+    and that declares a ``ReliedOn`` is listed in ``kept``: whether the
+    running deployment keeps its value depends on its records, not on the
+    environment.
     """
     values: dict[str, dict[str, Any]] = {}
     refused: list[RefusedImport] = []
     held: list[RefusedImport] = []
+    dropped: list[DroppedParts] = []
+    kept: list[KeptValue] = []
     for section in catalog:
-        found = _env_values(section, list(section.imports()), config, {}, refused, held)
+        found = _env_values(section, list(section.imports()), config, {}, refused, held, dropped=dropped)
         if found:
             values[section.name] = found
-    return EnvValues(values=values, refused=tuple(refused), held=tuple(held))
+        for key, imported in section.imports().items():
+            relied = imported.relied_on
+            if relied is not None and not is_set(config, imported.attr):
+                variable = env_name(imported.attr)
+                kept.append(KeptValue(section.name, key, variable, relied.value, relied.evidence))
+    return EnvValues(values=values, refused=tuple(refused), held=tuple(held), dropped=tuple(dropped), kept=tuple(kept))
 
 
 async def import_env_once(
-    store: SettingsStore, config: Any, *, today: date | None = None, earlier: Sequence[EarlierSource] = ()
+    store: SettingsStore,
+    config: Any,
+    *,
+    today: date | None = None,
+    earlier: Sequence[EarlierSource] = (),
+    started: datetime | None = None,
 ) -> BootstrapResult:
     """Import the environment value of every section key not imported yet, and what each of ``earlier``
-    stored. See the module docstring."""
+    stored. See the module docstring.
+
+    ``started`` is when this process began, by the database's clock (else the
+    store's ``started``): the moment a ``ReliedOn`` key is recorded as first
+    asked, when it has not been before (:func:`_first_asked`).
+    """
     sources = {source.section: source for source in earlier if store.catalog.get(source.section) is not None}
     pending = [f"{section.name}.{key}" for section in store.catalog for key in section.imports()]
     if not pending and not sources:
         return BootstrapResult()
+    asked = await _first_asked(store, started if started is not None else store.started)
     day = (today or datetime.now(UTC).date()).isoformat()
     imported: dict[str, dict[str, Any]] = {}
     from_earlier: dict[str, dict[str, Any]] = {}
     refused: list[RefusedImport] = []
     held: list[RefusedImport] = []
+    unchecked: list[RefusedImport] = []
+    dropped: list[DroppedParts] = []
+    kept: list[tuple[str, str, str, str]] = []
     async with store.edit(actor=BOOTSTRAP_ACTOR, source="bootstrap", reason="imported from the environment") as draft:
         todo = [path for path in pending if path not in draft.bootstrapped]
         text, data = draft.yaml_text, dict(draft.data)
@@ -310,14 +509,25 @@ async def import_env_once(
             if not keys:
                 continue
             stored = mapping(data.get(section.name))
-            values = _env_values(section, keys, config, stored, refused, held)
+            relied = await _relied_on(section, keys, config, stored, draft.conn, asked, unchecked)
+            values = _env_values(section, keys, config, stored, refused, held, relied, dropped)
             if not values:
                 continue
-            # One variable may feed several keys (CONTEXT_AUDIT_JOB_BUDGET_USD fed three): named once.
-            variables = ", ".join(dict.fromkeys(env_name(section.imports()[key].attr) for key in values))
-            comment = f"Imported from the environment on {day}: {variables}."
-            text = with_section(text, data, section.name, values, comment)
-            data = {**data, section.name: {**stored, **values}}
+            imports = section.imports()
+            given = {key: value for key, value in values.items() if key not in relied}
+            if given:
+                # One variable may feed several keys (CONTEXT_AUDIT_JOB_BUDGET_USD fed three): named once.
+                variables = ", ".join(dict.fromkeys(env_name(imports[key].attr) for key in given))
+                comment = f"Imported from the environment on {day}: {variables}."
+                text = with_section(text, data, section.name, given, comment)
+                data = {**data, section.name: {**mapping(data.get(section.name)), **given}}
+            for key in (key for key in values if key in relied):
+                variable = env_name(imports[key].attr)
+                evidence = relied[key].evidence
+                comment = f"Kept on {day}: {variable} is not set, and {evidence}."
+                text = with_section(text, data, section.name, {key: values[key]}, comment)
+                data = {**data, section.name: {**mapping(data.get(section.name)), key: values[key]}}
+                kept.append((section.name, key, variable, evidence))
             imported[section.name] = {**imported.get(section.name, {}), **values}
         in_file = data.get(MANAGED_BY_KEY) == MANAGED_BY_FILE
         if imported:
@@ -325,7 +535,7 @@ async def import_env_once(
             # of the document is what is stored, checked when it was written.
             draft.replace(text, data, draft.schema_version)
             draft.reason = _import_reason(sources, from_earlier, imported)
-        waiting = {f"{item.section}.{item.key}" for item in held}
+        waiting = {f"{item.section}.{item.key}" for item in (*held, *unchecked)}
         marked = [path for path in todo if path not in waiting]
         draft.mark_bootstrapped(marked)
     for item in refused:
@@ -344,8 +554,33 @@ async def import_env_once(
             reason=item.reason,
             hint="refused together with the section's other values; tried again at the next start",
         )
+    for item in unchecked:
+        logger.error(
+            "settings_bootstrap_check_failed",
+            variable=item.variable,
+            key=f"{item.section}.{item.key}",
+            reason=item.reason,
+            hint="the key reads its default until a later try in this run, or the next start, answers",
+        )
+    for part in dropped:
+        logger.warning(
+            "settings_env_value_dropped",
+            variable=part.variable,
+            key=f"{part.section}.{part.key}",
+            dropped=list(part.parts),
+            hint="the key does not know these, so they are left out of what is imported",
+        )
     for name, values in imported.items():
         logger.info("settings_env_imported", section=name, keys=sorted(values), revision_id=draft.revision_id)
+    for name, key, variable, evidence in kept:
+        logger.info(
+            "settings_default_kept",
+            variable=variable,
+            key=f"{name}.{key}",
+            evidence=evidence,
+            revision_id=draft.revision_id,
+            hint="the variable is not set and this deployment relied on its default, so the document keeps it",
+        )
     if imported and in_file:
         logger.warning(
             "settings_env_imported_into_file_document",
@@ -363,6 +598,8 @@ async def import_env_once(
         }
         if from_earlier:
             details["earlier"] = {name: sources[name].label for name in from_earlier}
+        if kept:
+            details["kept"] = [f"{name}.{key}" for name, key, _, _ in kept]
         await emit_audit(
             store.db,
             "settings.bootstrapped",
@@ -377,6 +614,9 @@ async def import_env_once(
         held=tuple(held),
         marked=tuple(marked),
         revision_id=draft.revision_id,
+        kept=tuple(f"{name}.{key}" for name, key, _, _ in kept),
+        unchecked=tuple(unchecked),
+        dropped=tuple(dropped),
     )
 
 
@@ -391,6 +631,42 @@ def _import_reason(
     if not labels:
         return "imported from the environment"
     return "imported from " + " and ".join([*labels, *(["the environment"] if from_env else [])])
+
+
+async def settle_unchecked(
+    store: SettingsStore,
+    config: Any,
+    result: BootstrapResult | None,
+    *,
+    earlier: Sequence[EarlierSource] = (),
+    started: datetime | None = None,
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+) -> BootstrapResult:
+    """Import again, in this run, until no key's ``ReliedOn`` check fails and the import itself succeeds.
+
+    The lifespan starts it when the start's import left keys unchecked, or
+    raised (``result`` None). It waits :data:`SETTLE_DELAYS` before each try
+    (the last repeated) and runs the import again with the same ``earlier``
+    sources and the same start (``started``, else the store's), which touches
+    only the keys the ledger lacks; each try that still fails logs at error
+    level. Without it, such a key would read its default until the next
+    start. A value an operator wrote in the meantime stands: a key the
+    document holds is never asked or imported. Returns the last try's result,
+    once nothing is unchecked.
+    """
+    tries = 0
+    while result is None or result.unchecked:
+        delays = SETTLE_DELAYS
+        await sleep(delays[min(tries, len(delays) - 1)])
+        tries += 1
+        try:
+            result = await import_env_once(store, config, earlier=earlier, started=started)
+        except Exception:  # noqa: BLE001 - tried again after the next delay
+            logger.error("settings_bootstrap_retry_failed", tries=tries, exc_info=True)
+            result = None
+    if tries:
+        logger.info("settings_bootstrap_check_settled", tries=tries, kept=list(result.kept))
+    return result
 
 
 async def log_ignored_env(store: SettingsStore, config: Any) -> list[GovernedVariable]:

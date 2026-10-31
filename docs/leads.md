@@ -4,17 +4,40 @@ Until leads, work reached embry0 in three ways: a person put the trigger label o
 
 The backlog intake and the lead client work only with Linear and GitHub today; other forges and trackers are tracked in #181.
 
+## Turning leads on
+
+Leads are off until an operator turns them on. Their policy is the `leads` section of the [settings document](configuration.md#settings-document) ([its keys](configuration.md#settings-reference)):
+
+```yaml
+leads:
+  enabled: true
+  finders: [ticket, ci, alert, flaky, review]
+  interval_hours: 6
+  backlog_interval_hours: 24
+  max_new_per_repo_per_day: 5
+  review_stale_days: 3
+  flaky_commits: 10
+  offer_min: 40
+  ask_min: 60
+```
+
+Those are the defaults, except `enabled`, which is `false`. The loop always runs: every 5 minutes it reads the section, does nothing while `enabled` is false, and otherwise runs a pass `interval_hours` after the last one ended (it wakes for that even between its 5-minute looks, so passes are spaced exactly as before the section), so turning leads on, off, or changing any key needs no restart. `POST /api/v1/leads/run` runs a pass by hand whether leads are on or not, and the leads already stored stay until answered.
+
+**Upgrading.** Leads used to be on by default (`LEADS_ENABLED=true`), so they ran on every deployment that left the variable unset, whether or not a finder ever stored anything. The first start of the release that moved them into the section keeps them on wherever they ran: when `LEADS_ENABLED` is not set and the deployment existed before, it writes `enabled: true` into the document, under a comment saying why, once. The evidence is any record a deployment in use holds from before that release first started: a registered repository, a job, or a `ticket`, `ci`, `alert`, `flaky` or `review` lead (open or gone). The import records that moment once (the database's clock when the process began, before the migrations), so a new deployment, whose tables did not exist then, never shows any, even if it registers a repository while a failed check waits for its retry or before its next start: its leads start off. `LEADS_ENABLED=true` or `false`, when set, is imported as any variable is. If the check fails at the start, leads read off and the check is asked again in the same run until it answers ([configuration.md](configuration.md#settings-document), *From the environment*). `embry0 settings import-env` leaves `enabled` out of the file it writes and says on stderr what a running deployment keeps.
+
+**Per organization.** An organization's [layer](configuration.md#settings-document) may set `finders`, `max_new_per_repo_per_day`, `review_stale_days`, `flaky_commits`, `offer_min` and `ask_min` for its repositories: each repository's pass, and how its tickets are offered and asked, follow its organization's values. Whether the loop runs and how often stay the deployment's.
+
 ## Where it looks
 
-A repository is read when it is registered and active and someone answers for it: its preferences name owners, or it is a watched stack. Each finder reads it with its organization's credential and adds at most `LEADS_MAX_NEW_PER_REPO_PER_DAY` new leads a day, the most severe first.
+A repository is read when it is registered and active and someone answers for it: its preferences name owners, or it is a watched stack. Each finder reads it with its organization's credential and adds at most `leads.max_new_per_repo_per_day` new leads a day, the most severe first.
 
 | Kind | Finder | What it reads | Severity, effort | Accepting starts |
 |---|---|---|---|---|
-| `ticket` | Backlog intake, every `LEADS_BACKLOG_INTERVAL_HOURS` | Linear tickets nobody started (unassigned, or assigned to the account embry0's key acts as) whose project resolves to the repository, and the repository's open GitHub issues nobody is assigned | From Linear priority or the labels; from size labels or the estimate | Its tracker's own path: on Linear the trigger label goes on and the ticket is dispatched, on GitHub the issue is brought into embry0 and dispatched |
+| `ticket` | Backlog intake, every `leads.backlog_interval_hours` | Linear tickets nobody started (unassigned, or assigned to the account embry0's key acts as) whose project resolves to the repository, and the repository's open GitHub issues nobody is assigned | From Linear priority or the labels; from size labels or the estimate | Its tracker's own path: on Linear the trigger label goes on and the ticket is dispatched, on GitHub the issue is brought into embry0 and dispatched |
 | `ci` | Failing CI | Check runs and commit statuses on the newest commit of the default branch | high, medium | A fix job for that check |
 | `alert` | Alerts | Open Dependabot alerts and open code-scanning alerts | The alert's, small for a dependency with a fixed version | An upgrade or fix job |
-| `flaky` | Flaky checks | Every run of every check on the newest `LEADS_FLAKY_COMMITS` commits of the default branch | medium, high from 3 commits; medium | A job that finds and fixes the cause |
-| `review` | Unanswered reviews | Open, non-draft pull requests from the repository itself with review threads a reviewer started, neither resolved nor outdated, and unanswered for `LEADS_REVIEW_STALE_DAYS` | low, medium from 3 threads; small | A follow-up job on the pull request's branch |
+| `flaky` | Flaky checks | Every run of every check on the newest `leads.flaky_commits` commits of the default branch | medium, high from 3 commits; medium | A job that finds and fixes the cause |
+| `review` | Unanswered reviews | Open, non-draft pull requests from the repository itself with review threads a reviewer started, neither resolved nor outdated, and unanswered for `leads.review_stale_days` days | low, medium from 3 threads; small | A follow-up job on the pull request's branch |
 | `crack` | The scout (below) | A finished `kintsugi-trace` job's ledger: one lead per row | break high, fracture medium, hairline low; the seal's size | A job that checks the evidence still holds, then fixes the cause |
 | `weed` | The scout (below) | A finished `garden` job's weed card | low, small | A job that removes it with the checked diff and changes no behavior |
 | `weed` | A [knowledge map](maps.md) | A part someone marked bloat on a map, while anyone does | low, small | A job that removes the part and what only it uses, without re-assessing the mark |
@@ -50,7 +73,7 @@ Those are the defaults. `SCOUT_REPOS` and `SCOUT_EXCLUDE` stay environment varia
 
 ## Backlog tickets
 
-A ticket is offered only when it reads as ready, a 0 to 100 score from the ticket alone, and the score is at least `LEADS_TICKET_MIN_SCORE`:
+A ticket is offered only when it reads as ready, a 0 to 100 score from the ticket alone, and the score is at least `leads.offer_min`:
 
 - a description (+5 short, +20 from 80 characters, +25 from 400);
 - file paths (+20), quoted error text (+10), what done looks like ("expected", "steps to reproduce", a checklist; +15);
@@ -58,6 +81,13 @@ A ticket is offered only when it reads as ready, a 0 to 100 score from the ticke
 - an epic, design, question, spike or blocked label (-30); a title of three words or fewer (-10).
 
 The score and its reasons are in the proposal's summary. A model-based reading of readiness is not part of this version.
+
+Two thresholds read that one score, each per repository through its organization's layer:
+
+- **`leads.offer_min`** (40): a ticket scoring below it is not stored as a lead at all, so it is never offered, on the page or in chat.
+- **`leads.ask_min`** (60): an offered ticket scoring below it is *held*. `GET /api/v1/proposals` leaves it out unless `include_held=true`, so a chat assistant does not ask it, and no ask is queued for it; the Owner proposals page shows it folded; the brief writer writes its brief after the others; and its decision card marks the readiness. It can still be read, accepted, declined and snoozed by id.
+
+The labels, weights and words the score reads are in the code for now; they become an organization's own vocabulary in a later change (#168).
 
 ## A lead's life
 
@@ -71,4 +101,4 @@ Owners answer leads like every proposal: accept, decline with a reason, or snooz
 - `POST /api/v1/leads/run` (`{"repo": "...", "backlog": true}`, both optional): one pass now, and what each finder found, stored, capped and closed per repository.
 - Answers go through `POST /api/v1/proposals/{id}/accept|decline|snooze`.
 
-Settings: the `LEADS_*` variables in [configuration.md](configuration.md).
+Settings: the `leads` section of the [settings document](configuration.md#settings-reference); the `LEADS_*` variables are only read once, at the upgrade ([configuration.md](configuration.md#leads)).

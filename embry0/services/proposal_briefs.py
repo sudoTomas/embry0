@@ -30,10 +30,13 @@ from embry0.services.background_models import (
     BackgroundCalls,
     Endpoint,
     ModelLookup,
+    model_lookup,
 )
 from embry0.services.lead_kinds import KINDS, ids
 from embry0.services.leads import LEAD_KINDS
 from embry0.services.proposals import Proposal
+from embry0.settings.layers import PerRepository
+from embry0.settings.sections.leads import LEADS, LeadsSettings
 
 logger = structlog.get_logger(__name__)
 
@@ -176,10 +179,11 @@ def parse_brief(text: str) -> Brief:
     return Brief(title=_cut(fields["title"]), problem=fields["problem"], fix=fields["fix"], size=size.strip().lower())
 
 
-def held(p: Proposal, min_readiness: int) -> bool:
-    """Shown on the page, not asked in chat: a backlog ticket below the readiness floor, or a lead
-    whose kind asks only some severities in chat and whose severity is not one of them (a weed, a
-    crack below ``break``: spec 2026-10-27, a scout running all day must not fill the chat)."""
+def held(p: Proposal, ask_min: int) -> bool:
+    """Shown on the page, not asked in chat: a backlog ticket whose readiness is below ``ask_min``
+    (``leads.ask_min`` for its repository), or a lead whose kind asks only some severities in chat
+    and whose severity is not one of them (a weed, a crack below ``break``: spec 2026-10-27, a scout
+    running all day must not fill the chat)."""
     known = KINDS.get(p.kind)
     asked = known.chat_severities if known else None
     if asked is not None:
@@ -187,7 +191,12 @@ def held(p: Proposal, min_readiness: int) -> bool:
     if p.kind != "ticket":
         return False
     readiness = (p.extra.get("source") or {}).get("readiness") if isinstance(p.extra.get("source"), Mapping) else None
-    return isinstance(readiness, int | float) and readiness < min_readiness
+    return isinstance(readiness, int | float) and readiness < ask_min
+
+
+def held_by(p: Proposal, leads: PerRepository[LeadsSettings]) -> bool:
+    """:func:`held`, with the ``ask_min`` of the proposal's repository, as its organization's layer sets it."""
+    return held(p, leads.repo(p.repo or None).ask_min)
 
 
 def _order(p: Proposal) -> tuple[int, float]:
@@ -211,13 +220,38 @@ async def write_brief(p: Proposal, endpoint: Endpoint, client: httpx.AsyncClient
     return parse_brief(answer)
 
 
+@dataclass(frozen=True)
+class BriefSettings:
+    """What one tick of the proposal brief writer reads, all from one snapshot of the settings documents."""
+
+    #: ``repo -> model`` a proposal of that repository's brief is written on (``background_models.proposal_brief``,
+    #: per repository); '' writes none.
+    models: ModelLookup
+    #: The ``leads`` section, per repository: by whose ``ask_min`` the held tickets' briefs come last.
+    leads: PerRepository[LeadsSettings]
+
+
+def brief_settings(store: Any) -> Callable[[], Awaitable[BriefSettings]]:
+    """The reader the proposal brief writer is built with: each call takes one snapshot of the settings
+    documents (``store.snapshot()``) and reads both ``background_models.proposal_brief`` and the ``leads``
+    section from it, so a write between two reads can never hand one tick two versions of the documents."""
+
+    async def read() -> BriefSettings:
+        snapshot = await store.snapshot()
+        return BriefSettings(models=model_lookup(snapshot, FEATURE), leads=snapshot.scoped(LEADS))
+
+    return read
+
+
 class ProposalBriefWriter:
     """Fills missing and stale briefs of the proposals still asked, a few a tick (spec 2026-10-25).
 
-    ``proposals()`` is the open feed (without owners); ``models()``, read once
-    a tick, gives the model each proposal's repository writes with ('' for
-    none: ``background_models.proposal_brief``, else its default); ``briefs``
-    the store; ``calls`` makes each call with the repository's key, the
+    ``proposals()`` is the open feed (without owners); ``settings()``, read
+    once a tick (:func:`brief_settings`, one snapshot of the settings
+    documents), gives the model each proposal's repository writes with ('' for
+    none: ``background_models.proposal_brief``, else its default) and the
+    ``leads`` section, by whose ``ask_min`` the held tickets' briefs are
+    written last; ``briefs`` the store; ``calls`` makes each call with the repository's key, the
     budget caps and the spend recorded (#164). A failed proposal waits
     ``RETRY_SECONDS`` before it is tried again; one the caps refuse ends the
     tick and is tried on the next.
@@ -227,28 +261,32 @@ class ProposalBriefWriter:
         self,
         *,
         proposals: Callable[[], Awaitable[list[Proposal]]],
-        models: Callable[[], Awaitable[ModelLookup]],
+        settings: Callable[[], Awaitable[BriefSettings]],
         briefs: Any,
         calls: BackgroundCalls,
-        min_readiness: int,
         per_tick: int = 3,
         interval_seconds: float = 60.0,
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._proposals = proposals
-        self._models = models
+        self._settings = settings
         self._briefs = briefs
         self._calls = calls
-        self._min_readiness = min_readiness
         self._per_tick = max(1, per_tick)
         self._interval = interval_seconds
         self._client = client
         self._clock = clock
         self._retry_at: dict[tuple[str, str], float] = {}
 
-    def due(self, proposals: Iterable[Proposal], stored: Mapping[str, Mapping[str, Any]]) -> list[Proposal]:
-        """The proposals whose brief is missing or stale and not waiting out a failure, in writing order."""
+    def due(
+        self,
+        proposals: Iterable[Proposal],
+        stored: Mapping[str, Mapping[str, Any]],
+        leads: PerRepository[LeadsSettings],
+    ) -> list[Proposal]:
+        """The proposals whose brief is missing or stale and not waiting out a failure, in writing order:
+        the held ones, by ``leads``, last."""
         now = self._clock()
         out = []
         for p in proposals:
@@ -259,14 +297,15 @@ class ProposalBriefWriter:
             if self._retry_at.get((p.id, digest), 0.0) > now:
                 continue
             out.append(p)
-        return sorted(out, key=lambda p: (held(p, self._min_readiness), *_order(p)))
+        return sorted(out, key=lambda p: (held_by(p, leads), *_order(p)))
 
     async def tick(self) -> list[str]:
         """One pass: the ids whose brief it wrote."""
-        lookup = await self._models()
+        read = await self._settings()
+        lookup, leads = read.models, read.leads
         proposals = await self._proposals()
         await self._briefs.prune({p.id for p in proposals})
-        due = self.due(proposals, await self._briefs.all())
+        due = self.due(proposals, await self._briefs.all(), leads)
         endpoints: dict[tuple[str, str], Endpoint | None] = {}
         client: httpx.AsyncClient | None = None
         written: list[str] = []
@@ -315,9 +354,10 @@ class ProposalBriefWriter:
 
 
 def with_briefs(
-    proposals: Iterable[Proposal], stored: Mapping[str, Mapping[str, Any]], min_readiness: int
+    proposals: Iterable[Proposal], stored: Mapping[str, Mapping[str, Any]], leads: PerRepository[LeadsSettings]
 ) -> list[dict[str, Any]]:
-    """Each proposal as the API shows it: its brief when one matches what it is now, and whether it is held."""
+    """Each proposal as the API shows it: its brief when one matches what it is now, and whether it is
+    held, by its repository's ``leads.ask_min``."""
     out = []
     for p in proposals:
         row = stored.get(p.id)
@@ -332,5 +372,5 @@ def with_briefs(
                 "model": row.get("model") or "",
                 "written_at": written_at.astimezone(UTC).isoformat() if isinstance(written_at, datetime) else None,
             }
-        out.append({**p.to_dict(), "brief": brief, "held": held(p, min_readiness)})
+        out.append({**p.to_dict(), "brief": brief, "held": held_by(p, leads)})
     return out

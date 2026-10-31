@@ -771,24 +771,22 @@ class Embry0Config(BaseSettings):
     # next release; nothing else reads it.
     context_audit_local_model: str = ""
 
-    # Leads (spec 2026-10-25): work embry0 finds by itself on the repositories
-    # someone answers for (owners set, or a watched stack) and offers as owner
-    # proposals. LEADS_ENABLED=false stops the loop; the proposals already
-    # stored stay until answered. LEADS_FINDERS names the finders that run:
-    # ticket (the backlog intake), ci, alert, flaky, review. Each adds at most
-    # LEADS_MAX_NEW_PER_REPO_PER_DAY new leads per repository a day, the worst
-    # first. The backlog intake runs every LEADS_BACKLOG_INTERVAL_HOURS, the
-    # rest every LEADS_INTERVAL_HOURS.
+    # Leads (spec 2026-10-25): the policy is the settings document's `leads`
+    # section now (embry0/settings/sections/leads.py), with
+    # PROPOSALS_TICKET_MIN_READINESS below as its `ask_min`. These variables
+    # are only its import source: read once, at the first start of the
+    # release that added the section, and ignored after that. They are
+    # removed in the next release; nothing else reads them. LEADS_ENABLED's
+    # default stays true, what it meant before; the section's is false, and a
+    # deployment that existed before, with LEADS_ENABLED unset, keeps
+    # `enabled: true` (EnvImport.relied_on, which declares that value itself).
     leads_enabled: bool = True
     leads_finders: str = "ticket,ci,alert,flaky,review"
     leads_interval_hours: float = Field(default=6.0, gt=0)
     leads_backlog_interval_hours: float = Field(default=24.0, gt=0)
     leads_max_new_per_repo_per_day: int = Field(default=5, ge=0)
-    # The lowest readiness (0 to 100) a backlog ticket must score to be offered.
     leads_ticket_min_score: int = Field(default=40, ge=0, le=100)
-    # Days a review thread waits for an answer before it is a lead.
     leads_review_stale_days: int = Field(default=3, ge=0)
-    # Commits of the default branch the flaky-check finder reads.
     leads_flaky_commits: int = Field(default=10, ge=1, le=50)
 
     # Scout (docs/leads.md, "The scout"): read-only scouting jobs (garden, kintsugi-trace)
@@ -831,10 +829,11 @@ class Embry0Config(BaseSettings):
     ask_tick_seconds: float = Field(default=120.0, ge=30)
     ask_max_open_per_person: int = Field(default=3, ge=1)
 
-    # Owner proposals in plain words (spec 2026-10-25, proposal briefs). A
-    # backlog ticket is asked in chat only at this readiness and up; the page
-    # shows the rest folded. The model each brief is written on is the
-    # settings document's background_models.proposal_brief now (#164).
+    # Owner proposals in plain words (spec 2026-10-25, proposal briefs). The
+    # model each brief is written on is the settings document's
+    # background_models.proposal_brief now (#164). PROPOSALS_TICKET_MIN_READINESS,
+    # the readiness at which a backlog ticket is asked in chat, is only the
+    # import source of the `leads` section's `ask_min` (see the leads block above).
     proposals_ticket_min_readiness: int = Field(default=60, ge=0, le=100)
     # PROPOSAL_BRIEF_MODEL and JOB_BRIEF_MODEL are only the import source of
     # background_models.proposal_brief and .job_brief (#164): read once, at the

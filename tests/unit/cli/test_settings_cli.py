@@ -381,6 +381,29 @@ def test_import_env_of_an_environment_at_its_defaults_sets_nothing(
     assert "sets nothing" in capsys.readouterr().err
 
 
+def test_import_env_says_what_a_running_deployment_keeps_and_how_to_keep_it_in_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """LEADS_ENABLED unset: the file cannot say whether leads stay on, so stderr says when they do."""
+    monkeypatch.chdir(tmp_path)
+    with patch.dict(os.environ, {}, clear=True):
+        assert run(_args("import-env")) == OK
+    captured = capsys.readouterr()
+    assert "leads" not in load_yaml(captured.out), "the environment sets nothing, so the file leaves leads out"
+    note = next((line for line in captured.err.splitlines() if line.startswith("LEADS_ENABLED is not set.")), "")
+    assert "keeps `enabled: true`" in note and "the deployment existed before leads became opt-in" in note, (
+        f"stderr says the running deployment would keep leads on, and when: {captured.err!r}"
+    )
+    assert "add `enabled: true` under `leads:`" in note, f"and how to keep it in the file: {note!r}"
+
+    with patch.dict(os.environ, {"LEADS_ENABLED": "false", "LEADS_FINDERS": "ci, nonsense"}, clear=True):
+        assert run(_args("import-env")) == OK
+    captured = capsys.readouterr()
+    assert "LEADS_ENABLED is not set" not in captured.err, "a variable that is set is imported as usual: no note"
+    assert "LEADS_FINDERS (leads.finders) names what the key does not know: nonsense" in captured.err, captured.err
+    assert load_yaml(captured.out)["leads"] == {"finders": ["ci"]}
+
+
 @pytest.mark.parametrize(
     "value",
     ["http://oauth2:tok-000000000007@gitlab.example.com", "http://tok-000000000007@gitlab.example.com"],

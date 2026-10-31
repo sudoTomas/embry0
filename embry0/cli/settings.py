@@ -564,7 +564,7 @@ def _import_env(args: argparse.Namespace) -> int:
     from embry0.config import Embry0Config
     from embry0.config_redaction import mask_url_credentials, validation_error_lines
     from embry0.settings.bootstrap import env_values
-    from embry0.settings.document import with_section
+    from embry0.settings.document import dump_yaml, with_section
     from embry0.settings.registry import SCHEMA_VERSION, VERSION_KEY
     from embry0.settings.sections import CATALOG
 
@@ -598,6 +598,15 @@ def _import_env(args: argparse.Namespace) -> int:
         _err(
             f"{item.variable} ({item.section}.{item.key}) is refused together with the section's other values, "
             f"so it is left out: {item.reason}"
+        )
+    for part in found.dropped:
+        _err(f"{part.variable} ({part.section}.{part.key}) names what the key does not know: {', '.join(part.parts)}")
+    for kept in found.kept:
+        line = dump_yaml({kept.key: kept.value}).strip()
+        _err(
+            f"{kept.variable} is not set. Where {kept.evidence}, the first start of the release that added "
+            f"{kept.section}.{kept.key} keeps `{line}` there; this file leaves it out, so applying it puts the "
+            f"key back to its default. To keep it in the file, add `{line}` under `{kept.section}:`."
         )
     if not found.values and not (found.refused or found.held):
         _err("no policy variable is set to anything but its default: the document sets nothing")

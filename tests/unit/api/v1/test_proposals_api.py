@@ -15,6 +15,7 @@ from embry0.api.v1 import proposals as proposals_api
 from embry0.services.context_audit import FIX_ACTOR
 from embry0.services.proposals import Decision
 from tests.fixtures.budget_settings import BudgetStore
+from tests.fixtures.leads import MemorySettings
 
 T0 = datetime(2026, 10, 24, 12, tzinfo=UTC)
 REPORT = "## Findings\n\n| Severity | Location | Claim | Evidence | Fix |\n|---|---|---|---|---|\n| misleads | AGENTS.md:3 | Run make check | no target | say make test |\n"
@@ -80,6 +81,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app.state.organizations_repo = FakeOrgs()
     app.state.config = SimpleNamespace(audit_log_path=None)
     app.state.db = None
+    app.state.settings = MemorySettings()
 
     async def forge_client(request: Any, org: Any) -> FakeForge:
         return FakeForge()
@@ -282,9 +284,9 @@ async def test_a_thin_ticket_is_held_out_of_the_chat_feed_but_the_page_can_see_i
     assert thin["held"] is True, "a held proposal is still readable (and answerable) by id"
 
 
-async def test_the_floor_is_the_deployment_s(app: FastAPI) -> None:
+async def test_the_floor_is_the_settings_document_s(app: FastAPI) -> None:
     app.state.leads_repo = FakeLeads()
-    app.state.config = SimpleNamespace(audit_log_path=None, proposals_ticket_min_readiness=30)
+    app.state.settings = MemorySettings({"ask_min": 30})
     async with await _client(app) as client:
         asked = (await client.get("/api/v1/proposals", params={"kind": "ticket"})).json()
     assert sorted(p["id"] for p in asked["proposals"]) == ["ticket:ready", "ticket:thin"]
