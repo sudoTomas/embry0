@@ -22,7 +22,7 @@ never left the queue does not expire at all (#295). The loop sleeps the deployme
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -39,8 +39,7 @@ logger = structlog.get_logger(__name__)
 class _Asks(Protocol):
     async def live(self) -> list[dict[str, Any]]: ...
     async def expired_pairs(self) -> Mapping[tuple[str, str], datetime | None]: ...
-    async def code(self, decision_id: str) -> str: ...
-    async def add(self, *, decision_id: str, recipient: str, due_at: datetime) -> str | None: ...
+    async def queue(self, asks: Iterable[tuple[str, str, datetime]]) -> list[str]: ...
     async def close(self, ask_ids: Sequence[str], *, state: str, now: datetime) -> int: ...
 
 
@@ -50,7 +49,9 @@ class AskLoop:
     #: ``scoped_reader(store, ASKS)`` in production.
     settings: Callable[[], Awaitable[PerRepository[AsksSettings]]]
     asks: _Asks
-    #: The open decisions, with owners, held and assigned_to (the decisions API's shape).
+    #: Every open decision, with owners, held and assigned_to (the decisions API's shape), none cut off by the
+    #: decisions page (the quests to review are the inbox's newest 30, #296): an ask whose decision is not among
+    #: them is withdrawn.
     decisions: Callable[[], Awaitable[list[dict[str, Any]]]]
     #: GitHub login (lowercased) to the email of the person who named it.
     people: Callable[[], Awaitable[Mapping[str, str]]]
@@ -89,19 +90,19 @@ class AskLoop:
         ]
         if old:
             await self.asks.close(old, state="expired", now=now)
-        live = [a for a in live if str(a["id"]) not in set(old)]
+        gone = set(old)
+        live = [a for a in live if str(a["id"]) not in gone]
         done_with = still_kept_from(await self.asks.expired_pairs(), now, policy)
         changes = plan(decisions, live, await self.people())
         if changes.withdraw:
             await self.asks.close(changes.withdraw, state="withdrawn", now=now)
-        queued = 0
-        for decision_id, recipient in changes.ask:
-            if (decision_id, recipient) in done_with:
-                continue
-            await self.asks.code(decision_id)
-            due = next_working_time(now, policy.settings(decision_id))
-            if await self.asks.add(decision_id=decision_id, recipient=recipient, due_at=due):
-                queued += 1
+        # One call for every new ask, so a tick makes no round trip per decision (#273).
+        new = [
+            (decision_id, recipient, next_working_time(now, policy.settings(decision_id)))
+            for decision_id, recipient in changes.ask
+            if (decision_id, recipient) not in done_with
+        ]
+        queued = len(await self.asks.queue(new))
         if old or changes.withdraw or queued:
             logger.info("asks_tick", expired=len(old), withdrawn=len(changes.withdraw), queued=queued)
         return {"expired": len(old), "withdrawn": len(changes.withdraw), "queued": queued}

@@ -32,6 +32,7 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 from embry0.storage.repositories.asks import AsksRepository
 from embry0.storage.repositories.organizations import OrganizationsRepository
+from tests.fixtures.asks import CountingDb
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
 pytestmark = pytest.mark.requires_postgres
@@ -95,6 +96,15 @@ class FakeAsks:
         row = {"id": ask_id, "decision_id": decision_id, "recipient": recipient, "state": "queued"}
         self.rows.append({**row, "due_at": due_at, "created_at": NOW})
         return ask_id
+
+    async def queue(self, asks: Any) -> list[str]:
+        """As the repository does: each decision gets its code, then each ask its person holds no live one of."""
+        queued = []
+        for decision_id, recipient, due_at in asks:
+            await self.code(decision_id)
+            if not any(r["decision_id"] == decision_id and r["recipient"] == recipient for r in await self.live()):
+                queued.append(await self.add(decision_id=decision_id, recipient=recipient, due_at=due_at))
+        return [q for q in queued if q]
 
     async def close(self, ask_ids: Any, *, state: str, now: datetime) -> int:
         for r in self.rows:
@@ -288,12 +298,68 @@ async def test_the_feed_reads_each_organization_s_layer_from_the_real_store(feed
             assert put.status_code == 200, put.text
         asks: AsksRepository = feed.state.asks_repo
         now = datetime.now(UTC)
-        held = await asks.add(decision_id="acme-1", recipient="ada@example.com", due_at=now - timedelta(hours=1))
-        assert held is not None and await asks.sent(held, message_ref="m-1", now=now) is not None
-        for decision_id in ("acme-2", "globex-1"):
-            await asks.add(decision_id=decision_id, recipient="ada@example.com", due_at=now - timedelta(minutes=1))
+        [held] = await asks.queue([("acme-1", "ada@example.com", now - timedelta(hours=1))])
+        assert await asks.sent(held, message_ref="m-1", now=now) is not None
+        await asks.queue((d, "ada@example.com", now - timedelta(minutes=1)) for d in ("acme-2", "globex-1"))
         due = (await client.get("/api/v1/asks/due")).json()["asks"]
     assert sorted(a["decision"]["id"] for a in due) == ["acme-2", "globex-1"], (
         "ada holds one acme ask: acme's layer lets her hold two, and globex's count starts at none, "
         f"so both go out although the deployment's limit is one: {[a['decision']['id'] for a in due]}"
     )
+
+
+def _code_lookups(statements: list[str]) -> tuple[int, int]:
+    """How many statements asked which codes are taken, one per code length a batch needed, and how many others."""
+    lookups = sum(s.startswith("SELECT code FROM decision_codes WHERE code = ANY") for s in statements)
+    return lookups, len(statements) - lookups
+
+
+async def test_the_production_loop_keeps_the_ask_of_a_decision_ranked_past_500(app: Any) -> None:
+    """#273: the decisions list shows at most 500, but the loop must read every open decision.
+
+    Ranked newest first, the 501st open issue is the oldest. A loop that read
+    only the first 500 never asked about it, and withdrew a live ask the moment
+    a newer decision pushed it past 500. The decisions, the asks table and the
+    settings reader are all the production loop's own.
+    """
+    await _put(app, DEPLOYMENT)
+    await app.state.repo_preferences_repo.upsert("acme/widgets", owners=["ada"])
+    for i in range(500):
+        await app.state.issues_repo.create(f"Widgets break, case {i}", repo="acme/widgets")
+    production = app.state.ask_loop
+    counting = CountingDb(app.state.db)
+    loop = AskLoop(
+        settings=production.settings,
+        asks=AsksRepository(counting),  # type: ignore[arg-type]
+        decisions=production.decisions,
+        people=production.people,
+        clock=lambda: NOW,
+    )
+
+    first = await loop.tick()
+    assert first["queued"] == 500, f"one ask for each of the 500 open issues: {first}"
+    first_statements = list(counting.statements)
+    longest = max(
+        len(c) for c in (await production.asks.codes(a["decision_id"] for a in await production.asks.live())).values()
+    )
+
+    await app.state.issues_repo.create("Widgets break, the newest case", repo="acme/widgets")
+    counting.statements.clear()
+    second = await loop.tick()
+    assert second == {"expired": 0, "withdrawn": 0, "queued": 1}, (
+        "a 501st open decision ranks first, which pushes the oldest past 500: its ask stays, and only the newest "
+        f"is asked about: {second}"
+    )
+    # How the asks were queued, checked after what the loop did with them.
+    first_lookups, first_rest = _code_lookups(first_statements)
+    assert first_lookups == longest - 3, (
+        f"the codes of 500 new decisions were asked one length at a time, four letters to {longest}: "
+        f"{first_lookups} statements"
+    )
+    second_lookups, second_rest = _code_lookups(counting.statements)
+    assert second_rest == first_rest and second_lookups >= 1, (
+        f"apart from asking codes one length at a time, the asks table took as many statements to queue one ask "
+        f"as to queue 500 ({second_rest} against {first_rest}): a tick makes no round trip per decision"
+    )
+    live = await production.asks.live()
+    assert len(live) == 501, f"one live ask for each of the 501 open decisions: {len(live)}"

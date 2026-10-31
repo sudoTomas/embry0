@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Any
 
-from embry0.services.asks import LIVE, code_for
+from embry0.services.asks import LIVE, code_candidates
 from embry0.storage.database import DatabasePool
 
 #: The repository of the decision ``{id}`` names, read at the time from the row it comes from: a finished job's,
@@ -26,6 +26,9 @@ LEFT JOIN LATERAL (
 ) decision ON TRUE
 """
 
+#: Passes at making the codes a batch lacks: each pass after the first follows another writer taking a code first.
+_CODE_PASSES = 3
+
 
 class AsksRepository:
     def __init__(self, db: DatabasePool) -> None:
@@ -33,18 +36,68 @@ class AsksRepository:
 
     async def code(self, decision_id: str) -> str:
         """The decision's code, made once and kept: never another decision's."""
-        row = await self._db.fetchrow("SELECT code FROM decision_codes WHERE decision_id = $1", decision_id)
-        if row is not None:
-            return str(row["code"])
-        taken = {str(r["code"]) for r in await self._db.fetch("SELECT code FROM decision_codes")}
-        code = code_for(decision_id, taken)
-        await self._db.execute(
-            "INSERT INTO decision_codes (decision_id, code) VALUES ($1, $2) ON CONFLICT (decision_id) DO NOTHING",
-            decision_id,
-            code,
-        )
-        row = await self._db.fetchrow("SELECT code FROM decision_codes WHERE decision_id = $1", decision_id)
-        return str(row["code"]) if row is not None else code
+        return (await self.make_codes([decision_id]))[decision_id]
+
+    async def make_codes(self, decision_ids: Iterable[str]) -> dict[str, str]:
+        """Each decision's code, made for those that have none: never another decision's.
+
+        Made in the order given, so where two new decisions' letters collide
+        the first gets the shorter code, as making them one by one does. A few
+        statements however many decisions (#273): one per code length a batch
+        needs, usually one (:meth:`_choose`), never a read of every code stored.
+        """
+        ids = list(dict.fromkeys(decision_ids))
+        found = await self.codes(ids)
+        for _ in range(_CODE_PASSES):
+            missing = [d for d in ids if d not in found]
+            if not missing:
+                return found
+            made = await self._choose(missing)
+            # A code another writer took meanwhile is skipped here and made again on the next pass.
+            await self._db.execute(
+                "INSERT INTO decision_codes (decision_id, code) SELECT * FROM unnest($1::text[], $2::text[]) "
+                "ON CONFLICT DO NOTHING",
+                list(made),
+                list(made.values()),
+            )
+            found = await self.codes(ids)
+        missing = [d for d in ids if d not in found]
+        if missing:
+            raise RuntimeError(f"no code stored for {len(missing)} decision(s) after {_CODE_PASSES} passes")
+        return found
+
+    async def _choose(self, missing: Sequence[str]) -> dict[str, str]:
+        """The code each of ``missing`` gets, in order: what :func:`code_for` gives it against every stored code
+        and the codes of those before it, as making them one by one does.
+
+        Asked one length at a time: every decision's four letters first, then
+        five letters for those whose four were taken, and so on. A code only
+        ever collides with one of its own length, so settling each length in
+        the order given gives each decision the code ``code_for`` would. Each
+        statement names one candidate per decision still waiting, so 20,000
+        new decisions send 20,000 candidates, not every prefix of every id.
+        """
+        candidates = {d: code_candidates(d) for d in missing}
+        made: dict[str, str] = {}
+        waiting = list(missing)
+        size = 0
+        while waiting:
+            if any(size >= len(candidates[d]) for d in waiting):
+                raise ValueError("no free code")
+            asked = sorted({candidates[d][size] for d in waiting})
+            rows = await self._db.fetch("SELECT code FROM decision_codes WHERE code = ANY($1::text[])", asked)
+            taken = {str(r["code"]) for r in rows}
+            later: list[str] = []
+            for decision_id in waiting:
+                code = candidates[decision_id][size]
+                if code in taken:
+                    later.append(decision_id)
+                else:
+                    made[decision_id] = code
+                    taken.add(code)  # the next decision of this batch may not take it too
+            waiting = later
+            size += 1
+        return made
 
     async def decision_of(self, code: str) -> str | None:
         row = await self._db.fetchrow("SELECT decision_id FROM decision_codes WHERE code = UPPER($1)", code)
@@ -63,18 +116,30 @@ class AsksRepository:
         rows = await self._db.fetch("SELECT * FROM asks WHERE state = ANY($1::text[]) ORDER BY due_at", list(LIVE))
         return [dict(r) for r in rows]
 
-    async def add(self, *, decision_id: str, recipient: str, due_at: datetime) -> str | None:
-        row = await self._db.fetchrow(
+    async def queue(self, asks: Iterable[tuple[str, str, datetime]]) -> list[str]:
+        """Queue an ask for each ``(decision id, recipient, due_at)`` its person holds no live ask about,
+        each decision given its code first; the ids of the asks queued.
+
+        A fixed number of statements however many asks, so a tick that queues
+        the asks of every open decision at once makes no round trip per
+        decision (#273).
+        """
+        rows = list(asks)
+        if not rows:
+            return []
+        await self.make_codes(decision_id for decision_id, _, _ in rows)
+        inserted = await self._db.fetch(
             """
-            INSERT INTO asks (id, decision_id, recipient, due_at) VALUES ($1, $2, $3, $4)
+            INSERT INTO asks (id, decision_id, recipient, due_at)
+            SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::timestamptz[])
             ON CONFLICT DO NOTHING RETURNING id
             """,
-            f"ask-{uuid.uuid4().hex[:12]}",
-            decision_id,
-            recipient.lower(),
-            due_at,
+            [f"ask-{uuid.uuid4().hex[:12]}" for _ in rows],
+            [decision_id for decision_id, _, _ in rows],
+            [recipient.lower() for _, recipient, _ in rows],
+            [due_at for _, _, due_at in rows],
         )
-        return str(row["id"]) if row is not None else None
+        return [str(r["id"]) for r in inserted]
 
     async def get(self, ask_id: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow("SELECT * FROM asks WHERE id = $1", ask_id)
