@@ -46,11 +46,17 @@ export function AgentBar({ nodes, edges }: AgentBarProps) {
   const { data: agents } = useAgents();
   const lookup = useIdentityLookup();
 
-  // Every agent_definitions row except triage (the root the editor places
-  // itself), plus the terminal `output` sentinel, valid template vocabulary
-  // with no agent row behind it (it runs the finalize_output code node). The
-  // backend validator accepts any registered row as a pipeline node.
-  const available = [...new Set([...(agents ?? []).filter((a) => a.type !== "triage").map((a) => a.type), "output"])];
+  // Every agent_definitions row a job can run except triage (the root the
+  // editor places itself: it runs in every job, so it is no runs_in_jobs
+  // row), plus the terminal `output` sentinel, valid template vocabulary with
+  // no agent row behind it (it runs the finalize_output code node). The
+  // backend validator refuses a row no job runs (runs_in_jobs false).
+  const available = [
+    ...new Set([
+      ...(agents ?? []).filter((a) => a.type !== "triage" && a.runs_in_jobs !== false).map((a) => a.type),
+      "output",
+    ]),
+  ];
 
   const feedbackCount = edges.filter(
     (e) => (e.data as Record<string, unknown> | undefined)?.edgeType === "feedback",

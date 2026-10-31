@@ -39,7 +39,7 @@ async def test_briefs_are_written_live_jobs_first_and_shown_while_they_match(db_
     brief = JobBrief(
         "Find why the worker crash-loops", "It restarts.", "Work stops.", "It stays up. You get a PR.", "medium"
     )
-    await briefs.save(live, input_hash(row), brief, model="m")
+    await briefs.save(live, input_hash(row), brief, model="m", prompt_hash="p1")
     current = await briefs.current([live, done])
     assert set(current) == {live} and current[live]["title"] == brief.title
     assert next(c for c in await briefs.candidates() if c["job_id"] == live)["brief_hash"] == input_hash(row)

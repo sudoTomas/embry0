@@ -6,6 +6,8 @@ from typing import Any
 import structlog
 
 from embry0.agents.identity import BUILTIN_IDENTITY, DEFAULT_AVATAR, DEFAULT_COLOR
+from embry0.services.job_briefs import VOICE as _JOB_BRIEF_VOICE
+from embry0.services.proposal_briefs import VOICE as _PROPOSAL_BRIEF_VOICE
 from embry0.services.slop import SLOPMASTER_SYSTEM_PROMPT as _SLOPMASTER_SYSTEM_PROMPT
 from embry0.storage.database import DatabasePool
 from embry0.workflows.issue_to_pr.noncode_agents import (
@@ -338,6 +340,40 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "auth_mode": None,
         "mcp_servers": {},
     },
+    # The one brief writer's voices (#166, embry0/services/brief_writer.py): who a brief speaks to and
+    # how, for an operator to change its language and tone; the answer's format is the code's and is
+    # added after every voice. No job runs them (runs_in_jobs false): each brief loop sends its voice to
+    # the model background_models names for it, so the row's model, tools and skills are not read.
+    "proposal-brief": {
+        "description": (
+            "The voice of each owner proposal's plain-words brief (language, tone, style), for the person who "
+            "decides it. The answer's format is the code's, added after it. Runs on "
+            "background_models.proposal_brief, in no job."
+        ),
+        "model": "",
+        "tools": [],
+        "skills": [],
+        "system_prompt": _PROPOSAL_BRIEF_VOICE,
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+        "runs_in_jobs": False,
+    },
+    "job-brief": {
+        "description": (
+            "The voice of each job's plain-words brief (language, tone, style), for the person responsible for "
+            "the code. The answer's format is the code's, added after it. Runs on background_models.job_brief, "
+            "in no job."
+        ),
+        "model": "",
+        "tools": [],
+        "skills": [],
+        "system_prompt": _JOB_BRIEF_VOICE,
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+        "runs_in_jobs": False,
+    },
 }
 
 # Every builtin carries its identity (embry0/agents/identity.py). Merged here so
@@ -345,6 +381,9 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
 # copies, so this touches the copies only (their own seeds carry it too).
 for _agent_type, _ident in BUILTIN_IDENTITY.items():
     BUILTIN_SEED[_agent_type].update(_ident)
+# Every builtin runs in jobs unless its entry says otherwise (migration 138's default).
+for _seed in BUILTIN_SEED.values():
+    _seed.setdefault("runs_in_jobs", True)
 
 _ALLOWED_UPDATE_FIELDS = {
     "description",
@@ -395,14 +434,15 @@ class AgentDefinitionsRepository:
         avatar: str = DEFAULT_AVATAR,
         color: str = DEFAULT_COLOR,
         tagline: str = "",
+        runs_in_jobs: bool = True,
     ) -> dict[str, Any]:
-        """Insert a new custom agent definition."""
+        """Insert a new custom agent definition; ``runs_in_jobs`` is the seeder's to set (the API never passes it)."""
         row = await self._db.fetchrow(
             """
             INSERT INTO agent_definitions
                 (type, description, model, tools, skills, system_prompt, is_builtin, execution_mode, auth_mode,
-                 mcp_servers, display_name, avatar, color, tagline)
-            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $13)
+                 mcp_servers, display_name, avatar, color, tagline, runs_in_jobs)
+            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING *
             """,
             agent_type,
@@ -418,6 +458,7 @@ class AgentDefinitionsRepository:
             avatar,
             color,
             tagline,
+            runs_in_jobs,
         )
         logger.info("agent_definition_created", agent_type=agent_type)
         assert row is not None, "INSERT ... RETURNING must return a row"
@@ -482,6 +523,7 @@ class AgentDefinitionsRepository:
                 avatar = $10,
                 color = $11,
                 tagline = $12,
+                runs_in_jobs = $14,
                 updated_at = NOW()
             WHERE type = $13
             RETURNING *
@@ -499,6 +541,7 @@ class AgentDefinitionsRepository:
             seed["color"],
             seed["tagline"],
             agent_type,
+            seed.get("runs_in_jobs", True),
         )
         if row is None:
             raise ValueError(f"Agent '{agent_type}' not found in database")

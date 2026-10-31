@@ -10,34 +10,46 @@ answer's schema enforced while it decodes, parsed strictly, and stored with a
 hash of its inputs and the prompt's version. Nothing waits on it: a job with
 no brief yet shows its task.
 
+The loop is the one brief writer's (:mod:`embry0.services.brief_writer`,
+#166), with :class:`JobBriefs` saying what is briefed. Its instructions are
+the ``job-brief`` agent definition, seeded from :data:`VOICE`; its answer's format is :data:`FORMAT`.
+
 docs/superpowers/specs/2026-10-26-job-briefs-design.md.
 """
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any
 
 import httpx
-import structlog
 
-from embry0.services.background_models import BackgroundCallRefused, BackgroundCalls, Endpoint, ModelLookup
+from embry0.services.background_models import BackgroundCalls, ModelLookup, model_lookup
+from embry0.services.brief_writer import (
+    SIZES,
+    TEXT_MAX,
+    TITLE_MAX,
+    BriefWriter,
+    agent_voice,
+    cut_title,
+    system_prompt,
+)
 from embry0.services.lead_kinds import id_pattern
-from embry0.services.proposal_briefs import RETRY_SECONDS, SIZES, TEXT_MAX, TITLE_MAX, cut_title
 
-logger = structlog.get_logger(__name__)
-
-#: Part of every brief's input hash: a change to the prompt or the schema rewrites the briefs on the next ticks.
+#: Part of every brief's input hash: a change to the user prompt or the schema rewrites the briefs on the next
+#: ticks. The system prompt is the agent definition's, which an operator edits (see brief_writer).
 PROMPT_VERSION = 1
 #: The key of ``background_models`` job briefs run on, and what their spend is recorded under.
 FEATURE = "job_brief"
+#: The agent definition whose system prompt is the briefs' voice, seeded from :data:`VOICE`.
+AGENT = "job-brief"
 #: How much of a task the brief is written from: its head says what the job is; the rest is evidence.
 TASK_CHARS = 6000
 #: Jobs whose brief is written first, then the ones finished in the last ``RECENT_DAYS``.
@@ -52,9 +64,12 @@ _NOISE = re.compile(
     rf"|{id_pattern()}",
 )
 
-SYSTEM_PROMPT = """\
-You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters.
-
+#: The shipped voice: who a brief speaks to, and how. It seeds the ``job-brief`` agent definition, which an
+#: operator edits to change a brief's language, tone or style.
+VOICE = "You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters."
+#: The answer's format and the rules it is read by, the code's: added after every voice, so no edit of the
+#: voice changes what the parser reads.
+FORMAT = """\
 The job's task can be long and technical: a ticket, log evidence, instructions for coding agents. Write a brief of it as one JSON object with exactly these keys:
 - "title": a plain, specific name for the job, at most 70 characters, phrased as what the job does, e.g. "Find why the service crash-looped and stop it". No [tags], ticket keys, ids, "feat:"/"fix:" prefixes, or code identifiers.
 - "what": one or two short sentences: what happened or what is asked, in concrete terms (what broke, where, how often, when), only as far as the task says.
@@ -67,6 +82,8 @@ Rules:
 - Write for a busy engineer: plain words, no markdown, no ids, no ticket keys, no log lines.
 - Avoid the automation's own words ("pipeline", "triage", "watcher", "the agent", "the job"): say what happens.
 Answer with the JSON object only."""
+#: What a brief is asked with under the shipped voice: what every brief was asked with before #166.
+SYSTEM_PROMPT = system_prompt(VOICE, FORMAT)
 
 #: The answer's shape, enforced while a vLLM-style server decodes it.
 JOB_BRIEF_SCHEMA: dict[str, Any] = {
@@ -214,24 +231,6 @@ def parse_job_brief(text: str) -> JobBrief:
     )
 
 
-async def write_job_brief(
-    job: Mapping[str, Any], endpoint: Endpoint, client: httpx.AsyncClient, calls: BackgroundCalls
-) -> JobBrief:
-    """Ask the model for ``job``'s brief; ``ValueError`` when the answer is not one, ``httpx.HTTPError`` when the
-    call fails, :class:`BackgroundCallRefused` when the budget caps refuse it."""
-    answer = await calls.ask(
-        FEATURE,
-        endpoint,
-        client,
-        repo=str(job.get("repo") or "") or None,
-        system=SYSTEM_PROMPT,
-        user=user_prompt(job),
-        schema=JOB_BRIEF_SCHEMA,
-        name="job_brief",
-    )
-    return parse_job_brief(answer)
-
-
 def brief_view(row: Mapping[str, Any]) -> dict[str, Any]:
     """A stored brief as the API shows it."""
     written_at = row.get("written_at")
@@ -242,97 +241,102 @@ def brief_view(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-class JobBriefWriter:
+@dataclass(frozen=True)
+class JobBriefSettings:
+    """What one tick of the job brief writer reads: the settings documents from one snapshot, and its voice."""
+
+    #: ``repo -> model`` a job of that repository's brief is written on (``background_models.job_brief``, per
+    #: repository); '' writes none.
+    models: ModelLookup
+    #: The voice: the ``job-brief`` agent definition's system prompt (:func:`embry0.services.brief_writer.agent_voice`).
+    voice: str
+
+
+def job_brief_settings(store: Any, agents: Any) -> Callable[[], Awaitable[JobBriefSettings]]:
+    """The reader the job brief writer is built with: each call takes one snapshot of the settings documents
+    (``store.snapshot()``) for ``background_models.job_brief``, and the ``job-brief`` agent definition's prompt
+    from ``agents`` (``AgentDefinitionsRepository``)."""
+
+    async def read() -> JobBriefSettings:
+        snapshot = await store.snapshot()
+        return JobBriefSettings(models=model_lookup(snapshot, FEATURE), voice=await agent_voice(agents, AGENT, VOICE))
+
+    return read
+
+
+@dataclass(frozen=True)
+class JobBriefs:
+    """The jobs to brief, as the one brief writer briefs them (:class:`embry0.services.brief_writer.Briefs`).
+
+    ``store`` is ``JobBriefsRepository``: its ``candidates()`` are the live
+    jobs, then the ones finished in the last ``RECENT_DAYS``, newest first,
+    each with its inputs and the input hash of its stored brief. A job with
+    no task has nothing to brief.
+    """
+
+    store: Any
+    feature: str = FEATURE
+    id_field: str = "job_id"
+    schema_name: str = "job_brief"
+    schema: Mapping[str, Any] = MappingProxyType(JOB_BRIEF_SCHEMA)
+    format: str = FORMAT
+    shipped_voice: str = VOICE
+
+    async def pending(self, settings: JobBriefSettings) -> Sequence[tuple[Mapping[str, Any], str | None, str | None]]:
+        return [
+            (job, job.get("brief_hash"), job.get("brief_prompt_hash"))
+            for job in await self.store.candidates()
+            if str(job.get("task") or "").strip()
+        ]
+
+    def key(self, item: Mapping[str, Any]) -> str:
+        return str(item["job_id"])
+
+    def repo(self, item: Mapping[str, Any]) -> str | None:
+        return str(item.get("repo") or "") or None
+
+    def input_hash(self, item: Mapping[str, Any]) -> str:
+        return input_hash(item)
+
+    def user_prompt(self, item: Mapping[str, Any]) -> str:
+        return user_prompt(item)
+
+    def parse(self, text: str) -> JobBrief:
+        return parse_job_brief(text)
+
+    async def save(
+        self, item: Mapping[str, Any], digest: str, brief: JobBrief, *, model: str, prompt_hash: str
+    ) -> None:
+        await self.store.save(str(item["job_id"]), digest, brief, model=model, prompt_hash=prompt_hash)
+
+
+class JobBriefWriter(BriefWriter[Mapping[str, Any], JobBriefSettings, JobBrief]):
     """Fills missing and stale job briefs, a few a tick: live jobs first, then recent ones, newest first.
 
-    ``store.candidates()`` gives the jobs in that order with their inputs and
-    stored hash; ``models()``, read once a tick, the model each job's
-    repository writes with ('' for none: ``background_models.job_brief``,
-    else its default); ``calls`` makes each call with the repository's key,
-    the budget caps and the spend recorded (#164). A job whose brief failed
-    waits ``RETRY_SECONDS`` before it is tried again; one the caps refuse
-    ends the tick and is tried on the next.
+    The one brief writer over :class:`JobBriefs`. ``settings()``, read once a
+    tick (:func:`job_brief_settings`), gives the model each job's repository
+    writes with ('' for none: ``background_models.job_brief``, else its
+    default) and the voice; ``calls`` makes each call with the repository's
+    key, the budget caps and the spend recorded (#164).
     """
 
     def __init__(
         self,
         *,
         store: Any,
-        models: Callable[[], Awaitable[ModelLookup]],
+        settings: Callable[[], Awaitable[JobBriefSettings]],
         calls: BackgroundCalls,
         per_tick: int = 3,
         interval_seconds: float = 60.0,
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._store = store
-        self._models = models
-        self._calls = calls
-        self._per_tick = max(1, per_tick)
-        self._interval = interval_seconds
-        self._client = client
-        self._clock = clock
-        self._retry_at: dict[tuple[str, str], float] = {}
-
-    def due(self, jobs: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-        """The jobs whose brief is missing or stale and not waiting out a failure, in the order given."""
-        now = self._clock()
-        out = []
-        for job in jobs:
-            digest = input_hash(job)
-            if job.get("brief_hash") == digest or not str(job.get("task") or "").strip():
-                continue
-            if self._retry_at.get((str(job["job_id"]), digest), 0.0) > now:
-                continue
-            out.append(job)
-        return out
-
-    async def tick(self) -> list[str]:
-        """One pass: the ids of the jobs whose brief it wrote."""
-        lookup = await self._models()
-        endpoints: dict[tuple[str, str], Endpoint | None] = {}
-        client: httpx.AsyncClient | None = None
-        written: list[str] = []
-        asked = 0
-        try:
-            for job in self.due(await self._store.candidates()):
-                if asked >= self._per_tick:
-                    break
-                repo = str(job.get("repo") or "")
-                model = lookup(repo or None).strip()
-                if not model:
-                    continue
-                where = (model, repo.lower())
-                if where not in endpoints:
-                    endpoints[where] = await self._calls.endpoint(FEATURE, model, repo or None)
-                    if endpoints[where] is None:
-                        logger.info("job_brief_model_unavailable", model=model, repo=repo)
-                endpoint = endpoints[where]
-                if endpoint is None:
-                    continue
-                client = client or self._client or httpx.AsyncClient()
-                asked += 1
-                job_id, digest = str(job["job_id"]), input_hash(job)
-                try:
-                    brief = await write_job_brief(job, endpoint, client, self._calls)
-                except BackgroundCallRefused:
-                    break
-                except (ValueError, httpx.HTTPError, KeyError, TypeError) as exc:
-                    self._retry_at[(job_id, digest)] = self._clock() + RETRY_SECONDS
-                    logger.warning("job_brief_failed", job_id=job_id, model=model, error=str(exc)[:300])
-                    continue
-                await self._store.save(job_id, digest, brief, model=model)
-                written.append(job_id)
-                logger.info("job_brief_written", job_id=job_id, model=model)
-        finally:
-            if self._client is None and client is not None:
-                await client.aclose()
-        return written
-
-    async def start(self) -> None:  # pragma: no cover - exercised by the app
-        while True:
-            try:
-                await self.tick()
-            except Exception:
-                logger.warning("job_brief_tick_failed", exc_info=True)
-            await asyncio.sleep(self._interval)
+        super().__init__(
+            briefs=JobBriefs(store=store),
+            settings=settings,
+            calls=calls,
+            per_tick=per_tick,
+            interval_seconds=interval_seconds,
+            client=client,
+            clock=clock,
+        )

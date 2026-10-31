@@ -290,3 +290,39 @@ describe("AgentsPage identity", () => {
     expect(badges[0]).toHaveAttribute("data-tier", "obsidian");
   });
 });
+
+describe("AgentsPage background writers (#166)", () => {
+  const WRITER = {
+    type: "proposal-brief",
+    display_name: "Proposal Brief",
+    avatar: "apprentice",
+    color: "sky",
+    description: "The voice of each owner proposal's brief",
+    model: "",
+    tools: [],
+    skills: [],
+    system_prompt: "You explain a piece of proposed engineering work.",
+    is_builtin: true,
+    runs_in_jobs: false,
+    effective_model: "claude-sonnet-5",
+    effective_model_source: "builtin_default",
+  };
+
+  it("lists a definition no job runs under its own heading, its model from background_models", () => {
+    mockUseAgents.mockReturnValue({ data: [...AGENTS, WRITER], isLoading: false });
+    renderPage();
+    const section = screen.getByTestId("background-writers");
+    expect(within(section).getByRole("heading", { name: "Background writers" })).toBeInTheDocument();
+    const row = within(section).getByText("Proposal Brief", { selector: "div" }).closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByTestId("background-model")).toHaveTextContent("from background_models");
+    expect(row, "never the built-in default it would run on in a job").not.toHaveTextContent("claude-sonnet-5");
+    const jobs = screen.getAllByRole("table")[0];
+    expect(within(jobs).queryByText("Proposal Brief"), "the jobs' agents table leaves it out").toBeNull();
+  });
+
+  it("shows no such heading while every definition runs in jobs", () => {
+    renderPage();
+    expect(screen.queryByTestId("background-writers")).toBeNull();
+  });
+});

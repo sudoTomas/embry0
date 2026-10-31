@@ -21,13 +21,13 @@ FIXED_NODE_TYPES = frozenset({"triage", "developer", "slopmaster", "reviewer", "
 
 
 def _default_agent_types() -> frozenset[str]:
-    """The rows every deployment has (BUILTIN_SEED), for callers without a database."""
+    """The rows every deployment has (BUILTIN_SEED) that a job can run, for callers without a database."""
     # Imported lazily: this module is imported by the workflow registry at
     # startup, and keeping the storage layer out of that import path avoids
     # any chance of a circular import.
     from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
 
-    return frozenset(BUILTIN_SEED)
+    return frozenset(t for t, seed in BUILTIN_SEED.items() if seed.get("runs_in_jobs", True))
 
 
 def validate_graph_definition(

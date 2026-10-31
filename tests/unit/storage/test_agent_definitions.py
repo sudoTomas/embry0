@@ -261,8 +261,9 @@ async def test_reset_restores_builtin_identity(db_with_migrations) -> None:
 
 
 async def test_every_builtin_row_carries_its_identity(agent_repo: AgentDefinitionsRepository) -> None:
-    """All twenty builtin rows (ten core agents, the Slopmaster among them, and ten specialists) match BUILTIN_IDENTITY
-    after the startup seeders run, whether migration 101 wrote the identity or a seeder inserted the row."""
+    """All twenty-two builtin rows (ten core agents, the Slopmaster among them, ten specialists and the brief
+    writer's two prompts) match BUILTIN_IDENTITY after the startup seeders run, whether migration 101 wrote the
+    identity or a seeder inserted the row."""
     from embry0.agents.identity import BUILTIN_IDENTITY
 
     rows = {r["type"]: r for r in await agent_repo.list_all()}
@@ -271,7 +272,9 @@ async def test_every_builtin_row_carries_its_identity(agent_repo: AgentDefinitio
         for agent_type, ident in BUILTIN_IDENTITY.items()
         if {k: rows.get(agent_type, {}).get(k) for k in ident} != ident
     }
-    assert len(BUILTIN_IDENTITY) == 20, "ten core agents (the Slopmaster among them) and ten specialists"
+    assert len(BUILTIN_IDENTITY) == 22, (
+        "ten core agents (the Slopmaster among them), ten specialists and the brief writer's two prompts"
+    )
     assert mismatched == {}, f"builtin rows whose identity differs from BUILTIN_IDENTITY: {mismatched}"
 
 

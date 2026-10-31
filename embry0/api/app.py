@@ -2618,7 +2618,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # BackgroundCalls: the repository's key, the budget caps the gate holds
     # jobs to, and the spend recorded where the caps and /stats count it.
     from embry0.orchestration.budget_gate import build_budget_gate
-    from embry0.services.background_models import BackgroundCalls, background_model
+    from embry0.services.background_models import BackgroundCalls
     from embry0.storage.repositories.background_spend import BackgroundSpendRepository
 
     app.state.background_calls = BackgroundCalls(
@@ -2632,13 +2632,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Proposal briefs (spec 2026-10-25): writes each owner proposal in plain
     # words on its model, a few a minute; the feed only reads them. The held
     # tickets (below their repository's `leads.ask_min`) come last. Each tick
-    # reads its model and the leads section from one settings snapshot.
+    # reads its model and the leads section from one settings snapshot, and
+    # its prompt from the proposal-brief agent definition (#166).
     from embry0.api.v1.proposals import open_proposals
     from embry0.services.proposal_briefs import ProposalBriefWriter, brief_settings
 
     app.state.proposal_brief_writer = ProposalBriefWriter(
         proposals=lambda: open_proposals(app.state),
-        settings=brief_settings(app.state.settings),
+        settings=brief_settings(app.state.settings, app.state.agent_defs_repo),
         briefs=app.state.proposal_briefs_repo,
         calls=app.state.background_calls,
         per_tick=config.proposal_briefs_per_tick,
@@ -2648,12 +2649,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(brief_task)
     brief_task.add_done_callback(app.state.background_tasks.discard)
 
-    # Job briefs (spec 2026-10-26): live jobs first, then the last week's.
-    from embry0.services.job_briefs import JobBriefWriter
+    # Job briefs (spec 2026-10-26): live jobs first, then the last week's, on
+    # the same brief writer: each tick reads its model from one settings
+    # snapshot and its prompt from the job-brief agent definition (#166).
+    from embry0.services.job_briefs import JobBriefWriter, job_brief_settings
 
     app.state.job_brief_writer = JobBriefWriter(
         store=app.state.job_briefs_repo,
-        models=background_model(app.state.settings, "job_brief"),
+        settings=job_brief_settings(app.state.settings, app.state.agent_defs_repo),
         calls=app.state.background_calls,
         per_tick=config.job_briefs_per_tick,
         interval_seconds=config.job_brief_interval_seconds,

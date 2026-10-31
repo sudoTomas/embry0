@@ -144,6 +144,17 @@ async def update_agent(
         if key in updates and updates[key] is None:
             raise HTTPException(status_code=422, detail=f"{key} cannot be null")
     await _reject_if_disabled(request, updates.get("model"))
+    if updates.get("system_prompt"):
+        # A definition no job runs is a brief writer's voice (#166): the answer's format is the code's, so a voice
+        # that says it would fight the format added after it.
+        from embry0.services.brief_writer import voice_problem
+
+        stored = await repo.get(agent_type)
+        problem = (
+            voice_problem(str(updates["system_prompt"])) if stored and not stored.get("runs_in_jobs", True) else None
+        )
+        if problem:
+            raise HTTPException(status_code=422, detail=problem)
     warnings: list[str] = []
     if updates.get("skills"):
         # Only the names this write adds are checked: the form sends the whole list

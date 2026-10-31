@@ -49,7 +49,9 @@ interface JobAdvancedFieldsProps {
 export function JobAdvancedFields({ value, onChange, idPrefix = "job-adv" }: JobAdvancedFieldsProps) {
   const { data: templates } = useTemplates();
   const { data: profiles } = useSandboxProfiles();
-  const { data: agents } = useAgents();
+  const { data: allAgents } = useAgents();
+  // A job's per-agent models name the agents a job runs: a brief writer's voice (runs_in_jobs false) is none.
+  const agents = allAgents?.filter((agent) => agent.runs_in_jobs !== false);
   const { models: knownModels, providers } = useModels();
 
   const set = (patch: Partial<JobAdvancedState>) => onChange({ ...value, ...patch });

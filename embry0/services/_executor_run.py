@@ -646,7 +646,8 @@ async def _load_merged_env_vars(self: IssueExecutor, repo_name: str, job_id: str
 
 
 async def _agent_definitions_for_precheck(self: IssueExecutor) -> list[dict[str, Any]]:
-    """DB rows when the pool is up, otherwise the builtin seeds."""
+    """DB rows when the pool is up, otherwise the builtin seeds: only those a job runs (``runs_in_jobs``), so a
+    brief writer's voice (#166), whose model is never a job's, never adds a provider a job must have."""
     db = getattr(self, "_db", None)
     if db is not None:
         try:
@@ -654,12 +655,12 @@ async def _agent_definitions_for_precheck(self: IssueExecutor) -> list[dict[str,
 
             rows = await AgentDefinitionsRepository(db).list_all()
             if rows:
-                return [dict(row) for row in rows]
+                return [dict(row) for row in rows if row.get("runs_in_jobs", True)]
         except Exception:
             logger.warning("llm_precheck_agent_definitions_failed", exc_info=True)
     from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
 
-    return [dict(row) for row in BUILTIN_SEED.values()]
+    return [dict(row) for row in BUILTIN_SEED.values() if row.get("runs_in_jobs", True)]
 
 
 async def _model_policy_for_precheck(self: IssueExecutor) -> dict[str, Any] | None:
