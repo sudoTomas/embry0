@@ -224,6 +224,12 @@ async def test_template_validate_posts_graph():
     assert json.loads(handler.seen[0].content) == {"name": "g", "nodes": []}
 
 
+async def test_lead_kinds_reads_the_catalogue():
+    handler = capture({("GET", "/api/v1/lead-kinds"): {"kinds": [{"id": "crack", "label": "Crack"}]}})
+    client = make_client(handler)
+    assert await client.lead_kinds() == {"kinds": [{"id": "crack", "label": "Crack"}]}
+
+
 async def test_watcher_paths():
     handler = capture(
         {

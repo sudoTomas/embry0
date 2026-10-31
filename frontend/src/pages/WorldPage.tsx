@@ -18,11 +18,11 @@ import "@/components/world/world.css";
 import { Button } from "@/components/ui/Button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
+import { useLeadKinds } from "@/hooks/useLeadKinds";
 import { useWorld } from "@/hooks/useWorld";
 import { useWorldChatDock } from "@/hooks/useWorldChatDock";
 import {
   inboxOrder,
-  kindsById,
   levelUps,
   narrate,
   xpDrops,
@@ -43,6 +43,8 @@ const XP_DROP_MS = 2_600;
  */
 export function WorldPage() {
   const world = useWorld();
+  // What each kind of quest is called: the backend's one catalogue (#166), read once and kept.
+  const kinds = useLeadKinds();
   const art = useArt();
   const lookup = useIdentityLookup();
   const isAdmin = useIsAdmin();
@@ -110,7 +112,6 @@ export function WorldPage() {
     );
   if (!world.data) return <Skeleton className="h-96 w-full" />;
   const data = world.data;
-  const kinds = kindsById(data.lead_kinds);
   const partyOf = new Map<string, Party>(
     data.parties.map((p) => [p.job_id, p]),
   );
@@ -189,6 +190,7 @@ export function WorldPage() {
             parties={data.parties}
             characters={data.characters}
             dungeons={data.dungeons ?? []}
+            kinds={kinds}
             onPickLead={(lead) => set("lead", lead.id)}
             onPickCharacter={(agent) => set("character", agent)}
           />

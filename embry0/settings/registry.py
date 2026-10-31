@@ -223,7 +223,11 @@ class Section[M: SectionModel]:
     ``org_keys`` and ``repo_keys`` name the fields an organization or a
     repository may override in its own layer (spec 2026-10-29): a layer
     replaces the inherited value of such a field whole, and may set nothing
-    else.
+    else. ``merged_keys`` are the exception: mapping fields a document merges
+    entry by entry over what is below it, the deployment's over the field's
+    default and a layer over what it inherits (its entries replace the entries
+    of the same name below, and every other entry stays), each one also in
+    ``org_keys`` or ``repo_keys``.
     ``env`` maps a field to the ``Embry0Config`` attribute its value is
     imported from, once (``embry0.settings.bootstrap``): a string is the
     attribute, an :class:`EnvImport` adds a converter, the parts it drops, or a
@@ -236,10 +240,12 @@ class Section[M: SectionModel]:
     org_keys: frozenset[str] = frozenset()
     repo_keys: frozenset[str] = frozenset()
     env: Mapping[str, str | EnvImport] = field(default_factory=dict)
+    merged_keys: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "org_keys", frozenset(self.org_keys))
         object.__setattr__(self, "repo_keys", frozenset(self.repo_keys))
+        object.__setattr__(self, "merged_keys", frozenset(self.merged_keys))
         object.__setattr__(self, "env", dict(self.env))
         problems = _section_problems(self)
         if problems:
@@ -356,10 +362,20 @@ def _section_problems(section: Section[Any]) -> list[str]:
             problems.append(f"field {name!r} needs a default: a key nobody wrote takes its default")
         if not (info.description or "").strip():
             problems.append(f"field {name!r} needs a description: the settings reference is generated from it")
-    for label, keys in (("org_keys", section.org_keys), ("repo_keys", section.repo_keys), ("env", section.env)):
+    for label, keys in (
+        ("org_keys", section.org_keys),
+        ("repo_keys", section.repo_keys),
+        ("env", section.env),
+        ("merged_keys", section.merged_keys),
+    ):
         unknown = sorted(set(keys) - names)
         if unknown:
             problems.append(f"{label} names no field of the model: {unknown}")
+    for key in sorted(section.merged_keys & names):
+        if key not in section.org_keys | section.repo_keys:
+            problems.append(f"merged_keys names {key!r}, which no layer may set")
+        if typing.get_origin(model.model_fields[key].annotation) is not dict:
+            problems.append(f"merged_keys names {key!r}, which is not a mapping")
     if not problems:
         problems.extend(_default_problems(section))
     if not problems:

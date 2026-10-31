@@ -28,7 +28,8 @@ from embry0.services import lead_kinds
 #: ``crack`` and ``weed``, which come from the scout loop's finished jobs
 #: (:mod:`embry0.services.scout`) and knowledge maps, not from a finder.
 LEAD_KINDS: tuple[str, ...] = lead_kinds.ids(lead=True)
-SEVERITIES: tuple[str, ...] = ("low", "medium", "high", "critical")
+#: The catalogue's severities, least first: the settings document's ``leads.ask_severities`` names them too.
+SEVERITIES: tuple[str, ...] = lead_kinds.SEVERITIES
 EFFORTS: tuple[str, ...] = ("small", "medium", "large")
 #: Who a lead's start is recorded under when the person who said yes is not known.
 ACTOR = "embry0:leads"

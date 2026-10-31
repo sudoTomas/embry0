@@ -19,13 +19,16 @@ leads:
   flaky_commits: 10
   offer_min: 40
   ask_min: 60
+  ask_severities:
+    crack: [high, critical]
+    weed: [high, critical]
 ```
 
 Those are the defaults, except `enabled`, which is `false`. The loop always runs: every 5 minutes it reads the section, does nothing while `enabled` is false, and otherwise runs a pass `interval_hours` after the last one ended (it wakes for that even between its 5-minute looks, so passes are spaced exactly as before the section), so turning leads on, off, or changing any key needs no restart. `POST /api/v1/leads/run` runs a pass by hand whether leads are on or not, and the leads already stored stay until answered.
 
 **Upgrading.** Leads used to be on by default (`LEADS_ENABLED=true`), so they ran on every deployment that left the variable unset, whether or not a finder ever stored anything. The first start of the release that moved them into the section keeps them on wherever they ran: when `LEADS_ENABLED` is not set and the deployment existed before, it writes `enabled: true` into the document, under a comment saying why, once. The evidence is any record a deployment in use holds from before that release first started: a registered repository, a job, or a `ticket`, `ci`, `alert`, `flaky` or `review` lead (open or gone). The import records that moment once (the database's clock when the process began, before the migrations), so a new deployment, whose tables did not exist then, never shows any, even if it registers a repository while a failed check waits for its retry or before its next start: its leads start off. `LEADS_ENABLED=true` or `false`, when set, is imported as any variable is. If the check fails at the start, leads read off and the check is asked again in the same run until it answers ([configuration.md](configuration.md#settings-document), *From the environment*). `embry0 settings import-env` leaves `enabled` out of the file it writes and says on stderr what a running deployment keeps.
 
-**Per organization.** An organization's [layer](configuration.md#settings-document) may set `finders`, `max_new_per_repo_per_day`, `review_stale_days`, `flaky_commits`, `offer_min` and `ask_min` for its repositories: each repository's pass, and how its tickets are offered and asked, follow its organization's values. Whether the loop runs and how often stay the deployment's.
+**Per organization.** An organization's [layer](configuration.md#settings-document) may set `finders`, `max_new_per_repo_per_day`, `review_stale_days`, `flaky_commits`, `offer_min`, `ask_min` and `ask_severities` for its repositories: each repository's pass, how its tickets are offered and asked, and which of its leads reach chat follow its organization's values. Whether the loop runs and how often stay the deployment's.
 
 ## Where it looks
 
@@ -42,7 +45,7 @@ A repository is read when it is registered and active and someone answers for it
 | `weed` | The scout (below) | A finished `garden` job's weed card | low, small | A job that removes it with the checked diff and changes no behavior |
 | `weed` | A [knowledge map](maps.md) | A part someone marked bloat on a map, while anyone does | low, small | A job that removes the part and what only it uses, without re-assessing the mark |
 
-Every kind, these and the ones read from other features (a watcher case, an open issue, a context audit finding, slop), is one entry in `embry0/services/lead_kinds.py`: its names, what a yes starts, its verb, creature, leader and starting level, and which severities are asked in chat. The leads loop, the proposals feed, the world, decision cards and briefs read it, and the dashboard gets it from `GET /world`; the world's art manifest names each kind's creature on its own, and a test holds the two equal.
+Every kind, these and the ones read from other features (a watcher case, an open issue, a context audit finding, slop), is one entry in `embry0/services/lead_kinds.py`: its names, what a yes starts, its verb, creature, leader and starting level. It is content, kept in the code. The leads loop, the proposals feed, the world, decision cards and briefs read it, and the dashboard gets each kind's plain names from `GET /api/v1/lead-kinds`, which answers with the game off too; the verb, creature, leader and level are the game's, carried by each quest of `GET /world`. The places that must still spell kinds out on their own (the world's art manifest, the MCP tools' descriptions, the stored kinds' database checks) are each held equal to it by a test. Which severities of a kind are asked in chat is the operator's: `leads.ask_severities`, below.
 
 A ticket that already carries the trigger label, or that embry0 already tracks, is left to the path that has it. A source the credential cannot read (alerts without the scope, a forge other than GitHub) is skipped quietly, one log line per reason.
 
@@ -67,7 +70,7 @@ Those are the defaults. Which repositories it reads is `background.scout`, off u
 - **What it runs.** Every 5 minutes it starts read-only jobs while fewer than `scout.max_in_flight` are out: `garden` (one provable weed) and `kintsugi-trace` (a ledger of graded cracks), the templates `scout.templates` names. Each job is pinned to its repository's scout model, read at that tick: a pinned run waits for its model (a free slot, for a local one) and never moves to another. On a local model the scout spends nothing; on a hosted one each job is metered and capped like any job.
 - **Where.** The registered, active repositories enrolled in `background.scout`, and each area of one that declares [areas](areas.md) (the job is told to look only under the area's paths). A repository taken out is not scouted on the next tick, and a job of it that finishes after that adds no leads. A unit, one repository or area and one template, is scouted again after `scout.revisit_hours`; never-scouted units go first, then the longest ago. A model reads the same code differently run to run, and the lead id of what it found before keeps a repeat from becoming a second lead.
 - **What becomes a lead.** When a job finishes, its deliverable is read once: each ledger row a `crack`, a weed card a `weed`, at most `scout.max_leads_per_job` a job, the worst first. A failed job yields nothing.
-- **What reaches chat.** Only a crack graded `break` (high) is asked in chat; every other crack and every weed stays on the page, so a scout running all day does not fill the chat.
+- **What reaches chat.** By default only a crack graded `break` (high) is asked in chat; every other crack and every weed stays on the page, so a scout running all day does not fill the chat. `leads.ask_severities` says so, and can say otherwise (below).
 - **Brakes.** `scout.max_in_flight` is the one that counts: never more jobs out at once. `0` starts none, while the jobs already out are still read into leads. `scout.max_jobs_per_day`, off by default, caps the jobs started in any 24 hours. Its jobs are dispatched by `embry0:scout`, which is exempt from `RATE_LIMIT_PER_AUTHOR_PER_HOUR` (that limit would hold it to a few jobs an hour), and each has a hard budget, `scout.job_budget_usd`, in case its pin is ever lost. The fleet's daily and monthly budget gates still apply.
 - **Per organization.** An organization's [layer](configuration.md#settings-document) may set `scout.templates`, `scout.revisit_hours` and `scout.max_leads_per_job` for its own repositories (`PUT /api/v1/config/settings?owner=acme`). Each tick reads one snapshot of the section and each repository through its organization's layer, the deployment's document supplying the rest, so a layer's change applies on the next tick. `scout.max_in_flight`, `scout.max_jobs_per_day` and `scout.job_budget_usd` are the deployment's alone: they bound what the scout starts and spends across every organization. Which model an organization's repositories are scouted on is `background_models.scout`, read per repository from the same snapshot of the settings documents as the section, so a write that lands during a tick never mixes two versions of them.
 
@@ -88,6 +91,20 @@ Two thresholds read that one score, each per repository through its organization
 - **`leads.ask_min`** (60): an offered ticket scoring below it is *held*. `GET /api/v1/proposals` leaves it out unless `include_held=true`, so a chat assistant does not ask it, and no ask is queued for it; the Owner proposals page shows it folded; the brief writer writes its brief after the others; and its decision card marks the readiness. It can still be read, accepted, declined and snoozed by id.
 
 The labels, weights and words the score reads are in the code for now; they become an organization's own vocabulary in a later change (#168).
+
+## What reaches chat
+
+Every lead is offered on the page. Which ones a chat asks about is `leads.ask_severities`, per repository through its organization's layer: a kind it names is asked only at the severities it lists, and the rest of that kind are *held*, as a ticket below `ask_min` is (left out of `GET /api/v1/proposals` unless `include_held=true`, no ask queued, folded on the page, its brief written after the others). A kind it does not name is asked at every severity; an empty list asks none of that kind. Only a kind whose proposals carry a severity may be named: the watcher's cases (`low`, `medium`, `high`, `critical`, the alerts' `warning`, and `unrated` for a case that came with none) and the leads (`low` to `critical`). An open issue or a context audit finding carries none, so naming one is refused.
+
+```yaml
+leads:
+  ask_severities:
+    crack: [high, critical]   # the default: only a crack graded break is asked
+    weed: []                  # no weed is asked (a weed is always low, so the default asks none either)
+    alert: [critical]         # only critical alerts are asked
+```
+
+The default is what the code held before the key: only a crack or a weed graded high or critical is asked. The key is written entry by entry, not whole: the deployment's document overrides only the kinds it names and keeps the default for every other kind, and an organization's layer overrides only the kinds it names over the deployment's. So `{alert: [critical]}`, in the deployment's document or in an organization's layer, asks only critical alerts and still only cracks and weeds graded high or critical. It is the one key merged entry by entry instead of replaced whole ([layers](configuration.md#settings-document)); `GET /api/v1/config/settings/effective` says where each kind's entry comes from. To ask every severity of a kind in one organization, list all of them. A kind or a severity the catalogue does not know is refused with a 422 naming the key, never repeating what was written.
 
 ## A lead's life
 

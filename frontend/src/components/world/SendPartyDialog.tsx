@@ -2,7 +2,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { toastApiError } from "@/api/errorToast";
 import type { RunWith } from "@/api/runWith";
-import type { Lead, LeadKind, WorldCharacter } from "@/api/world";
+import type { LeadKind } from "@/api/leadKinds";
+import type { Lead, WorldCharacter } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { RunWithControl } from "@/components/runwith/RunWithControl";
 import { Badge } from "@/components/ui/Badge";
@@ -15,7 +16,7 @@ import { CreatureIcon } from "./CreatureIcon";
 
 interface SendPartyDialogProps {
   lead: Lead;
-  /** GET /world's lead-kind catalogue by id (lib/world kindsById): what each kind is called. */
+  /** The lead-kind catalogue by id (GET /lead-kinds, hooks/useLeadKinds): what each kind is called. */
   kinds: ReadonlyMap<string, LeadKind>;
   characters: readonly WorldCharacter[];
   /** Who the answer is recorded as: the signed-in player. */

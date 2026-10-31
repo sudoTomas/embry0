@@ -15,6 +15,11 @@ A view of a layer also answers ``inherited``, the value the key would have
 without the layer the view is of, and ``layers``: one entry per document in
 the view, most general first, each saying whether it sets the key and with
 what.
+
+A key merged entry by entry (``Section.merged_keys``, #166) also answers
+``merged_by_entry`` true and ``entries``: each entry of its value with the
+document it comes from, ``default``, the deployment's (``document`` or
+``bootstrap``), ``organization`` or ``repository``.
 """
 
 from __future__ import annotations
@@ -95,6 +100,23 @@ def _layer_entry(
     }
 
 
+def _entries(
+    value: Mapping[str, Any],
+    default: Any,
+    deployment: tuple[str, Mapping[str, Any], str],
+    layers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Each entry of a merged key's value with the document it comes from: the most specific that names it."""
+    source_of = {entry: "default" for entry in (default if isinstance(default, Mapping) else {})}
+    deployment_source, stored, key = deployment
+    if deployment_source != "default" and isinstance(stored.get(key), Mapping):
+        source_of.update(dict.fromkeys(stored[key], deployment_source))
+    for layer in layers[1:]:
+        if layer["set"] and isinstance(layer["value"], Mapping):
+            source_of.update(dict.fromkeys(layer["value"], layer["layer"]))
+    return [{"entry": entry, "value": value[entry], "source": source_of.get(entry, "default")} for entry in value]
+
+
 def effective_view(
     catalog: Catalog,
     snapshot: Snapshot,
@@ -152,6 +174,7 @@ def effective_view(
                 source = "bootstrap"
             else:
                 source = "document"
+            deployment_source = source
             layers: list[dict[str, Any]] = [
                 {
                     **Scope.deployment().view(),
@@ -223,6 +246,9 @@ def effective_view(
             if view.layer != "deployment":
                 entry_out["inherited"] = inherited_value
                 entry_out["layers"] = layers
+            if key in section.merged_keys and isinstance(value, Mapping):
+                entry_out["merged_by_entry"] = True
+                entry_out["entries"] = _entries(value, defaults.get(key), (deployment_source, stored, key), layers)
             keys.append(entry_out)
         sections.append({"name": section.name, "summary": section.summary, "keys": keys})
     out: dict[str, Any] = {

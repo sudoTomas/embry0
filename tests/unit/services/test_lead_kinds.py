@@ -54,14 +54,12 @@ def test_a_brief_carrying_the_id_of_any_kind_of_proposal_is_refused() -> None:
 
 def test_every_kind_is_named_in_full() -> None:
     from embry0.services.lead_kinds import KINDS, catalogue
-    from embry0.services.leads import SEVERITIES
 
-    assert list(KINDS) == [k["id"] for k in catalogue()], "GET /world serves the kinds in the catalogue's order"
+    assert list(KINDS) == [k["id"] for k in catalogue()], "GET /lead-kinds serves the kinds in the catalogue's order"
     for kind in KINDS.values():
         for name in ("label", "plural", "about", "found_by", "starts", "verb", "creature", "leader"):
             assert getattr(kind, name).strip(), f"{kind.id} has no {name}"
         assert not kind.lead or kind.proposal, f"{kind.id} is stored as a lead, so it is offered as a proposal"
-        assert kind.chat_severities is None or kind.chat_severities <= set(SEVERITIES), kind.id
 
 
 @pytest.mark.parametrize(

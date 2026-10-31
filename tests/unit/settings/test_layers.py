@@ -6,6 +6,7 @@ Pure: :func:`embry0.settings.document.check` with a layer, and
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -162,3 +163,62 @@ def test_offline_each_key_still_meets_its_own_checks() -> None:
     with pytest.raises(DocumentInvalid) as hours:
         check(Catalog((ASKS,)), {"asks": {"hours": "25-30"}}, stored={}, layer="organization", inherited=None)
     assert [tuple(p.loc) for p in hours.value.problems] == [("asks", "hours")], "a key's own validator still runs"
+
+
+def _mapped_section(**declared: Any) -> Any:
+    """A section with a mapping field, ``limits``, an organization may set; ``declared`` adds to the Section."""
+    from pydantic import Field
+
+    from embry0.settings.registry import Section, SectionModel
+
+    assert "merged_keys" in Section.__dataclass_fields__, "a section names the mapping keys a layer merges by entry"
+
+    class Mapped(SectionModel):
+        limits: dict[str, int] = Field(default_factory=lambda: {"a": 1, "b": 2}, description="Limits by name.")
+        names: tuple[str, ...] = Field(default=("x", "y"), description="Names.")
+
+    return Section(
+        name="mapped", model=Mapped, summary="A test section.", org_keys=frozenset({"limits", "names"}), **declared
+    )
+
+
+def test_a_merged_key_takes_the_layer_s_entries_over_the_inherited_ones() -> None:
+    """``merged_keys`` (#166): the layer's entries replace the inherited entries of the same name and every other
+    inherited entry stays, the section's default where nothing set the key; any other key still replaces whole."""
+    section = _mapped_section(merged_keys=frozenset({"limits"}))
+    over_default = resolve(section, {}, [("organization:acme", {"limits": {"b": 5, "c": 9}, "names": ["z"]})])
+    assert over_default.model.model_dump(mode="json") == {"limits": {"a": 1, "b": 5, "c": 9}, "names": ["z"]}
+    over_stored = resolve(section, {"limits": {"a": 3}}, [("organization:acme", {"limits": {"c": 9}})])
+    assert over_stored.model.model_dump(mode="json")["limits"] == {"a": 3, "b": 2, "c": 9}, (
+        "over the deployment's own entries, themselves over the default's"
+    )
+    plain = resolve(_mapped_section(), {}, [("organization:acme", {"limits": {"c": 9}})])
+    assert plain.model.model_dump(mode="json")["limits"] == {"c": 9}, "without merged_keys a layer replaces whole"
+
+
+@pytest.mark.parametrize(
+    ("merged", "problem"),
+    [
+        ({"names"}, "merged_keys names 'names', which is not a mapping"),
+        ({"nothing"}, "merged_keys names no field of the model: ['nothing']"),
+    ],
+)
+def test_only_a_mapping_a_layer_may_set_can_be_merged(merged: set[str], problem: str) -> None:
+    from embry0.settings.registry import SectionError
+
+    with pytest.raises(SectionError, match=re.escape(problem)):
+        _mapped_section(merged_keys=frozenset(merged))
+
+
+def test_a_merged_key_no_layer_may_set_is_refused() -> None:
+    from pydantic import Field
+
+    from embry0.settings.registry import Section, SectionError, SectionModel
+
+    assert "merged_keys" in Section.__dataclass_fields__, "a section names the mapping keys a layer merges by entry"
+
+    class Mapped(SectionModel):
+        limits: dict[str, int] = Field(default_factory=dict, description="Limits by name.")
+
+    with pytest.raises(SectionError, match="merged_keys names 'limits', which no layer may set"):
+        Section(name="mapped", model=Mapped, summary="A test section.", merged_keys=frozenset({"limits"}))
