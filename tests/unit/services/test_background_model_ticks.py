@@ -166,16 +166,25 @@ async def test_the_job_briefs_read_their_model_at_every_tick() -> None:
 
 
 async def test_the_slop_judge_reads_its_model_at_every_tick() -> None:
-    _takes_a_reader(SlopMeterLoop)
+    from embry0.services.background_scope import Enrollment
+    from embry0.services.slop_meter.loop import MeterRead
     from tests.unit.services.slop_meter import test_loop as fakes
 
+    assert "models" not in inspect.signature(SlopMeterLoop).parameters, (
+        "the meter reads its judge's model with its enrollment, from one snapshot a tick (MeterRead, #165), "
+        "not by a reader of its own"
+    )
     records, order = fakes._history(40)
     records["big"] = fakes._record("big", fakes.START + timedelta(days=200), [("src/drop.py", 9_000, 0)])
     order.append("big")
     calls = fakes.FakeCalls()
     loop = fakes._loop(fakes.FakeMirror(records, order), fakes.FakeStore(), per_tick=100, model="", calls=calls)
     reader = Reader("")
-    loop._models = reader  # noqa: SLF001 - the reader the loop was built with, swapped for one the test drives
+
+    async def read() -> MeterRead:
+        return MeterRead(models=await reader(), enrollment=Enrollment(fakes._EveryRepository(), frozenset()))
+
+    loop._read = read  # noqa: SLF001 - the reader the loop was built with, swapped for one the test drives
     await loop.tick()
     assert calls.endpoints == [], "no model: nothing is asked"
     reader.set("custom/judge")

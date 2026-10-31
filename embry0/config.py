@@ -790,13 +790,16 @@ class Embry0Config(BaseSettings):
     leads_flaky_commits: int = Field(default=10, ge=1, le=50)
 
     # Scout (docs/leads.md, "The scout"): read-only scouting jobs (garden, kintsugi-trace)
-    # rotating through the world map's repositories (plus SCOUT_REPOS, minus
-    # SCOUT_EXCLUDE, comma-separated) and each area of one that declares areas.
-    # These two stay variables until the repository scope rule (#165). The
+    # rotating through the repositories enrolled in background.scout of the
+    # settings document (#165) and each area of one that declares areas. The
     # model its jobs are pinned to is the settings document's
     # background_models.scout now (#164): SCOUT_MODEL is only its import
     # source, read once at the first start of the release that added the
     # section and ignored after that, and removed in the next release.
+    # SCOUT_REPOS and SCOUT_EXCLUDE (comma-separated) are likewise only the
+    # import source of the repository layers' background.scout, read once at
+    # the first start of the release that added the background section
+    # (embry0.services.background_enrollment), and removed in the next release.
     scout_model: Annotated[str, NOT_SECRET] = ""
     scout_repos: Annotated[str, NOT_SECRET] = ""
     scout_exclude: Annotated[str, NOT_SECRET] = ""
@@ -848,14 +851,19 @@ class Embry0Config(BaseSettings):
     job_brief_interval_seconds: float = Field(default=60.0, gt=0)
     job_briefs_per_tick: int = Field(default=3, ge=1, le=20)
     # The Slop-O-Meter (spec 2026-10-26, slop-o-meter): it reads the
-    # repositories the world map shows, plus SLOP_METER_REPOS, minus
-    # SLOP_METER_EXCLUDE (comma-separated). Each one's bare mirror lives under
-    # the data path; the loop runs every interval (0 is off), sooner while a
-    # history is still being read, and each tick reads at most these many
-    # commits, event pages, pull requests' reviews, logins and outlier
-    # judgments per repository. Its forge calls share one budget per tick and
-    # stop when the credential's remaining rate limit drops below the reserve
-    # (jobs use the same credential). Outliers are judged on the job brief model.
+    # repositories enrolled in background.slop_meter of the settings document
+    # (#165). SLOP_METER_REPOS and SLOP_METER_EXCLUDE (comma-separated) are
+    # only the import source of the repository layers' background.slop_meter,
+    # read once at the first start of the release that added the section, and
+    # removed in the next release. Each one's bare mirror lives under the data
+    # path, removed with its rows background.prune_after_days after it leaves
+    # the scope (docs/ops/background-data.md). The loop runs every interval (0 is off),
+    # sooner while a history is still being read, and each tick reads at most
+    # these many commits, event pages, pull requests' reviews, logins and
+    # outlier judgments per repository. Its forge calls share one budget per
+    # tick and stop when the credential's remaining rate limit drops below the
+    # reserve (jobs use the same credential). Outliers are judged on
+    # background_models.slop_judge.
     slop_meter_repos: Annotated[str, NOT_SECRET] = ""
     slop_meter_exclude: Annotated[str, NOT_SECRET] = ""
     slop_meter_api_calls_per_tick: int = Field(default=200, ge=0)

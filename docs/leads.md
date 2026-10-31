@@ -29,7 +29,7 @@ Those are the defaults, except `enabled`, which is `false`. The loop always runs
 
 ## Where it looks
 
-A repository is read when it is registered and active and someone answers for it: its preferences name owners, or it is a watched stack. Each finder reads it with its organization's credential and adds at most `leads.max_new_per_repo_per_day` new leads a day, the most severe first.
+A repository is read when it is registered and active and someone answers for it: its preferences name owners, or it is a watched stack. An organization's or a repository's [layer](configuration.md#which-repositories-background-features-read) can take it out (`background: {leads: false}`), and a repository's own layer bring it back; the next pass follows. `POST /api/v1/leads/run` with a `repo` reads that repository whatever its layer says. Each finder reads it with its organization's credential and adds at most `leads.max_new_per_repo_per_day` new leads a day, the most severe first.
 
 | Kind | Finder | What it reads | Severity, effort | Accepting starts |
 |---|---|---|---|---|
@@ -62,10 +62,10 @@ scout:
   max_jobs_per_day: null
 ```
 
-Those are the defaults. `SCOUT_REPOS` and `SCOUT_EXCLUDE` stay environment variables, read at startup, until the one repository scope rule (#165) moves them.
+Those are the defaults. Which repositories it reads is `background.scout`, off until enrolled ([which repositories](configuration.md#which-repositories-background-features-read)): set it in an organization's layer to scout every repository of it, in a repository's to scout that one or keep it out, or in the deployment's document for every repository no layer decides for. A deployment that ran the scout before keeps the repositories it read then, and what `SCOUT_REPOS` and `SCOUT_EXCLUDE` named, each written into its repository's layer at the first start of that release.
 
 - **What it runs.** Every 5 minutes it starts read-only jobs while fewer than `scout.max_in_flight` are out: `garden` (one provable weed) and `kintsugi-trace` (a ledger of graded cracks), the templates `scout.templates` names. Each job is pinned to its repository's scout model, read at that tick: a pinned run waits for its model (a free slot, for a local one) and never moves to another. On a local model the scout spends nothing; on a hosted one each job is metered and capped like any job.
-- **Where.** The repositories the world map shows, plus `SCOUT_REPOS` and minus `SCOUT_EXCLUDE`, and each area of one that declares [areas](areas.md) (the job is told to look only under the area's paths). A unit, one repository or area and one template, is scouted again after `scout.revisit_hours`; never-scouted units go first, then the longest ago. A model reads the same code differently run to run, and the lead id of what it found before keeps a repeat from becoming a second lead.
+- **Where.** The registered, active repositories enrolled in `background.scout`, and each area of one that declares [areas](areas.md) (the job is told to look only under the area's paths). A repository taken out is not scouted on the next tick, and a job of it that finishes after that adds no leads. A unit, one repository or area and one template, is scouted again after `scout.revisit_hours`; never-scouted units go first, then the longest ago. A model reads the same code differently run to run, and the lead id of what it found before keeps a repeat from becoming a second lead.
 - **What becomes a lead.** When a job finishes, its deliverable is read once: each ledger row a `crack`, a weed card a `weed`, at most `scout.max_leads_per_job` a job, the worst first. A failed job yields nothing.
 - **What reaches chat.** Only a crack graded `break` (high) is asked in chat; every other crack and every weed stays on the page, so a scout running all day does not fill the chat.
 - **Brakes.** `scout.max_in_flight` is the one that counts: never more jobs out at once. `0` starts none, while the jobs already out are still read into leads. `scout.max_jobs_per_day`, off by default, caps the jobs started in any 24 hours. Its jobs are dispatched by `embry0:scout`, which is exempt from `RATE_LIMIT_PER_AUTHOR_PER_HOUR` (that limit would hold it to a few jobs an hour), and each has a hard budget, `scout.job_budget_usd`, in case its pin is ever lost. The fleet's daily and monthly budget gates still apply.

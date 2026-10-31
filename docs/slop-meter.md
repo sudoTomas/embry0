@@ -18,9 +18,11 @@ A score is **provisional** while some of its largest commits (the outliers) are 
 
 ## Which repositories
 
-The meter reads the registered repositories the world map shows: those with a job in the last 90 days, owners or a watched stack. `SLOP_METER_REPOS` adds repositories to that set and `SLOP_METER_EXCLUDE` takes them out (comma-separated). A repository that leaves the set is no longer read; its scores stay readable.
+The meter reads the registered, active repositories enrolled in it: `background.slop_meter` of the settings document, `false` until an operator sets it in an organization's layer (every repository of it), a repository's layer, or the deployment's document ([which repositories](configuration.md#which-repositories-background-features-read)). A job run on a repository enrolls nothing. A deployment that ran the meter before keeps the repositories it read then (those the world map showed: a job in the 90 days before the upgrade, owners or a watched stack, plus `SLOP_METER_REPOS` and minus `SLOP_METER_EXCLUDE`), each written into its repository's layer at the first start of that release.
 
-It is on by default. `SLOP_METER_INTERVAL_SECONDS=0` turns it off.
+A repository that leaves the meter's scope, opted out or unregistered, loses its mirror and everything the meter kept of it `background.prune_after_days` (a week) later, unless it comes back first; one made inactive is not read and keeps what was read ([what it keeps](#what-it-keeps)).
+
+The loop is on by default and reads what is enrolled. `SLOP_METER_INTERVAL_SECONDS=0` turns the reading off.
 
 ## What it reads, and how much
 
@@ -31,7 +33,7 @@ It is on by default. `SLOP_METER_INTERVAL_SECONDS=0` turns it off.
 ## What it keeps
 
 - **On disk:** one bare mirror per repository in scope, under `SLOP_METER_DATA_PATH` (`/data/embry0/slop-meter`, inside the orchestrator's data volume). A full mirror is the repository's whole history, so size the volume for it.
-- **In the database:** each repository's commits as read (author name and email, date, per-file line counts, co-author trailers), its forge events (login, kind, time), a map from forge logins to commit emails, the model's judgments of outlier commits, and the weekly series and current score per repository and area (the `slop_meter_*` tables, migrations 121 and 122). Contributor names and emails are personal data: they are kept until the repository's history is read again from the start, and are not removed when a repository leaves the set.
+- **In the database:** each repository's commits as read (author name and email, date, per-file line counts, co-author trailers), its forge events (login, kind, time), a map from forge logins to commit emails, the model's judgments of outlier commits, and the weekly series and current score per repository and area (the `slop_meter_*` tables, migrations 121 and 122). Contributor names, emails and logins are personal data: they are kept while the repository is in the meter's scope, replaced when its history is read again from the start, and removed with the rest of its rows and its mirror `background.prune_after_days` after it leaves, on the first tick past that (with the schedule off, at a start), unless it comes back first. A login goes once no remaining event refers to it. The removal never deletes anything outside `SLOP_METER_DATA_PATH` nor follows a link out of it ([what the background features keep](ops/background-data.md)).
 
 ## Where it shows
 

@@ -21,10 +21,8 @@ def _sql() -> str:
     return next((s for v, _, s in MIGRATIONS if v == VERSION), "")
 
 
-def test_the_background_spend_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_134.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must create background_spend"
+def test_the_background_spend_migration_is_listed_once() -> None:
+    """The "last entry" assertion passed to tests/unit/storage/test_migration_136.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 

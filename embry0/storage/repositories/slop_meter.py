@@ -30,6 +30,25 @@ _STATE_FIELDS = frozenset(
 )
 
 
+#: Every table that holds rows of one repository, by what the rows hold; ``slop_meter_repos`` last.
+_KEPT: tuple[tuple[str, str], ...] = (
+    ("commits", "slop_meter_commits"),
+    ("events", "slop_meter_events"),
+    ("judgments", "slop_meter_judgments"),
+    ("weeks", "slop_meter_weeks"),
+    ("scores", "slop_meter_scores"),
+    ("state", "slop_meter_repos"),
+)
+
+
+def _deleted(status: Any) -> int:
+    """The row count of a ``DELETE n`` status."""
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])
+    except ValueError:
+        return 0
+
+
 class SlopMeterRepository:
     def __init__(self, db: DatabasePool) -> None:
         self._db = db
@@ -53,6 +72,69 @@ class SlopMeterRepository:
             repo,
             *fields.values(),
         )
+
+    # ---- what it keeps, and forgetting it ----
+
+    async def held(self) -> list[str]:
+        """Every repository the meter keeps anything for.
+
+        Each of them has a ``slop_meter_repos`` row: the meter writes it when
+        it first mirrors a repository, before it stores anything else of it.
+        """
+        return [str(r["repo"]) for r in await self._db.fetch("SELECT repo FROM slop_meter_repos ORDER BY repo")]
+
+    async def forget(self, repo: str) -> dict[str, int]:
+        """Delete everything the meter keeps for ``repo``, and each login no event refers to any more.
+
+        One transaction: the history as read (commit authors' names and
+        emails, co-author trailers), the forge events (logins), the outlier
+        judgments, the weekly series, the scores and where reading stood.
+        A login maps a forge account to an email and is kept once for every
+        repository, so it goes when no event left refers to it. Answers how
+        many rows went, by what they held.
+        """
+        counts: dict[str, int] = {}
+        async with self._db.transaction() as conn:
+            for name, table in _KEPT:
+                status = await conn.execute(f"DELETE FROM {table} WHERE repo = $1", repo)
+                counts[name] = _deleted(status)
+            status = await conn.execute(
+                "DELETE FROM slop_meter_logins l "
+                "WHERE NOT EXISTS (SELECT 1 FROM slop_meter_events e WHERE lower(e.login) = l.login)"
+            )
+            counts["logins"] = _deleted(status)
+        return counts
+
+    async def respell(self, old: str, new: str) -> str:
+        """Move what the meter keeps under ``old`` onto ``new``, a spelling that differs only by case.
+
+        The meter keeps rows under the spelling it read a repository by; when
+        the registry spells it otherwise, the rows move to the registry's
+        spelling, in one transaction across every table, so the meter neither
+        reads the history again nor keeps two copies of its contributors.
+        When ``new`` already has its own reading, that one is kept and ``old``'s
+        rows go. Answers what was done: ``moved``, ``merged`` or nothing (``""``)
+        when ``old`` held nothing. The mirror's path is the same for both
+        spellings, so nothing on disk moves.
+        """
+        if old == new or old.lower() != new.lower():
+            raise ValueError(f"{old!r} and {new!r} are not two spellings of one repository")
+        async with self._db.transaction() as conn:
+            if not await conn.fetchval("SELECT EXISTS (SELECT 1 FROM slop_meter_repos WHERE repo = $1)", old):
+                return ""
+            merged = bool(await conn.fetchval("SELECT EXISTS (SELECT 1 FROM slop_meter_repos WHERE repo = $1)", new))
+            for _name, table in _KEPT:
+                if merged:
+                    await conn.execute(f"DELETE FROM {table} WHERE repo = $1", old)
+                else:
+                    await conn.execute(f"DELETE FROM {table} WHERE repo = $1", new)
+                    await conn.execute(f"UPDATE {table} SET repo = $2 WHERE repo = $1", old, new)
+            if merged:
+                await conn.execute(
+                    "DELETE FROM slop_meter_logins l "
+                    "WHERE NOT EXISTS (SELECT 1 FROM slop_meter_events e WHERE lower(e.login) = l.login)"
+                )
+        return "merged" if merged else "moved"
 
     # ---- the history ----
 

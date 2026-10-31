@@ -1,0 +1,34 @@
+# The background enrollment import held by a repository name (#165). Load this
+# into the Prometheus that scrapes the orchestrator's /metrics
+# (docs/ops/metrics.md, "Where it is exposed").
+#
+# embry0_background_enrollment_blocked is 1 while the import that enrolls what
+# the scout and the Slop-O-Meter read before the `background` section cannot
+# finish, because a registered repository's name cannot hold a settings layer
+# (an owner starting with a dot). Until it finishes, the meter removes nothing
+# of a repository that left its scope. The import retries on its own, every 15
+# minutes at most, so 30 minutes of 1 means it will not clear by itself.
+#
+# The gauge is seeded 0 when the process starts, and the expression is
+# `or vector(0)` all the same, so a missing series evaluates to 0 instead of to
+# nothing (a rule that produces no series cannot be told from a rule that never
+# fires, CLAUDE.md). The max has no labels, so there is no join to get wrong.
+# Tested by background-enrollment.rules.test.yml (promtool test rules).
+groups:
+  - name: embry0-background-enrollment
+    rules:
+      - alert: Embry0BackgroundEnrollmentBlocked
+        expr: |
+          (max(embry0_background_enrollment_blocked) or vector(0)) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The background enrollment import is held by a repository name"
+          description: >-
+            A registered repository's name cannot hold a settings layer, so the
+            import that enrolls what the scout and the Slop-O-Meter read before
+            cannot finish, and the meter removes nothing meanwhile. Find the
+            name in the orchestrator log (background_enrollment_name_unaddressable)
+            or the audit log (background_enrollment.blocked), then rename or
+            unregister it; docs/ops/background-data.md, "Upgrading".

@@ -343,10 +343,11 @@ def cmd_config(args: argparse.Namespace) -> None:
 
     # Spec 2026-10-28: a policy variable a settings section imported is read
     # once and then ignored; say so, since this command reads no database.
+    from embry0.services.background_enrollment import governed_lines as list_lines
     from embry0.settings.env import governed_lines
     from embry0.settings.sections import CATALOG
 
-    for line in governed_lines(CATALOG, config):
+    for line in [*governed_lines(CATALOG, config), *list_lines(config)]:
         _warn(line)
 
     if not config.github_token:

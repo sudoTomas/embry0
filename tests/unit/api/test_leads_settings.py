@@ -131,7 +131,7 @@ def _forge(*repos: str) -> FakeForge:
 def _loop(store: SettingsStore, db: DatabasePool, clock: list[datetime], *repos: str) -> LeadsLoop:
     forge = _forge(*repos)
 
-    async def targets() -> list[str]:
+    async def targets(section: Any = None) -> list[str]:
         return list(repos)
 
     async def client_for(repo: str) -> Any:

@@ -373,10 +373,14 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
             # The proposal briefs read their model with the leads section, from one snapshot a tick.
             return (await state.proposal_brief_writer._settings()).models  # noqa: SLF001
 
+        async def slop_judge() -> Any:
+            # The meter reads its judge's model with its enrollment, from one snapshot a tick (#165).
+            return (await state.slop_meter._read()).models  # noqa: SLF001
+
         readers = {
             "proposal_brief": proposal_brief,
             "job_brief": state.job_brief_writer._models,  # noqa: SLF001
-            "slop_judge": state.slop_meter._models,  # noqa: SLF001
+            "slop_judge": slop_judge,
             "scout": scout,
         }
 

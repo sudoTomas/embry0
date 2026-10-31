@@ -39,7 +39,7 @@ from embry0.services.leads.backlog import Tracked, find_github_tickets, linear_l
 from embry0.services.leads.ci import find_failing_checks
 from embry0.services.leads.flaky import find_flaky_checks
 from embry0.services.leads.reviews import find_unanswered_reviews
-from embry0.settings.layers import PerRepository
+from embry0.settings.layers import SnapshotSection
 from embry0.settings.sections.leads import LeadsSettings
 
 logger = structlog.get_logger(__name__)
@@ -81,10 +81,11 @@ class _Pass:
 class LeadsLoop:
     #: The ``leads`` section of the current snapshot, read per repository at the top of every pass and
     #: every look of the schedule: ``scoped_reader(store, LEADS)`` in production.
-    settings: Callable[[], Awaitable[PerRepository[LeadsSettings]]]
+    settings: Callable[[], Awaitable[SnapshotSection[LeadsSettings]]]
     leads: Any
-    #: The repositories to read, registered and active, with owners or a watched stack.
-    targets: Callable[[], Awaitable[list[str]]]
+    #: The repositories to read, registered and active, with owners or a watched stack, and enrolled in
+    #: ``background.leads``: given the section the pass read, so they come from its snapshot (#165).
+    targets: Callable[[SnapshotSection[LeadsSettings]], Awaitable[list[str]]]
     #: The forge client for a repository with its organization's credential; None when there is none.
     client_for: Callable[[str], Awaitable[Any]]
     #: The Linear service, or None when Linear is not configured.
@@ -155,7 +156,7 @@ class LeadsLoop:
         repos: Sequence[str] | None = None,
         *,
         backlog: bool | None = None,
-        section: PerRepository[LeadsSettings] | None = None,
+        section: SnapshotSection[LeadsSettings] | None = None,
     ) -> dict[str, Any]:
         """One pass, whether leads are on or off; returns what it did.
 
@@ -166,7 +167,7 @@ class LeadsLoop:
         if section is None:
             section = await self.settings()
         now = self.clock()
-        targets = list(repos) if repos is not None else await self.targets()
+        targets = list(repos) if repos is not None else await self.targets(section)
         policies = {repo: section.repo(repo) for repo in targets}
         wanted = any("ticket" in policy.finders for policy in policies.values())
         run_backlog = wanted and (self.backlog_due(now, section.deployment()) if backlog is None else backlog)

@@ -3856,6 +3856,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             '#164: one row per model call a background feature (proposal_brief, job_brief, slop_judge) made outside a job, priced as a job run is; counted by the budget caps and /stats.';
         """,
     ),
+    (
+        136,
+        "background_scope_exits: when a repository left a background feature's scope (#165)",
+        # A feature that removes what it kept of a repository that left its
+        # scope (the Slop-O-Meter: its mirror and its rows) waits the settings
+        # document's background.prune_after_days first, counted from the tick
+        # that first found the repository out. A repository that comes back in
+        # time has its row deleted and keeps everything. repo is the slug
+        # lowercased, as the meter's mirror path and every scope comparison
+        # read it.
+        """
+        CREATE TABLE IF NOT EXISTS background_scope_exits (
+            feature  TEXT NOT NULL,
+            repo     TEXT NOT NULL CHECK (repo = lower(repo)),
+            left_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (feature, repo)
+        );
+        COMMENT ON TABLE background_scope_exits IS
+            '#165: when a repository left a background feature''s scope; what the feature kept of it is removed background.prune_after_days later, unless it comes back first.';
+        """,
+    ),
 ]
 
 

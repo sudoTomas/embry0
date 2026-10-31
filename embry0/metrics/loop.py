@@ -316,6 +316,16 @@ class LoopMetrics:
             registry=r,
         )
 
+        # ---- settings imports --------------------------------------------
+        # #165: seeded 0 at construction, so the series exists on the first
+        # scrape and an alert on it can be told from one that never fires.
+        self._background_enrollment_blocked = Gauge(
+            "embry0_background_enrollment_blocked",
+            "1 while the background enrollment import is held by a registered repository name no settings layer "
+            "can be stored under (the Slop-O-Meter removes nothing meanwhile); 0 otherwise.",
+            registry=r,
+        )
+
         # ---- the DB snapshot itself ---------------------------------------
         self.snapshot_last_success = Gauge(
             "embry0_loop_snapshot_last_success_timestamp_seconds",
@@ -495,6 +505,13 @@ class LoopMetrics:
         for decision, count in tickets.items():
             self._reconciler_last_sweep_tickets.labels(decision=decision).set(count)
         self._reconciler_last_sweep.set(time.time())
+
+    # ---- settings imports ---------------------------------------------------
+
+    @_never_raises
+    def background_enrollment_blocked(self, blocked: bool) -> None:
+        """Whether the last run of the background enrollment import was held by an unaddressable name (#165)."""
+        self._background_enrollment_blocked.set(1 if blocked else 0)
 
     # ---- runner / infrastructure -------------------------------------------
 

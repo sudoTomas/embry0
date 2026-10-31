@@ -10,14 +10,16 @@ from typing import Any
 import pytest
 
 from embry0.branding import GIT_AUTHOR_EMAIL
+from embry0.services.background_scope import Enrollment, Registered
 from embry0.services.slop_meter import loop as loop_mod
 from embry0.services.slop_meter.context import job_meter, meter_sentence
 from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader
 from embry0.services.slop_meter.history import HISTORY_VERSION, Commit
 from embry0.services.slop_meter.judge import parse_judgment, user_prompt
-from embry0.services.slop_meter.loop import SlopMeterLoop, SlopMeterSettings
+from embry0.services.slop_meter.loop import MeterRead, SlopMeterLoop, SlopMeterSettings
 from embry0.services.slop_meter.mirror import GitError, GitMirror, auth_env
 from embry0.services.slop_meter.score import Outlier
+from embry0.settings.sections.background import BackgroundSettings
 
 START = datetime(2025, 1, 6, 9, 0, tzinfo=UTC)
 REPO = "acme/web"
@@ -59,6 +61,9 @@ class FakeStore:
 
     async def state(self, repo: str) -> dict[str, Any]:
         return dict(self.states.get(repo, {"repo": repo, "commits_read": 0}))
+
+    async def held(self) -> list[str]:
+        return sorted(self.states)
 
     async def set_state(self, repo: str, **fields: Any) -> None:
         self.states.setdefault(repo, {"repo": repo, "commits_read": 0}).update(fields)
@@ -108,6 +113,43 @@ def _history(n: int) -> tuple[dict[str, str], list[str]]:
     return {s: _record(s, START + timedelta(hours=3 * i), [("src/a.py", 20, 0)]) for i, s in enumerate(order)}, order
 
 
+class _EveryRepository:
+    """The ``background`` section with every repository enrolled in the meter."""
+
+    def deployment(self) -> BackgroundSettings:
+        return BackgroundSettings(slop_meter=True)
+
+    def repo(self, repo: str | None) -> BackgroundSettings:
+        return BackgroundSettings(slop_meter=True)
+
+
+class NoExits:
+    """The record of repositories that left the scope: never read here, since nothing is settled."""
+
+    async def left(self, feature: str) -> dict[str, Any]:
+        return {}
+
+    async def mark(self, feature: str, repos: Any, *, at: Any) -> list[str]:
+        return []
+
+    async def clear(self, feature: str, repos: Any) -> list[str]:
+        return []
+
+
+async def no_audit(*, action: str, details: dict[str, Any]) -> None:
+    return None
+
+
+def _read(model: str = "") -> Any:
+    """A tick's read with every listed repository enrolled and its outliers judged on ``model``. Not settled,
+    so nothing is removed: what the meter removes is tested in test_prune.py."""
+
+    async def read() -> MeterRead:
+        return MeterRead(models=lambda repo: model, enrollment=Enrollment(_EveryRepository(), frozenset()))
+
+    return read
+
+
 class FakeCalls:
     """Every model it is asked about can be called; the judge itself is replaced where a test asks one."""
 
@@ -129,8 +171,8 @@ def _loop(
     owner_bots: tuple[str, ...] = (),
     calls: Any = None,
 ) -> SlopMeterLoop:
-    async def repos() -> list[str]:
-        return [REPO]
+    async def repos() -> Registered:
+        return Registered(active=(REPO,))
 
     async def bots(repo: str) -> tuple[str, ...]:
         return owner_bots
@@ -141,16 +183,15 @@ def _loop(
     async def client_for(repo: str) -> Any:
         return client
 
-    async def models() -> Any:
-        return lambda repo: model
-
     return SlopMeterLoop(
         repos=repos,
+        exits=NoExits(),
+        audit=no_audit,
+        read=_read(model),
         store=store,
         mirror=mirror,
         token_for=token_for,
         client_for=client_for,
-        models=models,
         bots=bots,
         calls=calls if calls is not None else FakeCalls(),
         settings=SlopMeterSettings(commits_per_tick=per_tick),
@@ -411,16 +452,6 @@ async def test_the_rate_reserve_stops_the_ticks_forge_calls() -> None:
     assert budget.made == 1 and budget.remaining == 1_500 and budget.spent, "one call, then the reserve is reached"
 
 
-def test_the_scope_is_the_maps_repositories_plus_and_minus_the_operators_lists() -> None:
-    shown = ["acme/web", "Acme/API", "acme/old"]
-    assert loop_mod.scope(shown) == ["Acme/API", "acme/old", "acme/web"]
-    assert loop_mod.scope(shown, include="acme/extra, acme/web", exclude="ACME/OLD,") == [
-        "Acme/API",
-        "acme/extra",
-        "acme/web",
-    ]
-
-
 @pytest.mark.asyncio
 async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
     """Two repositories: one with a long comment history. Each gets a call in turn; neither starves."""
@@ -435,8 +466,8 @@ async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
 
     mirror = Mirrors(records, order)
 
-    async def repos() -> list[str]:
-        return [big, small]
+    async def repos() -> Registered:
+        return Registered(active=(big, small))
 
     async def token_for(repo: str) -> tuple[str, str, str]:
         return ("github", "t", "")
@@ -444,16 +475,15 @@ async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
     async def client_for(repo: str) -> Any:
         return forges[repo]
 
-    async def no_model() -> Any:
-        return lambda repo: ""
-
     loop = SlopMeterLoop(
         repos=repos,
+        exits=NoExits(),
+        audit=no_audit,
+        read=_read(),
         store=store,
         mirror=mirror,
         token_for=token_for,
         client_for=client_for,
-        models=no_model,
         bots=lambda repo: _no_bots(),
         calls=FakeCalls(),
         settings=SlopMeterSettings(commits_per_tick=10, event_pages=100, api_calls_per_tick=16, rate_reserve=0),
@@ -491,15 +521,23 @@ async def test_the_mirror_clones_then_fetches_and_keeps_the_token_out_of_its_arg
         if args[0] == "clone":
             (Path(args[-1])).mkdir(parents=True)
             (Path(args[-1]) / "HEAD").write_text("ref: refs/heads/main\n")
+        if "config" in args:
+            (Path(args[1]) / "config").write_text("[core]\n\tbare = true\n[embry0]\n\tslopMeter = true\n")
         return 0, b"", b""
 
     mirror = GitMirror(tmp_path, run=run)
     await mirror.sync(REPO, forge="github", token="s3cret", gitlab_url="")
     await mirror.sync(REPO, forge="github", token="s3cret", gitlab_url="")
     await mirror.log(REPO, ["a", "b"])
-    clone, fetch, log = calls
+    assert [c[0][2] if c[0][0] == "-C" else c[0][0] for c in calls][:3] == ["clone", "config", "fetch"], (
+        "the clone is marked as the meter's own (git config embry0.slopMeter true), and the fetch of a marked "
+        f"mirror marks nothing again: {[c[0][:4] for c in calls]}"
+    )
+    assert len(calls) == 4, "then the log is read"
+    clone, marker, fetch, log = calls
     assert clone[0][:3] == ["clone", "--bare", "--quiet"] and clone[0][3] == f"https://github.com/{REPO}.git"
-    assert fetch[0][2:4] == ["fetch", "--quiet"]
+    assert marker[0][2:] == ["config", "embry0.slopMeter", "true"], "the clone is marked as the meter's own"
+    assert fetch[0][2:4] == ["fetch", "--quiet"], "a marked mirror is fetched and not marked again"
     assert all("s3cret" not in " ".join(c[0]) for c in calls), "the token is never an argument"
     expected = base64.b64encode(b"x-access-token:s3cret").decode()
     assert clone[1]["GIT_CONFIG_VALUE_0"] == f"Authorization: Basic {expected}"
@@ -592,8 +630,8 @@ async def test_each_credential_keeps_its_own_budget() -> None:
     records, order = _history(2)
     store = FakeStore()
 
-    async def repos() -> list[str]:
-        return [low, high]
+    async def repos() -> Registered:
+        return Registered(active=(low, high))
 
     async def token_for(repo: str) -> tuple[str, str, str]:
         return ("github", f"token-of-{repo.split('/')[0]}", "")
@@ -601,19 +639,18 @@ async def test_each_credential_keeps_its_own_budget() -> None:
     async def client_for(repo: str) -> Any:
         return forges[repo]
 
-    async def no_model() -> Any:
-        return lambda repo: ""
-
     async def no_bots(repo: str) -> tuple[str, ...]:
         return ()
 
     loop = SlopMeterLoop(
         repos=repos,
+        exits=NoExits(),
+        audit=no_audit,
+        read=_read(),
         store=store,
         mirror=FakeMirror(records, order),
         token_for=token_for,
         client_for=client_for,
-        models=no_model,
         bots=no_bots,
         calls=FakeCalls(),
         settings=SlopMeterSettings(commits_per_tick=10, event_pages=100, api_calls_per_tick=8, rate_reserve=100),

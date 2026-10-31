@@ -84,6 +84,9 @@ ANONYMOUS = f"{RESERVED_PREFIX}anonymous"
 # document at boot (spec 2026-10-28). It writes a revision and an audit row
 # and never dispatches.
 SETTINGS_BOOTSTRAP = f"{RESERVED_PREFIX}bootstrap"
+# The Slop-O-Meter removing what it kept of a repository that left its scope
+# (#165). It writes audit rows and never dispatches.
+SLOP_METER = f"{RESERVED_PREFIX}slop-meter"
 
 RATE_LIMIT_EXEMPT: frozenset[str] = frozenset({WATCHER, AUTO_RETRIAGE, ANSWER_RESUME, CONTEXT_AUDIT, SCOUT})
 

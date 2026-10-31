@@ -22,7 +22,6 @@ import embry0.api.app as app_module
 #: Each loop, the keyword it takes its model by, and the reader production must pass.
 READERS = {
     "JobBriefWriter": ("models", "background_model(app.state.settings, 'job_brief')"),
-    "SlopMeterLoop": ("models", "background_model(app.state.settings, 'slop_judge')"),
 }
 #: The scout reads its model with its own section, from one snapshot a tick: ``tick_settings`` reads
 #: ``background_models.scout`` (``tests/unit/api/test_scout_per_organization.py`` runs it).
@@ -57,6 +56,27 @@ def test_each_loop_reads_its_own_key_of_the_section_every_tick(loop: str) -> Non
         f"{loop} must read its model from background_models every tick, through its own key (#164); "
         f"got {keyword}={passed.get(keyword)!r}"
     )
+
+
+async def test_the_meter_reads_its_judge_s_model_from_the_snapshot_it_reads_its_repositories_from() -> None:
+    """The meter reads background_models.slop_judge and its enrollment (#165) from one snapshot a tick:
+    ``meter_reader``, which ``tests/unit/api/test_background_scope_wiring.py`` pins production passes."""
+    from embry0.services.slop_meter import loop
+
+    meter_reader = getattr(loop, "meter_reader", None)
+    assert meter_reader is not None, "the meter's one reader of the settings documents a tick is meter_reader"
+    from embry0.settings.sections import CATALOG
+    from embry0.settings.store import build_snapshot
+
+    data = {"background_models": {"default": "custom/a", "slop_judge": "custom/judge", "job_brief": "custom/b"}}
+    snapshot = build_snapshot(CATALOG, [{"scope": "deployment", "data": data, "generation": 1, "updated_at": None}])
+
+    class Store:
+        async def snapshot(self) -> object:
+            return snapshot
+
+    read = await meter_reader(Store())()
+    assert read.models("acme/widgets") == "custom/judge", "the meter judges outliers on its own key (#164)"
 
 
 def test_the_scout_reads_its_model_and_its_section_from_one_snapshot() -> None:

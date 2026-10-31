@@ -84,7 +84,7 @@ def _loop(
 ) -> LeadsLoop:
     leads_section()
 
-    async def targets() -> list[str]:
+    async def targets(section: Any = None) -> list[str]:
         return list(repos)
 
     async def client_for(repo: str) -> Any:
@@ -249,7 +249,7 @@ async def test_passes_come_interval_hours_after_the_last_one_ended_as_before_the
     loop = _loop(settings, MemoryLeads(), None, clock)
     assert "sleep" in LeadsLoop.__dataclass_fields__, "the schedule's sleep is given, so its timing can be read"
 
-    async def targets() -> list[str]:
+    async def targets(section: Any = None) -> list[str]:
         starts.append((clock[0] - T0).total_seconds() / 60)
         clock[0] += timedelta(minutes=7)
         return [ACME]
