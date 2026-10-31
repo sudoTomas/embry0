@@ -29,6 +29,12 @@ vi.mock("@/api/provider", () => ({
 
 vi.mock("@/api/credentials", () => ({ addProviderKey: vi.fn() }));
 vi.mock("@/stores/authStore", () => ({ useIsAdmin: () => true }));
+// The background models card reads the settings document; none here.
+vi.mock("@/api/settings", () => ({
+  fetchEffectiveSettings: () => Promise.resolve({ generation: 0, sections: [], unknown_sections: [], unknown_keys: [] }),
+  fetchSettings: () => Promise.resolve({ allowlist_covers: true }),
+  setSettingsKeys: vi.fn(),
+}));
 
 import { ProvidersPage } from "../ProvidersPage";
 

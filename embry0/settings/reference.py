@@ -59,6 +59,8 @@ def _resolve(prop: Any, defs: dict[str, Any], depth: int = 0) -> dict[str, Any]:
 def _type(prop: dict[str, Any]) -> str:
     if "anyOf" in prop:
         return " or ".join(_type(option) for option in prop["anyOf"])
+    if isinstance(prop.get("const"), bool):
+        return json.dumps(prop["const"])
     if "enum" in prop or "const" in prop:
         return "text" if all(isinstance(v, str) for v in prop.get("enum", [prop.get("const")])) else "value"
     kind = prop.get("type")

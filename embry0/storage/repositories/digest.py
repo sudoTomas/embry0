@@ -2,8 +2,9 @@
 
 The operator asked for one daily summary in place of a notification per watcher
 analysis job, which arrived hourly as raw JSON. Every number here comes from
-tables that already record the facts — jobs, watcher_runs, healing_cases,
-issue_inputs — so the digest is a read, never a second source of truth.
+tables that already record the facts — jobs, background_spend, watcher_runs,
+healing_cases, issue_inputs — so the digest is a read, never a second source of
+truth.
 
 The watcher's own analysis jobs are counted separately from real work. They are
 ~24 a day and would otherwise bury the two or three jobs a human dispatched.
@@ -20,6 +21,19 @@ from embry0.storage.database import DatabasePool
 #: How many individual jobs the digest names. The counts are always complete;
 #: this only bounds the list a human reads.
 MAX_LISTED_JOBS = 8
+
+#: What the background features spent outside any job in [$1, $2), by feature:
+#: the proposal and job briefs and the Slop-O-Meter's judge, which record each
+#: call in ``background_spend`` (migration 135) rather than on a job. The
+#: window is a range of ``idx_background_spend_at``, so the read stays one
+#: day's rows however long the history grows.
+_BACKGROUND_SPEND_SQL = """
+SELECT feature, COALESCE(sum(cost_usd), 0) AS cost
+  FROM background_spend
+ WHERE at >= $1 AND at < $2
+ GROUP BY feature
+ ORDER BY feature
+"""
 
 # Listed jobs are every finished job but cancelled ones. The status vocabulary
 # is wider than completed/failed: a job whose PR merged is `pr_merged`, one
@@ -99,6 +113,7 @@ class DigestRepository:
             until,
             watcher_actor,
         )
+        background = await self._db.fetch(_BACKGROUND_SPEND_SQL, since, until)
         ticks = await self._db.fetch(
             "SELECT action, count(*) AS n FROM watcher_runs WHERE created_at >= $1 AND created_at < $2 GROUP BY action",
             since,
@@ -138,6 +153,8 @@ class DigestRepository:
             "jobs": {r["status"]: int(r["n"]) for r in jobs},
             "job_spend_usd": round(sum(float(r["cost"]) for r in jobs), 2),
             "watcher_spend_usd": round(float(watcher_spend or 0), 2),
+            "background_spend_usd": round(sum(float(r["cost"]) for r in background), 2),
+            "background_spend_by_feature": {r["feature"]: round(float(r["cost"]), 2) for r in background},
             "jobs_listed": [
                 {
                     "job_id": r["job_id"],

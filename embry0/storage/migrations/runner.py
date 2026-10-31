@@ -3821,6 +3821,41 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'spec 2026-10-28 and 2026-10-29: operator policy as YAML documents, one for the deployment and one layer per organization and repository that sets its own; data = the validated values of yaml_text.';
         """,
     ),
+    (
+        135,
+        "background_spend: what each background model call outside a job spent, by feature (#164)",
+        # The briefs and the Slop-O-Meter's judgments ask a model directly,
+        # outside any job, so neither jobs nor traces see what they spend. One
+        # row per call: the feature that made it, the model and the
+        # repository it was about, the tokens the provider reported and their
+        # price (price_run in embry0/agents/_tool_loop.py, as a turn of a
+        # chat-completions job is priced). The budget gate's daily and monthly
+        # rollup and /stats add it to what jobs spent, reading this month's
+        # rows as a range of idx_background_spend_at; /stats' lifetime total
+        # sums cost_usd from the same index alone (it INCLUDEs the column), an
+        # index-only scan that never reads the table's wider rows. A call on
+        # the operator's own server costs 0 and is recorded all the same, for
+        # its tokens. No retention, like the jobs' and traces' spend. call_id
+        # is the caller's id for the call, so a row stored again after a
+        # driver error that hid its commit is not counted twice; at is when
+        # the call was made, not when its row was stored.
+        """
+        CREATE TABLE IF NOT EXISTS background_spend (
+            call_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            feature            TEXT NOT NULL,
+            model              TEXT NOT NULL,
+            repo               TEXT,
+            input_tokens       INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+            output_tokens      INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+            cache_read_tokens  INTEGER NOT NULL DEFAULT 0 CHECK (cache_read_tokens >= 0),
+            cost_usd           DOUBLE PRECISION NOT NULL DEFAULT 0.0 CHECK (cost_usd >= 0)
+        );
+        CREATE INDEX IF NOT EXISTS idx_background_spend_at ON background_spend (at) INCLUDE (cost_usd);
+        COMMENT ON TABLE background_spend IS
+            '#164: one row per model call a background feature (proposal_brief, job_brief, slop_judge) made outside a job, priced as a job run is; counted by the budget caps and /stats.';
+        """,
+    ),
 ]
 
 

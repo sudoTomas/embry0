@@ -25,6 +25,12 @@ from typing import Any
 import httpx
 import structlog
 
+from embry0.services.background_models import (
+    BackgroundCallRefused,
+    BackgroundCalls,
+    Endpoint,
+    ModelLookup,
+)
 from embry0.services.lead_kinds import KINDS, ids
 from embry0.services.leads import LEAD_KINDS
 from embry0.services.proposals import Proposal
@@ -38,7 +44,8 @@ TEXT_MAX = 420
 RETRY_SECONDS = 30 * 60
 #: Part of every brief's input hash: a change to the prompt or the schema rewrites the briefs on the next ticks.
 PROMPT_VERSION = 2
-REQUEST_TIMEOUT_SECONDS = 90.0
+#: The key of ``background_models`` the briefs run on, and what their spend is recorded under.
+FEATURE = "proposal_brief"
 #: What a brief must never carry: a proposal id, which says nothing to a person.
 _ID = re.compile(rf"\b(?:{'|'.join(map(re.escape, ids(proposal=True)))}):[0-9a-z-]{{4,}}", re.IGNORECASE)
 _DIGITS = re.compile(r"\d+")
@@ -188,83 +195,18 @@ def _order(p: Proposal) -> tuple[int, float]:
     return rank, -p.created_at.timestamp()
 
 
-@dataclass(frozen=True)
-class Endpoint:
-    """Where a brief is written: an OpenAI-compatible API root, its key, the upstream model id."""
-
-    model: str
-    root: str
-    key: str
-    upstream_model: str
-    #: The custom provider is the operator's own vLLM-style server.
-    local: bool
-
-
-async def resolve_endpoint(model: str, resolver: Any) -> Endpoint | None:
-    """The chat-completions endpoint ``model`` runs on, or None when it cannot be called from here."""
-    from embry0.agents.providers import provider_for_model, upstream_model
-
-    provider = provider_for_model(model)
-    if provider is None or provider.runtime != "chat_completions" or resolver is None:
-        return None
-    try:
-        cred = await resolver.resolve_llm("", provider.name)
-    except Exception:  # noqa: BLE001 - no usable key: no briefs this tick
-        logger.info("proposal_brief_no_key", model=model, provider=provider.name, exc_info=True)
-        return None
-    root = str(cred.metadata.get("base_url") or provider.openai_base_url or "").rstrip("/")
-    if not root or not cred.secret:
-        return None
-    return Endpoint(
-        model=model,
-        root=root,
-        key=cred.secret,
-        upstream_model=upstream_model(provider, model),
-        local=provider.name == "custom",
-    )
-
-
-async def ask_json(
-    endpoint: Endpoint,
-    client: httpx.AsyncClient,
-    *,
-    system: str,
-    user: str,
-    schema: Mapping[str, Any],
-    name: str,
-    max_tokens: int = 600,
-) -> str:
-    """One short JSON answer from the model, as text; ``httpx.HTTPError`` when the call fails.
-
-    Shared by every brief (proposals here, jobs in ``job_briefs``).
-    """
-    body: dict[str, Any] = {
-        "model": endpoint.upstream_model,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        "temperature": 0.3,
-        "max_tokens": max_tokens,
-    }
-    if endpoint.local:
-        # A vLLM-style server: the answer's own schema, enforced while it decodes,
-        # and no thinking for a short task.
-        body["response_format"] = {"type": "json_schema", "json_schema": {"name": name, "schema": dict(schema)}}
-        body["chat_template_kwargs"] = {"enable_thinking": False}
-    resp = await client.post(
-        f"{endpoint.root}/chat/completions",
-        json=body,
-        headers={"Authorization": f"Bearer {endpoint.key}"},
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-    resp.raise_for_status()
-    choices = resp.json().get("choices") or []
-    content = (choices[0].get("message") or {}).get("content") if choices else None
-    return str(content or "")
-
-
-async def write_brief(p: Proposal, endpoint: Endpoint, client: httpx.AsyncClient) -> Brief:
-    """Ask the model for ``p``'s brief; ``ValueError`` when the answer is not one, ``httpx.HTTPError`` when the call fails."""
-    answer = await ask_json(
-        endpoint, client, system=SYSTEM_PROMPT, user=user_prompt(p), schema=BRIEF_SCHEMA, name="brief"
+async def write_brief(p: Proposal, endpoint: Endpoint, client: httpx.AsyncClient, calls: BackgroundCalls) -> Brief:
+    """Ask the model for ``p``'s brief; ``ValueError`` when the answer is not one, ``httpx.HTTPError`` when the
+    call fails, :class:`BackgroundCallRefused` when the budget caps refuse it."""
+    answer = await calls.ask(
+        FEATURE,
+        endpoint,
+        client,
+        repo=p.repo,
+        system=SYSTEM_PROMPT,
+        user=user_prompt(p),
+        schema=BRIEF_SCHEMA,
+        name="brief",
     )
     return parse_brief(answer)
 
@@ -272,18 +214,22 @@ async def write_brief(p: Proposal, endpoint: Endpoint, client: httpx.AsyncClient
 class ProposalBriefWriter:
     """Fills missing and stale briefs of the proposals still asked, a few a tick (spec 2026-10-25).
 
-    ``proposals()`` is the open feed (without owners), ``model()`` the model to
-    write with ('' for none), ``briefs`` the store. A failed proposal waits
-    ``RETRY_SECONDS`` before it is tried again.
+    ``proposals()`` is the open feed (without owners); ``models()``, read once
+    a tick, gives the model each proposal's repository writes with ('' for
+    none: ``background_models.proposal_brief``, else its default); ``briefs``
+    the store; ``calls`` makes each call with the repository's key, the
+    budget caps and the spend recorded (#164). A failed proposal waits
+    ``RETRY_SECONDS`` before it is tried again; one the caps refuse ends the
+    tick and is tried on the next.
     """
 
     def __init__(
         self,
         *,
         proposals: Callable[[], Awaitable[list[Proposal]]],
-        model: Callable[[], Awaitable[str]],
+        models: Callable[[], Awaitable[ModelLookup]],
         briefs: Any,
-        resolver: Any,
+        calls: BackgroundCalls,
         min_readiness: int,
         per_tick: int = 3,
         interval_seconds: float = 60.0,
@@ -291,9 +237,9 @@ class ProposalBriefWriter:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._proposals = proposals
-        self._model = model
+        self._models = models
         self._briefs = briefs
-        self._resolver = resolver
+        self._calls = calls
         self._min_readiness = min_readiness
         self._per_tick = max(1, per_tick)
         self._interval = interval_seconds
@@ -317,25 +263,36 @@ class ProposalBriefWriter:
 
     async def tick(self) -> list[str]:
         """One pass: the ids whose brief it wrote."""
-        model = (await self._model()).strip()
+        lookup = await self._models()
         proposals = await self._proposals()
         await self._briefs.prune({p.id for p in proposals})
-        if not model:
-            return []
-        todo = self.due(proposals, await self._briefs.all())[: self._per_tick]
-        if not todo:
-            return []
-        endpoint = await resolve_endpoint(model, self._resolver)
-        if endpoint is None:
-            logger.info("proposal_brief_model_unavailable", model=model)
-            return []
-        client = self._client or httpx.AsyncClient()
+        due = self.due(proposals, await self._briefs.all())
+        endpoints: dict[tuple[str, str], Endpoint | None] = {}
+        client: httpx.AsyncClient | None = None
         written: list[str] = []
+        asked = 0
         try:
-            for p in todo:
+            for p in due:
+                if asked >= self._per_tick:
+                    break
+                model = lookup(p.repo).strip()
+                if not model:
+                    continue
+                where = (model, p.repo.lower())
+                if where not in endpoints:
+                    endpoints[where] = await self._calls.endpoint(FEATURE, model, p.repo)
+                    if endpoints[where] is None:
+                        logger.info("proposal_brief_model_unavailable", model=model, repo=p.repo)
+                endpoint = endpoints[where]
+                if endpoint is None:
+                    continue
+                client = client or self._client or httpx.AsyncClient()
+                asked += 1
                 digest = input_hash(p)
                 try:
-                    brief = await write_brief(p, endpoint, client)
+                    brief = await write_brief(p, endpoint, client, self._calls)
+                except BackgroundCallRefused:
+                    break
                 except (ValueError, httpx.HTTPError, KeyError, TypeError) as exc:
                     self._retry_at[(p.id, digest)] = self._clock() + RETRY_SECONDS
                     logger.warning("proposal_brief_failed", proposal_id=p.id, model=model, error=str(exc)[:300])
@@ -344,7 +301,7 @@ class ProposalBriefWriter:
                 written.append(p.id)
                 logger.info("proposal_brief_written", proposal_id=p.id, model=model)
         finally:
-            if self._client is None:
+            if self._client is None and client is not None:
                 await client.aclose()
         return written
 

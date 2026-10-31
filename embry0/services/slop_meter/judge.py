@@ -1,7 +1,8 @@
 """Asking a model whether an outlier commit is slop (spec 2026-10-26, slop-o-meter).
 
 The few commits that add thousands of weighted lines at once are judged one by
-one through the shared brief-model call (local model first): slop, or not slop
+one, on ``background_models.slop_judge`` through the background call every
+brief makes (``embry0.services.background_models``): slop, or not slop
 with a reason (a code drop, a restructuring, a vendored import). A judgment is
 kept per commit and never asked again.
 """
@@ -13,8 +14,11 @@ from typing import Any
 
 import httpx
 
-from embry0.services.proposal_briefs import Endpoint, ask_json
+from embry0.services.background_models import BackgroundCalls, Endpoint
 from embry0.services.slop_meter.score import Outlier
+
+#: The key of ``background_models`` the judge runs on, and what its spend is recorded under.
+FEATURE = "slop_judge"
 
 SYSTEM_PROMPT = """\
 You judge one large commit of a software repository: did it add bulk code no
@@ -61,8 +65,19 @@ def parse_judgment(text: str) -> tuple[bool, str]:
     return data["slop"], str(data.get("reason") or "").strip()[:300]
 
 
-async def judge(repo: str, outlier: Outlier, endpoint: Endpoint, client: httpx.AsyncClient) -> tuple[bool, str]:
-    answer = await ask_json(
-        endpoint, client, system=SYSTEM_PROMPT, user=user_prompt(repo, outlier), schema=SCHEMA, name="judgment"
+async def judge(
+    repo: str, outlier: Outlier, endpoint: Endpoint, client: httpx.AsyncClient, calls: BackgroundCalls
+) -> tuple[bool, str]:
+    """``(slop, reason)``; ``ValueError`` for an answer that is not one, ``httpx.HTTPError`` for a failed call,
+    ``BackgroundCallRefused`` when the budget caps refuse it."""
+    answer = await calls.ask(
+        FEATURE,
+        endpoint,
+        client,
+        repo=repo,
+        system=SYSTEM_PROMPT,
+        user=user_prompt(repo, outlier),
+        schema=SCHEMA,
+        name="judgment",
     )
     return parse_judgment(answer)

@@ -613,9 +613,11 @@ class ProviderConfigUpdate(BaseModel):
     # is allowed too (local models), priced at $0.
     fallback_models: list[str] | None = None
     # Local models (docs/providers.md): how many agent runs the operator's own
-    # model server takes at once, and the custom/<model> the watcher's
-    # analyses run on first while one of its slots is free ("" turns that off).
+    # model server takes at once.
     local_max_runs: int | None = Field(default=None, ge=1, le=64)
+    # Moved to the settings document's background_models section (#164): kept
+    # only so a request that still sends it is refused with a 422 naming where
+    # it went, instead of being dropped.
     watcher_local_model: str | None = None
 
 

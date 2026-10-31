@@ -39,6 +39,10 @@ MANAGED_BY_KEY: Final = "managed_by"
 MANAGED_BY_FILE: Final = "file"
 #: The document's own top-level keys: everything else at the top is a section.
 DOCUMENT_KEYS: Final = frozenset({VERSION_KEY, MANAGED_BY_KEY})
+#: The validation context key of a write's section values as the document read them before the write (its
+#: stored values, over what a layer inherits): a check of the running deployment leaves a value equal to its
+#: stored one alone, since the write does not set it (:func:`validate_values`).
+STORED: Final = "stored"
 
 _NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 #: Words YAML 1.1 reads as true, false or null: a key spelled so is not text.
@@ -65,7 +69,9 @@ def _failed(loc: tuple[str | int, ...], exc: BaseException) -> dict[str, Any]:
     return {"loc": loc, "type": "check_failed", "msg": f"The check of this value failed ({type(exc).__name__})"}
 
 
-def validate_values[M: BaseModel](model: type[M], raw: Mapping[str, Any]) -> M:
+def validate_values[M: BaseModel](
+    model: type[M], raw: Mapping[str, Any], *, context: Mapping[str, Any] | None = None
+) -> M:
     """``raw`` as ``model``, validated as stored values are read; :class:`SectionRefused` when it is not one.
 
     Through JSON, strictly: the same rules for a value parsed from YAML,
@@ -73,20 +79,29 @@ def validate_values[M: BaseModel](model: type[M], raw: Mapping[str, Any]) -> M:
     tuple and a string for an enum member. Any exception a check raises is a
     refusal, never an escape: a validator that raises ``KeyError`` (as
     ``zoneinfo`` does for an unknown zone) is pinned to the key it checked.
+
+    ``context`` is pydantic's validation context, for a check that needs the
+    running deployment (what its provider catalogue offers). The settings
+    store passes it on every write it stores; a stored value read back, the
+    environment import and the offline check pass none, so what such a check
+    reads moving never turns a stored value into its default. Under
+    :data:`STORED` it holds the section's values before the write, so such a
+    check can leave a value the write does not change alone: a value stored
+    before its provider was turned off never blocks a change to another key.
     """
     try:
         text = json.dumps(dict(raw), allow_nan=False)
     except (TypeError, ValueError, RecursionError) as exc:
         raise SectionRefused([_failed((), exc)]) from None
     try:
-        return model.model_validate_json(text, strict=True)
+        return model.model_validate_json(text, strict=True, context=context)
     except ValidationError as exc:
         raise SectionRefused([dict(error) for error in exc.errors()]) from None
     except Exception as exc:  # noqa: BLE001 - any check that raised is a refusal
         errors: list[dict[str, Any]] = []
         for key, value in raw.items():
             try:
-                model.model_validate_json(json.dumps({key: value}, allow_nan=False), strict=True)
+                model.model_validate_json(json.dumps({key: value}, allow_nan=False), strict=True, context=context)
             except ValidationError as inner:
                 errors.extend(dict(error) for error in inner.errors())
             except Exception as inner:  # noqa: BLE001 - the key whose check raised
@@ -211,9 +226,13 @@ class Section[M: SectionModel]:
         """The section with nothing written: every field at its default."""
         return self.model()
 
-    def validate(self, raw: Mapping[str, Any]) -> M:
-        """``raw`` as this section's model; :class:`SectionRefused` naming each refused key."""
-        return validate_values(self.model, raw)
+    def validate(self, raw: Mapping[str, Any], *, context: Mapping[str, Any] | None = None) -> M:
+        """``raw`` as this section's model; :class:`SectionRefused` naming each refused key.
+
+        ``context`` is what a write is checked against beyond the values
+        themselves (:func:`validate_values`); None when a stored value is read.
+        """
+        return validate_values(self.model, raw, context=context)
 
     def validate_alone(self, raw: Mapping[str, Any]) -> dict[str, Any]:
         """Each key of ``raw`` on its own (:func:`field_alone`), as the values a reader of it would get.

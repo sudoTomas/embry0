@@ -105,3 +105,52 @@ async def test_the_sent_payload_is_stored_as_a_json_object(db_with_migrations) -
     assert row["kind"] == "object", f"payload stored as {row['kind']}"
     assert row["completed"] == "2"
     assert row["since"].startswith("2026-09-21"), "a datetime in the payload must still serialize"
+
+
+async def test_collect_reports_what_background_calls_spent_in_the_window(db_with_migrations) -> None:
+    """The briefs and the Slop-O-Meter's judge spend outside any job, in ``background_spend``: the day's
+    digest reports what they spent that day, by feature, and nothing of the day before or after (#164)."""
+    from embry0.storage.repositories import digest
+
+    db = db_with_migrations
+    since, until = NOW - timedelta(days=1), NOW
+    for feature, cost, at in [
+        ("job_brief", 0.25, since),  # the window's first instant is in it
+        ("job_brief", 0.5, NOW - timedelta(hours=3)),
+        ("slop_judge", 1.0, NOW - timedelta(hours=2)),
+        ("proposal_brief", 9.0, since - timedelta(seconds=1)),  # the day before
+        ("proposal_brief", 9.0, until),  # the next day's first instant
+    ]:
+        await db.execute(
+            "INSERT INTO background_spend (feature, model, cost_usd, at) VALUES ($1, 'custom/m', $2, $3)",
+            feature,
+            cost,
+            at,
+        )
+    await _job(db, "j-done", status="completed", finished=NOW - timedelta(hours=3), cost=2.5)
+
+    out = await DigestRepository(db).collect(since=since, until=until, watcher_actor=dispatch_actors.WATCHER)
+    assert out.get("background_spend_by_feature") == {"job_brief": 0.75, "slop_judge": 1.0}, (
+        f"the digest leaves out what background calls spent that day, or counts another day's: {out}"
+    )
+    assert out["background_spend_usd"] == 1.75
+    assert out["job_spend_usd"] == 2.5, "a background call was counted as a job's spend"
+
+    sql = getattr(digest, "_BACKGROUND_SPEND_SQL", "")
+    assert sql, "the digest reads background_spend"
+    async with db.transaction() as conn:
+        await conn.execute("SET LOCAL enable_seqscan = off")
+        plan = "\n".join(r[0] for r in await conn.fetch("EXPLAIN " + sql, since, until))
+    ranges = [line for line in plan.splitlines() if "Index Cond" in line and "at >=" in line and "at <" in line]
+    assert "idx_background_spend_at" in plan and ranges, (
+        f"the day's read is a range of the index, not a pass over the whole table: {plan}"
+    )
+
+
+async def test_collect_reports_no_background_spend_on_a_quiet_day(db_with_migrations) -> None:
+    out = await DigestRepository(db_with_migrations).collect(
+        since=NOW - timedelta(days=1), until=NOW, watcher_actor=dispatch_actors.WATCHER
+    )
+    assert out.get("background_spend_usd") == 0 and out.get("background_spend_by_feature") == {}, (
+        f"a day with no background call reports none: {out}"
+    )

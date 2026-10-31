@@ -637,13 +637,18 @@ async def _bring_up_qa_minio(
     logger.info("qa_minio_ready", retention_days=expire_days)
 
 
-def _watcher_local_first_model(app: FastAPI) -> Any:
-    """``() -> model``: the watcher's local-first model from provider_config, '' for none."""
+def _watcher_local_first_model(app: FastAPI, repo: str) -> Any:
+    """``() -> model``: the model the stack's analyses prefer, '' for none (#164).
+
+    ``background_models.watcher``, else its default, as the stack's
+    repository reads them, from the settings document every tick.
+    """
+    from embry0.services.background_models import background_model
+
+    models = background_model(app.state.settings, "watcher")
 
     async def read() -> str:
-        from embry0.storage.repositories.provider_config import ProviderConfigRepository
-
-        return str((await ProviderConfigRepository(app.state.db).get()).get("watcher_local_model") or "")
+        return (await models())(repo or None)
 
     return read
 
@@ -1093,6 +1098,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # never stops this one: every section reads as its defaults meanwhile,
     # except the budget. Its policy reads each key not imported as the
     # release before did and tries the import again while this one runs.
+    from embry0.services.background_models import import_provider_settings_once
     from embry0.settings.bootstrap import import_env_once, log_ignored_env
     from embry0.settings.earlier import EARLIER_SOURCES
     from embry0.settings.org_import import import_org_settings_once
@@ -1115,6 +1121,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     except Exception:
         logger.critical("settings_org_import_failed", exc_info=True)
+    try:
+        # #164: the provider settings' watcher_local_model and the retired
+        # fallback chain, once, after the variables, so no model changes.
+        await import_provider_settings_once(app.state.settings, config)
+    except Exception:
+        logger.critical("background_models_import_failed", exc_info=True)
     try:
         await app.state.settings.snapshot()
         await log_ignored_env(app.state.settings, config)
@@ -2111,7 +2123,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     def _watcher_for(stack: WatcherStack) -> WatcherService:
         return WatcherService(
             auto_acceptor=auto_acceptor,
-            local_first_model=_watcher_local_first_model(app),
+            local_first_model=_watcher_local_first_model(app, stack.repo),
             signature_masks=_watcher_signature_masks(app, stack.repo),
             cases_repo=app.state.healing_cases_repo,
             case_recorder=app.state.case_recorder,
@@ -2270,10 +2282,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         from embry0.api.v1.organizations import app_request as _audit_request
         from embry0.api.v1.organizations import org_forge_client
+        from embry0.services.background_models import background_model as _audit_background_model
         from embry0.services.context_audit import ACTOR as _CONTEXT_AUDIT_ACTOR
         from embry0.services.context_audit import ContextAuditLoop, start_context_audit_job
         from embry0.services.context_audit import RepoContext as _RepoContext
         from embry0.services.organizations import Organization as _AuditedOrganization
+
+        _context_audit_models = _audit_background_model(app.state.settings, "context_audit")
 
         async def _context_audit_client(org: _AuditedOrganization) -> Any:
             return await org_forge_client(_audit_request(app), org)
@@ -2297,8 +2312,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 db=db,
                 audit_log_path=config.audit_log_path,
                 run_with=run_with,
-                # Scheduled audits prefer the operator's local model while it has a free slot.
-                local_first_model=config.context_audit_local_model or None,
+                # Scheduled audits prefer background_models.context_audit (else its default) as the
+                # repository reads it, from the settings document at each start (#164).
+                local_first_model=(await _context_audit_models())(context.repo) or None,
             )
 
         app.state.context_audit = ContextAuditLoop(
@@ -2527,21 +2543,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(account_wait_task)
     account_wait_task.add_done_callback(app.state.background_tasks.discard)
 
+    # Background models (#164): the briefs and the Slop-O-Meter's judgments
+    # each read their own key of the settings document's background_models
+    # section every tick, and call it outside any job through one
+    # BackgroundCalls: the repository's key, the budget caps the gate holds
+    # jobs to, and the spend recorded where the caps and /stats count it.
+    from embry0.orchestration.budget_gate import build_budget_gate
+    from embry0.services.background_models import BackgroundCalls, background_model
+    from embry0.storage.repositories.background_spend import BackgroundSpendRepository
+
+    app.state.background_calls = BackgroundCalls(
+        resolver=getattr(app.state, "credential_resolver", None),
+        spend=BackgroundSpendRepository(db),
+        # The gate the executor's dispatches ask, built by the one factory both use, over the
+        # application's budget policy: the operator's caps, never the section's code defaults.
+        gate=build_budget_gate(app.state.budget_policy),
+    )
+
     # Proposal briefs (spec 2026-10-25): writes each owner proposal in plain
-    # words on the brief model, a few a minute; the feed only reads them.
+    # words on its model, a few a minute; the feed only reads them.
     from embry0.api.v1.proposals import open_proposals
     from embry0.services.proposal_briefs import ProposalBriefWriter
 
-    local_first = _watcher_local_first_model(app)
-
-    async def brief_model() -> str:
-        return str(getattr(config, "proposal_brief_model", "") or "").strip() or await local_first()
-
     app.state.proposal_brief_writer = ProposalBriefWriter(
         proposals=lambda: open_proposals(app.state),
-        model=brief_model,
+        models=background_model(app.state.settings, "proposal_brief"),
         briefs=app.state.proposal_briefs_repo,
-        resolver=getattr(app.state, "credential_resolver", None),
+        calls=app.state.background_calls,
         min_readiness=config.proposals_ticket_min_readiness,
         per_tick=config.proposal_briefs_per_tick,
         interval_seconds=config.proposal_brief_interval_seconds,
@@ -2553,13 +2581,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Job briefs (spec 2026-10-26): live jobs first, then the last week's.
     from embry0.services.job_briefs import JobBriefWriter
 
-    async def job_brief_model() -> str:
-        return str(getattr(config, "job_brief_model", "") or "").strip() or await brief_model()
-
     app.state.job_brief_writer = JobBriefWriter(
         store=app.state.job_briefs_repo,
-        model=job_brief_model,
-        resolver=getattr(app.state, "credential_resolver", None),
+        models=background_model(app.state.settings, "job_brief"),
+        calls=app.state.background_calls,
         per_tick=config.job_briefs_per_tick,
         interval_seconds=config.job_brief_interval_seconds,
     )
@@ -2569,8 +2594,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # The Slop-O-Meter (spec 2026-10-26): each registered repository's history,
     # read a bounded batch a tick from a bare mirror fetched with its
-    # organization's credential, scored daily. Outliers are judged on the job
-    # brief model.
+    # organization's credential, scored daily. Outliers are judged on
+    # background_models.slop_judge (#164).
     from pathlib import Path as _Path
 
     from fastapi import HTTPException
@@ -2627,25 +2652,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         mirror=GitMirror(_Path(config.slop_meter_data_path), timeout=config.slop_meter_git_timeout_seconds),
         token_for=_slop_meter_credential,
         client_for=_slop_meter_client,
-        model=job_brief_model,
+        models=background_model(app.state.settings, "slop_judge"),
         bots=_slop_meter_bots,
-        resolver=getattr(app.state, "credential_resolver", None),
+        calls=app.state.background_calls,
         settings=slop_meter_settings(config),
     )
     slop_meter_task = asyncio.create_task(app.state.slop_meter.start())
     app.state.background_tasks.add(slop_meter_task)
     slop_meter_task.add_done_callback(app.state.background_tasks.discard)
 
-    # Scout (spec 2026-10-27): read-only jobs pinned to the operator's local
-    # model, rotating through the world map's repositories and their areas;
-    # each finished job's cracks and weeds become leads. Off until SCOUT_MODEL
-    # names a model. Its policy is the settings document's `scout` section,
-    # read every tick, so a change to it needs no restart.
+    # Scout (spec 2026-10-27): read-only jobs pinned to the scout's model,
+    # rotating through the world map's repositories and their areas; each
+    # finished job's cracks and weeds become leads. Its model is the settings
+    # document's background_models.scout (#164) and its policy the `scout`
+    # section, both read every tick, so a change to either needs no restart;
+    # a repository with no model is not scouted.
     from embry0.audit.helpers import emit_audit as _scout_audit
     from embry0.orchestration import dispatch_actors as _scout_actors
     from embry0.services.areas import AREAS as _SCOUT_AREAS
     from embry0.services.areas import read_contents as _scout_read_contents
-    from embry0.services.scout import ScoutLoop, scout_model, warn_retired_tick
+    from embry0.services.scout import ScoutLoop, warn_retired_tick
     from embry0.settings.sections.scout import SCOUT as _SCOUT
     from embry0.settings.store import section_reader as _section_reader
     from embry0.storage.repositories.scout import ScoutRunsRepository
@@ -2686,7 +2712,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     warn_retired_tick(config)
     app.state.scout = ScoutLoop(
-        model=scout_model(config),
+        models=background_model(app.state.settings, "scout"),
         settings=_section_reader(app.state.settings, _SCOUT),
         runs=ScoutRunsRepository(db),
         jobs=app.state.jobs_repo,

@@ -21,6 +21,8 @@ import type { CatalogProvider, ProviderCatalogStatus, ProviderProbeResult } from
 import { toastApiError } from "@/api/errorToast";
 import { ProviderKeyDialog } from "@/components/providers/ProviderKeyDialog";
 import { ProviderSpend } from "@/components/providers/ProviderSpend";
+import { BackgroundModelsCard } from "@/components/providers/BackgroundModelsCard";
+import { useBackgroundModelIds } from "@/hooks/useBackgroundModels";
 import { isLlmProvider } from "@/lib/llmProviders";
 
 // RAV-1297: LLM Providers — the complete catalog (Anthropic first-class),
@@ -480,30 +482,25 @@ function FallbackOrderCard({
 
 /**
  * Local models: the operator's own model server (the custom provider). It is
- * shared hardware, so agents run on it a few at a time; the watcher's log
- * analyses can run on it first while a slot is free.
+ * shared hardware, so agents run on it a few at a time. Which background work
+ * runs on it is the background models card's (#164).
  */
 function LocalModelCard({
   savedRuns,
-  savedModel,
   isAdmin,
   pending,
   onSave,
 }: {
   savedRuns: number;
-  savedModel: string;
   isAdmin: boolean;
   pending: boolean;
-  onSave: (runs: number, model: string, done: () => void) => void;
+  onSave: (runs: number, done: () => void) => void;
 }) {
   const [runs, setRuns] = useState<string | null>(null);
-  const [model, setModel] = useState<string | null>(null);
   const runsValue = runs ?? String(savedRuns);
-  const modelValue = model ?? savedModel;
   const parsedRuns = Number(runsValue);
   const runsValid = Number.isInteger(parsedRuns) && parsedRuns >= 1 && parsedRuns <= 64;
-  const modelValid = modelValue.trim() === "" || /^custom\/.+/.test(modelValue.trim());
-  const changed = parsedRuns !== savedRuns || modelValue.trim() !== savedModel;
+  const changed = parsedRuns !== savedRuns;
 
   return (
     <Card data-testid="local-model">
@@ -512,21 +509,16 @@ function LocalModelCard({
           <CardTitle className="text-lg">Local model</CardTitle>
           <Button
             size="sm"
-            onClick={() =>
-              onSave(parsedRuns, modelValue.trim(), () => {
-                setRuns(null);
-                setModel(null);
-              })
-            }
-            disabled={!isAdmin || !changed || !runsValid || !modelValid || pending}
+            onClick={() => onSave(parsedRuns, () => setRuns(null))}
+            disabled={!isAdmin || !changed || !runsValid || pending}
           >
             {pending ? "Saving..." : "Save"}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
           Your own model server, reached as custom/&lt;model&gt;. Agents run on it at most this many at a time; one
-          that has to use it waits for a free slot. Log analyses can run on it first: with a slot free they use
-          it, otherwise they run on their own model at once.
+          that has to use it waits for a free slot. Log analyses and context audits that prefer it run on their own
+          model at once when no slot is free.
         </p>
       </CardHeader>
       <CardContent>
@@ -544,20 +536,8 @@ function LocalModelCard({
               onChange={(e) => setRuns(e.target.value)}
             />
           </div>
-          <div>
-            <Label htmlFor="watcher_local_model">Log analyses run first on</Label>
-            <Input
-              id="watcher_local_model"
-              className="w-72 font-mono"
-              placeholder="custom/<model> (empty: off)"
-              value={modelValue}
-              disabled={!isAdmin}
-              onChange={(e) => setModel(e.target.value)}
-            />
-          </div>
         </div>
         {!runsValid && <p className="mt-2 text-xs text-destructive">Runs at once is a whole number from 1 to 64.</p>}
-        {!modelValid && <p className="mt-2 text-xs text-destructive">The model starts with custom/.</p>}
       </CardContent>
     </Card>
   );
@@ -590,6 +570,7 @@ export function ProvidersPage() {
   }, [catalog, tierModels]);
 
   const savedDefaultModel = providerConfig?.default_model ?? "";
+  const backgroundModels = useBackgroundModelIds();
   const fallbackModels = useMemo(() => providerConfig?.fallback_models ?? [], [providerConfig]);
 
   // Fallback options: enabled catalog models that call tools — a fallback
@@ -598,10 +579,11 @@ export function ProvidersPage() {
     const fromCatalog = (catalog?.providers ?? []).flatMap((p) =>
       p.models.filter((m) => m.enabled && m.tool_calling !== false).map((m) => m.model),
     );
-    // The local model lists no catalogue; the one set below can end the order.
-    const local = providerConfig?.watcher_local_model;
-    return local && !fromCatalog.includes(local) ? [...fromCatalog, local] : fromCatalog;
-  }, [catalog, providerConfig]);
+    // A model of the operator's own server lists no catalogue; the background models name it.
+    const local = backgroundModels.filter((m) => m.startsWith("custom/") && !fromCatalog.includes(m));
+    return [...fromCatalog, ...new Set(local)];
+  }, [catalog, backgroundModels]);
+
 
   // Default-model options: enabled catalog models only — the API refuses an
   // id outside the catalog, and one that is disabled. The saved value is
@@ -756,15 +738,16 @@ export function ProvidersPage() {
         />
       )}
 
+      <BackgroundModelsCard localModels={fallbackModels.filter((m) => m.startsWith("custom/"))} />
+
       {providerConfig?.local_max_runs !== undefined && (
         <LocalModelCard
           savedRuns={providerConfig.local_max_runs}
-          savedModel={providerConfig.watcher_local_model ?? ""}
           isAdmin={isAdmin}
           pending={updateProvider.isPending}
-          onSave={(runs, model, done) =>
+          onSave={(runs, done) =>
             updateProvider.mutate(
-              { local_max_runs: runs, watcher_local_model: model },
+              { local_max_runs: runs },
               {
                 onSuccess: () => {
                   done();

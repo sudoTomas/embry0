@@ -134,8 +134,12 @@ def _loop(store: SettingsStore, db: DatabasePool, jobs: FakeJobs, clock: list[da
         return None
 
     leads = MagicMock(upsert=AsyncMock())
+
+    async def models() -> Any:
+        return lambda repo: LOCAL
+
     return ScoutLoop(
-        model=LOCAL,
+        models=models,
         settings=section_reader(store, _scout()),
         runs=ScoutRunsRepository(db),
         jobs=jobs,
@@ -254,6 +258,9 @@ async def test_the_first_boot_imports_a_non_default_scout_value_once_and_a_secon
         "the values that differ from the defaults are imported as the scout read them: garden,bogus ran garden; "
         f"SCOUT_MAX_IN_FLIGHT=2 is the default, and SCOUT_MODEL is no key of the section: {first.imported}"
     )
+    assert first.imported.get("background_models") == {"scout": LOCAL}, (
+        f"SCOUT_MODEL is imported into the map of background models (#164): {first.imported}"
+    )
     refused = [(e["variable"], e["key"]) for e in logs if e["event"] == "settings_bootstrap_value_refused"]
     assert refused == [("SCOUT_MAX_LEADS_PER_JOB", "scout.max_leads_per_job")], (
         "a value past the section's bound is reported by name and not imported"
@@ -273,9 +280,13 @@ async def test_the_first_boot_imports_a_non_default_scout_value_once_and_a_secon
     assert (await again_store.document())["data"] == {"scout": {"revisit_hours": 6.0}}, "the person's value stays"
     assert len(await again_store.revisions()) == 2
     ignored = {e["variable"] for e in logs if e["event"] == "settings_env_ignored"}
-    assert ignored == {"SCOUT_TEMPLATES", "SCOUT_MAX_IN_FLIGHT", "SCOUT_REVISIT_HOURS", "SCOUT_MAX_LEADS_PER_JOB"}, (
-        "each policy variable still set is logged as ignored; SCOUT_MODEL is still read"
-    )
+    assert ignored == {
+        "SCOUT_TEMPLATES",
+        "SCOUT_MAX_IN_FLIGHT",
+        "SCOUT_REVISIT_HOURS",
+        "SCOUT_MAX_LEADS_PER_JOB",
+        "SCOUT_MODEL",
+    }, "each policy variable still set is logged as ignored, SCOUT_MODEL too since #164"
 
 
 @pytest.mark.usefixtures("stub_container_runtime")

@@ -24,6 +24,7 @@ import httpx
 import structlog
 
 from embry0.services.areas import AREAS_PATH, area_of_path, parse_areas
+from embry0.services.background_models import BackgroundCallRefused, BackgroundCalls, ModelLookup
 from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader
 from embry0.services.slop_meter.history import (
     HISTORY_VERSION,
@@ -34,6 +35,7 @@ from embry0.services.slop_meter.history import (
     parse_log,
     with_bots,
 )
+from embry0.services.slop_meter.judge import FEATURE
 from embry0.services.slop_meter.score import Event, Meter, meters, outliers
 from embry0.services.slop_meter.weights import CONFIG_FILES, Weigher, ignore_patterns, outlier_files
 
@@ -181,8 +183,11 @@ class SlopMeterLoop:
     ``repos()`` lists the repositories in scope (:func:`scope`),
     ``token_for(repo)`` the forge, credential and GitLab URL to fetch with
     (None when there is none), ``client_for(repo)`` the GitHub client to read
-    events with (None for a GitLab repository), ``model()`` the brief model
-    ('' for none).
+    events with (None for a GitLab repository), ``models()``, read once a
+    tick, the model each repository's outliers are judged on ('' for none:
+    ``background_models.slop_judge``, else its default), and ``calls`` makes
+    each judgment's call with the repository's key, the budget caps and the
+    spend recorded (#164).
     """
 
     def __init__(
@@ -193,9 +198,9 @@ class SlopMeterLoop:
         mirror: Any,
         token_for: TokenFor,
         client_for: ClientFor,
-        model: Callable[[], Awaitable[str]],
+        models: Callable[[], Awaitable[ModelLookup]],
         bots: Callable[[str], Awaitable[Iterable[str]]],
-        resolver: Any,
+        calls: BackgroundCalls,
         settings: SlopMeterSettings,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         http: httpx.AsyncClient | None = None,
@@ -205,10 +210,12 @@ class SlopMeterLoop:
         self._mirror = mirror
         self._token_for = token_for
         self._client_for = client_for
-        self._model = model
+        self._models = models
+        #: The tick's ``repo -> model``, read at its start.
+        self._lookup: ModelLookup | None = None
         #: A repository's own bots and embry0's commit identities for it (#184).
         self._bots = bots
-        self._resolver = resolver
+        self._calls = calls
         self._settings = settings
         self._clock = clock
         self._http = http
@@ -225,6 +232,7 @@ class SlopMeterLoop:
         names = list(await self._repos())
         if not names:
             return False
+        self._lookup = await self._models()
         turn = self._turn % len(names)
         self._turn += 1
         order = names[turn:] + names[:turn]
@@ -394,10 +402,9 @@ class SlopMeterLoop:
         pending = [o for o in outliers(inputs.commits, weigh, inputs.judgments) if o.slop is None]
         if not pending:
             return
-        model = await self._model()
-        from embry0.services.proposal_briefs import resolve_endpoint
-
-        endpoint = await resolve_endpoint(model, self._resolver) if model else None
+        lookup = self._lookup if self._lookup is not None else await self._models()
+        model = lookup(repo).strip()
+        endpoint = await self._calls.endpoint(FEATURE, model, repo) if model else None
         if endpoint is None:
             return
         from embry0.services.slop_meter.judge import judge
@@ -406,7 +413,9 @@ class SlopMeterLoop:
         try:
             for outlier in pending[: self._settings.judgments_per_tick]:
                 try:
-                    slop, reason = await judge(repo, outlier, endpoint, client)
+                    slop, reason = await judge(repo, outlier, endpoint, client, self._calls)
+                except BackgroundCallRefused:
+                    break
                 except (httpx.HTTPError, ValueError) as exc:
                     logger.info("slop_meter_judgment_failed", repo=repo, sha=outlier.commit.sha, error=str(exc)[:200])
                     continue

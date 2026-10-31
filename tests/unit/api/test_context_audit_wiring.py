@@ -80,8 +80,17 @@ def test_every_scheduled_job_gets_the_hard_budget_and_the_job_path() -> None:
     assert passed.get("jobs") == "app.state.jobs_repo"
     assert "issue_executor" in passed.get("executor", ""), "a job row nobody runs sits in pending forever"
     assert passed.get("db") == "db", "the job_created audit row goes to the database"
-    assert passed.get("local_first_model") == "config.context_audit_local_model or None", (
-        "scheduled audits must prefer CONTEXT_AUDIT_LOCAL_MODEL, and an empty setting means none"
+    assert passed.get("local_first_model") == "(await _context_audit_models())(context.repo) or None", (
+        "scheduled audits prefer background_models.context_audit as the repository reads it, at each start "
+        "(#164), and no model means none"
+    )
+    reader = [
+        ast.unparse(n.value)
+        for n in ast.walk(_tree())
+        if isinstance(n, ast.Assign) and [ast.unparse(t) for t in n.targets] == ["_context_audit_models"]
+    ]
+    assert reader == ["_audit_background_model(app.state.settings, 'context_audit')"], (
+        "the audits' model is read from the settings document's background_models section, not from a variable"
     )
 
 

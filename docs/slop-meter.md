@@ -14,7 +14,7 @@ It is a clean-room reimplementation of [Slop-O-Meter](https://github.com/slop-o-
 | below 0.8 | Sloppy Joe |
 | 0.8 and above | Just The Slop |
 
-A score is **provisional** while some of its largest commits (the outliers) are not judged yet. A model judges a few a tick, on `JOB_BRIEF_MODEL`'s chain ([configuration.md](configuration.md)); with no model, they stay unjudged and count as not slop.
+A score is **provisional** while some of its largest commits (the outliers) are not judged yet. A model judges a few a tick, on `background_models.slop_judge` of the settings document, else its default ([background models](providers.md#background-models)); with no model, they stay unjudged and count as not slop. A judgment on a hosted model is counted against the budget caps, and refused past them.
 
 ## Which repositories
 

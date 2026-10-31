@@ -178,7 +178,6 @@ _TIERS = ("model_heavy", "model_medium", "model_light", "default_model")
         {"local_max_runs": 2},
         {"fallback_models": ["grok-4.7"]},
         {"disabled_models": ["claude-haiku-4-5"]},
-        {"watcher_local_model": "custom/local"},
     ],
     ids=lambda fields: next(iter(fields)),
 )

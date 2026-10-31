@@ -148,12 +148,19 @@ curl -X PUT http://localhost:8200/api/v1/config/context \
   -d '{"system_context": "Use TypeScript strict mode."}'
 
 # Model providers (admin): the fallback order, and the local model server's
-# run cap and the watcher's local-first model (docs/providers.md#local-models)
+# run cap (docs/providers.md#local-models)
 curl http://localhost:8200/api/v1/config/provider
 curl -X PUT http://localhost:8200/api/v1/config/provider \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
-  -d '{"fallback_models": ["grok-4.7", "custom/my-model"], "local_max_runs": 1, "watcher_local_model": "custom/my-model"}'
+  -d '{"fallback_models": ["grok-4.7", "custom/my-model"], "local_max_runs": 1}'
+
+# The model background features run on (admin): the settings document's
+# background_models section, one key changed (docs/providers.md#background-models)
+curl -X PATCH http://localhost:8200/api/v1/config/settings/background_models \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"default": "custom/my-model", "scout": false}'
 
 # Sandbox profiles
 curl http://localhost:8200/api/v1/sandbox-profiles
@@ -169,7 +176,7 @@ curl -X POST http://localhost:8200/api/v1/config/providers/openrouter/catalog/re
 ```
 
 `GET /api/v1/config/models` lists every model a provider offers with its `enabled`, `tool_calling` and `pricing_usd_per_mtok`. OpenRouter's entry lists its [live model list](providers.md#openrouters-live-model-list), each model with its `name`, `vendor` and `context_length` too, and carries `catalog`: where the list comes from (`source`: `live` or `static`), when it was read, what it left out by reason, and the last failed read.
-`PUT /config/provider` takes any subset of its fields. `local_max_runs` is 1 to 64 (422 outside). `watcher_local_model` is `""` (off) or a `custom/<model>` with the custom provider enabled; anything else is 422.
+`PUT /config/provider` takes any subset of its fields. `local_max_runs` is 1 to 64 (422 outside). `watcher_local_model` moved to the settings document's `background_models` section (#164): a request that sends it is refused with a 422 naming where it went, and nothing of it is stored; `GET` no longer answers it.
 
 **Deprecated: `GET` and `PUT /api/v1/config/budget`.** The fleet budget is the settings document's `budget` section ([configuration.md](configuration.md#settings-document)); its five keys keep the names this route used. Until 0.2.0 the route stays, marked `deprecated` in the OpenAPI schema: `GET` answers the section's values of `max_budget_per_job_usd`, `daily_cap_usd`, `monthly_cap_usd`, `rate_limit_per_author_per_hour` and `overrun_mode`, and `PUT` sets the keys it is given as `PATCH /api/v1/config/settings/budget` does, with every rule of that route: the admin tier (it took any write key before), a key with no repository allowlist, a revision with source `person` and reason `PUT /config/budget`, and a `settings.updated` audit row (it wrote `budget_config_updated`, a name that older rows keep and that a filter by `settings.updated` finds). Its own checks stay too: a cap above 0 and a rate limit of 1 or more, so this route still cannot lift one; the section takes `0` for no limit. 0.2.0 removes it, so move a client to `/api/v1/config/settings` now.
 

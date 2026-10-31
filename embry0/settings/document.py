@@ -31,6 +31,7 @@ from embry0.settings.registry import (
     MANAGED_BY_FILE,
     MANAGED_BY_KEY,
     SCHEMA_VERSION,
+    STORED,
     VERSION_KEY,
     Catalog,
     Section,
@@ -312,6 +313,7 @@ def check(
     stored_text: str = "",
     layer: str = "deployment",
     inherited: Mapping[str, Mapping[str, Any]] | None = None,
+    context: Mapping[str, Any] | None = None,
 ) -> Checked:
     """``raw`` as it would be stored, or :class:`DocumentInvalid` listing every problem.
 
@@ -334,6 +336,15 @@ def check(
     layer, is a check made offline, where what the layer inherits is not
     known: each key is checked on its own (``Section.validate_alone``), and
     how keys combine is left to the check made where the documents are.
+
+    ``context`` is what the orchestrator checks a write against beyond the
+    values themselves, such as the provider catalogue
+    (:func:`embry0.settings.registry.validate_values`): the settings store
+    passes it on every write it stores, and each section gets it with its
+    values before the write under ``STORED``, so a value the write leaves as
+    it was is not checked against the deployment again. Offline, and for a
+    layer's file checked without what it inherits, there is none, and those
+    checks are left to the write.
     """
     problems: list[Problem] = []
     data: dict[str, Any] = {}
@@ -450,8 +461,11 @@ def check(
                 data[key] = clean
             continue
         base = mapping((inherited or {}).get(key)) if layer != "deployment" else {}
+        before = {**base, **{k: v for k, v in kept_section.items() if k in section.model.model_fields}}
         try:
-            model = section.validate({**base, **known})
+            model = section.validate(
+                {**base, **known}, context=None if context is None else {**context, STORED: before}
+            )
         except SectionRefused as exc:
             for error in exc.errors:
                 loc = tuple(error.get("loc") or ())
@@ -524,6 +538,7 @@ def patch_section(
     stored_text: str = "",
     layer: str = "deployment",
     inherited: Mapping[str, Mapping[str, Any]] | None = None,
+    context: Mapping[str, Any] | None = None,
 ) -> tuple[str, Checked]:
     """The stored document with ``keys`` of section ``name`` set, ``None`` taking a key out: its new text
     and what :func:`check` makes of it.
@@ -539,7 +554,8 @@ def patch_section(
     may not set, and every problem :func:`check` finds. A key taken out that
     is not written changes nothing, and nor does a value the section reads as
     the one stored, such as ``12`` for a number stored as ``12.0``: its text
-    is left as written. No problem echoes a value.
+    is left as written. No problem echoes a value. ``context`` is
+    :func:`check`'s.
     """
     as_text = _stored_text_values(stored_text)
     problems = _patch_problems(catalog, name, keys, held=(as_text, stored), layer=layer)
@@ -557,7 +573,9 @@ def patch_section(
     if section or name in raw:
         raw[name] = section
     try:
-        proposed = check(catalog, raw, stored=stored, stored_text=stored_text, layer=layer, inherited=inherited)
+        proposed = check(
+            catalog, raw, stored=stored, stored_text=stored_text, layer=layer, inherited=inherited, context=context
+        )
     except DocumentInvalid as exc:
         problems.extend(exc.problems)
     if problems:
@@ -571,7 +589,15 @@ def patch_section(
         if value is None or not (key in written and key in kept and key in now and same(now[key], kept[key]))
     }
     text = with_keys(stored_text, stored, name, good)
-    checked = check(catalog, load_yaml(text), stored=stored, stored_text=stored_text, layer=layer, inherited=inherited)
+    checked = check(
+        catalog,
+        load_yaml(text),
+        stored=stored,
+        stored_text=stored_text,
+        layer=layer,
+        inherited=inherited,
+        context=context,
+    )
     return text, checked
 
 

@@ -65,12 +65,13 @@ AUTO_ACCEPT = f"{RESERVED_PREFIX}auto-accept"
 # proxy all its requests share the proxy's address, so the key is the actor.
 # Rate-limited: it is a person at a keyboard or a script acting for one.
 MASTER_KEY = f"{RESERVED_PREFIX}master-key"
-# The scout loop (spec 2026-10-27): read-only jobs pinned to the operator's
-# local model. Exempt from the per-author limit, which would hold it to a few
-# jobs an hour: its brakes are the settings document's scout.max_in_flight
-# (never more out at once) and scout.max_jobs_per_day (never more started in
-# 24 hours), the pin (a local model bills nothing), and each job's hard
-# budget, scout.job_budget_usd.
+# The scout loop (spec 2026-10-27): read-only jobs pinned to the scout's
+# model (background_models.scout, #164), usually the operator's local one.
+# Exempt from the per-author limit, which would hold it to a few jobs an
+# hour: its brakes are the settings document's scout.max_in_flight (never
+# more out at once) and scout.max_jobs_per_day (never more started in 24
+# hours), the pin (a local model bills nothing), each job's hard budget,
+# scout.job_budget_usd, and the daily and monthly caps.
 SCOUT = f"{RESERVED_PREFIX}scout"
 # Owner proposals (spec 2026-10-24): the fix job an owner starts by accepting
 # one finding of a context audit. Rate-limited: an owner's yes is not a

@@ -22,7 +22,6 @@ from embry0.services.scout import (
     due,
     parse_ledger,
     parse_weed,
-    scout_model,
     task,
     units,
     warn_retired_tick,
@@ -118,12 +117,6 @@ def test_never_scouted_units_go_first_then_the_longest_ago_and_a_recent_one_wait
     a, b, c = (Unit("acme/a", "", "garden"), Unit("acme/b", "", "garden"), Unit("acme/c", "", "garden"))
     last = {a.key: T0 - timedelta(hours=30), c.key: T0 - timedelta(hours=2)}
     assert due([a, b, c], last, T0, timedelta(hours=24)) == [b, a]
-
-
-def test_the_model_comes_from_the_environment_and_none_turns_the_loop_off() -> None:
-    assert scout_model(SimpleNamespace(scout_model="")) == ""
-    assert scout_model(SimpleNamespace(scout_model=f" {LOCAL} ")) == LOCAL
-    assert scout_model(SimpleNamespace()) == ""
 
 
 def _retired_tick_warnings(**env: str) -> tuple[bool, list[dict[str, Any]]]:
@@ -252,6 +245,22 @@ class FakeLeads:
         self.stored.append((list(leads), areas))
 
 
+class Models:
+    """``background_models`` as a test hands it to the loop: one model, or one per repository; ``set`` replaces it."""
+
+    def __init__(self, model: str | dict[str, str]) -> None:
+        self.set(model)
+        self.reads = 0
+
+    def set(self, model: str | dict[str, str]) -> None:
+        self.current = model
+
+    async def __call__(self) -> Any:
+        self.reads += 1
+        current = self.current
+        return lambda repo: current.get(repo or "", "") if isinstance(current, dict) else current
+
+
 class Policy:
     """The ``scout`` section as a test hands it to the loop: ``set`` replaces it before the next tick."""
 
@@ -284,7 +293,7 @@ def make_loop(*, repos: list[str], areas: dict[str, list[Area]] | None = None, r
         submitted.append((job_id, unit, text))
 
     loop = ScoutLoop(
-        model=LOCAL,
+        models=Models(LOCAL),
         settings=Policy(**settings),
         runs=runs,
         jobs=jobs,
@@ -352,7 +361,7 @@ async def test_a_job_s_leads_are_capped_the_worst_first() -> None:
 @pytest.mark.asyncio
 async def test_without_a_model_the_loop_harvests_but_starts_nothing() -> None:
     loop, runs, jobs, _, submitted = make_loop(repos=["acme/a"])
-    loop.model = ""
+    loop.models.set("")
     assert await loop.tick() == {"harvested_leads": 0, "started": []}
     assert submitted == []
 

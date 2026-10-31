@@ -53,6 +53,47 @@ asks:
   # person a decision now waits on.
   # tick_seconds: 120.0
 
+# The models embry0's background features run on: a default, and each
+# feature's own.
+background_models:
+  # The model of your own server, custom/<model>, the features below run on
+  # unless they name their own; null for none. It must call tools and answer
+  # over chat completions, since any of them may run on it. The scout never
+  # does unless it is named for it.
+  # default: null
+
+  # The model of your own server the watcher's log analyses prefer: they run
+  # on it while a local slot is free, else on their agents' own models. null:
+  # the default; false: no preference.
+  # watcher: null
+
+  # The model of your own server scheduled context audits prefer, as the
+  # watcher's analyses do. A model chosen with Run with wins. null: the
+  # default; false: no preference.
+  # context_audit: null
+
+  # The model every scouting job is pinned to, a run waiting for it; a hosted
+  # one's jobs are metered and capped like any job. false, the default: no
+  # model, and the scout starts nothing; null: the default model.
+  # scout: false
+
+  # The model that writes each owner proposal's plain-words brief, asked over
+  # chat completions; a hosted one's calls count against the budget caps.
+  # null: the default; false: none is written, and the feed shows each
+  # proposal's summary.
+  # proposal_brief: null
+
+  # The model that writes each job's brief, asked over chat completions; a
+  # hosted one's calls count against the budget caps. null: the default;
+  # false: none is written.
+  # job_brief: null
+
+  # The model the Slop-O-Meter asks whether an outlier commit is slop, over
+  # chat completions; a hosted one's calls count against the budget caps.
+  # null: the default; false: outliers stay unjudged and the score
+  # provisional.
+  # slop_judge: null
+
 # What embry0 may spend: each job's ceiling, the daily and monthly caps, the
 # unattended jobs' caps, and how far a person may continue a job past its cap.
 budget:

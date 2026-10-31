@@ -125,7 +125,7 @@ async def test_a_local_model_is_asked_for_json_without_thinking() -> None:
 
     endpoint = Endpoint("custom/local-27b", "http://models.test/v1", "k", "local-27b", local=True)
     async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
-        brief = await write_brief(_proposal(), endpoint, client)
+        brief = await write_brief(_proposal(), endpoint, client, _calls())
     assert brief.size == "small"
     [call] = sent
     assert call["url"] == "http://models.test/v1/chat/completions" and call["auth"] == "Bearer k"
@@ -159,6 +159,23 @@ class FakeResolver:
         return SimpleNamespace(secret="k", metadata={"base_url": "http://models.test/v1"})
 
 
+class NoSpend:
+    async def record(self, **kwargs: Any) -> None:
+        return None
+
+
+class OpenGate:
+    async def check(self, **kwargs: Any) -> Any:
+        return SimpleNamespace(allowed=True)
+
+
+def _calls() -> Any:
+    """The metered call path (#164), imported here so this file still collects on a tree without it."""
+    from embry0.services.background_models import BackgroundCalls
+
+    return BackgroundCalls(resolver=FakeResolver(), spend=NoSpend(), gate=OpenGate())
+
+
 def _writer(
     briefs: FakeBriefs,
     proposals: list[Proposal],
@@ -177,14 +194,14 @@ def _writer(
     async def feed() -> list[Proposal]:
         return proposals
 
-    async def chosen() -> str:
-        return model
+    async def chosen() -> Any:
+        return lambda repo: model
 
     return ProposalBriefWriter(
         proposals=feed,
-        model=chosen,
+        models=chosen,
         briefs=briefs,
-        resolver=FakeResolver(),
+        calls=_calls(),
         min_readiness=60,
         per_tick=per_tick,
         client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),

@@ -501,8 +501,9 @@ cannot reach anything else on it. The custom provider still needs an account
 server that checks no key any placeholder will do): it is what makes the
 provider ready, pinnable and quarantinable. With the proxy on, every custom
 run in a sandbox goes to `LOCAL_LLM_UPSTREAM`. Calls the orchestrator makes
-itself (proposal and job briefs, the Slop-O-Meter's judgments) still use the
-account's base URL and key, so keep them pointing at the same server.
+itself (proposal and job briefs, the Slop-O-Meter's judgments; see
+[Background models](#background-models)) still use the custom account's base
+URL and key, so keep them pointing at the same server.
 
 **One run at a time.** `local_max_runs` in the provider settings (default 1,
 at most 64) is how many agent runs embry0 sends the server at once. Each run
@@ -515,20 +516,12 @@ fallback, or the job named it) waits for a slot up to
 the job is parked for five minutes and tries again
 ([Spent account waits](#spent-account-waits)).
 
-**Proposal briefs on the local model.** The same `watcher_local_model` writes
-each owner proposal's plain-words brief (title, problem, fix, size) unless
-`PROPOSAL_BRIEF_MODEL` names another OpenAI-compatible model: a few a minute,
-in the background, with thinking off and a JSON answer asked for. With
-neither set, no briefs are written and the feed shows each proposal's
-summary ([proposal briefs](superpowers/specs/2026-10-25-proposal-briefs-design.md)).
-Each job's brief (what it is, why it matters, what done looks like) is
-written the same way, on `JOB_BRIEF_MODEL` when set ([job briefs](superpowers/specs/2026-10-26-job-briefs-design.md)).
-
-**Local-first for the watcher.** `watcher_local_model` in the provider
-settings (`""`, the default, is off) is a `custom/<model>` the watcher's log
-analyses run on first. The watcher stamps it on each analysis job
-(`pipeline_config.local_first_model`) unless the tick runs with a model a
-person chose. For each agent of such a job:
+**Preferring the local model.** A background feature that prefers a model
+(the watcher's log analyses, scheduled context audits; see
+[Background models](#background-models)) stamps it on each job it starts
+(`pipeline_config.local_first_model`) unless the job runs with a model a
+person chose. For each agent of such a job, when the model is a
+`custom/<model>`:
 
 - with a slot free, the agent runs on the local model; a `progress` event
   says "analysis runs on the local model custom/... instead of
@@ -552,6 +545,134 @@ oldest tool results with a one-line note, keeping the task and the last
 messages whole. A conversation that still does not fit fails the run with
 `ERR_CONTEXT_WINDOW_EXCEEDED`, as does a request any server refuses as over
 its window, instead of being sent until the turn cap.
+
+## Background models
+
+Some of embry0's work runs without anyone asking for it: the watcher's log
+analyses, scheduled context audits, the scout, the plain-words briefs of
+owner proposals and of jobs, and the Slop-O-Meter's judgments of outlier
+commits. Which model each one runs on is the `background_models` section of
+the [settings document](configuration.md#settings-document): a `default`,
+and one key per feature that names its own model, `null` to run on the
+default, or `false` for none. A key left out runs on the default, except
+`scout`, which is `false` until a model is named for it, so setting the
+default never starts the scout. No feature falls back on another's model, so
+changing one changes no other unless it runs on the default.
+
+```yaml
+background_models:
+  default: custom/qwen3-32b   # what the features below run on, unless they name their own
+  scout: custom/qwen3-32b     # the scout runs only on a model named for it
+  proposal_brief: gpt-6-luna  # a hosted model: its spend counts against the caps
+```
+
+| Key | Runs | Takes | With no model |
+|---|---|---|---|
+| `default` | every feature below that names no model of its own (never the scout unless `scout: null`) | `custom/<model>` only | each runs on none |
+| `watcher` | the watcher's analysis jobs prefer it ([preferring the local model](#local-models)) | `custom/<model>` only | they run on their agents' own models |
+| `context_audit` | scheduled audit jobs prefer it; a model chosen with Run with wins | `custom/<model>` only | they run on their agents' own models |
+| `scout` | every scouting job is pinned to it: a run waits for it | any model whose agents call tools | the scout starts nothing (the default) |
+| `proposal_brief` | writes each owner proposal's brief, asked over chat completions | any chat-completions model | none is written; the feed shows each proposal's summary |
+| `job_brief` | writes each job's brief, asked over chat completions | any chat-completions model | none is written |
+| `slop_judge` | judges whether an outlier commit is slop, over chat completions | any chat-completions model | outliers stay unjudged and the score provisional |
+
+Every feature reads the section at each tick, so a change needs no restart.
+An organization may set every key for its own repositories (a layer, see
+[Layers by organization and repository](configuration.md#settings-document));
+a repository may not, since a key whose allowlist covers one repository
+would otherwise move the deployment's shared spend.
+
+**Which model may go where.** `watcher`, `context_audit` and `default` take
+only a model of the operator's own server, `custom/<model>`: those
+features *prefer* their model while a local slot is free, and a preference
+for a hosted model, which never runs out of slots, would pin every run to
+it. A hosted model may be named for the briefs, the judge and the scout,
+whose calls and jobs are metered and capped. Every value's shape is checked
+whenever it is read, and a write is also checked against this deployment's
+catalogue: the model must be one `GET /api/v1/config/models` lists, or a
+`custom/<model>` with the custom provider enabled, and priced; the scout's
+agents call tools, so not a chat-only model; the briefs and the judge are
+asked over chat completions, which only an OpenAI-compatible provider or
+`custom/` serves; `default` must serve all of them. A 422 names each key it
+refuses, never the value. A stored model is never refused against the
+catalogue when it is read, or when a write leaves it as it is: a provider
+turned off later makes the feature log that its model cannot be called.
+
+**Hosted models, metered and capped.** The watcher, the context audit and the
+scout run on their model inside jobs, metered and capped like every job.
+The briefs and the judge call their model directly, outside any job, and
+each call goes the way a job's run would:
+
+- its key is resolved with the repository the call is about, so that
+  repository's and its owner's [key bindings](credentials.md) apply;
+- a call to a hosted model first asks the budget gate jobs are dispatched
+  through, built by the same factory over the same budget policy (the
+  `budget` section of the settings document): past the daily or monthly cap
+  it is not sent, the feature logs `background_model_refused` (a warning,
+  then once an hour while it lasts) and its loop goes on, trying again on
+  its next tick.
+  A `custom/` model bills nothing and is never refused;
+- a model with no price is never called (`background_model_unpriced`, a
+  warning once an hour per model);
+- the tokens the provider reports are priced as a job's run is and recorded
+  under the feature (`background_spend`): the budget caps count them, and
+  `GET /api/v1/stats` adds them to the lifetime, the day's and the month's
+  spend (`total_cost_usd`, `daily_cost_usd`, `monthly_cost_usd`) and lists
+  each feature's spend for today and this month under `background_spend`,
+  with the lifetime sum in its `total_usd`. The month's figures are a range of
+  the table's index, and the lifetime sum reads that index alone. The daily
+  digest reports the day's spend beside the jobs' and the watcher's
+  (`background_spend_usd`, by feature in `background_spend_by_feature`), as a
+  range of the same index. Usage a provider sends badly (a count that is a
+  string, an infinity, or past any real count) is read as none: the call is
+  still recorded, with no tokens, and `background_model_usage_missing` says
+  so;
+- a call whose record cannot be stored is kept in memory, dated when the
+  call was made, and stored before the feature's next call. Until it is,
+  the feature's hosted calls are refused (`background_model_refused` with
+  `limit=spend_unrecorded`) and `background_spend_record_failed` is logged at
+  error level, the first time and then once a minute. Each row carries its
+  call's own id, so a row stored again after a database error that hid its
+  commit is stored once. Past 1000 held rows a feature drops the ones that
+  cost nothing first, then the oldest, logged: a cap that cannot see a spend
+  cannot hold it.
+
+`background_spend` has no retention, like the jobs' and traces' spend:
+`JOB_LOG_RETENTION_DAYS` rewrites job events only.
+
+**On the Providers page.** The **Background models** card edits `default`
+alone (`PATCH /api/v1/config/settings/background_models`), and offers and
+accepts only a `custom/<model>`. It says where the value came from and lists
+what each feature runs on. Anyone signed in sees it; only an admin can
+change it. Each feature's own key, a hosted model for the briefs, the judge
+or the scout included, is set in Settings → Policy.
+
+**Upgrading.** Before this section, the watcher ran on `watcher_local_model`
+of the provider settings, the proposal briefs on `PROPOSAL_BRIEF_MODEL` or
+else that, the job briefs on `JOB_BRIEF_MODEL` or else the proposal briefs'
+model, the judge on the job briefs' model, the scout on `SCOUT_MODEL` and the
+context audit on `CONTEXT_AUDIT_LOCAL_MODEL`. The first start of the release
+that added the section imports each variable into its key, then the
+provider settings' `watcher_local_model` as the `default`, with what each
+feature fell back on, so no feature's model changes. The scout and the
+context audit never ran on the watcher's model: each is set to `false`
+whenever its own variable gives it no model, so a default written later
+never starts the scout or moves the context audits. The provider settings'
+import writes each variable's model into its key too, unless the environment
+import stored it first. Both read the variables themselves, never what is
+stored: a first start whose environment import failed already runs every
+feature on its variable's model, never on the default in its place while
+the import is tried again, and loses no variable to the next. A hosted
+`CONTEXT_AUDIT_LOCAL_MODEL` is refused, since the context audit prefers only
+a model of your own server: scheduled audits then run on their agents' own
+models, and `background_models_variable_refused` names the variable (never
+its value) at warning level. Name a `custom/<model>` in
+`background_models.context_audit` to prefer one. Each import runs once
+(revision sources `bootstrap` and `upgrade`). `PUT /config/provider` refuses
+`watcher_local_model` with a 422 naming where it went; its column is kept,
+unread, so a rollback finds its value, and a later release drops it. Keep
+the four variables set until you are sure you will not roll back: the
+release before reads them.
 
 ## Provider readiness
 
