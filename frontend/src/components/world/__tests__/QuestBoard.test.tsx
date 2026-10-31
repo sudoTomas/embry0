@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { Lead, LeadKind } from "@/api/world";
+import type { LeadKind } from "@/api/leadKinds";
+import type { Lead } from "@/api/world";
 
 vi.mock("@/components/world/art/manifest", async (original) => {
   const actual = await original<typeof import("../art/manifest")>();
@@ -9,7 +10,7 @@ vi.mock("@/components/world/art/manifest", async (original) => {
 
 import { QuestBoard } from "../QuestBoard";
 
-/** Two entries of GET /world's lead_kinds (the backend's catalogue, embry0/services/lead_kinds.py). */
+/** Two entries of GET /lead-kinds (the backend's catalogue, embry0/services/lead_kinds.py). */
 const CATALOGUE: LeadKind[] = [
   {
     id: "crack",

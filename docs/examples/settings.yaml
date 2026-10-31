@@ -208,8 +208,8 @@ done_when:
   # ticket_sections:
   # - Acceptance criteria
 
-# Whether the finders run, which ones and how often, and which backlog tickets
-# are offered and asked.
+# Whether the finders run, which ones and how often, and which leads are
+# offered and asked in chat.
 leads:
   # Run the finders on their schedule, on the repositories someone answers for
   # (owners set, or a watched stack), and offer what they find as owner
@@ -256,6 +256,24 @@ leads:
   # sent as an ask, shown on the page only, folded, its brief written after
   # the others, and its readiness marked on its decision card.
   # ask_min: 60
+
+  # Which leads are asked in chat, by kind: a kind named here is asked only at
+  # the severities it lists, and one of another severity is held like a ticket
+  # below `ask_min`. An empty list asks none of that kind; a kind not named is
+  # asked at every severity. Only a kind whose proposals carry a severity may
+  # be named: case (low, medium, high, critical, warning, unrated); ticket,
+  # ci, alert, flaky, review, crack, weed (low, medium, high, critical).
+  # Written entry by entry, not whole: the deployment's document overrides
+  # only the kinds it names and keeps the default for every other kind, and an
+  # organization's layer overrides only the kinds it names over the
+  # deployment's. To ask every severity of a kind, list them all.
+  # ask_severities:
+  #   crack:
+  #   - high
+  #   - critical
+  #   weed:
+  #   - high
+  #   - critical
 
 # The subject of the commit that keeps the work of a coding run that stopped
 # before it committed.

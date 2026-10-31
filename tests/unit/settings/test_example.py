@@ -22,8 +22,10 @@ from tests.fixtures.settings_sections import TEST_CATALOG
 
 ROOT = Path(__file__).resolve().parents[3]
 
-#: A line of a section's body that is not a comment: a key, or a line of a key's value.
-_SET_LINE = re.compile(r"^(\s+)(?!#)(\S)")
+#: A line of a section's body that is not a comment: a key, or a line of a key's value, which a nested
+#: value (a mapping's entries) indents further. The example comments it at the section's indent, so the
+#: marks of one key stand in one column and the key uncomments as a block.
+_SET_LINE = re.compile(r"^(  )(?!#)(.)")
 
 
 def _comment_out(text: str) -> str:

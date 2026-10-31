@@ -26,6 +26,7 @@ from typing import Any, Final
 import structlog
 import yaml
 
+from embry0.settings.layers import over_default
 from embry0.settings.registry import (
     DOCUMENT_KEYS,
     MANAGED_BY_FILE,
@@ -653,7 +654,7 @@ def read_sections(catalog: Catalog, data: Mapping[str, Any]) -> Sections:
             refused.append(Refusal(section.name, "", "the stored section is not a mapping"))
             models[section.name] = section.defaults()
             continue
-        known = {k: v for k, v in raw.items() if k in section.model.model_fields}
+        known = over_default(section, {k: v for k, v in raw.items() if k in section.model.model_fields})
         try:
             models[section.name] = section.validate(known)
             continue

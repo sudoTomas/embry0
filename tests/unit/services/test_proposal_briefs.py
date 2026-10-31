@@ -16,6 +16,7 @@ from embry0.services.proposal_briefs import (
     Endpoint,
     ProposalBriefWriter,
     held,
+    held_by,
     input_hash,
     parse_brief,
     user_prompt,
@@ -23,6 +24,7 @@ from embry0.services.proposal_briefs import (
     write_brief,
 )
 from embry0.services.proposals import Proposal
+from embry0.settings.sections.leads import LeadsSettings
 from tests.fixtures.leads import MemorySettings, brief_reader, leads_policy, leads_section
 
 T0 = datetime(2026, 10, 25, 12, tzinfo=UTC)
@@ -99,10 +101,36 @@ def test_the_prompt_carries_the_proposal_and_no_id() -> None:
 
 
 def test_a_ticket_below_the_floor_is_held_and_nothing_else_is() -> None:
-    assert held(_proposal("ticket:a", "ticket", source={"readiness": 40}), 60)
-    assert not held(_proposal("ticket:b", "ticket", source={"readiness": 60}), 60)
-    assert not held(_proposal("ticket:c", "ticket"), 60), "a ticket with no score is not held"
-    assert not held(_proposal(), 60)
+    policy = LeadsSettings(ask_min=60)
+    assert held(_proposal("ticket:a", "ticket", source={"readiness": 40}), policy)
+    assert not held(_proposal("ticket:b", "ticket", source={"readiness": 60}), policy)
+    assert not held(_proposal("ticket:c", "ticket"), policy), "a ticket with no score is not held"
+    assert not held(_proposal(), policy)
+
+
+def test_which_severities_reach_chat_is_the_leads_section_s_not_the_catalogue_s() -> None:
+    """``leads.ask_severities`` (#166): a kind it names is asked only at the severities it lists; one it leaves
+    out keeps the default's entry. A ticket below ``ask_min`` stays held whatever the mapping says."""
+    every = ["low", "medium", "high", "critical"]
+    policy = leads_policy(
+        {"ask_severities": {"ci": ["critical"], "case": ["high", "critical"], "ticket": ["high"], "crack": every}}
+    )
+    asked = {
+        "a critical failing check": _proposal("ci:a", "ci", severity="critical"),
+        "a medium crack, every severity named": _proposal("crack:a", "crack", severity="medium"),
+        "a high ticket ready 70": _proposal("ticket:a", "ticket", severity="high", source={"readiness": 70}),
+    }
+    kept = {
+        "a high failing check": _proposal("ci:b", "ci", severity="high"),
+        "a case that came with no severity": _proposal("case:u", "case", severity="unrated"),
+        "a high ticket ready 40": _proposal("ticket:b", "ticket", severity="high", source={"readiness": 40}),
+        "a low ticket ready 70": _proposal("ticket:c", "ticket", severity="low", source={"readiness": 70}),
+    }
+    assert [what for what, p in asked.items() if held_by(p, policy)] == [], "each of these is asked in chat"
+    assert [what for what, p in kept.items() if not held_by(p, policy)] == [], "each of these is held from chat"
+    default = leads_policy()
+    assert held_by(_proposal("crack:b", "crack", severity="medium"), default), "by default a medium crack is held"
+    assert not held_by(_proposal("crack:c", "crack", severity="high"), default), "and a high one is asked"
 
 
 def test_the_feed_shows_a_brief_only_while_it_matches_the_proposal() -> None:

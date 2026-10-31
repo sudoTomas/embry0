@@ -1,4 +1,4 @@
-"""The ``leads`` section: whether the finders run, which ones, how often, and which backlog tickets are offered.
+"""The ``leads`` section: whether the finders run, which ones, how often, and which leads are offered and asked.
 
 An operator writes it the way they would say it::
 
@@ -12,6 +12,9 @@ An operator writes it the way they would say it::
       flaky_commits: 10
       offer_min: 50   # a backlog ticket scoring below it is not offered at all
       ask_min: 70     # one offered below it stays on the page, never asked in chat
+      ask_severities: # a kind named here is asked in chat only at these severities
+        crack: [high, critical]
+        weed: []      # never asked: weeds stay on the page
 
 Leads are off until an operator turns them on. A deployment that existed
 before this section, when leads ran by default on every deployment that
@@ -27,15 +30,27 @@ object, so an organization's layer can set one without restating the other
 (a layer replaces a key's value whole: spec 2026-10-29, L2). The labels,
 weights and words that score a ticket's readiness stay in the code for now:
 they become per-organization vocabulary later (#168).
+
+``ask_severities`` is the one key written entry by entry
+(``Section.merged_keys``): the deployment's document merges it over the
+default, and an organization's layer over the deployment's. The kinds a
+document names replace the entries below; every other kind keeps them, so
+restricting alerts never reopens the default's cracks and weeds.
+Only a kind whose proposals carry a severity may be named, with the
+severities the lead-kind catalogue gives it (:func:`embry0.services.lead_kinds.rated`;
+that module imports nothing of embry0). Its default is what the code held
+before the key (#166): only a crack or a weed graded high or critical is
+asked, so a scout running all day does not fill the chat.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal, Protocol, get_args
 
 from pydantic import Field, field_validator
 
+from embry0.services.lead_kinds import rated
 from embry0.settings.registry import EnvImport, ReliedOn, Section, SectionModel
 
 #: A finder the leads loop runs: each stores leads of its own kind.
@@ -45,6 +60,24 @@ FINDERS: Final[tuple[Finder, ...]] = get_args(Finder)
 #: The shortest intervals the loop ran before the section, whatever the variables said.
 MIN_INTERVAL_HOURS: Final = 0.25
 MIN_BACKLOG_INTERVAL_HOURS: Final = 1.0
+
+#: The severities of each kind asked in chat before any document names them: only the scout's worst finds
+#: (spec 2026-10-27), as the code held them before ``ask_severities`` (#166).
+DEFAULT_ASK_SEVERITIES: Final[Mapping[str, tuple[str, ...]]] = {
+    "crack": ("high", "critical"),
+    "weed": ("high", "critical"),
+}
+
+
+def _rated_kinds() -> str:
+    """The kinds ``ask_severities`` may name, each with its severities, as its description says them."""
+    groups: dict[tuple[str, ...], list[str]] = {}
+    for kind, severities in rated().items():
+        groups.setdefault(severities, []).append(kind)
+    return "; ".join(f"{', '.join(kinds)} ({', '.join(severities)})" for severities, kinds in groups.items())
+
+
+_RATED_KINDS: Final = _rated_kinds()
 
 #: What a true ``ReliedOn`` check of ``enabled`` means, as the import's comment and ``import-env`` say it.
 EXISTED_BEFORE: Final = (
@@ -167,6 +200,19 @@ class LeadsSettings(SectionModel):
         ),
     )
 
+    ask_severities: dict[str, tuple[str, ...]] = Field(
+        default_factory=lambda: dict(DEFAULT_ASK_SEVERITIES),
+        description=(
+            "Which leads are asked in chat, by kind: a kind named here is asked only at the severities it lists, "
+            "and one of another severity is held like a ticket below `ask_min`. An empty list asks none of that "
+            "kind; a kind not named is asked at every severity. Only a kind whose proposals carry a severity may "
+            f"be named: {_RATED_KINDS}. Written entry by entry, not whole: the deployment's document overrides "
+            "only the kinds it names and keeps the default for every other kind, and an organization's layer "
+            "overrides only the kinds it names over the deployment's. To ask every severity of a kind, list them "
+            "all."
+        ),
+    )
+
     @field_validator("finders")
     @classmethod
     def _finders(cls, value: tuple[str, ...]) -> tuple[str, ...]:
@@ -174,23 +220,70 @@ class LeadsSettings(SectionModel):
             raise ValueError("name each finder once")
         return value
 
+    @field_validator("ask_severities", mode="before")
+    @classmethod
+    def _ask_severities_shape(cls, value: Any) -> Any:
+        # Checked before the type, so a value of another shape is refused as the key: a type error would put the
+        # operator's own kind into the 422's loc.
+        shaped = isinstance(value, dict) and all(
+            isinstance(kind, str)
+            and isinstance(severities, list | tuple)
+            and all(isinstance(s, str) for s in severities)
+            for kind, severities in value.items()
+        )
+        if not shaped:
+            raise ValueError("write a mapping of kind to a list of severities, such as crack: [high, critical]")
+        # As the type takes it once this check has read the value: a strict tuple, not the list JSON gives.
+        return {kind: tuple(severities) for kind, severities in value.items()}
+
+    @field_validator("ask_severities")
+    @classmethod
+    def _ask_severities(cls, value: dict[str, tuple[str, ...]]) -> dict[str, tuple[str, ...]]:
+        # The messages name only the catalogue's words, never a value written: what a 422 says is read back.
+        kinds = rated()
+        problems: list[str] = []
+        if any(kind not in kinds for kind in value):
+            problems.append(f"name only kinds whose proposals carry a severity: {', '.join(kinds)}")
+        for kind, severities in value.items():
+            if kind not in kinds:
+                continue
+            if any(severity not in kinds[kind] for severity in severities):
+                problems.append(f"{kind} lists a severity that is none of {', '.join(kinds[kind])}")
+            elif len(set(severities)) != len(severities):
+                problems.append(f"{kind} names a severity twice")
+        if problems:
+            raise ValueError("; ".join(problems))
+        return value
+
 
 LEADS = Section(
     name="leads",
     model=LeadsSettings,
-    summary="Whether the finders run, which ones and how often, and which backlog tickets are offered and asked.",
+    summary="Whether the finders run, which ones and how often, and which leads are offered and asked in chat.",
     # What one repository's pass does is its organization's to choose: which
     # finders read it, how many new leads it takes a day, when a review
     # counts as stale, how far back flakiness is read (on the organization's
-    # own credential), and which backlog tickets are offered and asked, since
-    # organizations write tickets differently. Whether the one loop runs, and
+    # own credential), which backlog tickets are offered and asked, since
+    # organizations write tickets differently, and which severities of a kind
+    # its people are asked about in chat. Whether the one loop runs, and
     # how often, stay the deployment's. No repository keys: which
     # repositories a background feature reads is the repository scope rule's
     # (#165).
     org_keys=frozenset(
-        {"finders", "max_new_per_repo_per_day", "review_stale_days", "flaky_commits", "offer_min", "ask_min"}
+        {
+            "finders",
+            "max_new_per_repo_per_day",
+            "review_stale_days",
+            "flaky_commits",
+            "offer_min",
+            "ask_min",
+            "ask_severities",
+        }
     ),
     repo_keys=frozenset(),
+    # An organization restricts or opens the kinds it names; the deployment's entry stands for every other
+    # kind, so a layer naming alerts does not open the deployment's cracks and weeds to every severity.
+    merged_keys=frozenset({"ask_severities"}),
     env={
         "enabled": EnvImport(
             "leads_enabled",

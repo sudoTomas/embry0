@@ -190,6 +190,10 @@ export interface EffectiveSetting {
   inherited?: unknown;
   /** A layer's view only: each document in the view, most general first. */
   layers?: EffectiveLayerEntry[];
+  /** A key merged entry by entry (`leads.ask_severities`): true, with `entries`. Absent for every other key. */
+  merged_by_entry?: boolean;
+  /** Each entry of a merged key's value and the document it comes from. */
+  entries?: { entry: string; value: unknown; source: SettingSource | "organization" | "repository" }[];
 }
 
 export interface EffectiveSection {

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useDecisions, usePeople, useSetMyGithubLogin } from "@/hooks/useDecisions";
+import { useLeadKinds } from "@/hooks/useLeadKinds";
 import { useUiSettings } from "@/hooks/useUiSettings";
 import { toastApiError } from "@/api/errorToast";
 import { toast } from "sonner";
@@ -91,7 +92,7 @@ function CardList({
       {held.length > 0 && (
         <details className="rounded-md border border-border p-2" data-testid="decisions-held">
           <summary className="cursor-pointer text-sm text-fg-secondary">
-            Not asked in chat ({held.length}): tickets below the readiness floor, weeds and minor cracks
+            Not asked in chat ({held.length}): tickets below the readiness floor, and leads of a severity the leads policy does not ask
           </summary>
           <div className="mt-2 space-y-2">
             {held.map((d) => (
@@ -120,6 +121,8 @@ export function DecisionsPage() {
   const kind = params.get("kind") ?? "";
   const decisions = useDecisions({ stage: "all", ...(owner ? { owner } : {}) });
   const waiting = useDecisions({ stage: "all", for: "me" });
+  // The kinds filter names kinds as the quest board's does: the catalogue's plural (GET /lead-kinds, #166).
+  const kindNames = useLeadKinds();
   const people = usePeople();
   const isAdmin = useIsAdmin();
   const by = useAuthStore((s) => s.user?.email) ?? "dashboard";
@@ -138,7 +141,10 @@ export function DecisionsPage() {
   const source = stage === "mine" ? waiting : decisions;
   const inStage = stage === "mine" ? (waiting.data ?? []) : all.filter((d) => d.stage === stage);
   // Finished work all reads one label ("Quest done", "Job done" with the game off): the kinds filter what is on offer only.
-  const kinds = stage === "offered" ? [...new Map(inStage.map((d) => [d.kind, d.kind_label])).entries()] : [];
+  const kinds =
+    stage === "offered"
+      ? [...new Map(inStage.map((d) => [d.kind, kindNames.get(d.kind)?.plural ?? d.kind_label])).entries()]
+      : [];
   const shown = kind ? inStage.filter((d) => d.kind === kind) : inStage;
   const repos = [...new Set(shown.map((d) => d.repo))];
   const current = words.stages.find((s) => s.stage === stage) ?? words.stages[0];

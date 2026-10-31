@@ -90,6 +90,7 @@ EXPECTED_TOOLS = {
     "agent_skill_add",
     "agent_skill_remove",
     "tool_list",
+    "lead_kinds",
     "proposal_list",
     "proposal_get",
     "proposal_accept",
@@ -618,11 +619,13 @@ async def test_proposal_tools_relay_the_owner_and_refuse_without_confirm(fake_cl
         "error"
     ] == "confirmation_required"
     assert fake_client.calls == []
+    await server.lead_kinds()
     await server.proposal_list(owner="octo", kind="finding")
     await server.proposal_accept("issue:i-1", by="octo", confirm=True)
     await server.proposal_decline("finding:ab", by="octo", reason="it says what I want", confirm=True)
     await server.proposal_snooze("case:hc-1", by="octo", until="2026-11-01T00:00:00Z", confirm=True)
     assert fake_client.calls == [
+        ("lead_kinds", (), {}),
         ("proposal_list", (), {"owner": "octo", "kind": "finding", "since": None}),
         ("proposal_answer", ("issue:i-1", "accept"), {"by": "octo"}),
         ("proposal_answer", ("finding:ab", "decline"), {"by": "octo", "reason": "it says what I want"}),

@@ -574,6 +574,9 @@ class Embry0Client:
 
     # ---- owner proposals (spec 2026-10-24)
 
+    async def lead_kinds(self) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", "/api/v1/lead-kinds"))
+
     async def proposal_list(
         self, *, owner: str | None = None, kind: str | None = None, since: str | None = None
     ) -> dict[str, Any]:

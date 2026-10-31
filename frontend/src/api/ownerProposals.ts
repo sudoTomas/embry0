@@ -3,8 +3,8 @@ import type { RunWith } from "./runWith";
 
 /**
  * Work a repository's owners could start (owner proposals, spec 2026-10-24):
- * one of the ids of GET /world's `lead_kinds` whose `proposal` is true. The
- * backend's catalogue (embry0/services/lead_kinds.py) is the one list.
+ * a kind of the backend's lead-kind catalogue (embry0/services/lead_kinds.py,
+ * served by GET /lead-kinds), the one list.
  */
 export type OwnerProposalKind = string;
 
@@ -21,7 +21,7 @@ export interface OwnerProposalBrief {
 }
 
 export interface OwnerProposal {
-  /** `case:<id>`, `issue:<id>` or `finding:<hash>`. */
+  /** `<kind>:<key>`, its kind one of GET /lead-kinds' ids. */
   id: string;
   kind: OwnerProposalKind;
   repo: string;
@@ -42,7 +42,8 @@ export interface OwnerProposal {
   line?: number | null;
   /** Null until the brief writer has written it (or when it was written from an older version of the proposal). */
   brief?: OwnerProposalBrief | null;
-  /** A backlog ticket below the readiness floor: shown here, not asked in chat. */
+  /** Shown here, not asked in chat: a backlog ticket below the readiness floor, or a lead of a severity
+   * the settings document's `leads.ask_severities` does not ask (by default a weed, or a crack below high). */
   held?: boolean;
 }
 

@@ -3,13 +3,17 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { LeadKind } from "@/api/leadKinds";
 import type { QuestScroll, World } from "@/api/world";
 import { identityOf } from "@/lib/agentIdentity";
 
-const state: { world: World | undefined; quest: QuestScroll | undefined } = {
+const state: { world: World | undefined; quest: QuestScroll | undefined; kinds: LeadKind[] } = {
   world: undefined,
   quest: undefined,
+  kinds: [],
 };
+const fetchLeadKinds = vi.fn(() => Promise.resolve(state.kinds));
+vi.mock("@/api/leadKinds", () => ({ fetchLeadKinds: () => fetchLeadKinds() }));
 const send = vi.fn();
 const rate = vi.fn();
 const sendBack = vi.fn();
@@ -297,6 +301,8 @@ beforeEach(() => {
   for (const fn of [send, rate, sendBack, reject, merge, again, dismiss]) fn.mockReset();
   state.world = WORLD;
   state.quest = SCROLL;
+  state.kinds = [];
+  fetchLeadKinds.mockClear();
 });
 
 describe("WorldPage (the guild, spec 2026-10-25)", () => {
@@ -316,22 +322,20 @@ describe("WorldPage (the guild, spec 2026-10-25)", () => {
     ).toHaveTextContent("Lvl 55");
   });
 
-  it("names a quest's kind on the board and in its dialog as GET /world's catalogue says (#166)", async () => {
-    state.world = {
-      ...WORLD,
-      lead_kinds: [
-        {
-          id: "case",
-          label: "Watcher problem",
-          plural: "Watcher problems",
-          about: "a problem the log watcher keeps seeing in production",
-          found_by: "the log watcher",
-        },
-      ],
-    };
+  it("names a quest's kind on the board and in its dialog as GET /lead-kinds says (#166)", async () => {
+    state.kinds = [
+      {
+        id: "case",
+        label: "Watcher problem",
+        plural: "Watcher problems",
+        about: "a problem the log watcher keeps seeing in production",
+        found_by: "the log watcher",
+      },
+    ];
     renderAt();
     const board = screen.getByTestId("quest-board");
-    expect(within(within(board).getByTestId("quest")).getByText("Watcher problem")).toBeInTheDocument();
+    expect(await within(within(board).getByTestId("quest")).findByText("Watcher problem")).toBeInTheDocument();
+    expect(fetchLeadKinds, "the board reads the catalogue from its own endpoint").toHaveBeenCalledTimes(1);
     await userEvent.click(within(board).getByTestId("quest"));
     expect(within(screen.getByTestId("send-party")).getByText("Watcher problem")).toBeInTheDocument();
   });

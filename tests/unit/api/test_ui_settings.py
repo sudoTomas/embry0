@@ -178,6 +178,24 @@ async def test_with_the_game_off_its_reads_answer_404_and_review_works(app: Any,
     assert pack.status_code == 200, f"the content pack is the game's configuration, kept while it is off: {pack.text}"
 
 
+async def test_the_lead_kind_catalogue_answers_any_signed_in_caller_with_the_game_off(
+    app: Any, client: AsyncClient
+) -> None:
+    """GET /lead-kinds (#166) is not the game's: with the game off the dashboard still names each kind of
+    work on offer, in plain words, and serves no creature, leader, verb or level."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as anonymous:
+        reader = await anonymous.get("/api/v1/lead-kinds", headers={"Authorization": f"Bearer {READER}"})
+        assert reader.status_code == 200, f"any signed-in caller may read the catalogue: {reader.text}"
+        assert (await anonymous.get("/api/v1/lead-kinds")).status_code == 401, "it is not public"
+    assert (await _put(client, "ui:\n  game: false\n")).status_code == 200
+    off = await client.get("/api/v1/lead-kinds")
+    assert off.status_code == 200, f"the catalogue answers with the game off: {off.status_code} {off.text}"
+    assert off.json() == reader.json(), "the same plain names, the game on or off"
+    game_words = sorted({key for kind in off.json()["kinds"] for key in kind} & {"verb", "creature", "leader", "level"})
+    assert game_words == [], f"creatures and leaders are the game's, served with each quest: {game_words}"
+    assert {k["id"]: k["label"] for k in off.json()["kinds"]}["weed"] == "Weed"
+
+
 async def test_a_change_applies_on_the_next_request_with_no_restart(client: AsyncClient) -> None:
     assert (await client.get("/api/v1/world")).status_code == 200
     assert (await _put(client, "ui:\n  game: off\n  home: overview\n")).status_code == 200

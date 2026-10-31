@@ -4,7 +4,10 @@ A key takes the value of the most specific layer that sets it: the
 deployment's document, then an organization's layer, then a repository's.
 A layer may set only the keys its section declares for its level
 (``Section.settable``), and replaces the inherited value of such a key
-whole. Every other key it holds is ignored.
+whole, except a key of ``Section.merged_keys``, a mapping it merges entry by
+entry over the inherited one (:func:`merged`), as the deployment's document
+merges it over the section's default (:func:`over_default`). Every other key
+it holds is ignored.
 
 A section can check its fields against each other, so a value accepted when
 it was written can be refused later, together with what it inherits, once
@@ -94,6 +97,31 @@ def _reason(errors: Sequence[Mapping[str, Any]], key: str | None) -> str:
     return str((errors[0] if errors else {}).get("msg") or "refused").removeprefix("Value error, ")
 
 
+def merged(section: Section[Any], inherited: Mapping[str, Any], values: Mapping[str, Any]) -> dict[str, Any]:
+    """A document's ``values`` as they apply over ``inherited``: each key of ``section.merged_keys`` it sets, a
+    mapping, holds the section's default entries, then the inherited ones, under its own; every other key as the
+    document wrote it."""
+    out = dict(values)
+    defaults: dict[str, Any] | None = None
+    for key in section.merged_keys & set(values):
+        own = values[key]
+        if not isinstance(own, Mapping):
+            continue
+        defaults = defaults if defaults is not None else section.defaults().model_dump(mode="json")
+        below: dict[str, Any] = {}
+        for layer in (defaults.get(key), inherited.get(key)):
+            if isinstance(layer, Mapping):
+                below.update(layer)
+        out[key] = {**below, **own}
+    return out
+
+
+def over_default(section: Section[Any], values: Mapping[str, Any]) -> dict[str, Any]:
+    """The deployment's stored ``values`` as its readers read them: each merged key over the section's default
+    entries, so writing one entry never drops the others' defaults."""
+    return merged(section, {}, values)
+
+
 def resolve(
     section: Section[Any],
     base: Mapping[str, Any],
@@ -112,7 +140,7 @@ def resolve(
     applied: dict[str, dict[str, Any]] = {}
     refused: list[LayerRefusal] = []
     for scope, values in layers:
-        accepted = dict(values)
+        accepted = merged(section, current, values)
         while accepted:
             try:
                 section.validate({**current, **accepted})
