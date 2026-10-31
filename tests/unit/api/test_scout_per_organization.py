@@ -42,7 +42,8 @@ NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 LOCAL = "custom/local-model"
 BOTH = ["garden", "kintsugi-trace"]
 #: The deployment document's model for the scout: without one, no repository is scouted (#164).
-MODEL = f"background_models:\n  scout: {LOCAL}\n"
+#: Every repository enrolled in the scout (#165), so these tests read the section's layers alone.
+MODEL = f"background_models:\n  scout: {LOCAL}\nbackground:\n  scout: true\n"
 #: A kintsugi ledger of five graded cracks, more than any cap below keeps.
 LEDGER = """## Ledger
 
@@ -263,7 +264,8 @@ async def test_an_organization_s_max_leads_per_job_holds_on_its_repositories_onl
     for n, repo in enumerate(("acme/widgets", "globex/gizmos", "other/tools")):
         await runs.record(job_id=f"done-{n}", repo=repo, area="", template="kintsugi-trace", now=NOW)
         jobs.rows[f"done-{n}"] = {"status": "completed", "result_summary": LEDGER}
-    loop = _loop(app, db_with_migrations, [], jobs=jobs, leads=leads)
+    # Registered and enrolled (#165): a finished job of a repository the scout no longer reads adds no leads.
+    loop = _loop(app, db_with_migrations, ["acme/widgets", "globex/gizmos", "other/tools"], jobs=jobs, leads=leads)
 
     harvested = (await loop.tick())["harvested_leads"]
     stored = leads.by_repo()

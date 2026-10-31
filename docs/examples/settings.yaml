@@ -53,6 +53,35 @@ asks:
   # person a decision now waits on.
   # tick_seconds: 120.0
 
+# Which repositories the leads finders, the scout and the Slop-O-Meter read.
+background:
+  # The leads finders read this repository, when the leads loop runs and
+  # someone answers for the repository (owners set, or a watched stack). False
+  # takes a repository, or every repository of an organization, out; the leads
+  # already stored stay until answered.
+  # leads: true
+
+  # The scout starts read-only scouting jobs on this repository and its areas,
+  # on the model background_models.scout names. Off until an operator enrolls
+  # a repository, an organization or the deployment. Upgrading keeps what it
+  # read before, and SCOUT_REPOS and SCOUT_EXCLUDE, in each repository's
+  # layer, once.
+  # scout: false
+
+  # The Slop-O-Meter keeps a bare mirror of this repository and reads its
+  # history and forge events to score it. Off until enrolled; upgrading keeps
+  # what it read before, and SLOP_METER_REPOS and SLOP_METER_EXCLUDE, in each
+  # repository's layer, once. An inactive repository is not read but keeps
+  # what was read. One that leaves (false, or unregistered) has its mirror,
+  # its rows and its contributors' names and emails removed prune_after_days
+  # later, unless it comes back first.
+  # slop_meter: false
+
+  # Days the Slop-O-Meter waits after a repository leaves its scope before it
+  # removes the mirror and the rows it kept of it; one that comes back within
+  # them keeps everything. The deployment's alone.
+  # prune_after_days: 7
+
 # The models embry0's background features run on: a default, and each
 # feature's own.
 background_models:

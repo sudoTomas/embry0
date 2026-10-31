@@ -43,6 +43,20 @@ class PerRepository[M: SectionModel](Protocol):
     def repo(self, repo: str | None) -> M: ...
 
 
+@runtime_checkable
+class SnapshotSection[M: SectionModel](PerRepository[M], Protocol):
+    """A :class:`PerRepository` that also names the snapshot it was read from.
+
+    What a loop takes when something else it reads in the same pass must come
+    from the same snapshot: the leads loop reads its repositories' enrollment
+    (``background.leads``) from the snapshot its ``leads`` section came from.
+    :class:`embry0.settings.store.Scoped` is one.
+    """
+
+    @property
+    def snapshot(self) -> Any: ...
+
+
 @dataclass(frozen=True)
 class LayerRefusal:
     """A layer's value that is read as the inherited one, and why."""

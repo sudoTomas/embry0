@@ -227,6 +227,23 @@ timestamps carry a `dataset` label that `enabled` does not, so a plain `and`
 matches nothing. The rule and its `promtool` tests are in `infra/prometheus/`;
 the procedure is in [backup-restore.md](backup-restore.md#off-host-copy).
 
+## Settings imports
+
+| Metric | Type | Labels |
+|---|---|---|
+| `embry0_background_enrollment_blocked` | gauge 0/1 | — |
+
+1 while the import that enrolls what the scout and the Slop-O-Meter read
+before the `background` section cannot finish, because a registered
+repository's name cannot hold a settings layer (an owner starting with a dot);
+the meter removes nothing meanwhile (#165,
+[what the background features keep](background-data.md#the-slop-o-meter)). Set by
+each run of the import, at the start and each retry, and seeded 0 when the
+process starts, so the series exists before the first block. The rule
+`Embry0BackgroundEnrollmentBlocked` and its `promtool` tests are in
+`infra/prometheus/background-enrollment.rules*.yml`; it fires after 30 minutes
+at 1, since the import retries on its own at least every 15.
+
 ## The snapshot itself
 
 | Metric | Type | Labels |

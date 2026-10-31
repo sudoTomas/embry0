@@ -1,0 +1,66 @@
+# promtool test rules background-enrollment.rules.test.yml
+# Series carry the labels a real scrape of the orchestrator gives them, one
+# sample a minute: sparser samples go stale between scrapes (5m lookback) and
+# then no `for` is ever satisfied.
+rule_files:
+  - background-enrollment.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Seeded 0 and never blocked: quiet.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_background_enrollment_blocked{instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x240'
+    alert_rule_test:
+      - eval_time: 4h
+        alertname: Embry0BackgroundEnrollmentBlocked
+        exp_alerts: []
+
+  # Blocked from minute 10: quiet before the 30 m `for` has passed, firing after.
+  # This is the rule shown able to fire.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_background_enrollment_blocked{instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x10 1x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: Embry0BackgroundEnrollmentBlocked
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: Embry0BackgroundEnrollmentBlocked
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "The background enrollment import is held by a repository name"
+              description: "A registered repository's name cannot hold a settings layer, so the import that enrolls what the scout and the Slop-O-Meter read before cannot finish, and the meter removes nothing meanwhile. Find the name in the orchestrator log (background_enrollment_name_unaddressable) or the audit log (background_enrollment.blocked), then rename or unregister it; docs/ops/background-data.md, \"Upgrading\"."
+
+  # Blocked, then the name is renamed: the alert clears.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_background_enrollment_blocked{instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '1x60 0x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: Embry0BackgroundEnrollmentBlocked
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "The background enrollment import is held by a repository name"
+              description: "A registered repository's name cannot hold a settings layer, so the import that enrolls what the scout and the Slop-O-Meter read before cannot finish, and the meter removes nothing meanwhile. Find the name in the orchestrator log (background_enrollment_name_unaddressable) or the audit log (background_enrollment.blocked), then rename or unregister it; docs/ops/background-data.md, \"Upgrading\"."
+      - eval_time: 90m
+        alertname: Embry0BackgroundEnrollmentBlocked
+        exp_alerts: []
+
+  # No series at all (an older orchestrator, a scrape that lost it): `or vector(0)` keeps it 0, quiet.
+  - interval: 1m
+    input_series:
+      - series: 'up{instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: Embry0BackgroundEnrollmentBlocked
+        exp_alerts: []

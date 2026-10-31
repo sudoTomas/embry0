@@ -44,6 +44,11 @@ AuditAction = Literal[
     "settings.updated",
     "settings.change_undone",
     "settings.bootstrapped",
+    # The Slop-O-Meter removed what it kept of a repository that left its scope, or refused to (#165)
+    "slop_meter.pruned",
+    "slop_meter.prune.refused",
+    # The background enrollment import is held by a repository name no settings layer can be stored under (#165)
+    "background_enrollment.blocked",
     "environment.secret_revealed",
     # Credentials
     "credential.created",
@@ -164,6 +169,9 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "settings.updated": "Settings document changed",
     "settings.change_undone": "Settings change undone",
     "settings.bootstrapped": "Settings imported from the environment",
+    "slop_meter.pruned": "Slop-O-Meter data of a repository removed",
+    "slop_meter.prune.refused": "Slop-O-Meter removal refused",
+    "background_enrollment.blocked": "Background enrollment held by a repository name",
     "environment.secret_revealed": "Secret revealed",
     "credential.created": "Credential created",
     "credential.bound": "Credential bound",

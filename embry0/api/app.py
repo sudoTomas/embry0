@@ -1105,6 +1105,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # tried again in this run too, once the background tasks exist
     # (settle_unchecked, below). The store carries when this process began,
     # so every try counts a deployment's past against the same moment.
+    from embry0.services.background_enrollment import EnrollmentImport, import_enrollment_once, log_ignored_lists
     from embry0.services.background_models import import_provider_settings_once
     from embry0.settings.bootstrap import BootstrapResult, import_env_once, log_ignored_env
     from embry0.settings.earlier import EARLIER_SOURCES
@@ -1135,9 +1136,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await import_provider_settings_once(app.state.settings, config)
     except Exception:
         logger.critical("background_models_import_failed", exc_info=True)
+    enrollment_import: EnrollmentImport | None = None
+    # The unaddressable names this process logged at error level and audited; its retries log them at debug.
+    enrollment_reported: set[str] = set()
     try:
-        await app.state.settings.snapshot()
+        # #165: the repositories the scout and the Slop-O-Meter read before
+        # their enrollment became explicit, and the ones SCOUT_REPOS,
+        # SCOUT_EXCLUDE, SLOP_METER_REPOS and SLOP_METER_EXCLUDE named, into
+        # their repository layers, once. Until it has run for a feature, that
+        # feature reads its defaults and the meter removes nothing. One that
+        # fails is tried again in this run (settle_enrollment, below), with
+        # the store's start as its moment.
+        enrollment_import = await import_enrollment_once(
+            app.state.settings,
+            config,
+            reported=enrollment_reported,
+            metrics=getattr(app.state, "loop_metrics", None),
+        )
+    except Exception:
+        logger.critical("background_enrollment_import_failed", exc_info=True)
+    try:
+        first_snapshot = await app.state.settings.snapshot()
         await log_ignored_env(app.state.settings, config)
+        log_ignored_lists(first_snapshot, config)
     except Exception:
         # A loop's own snapshot() reads the document again on its first tick.
         logger.critical("settings_first_read_failed", exc_info=True)
@@ -1704,6 +1725,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.background_tasks.add(settle_task)
         settle_task.add_done_callback(app.state.background_tasks.discard)
+    # The enrollment import failed, or left a repository's write failed: it is
+    # tried again in this run, with the same start (#165).
+    if enrollment_import is None or enrollment_import.failed:
+        from embry0.services.background_enrollment import settle_enrollment
+
+        enrollment_task = asyncio.create_task(
+            settle_enrollment(
+                app.state.settings,
+                config,
+                enrollment_import,
+                reported=enrollment_reported,
+                metrics=getattr(app.state, "loop_metrics", None),
+            )
+        )
+        app.state.background_tasks.add(enrollment_task)
+        enrollment_task.add_done_callback(app.state.background_tasks.discard)
     if qa_minio_task is not None:
         app.state.background_tasks.add(qa_minio_task)
         qa_minio_task.add_done_callback(app.state.background_tasks.discard)
@@ -2357,28 +2394,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.critical("context_audit_unavailable", exc_info=True)
 
     # Leads (spec 2026-10-25): every finder on every repository someone answers
-    # for (owners set, or a watched stack), read with its organization's
-    # credential; what they find is offered as owner proposals. The loop
-    # always runs and reads the settings document's `leads` section every
-    # look (spec 2026-10-28), each repository through its organization's
-    # layer (spec 2026-10-29), so turning leads on, or changing what they
-    # read, needs no restart; it does nothing while `leads.enabled` is false.
-    # POST /leads/run runs one pass by hand either way.
+    # for (owners set, or a watched stack) and enrolled in background.leads
+    # (#165), read with its organization's credential; what they find is
+    # offered as owner proposals. The loop always runs and reads the settings
+    # document's `leads` section every look (spec 2026-10-28), each
+    # repository through its organization's layer (spec 2026-10-29), so
+    # turning leads on, or changing what they read, needs no restart; it does
+    # nothing while `leads.enabled` is false. A pass reads its repositories'
+    # enrollment from the snapshot its `leads` section came from. POST
+    # /leads/run runs one pass by hand either way.
     app.state.leads_loop = None
     try:
         from embry0.api.trigger_context import resolve_trigger_labels
         from embry0.api.v1.organizations import app_request as _leads_request
         from embry0.api.v1.organizations import org_forge_client as _leads_forge_client
+        from embry0.services.background_scope import enrollment as _leads_enrollment
+        from embry0.services.background_scope import registered_reader as _leads_registered
         from embry0.services.leads.loop import LeadsLoop
+        from embry0.settings.layers import SnapshotSection
         from embry0.settings.sections.leads import LEADS as _LEADS
+        from embry0.settings.sections.leads import LeadsSettings
         from embry0.settings.store import scoped_reader as _leads_reader
 
-        async def _lead_targets() -> list[str]:
+        _leads_candidates = _leads_registered(app.state.repos_repo)
+
+        async def _lead_targets(section: SnapshotSection[LeadsSettings]) -> list[str]:
+            # The repositories enrolled in background.leads (#165), of those someone answers for (owners
+            # set, or a watched stack), read from the snapshot the pass's `leads` section came from
+            # (the scoped_reader's Scoped, a SnapshotSection), so one pass reads one snapshot.
+            enrolled = _leads_enrollment(section.snapshot)
             owned = await app.state.proposals_repo.owners()
             stacks = [s.repo for s in await app.state.watcher_stacks_repo.list_all(enabled_only=True)]
-            registered = {str(r["repo"]).lower(): str(r["repo"]) for r in await app.state.repos_repo.list_all()}
-            wanted = set(owned) | {repo.lower() for repo in stacks}
-            return sorted(registered[repo] for repo in wanted if repo in registered)
+            return enrolled.scope("leads", await _leads_candidates(), among=[*owned, *stacks])
 
         async def _lead_client(repo: str) -> Any:
             org = await app.state.organizations_repo.get(repo.split("/", 1)[0])
@@ -2615,10 +2662,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(job_brief_task)
     job_brief_task.add_done_callback(app.state.background_tasks.discard)
 
-    # The Slop-O-Meter (spec 2026-10-26): each registered repository's history,
+    # The Slop-O-Meter (spec 2026-10-26): each enrolled repository's history,
     # read a bounded batch a tick from a bare mirror fetched with its
     # organization's credential, scored daily. Outliers are judged on
-    # background_models.slop_judge (#164).
+    # background_models.slop_judge (#164). A repository that leaves its scope
+    # loses its mirror and its rows on the next tick (#165).
     from pathlib import Path as _Path
 
     from fastapi import HTTPException
@@ -2626,17 +2674,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.api.v1.organizations import app_request as _slop_meter_request
     from embry0.api.v1.organizations import org_forge_client as _slop_meter_forge_client
     from embry0.api.v1.organizations import org_token as _slop_meter_token
-    from embry0.services.slop_meter.loop import SlopMeterLoop, slop_meter_settings
+    from embry0.audit.helpers import emit_audit as _slop_meter_emit_audit
+    from embry0.orchestration import dispatch_actors as _slop_meter_actors
+    from embry0.services.background_scope import registered_reader, registry_reader
+    from embry0.services.slop_meter.loop import SlopMeterLoop, meter_reader, slop_meter_settings
     from embry0.services.slop_meter.loop import repo_bots as slop_meter_repo_bots
-    from embry0.services.slop_meter.loop import scope as slop_meter_scope
     from embry0.services.slop_meter.mirror import GitMirror
-
-    async def _slop_meter_repos() -> list[str]:
-        # The registered repositories the world map shows (its regions), plus and minus the operator's lists.
-        regions = await app.state.world_repo.regions()
-        registered = {str(r["repo"]).lower() for r in await app.state.repos_repo.list_all()}
-        shown = (str(r["repo"]) for r in regions if str(r["repo"]).lower() in registered)
-        return slop_meter_scope(shown, config.slop_meter_repos, config.slop_meter_exclude)
+    from embry0.services.slop_meter.prune import audit_writer as _slop_meter_audit_writer
+    from embry0.storage.repositories.background_scope import ScopeExitsRepository
 
     async def _slop_meter_org(repo: str) -> Any:
         org = await app.state.organizations_repo.get(repo.split("/", 1)[0])
@@ -2670,12 +2715,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     app.state.slop_meter = SlopMeterLoop(
-        repos=_slop_meter_repos,
+        # The registered repositories, of which each tick reads the active ones enrolled in
+        # background.slop_meter (#165), keeps what it read of every enrolled one, active or not, and
+        # removes what it kept of the rest background.prune_after_days after they left (recorded in
+        # background_scope_exits, each removal audited); the enrollment and the judge's model
+        # (background_models.slop_judge) come from one snapshot a tick.
+        repos=registry_reader(app.state.repos_repo),
+        read=meter_reader(app.state.settings),
         store=app.state.slop_meter_repo,
         mirror=GitMirror(_Path(config.slop_meter_data_path), timeout=config.slop_meter_git_timeout_seconds),
+        exits=ScopeExitsRepository(db),
+        audit=_slop_meter_audit_writer(
+            _slop_meter_emit_audit, db, actor=_slop_meter_actors.SLOP_METER, audit_log_path=config.audit_log_path
+        ),
         token_for=_slop_meter_credential,
         client_for=_slop_meter_client,
-        models=background_model(app.state.settings, "slop_judge"),
         bots=_slop_meter_bots,
         calls=app.state.background_calls,
         settings=slop_meter_settings(config),
@@ -2685,11 +2739,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     slop_meter_task.add_done_callback(app.state.background_tasks.discard)
 
     # Scout (spec 2026-10-27): read-only jobs pinned to the scout's model,
-    # rotating through the world map's repositories and their areas; each
-    # finished job's cracks and weeds become leads. Its model is the settings
-    # document's background_models.scout (#164) and its policy the `scout`
-    # section, both read every tick from one snapshot, so a change to either
-    # needs no restart and a tick never mixes two versions; a repository with
+    # rotating through the repositories enrolled in background.scout (#165)
+    # and their areas; each finished job's cracks and weeds become leads. Its
+    # model is the settings document's background_models.scout (#164), its
+    # policy the `scout` section and its repositories background.scout, all
+    # read every tick from one snapshot, so a change to any needs no restart
+    # and a tick never mixes two versions; a repository with
     # no model is not scouted.
     from embry0.audit.helpers import emit_audit as _scout_audit
     from embry0.orchestration import dispatch_actors as _scout_actors
@@ -2697,12 +2752,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.services.areas import read_contents as _scout_read_contents
     from embry0.services.scout import ScoutLoop, tick_settings, warn_retired_tick
     from embry0.storage.repositories.scout import ScoutRunsRepository
-
-    async def _scout_repos() -> list[str]:
-        regions = await app.state.world_repo.regions()
-        registered = {str(r["repo"]).lower() for r in await app.state.repos_repo.list_all()}
-        shown = (str(r["repo"]) for r in regions if str(r["repo"]).lower() in registered)
-        return slop_meter_scope(shown, config.scout_repos, config.scout_exclude)
 
     async def _scout_areas(repo: str) -> list[Any]:
         client = await _slop_meter_client(repo)
@@ -2738,7 +2787,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runs=ScoutRunsRepository(db),
         jobs=app.state.jobs_repo,
         leads=app.state.leads_repo,
-        repos=_scout_repos,
+        # The registered, active repositories; each tick scouts those background.scout enrolls (#165).
+        repos=registered_reader(app.state.repos_repo),
         areas_for=_scout_areas,
         ask_gate=_scout_gate,
         submit=_scout_submit,

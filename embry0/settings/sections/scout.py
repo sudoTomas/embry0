@@ -11,9 +11,10 @@ An operator writes it the way they would say it::
       max_jobs_per_day: 20  # null, the default, sets no daily cap
 
 Which model the scout runs on is ``background_models.scout`` (#164), off
-until a model is named for it, and which repositories it reads
-(``SCOUT_REPOS``, ``SCOUT_EXCLUDE``) are not in this section yet: they move
-with the repository scope rule (#165). Without a model the scout starts
+until a model is named for it, and which repositories it reads is
+``background.scout`` (#165), the one repository scope rule every background
+feature follows, off until a repository, an organization or the deployment
+is enrolled. Without a model or an enrolled repository the scout starts
 nothing, so this section holds no ``enabled`` key: ``max_in_flight: 0``
 stops it starting jobs, as does ``scout: false`` in ``background_models``.
 """

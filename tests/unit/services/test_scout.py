@@ -29,7 +29,7 @@ from embry0.services.scout import (
     weed_leads,
 )
 from embry0.settings.sections.scout import ScoutSettings
-from tests.fixtures.scout import scout_read
+from tests.fixtures.scout import scout_enrollment, scout_read
 
 T0 = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
 LOCAL = "custom/qwen3-27b"
@@ -276,13 +276,15 @@ class Policy:
         self.models = models
         self.set(**values)
         self.reads = 0
+        #: ``background.scout``: every repository enrolled, unless a test says otherwise.
+        self.enrollment = scout_enrollment()
 
     def set(self, **values: Any) -> None:
         self.current = scout_read(ScoutSettings(**values))
 
     async def __call__(self) -> TickSettings:
         self.reads += 1
-        return TickSettings(section=self.current, models=await self.models())
+        return TickSettings(section=self.current, models=await self.models(), enrollment=self.enrollment)
 
 
 def make_loop(*, repos: list[str], areas: dict[str, list[Area]] | None = None, refuse: Any = None, **settings: Any):
@@ -359,7 +361,7 @@ async def test_finished_jobs_are_harvested_once_into_leads_with_their_area() -> 
 
 @pytest.mark.asyncio
 async def test_a_job_s_leads_are_capped_the_worst_first() -> None:
-    loop, runs, jobs, leads, _ = make_loop(repos=[], max_leads_per_job=1)
+    loop, runs, jobs, leads, _ = make_loop(repos=["acme/a"], max_leads_per_job=1)
     await runs.record(job_id="job-1", repo="acme/a", area="", template="kintsugi-trace", now=T0)
     jobs.rows["job-1"] = {"status": "completed", "result_summary": LEDGER}
     assert await loop.harvest() == 1

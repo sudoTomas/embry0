@@ -38,6 +38,7 @@ from embry0.settings.store import SettingsStore
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 from embry0.storage.repositories.scout import ScoutRunsRepository
+from tests.fixtures.scout import scout_enrollment
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
 pytestmark = pytest.mark.requires_postgres
@@ -139,8 +140,8 @@ def _loop(store: SettingsStore, db: DatabasePool, jobs: FakeJobs, clock: list[da
     production = tick_settings(store)
 
     async def settings() -> TickSettings:
-        # The store's scout section, as production reads it; every repository on the local model.
-        return dataclasses.replace(await production(), models=lambda repo: LOCAL)
+        # The store's scout section, as production reads it; every repository enrolled (#165), on the local model.
+        return dataclasses.replace(await production(), models=lambda repo: LOCAL, enrollment=scout_enrollment())
 
     return ScoutLoop(
         settings=settings,

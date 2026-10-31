@@ -40,7 +40,7 @@ def _loop(store: MemoryLeads, client: Any, *, finders: set[str], linear: Any = N
     clock = {"now": now}
     settings = MemorySettings({"enabled": True, "finders": sorted(finders), "max_new_per_repo_per_day": cap})
 
-    async def targets() -> list[str]:
+    async def targets(section: Any = None) -> list[str]:
         return [REPO]
 
     async def client_for(repo: str) -> Any:
