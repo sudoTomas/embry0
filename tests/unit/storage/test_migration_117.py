@@ -23,10 +23,16 @@ async def test_a_brief_is_stored_replaced_and_pruned(db_with_migrations: Databas
 
     briefs = ProposalBriefsRepository(db_with_migrations)
     await briefs.save(
-        "case:1", "h1", Brief("Stop the retries", "It retries.", "Stop it; you get a PR.", "small"), model="m"
+        "case:1",
+        "h1",
+        Brief("Stop the retries", "It retries.", "Stop it; you get a PR.", "small"),
+        model="m",
+        prompt_hash="p1",
     )
-    await briefs.save("case:2", "h2", Brief("Other", "P.", "F.", "large"), model="m")
-    await briefs.save("case:1", "h3", Brief("Stop the retries now", "It retries.", "Stop it.", "medium"), model="m2")
+    await briefs.save("case:2", "h2", Brief("Other", "P.", "F.", "large"), model="m", prompt_hash="p1")
+    await briefs.save(
+        "case:1", "h3", Brief("Stop the retries now", "It retries.", "Stop it.", "medium"), model="m2", prompt_hash="p1"
+    )
     stored = await briefs.all()
     assert stored["case:1"]["input_hash"] == "h3" and stored["case:1"]["size"] == "medium"
     assert stored["case:1"]["model"] == "m2" and stored["case:1"]["written_at"] is not None

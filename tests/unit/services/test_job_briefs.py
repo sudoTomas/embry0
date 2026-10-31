@@ -10,16 +10,16 @@ import httpx
 import pytest
 
 from embry0.services import job_briefs
+from embry0.services.brief_writer import RETRY_SECONDS
 from embry0.services.job_briefs import (
     JobBrief,
+    JobBriefSettings,
     JobBriefWriter,
     brief_view,
     input_hash,
     parse_job_brief,
     user_prompt,
-    write_job_brief,
 )
-from embry0.services.proposal_briefs import RETRY_SECONDS
 
 GOOD = {
     "title": "Find why the worker crash-looped and stop it",
@@ -104,20 +104,12 @@ def test_the_prompt_says_what_the_job_delivers_and_carries_no_job_id() -> None:
     assert "an analysis of the production logs, and a ticket when it finds a problem worth one" in watcher
 
 
-async def test_a_local_model_is_held_to_the_job_brief_schema_without_thinking() -> None:
-    sent: list[dict[str, Any]] = []
-
-    def answer(request: httpx.Request) -> httpx.Response:
-        sent.append(json.loads(request.content))
-        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(GOOD)}}]})
-
-    from embry0.services.background_models import Endpoint
-
-    endpoint = Endpoint("custom/local-27b", "http://models.test/v1", "k", "local-27b", local=True)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
-        brief = await write_job_brief(_job(), endpoint, client, _calls())
-    assert brief.size == "medium"
-    [body] = sent
+async def test_a_local_model_is_held_to_the_job_brief_schema_without_thinking(custom_enabled: None) -> None:
+    sent: list[httpx.Request] = []
+    store = FakeStore([_job()])
+    assert await _writer(store, [], sent=sent).tick() == ["job-1"]
+    assert store.saved["job-1"][1].size == "medium"
+    [body] = [json.loads(r.content) for r in sent]
     assert body["response_format"]["json_schema"]["name"] == "job_brief"
     assert body["response_format"]["json_schema"]["schema"]["required"] == ["title", "what", "why", "done", "size"]
     assert body["chat_template_kwargs"] == {"enable_thinking": False}
@@ -141,7 +133,7 @@ class FakeStore:
             for j in self.jobs
         ]
 
-    async def save(self, job_id: str, digest: str, brief: JobBrief, *, model: str) -> None:
+    async def save(self, job_id: str, digest: str, brief: JobBrief, *, model: str, prompt_hash: str = "") -> None:
         self.saved[job_id] = (digest, brief, model)
 
 
@@ -168,20 +160,28 @@ def _calls() -> Any:
 
 
 def _writer(
-    store: FakeStore, answers: list[Any], *, model: str = "custom/local-27b", clock: Any = None, per_tick: int = 3
+    store: FakeStore,
+    answers: list[Any],
+    *,
+    model: str = "custom/local-27b",
+    clock: Any = None,
+    per_tick: int = 3,
+    sent: list[httpx.Request] | None = None,
 ) -> JobBriefWriter:
     def answer(request: httpx.Request) -> httpx.Response:
+        if sent is not None:
+            sent.append(request)
         content = answers.pop(0) if answers else json.dumps(GOOD)
         if isinstance(content, httpx.Response):
             return content
         return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
 
-    async def chosen() -> Any:
-        return lambda repo: model
+    async def settings() -> JobBriefSettings:
+        return JobBriefSettings(models=lambda repo: model, voice=job_briefs.VOICE)
 
     return JobBriefWriter(
         store=store,
-        models=chosen,
+        settings=settings,
         calls=_calls(),
         per_tick=per_tick,
         client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),

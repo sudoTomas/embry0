@@ -196,7 +196,7 @@ async def test_a_writer_refused_by_the_caps_stops_its_tick_and_writes_on_a_later
         async def all(self) -> dict[str, Any]:
             return dict(rows)
 
-        async def save(self, pid: str, digest: str, brief: Any, *, model: str) -> None:
+        async def save(self, pid: str, digest: str, brief: Any, *, model: str, prompt_hash: str = "") -> None:
             rows[pid] = {"input_hash": digest, "model": model}
 
         async def prune(self, keep: set[str]) -> int:

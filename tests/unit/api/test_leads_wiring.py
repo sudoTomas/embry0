@@ -91,9 +91,9 @@ def test_the_check_for_a_loop_started_under_a_condition_can_fail() -> None:
 
 def test_the_brief_writer_orders_held_tickets_by_the_section() -> None:
     passed = {kw.arg: ast.unparse(kw.value) for kw in _construction("ProposalBriefWriter").keywords if kw.arg}
-    assert passed.get("settings") == "brief_settings(app.state.settings)", (
+    assert passed.get("settings") == "brief_settings(app.state.settings, app.state.agent_defs_repo)", (
         "the brief writer reads its model and leads.ask_min every tick, from one snapshot of the settings "
-        f"documents: {passed}"
+        f"documents, and its prompt from the proposal-brief agent definition: {passed}"
     )
     assert not {"min_readiness", "models", "leads"} & set(passed), (
         f"no readiness floor read once from the environment, and no second reader of the documents: {passed}"

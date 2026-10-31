@@ -226,8 +226,9 @@ export function AgentDetailPopup({
     [agents, agentType],
   );
 
+  // A definition naming no model (a brief writer's voice) adds no option: "" is the default's.
   const models = useMemo(
-    () => [...new Set(agents?.map((a) => a.model) ?? [])],
+    () => [...new Set((agents ?? []).map((a) => a.model).filter((m) => m.trim() !== ""))],
     [agents],
   );
 

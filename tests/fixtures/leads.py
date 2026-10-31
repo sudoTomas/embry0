@@ -73,7 +73,8 @@ class MemorySettings:
 
 def brief_reader(models: Any, leads: MemorySettings | None = None) -> Any:
     """The proposal brief writer's settings reader for a test: ``models()`` as its model lookup and the
-    ``leads`` section of ``leads`` (else the defaults), both read at each call, as one snapshot holds them."""
+    ``leads`` section of ``leads`` (else the defaults), both read at each call, as one snapshot holds them,
+    and the voice the ``proposal-brief`` agent definition is seeded with."""
     from embry0.services import proposal_briefs
 
     settings_type = getattr(proposal_briefs, "BriefSettings", None)
@@ -81,6 +82,6 @@ def brief_reader(models: Any, leads: MemorySettings | None = None) -> Any:
     source = leads or MemorySettings()
 
     async def read() -> Any:
-        return settings_type(models=await models(), leads=await source.leads())
+        return settings_type(models=await models(), leads=await source.leads(), voice=proposal_briefs.VOICE)
 
     return read

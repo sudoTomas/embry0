@@ -196,7 +196,18 @@ def test_every_builtin_agent_on_every_catalog_model_names_the_serving_provider(a
     assert (routed.name if routed is not None else ANTHROPIC.name) == provider.name
 
 
-@pytest.mark.parametrize("agent_type", sorted(BUILTIN_AGENTS))
+#: The built-in definitions that name no model: the brief writer's prompts (#166), whose loops run on the model
+#: background_models names for them, so a model named here would read as one they use and is not.
+NO_MODEL = frozenset({"proposal-brief", "job-brief"})
+
+
+def test_only_the_brief_prompts_name_no_model():
+    assert {t for t, seed in BUILTIN_AGENTS.items() if not seed["model"]} == NO_MODEL, (
+        "every built-in agent that runs in a job seeds a model; only the brief writer's prompts name none"
+    )
+
+
+@pytest.mark.parametrize("agent_type", sorted(set(BUILTIN_AGENTS) - NO_MODEL))
 def test_every_builtin_agent_seed_model_is_a_catalog_model(agent_type):
     model = BUILTIN_AGENTS[agent_type]["model"]
     provider = catalog_provider_for_model(model)

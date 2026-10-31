@@ -27,6 +27,16 @@ beforeEach(() => {
   mockUseAgents.mockReturnValue({
     data: [
       { type: "developer", description: "", model: "m", tools: [], skills: [], system_prompt: "", is_builtin: true },
+      {
+        type: "job-brief",
+        description: "",
+        model: "",
+        tools: [],
+        skills: [],
+        system_prompt: "",
+        is_builtin: true,
+        runs_in_jobs: false,
+      },
     ],
   });
   mockUseModels.mockReturnValue({ models: ["claude-opus-5", "claude-sonnet-5"], isLoading: false });
@@ -59,6 +69,12 @@ describe("advancedToRequest", () => {
 });
 
 describe("JobAdvancedFields", () => {
+  it("offers a per-agent model only for the agents a job runs, not a brief writer's voice (#166)", () => {
+    render(<JobAdvancedFields value={EMPTY_ADVANCED} onChange={() => {}} />);
+    expect(screen.getByLabelText("Model override for developer")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Model override for job-brief"), "runs_in_jobs false runs in no job").toBeNull();
+  });
+
   it("renders template, profile, budget, and per-agent model controls", () => {
     render(<JobAdvancedFields value={EMPTY_ADVANCED} onChange={vi.fn()} />);
     expect(screen.getByLabelText("Pipeline Template")).toBeInTheDocument();

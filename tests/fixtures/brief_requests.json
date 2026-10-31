@@ -1,0 +1,697 @@
+{
+ "about": "What the brief writers sent before their prompts became agent definitions (#166), recorded by driving the proposal and job brief writers' own ticks on the tree before that change, with each input, its input hash and the request: the seeded prompts must send exactly this. Headers are the ones the request sets (the client library adds the rest).",
+ "model": "custom/local-27b",
+ "proposals": {
+  "written_in_order": [
+   "case:hc-1",
+   "case:hc-2",
+   "case:hc-3",
+   "ticket:t1",
+   "ci:c1",
+   "alert:a1",
+   "flaky:k1",
+   "review:r1",
+   "crack:k2",
+   "issue:41",
+   "finding:f1",
+   "omen:o1",
+   "ticket:t2",
+   "weed:w1"
+  ],
+  "cases": [
+   {
+    "input": {
+     "id": "case:hc-1",
+     "kind": "case",
+     "repo": "acme/widgets",
+     "title": "Something about case 7",
+     "summary": "A case embry0 found.",
+     "details": "Severity medium, seen 3 times",
+     "action": "Its own words for a yes on a case",
+     "created_at": "2026-10-25T11:59:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "medium",
+      "occurrences": 3
+     }
+    },
+    "input_hash": "53365876e22a10d3ac925757",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2276",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: a problem the log watcher keeps seeing in production\\nRepository: widgets\\nTitle: Something about case 7\\nSeverity: medium\\nWhat a yes starts: the agents investigate the problem, fix it and open a pull request (Its own words for a yes on a case)\\nDetails:\\nSeverity medium, seen 3 times\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "case:hc-2",
+     "kind": "case",
+     "repo": "acme/widgets",
+     "title": "Something about case 7",
+     "summary": "A case embry0 found.",
+     "details": "Line of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\nLine of evidence 1234 for the failure.\n",
+     "action": "Its own words for a yes on a case",
+     "created_at": "2026-10-25T11:58:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "high",
+      "paths": [
+       "src/m0.py",
+       "src/m1.py",
+       "src/m2.py",
+       "src/m3.py",
+       "src/m4.py",
+       "src/m5.py",
+       "src/m6.py",
+       "src/m7.py",
+       "src/m8.py",
+       "src/m9.py",
+       "src/m10.py"
+      ]
+     }
+    },
+    "input_hash": "f93a68925ff0acc7ddabae12",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "5929",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: a problem the log watcher keeps seeing in production\\nRepository: widgets\\nTitle: Something about case 7\\nSeverity: high\\nFiles: src/m0.py, src/m1.py, src/m2.py, src/m3.py, src/m4.py, src/m5.py, src/m6.py, src/m7.py\\nWhat a yes starts: the agents investigate the problem, fix it and open a pull request (Its own words for a yes on a case)\\nDetails:\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the failure.\\nLine of evidence 1234 for the\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "case:hc-3",
+     "kind": "case",
+     "repo": "globex/api",
+     "title": "Ünïcode — “quoted” title\twith a tab",
+     "summary": "A case embry0 found.",
+     "details": "Line\r\nwith CRLF",
+     "action": "Its own words for a yes on a case",
+     "created_at": "2026-10-25T11:46:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {}
+    },
+    "input_hash": "cc44e9a72003c37754054994",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2264",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: a problem the log watcher keeps seeing in production\\nRepository: api\\nTitle: Ünïcode — “quoted” title\\twith a tab\\nWhat a yes starts: the agents investigate the problem, fix it and open a pull request (Its own words for a yes on a case)\\nDetails:\\nLine\\r\\nwith CRLF\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "ticket:t1",
+     "kind": "ticket",
+     "repo": "acme/widgets",
+     "title": "Something about ticket 7",
+     "summary": "A ticket embry0 found.",
+     "details": "",
+     "action": "Its own words for a yes on a ticket",
+     "created_at": "2026-10-25T11:55:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "medium",
+      "source": {
+       "readiness": 80
+      }
+     }
+    },
+    "input_hash": "da1938a5370033d8ba8a53dc",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2209",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: a backlog ticket\\nRepository: widgets\\nTitle: Something about ticket 7\\nSeverity: medium\\nWhat a yes starts: the agents take the ticket and work it, usually ending in a pull request (Its own words for a yes on a ticket)\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "ci:c1",
+     "kind": "ci",
+     "repo": "acme/widgets",
+     "title": "Something about ci 7",
+     "summary": "A ci embry0 found.",
+     "details": "",
+     "action": "Its own words for a yes on a ci",
+     "created_at": "2026-10-25T11:53:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "high",
+      "paths": [
+       ".github/workflows/ci.yml"
+      ]
+     }
+    },
+    "input_hash": "c4f2adecccb08fcb68970692",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2235",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: a failing CI check\\nRepository: widgets\\nTitle: Something about ci 7\\nSeverity: high\\nFiles: .github/workflows/ci.yml\\nWhat a yes starts: the agents find why the check fails and open a pull request that fixes it (Its own words for a yes on a ci)\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "alert:a1",
+     "kind": "alert",
+     "repo": "acme/widgets",
+     "title": "Something about alert 7",
+     "summary": "A alert embry0 found.",
+     "details": "",
+     "action": "Its own words for a yes on a alert",
+     "created_at": "2026-10-25T11:52:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "critical"
+     }
+    },
+    "input_hash": "240afcbd705ea6bb7512357e",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2194",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: a firing alert\\nRepository: widgets\\nTitle: Something about alert 7\\nSeverity: critical\\nWhat a yes starts: the agents fix what the alert names and open a pull request (Its own words for a yes on a alert)\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "flaky:k1",
+     "kind": "flaky",
+     "repo": "acme/widgets",
+     "title": "Something about flaky 7",
+     "summary": "A flaky embry0 found.",
+     "details": "",
+     "action": "Its own words for a yes on a flaky",
+     "created_at": "2026-10-25T11:51:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "medium"
+     }
+    },
+    "input_hash": "8f27fc392bdd9171bcfbb6f5",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2199",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: a flaky check\\nRepository: widgets\\nTitle: Something about flaky 7\\nSeverity: medium\\nWhat a yes starts: the agents find why the check is unreliable and open a pull request (Its own words for a yes on a flaky)\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "review:r1",
+     "kind": "review",
+     "repo": "acme/widgets",
+     "title": "Something about review 7",
+     "summary": "A review embry0 found.",
+     "details": "",
+     "action": "Its own words for a yes on a review",
+     "created_at": "2026-10-25T11:50:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "low",
+      "paths": [
+       "api/handlers.py"
+      ]
+     }
+    },
+    "input_hash": "f33963f18d6ee4dbdf85dd5e",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2244",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: review comments nobody answered\\nRepository: widgets\\nTitle: Something about review 7\\nSeverity: low\\nFiles: api/handlers.py\\nWhat a yes starts: the agents answer the open review comments on the pull request's branch (Its own words for a yes on a review)\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "crack:k2",
+     "kind": "crack",
+     "repo": "acme/widgets",
+     "title": "Something about crack 7",
+     "summary": "A crack embry0 found.",
+     "details": "",
+     "action": "Its own words for a yes on a crack",
+     "created_at": "2026-10-25T11:49:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "high",
+      "paths": [
+       "lib/status.ts"
+      ]
+     }
+    },
+    "input_hash": "1dea8654645cf21ae6a9d095",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2233",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: a crack the scout found in the code\\nRepository: widgets\\nTitle: Something about crack 7\\nSeverity: high\\nFiles: lib/status.ts\\nWhat a yes starts: the agents fix what the crack names and open a pull request (Its own words for a yes on a crack)\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "issue:41",
+     "kind": "issue",
+     "repo": "acme/widgets",
+     "title": "Something about issue 7",
+     "summary": "A issue embry0 found.",
+     "details": "Body of the issue\nwith two lines",
+     "action": "Its own words for a yes on a issue",
+     "created_at": "2026-10-25T11:57:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "labels": [
+       "bug"
+      ]
+     }
+    },
+    "input_hash": "50aae607426a1dbac2822fe6",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2256",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: an open issue nobody has started\\nRepository: widgets\\nTitle: Something about issue 7\\nWhat a yes starts: the agents plan the issue and start the work, usually ending in a pull request (Its own words for a yes on a issue)\\nDetails:\\nBody of the issue\\nwith two lines\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "finding:f1",
+     "kind": "finding",
+     "repo": "acme/widgets",
+     "title": "CLAUDE.md:12: the tests run with make test",
+     "summary": "A finding embry0 found.",
+     "details": "",
+     "action": "Its own words for a yes on a finding",
+     "created_at": "2026-10-25T11:56:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "path": "CLAUDE.md",
+      "line": 12
+     }
+    },
+    "input_hash": "ae4f3e18668c2d0b61289ea7",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2269",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: a claim in a file that steers coding agents, which an audit thinks is wrong\\nRepository: widgets\\nTitle: CLAUDE.md:12: the tests run with make test\\nFiles: CLAUDE.md\\nWhat a yes starts: a pull request that changes that one claim in the file (Its own words for a yes on a finding)\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "omen:o1",
+     "kind": "omen",
+     "repo": "acme/other",
+     "title": "Something about omen 7",
+     "summary": "A omen embry0 found.",
+     "details": "",
+     "action": "Its own words for a yes on a omen",
+     "created_at": "2026-10-25T11:47:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "medium"
+     }
+    },
+    "input_hash": "31a346108e8cafea8b4af73a",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2152",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: omen\\nRepository: other\\nTitle: Something about omen 7\\nSeverity: medium\\nWhat a yes starts: Its own words for a yes on a omen (Its own words for a yes on a omen)\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "ticket:t2",
+     "kind": "ticket",
+     "repo": "acme/widgets",
+     "title": "Something about ticket 7",
+     "summary": "A ticket embry0 found.",
+     "details": "",
+     "action": "Its own words for a yes on a ticket",
+     "created_at": "2026-10-25T11:54:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "low",
+      "source": {
+       "readiness": 30
+      }
+     }
+    },
+    "input_hash": "bcce7a2db31711707afc5918",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2206",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: a backlog ticket\\nRepository: widgets\\nTitle: Something about ticket 7\\nSeverity: low\\nWhat a yes starts: the agents take the ticket and work it, usually ending in a pull request (Its own words for a yes on a ticket)\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "id": "weed:w1",
+     "kind": "weed",
+     "repo": "acme/widgets",
+     "title": "Something about weed 7",
+     "summary": "A weed embry0 found.",
+     "details": "Kind: dead export",
+     "action": "Its own words for a yes on a weed",
+     "created_at": "2026-10-25T11:48:00+00:00",
+     "url": null,
+     "area": null,
+     "extra": {
+      "severity": "low"
+     }
+    },
+    "input_hash": "c72aeb937065149c82c39bb8",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2258",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.\\n\\nYou get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no \\\"feat:\\\"/\\\"fix(x):\\\" prefixes, no ticket keys, no ids.\\n- \\\"problem\\\": one or two short sentences: what is wrong or missing, and who or what it affects.\\n- \\\"fix\\\": one or two short sentences: what the agents would do about it, ending with what the owner gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What a yes starts\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work the fix is.\\n\\nRules:\\n- Use only what the proposal says. Never invent causes, numbers, people, dates or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no counts of how often something was seen.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"draft ticket\\\", \\\"triage\\\", \\\"lead\\\", \\\"proposal\\\", \\\"the agent\\\"): say what happens.\\n- Name a file only when the fix is about that file.\\n- If the proposal is unclear, say so plainly in \\\"problem\\\" rather than guessing.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind: dead or duplicated code the scout found\\nRepository: widgets\\nTitle: Something about weed 7\\nSeverity: low\\nWhat a yes starts: the agents remove the dead code, change no behavior, and open a pull request (Its own words for a yes on a weed)\\nDetails:\\nKind: dead export\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"problem\":{\"type\":\"string\",\"maxLength\":420},\"fix\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"problem\",\"fix\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   }
+  ]
+ },
+ "jobs": {
+  "written_in_order": [
+   "job-1",
+   "job-2",
+   "job-3",
+   "job-4",
+   "job-5",
+   "job-6",
+   "job-7",
+   "job-8",
+   "job-9"
+  ],
+  "cases": [
+   {
+    "input": {
+     "job_id": "job-1",
+     "task": "[ENG-3075] [watcher] Diagnose the worker boot crash-loop\n\n## Evidence\nx 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 ",
+     "repo": "acme/widgets",
+     "area": "Workers",
+     "job_kind": "code",
+     "pipeline_template": "full-magnum-opus",
+     "work_nature": null,
+     "issue_title": "Diagnose the worker boot crash-loop",
+     "status": "running",
+     "brief_hash": null
+    },
+    "input_hash": "ab4961fa1c9d077943eb5d34",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "8284",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters.\\n\\nThe job's task can be long and technical: a ticket, log evidence, instructions for coding agents. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain, specific name for the job, at most 70 characters, phrased as what the job does, e.g. \\\"Find why the service crash-looped and stop it\\\". No [tags], ticket keys, ids, \\\"feat:\\\"/\\\"fix:\\\" prefixes, or code identifiers.\\n- \\\"what\\\": one or two short sentences: what happened or what is asked, in concrete terms (what broke, where, how often, when), only as far as the task says.\\n- \\\"why\\\": one or two short sentences: why it matters: who or what it affects, and what happens if nobody does it. If the task gives no reason, write \\\"The task does not say why it matters.\\\"\\n- \\\"done\\\": one or two short sentences: what finished looks like, ending with what the person gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What it delivers\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work it is.\\n\\nRules:\\n- Use only what the task says. Never invent causes, numbers, dates, people or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no ticket keys, no log lines.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"triage\\\", \\\"watcher\\\", \\\"the agent\\\", \\\"the job\\\"): say what happens.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind of work: a code change\\nRepository: widgets, area Workers\\nTicket title: Diagnose the worker boot crash-loop\\nWhat it delivers: a pull request with the change\\nTask:\\n[ENG-3075] [watcher] Diagnose the worker boot crash-loop\\n\\n## Evidence\\nx 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 x 42 \"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"job_brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"what\":{\"type\":\"string\",\"maxLength\":420},\"why\":{\"type\":\"string\",\"maxLength\":420},\"done\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"what\",\"why\",\"done\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "job_id": "job-2",
+     "task": "Fix the sender 12 times",
+     "repo": "acme/widgets",
+     "area": "",
+     "job_kind": "analysis",
+     "pipeline_template": "analysis-default",
+     "work_nature": null,
+     "issue_title": "",
+     "status": "running",
+     "brief_hash": null
+    },
+    "input_hash": "448e819cea430bdd76719f66",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2289",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters.\\n\\nThe job's task can be long and technical: a ticket, log evidence, instructions for coding agents. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain, specific name for the job, at most 70 characters, phrased as what the job does, e.g. \\\"Find why the service crash-looped and stop it\\\". No [tags], ticket keys, ids, \\\"feat:\\\"/\\\"fix:\\\" prefixes, or code identifiers.\\n- \\\"what\\\": one or two short sentences: what happened or what is asked, in concrete terms (what broke, where, how often, when), only as far as the task says.\\n- \\\"why\\\": one or two short sentences: why it matters: who or what it affects, and what happens if nobody does it. If the task gives no reason, write \\\"The task does not say why it matters.\\\"\\n- \\\"done\\\": one or two short sentences: what finished looks like, ending with what the person gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What it delivers\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work it is.\\n\\nRules:\\n- Use only what the task says. Never invent causes, numbers, dates, people or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no ticket keys, no log lines.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"triage\\\", \\\"watcher\\\", \\\"the agent\\\", \\\"the job\\\"): say what happens.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind of work: an analysis\\nRepository: widgets\\nWhat it delivers: an analysis of the production logs, and a ticket when it finds a problem worth one\\nTask:\\nFix the sender 12 times\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"job_brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"what\":{\"type\":\"string\",\"maxLength\":420},\"why\":{\"type\":\"string\",\"maxLength\":420},\"done\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"what\",\"why\",\"done\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "job_id": "job-3",
+     "task": "Fix the sender 12 times",
+     "repo": "globex/api",
+     "area": "",
+     "job_kind": "research",
+     "pipeline_template": "research-default",
+     "work_nature": null,
+     "issue_title": "",
+     "status": "running",
+     "brief_hash": null
+    },
+    "input_hash": "f104eebdba1f808e33c40dde",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2216",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters.\\n\\nThe job's task can be long and technical: a ticket, log evidence, instructions for coding agents. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain, specific name for the job, at most 70 characters, phrased as what the job does, e.g. \\\"Find why the service crash-looped and stop it\\\". No [tags], ticket keys, ids, \\\"feat:\\\"/\\\"fix:\\\" prefixes, or code identifiers.\\n- \\\"what\\\": one or two short sentences: what happened or what is asked, in concrete terms (what broke, where, how often, when), only as far as the task says.\\n- \\\"why\\\": one or two short sentences: why it matters: who or what it affects, and what happens if nobody does it. If the task gives no reason, write \\\"The task does not say why it matters.\\\"\\n- \\\"done\\\": one or two short sentences: what finished looks like, ending with what the person gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What it delivers\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work it is.\\n\\nRules:\\n- Use only what the task says. Never invent causes, numbers, dates, people or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no ticket keys, no log lines.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"triage\\\", \\\"watcher\\\", \\\"the agent\\\", \\\"the job\\\"): say what happens.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind of work: research\\nRepository: api\\nWhat it delivers: a written report\\nTask:\\nFix the sender 12 times\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"job_brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"what\":{\"type\":\"string\",\"maxLength\":420},\"why\":{\"type\":\"string\",\"maxLength\":420},\"done\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"what\",\"why\",\"done\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "job_id": "job-4",
+     "task": "Fix the sender 12 times",
+     "repo": "acme/widgets",
+     "area": "",
+     "job_kind": "ops",
+     "pipeline_template": "ops-default",
+     "work_nature": null,
+     "issue_title": "",
+     "status": "running",
+     "brief_hash": null
+    },
+    "input_hash": "088b1063579bd4fde9cf100d",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2249",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters.\\n\\nThe job's task can be long and technical: a ticket, log evidence, instructions for coding agents. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain, specific name for the job, at most 70 characters, phrased as what the job does, e.g. \\\"Find why the service crash-looped and stop it\\\". No [tags], ticket keys, ids, \\\"feat:\\\"/\\\"fix:\\\" prefixes, or code identifiers.\\n- \\\"what\\\": one or two short sentences: what happened or what is asked, in concrete terms (what broke, where, how often, when), only as far as the task says.\\n- \\\"why\\\": one or two short sentences: why it matters: who or what it affects, and what happens if nobody does it. If the task gives no reason, write \\\"The task does not say why it matters.\\\"\\n- \\\"done\\\": one or two short sentences: what finished looks like, ending with what the person gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What it delivers\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work it is.\\n\\nRules:\\n- Use only what the task says. Never invent causes, numbers, dates, people or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no ticket keys, no log lines.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"triage\\\", \\\"watcher\\\", \\\"the agent\\\", \\\"the job\\\"): say what happens.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind of work: operations work\\nRepository: widgets\\nWhat it delivers: the operation done, and a report of it\\nTask:\\nFix the sender 12 times\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"job_brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"what\":{\"type\":\"string\",\"maxLength\":420},\"why\":{\"type\":\"string\",\"maxLength\":420},\"done\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"what\",\"why\",\"done\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "job_id": "job-5",
+     "task": "Fix the sender 12 times",
+     "repo": "acme/widgets",
+     "area": "",
+     "job_kind": "",
+     "pipeline_template": "",
+     "work_nature": null,
+     "issue_title": "",
+     "status": "running",
+     "brief_hash": null
+    },
+    "input_hash": "3dd67d94a094497c83b74e25",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2236",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters.\\n\\nThe job's task can be long and technical: a ticket, log evidence, instructions for coding agents. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain, specific name for the job, at most 70 characters, phrased as what the job does, e.g. \\\"Find why the service crash-looped and stop it\\\". No [tags], ticket keys, ids, \\\"feat:\\\"/\\\"fix:\\\" prefixes, or code identifiers.\\n- \\\"what\\\": one or two short sentences: what happened or what is asked, in concrete terms (what broke, where, how often, when), only as far as the task says.\\n- \\\"why\\\": one or two short sentences: why it matters: who or what it affects, and what happens if nobody does it. If the task gives no reason, write \\\"The task does not say why it matters.\\\"\\n- \\\"done\\\": one or two short sentences: what finished looks like, ending with what the person gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What it delivers\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work it is.\\n\\nRules:\\n- Use only what the task says. Never invent causes, numbers, dates, people or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no ticket keys, no log lines.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"triage\\\", \\\"watcher\\\", \\\"the agent\\\", \\\"the job\\\"): say what happens.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind of work: not classified yet\\nRepository: widgets\\nWhat it delivers: the result of the work\\nTask:\\nFix the sender 12 times\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"job_brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"what\":{\"type\":\"string\",\"maxLength\":420},\"why\":{\"type\":\"string\",\"maxLength\":420},\"done\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"what\",\"why\",\"done\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "job_id": "job-6",
+     "task": "Fix the sender 12 times",
+     "repo": "acme/widgets",
+     "area": "",
+     "job_kind": "code",
+     "pipeline_template": "full-magnum-opus",
+     "work_nature": {
+      "nature": "slop",
+      "slop_score": 72,
+      "kinds": [
+       "wrapper",
+       "retry",
+       "a",
+       "b",
+       "c",
+       "d"
+      ]
+     },
+     "issue_title": "",
+     "status": "running",
+     "brief_hash": null
+    },
+    "input_hash": "5fd34994304973f17044de6e",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2275",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters.\\n\\nThe job's task can be long and technical: a ticket, log evidence, instructions for coding agents. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain, specific name for the job, at most 70 characters, phrased as what the job does, e.g. \\\"Find why the service crash-looped and stop it\\\". No [tags], ticket keys, ids, \\\"feat:\\\"/\\\"fix:\\\" prefixes, or code identifiers.\\n- \\\"what\\\": one or two short sentences: what happened or what is asked, in concrete terms (what broke, where, how often, when), only as far as the task says.\\n- \\\"why\\\": one or two short sentences: why it matters: who or what it affects, and what happens if nobody does it. If the task gives no reason, write \\\"The task does not say why it matters.\\\"\\n- \\\"done\\\": one or two short sentences: what finished looks like, ending with what the person gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What it delivers\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work it is.\\n\\nRules:\\n- Use only what the task says. Never invent causes, numbers, dates, people or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no ticket keys, no log lines.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"triage\\\", \\\"watcher\\\", \\\"the agent\\\", \\\"the job\\\"): say what happens.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind of work: a code change\\nRepository: widgets\\nClassified as: slop, slop score 72\\nWhat it delivers: a pull request with the change\\nTask:\\nFix the sender 12 times\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"job_brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"what\":{\"type\":\"string\",\"maxLength\":420},\"why\":{\"type\":\"string\",\"maxLength\":420},\"done\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"what\",\"why\",\"done\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "job_id": "job-7",
+     "task": "Fix the sender 12 times",
+     "repo": "acme/widgets",
+     "area": "",
+     "job_kind": "code",
+     "pipeline_template": "full-magnum-opus",
+     "work_nature": "{\"nature\": \"bug\", \"slop_score\": null, \"kinds\": []}",
+     "issue_title": "",
+     "status": "running",
+     "brief_hash": null
+    },
+    "input_hash": "1c3fb8a5451f385344c667a7",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2259",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters.\\n\\nThe job's task can be long and technical: a ticket, log evidence, instructions for coding agents. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain, specific name for the job, at most 70 characters, phrased as what the job does, e.g. \\\"Find why the service crash-looped and stop it\\\". No [tags], ticket keys, ids, \\\"feat:\\\"/\\\"fix:\\\" prefixes, or code identifiers.\\n- \\\"what\\\": one or two short sentences: what happened or what is asked, in concrete terms (what broke, where, how often, when), only as far as the task says.\\n- \\\"why\\\": one or two short sentences: why it matters: who or what it affects, and what happens if nobody does it. If the task gives no reason, write \\\"The task does not say why it matters.\\\"\\n- \\\"done\\\": one or two short sentences: what finished looks like, ending with what the person gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What it delivers\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work it is.\\n\\nRules:\\n- Use only what the task says. Never invent causes, numbers, dates, people or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no ticket keys, no log lines.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"triage\\\", \\\"watcher\\\", \\\"the agent\\\", \\\"the job\\\"): say what happens.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind of work: a code change\\nRepository: widgets\\nClassified as: bug\\nWhat it delivers: a pull request with the change\\nTask:\\nFix the sender 12 times\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"job_brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"what\":{\"type\":\"string\",\"maxLength\":420},\"why\":{\"type\":\"string\",\"maxLength\":420},\"done\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"what\",\"why\",\"done\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "job_id": "job-8",
+     "task": "Fix the sender 12 times",
+     "repo": "",
+     "area": "",
+     "job_kind": "code",
+     "pipeline_template": "context-audit",
+     "work_nature": null,
+     "issue_title": "",
+     "status": "running",
+     "brief_hash": null
+    },
+    "input_hash": "8787e97eda90079d32af6c74",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2264",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters.\\n\\nThe job's task can be long and technical: a ticket, log evidence, instructions for coding agents. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain, specific name for the job, at most 70 characters, phrased as what the job does, e.g. \\\"Find why the service crash-looped and stop it\\\". No [tags], ticket keys, ids, \\\"feat:\\\"/\\\"fix:\\\" prefixes, or code identifiers.\\n- \\\"what\\\": one or two short sentences: what happened or what is asked, in concrete terms (what broke, where, how often, when), only as far as the task says.\\n- \\\"why\\\": one or two short sentences: why it matters: who or what it affects, and what happens if nobody does it. If the task gives no reason, write \\\"The task does not say why it matters.\\\"\\n- \\\"done\\\": one or two short sentences: what finished looks like, ending with what the person gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What it delivers\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work it is.\\n\\nRules:\\n- Use only what the task says. Never invent causes, numbers, dates, people or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no ticket keys, no log lines.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"triage\\\", \\\"watcher\\\", \\\"the agent\\\", \\\"the job\\\"): say what happens.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind of work: a code change\\nWhat it delivers: a report of the claims that look wrong in the files that steer coding agents\\nTask:\\nFix the sender 12 times\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"job_brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"what\":{\"type\":\"string\",\"maxLength\":420},\"why\":{\"type\":\"string\",\"maxLength\":420},\"done\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"what\",\"why\",\"done\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   },
+   {
+    "input": {
+     "job_id": "job-9",
+     "task": "Fix the sender 12 times",
+     "repo": "acme/widgets",
+     "area": "",
+     "job_kind": "weird",
+     "pipeline_template": "qa",
+     "work_nature": null,
+     "issue_title": "",
+     "status": "completed",
+     "brief_hash": null
+    },
+    "input_hash": "8bc3aafb2da198c8ab01ba13",
+    "request": {
+     "method": "POST",
+     "url": "http://models.test/v1/chat/completions",
+     "headers": {
+      "authorization": "Bearer key-000000000001",
+      "content-length": "2214",
+      "content-type": "application/json"
+     },
+     "body": "{\"model\":\"local-27b\",\"messages\":[{\"role\":\"system\",\"content\":\"You explain a job an automation service is running (or ran) to the person responsible for the code, so they understand at a glance what it is about and why it matters.\\n\\nThe job's task can be long and technical: a ticket, log evidence, instructions for coding agents. Write a brief of it as one JSON object with exactly these keys:\\n- \\\"title\\\": a plain, specific name for the job, at most 70 characters, phrased as what the job does, e.g. \\\"Find why the service crash-looped and stop it\\\". No [tags], ticket keys, ids, \\\"feat:\\\"/\\\"fix:\\\" prefixes, or code identifiers.\\n- \\\"what\\\": one or two short sentences: what happened or what is asked, in concrete terms (what broke, where, how often, when), only as far as the task says.\\n- \\\"why\\\": one or two short sentences: why it matters: who or what it affects, and what happens if nobody does it. If the task gives no reason, write \\\"The task does not say why it matters.\\\"\\n- \\\"done\\\": one or two short sentences: what finished looks like, ending with what the person gets back, e.g. \\\"You get a pull request.\\\" Base it on \\\"What it delivers\\\".\\n- \\\"size\\\": \\\"small\\\", \\\"medium\\\" or \\\"large\\\": how much work it is.\\n\\nRules:\\n- Use only what the task says. Never invent causes, numbers, dates, people or results.\\n- Write for a busy engineer: plain words, no markdown, no ids, no ticket keys, no log lines.\\n- Avoid the automation's own words (\\\"pipeline\\\", \\\"triage\\\", \\\"watcher\\\", \\\"the agent\\\", \\\"the job\\\"): say what happens.\\nAnswer with the JSON object only.\"},{\"role\":\"user\",\"content\":\"Kind of work: weird\\nRepository: widgets\\nWhat it delivers: a test report\\nTask:\\nFix the sender 12 times\"}],\"temperature\":0.3,\"max_tokens\":600,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\"job_brief\",\"schema\":{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"maxLength\":70},\"what\":{\"type\":\"string\",\"maxLength\":420},\"why\":{\"type\":\"string\",\"maxLength\":420},\"done\":{\"type\":\"string\",\"maxLength\":420},\"size\":{\"type\":\"string\",\"enum\":[\"small\",\"medium\",\"large\"]}},\"required\":[\"title\",\"what\",\"why\",\"done\",\"size\"],\"additionalProperties\":false}}},\"chat_template_kwargs\":{\"enable_thinking\":false}}"
+    }
+   }
+  ]
+ }
+}

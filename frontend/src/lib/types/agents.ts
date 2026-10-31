@@ -31,6 +31,9 @@ export interface AgentDefinition {
   auth_mode?: AgentAuthMode | null;
   mcp_servers?: Record<string, unknown> | null;
   is_builtin: boolean;
+  /** False for a definition no job runs: a brief writer's voice, listed under Background writers and
+   * never a pipeline step, a job's per-agent model or a guild character. Absent on an older backend: true. */
+  runs_in_jobs?: boolean;
   /** Catalog provider the model routes to by id prefix; null when none does.
    * Absent on a backend that predates the field. */
   provider?: string | null;

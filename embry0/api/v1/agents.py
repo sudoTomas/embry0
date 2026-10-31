@@ -9,6 +9,8 @@ from embry0.api.deps import get_agent_defs_repo, require_admin
 from embry0.api.schemas import AgentCreateRequest, AgentUpdateRequest
 from embry0.api.v1._audit import audit
 from embry0.api.v1._skill_writes import check_added_skills
+from embry0.services import job_briefs, proposal_briefs
+from embry0.services.brief_writer import voice_problem
 from embry0.services.model_enablement import (
     DisabledModelError,
     UnpricedModelError,
@@ -127,6 +129,13 @@ async def create_agent(
     return {**created, "warnings": warnings}
 
 
+def _voice_problem(voice: str) -> str | None:
+    """Why ``voice`` cannot be a brief writer's voice, held to the keys both brief formats set, or None."""
+    return voice_problem(
+        voice, (*proposal_briefs.BRIEF_SCHEMA["properties"], *job_briefs.JOB_BRIEF_SCHEMA["properties"])
+    )
+
+
 @router.put("/agents/{agent_type}", dependencies=[require_admin])
 async def update_agent(
     agent_type: str,
@@ -144,6 +153,15 @@ async def update_agent(
         if key in updates and updates[key] is None:
             raise HTTPException(status_code=422, detail=f"{key} cannot be null")
     await _reject_if_disabled(request, updates.get("model"))
+    if updates.get("system_prompt"):
+        # A definition no job runs is a brief writer's voice (#166): the answer's format is the code's, so a voice
+        # that defines one of its keys would fight the format added after it.
+        stored = await repo.get(agent_type)
+        problem = (
+            _voice_problem(str(updates["system_prompt"])) if stored and stored.get("runs_in_jobs") is False else None
+        )
+        if problem:
+            raise HTTPException(status_code=422, detail=problem)
     warnings: list[str] = []
     if updates.get("skills"):
         # Only the names this write adds are checked: the form sends the whole list

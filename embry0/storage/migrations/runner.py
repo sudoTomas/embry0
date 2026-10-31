@@ -3895,6 +3895,33 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             '#295: when GET /asks/due first handed the ask out; it expires expire_days later if it was never reported sent.';
         """,
     ),
+    (
+        138,
+        "agent_definitions.runs_in_jobs, and the prompt each brief was written with (#166)",
+        # The brief writer's voices are agent definitions an operator edits,
+        # but no job runs them: runs_in_jobs false keeps such a row out of
+        # template steps, the job form's per-agent models and the guild's
+        # characters. Every row before this one runs in jobs, the default;
+        # the seeder writes false for the brief writer's two rows. Each brief
+        # now records the prompt it was written with (prompt_hash, a hash of
+        # the system prompt sent): a voice edited since is rewritten, a few a
+        # tick behind the missing and stale ones, while readers keep matching
+        # on input_hash alone, so no brief is hidden meanwhile. NULL is a
+        # brief written before this column, with the prompt its loop sent
+        # then, whose hash each loop keeps as a literal
+        # (PROMPT_HASH_BEFORE_VOICES).
+        """
+        ALTER TABLE agent_definitions ADD COLUMN IF NOT EXISTS runs_in_jobs BOOLEAN NOT NULL DEFAULT true;
+        ALTER TABLE proposal_briefs ADD COLUMN IF NOT EXISTS prompt_hash TEXT;
+        ALTER TABLE job_briefs ADD COLUMN IF NOT EXISTS prompt_hash TEXT;
+        COMMENT ON COLUMN agent_definitions.runs_in_jobs IS
+            '#166: false for a definition no job runs (the brief writer''s voices): not a template step, not a job form override, not a guild character.';
+        COMMENT ON COLUMN proposal_briefs.prompt_hash IS
+            '#166: a hash of the system prompt the brief was written with; NULL is the prompt sent before #166.';
+        COMMENT ON COLUMN job_briefs.prompt_hash IS
+            '#166: a hash of the system prompt the brief was written with; NULL is the prompt sent before #166.';
+        """,
+    ),
 ]
 
 

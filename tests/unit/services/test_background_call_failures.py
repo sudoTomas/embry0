@@ -142,7 +142,7 @@ async def test_bad_usage_never_raises_past_a_writer(providers: None) -> None:
         async def all(self) -> dict[str, Any]:
             return dict(rows)
 
-        async def save(self, pid: str, digest: str, brief: Any, *, model: str) -> None:
+        async def save(self, pid: str, digest: str, brief: Any, *, model: str, prompt_hash: str = "") -> None:
             rows[pid] = {"input_hash": digest}
 
         async def prune(self, keep: set[str]) -> int:
