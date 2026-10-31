@@ -3877,6 +3877,24 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             '#165: when a repository left a background feature''s scope; what the feature kept of it is removed background.prune_after_days later, unless it comes back first.';
         """,
     ),
+    (
+        137,
+        "asks.handed_out_at: when the feed first handed an ask out, so one never reported sent can expire (#295)",
+        # An ask expires expire_days after it was sent. One the feed handed
+        # out that the assistant never reported sent (a recipient it cannot
+        # reach, an owner it skips) would otherwise hold its person's slot
+        # for ever: it expires expire_days after it was first handed out, and
+        # keeps its person from being asked about that decision for another
+        # expire_days, not for good. An ask still queued and never handed out
+        # does not expire. The feed sets it with COALESCE in the statement
+        # that hands the ask out, so the first hand-out's time is the one
+        # kept. Rows before this have none, and none is back-filled.
+        """
+        ALTER TABLE asks ADD COLUMN IF NOT EXISTS handed_out_at TIMESTAMPTZ;
+        COMMENT ON COLUMN asks.handed_out_at IS
+            '#295: when GET /asks/due first handed the ask out; it expires expire_days later if it was never reported sent.';
+        """,
+    ),
 ]
 
 

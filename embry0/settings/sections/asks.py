@@ -122,8 +122,10 @@ class AsksSettings(SectionModel):
         gt=0,
         le=365,
         description=(
-            "Days after which an unanswered ask expires. That answers nothing, "
-            "and the person is not asked about that decision again."
+            "Days after it was sent that an unanswered ask expires. That answers nothing, "
+            "and the person is not asked about that decision again. One handed out but never "
+            "reported sent expires this many days after it was handed out, and its person may "
+            "be asked again this many days later. An ask still queued does not expire."
         ),
     )
     max_open_per_person: int = Field(

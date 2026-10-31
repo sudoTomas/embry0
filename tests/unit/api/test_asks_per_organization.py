@@ -82,8 +82,10 @@ class FakeAsks:
     async def live(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.rows if r["state"] in ("queued", "sent", "reminded")]
 
-    async def expired_pairs(self) -> set[tuple[str, str]]:
-        return {(r["decision_id"], r["recipient"]) for r in self.rows if r["state"] == "expired"}
+    async def expired_pairs(self) -> dict[tuple[str, str], Any]:
+        return {
+            (r["decision_id"], r["recipient"]): None for r in self.rows if r["state"] == "expired" and r.get("sent_at")
+        }
 
     async def code(self, decision_id: str) -> str:
         return "ABCD"
@@ -148,7 +150,12 @@ async def test_two_organizations_each_get_asks_within_their_own_working_time_in_
 async def test_an_ask_about_a_decision_with_no_repository_reads_the_deployment_s_values(app: Any) -> None:
     await _put(app, DEPLOYMENT + "  expire_days: 7\n")
     await _put(app, "asks:\n  hours: 00-24\n  weekdays: mon-sun\n  expire_days: 1\n", owner="acme")
-    two_days_old = {"recipient": "ada@example.com", "state": "sent", "due_at": NOW - timedelta(days=2)}
+    two_days_old = {
+        "recipient": "ada@example.com",
+        "state": "sent",
+        "due_at": NOW - timedelta(days=2),
+        "sent_at": NOW - timedelta(days=2),
+    }
     asks = FakeAsks(
         {"id": f"old-{d}", "decision_id": d, **two_days_old, "created_at": NOW - timedelta(days=2)}
         for d in ("acme", "none", "gone")

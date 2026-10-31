@@ -8,7 +8,11 @@ press back (``POST /asks/answer``). No model turns a reply into an answer.
   open; else each owner of the decision. A quest on offer a chat does not ask
   (``held``) is asked of nobody.
 - **When.** Within working hours; one reminder after ``remind_hours``
-  unanswered; expired after ``expire_days``, which answers nothing.
+  unanswered; expired ``expire_days`` after it was sent, which answers
+  nothing. An ask that waits in the queue, behind its person's limit or for
+  working hours, was never sent and does not expire (#295); one the feed
+  handed out that was never reported sent expires ``expire_days`` after it
+  was handed out, and its person may be asked again ``expire_days`` later.
 - **Codes.** One per decision, from its id, lengthened on a collision and
   never given to another decision, so a late answer cannot land on the wrong
   quest.
@@ -224,12 +228,26 @@ def release(
         if reminder_due(a, now, s) and working(now, s):
             out.append((a, True))
     queued = [a for a in handed if a.get("state") == "queued" and a["due_at"] <= now]
-    for a in sorted(queued, key=lambda a: (order.get(str(a["decision_id"]), 1_000_000), a.get("created_at") or now)):
+    for a in sorted(
+        queued,
+        key=lambda a: (_handed_out_before(a), order.get(str(a["decision_id"]), 1_000_000), a.get("created_at") or now),
+    ):
         key = counted(a)
         if held.get(key, 0) < policy.settings(str(a["decision_id"])).max_open_per_person:
             out.append((a, False))
             held[key] = held.get(key, 0) + 1
     return out
+
+
+def _handed_out_before(ask: Mapping[str, Any]) -> bool:
+    """Whether the feed handed ``ask`` out before and no one reported it sent.
+
+    Such an ask goes after every queued ask never handed out, whatever their
+    ranks (#295): the asks of people the assistant skips and never reports
+    would otherwise fill every page, poll after poll, ahead of the fresh ones
+    of people it does reach.
+    """
+    return ask.get("handed_out_at") is not None
 
 
 def reminder_due(ask: Mapping[str, Any], now: datetime, s: AskSettings) -> bool:
@@ -242,5 +260,26 @@ def reminder_due(ask: Mapping[str, Any], now: datetime, s: AskSettings) -> bool:
 
 
 def expired(ask: Mapping[str, Any], now: datetime, s: AskSettings) -> bool:
-    created = ask.get("created_at")
-    return isinstance(created, datetime) and now - created >= timedelta(days=s.expire_days)
+    """Whether ``ask`` is still unanswered ``expire_days`` after it was sent, or, never reported sent, after the
+    feed first handed it out (#295).
+
+    Not counted from when it was queued: an ask that never left the queue,
+    held back by its person's limit or by working hours, does not expire
+    however long it waits. It is withdrawn when its decision closes. One the
+    feed handed out that no one reported sent, a recipient the assistant
+    cannot reach, would otherwise hold its person's slot for ever.
+    """
+    since = ask.get("sent_at") or ask.get("handed_out_at")
+    return isinstance(since, datetime) and now - since >= timedelta(days=s.expire_days)
+
+
+def still_kept_from(
+    expired_pairs: Mapping[tuple[str, str], datetime | None], now: datetime, policy: AskPolicy
+) -> set[tuple[str, str]]:
+    """The (decision, person) pairs not to ask again now: those whose ask reached them and expired, and those
+    whose ask was handed out, never reported sent, and expired less than ``expire_days`` ago (#295)."""
+    return {
+        pair
+        for pair, since in expired_pairs.items()
+        if since is None or now - since < timedelta(days=policy.settings(pair[0]).expire_days)
+    }

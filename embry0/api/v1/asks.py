@@ -101,13 +101,26 @@ async def open_decisions(app: Any) -> list[dict[str, Any]]:
 
 
 @router.get("/asks/due")
-async def asks_due(request: Request, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+async def asks_due(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    peek: bool = Query(
+        default=False,
+        description="Return the page without handing it out: its first sends are not stamped, so no expiry starts",
+    ),
+) -> dict[str, Any]:
     """The asks to send now: due reminders, then queued ones, worst first, while their person holds
     fewer than ``asks.max_open_per_person`` unanswered asks about that organization's decisions. Each
     ask is held to its decision's organization's values: its working hours for a reminder, its
     ``remind_hours`` and its limit. Only asks whose decision the caller's key may read are handed
     out, but every unanswered ask counts toward its person's limit. An empty list while
-    ``asks.enabled`` is false in the settings document, whatever is stored; ``enabled`` says which."""
+    ``asks.enabled`` is false in the settings document, whatever is stored; ``enabled`` says which.
+
+    A call is the assistant's hand-out: each first send on the page is stamped
+    ``handed_out_at`` and expires ``asks.expire_days`` later unless it is
+    reported sent (#295). Queued asks never handed out come before those handed
+    out and unreported. ``?peek=1`` returns the same page and stamps nothing,
+    for a person or a probe that only looks."""
     from embry0.api.v1.decisions import listed_to
 
     section = await ask_policy(request)
@@ -143,6 +156,10 @@ async def asks_due(request: Request, limit: int = Query(default=50, ge=1, le=200
         )
         if len(out) >= limit:
             break
+    # Each first send handed out is stamped, once (#295): if it is never reported sent, it expires expire_days
+    # after this, instead of holding its person's slot for ever. A peek hands nothing out.
+    if not peek:
+        await asks.hand_out([o["id"] for o in out if not o["reminder"]], now=now)
     return {"asks": out, "count": len(out), "enabled": True}
 
 

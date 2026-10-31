@@ -38,6 +38,15 @@ class FakeAsks:
     async def code(self, decision_id: str) -> str:
         return self.codes[decision_id]
 
+    async def hand_out(self, ask_ids: Any, *, now: datetime) -> dict[str, datetime]:
+        """As the table stamps them: the first time a queued ask is handed out, kept after that."""
+        stamped: dict[str, datetime] = {}
+        for r in self.rows:
+            if r["id"] in set(ask_ids) and r["state"] == "queued":
+                r["handed_out_at"] = r.get("handed_out_at") or now
+                stamped[r["id"]] = r["handed_out_at"]
+        return stamped
+
     async def decision_of(self, code: str) -> str | None:
         return next((d for d, c in self.codes.items() if c == code), None)
 

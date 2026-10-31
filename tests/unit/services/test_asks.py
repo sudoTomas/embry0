@@ -77,7 +77,9 @@ def test_one_reminder_after_a_day_and_expiry_after_a_week() -> None:
     assert reminder_due(sent, TUE_10, S)
     assert not reminder_due({**sent, "reminders": 1}, TUE_10, S), "one reminder only"
     assert not reminder_due({**sent, "sent_at": TUE_10 - timedelta(hours=2)}, TUE_10, S)
-    assert expired({**sent, "created_at": TUE_10 - timedelta(days=8)}, TUE_10, S)
+    assert expired({**sent, "sent_at": TUE_10 - timedelta(days=8)}, TUE_10, S), "sent a week and a day ago"
+    queued = {"state": "queued", "reminders": 0, "created_at": TUE_10 - timedelta(days=30)}
+    assert not expired(queued, TUE_10, S), "an ask queued for a month but never sent does not expire (#295)"
 
 
 def test_the_section_reads_as_hours_days_and_zone() -> None:
@@ -99,8 +101,8 @@ class FakeAsks:
     async def live(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.rows if r["state"] in ("queued", "sent", "reminded")]
 
-    async def expired_pairs(self) -> set[tuple[str, str]]:
-        return set(self.gone)
+    async def expired_pairs(self) -> dict[tuple[str, str], Any]:
+        return dict.fromkeys(self.gone)
 
     async def code(self, decision_id: str) -> str:
         return self.codes.setdefault(decision_id, code_for(decision_id, set(self.codes.values())))
@@ -145,7 +147,8 @@ async def test_a_tick_queues_withdraws_and_expires_and_never_re_asks_an_expired_
     decisions[0] = {"id": "d1", "owners": ["ada"], "assigned_to": {"email": "bo@example.com"}}
     assert await loop.tick() == {"expired": 0, "withdrawn": 1, "queued": 1}, "a hand-off moves the ask to its person"
 
-    asks.rows[1]["created_at"] = TUE_10 - timedelta(days=8)
+    # bo's ask went out eight days ago and was never answered.
+    asks.rows[1].update(state="sent", sent_at=TUE_10 - timedelta(days=8), created_at=TUE_10 - timedelta(days=8))
     asks.gone.add(("d1", "bo@example.com"))
     assert await loop.tick() == {"expired": 1, "withdrawn": 0, "queued": 0}, "expired once, not asked again"
 

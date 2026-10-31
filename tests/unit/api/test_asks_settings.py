@@ -101,8 +101,10 @@ class FakeAsks:
     async def live(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.rows if r["state"] in ("queued", "sent", "reminded")]
 
-    async def expired_pairs(self) -> set[tuple[str, str]]:
-        return {(r["decision_id"], r["recipient"]) for r in self.rows if r["state"] == "expired"}
+    async def expired_pairs(self) -> dict[tuple[str, str], Any]:
+        return {
+            (r["decision_id"], r["recipient"]): None for r in self.rows if r["state"] == "expired" and r.get("sent_at")
+        }
 
     async def code(self, decision_id: str) -> str:
         return "ABCD"
@@ -131,6 +133,7 @@ async def test_a_put_reaches_the_next_tick_of_the_running_loop(app: Any, client:
         "state": "sent",
         "due_at": NOW - timedelta(days=2),
         "created_at": NOW - timedelta(days=2),
+        "sent_at": NOW - timedelta(days=2),
     }
     asks = FakeAsks([two_days_old])
     read: list[str] = []

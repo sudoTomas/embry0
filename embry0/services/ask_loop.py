@@ -3,7 +3,8 @@
 Each tick reads the ``asks`` section of the settings document first, every
 organization's layer with it, so a change applies on the next tick with no
 restart. While the deployment's ``enabled`` is false a tick does nothing.
-Otherwise it reads the open decisions, expires the asks past ``expire_days``,
+Otherwise it reads the open decisions, expires the asks sent, or handed out and
+never reported sent, ``expire_days`` ago,
 withdraws the ones whose decision was answered, moved on or was handed to
 someone else, and queues one for each person a decision now waits on, due at
 the next working hour. An ask whose decision is no longer open is withdrawn,
@@ -11,8 +12,10 @@ never expired. Each ask is held to its decision's organization's values
 (spec 2026-10-29): an organization's layer may set the hours, weekdays, time
 zone, reminder and expiry its asks follow; an ask about a decision with no
 repository follows the deployment's.
-A person whose ask about a decision expired is not asked about it again: the
-decision stays on their page. The loop sleeps the deployment's
+A person whose ask about a decision reached them and expired is not asked about
+it again: the decision stays on their page. One handed out but never reported
+sent keeps them from being asked again for ``expire_days`` only, and one that
+never left the queue does not expire at all (#295). The loop sleeps the deployment's
 ``tick_seconds`` between ticks.
 """
 
@@ -26,7 +29,7 @@ from typing import Any, Protocol
 
 import structlog
 
-from embry0.services.asks import AskPolicy, expired, next_working_time, plan
+from embry0.services.asks import AskPolicy, expired, next_working_time, plan, still_kept_from
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.asks import AsksSettings
 
@@ -35,7 +38,7 @@ logger = structlog.get_logger(__name__)
 
 class _Asks(Protocol):
     async def live(self) -> list[dict[str, Any]]: ...
-    async def expired_pairs(self) -> set[tuple[str, str]]: ...
+    async def expired_pairs(self) -> Mapping[tuple[str, str], datetime | None]: ...
     async def code(self, decision_id: str) -> str: ...
     async def add(self, *, decision_id: str, recipient: str, due_at: datetime) -> str | None: ...
     async def close(self, ask_ids: Sequence[str], *, state: str, now: datetime) -> int: ...
@@ -87,7 +90,7 @@ class AskLoop:
         if old:
             await self.asks.close(old, state="expired", now=now)
         live = [a for a in live if str(a["id"]) not in set(old)]
-        done_with = await self.asks.expired_pairs()
+        done_with = still_kept_from(await self.asks.expired_pairs(), now, policy)
         changes = plan(decisions, live, await self.people())
         if changes.withdraw:
             await self.asks.close(changes.withdraw, state="withdrawn", now=now)
