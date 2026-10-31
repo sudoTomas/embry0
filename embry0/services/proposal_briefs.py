@@ -32,7 +32,7 @@ from embry0.services.background_models import (
     ModelLookup,
     model_lookup,
 )
-from embry0.services.lead_kinds import KINDS, ids
+from embry0.services.lead_kinds import KINDS, id_pattern
 from embry0.services.leads import LEAD_KINDS
 from embry0.services.proposals import Proposal
 from embry0.settings.layers import PerRepository
@@ -50,7 +50,7 @@ PROMPT_VERSION = 2
 #: The key of ``background_models`` the briefs run on, and what their spend is recorded under.
 FEATURE = "proposal_brief"
 #: What a brief must never carry: a proposal id, which says nothing to a person.
-_ID = re.compile(rf"\b(?:{'|'.join(map(re.escape, ids(proposal=True)))}):[0-9a-z-]{{4,}}", re.IGNORECASE)
+_ID = re.compile(id_pattern(), re.IGNORECASE)
 _DIGITS = re.compile(r"\d+")
 
 SYSTEM_PROMPT = """\
@@ -179,24 +179,23 @@ def parse_brief(text: str) -> Brief:
     return Brief(title=_cut(fields["title"]), problem=fields["problem"], fix=fields["fix"], size=size.strip().lower())
 
 
-def held(p: Proposal, ask_min: int) -> bool:
-    """Shown on the page, not asked in chat: a backlog ticket whose readiness is below ``ask_min``
-    (``leads.ask_min`` for its repository), or a lead whose kind asks only some severities in chat
-    and whose severity is not one of them (a weed, a crack below ``break``: spec 2026-10-27, a scout
-    running all day must not fill the chat)."""
-    known = KINDS.get(p.kind)
-    asked = known.chat_severities if known else None
-    if asked is not None:
-        return str(p.extra.get("severity") or "") not in asked
+def held(p: Proposal, policy: LeadsSettings) -> bool:
+    """Shown on the page, not asked in chat, by the ``leads`` section of the proposal's repository: a
+    proposal of a kind ``ask_severities`` names whose severity it does not list (by default a weed, and a
+    crack below ``break``: spec 2026-10-27, a scout running all day must not fill the chat), or a backlog
+    ticket whose readiness is below ``ask_min``."""
+    asked = policy.ask_severities.get(p.kind)
+    if asked is not None and str(p.extra.get("severity") or "") not in asked:
+        return True
     if p.kind != "ticket":
         return False
     readiness = (p.extra.get("source") or {}).get("readiness") if isinstance(p.extra.get("source"), Mapping) else None
-    return isinstance(readiness, int | float) and readiness < ask_min
+    return isinstance(readiness, int | float) and readiness < policy.ask_min
 
 
 def held_by(p: Proposal, leads: PerRepository[LeadsSettings]) -> bool:
-    """:func:`held`, with the ``ask_min`` of the proposal's repository, as its organization's layer sets it."""
-    return held(p, leads.repo(p.repo or None).ask_min)
+    """:func:`held`, by the ``leads`` section of the proposal's repository, as its organization's layer sets it."""
+    return held(p, leads.repo(p.repo or None))
 
 
 def _order(p: Proposal) -> tuple[int, float]:

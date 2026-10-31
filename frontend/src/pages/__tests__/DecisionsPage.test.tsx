@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Decision } from "@/api/decisions";
+import type { LeadKind } from "@/api/leadKinds";
 import { UiSettingsContext } from "@/hooks/useUiSettings";
 
 const mockUseDecisions = vi.fn();
@@ -25,6 +26,9 @@ vi.mock("@/stores/authStore", () => ({
   useAuthStore: (select: (s: { user: { email: string } }) => unknown) => select({ user: { email: "owner@example.com" } }),
 }));
 vi.mock("@/hooks/useRunWith", () => ({ useRunWithKeys: () => ({ data: [] }) }));
+/** GET /lead-kinds as read (hooks/useLeadKinds): empty until a test loads the backend's catalogue. */
+const catalogue = { current: new Map<string, LeadKind>() };
+vi.mock("@/hooks/useLeadKinds", () => ({ useLeadKinds: () => catalogue.current }));
 vi.mock("@/hooks/useModels", () => ({ useModels: () => ({ models: [], providers: [], isLoading: false }) }));
 
 import { DecisionsPage } from "../DecisionsPage";
@@ -83,6 +87,7 @@ beforeEach(() => {
   mutate.mockReset();
   send.mockReset();
   admin.current = true;
+  catalogue.current = new Map();
   people.current = [
     { email: "owner@example.com", name: "Owner", github_login: "owner" },
     { email: "bo@example.com", name: "Bo", github_login: "bo" },
@@ -173,6 +178,30 @@ describe("DecisionsPage (decisions, spec 2026-10-27)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Crack" }));
     expect(screen.getAllByTestId("decision-card")).toHaveLength(1);
   });
+
+  it.each([true, false])(
+    "names each kind in the filter as the catalogue says them, the game on or off (game: %s, #166)",
+    async (game) => {
+      catalogue.current = new Map([
+        ["crack", { id: "crack", label: "Crack", plural: "Cracks", about: "a crack", found_by: "the scout" }],
+        ["weed", { id: "weed", label: "Weed", plural: "Weeds", about: "dead code", found_by: "the scout" }],
+      ]);
+      render(
+        <UiSettingsContext.Provider value={{ game, home: "guild" }}>
+          <MemoryRouter initialEntries={["/decisions?stage=offered"]}>
+            <DecisionsPage />
+          </MemoryRouter>
+        </UiSettingsContext.Provider>,
+      );
+      const filter = screen.getByLabelText("Kind");
+      expect(
+        within(filter).getAllByRole("button").map((b) => b.textContent),
+        "the kinds filter says the catalogue's plural, as the quest board's does",
+      ).toEqual(["All", "Cracks", "Weeds"]);
+      await userEvent.click(within(filter).getByRole("button", { name: "Cracks" }));
+      expect(screen.getAllByTestId("decision-card")).toHaveLength(1);
+    },
+  );
 
   it("lets someone who may not answer read the cards without their buttons", () => {
     admin.current = false;

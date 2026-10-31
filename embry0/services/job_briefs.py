@@ -29,6 +29,7 @@ import httpx
 import structlog
 
 from embry0.services.background_models import BackgroundCallRefused, BackgroundCalls, Endpoint, ModelLookup
+from embry0.services.lead_kinds import id_pattern
 from embry0.services.proposal_briefs import RETRY_SECONDS, SIZES, TEXT_MAX, TITLE_MAX, cut_title
 
 logger = structlog.get_logger(__name__)
@@ -43,12 +44,12 @@ TASK_CHARS = 6000
 LIVE_STATUSES: tuple[str, ...] = ("pending", "running", "paused", "awaiting_input")
 RECENT_DAYS = 7
 
-#: What a brief must never carry: a job id, a tracker key, a proposal id, a [tag].
+#: What a brief must never carry: a job id, a tracker key, a proposal id of any kind the catalogue knows, a [tag].
 _NOISE = re.compile(
     r"\[[^\]\n]{1,40}\]"
     r"|\bjob-[0-9a-f]{8,}\b"
     r"|\b[A-Z][A-Z0-9]{1,9}-\d{2,}\b"
-    r"|\b(?:case|issue|finding|ticket|ci|alert|flaky|review):[0-9a-z-]{4,}",
+    rf"|{id_pattern()}",
 )
 
 SYSTEM_PROMPT = """\

@@ -199,11 +199,14 @@ async def test_the_guild_hall_shows_every_character_the_board_and_the_inbox(app:
 
 
 async def test_the_world_names_every_kind_a_quest_can_be(app: Any) -> None:
-    """The dashboard's names for each kind come from the backend's catalogue (#166), not a copy of its own."""
+    """What each kind is called comes from the lead-kind catalogue's one endpoint (#166), GET /lead-kinds,
+    which answers with the game off too; the guild's read carries each quest's own game words."""
     async with await _client(app) as client:
         world = (await client.get("/api/v1/world")).json()
-    assert "lead_kinds" in world, "GET /world must serve the lead-kind catalogue"
-    kinds = {k["id"]: k for k in world["lead_kinds"]}
+        resp = await client.get("/api/v1/lead-kinds")
+    assert resp.status_code == 200, f"GET /lead-kinds serves the lead-kind catalogue: {resp.status_code}"
+    assert "lead_kinds" not in world, "the catalogue has one endpoint, GET /lead-kinds, not a copy in GET /world"
+    kinds = {k["id"]: k for k in resp.json()["kinds"]}
     assert list(kinds) == [
         "case",
         "issue",
@@ -223,12 +226,38 @@ async def test_the_world_names_every_kind_a_quest_can_be(app: Any) -> None:
         "plural": "Cracks",
         "about": "a crack the scout found in the code",
         "found_by": "the scout",
-    }, "only what the dashboard reads is served: every served field is API to keep"
-    assert kinds["slop"]["label"] == "Slop, not a bug" and kinds["slop"]["plural"] == "Slop"
+        "lead": True,
+    }, "only what a client reads is served, its plain names and whether it is a lead: every served field is API"
+    assert kinds["slop"]["label"] == "Slop, not a bug" and kinds["slop"]["lead"] is False
     quest = world["quests"][0]
     assert (quest["verb"], quest["creature"]) == ("Attack", "case_bug"), (
         "a quest still carries its own verb and creature"
     )
+
+
+async def test_the_catalogue_is_revalidated_by_its_etag(app: Any) -> None:
+    """It changes only with a release: a client keeps it and asks again with its ETag on every reload, so a new
+    kind shows on the first reload after a deploy and a 304 is all it costs otherwise."""
+    async with await _client(app) as client:
+        first = await client.get("/api/v1/lead-kinds")
+        etag = first.headers.get("etag")
+        assert etag and etag.startswith('"'), f"the catalogue carries an ETag: {first.headers}"
+        assert first.headers.get("cache-control") == "private, no-cache", "a browser asks again on every use"
+        again = await client.get("/api/v1/lead-kinds", headers={"If-None-Match": etag})
+        assert (again.status_code, again.content) == (304, b""), "unchanged: a 304, no body"
+        assert again.headers.get("etag") == etag
+        other = await client.get("/api/v1/lead-kinds", headers={"If-None-Match": '"an-older-release"'})
+        assert other.status_code == 200 and other.json() == first.json(), "another release's tag gets the catalogue"
+
+
+def test_the_etag_is_the_catalogue_s_hash() -> None:
+    """A deploy that changes a kind changes the tag: it is computed from what is served, not fixed."""
+    from embry0.api.v1 import lead_kinds as route
+    from embry0.services.lead_kinds import catalogue
+
+    assert route.ETAG == route.etag_of({"kinds": catalogue()}), "the tag is the hash of the catalogue served"
+    renamed = [{**kind, "label": f"{kind['label']}!"} if kind["id"] == "crack" else kind for kind in catalogue()]
+    assert route.etag_of({"kinds": renamed}) != route.ETAG, "a kind named differently is a new tag"
 
 
 async def test_a_character_has_its_quest_log_and_an_unknown_one_is_404(app: Any) -> None:

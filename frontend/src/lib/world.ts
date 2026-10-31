@@ -1,8 +1,8 @@
+import type { LeadKind } from "@/api/leadKinds";
 import type {
   CharacterState,
   InboxQuest,
   Lead,
-  LeadKind,
   Outcome,
   Party,
   QuestScroll,
@@ -326,7 +326,7 @@ export function filterLeads(leads: readonly Lead[], f: LeadFilters): Lead[] {
   );
 }
 
-/** GET /world's lead-kind catalogue by id; empty on an older backend that serves none. */
+/** The lead-kind catalogue (GET /lead-kinds) by id; empty until it is read, or on an older backend that serves none. */
 export function kindsById(kinds: readonly LeadKind[] | undefined): ReadonlyMap<string, LeadKind> {
   return new Map((kinds ?? []).map((k) => [k.id, k]));
 }

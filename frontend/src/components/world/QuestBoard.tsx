@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import type { Lead, LeadKind } from "@/api/world";
+import type { LeadKind } from "@/api/leadKinds";
+import type { Lead } from "@/api/world";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { FilterSelect } from "@/components/ui/FilterSelect";
@@ -8,7 +9,7 @@ import { CreatureIcon } from "./CreatureIcon";
 
 interface QuestBoardProps {
   quests: readonly Lead[];
-  /** GET /world's lead-kind catalogue by id (lib/world kindsById): what each kind is called. */
+  /** The lead-kind catalogue by id (GET /lead-kinds, hooks/useLeadKinds): what each kind is called. */
   kinds: ReadonlyMap<string, LeadKind>;
   /** The level a lead's colour is read against: the strongest agent's. */
   partyLevel: number;

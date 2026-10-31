@@ -4,7 +4,9 @@ A key takes the value of the most specific layer that sets it: the
 deployment's document, then an organization's layer, then a repository's.
 A layer may set only the keys its section declares for its level
 (``Section.settable``), and replaces the inherited value of such a key
-whole. Every other key it holds is ignored.
+whole, except a key of ``Section.merged_keys``, a mapping it merges entry by
+entry over the inherited one (:func:`merged`). Every other key it holds is
+ignored.
 
 A section can check its fields against each other, so a value accepted when
 it was written can be refused later, together with what it inherits, once
@@ -94,6 +96,24 @@ def _reason(errors: Sequence[Mapping[str, Any]], key: str | None) -> str:
     return str((errors[0] if errors else {}).get("msg") or "refused").removeprefix("Value error, ")
 
 
+def merged(section: Section[Any], inherited: Mapping[str, Any], values: Mapping[str, Any]) -> dict[str, Any]:
+    """A layer's ``values`` as they apply over ``inherited``: each key of ``section.merged_keys`` the layer sets,
+    a mapping, holds the inherited entries (the section's default where nothing set the key) under its own; every
+    other key as the layer wrote it."""
+    out = dict(values)
+    defaults: dict[str, Any] | None = None
+    for key in section.merged_keys & set(values):
+        own = values[key]
+        if key in inherited:
+            below = inherited[key]
+        else:
+            defaults = defaults if defaults is not None else section.defaults().model_dump(mode="json")
+            below = defaults.get(key)
+        if isinstance(own, Mapping) and isinstance(below, Mapping):
+            out[key] = {**below, **own}
+    return out
+
+
 def resolve(
     section: Section[Any],
     base: Mapping[str, Any],
@@ -112,7 +132,7 @@ def resolve(
     applied: dict[str, dict[str, Any]] = {}
     refused: list[LayerRefusal] = []
     for scope, values in layers:
-        accepted = dict(values)
+        accepted = merged(section, current, values)
         while accepted:
             try:
                 section.validate({**current, **accepted})

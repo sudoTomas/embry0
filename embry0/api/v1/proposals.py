@@ -216,7 +216,11 @@ async def list_proposals(
     kind: str | None = Query(default=None, description=", ".join(KINDS)),
     since: datetime | None = Query(default=None, description="Only proposals asked after this time"),
     include_held: bool = Query(
-        default=False, description="Also the backlog tickets below the readiness floor, which a chat does not ask"
+        default=False,
+        description=(
+            "Also the proposals a chat does not ask: backlog tickets below the readiness floor (leads.ask_min), "
+            "and leads of a severity leads.ask_severities does not ask"
+        ),
     ),
 ) -> dict[str, Any]:
     """The proposals still asked, newest first: what an assistant reads to message owners."""
