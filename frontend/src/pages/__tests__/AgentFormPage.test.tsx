@@ -171,6 +171,51 @@ describe("AgentFormPage — execution depth (RAV-1058)", () => {
   });
 });
 
+describe("AgentFormPage — a definition that names no model (#166)", () => {
+  it("saves a brief writer's prompt, still naming no model", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({
+      data: {
+        ...EXISTING,
+        type: "proposal-brief",
+        model: "",
+        tools: [],
+        mcp_servers: {},
+        system_prompt: "You explain.",
+        runs_in_jobs: false,
+      },
+      isLoading: false,
+    });
+    renderEdit("proposal-brief");
+    const prompt = screen.getByLabelText("System prompt");
+    await user.clear(prompt);
+    await user.type(prompt, "Write every brief in plain German.");
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+
+    expect(mockUpdateMutate, "the edited prompt is saved, with no model forced on the definition").toHaveBeenCalledWith(
+      expect.objectContaining({ type: "proposal-brief", model: "", system_prompt: "Write every brief in plain German." }),
+      expect.anything(),
+    );
+  });
+
+  it("still asks a job's agent that names no model for one", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({ data: { ...EXISTING, model: "" }, isLoading: false });
+    renderEdit();
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate, "only a definition no job runs may name no model").not.toHaveBeenCalled();
+  });
+
+  it("still asks a new agent for its model", async () => {
+    const user = userEvent.setup();
+    renderNew();
+    await user.type(screen.getByLabelText(/type \(slug\)/i), "custom-one");
+    await user.selectOptions(screen.getByLabelText("Model"), "__custom__");
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+    expect(mockCreateMutate, "a new agent with no model is not created").not.toHaveBeenCalled();
+  });
+});
+
 describe("AgentFormPage provider readiness without the catalog", () => {
   it("shows the saved model's provider and that it is not ready", () => {
     mockUseAgent.mockReturnValue({

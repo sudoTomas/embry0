@@ -141,6 +141,16 @@ The scout's policy is the `scout` section of the [settings document](#settings-d
 
 ### Proposal and job briefs
 
+Both loops are one brief writer (`embry0/services/brief_writer.py`), each on its own interval and per-tick count below. Each tick reads its model from one snapshot of the settings document ([background models](providers.md#background-models)) and its voice from an agent definition, so a change to either needs no restart.
+
+**A brief's voice is an agent definition; its format is embry0's.** A brief's request is a voice, then a format. The voice says who the brief speaks to and how: its language, tone and style. It is the system prompt of the built-in agent `proposal-brief` or `job-brief`. Change it like any agent's: on the Agents page (under *Background writers*), with `PUT /api/v1/agents/{type}` (`{"system_prompt": "..."}`), or with the MCP tools `agent_get`, `agent_update` and `agent_reset`.
+
+- **The format stays embry0's.** The answer's JSON keys, their lengths and the rules the parser holds it to are added after every voice, so a voice in German still gets answers embry0 reads. A voice that tries to say the format (mentions JSON or defines a key) is refused with 422.
+- **An edit rewrites the briefs already written**, a few a tick after any missing or stale one, within the per-tick count and the budget caps. Each brief records the prompt it was written with. Every brief stays shown until its rewrite replaces it.
+- **No voice falls back to the shipped one.** A definition with an empty voice, or none, writes with the voice the release ships, and `agent_reset` puts that voice back.
+- **The voices are the deployment's.** An organization cannot have its own.
+- **They run in no job** (`runs_in_jobs` false on their rows). They are not pipeline steps, not per-agent models on the job form, and not guild characters, and their own model is not read: a brief runs on `background_models.proposal_brief` or `job_brief`.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PROPOSALS_TICKET_MIN_READINESS` | `60` | Governed by the settings document (`leads.ask_min`, the readiness at which a backlog ticket is asked in chat). Read once, at the first start of the release that added the section, and ignored after that |

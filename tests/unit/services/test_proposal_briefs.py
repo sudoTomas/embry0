@@ -10,10 +10,9 @@ from typing import Any
 import httpx
 import pytest
 
+from embry0.services.brief_writer import RETRY_SECONDS
 from embry0.services.proposal_briefs import (
-    RETRY_SECONDS,
     Brief,
-    Endpoint,
     ProposalBriefWriter,
     held,
     held_by,
@@ -21,7 +20,6 @@ from embry0.services.proposal_briefs import (
     parse_brief,
     user_prompt,
     with_briefs,
-    write_brief,
 )
 from embry0.services.proposals import Proposal
 from embry0.settings.sections.leads import LeadsSettings
@@ -141,20 +139,12 @@ def test_the_feed_shows_a_brief_only_while_it_matches_the_proposal() -> None:
     assert stale["brief"] is None
 
 
-async def test_a_local_model_is_asked_for_json_without_thinking() -> None:
-    sent: list[dict[str, Any]] = []
-
-    def answer(request: httpx.Request) -> httpx.Response:
-        sent.append(
-            {"url": str(request.url), "auth": request.headers["authorization"], "body": json.loads(request.content)}
-        )
-        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(GOOD)}}]})
-
-    endpoint = Endpoint("custom/local-27b", "http://models.test/v1", "k", "local-27b", local=True)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
-        brief = await write_brief(_proposal(), endpoint, client, _calls())
-    assert brief.size == "small"
-    [call] = sent
+async def test_a_local_model_is_asked_for_json_without_thinking(custom_enabled: None) -> None:
+    sent: list[httpx.Request] = []
+    briefs = FakeBriefs()
+    assert await _writer(briefs, [_proposal()], [], sent=sent).tick() == ["case:hc-1"]
+    assert briefs.rows["case:hc-1"]["size"] == "small"
+    [call] = [{"url": str(r.url), "auth": r.headers["authorization"], "body": json.loads(r.content)} for r in sent]
     assert call["url"] == "http://models.test/v1/chat/completions" and call["auth"] == "Bearer k"
     assert call["body"]["model"] == "local-27b"
     assert call["body"]["chat_template_kwargs"] == {"enable_thinking": False}
@@ -170,7 +160,7 @@ class FakeBriefs:
     async def all(self) -> dict[str, dict[str, Any]]:
         return dict(self.rows)
 
-    async def save(self, pid: str, digest: str, brief: Brief, *, model: str) -> None:
+    async def save(self, pid: str, digest: str, brief: Brief, *, model: str, prompt_hash: str = "") -> None:
         self.rows[pid] = {"input_hash": digest, "model": model, **brief.to_dict()}
 
     async def prune(self, keep: set[str]) -> int:
@@ -179,6 +169,23 @@ class FakeBriefs:
         for k in gone:
             del self.rows[k]
         return len(gone)
+
+
+class FakeAgents:
+    """``AgentDefinitionsRepository`` as the brief writer reads it: the built-in rows, as the seeder stores them."""
+
+    def __init__(self, **prompts: str) -> None:
+        from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+
+        self.rows = {t: {"type": t, **BUILTIN_SEED[t]} for t in ("proposal-brief", "job-brief")}
+        for agent_type, prompt in prompts.items():
+            self.rows[agent_type.replace("_", "-")]["system_prompt"] = prompt
+        self.reads = 0
+
+    async def get(self, agent_type: str) -> dict[str, Any] | None:
+        self.reads += 1
+        row = self.rows.get(agent_type)
+        return dict(row) if row is not None else None
 
 
 class FakeResolver:
@@ -212,8 +219,11 @@ def _writer(
     clock: Any = None,
     per_tick: int = 3,
     settings: MemorySettings | None = None,
+    sent: list[httpx.Request] | None = None,
 ) -> ProposalBriefWriter:
     def answer(request: httpx.Request) -> httpx.Response:
+        if sent is not None:
+            sent.append(request)
         content = answers.pop(0) if answers else json.dumps(GOOD)
         if isinstance(content, httpx.Response):
             return content
@@ -320,18 +330,16 @@ async def test_a_model_off_the_chat_completions_family_is_not_called(custom_enab
     assert await writer.tick() == [] and briefs.rows == {}
 
 
-def test_a_new_proposal_is_due_and_a_written_one_is_not() -> None:
+async def test_a_new_proposal_is_due_and_a_written_one_is_not(custom_enabled: None) -> None:
     p, q = _proposal("case:a"), _proposal("case:b")
-    writer = _writer(FakeBriefs(), [], [])
-    stored = {p.id: {"input_hash": input_hash(p)}}
-    assert [x.id for x in writer.due([p, q], stored, leads_policy())] == ["case:b"]
+    briefs = FakeBriefs({p.id: {"input_hash": input_hash(p), **GOOD}})
+    assert await _writer(briefs, [p, q], []).tick() == ["case:b"]
 
 
-def test_newest_first_within_a_kind() -> None:
+async def test_newest_first_within_a_kind(custom_enabled: None) -> None:
     old = Proposal(**{**_proposal("case:old").__dict__, "created_at": T0 - timedelta(days=1)})
     new = _proposal("case:new")
-    writer = _writer(FakeBriefs(), [], [])
-    assert [x.id for x in writer.due([old, new], {}, leads_policy())] == ["case:new", "case:old"]
+    assert await _writer(FakeBriefs(), [old, new], [], per_tick=1).tick() == ["case:new"]
 
 
 class ChangingDocuments:
@@ -376,7 +384,7 @@ async def test_a_tick_reads_its_model_and_its_leads_from_one_version_of_the_docu
     store = ChangingDocuments()
     writer = ProposalBriefWriter(
         proposals=feed,
-        settings=reader(store),
+        settings=reader(store, FakeAgents()),
         briefs=FakeBriefs(),
         calls=_calls(),
         per_tick=1,

@@ -281,7 +281,7 @@ async def pinned_triage_template_config(state: dict[str, Any], templates_repo: A
 
 
 async def _known_agent_types(config: RunnableConfig) -> set[str] | None:
-    """The agent_definitions types that exist now, for the validator; None without a database.
+    """The agent_definitions types a job can run now (``runs_in_jobs``), for the validator; None without a database.
 
     A read failure is logged and treated like no database (the builtin seed
     types): a template naming a custom agent is then skipped with the usual
@@ -293,7 +293,9 @@ async def _known_agent_types(config: RunnableConfig) -> set[str] | None:
     try:
         from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 
-        return {str(row["type"]) for row in await AgentDefinitionsRepository(db).list_all()}
+        return {
+            str(row["type"]) for row in await AgentDefinitionsRepository(db).list_all() if row.get("runs_in_jobs", True)
+        }
     except Exception:
         logger.warning("plan_route_agent_types_unavailable", exc_info=True)
         return None

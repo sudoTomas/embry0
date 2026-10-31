@@ -94,6 +94,12 @@
       "display_name": "Interrogator",
       "tagline": "Four angles on a diff, then a verdict."
     },
+    "job-brief": {
+      "avatar": "apprentice",
+      "color": "slate",
+      "display_name": "Job Brief",
+      "tagline": "Says what a job is about, in one read."
+    },
     "kintsugi": {
       "avatar": "monk",
       "color": "gold",
@@ -117,6 +123,12 @@
       "color": "cyan",
       "display_name": "PR Reviewer",
       "tagline": "Weighs a pull request."
+    },
+    "proposal-brief": {
+      "avatar": "apprentice",
+      "color": "sky",
+      "display_name": "Proposal Brief",
+      "tagline": "Says what a proposal asks, in one read."
     },
     "qa": {
       "avatar": "alchemist",

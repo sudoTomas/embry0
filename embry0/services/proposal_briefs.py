@@ -7,30 +7,36 @@ the problem, the fix and the size. A model writes it once from what embry0
 holds about the proposal, and again when that changes; the feed reads stored
 briefs only, so a model that is slow, absent or wrong never holds the feed up.
 
+The loop is the one brief writer's (:mod:`embry0.services.brief_writer`,
+#166), with :class:`ProposalBriefs` saying what is briefed. Its instructions
+are the ``proposal-brief`` agent definition, seeded from :data:`VOICE`; its answer's format is :data:`FORMAT`.
+
 docs/superpowers/specs/2026-10-25-proposal-briefs-design.md.
 """
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any
 
 import httpx
-import structlog
 
-from embry0.services.background_models import (
-    BackgroundCallRefused,
-    BackgroundCalls,
-    Endpoint,
-    ModelLookup,
-    model_lookup,
+from embry0.services.background_models import BackgroundCalls, ModelLookup, model_lookup
+from embry0.services.brief_writer import (
+    SIZES,
+    TEXT_MAX,
+    TITLE_MAX,
+    BriefWriter,
+    agent_voice,
+    cut_title,
+    system_prompt,
 )
 from embry0.services.lead_kinds import KINDS, id_pattern
 from embry0.services.leads import LEAD_KINDS
@@ -38,24 +44,23 @@ from embry0.services.proposals import Proposal
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.leads import LEADS, LeadsSettings
 
-logger = structlog.get_logger(__name__)
-
-SIZES: tuple[str, ...] = ("small", "medium", "large")
-TITLE_MAX = 70
-TEXT_MAX = 420
-#: How long a proposal whose brief failed waits before it is tried again.
-RETRY_SECONDS = 30 * 60
-#: Part of every brief's input hash: a change to the prompt or the schema rewrites the briefs on the next ticks.
+#: Part of every brief's input hash: a change to the user prompt or the schema rewrites the briefs on the next
+#: ticks. The system prompt is the agent definition's, which an operator edits (see brief_writer).
 PROMPT_VERSION = 2
 #: The key of ``background_models`` the briefs run on, and what their spend is recorded under.
 FEATURE = "proposal_brief"
+#: The agent definition whose system prompt is the briefs' voice, seeded from :data:`VOICE`.
+AGENT = "proposal-brief"
 #: What a brief must never carry: a proposal id, which says nothing to a person.
 _ID = re.compile(id_pattern(), re.IGNORECASE)
 _DIGITS = re.compile(r"\d+")
 
-SYSTEM_PROMPT = """\
-You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read.
-
+#: The shipped voice: who a brief speaks to, and how. It seeds the ``proposal-brief`` agent definition, which an
+#: operator edits to change a brief's language, tone or style.
+VOICE = "You explain a piece of proposed engineering work to the person who owns the code, so they can say yes or no after one read."
+#: The answer's format and the rules it is read by, the code's: added after every voice, so no edit of the
+#: voice changes what the parser reads.
+FORMAT = """\
 You get one proposal from an automation service. Its agents can investigate, change code and open pull requests, file reports, or update tickets. Write a brief of it as one JSON object with exactly these keys:
 - "title": a plain name for the work, at most 70 characters. Rewrite it in plain words even when the original title is technical: no event, class or function names, no "feat:"/"fix(x):" prefixes, no ticket keys, no ids.
 - "problem": one or two short sentences: what is wrong or missing, and who or what it affects.
@@ -69,6 +74,8 @@ Rules:
 - Name a file only when the fix is about that file.
 - If the proposal is unclear, say so plainly in "problem" rather than guessing.
 Answer with the JSON object only."""
+#: What a brief is asked with under the shipped voice: what every brief was asked with before #166.
+SYSTEM_PROMPT = system_prompt(VOICE, FORMAT)
 
 
 #: The answer's shape, for a server that can hold the model to it (``response_format``).
@@ -136,19 +143,6 @@ def user_prompt(p: Proposal) -> str:
     return "\n".join(lines)
 
 
-def cut_title(title: str) -> str:
-    """A title cut to ``TITLE_MAX`` at a word."""
-    return _cut(title)
-
-
-def _cut(title: str) -> str:
-    title = " ".join(title.split())
-    if len(title) <= TITLE_MAX:
-        return title
-    head = title[: TITLE_MAX - 1].rsplit(" ", 1)[0].rstrip(",;:-")
-    return f"{head}…"
-
-
 def parse_brief(text: str) -> Brief:
     """The model's answer as a brief, or ``ValueError`` saying why it is not one."""
     raw = (text or "").strip()
@@ -176,7 +170,9 @@ def parse_brief(text: str) -> Brief:
     size = data["size"]
     if not isinstance(size, str) or size.strip().lower() not in SIZES:
         raise ValueError(f"size is not one of {', '.join(SIZES)}")
-    return Brief(title=_cut(fields["title"]), problem=fields["problem"], fix=fields["fix"], size=size.strip().lower())
+    return Brief(
+        title=cut_title(fields["title"]), problem=fields["problem"], fix=fields["fix"], size=size.strip().lower()
+    )
 
 
 def held(p: Proposal, policy: LeadsSettings) -> bool:
@@ -203,57 +199,92 @@ def _order(p: Proposal) -> tuple[int, float]:
     return rank, -p.created_at.timestamp()
 
 
-async def write_brief(p: Proposal, endpoint: Endpoint, client: httpx.AsyncClient, calls: BackgroundCalls) -> Brief:
-    """Ask the model for ``p``'s brief; ``ValueError`` when the answer is not one, ``httpx.HTTPError`` when the
-    call fails, :class:`BackgroundCallRefused` when the budget caps refuse it."""
-    answer = await calls.ask(
-        FEATURE,
-        endpoint,
-        client,
-        repo=p.repo,
-        system=SYSTEM_PROMPT,
-        user=user_prompt(p),
-        schema=BRIEF_SCHEMA,
-        name="brief",
-    )
-    return parse_brief(answer)
-
-
 @dataclass(frozen=True)
 class BriefSettings:
-    """What one tick of the proposal brief writer reads, all from one snapshot of the settings documents."""
+    """What one tick of the proposal brief writer reads: the settings documents from one snapshot, and its voice."""
 
     #: ``repo -> model`` a proposal of that repository's brief is written on (``background_models.proposal_brief``,
     #: per repository); '' writes none.
     models: ModelLookup
     #: The ``leads`` section, per repository: by whose ``ask_min`` the held tickets' briefs come last.
     leads: PerRepository[LeadsSettings]
+    #: The voice: the ``proposal-brief`` agent definition's system prompt (:func:`embry0.services.brief_writer.agent_voice`).
+    voice: str
 
 
-def brief_settings(store: Any) -> Callable[[], Awaitable[BriefSettings]]:
+def brief_settings(store: Any, agents: Any) -> Callable[[], Awaitable[BriefSettings]]:
     """The reader the proposal brief writer is built with: each call takes one snapshot of the settings
     documents (``store.snapshot()``) and reads both ``background_models.proposal_brief`` and the ``leads``
-    section from it, so a write between two reads can never hand one tick two versions of the documents."""
+    section from it, so a write between two reads can never hand one tick two versions of the documents;
+    and the ``proposal-brief`` agent definition's voice from ``agents`` (``AgentDefinitionsRepository``)."""
 
     async def read() -> BriefSettings:
         snapshot = await store.snapshot()
-        return BriefSettings(models=model_lookup(snapshot, FEATURE), leads=snapshot.scoped(LEADS))
+        return BriefSettings(
+            models=model_lookup(snapshot, FEATURE),
+            leads=snapshot.scoped(LEADS),
+            voice=await agent_voice(agents, AGENT, VOICE),
+        )
 
     return read
 
 
-class ProposalBriefWriter:
+@dataclass(frozen=True)
+class ProposalBriefs:
+    """The proposals still asked, as the one brief writer briefs them (:class:`embry0.services.brief_writer.Briefs`).
+
+    ``proposals()`` is the open feed (without owners); ``store`` keeps the
+    briefs (``ProposalBriefsRepository``). A proposal no longer asked loses
+    its brief at each tick. The held tickets, by their repository's
+    ``leads`` section, are written last.
+    """
+
+    proposals: Callable[[], Awaitable[list[Proposal]]]
+    store: Any
+    feature: str = FEATURE
+    id_field: str = "proposal_id"
+    schema_name: str = "brief"
+    schema: Mapping[str, Any] = MappingProxyType(BRIEF_SCHEMA)
+    format: str = FORMAT
+    shipped_voice: str = VOICE
+
+    async def pending(self, settings: BriefSettings) -> Sequence[tuple[Proposal, str | None, str | None]]:
+        proposals = await self.proposals()
+        await self.store.prune({p.id for p in proposals})
+        stored = await self.store.all()
+        ordered = sorted(proposals, key=lambda p: (held_by(p, settings.leads), *_order(p)))
+        rows = [stored.get(p.id) or {} for p in ordered]
+        return [(p, row.get("input_hash"), row.get("prompt_hash")) for p, row in zip(ordered, rows, strict=True)]
+
+    def key(self, item: Proposal) -> str:
+        return item.id
+
+    def repo(self, item: Proposal) -> str | None:
+        return item.repo
+
+    def input_hash(self, item: Proposal) -> str:
+        return input_hash(item)
+
+    def user_prompt(self, item: Proposal) -> str:
+        return user_prompt(item)
+
+    def parse(self, text: str) -> Brief:
+        return parse_brief(text)
+
+    async def save(self, item: Proposal, digest: str, brief: Brief, *, model: str, prompt_hash: str) -> None:
+        await self.store.save(item.id, digest, brief, model=model, prompt_hash=prompt_hash)
+
+
+class ProposalBriefWriter(BriefWriter[Proposal, BriefSettings, Brief]):
     """Fills missing and stale briefs of the proposals still asked, a few a tick (spec 2026-10-25).
 
-    ``proposals()`` is the open feed (without owners); ``settings()``, read
-    once a tick (:func:`brief_settings`, one snapshot of the settings
-    documents), gives the model each proposal's repository writes with ('' for
-    none: ``background_models.proposal_brief``, else its default) and the
-    ``leads`` section, by whose ``ask_min`` the held tickets' briefs are
-    written last; ``briefs`` the store; ``calls`` makes each call with the repository's key, the
-    budget caps and the spend recorded (#164). A failed proposal waits
-    ``RETRY_SECONDS`` before it is tried again; one the caps refuse ends the
-    tick and is tried on the next.
+    The one brief writer over :class:`ProposalBriefs`. ``settings()``, read
+    once a tick (:func:`brief_settings`), gives the model each proposal's
+    repository writes with ('' for none: ``background_models.proposal_brief``,
+    else its default), the ``leads`` section, by whose ``ask_min`` the held
+    tickets' briefs are written last, and the voice; ``briefs`` the store;
+    ``calls`` makes each call with the repository's key, the budget caps and
+    the spend recorded (#164).
     """
 
     def __init__(
@@ -268,88 +299,15 @@ class ProposalBriefWriter:
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._proposals = proposals
-        self._settings = settings
-        self._briefs = briefs
-        self._calls = calls
-        self._per_tick = max(1, per_tick)
-        self._interval = interval_seconds
-        self._client = client
-        self._clock = clock
-        self._retry_at: dict[tuple[str, str], float] = {}
-
-    def due(
-        self,
-        proposals: Iterable[Proposal],
-        stored: Mapping[str, Mapping[str, Any]],
-        leads: PerRepository[LeadsSettings],
-    ) -> list[Proposal]:
-        """The proposals whose brief is missing or stale and not waiting out a failure, in writing order:
-        the held ones, by ``leads``, last."""
-        now = self._clock()
-        out = []
-        for p in proposals:
-            digest = input_hash(p)
-            row = stored.get(p.id)
-            if row is not None and row.get("input_hash") == digest:
-                continue
-            if self._retry_at.get((p.id, digest), 0.0) > now:
-                continue
-            out.append(p)
-        return sorted(out, key=lambda p: (held_by(p, leads), *_order(p)))
-
-    async def tick(self) -> list[str]:
-        """One pass: the ids whose brief it wrote."""
-        read = await self._settings()
-        lookup, leads = read.models, read.leads
-        proposals = await self._proposals()
-        await self._briefs.prune({p.id for p in proposals})
-        due = self.due(proposals, await self._briefs.all(), leads)
-        endpoints: dict[tuple[str, str], Endpoint | None] = {}
-        client: httpx.AsyncClient | None = None
-        written: list[str] = []
-        asked = 0
-        try:
-            for p in due:
-                if asked >= self._per_tick:
-                    break
-                model = lookup(p.repo).strip()
-                if not model:
-                    continue
-                where = (model, p.repo.lower())
-                if where not in endpoints:
-                    endpoints[where] = await self._calls.endpoint(FEATURE, model, p.repo)
-                    if endpoints[where] is None:
-                        logger.info("proposal_brief_model_unavailable", model=model, repo=p.repo)
-                endpoint = endpoints[where]
-                if endpoint is None:
-                    continue
-                client = client or self._client or httpx.AsyncClient()
-                asked += 1
-                digest = input_hash(p)
-                try:
-                    brief = await write_brief(p, endpoint, client, self._calls)
-                except BackgroundCallRefused:
-                    break
-                except (ValueError, httpx.HTTPError, KeyError, TypeError) as exc:
-                    self._retry_at[(p.id, digest)] = self._clock() + RETRY_SECONDS
-                    logger.warning("proposal_brief_failed", proposal_id=p.id, model=model, error=str(exc)[:300])
-                    continue
-                await self._briefs.save(p.id, digest, brief, model=model)
-                written.append(p.id)
-                logger.info("proposal_brief_written", proposal_id=p.id, model=model)
-        finally:
-            if self._client is None and client is not None:
-                await client.aclose()
-        return written
-
-    async def start(self) -> None:  # pragma: no cover - exercised by the app
-        while True:
-            try:
-                await self.tick()
-            except Exception:
-                logger.warning("proposal_brief_tick_failed", exc_info=True)
-            await asyncio.sleep(self._interval)
+        super().__init__(
+            briefs=ProposalBriefs(proposals=proposals, store=briefs),
+            settings=settings,
+            calls=calls,
+            per_tick=per_tick,
+            interval_seconds=interval_seconds,
+            client=client,
+            clock=clock,
+        )
 
 
 def with_briefs(

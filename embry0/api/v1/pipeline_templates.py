@@ -76,14 +76,14 @@ def _template_name_taken(name: str | None) -> HTTPException:
 
 
 async def _known_agent_types(request: Request) -> set[str] | None:
-    """The agent_definitions types that exist now; None when the app has no
-    repository (tests) or the read fails, so the builtin types decide, as at
-    plan time (plan_route)."""
+    """The agent_definitions types a job can run now (``runs_in_jobs``: the brief writer's voices are no step);
+    None when the app has no repository (tests) or the read fails, so the builtin types decide, as at plan time
+    (plan_route)."""
     repo = getattr(request.app.state, "agent_defs_repo", None)
     if repo is None:
         return None
     try:
-        return {str(a["type"]) for a in await repo.list_all()}
+        return {str(a["type"]) for a in await repo.list_all() if a.get("runs_in_jobs", True)}
     except Exception:
         logger.warning("template_agent_types_unavailable", exc_info=True)
         return None
