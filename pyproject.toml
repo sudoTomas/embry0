@@ -46,7 +46,7 @@ dependencies = [
     "pyyaml>=6.0,<7",
     "sse-starlette>=3.5,<4",
     "mcp>=2.3,<3",
-    "authlib>=1.8,<2",
+    "authlib>=1.9,<2",
     "joserfc>=1.7,<2",
     "itsdangerous>=2.1,<3",
 ]
