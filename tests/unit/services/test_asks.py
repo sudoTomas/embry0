@@ -119,6 +119,15 @@ class FakeAsks:
         )
         return ask_id
 
+    async def queue(self, asks: Any) -> list[str]:
+        """As the repository does: each decision gets its code, then each ask its person holds no live one of."""
+        queued = []
+        for decision_id, recipient, due_at in asks:
+            await self.code(decision_id)
+            if not any(r["decision_id"] == decision_id and r["recipient"] == recipient for r in await self.live()):
+                queued.append(await self.add(decision_id=decision_id, recipient=recipient, due_at=due_at))
+        return [q for q in queued if q]
+
     async def close(self, ask_ids: Any, *, state: str, now: datetime) -> int:
         for r in self.rows:
             if r["id"] in set(ask_ids):
@@ -205,3 +214,38 @@ def test_an_ask_under_a_renamed_slug_counts_against_its_new_organization(monkeyp
         "ada holds one globex ask, globex's limit: the ask under the old acme/widgets slug counts as globex's "
         f"and waits; acme/gadgets is still acme's and goes: {[x['id'] for x, _ in released]}"
     )
+
+
+def test_every_live_ask_counts_toward_the_limit_and_only_the_shown_ones_go_out() -> None:
+    """``shown`` is what the caller may be handed (#272): it decides what goes out, never what counts."""
+    section = asks_read({"enabled": True, "hours": "00-24", "weekdays": "mon-sun", "max_open_per_person": 1})
+    decisions = [{"id": f"d{i}", "repo": "acme/widgets"} for i in range(1, 6)]
+    policy = AskPolicy(section, decisions)
+
+    def a(ask_id: str, decision_id: str, state: str = "queued", **over: Any) -> dict[str, Any]:
+        return {
+            "id": ask_id,
+            "decision_id": decision_id,
+            "recipient": "ada@example.com",
+            "state": state,
+            "due_at": TUE_10,
+            "created_at": TUE_10,
+            "reminders": 0,
+            **over,
+        }
+
+    def shown(ask: Any) -> bool:
+        return ask["decision_id"] != "d1" and ask["decision_id"] != "d3"
+
+    held_unshown = a("held", "d1", "sent", sent_at=TUE_10)
+    assert release([held_unshown, a("next", "d2")], {}, TUE_10, policy, shown) == [], (
+        "ada holds acme's one ask through d1, which the caller may not be handed: d2's waits all the same"
+    )
+    released = release([a("worse", "d3"), a("better", "d4")], {"d3": 0, "d4": 1}, TUE_10, policy, shown)
+    assert [x["id"] for x, _ in released] == ["better"], (
+        "a queued ask the caller may not be handed is not released to it, and so takes no slot from one it may: "
+        f"{[x['id'] for x, _ in released]}"
+    )
+    reminder = a("remind", "d1", "sent", sent_at=TUE_10 - timedelta(hours=30))
+    assert release([reminder], {}, TUE_10, policy, shown) == [], "nor is a reminder the caller may not be handed"
+    assert release([reminder], {}, TUE_10, policy) == [(reminder, True)], "every ask is shown when shown is None"
