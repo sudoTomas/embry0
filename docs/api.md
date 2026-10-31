@@ -423,10 +423,10 @@ One message to one person about one decision, tracked from `queued` to `answered
 - **Whose policy.** Each ask follows the organization its decision's repository belongs to (the first segment of the slug): that organization's [layer](configuration.md#settings-document) may set any of the six keys above (`PUT /api/v1/config/settings?owner=acme`), and the deployment's document supplies the rest. So two organizations' asks go out in their own working hours in the same tick, and someone asked about both organizations' decisions may hold each one's number. An ask about a decision with no repository, such as a non-git job's, follows the deployment's document, and its limit counts apart from every organization's. `asks.enabled` and `asks.tick_seconds` are the deployment's alone. `GET /api/v1/config/settings/effective?owner=acme` shows what an organization's asks read.
 - **Expiry.** `asks.expire_days` counts from when an ask was sent. An ask still queued, waiting behind its person's limit or for working hours, does not expire; it is withdrawn when its decision closes. A plain call to `GET /asks/due` is the assistant's hand-out: each first send on its page is stamped as handed out, and if it is never reported sent (`POST /asks/{id}/sent`), such as one to a person the assistant cannot reach, it expires `asks.expire_days` after it was first handed out, so it does not hold its person's place for ever. `GET /asks/due?peek=1` returns the same page and stamps nothing: use it to look without starting that clock. A page puts the asks never handed out before those handed out and unreported, so a person's fresh ask reaches it within a few polls however many asks of people the assistant skips are waiting. An ask that reached its person and expired keeps them from being asked about that decision again; one handed out and never reported sent keeps them from it for another `asks.expire_days`, then they may be asked again, a second message if the first did reach them.
 - **Codes.** Each decision gets one code: four letters from its id, lengthened on a collision, never given to another decision. A late press cannot land on the wrong quest.
-- `GET /api/v1/asks/due?limit=` lists what to send now: queued and due, or a first reminder due within its organization's working hours. It answers `{"asks", "count", "enabled"}`; while `asks.enabled` is false `asks` is empty, whatever is stored, and the stored asks wait. Each item is `{"id", "code", "recipient": {"email", "name", "github_login"}, "reminder", "decision", "actions", "dashboard_url"}`. `decision` is the decision as `GET /decisions/{id}` shows it. `actions` are what a chat may answer by itself: `start`, `decline`, `later` and `send_to` on offer; `merge` (through a pending merge approval) and `send_to` on a quest to review. Everything else opens `dashboard_url`. It lists only decisions in repositories the caller's key covers; an ask whose decision was answered meanwhile is left out here and withdrawn by the ask loop, which reads every decision. A person's unanswered asks count toward their limit whether or not the key covers their decisions, so a key limited to some repositories never releases an ask past it.
+- `GET /api/v1/asks/due?limit=` lists what to send now: queued and due, or a first reminder due within its organization's working hours. It answers `{"asks", "count", "enabled"}`; while `asks.enabled` is false `asks` is empty, whatever is stored, and the stored asks wait. Each item is `{"id", "code", "recipient": {"email", "name", "github_login"}, "reminder", "decision", "actions", "dashboard_url"}`. `decision` is the decision as `GET /decisions/{id}` shows it. `actions` are what a chat may answer by itself: `start`, `decline`, `later` and `send_to` on offer; `merge` (through a pending merge approval) and `send_to` on a quest to review. Everything else opens `dashboard_url`. Through a key with a [repository allowlist](#repository-allowlist) it hands out only asks about decisions, on offer or to review, in the repositories the key covers; an ask whose decision was answered meanwhile is left out here and withdrawn by the ask loop, which reads every decision. A person's unanswered asks count toward their limit whether or not the key covers their decisions, so a key limited to some repositories never releases an ask past it.
 - `POST /api/v1/asks/{id}/sent` (`{"message_ref"}`): the assistant sent it. A second report counts as the reminder.
 - `POST /api/v1/asks/answer` (`{"code", "action", "person", "reason", "to", "note"}`): a button press by `person` (an email the assistant verified). It is answered through the paths the dashboard uses, as that person, and only when they may decide: the hand-off's person while one is open, else an owner (by their GitHub login) or an admin. Every live ask of the decision closes as `answered`, and the `ask.answered` event lists each message to update. A second press returns `{"already": true, "answer", "by"}` and runs nothing.
-- `GET /api/v1/asks?limit=`: the latest asks.
+- `GET /api/v1/asks?limit=`: the latest asks. Through a key with a [repository allowlist](#repository-allowlist), only those about decisions in the repositories the key covers, closed ones included.
 
 ## Leads
 
@@ -1021,8 +1021,7 @@ other repository:
   names none is refused, since it would start work on any repository under
   the owner);
 - `POST /cases/{id}/accept`, `POST /merge-approvals/{id}/decide`,
-  `POST /proposals/{id}/accept`, `/decline` and `/snooze` (the proposal's
-  repository), `POST /watcher/run` (the stack ticked; with none named, every watched
+  `POST /watcher/run` (the stack ticked; with none named, every watched
   stack, all checked before any ticks), `POST /qa/images/build` and
   `POST /repos/bootstrap`;
 - the steps of setting up testing: `POST /repos/{repo}/-/setup/propose`,
@@ -1045,6 +1044,39 @@ they are covered too. Matching ignores case and follows `REPO_RENAMES`
 slug also matches its current one, and the reverse. Each refusal logs
 `api_key_repo_refused` with the key's name and id (never the key), the
 repository and the action, and writes an `apikey.repo_refused` audit row.
+
+The list also narrows what the key reads and does of a repository's
+decisions, the work offered on it and the game layer's view of its work, by
+one rule (`key_covers` in `embry0/api/repo_allowlist.py`):
+
+- `GET /decisions`, `GET /proposals`, `GET /asks/due`, `GET /asks`,
+  `GET /leads`, `GET /handoffs`, `GET /world` (its parties, quests, inbox,
+  loot, regions, frontier, dungeons and recent diary tiers),
+  `GET /world/characters/{agent}` (its quest log) and `GET /progression`
+  (its diaries and recent diary tiers) list only what is in repositories
+  the key covers. The account's and the characters' totals still count
+  every repository's work, without naming any.
+- Reading one item of another repository, `GET /proposals/{id}`,
+  `GET /decisions/{id}` and `GET /world/quests/{id}`, answers exactly as an
+  item that does not exist (404).
+- Acting on one item of another repository answers exactly as acting on an
+  item that does not exist: `POST /proposals/{id}/accept`, `/decline` and
+  `/snooze` and `POST /decisions/{id}/send-to` with 404,
+  `POST /handoffs/{id}/return` and `/cancel` with 404,
+  `POST /asks/{id}/sent` with 409 and `POST /asks/answer` with 404. So no
+  answer tells whether the item exists.
+
+A list or a read is narrowed, not refused, so it logs and audits nothing.
+An action is refused: it logs `api_key_repo_refused` and writes an
+`apikey.repo_refused` audit row as the refusals above do, though its answer
+is the missing item's. An ask names only its decision: its repository is
+read back from the row the decision comes from (a finished job, an issue, a
+watcher case, a lead, an answered proposal), else from the open decisions.
+An ask about an audit finding that was never answered and is no longer
+offered has no repository to read back, so a key with an allowlist neither
+lists it nor acts on it. The jobs and merge approval routes, which the list
+does not narrow for reading, keep the 403 refusal above for their actions,
+reviewing a finished job included.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
 every key minted before the allowlist existed is unrestricted. Beyond the

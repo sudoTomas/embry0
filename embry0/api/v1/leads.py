@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers
 from embry0.services.leads import LEAD_KINDS, as_utc_iso
 from embry0.services.leads.tasks import lead_task
 from embry0.services.run_with import RunWith, apply_run_with
@@ -63,12 +63,15 @@ async def list_leads(
     state: str = Query(default="open", pattern="^(open|gone|all)$"),
     limit: int = Query(default=200, ge=1, le=1000),
 ) -> dict[str, Any]:
-    """The leads the finders stored, most recently seen first."""
+    """The leads the finders stored, most recently seen first, in the repositories the caller's key covers."""
     if kind is not None and kind not in LEAD_KINDS:
         raise HTTPException(status_code=422, detail=f"kind is one of {', '.join(LEAD_KINDS)}")
     if repo:
         await enforce_repo_allowlist(request, repo, action="read a repository's leads")
-    rows = await _repo(request).list(repo=repo, kind=kind, state=None if state == "all" else state, limit=limit)
+    rows = await _repo(request).list(
+        repo=repo, kind=kind, state=None if state == "all" else state, limit=limit, repos=covered_slugs(request)
+    )
+    rows = [r for r in rows if key_covers(request, r.get("repo"))]
     return {"leads": [lead_view(r) for r in rows], "count": len(rows)}
 
 

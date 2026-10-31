@@ -13,6 +13,7 @@ can read would release asks past the limit.
 from __future__ import annotations
 
 import os
+import random
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -27,6 +28,7 @@ from embry0.api.v1 import proposals as proposals_api
 from embry0.api.v1 import world as world_api
 from embry0.config import Embry0Config
 from embry0.services.proposals import Proposal
+from embry0.storage import repo_renames
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 from tests.fixtures.asks import asks_snapshot
 from tests.unit.api.v1.test_asks_api import FakeAsks, ask
@@ -233,3 +235,42 @@ async def test_the_feed_hands_the_key_only_asks_about_decisions_the_decisions_li
         f"reminders included, and no other: {sorted(a['id'] for a in handed)}"
     )
     assert "r-review-api" not in expected, "the acme/api review's reminder is not the key's to send"
+
+
+FUZZ_REPOS = [
+    "acme/web",
+    "ACME/Web",
+    "acme/api",
+    "globex/gizmos",
+    "globex/other",
+    "acme/old-web",
+    "",
+    None,
+    "initech/tps",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seed", range(25))
+async def test_the_feed_hands_a_key_exactly_the_decisions_the_list_shows_it_for_any_mix(
+    app: Any, monkeypatch: pytest.MonkeyPatch, seed: int
+) -> None:
+    """Quests on offer and to review in random repositories, renamed, mixed-case and none among them: the decisions
+    the feed hands asks out about are exactly those GET /decisions lists to the key, so the two cannot drift."""
+    monkeypatch.setattr(repo_renames, "REPO_RENAMES", {"acme/old-web": "acme/web"})
+    rng = random.Random(seed)
+    app.state.settings.deployment["max_open_per_person"] = 50
+    reviews = [(f"job-{i}", rng.choice(FUZZ_REPOS)) for i in range(rng.randrange(0, 12))]
+    _reviews(app, *reviews)  # type: ignore[arg-type]
+    offers = [(f"issue:{i}", rng.choice([r for r in FUZZ_REPOS if r])) for i in range(rng.randrange(0, 12))]
+    app.state.offers.extend(_offer(pid, str(repo)) for pid, repo in offers)
+    rows = [ask(f"q-{job}", f"done:{job}", f"{job}@example.com") for job, _ in reviews]
+    for pid, _ in offers:
+        app.state.asks_repo.codes[f"offer:{pid}"] = pid.replace(":", "").upper()
+        rows.append(ask(f"q-{pid}", f"offer:{pid}", f"{pid.replace(':', '')}@example.com"))
+    app.state.asks_repo.rows = rows
+    listed = {d["id"] for d in (await _get(app, "/api/v1/decisions?limit=500"))["decisions"]}
+    handed = {a["decision"]["id"] for a in (await _get(app, "/api/v1/asks/due?limit=200"))["asks"]}
+    assert handed == listed, (
+        f"seed {seed}: the feed and the list disagree on {sorted(handed ^ listed)} (reviews {reviews}, offers {offers})"
+    )

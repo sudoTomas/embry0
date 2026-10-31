@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
 from embry0.api.deps import bust_api_key_cache
-from embry0.api.repo_allowlist import repo_allowed
+from embry0.api.repo_allowlist import covered_slugs, key_covers, repo_allowed
 from embry0.config import Embry0Config
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 
@@ -379,3 +379,31 @@ def test_a_rename_reaches_the_route(app) -> None:
     with patch("embry0.storage.repo_renames.REPO_RENAMES", renames):
         response = _call(app, LIMITED_TOKEN, "POST", "/api/v1/jobs", {"repo": "acme/old-widgets", "task": "t"}, "x")
     assert not _refused(response), f"a job addressed by the old slug was refused: {response.text}"
+
+
+@pytest.mark.parametrize("allowlist", [(ALLOWED,), ("acme/old-widgets",), ("ACME/Widgets",)])
+def test_a_query_narrowed_to_covered_slugs_selects_exactly_what_key_covers_passes(allowlist: tuple[str, ...]) -> None:
+    """A list that pages in SQL narrows its query to ``covered_slugs``: it must select every row ``key_covers``
+    passes, under the old slug too, and no other."""
+    renames = {"acme/old-widgets": ALLOWED}
+    request = MagicMock()
+    request.state.principal = MagicMock(allowed_repos=allowlist)
+    stored = [ALLOWED, ALLOWED.upper(), "acme/old-widgets", "Acme/Old-Widgets", OTHER, "acme/widgets-private", ""]
+    with patch("embry0.storage.repo_renames.REPO_RENAMES", renames):
+        slugs = covered_slugs(request)
+        assert slugs is not None
+        selected = [s for s in stored if s.lower() in slugs]
+        passed = [s for s in stored if key_covers(request, s)]
+    assert selected == passed == [ALLOWED, ALLOWED.upper(), "acme/old-widgets", "Acme/Old-Widgets"], (
+        f"an allowlist of {allowlist}: the query selects {selected}, key_covers passes {passed}"
+    )
+
+
+def test_a_key_without_an_allowlist_narrows_nothing_and_an_empty_one_everything() -> None:
+    request = MagicMock()
+    request.state.principal = MagicMock(allowed_repos=None)
+    assert covered_slugs(request) is None and key_covers(request, OTHER)
+    request.state.principal = MagicMock(allowed_repos=[])
+    assert covered_slugs(request) == [] and not key_covers(request, OTHER)
+    request.state.principal = None
+    assert covered_slugs(request) is None and key_covers(request, OTHER), "a session or the master key"

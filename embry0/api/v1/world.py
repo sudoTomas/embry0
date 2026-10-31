@@ -28,7 +28,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import hide_unless_covered, key_covers
 from embry0.api.v1.job_review import GITHUB_PR
 from embry0.api.v1.ui import require_game
 from embry0.services.slop import dungeons
@@ -164,7 +164,9 @@ async def read_world(request: Request) -> dict[str, Any]:
     progression = await _state(request, "progression").read()
     cache = _cache(request)
     now = datetime.now(UTC)
-    jobs = await repo.jobs(returning_seconds=RETURN_SECONDS)
+    # What the caller's key covers only: the parties, quests, inbox, loot, regions and dungeons of its
+    # repositories. The cache holds every repository's, shared by every caller, so each is narrowed after it.
+    jobs = [j for j in await repo.jobs(returning_seconds=RETURN_SECONDS) if key_covers(request, j.get("repo"))]
     ids = [str(j["job_id"]) for j in jobs]
     runs, links, last_events, leads, places, stats, inbox, loot, cleaned, meter_rows = await asyncio.gather(
         repo.agent_runs(ids),
@@ -178,7 +180,12 @@ async def read_world(request: Request) -> dict[str, Any]:
         cache.get("cleaned", lambda: repo.cleaned(days=CLEANED_DAYS)),
         cache.get("meters", lambda: _meters(request)),
     )
-    quests = [lead_entry(lead) for lead in leads]
+    quests = [lead_entry(lead) for lead in leads if key_covers(request, lead.get("repo"))]
+    inbox = [r for r in inbox if key_covers(request, r.get("repo"))]
+    loot = [r for r in loot if key_covers(request, r.get("repo"))]
+    cleaned = {scope: n for scope, n in cleaned.items() if key_covers(request, scope[0])}
+    meter_rows = [m for m in meter_rows if key_covers(request, m.get("repo"))]
+    places = covered_places(request, places)
     titles = await _brief_titles(request, [*ids, *(str(r["job_id"]) for r in [*inbox, *loot])])
     parties = [
         job_entry(
@@ -231,8 +238,22 @@ async def read_world(request: Request) -> dict[str, Any]:
             }
             for r in loot
         ],
-        "recent": snapshot["recent"],
+        "recent": covered_entries(request, snapshot["recent"]),
         **places,
+    }
+
+
+def covered_entries(request: Request, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The entries that name no repository, or one the caller's key covers: a diary's, say, of another is left out."""
+    return [e for e in entries if "repo" not in e or key_covers(request, e.get("repo"))]
+
+
+def covered_places(request: Request, places: dict[str, Any]) -> dict[str, Any]:
+    """The regions and the frontier of the repositories the caller's key covers."""
+    return {
+        **places,
+        "regions": [r for r in places.get("regions", []) if key_covers(request, r.get("repo"))],
+        "frontier": [name for name in places.get("frontier", []) if key_covers(request, name)],
     }
 
 
@@ -245,6 +266,7 @@ async def read_character(agent_type: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"no character {agent_type}")
     repo = _state(request, "world_repo")
     stats, log = await asyncio.gather(repo.stats(agent_type), repo.quest_log(agent_type))
+    log = [r for r in log if key_covers(request, r.get("repo"))]
     titles = await _brief_titles(request, [str(r["job_id"]) for r in log])
     entry = character_entries([character.to_dict()], [], stats, datetime.now(UTC))[0]
     return {
@@ -302,11 +324,15 @@ async def _pr_stats(request: Request, pr_url: str | None) -> dict[str, Any] | No
     }
 
 
-async def _quest_or_404(request: Request, job_id: str) -> dict[str, Any]:
+async def _quest_or_404(request: Request, job_id: str, *, action: str | None = None) -> dict[str, Any]:
+    """One quest, for a read or, naming ``action``, for a route that acts on it. A quest in a repository the
+    caller's key does not cover answers as one that is not there; an action's refusal is logged and audited."""
     quest = await _state(request, "world_repo").quest(job_id)
     if quest is None:
         raise HTTPException(status_code=404, detail=f"no quest {job_id}")
-    await enforce_repo_allowlist(request, quest.get("repo"), action="read a quest")
+    await hide_unless_covered(
+        request, quest.get("repo"), HTTPException(status_code=404, detail=f"no quest {job_id}"), action=action
+    )
     return dict(quest)
 
 
