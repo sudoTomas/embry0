@@ -158,6 +158,19 @@ BUILTIN_IDENTITY: Final[dict[str, dict[str, str]]] = {
         "color": "emerald",
         "tagline": "Maps the parts of a monorepo.",
     },
+    # The brief writer's two prompts (#166): not job agents, see agent_definitions.BUILTIN_SEED.
+    "proposal-brief": {
+        "display_name": "Proposal Brief",
+        "avatar": "apprentice",
+        "color": "sky",
+        "tagline": "Says what a proposal asks, in one read.",
+    },
+    "job-brief": {
+        "display_name": "Job Brief",
+        "avatar": "apprentice",
+        "color": "slate",
+        "tagline": "Says what a job is about, in one read.",
+    },
 }
 
 

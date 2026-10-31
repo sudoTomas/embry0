@@ -9,14 +9,14 @@ from embry0.services.job_briefs import LIVE_STATUSES, RECENT_DAYS, TASK_CHARS, J
 from embry0.storage.database import DatabasePool
 
 # A job's brief inputs (embry0.services.job_briefs.job_inputs), its task cut as
-# the brief reads it, and the hash of the brief stored for it.
+# the brief reads it, and the hashes of the brief stored for it: its inputs' and its prompt's (#166).
 _INPUTS = f"""
 j.job_id, LEFT(j.task, {TASK_CHARS}) AS task, j.repo, j.area, j.job_kind, j.pipeline_template, j.work_nature,
 i.title AS issue_title
 """
 
 _CANDIDATES_SQL = f"""
-SELECT {_INPUTS}, j.status, b.input_hash AS brief_hash
+SELECT {_INPUTS}, j.status, b.input_hash AS brief_hash, b.prompt_hash AS brief_prompt_hash
 FROM jobs j
 LEFT JOIN issues i ON i.id = j.issue_id
 LEFT JOIN job_briefs b ON b.job_id = j.job_id
@@ -43,16 +43,16 @@ class JobBriefsRepository:
         rows = await self._db.fetch(_CANDIDATES_SQL, list(LIVE_STATUSES), RECENT_DAYS, limit)
         return [dict(r) for r in rows]
 
-    async def save(self, job_id: str, input_hash: str, brief: JobBrief, *, model: str) -> None:
-        """Store the brief written from ``input_hash``, in place of any earlier one."""
+    async def save(self, job_id: str, input_hash: str, brief: JobBrief, *, model: str, prompt_hash: str) -> None:
+        """Store the brief written from ``input_hash`` with the prompt ``prompt_hash``, in place of any earlier one."""
         await self._db.execute(
             """
-            INSERT INTO job_briefs (job_id, input_hash, title, what, why, done, size, model)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO job_briefs (job_id, input_hash, title, what, why, done, size, model, prompt_hash)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (job_id) DO UPDATE SET
                 input_hash = EXCLUDED.input_hash, title = EXCLUDED.title, what = EXCLUDED.what,
                 why = EXCLUDED.why, done = EXCLUDED.done, size = EXCLUDED.size, model = EXCLUDED.model,
-                written_at = NOW()
+                prompt_hash = EXCLUDED.prompt_hash, written_at = NOW()
             """,
             job_id,
             input_hash,
@@ -62,6 +62,7 @@ class JobBriefsRepository:
             brief.done,
             brief.size,
             model,
+            prompt_hash,
         )
 
     async def current(self, job_ids: Iterable[str]) -> dict[str, dict[str, Any]]:

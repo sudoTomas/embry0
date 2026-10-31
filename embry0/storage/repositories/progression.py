@@ -231,8 +231,10 @@ class ProgressionRepository:
         )
 
     async def agent_types(self) -> list[str]:
-        """Every agent the instance defines, built-in and custom."""
-        return [str(r["type"]) for r in await self._db.fetch("SELECT type FROM agent_definitions ORDER BY type")]
+        """Every agent the instance defines that runs in jobs, built-in and custom: the brief writer's voices
+        (``runs_in_jobs`` false) are no character."""
+        rows = await self._db.fetch("SELECT type FROM agent_definitions WHERE runs_in_jobs ORDER BY type")
+        return [str(r["type"]) for r in rows]
 
     async def facts(self, queries: Iterable[FactFragment], timezone: str) -> list[Fact]:
         """Every step of every metric ``queries`` asks for, with its evidence, oldest first.

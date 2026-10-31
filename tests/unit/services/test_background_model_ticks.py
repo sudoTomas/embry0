@@ -119,7 +119,7 @@ async def test_the_proposal_briefs_read_their_model_at_every_tick() -> None:
         async def all(self) -> dict[str, Any]:
             return dict(rows)
 
-        async def save(self, pid: str, digest: str, brief: Any, *, model: str) -> None:
+        async def save(self, pid: str, digest: str, brief: Any, *, model: str, prompt_hash: str = "") -> None:
             rows[pid] = {"input_hash": digest, "model": model}
 
         async def prune(self, keep: set[str]) -> int:
@@ -146,19 +146,27 @@ async def test_the_proposal_briefs_read_their_model_at_every_tick() -> None:
 
 
 async def test_the_job_briefs_read_their_model_at_every_tick() -> None:
-    _takes_a_reader(JobBriefWriter)
+    _takes_a_reader(JobBriefWriter, "settings")
+    from embry0.services.job_briefs import VOICE, JobBriefSettings
+
     jobs = [{"job_id": f"job-{n}", "repo": "acme/widgets", "task": f"Fix crash {n}"} for n in range(2)]
 
     class Store:
         async def candidates(self) -> list[dict[str, Any]]:
             return [j for j in jobs if "brief_hash" not in j]
 
-        async def save(self, job_id: str, digest: str, brief: Any, *, model: str) -> None:
+        async def save(self, job_id: str, digest: str, brief: Any, *, model: str, prompt_hash: str = "") -> None:
             next(j for j in jobs if j["job_id"] == job_id)["brief_hash"] = digest
 
     sent: list[str] = []
     reader = Reader("custom/first")
-    writer = JobBriefWriter(store=Store(), models=reader, calls=_calls(), per_tick=1, client=_client(sent, JOB_BRIEF))
+
+    async def settings() -> JobBriefSettings:
+        return JobBriefSettings(models=await reader(), voice=VOICE)
+
+    writer = JobBriefWriter(
+        store=Store(), settings=settings, calls=_calls(), per_tick=1, client=_client(sent, JOB_BRIEF)
+    )
     await writer.tick()
     reader.set("custom/second")
     await writer.tick()

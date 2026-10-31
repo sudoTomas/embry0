@@ -37,6 +37,7 @@ from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
 from embry0.settings.store import SettingsStore
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
@@ -278,7 +279,7 @@ async def test_a_hosted_model_s_spend_is_counted_against_the_caps_and_refused_pa
         async def all(self) -> dict[str, Any]:
             return dict(self.rows)
 
-        async def save(self, pid: str, digest: str, brief: Any, *, model: str) -> None:
+        async def save(self, pid: str, digest: str, brief: Any, *, model: str, prompt_hash: str = "") -> None:
             self.rows[pid] = {"input_hash": digest}
 
         async def prune(self, keep: set[str]) -> int:
@@ -304,7 +305,7 @@ async def test_a_hosted_model_s_spend_is_counted_against_the_caps_and_refused_pa
 
     writer = ProposalBriefWriter(
         proposals=feed,
-        settings=brief_settings(app.state.settings),
+        settings=brief_settings(app.state.settings, AgentDefinitionsRepository(db)),
         briefs=Briefs(),
         calls=module.BackgroundCalls(
             resolver=Resolver(),
@@ -360,6 +361,10 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
         auth_proxy_enabled=False,
         context_proxy_enabled=False,
         scout_model="custom/scout",
+        proposal_briefs_per_tick=4,
+        proposal_brief_interval_seconds=61.0,
+        job_briefs_per_tick=5,
+        job_brief_interval_seconds=62.0,
     )
     app = create_app(config)
     async with lifespan(app):
@@ -377,9 +382,15 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
             # The meter reads its judge's model with its enrollment, from one snapshot a tick (#165).
             return (await state.slop_meter._read()).models  # noqa: SLF001
 
+        async def job_brief() -> Any:
+            # The job briefs read their model from one snapshot a tick, on the same brief writer (#166).
+            settings = getattr(state.job_brief_writer, "_settings", None)
+            assert settings is not None, "the job briefs read their model and their prompt through one reader (#166)"
+            return (await settings()).models
+
         readers = {
             "proposal_brief": proposal_brief,
-            "job_brief": state.job_brief_writer._models,  # noqa: SLF001
+            "job_brief": job_brief,
             "slop_judge": slop_judge,
             "scout": scout,
         }
@@ -414,6 +425,27 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
         )
         for loop in (state.proposal_brief_writer, state.job_brief_writer, state.slop_meter):
             assert loop._calls is calls, f"{type(loop).__name__} calls through the metered path"  # noqa: SLF001
+
+        # One brief writer (#166): both loops are it, each with its own cadence and count, and each tick asks with
+        # its agent definition's voice, seeded at the boot; an edit reaches the next tick.
+        from embry0.services.brief_writer import BriefWriter
+        from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+
+        loops = {
+            "proposal-brief": (state.proposal_brief_writer, 4, 61.0),
+            "job-brief": (state.job_brief_writer, 5, 62.0),
+        }
+        for agent_type, (writer, per_tick, interval) in loops.items():
+            assert isinstance(writer, BriefWriter), f"the {agent_type} loop is the one brief writer"
+            assert (writer._per_tick, writer._interval) == (per_tick, interval), (  # noqa: SLF001
+                f"the {agent_type} loop keeps its own per-tick count and cadence from the config"
+            )
+            shipped = BUILTIN_SEED[agent_type]["system_prompt"]
+            assert (await writer._settings()).voice == shipped, f"the boot seeded {agent_type}"  # noqa: SLF001
+            await state.agent_defs_repo.update(agent_type, system_prompt="Write every brief in plain German.")
+            assert (await writer._settings()).voice == "Write every brief in plain German.", (  # noqa: SLF001
+                f"an edit of {agent_type} reaches its loop's next tick, with no restart"
+            )
 
 
 # What each feature ran on before the section, as origin/main's app.py read it: the watcher on W, the

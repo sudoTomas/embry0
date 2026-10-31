@@ -51,6 +51,9 @@ _EVERY_AGENT_TYPE = (
     "design-auditor",
     "context-auditor",
     "area-mapper",
+    # The brief writer's prompts (#166): their loops run on background_models, but a template could name them.
+    "proposal-brief",
+    "job-brief",
 )
 
 
@@ -115,7 +118,10 @@ def test_default_model_is_the_model_of_every_agent_type(agent_type: str) -> None
 
 @pytest.mark.parametrize("agent_type", _EVERY_AGENT_TYPE)
 def test_empty_default_model_leaves_the_definition_model(agent_type: str) -> None:
-    definition_model = BUILTIN_SEED[agent_type]["model"]
+    from embry0.agents.resolver import BUILTIN_DEFAULT_MODEL
+
+    # A definition that names no model (the brief writer's prompts, #166) runs on the built-in default.
+    definition_model = BUILTIN_SEED[agent_type]["model"] or BUILTIN_DEFAULT_MODEL
     for policy in (None, _policy("")):
         inv = _resolve(agent_type, model_policy=policy)
         assert inv.model == definition_model, (

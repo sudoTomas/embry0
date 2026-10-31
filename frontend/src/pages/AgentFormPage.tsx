@@ -223,7 +223,10 @@ export function AgentFormPage() {
       toast.error("Agent type is required");
       return;
     }
-    if (!resolvedModel.trim()) {
+    // A definition no job runs keeps naming no model: the brief writer's voices (runs_in_jobs false),
+    // whose briefs run on the model background_models names for them.
+    const namesNoModel = isEdit && existing !== undefined && existing.runs_in_jobs === false && !existing.model;
+    if (!resolvedModel.trim() && !namesNoModel) {
       openSection("model");
       toast.error("Model is required");
       return;
