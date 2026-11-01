@@ -31,7 +31,7 @@ env:
   # The orchestrator and proxy images export the lock with the same uv, the
   # `uv` stage of their Dockerfiles; tests/unit/infra/test_image_lockfile.py
   # fails while the two differ.
-  UV_VERSION: "0.11.17"
+  UV_VERSION: "0.13.6"
 
 jobs:
   backend:
