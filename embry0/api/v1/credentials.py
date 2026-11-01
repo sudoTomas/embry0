@@ -10,10 +10,10 @@ import json
 import math
 import re
 import secrets
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from urllib.parse import urlparse
 
 import asyncpg
@@ -28,12 +28,14 @@ from fastapi.responses import JSONResponse
 from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import (
+    OWNER_WIDE_CREDENTIAL,
+    answer_as_missing,
     deployment_writes,
     enforce_deployment_allowlist,
-    enforce_owner_allowlist,
+    enforce_no_allowlist,
     enforce_repo_allowlist,
     key_covers,
-    key_covers_organization,
+    record_refusal,
     restricted_key_name,
 )
 from embry0.api.schemas.credentials import (
@@ -61,6 +63,7 @@ from embry0.services.hosts import TAILNET_API_BASE
 from embry0.storage.repositories.credentials import (
     BindingValidationError,
     CredentialBoundError,
+    Held,
     normalize_scope_value,
 )
 from embry0.storage.repositories.repos import UnregisteredRepoError
@@ -209,14 +212,18 @@ async def _bindings_view(request: Request, bindings: list[dict[str, Any]]) -> li
 
 @router.get("/credentials", response_model=list[CredentialOut])
 async def list_credentials(request: Request) -> list[CredentialOut]:
-    """Every credential; to a key with an allowlist, those nothing beyond its list uses: bound only to its
-    repositories or owners, or to nothing."""
+    """Every credential; to a key with an allowlist, its own (:func:`_standing`): those only its repositories use,
+    and those nothing uses that it created."""
     repo = _state(request).credentials_repo
     rows = await repo.list_all()
     if restricted_key_name(request) is None:
         return [_out(r) for r in rows]
     holders = await repo.all_holders()
-    return [_out(r) for r in rows if not await _used_beyond(request, holders.get(str(r["id"]), []))]
+    return [
+        _out(r)
+        for r in rows
+        if await _standing(request, Held(str(r.get("created_by") or ""), holders.get(str(r["id"]), []))) == OWN
+    ]
 
 
 @router.post("/credentials", response_model=CredentialOut, status_code=201, dependencies=[require_admin])
@@ -317,8 +324,10 @@ async def set_bindings(req: ScopedBindingsSet, request: Request) -> dict[str, An
                 status_code=422,
                 detail=f"owner scope_value must be 'github:<owner>' or 'gitlab:<owner>', got {scope_value!r}",
             )
-        # The owner's repositories read their forge credential from it, as PATCH /orgs/{owner} changes them.
-        await enforce_owner_allowlist(request, owner, action="bind credentials to an owner")
+        # The owner's repositories read their forge credential from it, those registered later too.
+        await enforce_no_allowlist(
+            request, f"{owner}/*", action="bind credentials to an owner", reason=OWNER_WIDE_CREDENTIAL
+        )
     for b in req.bindings if req.scope_kind in ("owner", "host") else []:
         cred = await st.credentials_repo.get(b.credential_id)
         if b.role != "forge" or cred is None:
@@ -342,7 +351,7 @@ async def set_bindings(req: ScopedBindingsSet, request: Request) -> dict[str, An
             scope_value,
             [b.model_dump() for b in req.bindings],
             created_by=request_actor(request),
-            **_bind_check(request),
+            **await _bind_check(request, [b.credential_id for b in req.bindings]),
         )
     except BindingValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -359,42 +368,60 @@ async def set_bindings(req: ScopedBindingsSet, request: Request) -> dict[str, An
     return {"bindings": rows}
 
 
-async def _used_beyond(request: Request, holders: list[tuple[str, str]]) -> bool:
-    """Whether something the caller's key does not cover uses a credential, by its ``holders``: a binding to a
-    repository it does not cover or to an owner it does not cover as a whole, to a host or to every repository, an
-    organization it does not cover as a whole, or a skill source. Never for a caller without an allowlist."""
+#: How a credential stands to a key with an allowlist: its own to bind and change; used beyond its list, the
+#: deployment's; or created by someone else and used by nothing, not there for it at all.
+OWN, BEYOND, HIDDEN = "own", "beyond", "hidden"
+
+
+async def _standing(request: Request, held: Held) -> str:
+    """How the credential ``held`` stands to the caller's key: :data:`OWN` when only repositories its list covers use
+    it, or nothing does and the key created it; :data:`BEYOND` when anything else uses it, an owner or an
+    organization included, since those reach repositories registered later; :data:`HIDDEN` when nothing uses it and
+    someone else created it. Always :data:`OWN` for a caller without an allowlist."""
     if restricted_key_name(request) is None:
-        return False
-    for kind, value in holders:
-        if kind == "repo" and key_covers(request, value):
-            continue
-        if kind == "owner" and await key_covers_organization(request, value.partition(":")[2]):
-            continue
-        return True
-    return False
+        return OWN
+    if not held.holders:
+        return OWN if held.created_by == request_actor(request) else HIDDEN
+    return OWN if all(kind == "repo" and key_covers(request, value) for kind, value in held.holders) else BEYOND
+
+
+_MISSING = HTTPException(status_code=404, detail="credential not found")
+
+
+async def _refuse_unless_own(request: Request, standing: str, credential_id: str, *, action: str) -> None:
+    """Refuse ``action`` on a credential that is not the key's: one used beyond its list as the deployment's (403),
+    one it may not see as a credential that does not exist (404), the refusal logged and audited either way."""
+    if standing == BEYOND:
+        await enforce_deployment_allowlist(request, action=action)
+    if standing == HIDDEN:
+        await answer_as_missing(request, f"credential {credential_id}", _MISSING, action=action)
 
 
 async def _refuse_beyond_allowlist(request: Request, credential_id: str, *, action: str) -> None:
-    """Refuse a key with an allowlist ``action`` on a credential something beyond its list uses
-    (:func:`_used_beyond`). A credential nothing uses, or only what the key covers, is its to change. A check
-    that stands before a slow step, a forge's answer; the write that follows checks again (:func:`_held`)."""
+    """:func:`_refuse_unless_own` read without holding the row: for a check that stands before a slow step, a
+    forge's answer; the write that follows checks again (:func:`_held`)."""
     if restricted_key_name(request) is None:
         return
-    if await _used_beyond(request, await _state(request).credentials_repo.holders(credential_id)):
-        await enforce_deployment_allowlist(request, action=action)
+    repo = _state(request).credentials_repo
+    row = await repo.get(credential_id)
+    if row is not None:
+        held = Held(str(row.get("created_by") or ""), await repo.holders(credential_id))
+        await _refuse_unless_own(request, await _standing(request, held), credential_id, action=action)
 
 
 @asynccontextmanager
 async def _held(request: Request, credential_id: str, *, action: str) -> AsyncIterator[Any]:
     """For a key with an allowlist, the connection of a transaction holding the credential's row, refused first as
-    :func:`_refuse_beyond_allowlist` is: what uses it cannot change between the check and the write made on the
+    :func:`_refuse_unless_own` refuses: who uses it cannot change between the check and the write made on the
     connection yielded. Without an allowlist there is nothing to check, and None: the write takes the pool."""
     if restricted_key_name(request) is None:
         yield None
         return
-    async with _state(request).credentials_repo.held([credential_id]) as (conn, holders):
-        if await _used_beyond(request, holders.get(credential_id, [])):
-            await enforce_deployment_allowlist(request, action=action)
+    async with _state(request).credentials_repo.held([credential_id]) as (conn, taken):
+        if credential_id in taken:
+            await _refuse_unless_own(
+                request, await _standing(request, taken[credential_id]), credential_id, action=action
+            )
         yield conn
 
 
@@ -403,16 +430,38 @@ def _on(conn: Any) -> dict[str, Any]:
     return {} if conn is None else {"conn": conn}
 
 
-def _bind_check(request: Request) -> dict[str, Any]:
-    """For a key with an allowlist, the ``check`` :meth:`replace_bindings` awaits with the bound credentials' rows
-    held: a credential something beyond the key's list uses is not the key's to bind, even to its own repository.
-    Nothing to pass for a caller without an allowlist."""
+_BIND = "bind a credential"
+
+
+async def _not_there(request: Request, credential_id: str) -> NoReturn:
+    """Answer a bind of a credential the key may not see as a bind of one that does not exist, in
+    :meth:`replace_bindings`' own words, the refusal logged and audited."""
+    await record_refusal(request, f"credential {credential_id}", _BIND)
+    raise BindingValidationError(f"credential {credential_id!r} does not exist")
+
+
+async def _bind_check(request: Request, credential_ids: Iterable[str]) -> dict[str, Any]:
+    """For a key with an allowlist, a first look at the credentials it binds, before they are checked as bindings
+    (so a credential it may not see answers as a missing one, whatever else is wrong with it), and the ``check``
+    :meth:`replace_bindings` awaits with their rows held: a credential not the key's own is not its to bind, even
+    to its own repository. Nothing to pass for a caller without an allowlist."""
     if restricted_key_name(request) is None:
         return {}
+    repo = _state(request).credentials_repo
+    for cid in sorted(set(credential_ids)):
+        row = await repo.get(cid)
+        if (
+            row is not None
+            and await _standing(request, Held(str(row.get("created_by") or ""), await repo.holders(cid))) == HIDDEN
+        ):
+            await _not_there(request, cid)
 
-    async def check(holders: dict[str, list[tuple[str, str]]]) -> None:
-        for used_by in holders.values():
-            if await _used_beyond(request, used_by):
+    async def check(taken: dict[str, Held]) -> None:
+        for cid, held in taken.items():
+            standing = await _standing(request, held)
+            if standing == HIDDEN:
+                await _not_there(request, cid)
+            if standing == BEYOND:
                 await enforce_deployment_allowlist(request, action="bind a credential used beyond its repositories")
 
     return {"check": check}
@@ -790,7 +839,12 @@ async def bind_repo_credentials(
     scope_value = full_repo.lower()
     st = _state(request)
     await st.credentials_repo.replace_bindings(
-        "repo", scope_value, bindings, created_by=actor, repo_forge=repo_forge, **_bind_check(request)
+        "repo",
+        scope_value,
+        bindings,
+        created_by=actor,
+        repo_forge=repo_forge,
+        **await _bind_check(request, [str(b["credential_id"]) for b in bindings]),
     )
     await emit_audit(
         st.db,

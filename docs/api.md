@@ -1043,14 +1043,21 @@ organization:
   the answer is the same whether it is registered or not;
 - changing an organization: `POST /orgs` (registering an owner, again
   or not), `PATCH /orgs/{owner}`, `PUT /orgs/{owner}/status`,
-  `PUT /credentials/bindings` with an `owner` scope, which sets the forge
-  credential its repositories use, `POST /orgs/{owner}/probe`, `/discover`,
+  `POST /orgs/{owner}/probe`, `/discover`,
   `/webhook` and `/actions` (and each repository its `repos` names),
   `POST /orgs/{owner}/needs/{id}/dismiss` and `/reopen`, and
   `PUT /standards/{owner}/{kind}`. A key covers an owner when one of its
   repositories is under it and it covers every repository registered under
-  it, since these change all of them; any other owner is refused naming
-  `<owner>/*`. `POST /orgs/{owner}/context-audit/run` is a repository's
+  it, a repository registered under an old slug `REPO_RENAMES` maps into
+  the owner included, since these change all of them; any other owner is
+  refused naming `<owner>/*`, saying the key must cover every repository
+  registered under the owner. A credential for a whole owner, an `owner`
+  binding (`PUT /credentials/bindings`) or an organization's credential
+  (`POST /orgs` setting one, or replacing the stored one), takes a key
+  without an allowlist whatever its list covers: it reaches repositories
+  registered later. Such a key binds a credential to each repository
+  (`PUT /repos/{repo}/-/credentials`) instead.
+  `POST /orgs/{owner}/context-audit/run` is a repository's
   work: it takes the repository its `repo` names, under an owner one of the
   key's repositories is under;
 - the [knowledge maps](#knowledge-maps), which belong to a forge owner,
@@ -1134,13 +1141,15 @@ sandbox), and credential bindings for a host or for every repository are
 refused with
 a 403 `repo_not_allowed` naming `(the deployment)`, logged and audited as
 the refusals above are. It creates credentials, and binds, changes,
-rotates, verifies or deletes one only while nothing beyond its list uses
-it: a binding to another repository, to an owner it does not cover, to a
-host or to every repository, an organization it does not cover or a skill
-source. That check and the write are one transaction holding the
-credential's row, so a binding made meanwhile waits for it.
-`GET /credentials` lists to it only the credentials within its list, bound
-only inside it or to nothing, and `GET /apikeys` only the keys within it.
+rotates, verifies or deletes only its own: one only its repositories use,
+or one it created that nothing uses yet. One something else uses (another
+repository, an owner, a host, every repository, an organization, a skill
+source) is refused as the deployment's; one someone else created that
+nothing uses yet answers as a credential that does not exist. That check
+and the write are one transaction holding the credential's row, so a
+binding made meanwhile waits for it; every bind takes the credentials in
+id order, so two binds never wait on each other. `GET /credentials` lists
+to it only its own, and `GET /apikeys` only the keys within its list.
 `POST /pipelines/validate` stores nothing and stays open to it. A restricted key may not mint
 keys or change any key's allowlist, its own included, since a key it minted
 would carry no restriction. It revokes only keys whose allowlist is within

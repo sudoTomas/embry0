@@ -91,7 +91,7 @@ async def test_another_repository_s_credential_is_not_the_key_s_to_bind_list_or_
             )
         }
     labels = sorted(c["label"] for c in listed.json())
-    assert labels == ["fixture-forge", "own-forge"], f"the limited key lists its own and the unused: {labels}"
+    assert labels == ["own-forge"], f"the limited key lists its own only: {labels}"
     assert (reuse.status_code, reuse_owner.status_code, rotate.status_code) == (403, 403, 403), (
         reuse.text,
         reuse_owner.text,
@@ -110,11 +110,6 @@ OWNER_ROUTES: dict[str, tuple[str, str, Any]] = {
     "webhook": ("POST", f"/api/v1/orgs/{OWNER[COVERED]}/webhook", None),
     "actions": ("POST", f"/api/v1/orgs/{OWNER[COVERED]}/actions", {"action": "deactivate", "repos": [COVERED]}),
     "need": ("POST", f"/api/v1/orgs/{OWNER[COVERED]}/needs/need-widget/dismiss", None),
-    "binding": (
-        "PUT",
-        "/api/v1/credentials/bindings",
-        {"scope_kind": "owner", "scope_value": f"github:{OWNER[COVERED]}", "bindings": []},
-    ),
 }
 
 
@@ -131,6 +126,10 @@ async def test_a_key_changes_an_owner_only_when_it_covers_every_repository_regis
         with_sibling = await call(app, method, path, keys.limited, body)
     assert alone.status_code != 403 or "repo_not_allowed" not in alone.text, (
         f"{name}: covering the owner's only repository, the key may change the owner: {alone.status_code} {alone.text}"
+    )
+    detail = with_sibling.json().get("detail", "") if with_sibling.status_code == 403 else ""
+    assert "every repository registered under the owner" in detail and SIBLING not in detail, (
+        f"{name}: the refusal says what the key lacks, naming no repository it does not cover: {detail}"
     )
     assert with_sibling.status_code == 403 and f"{OWNER[COVERED]}/*" in with_sibling.json()["detail"], (
         f"{name}: with {SIBLING} registered and not covered: {with_sibling.status_code} {with_sibling.text}"
@@ -226,3 +225,113 @@ async def test_a_context_audit_of_the_key_s_own_repository_is_its_work_not_its_o
         )
     assert own.status_code == 200, own.text
     assert sibling.status_code == 403 and SIBLING in sibling.json()["detail"], sibling.text
+
+
+async def test_a_credential_for_a_whole_owner_takes_a_key_without_an_allowlist(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The key covers every repository of its owner today, yet an owner binding or an organization's credential
+    would reach a repository registered tomorrow: it binds per repository instead."""
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
+        own = await _credential(app, keys.limited, "own-forge")
+        owner_binding = await call(
+            app,
+            "PUT",
+            "/api/v1/credentials/bindings",
+            keys.limited,
+            {
+                "scope_kind": "owner",
+                "scope_value": f"github:{OWNER[COVERED]}",
+                "bindings": [{"credential_id": own, "role": "forge"}],
+            },
+        )
+        organization = await call(
+            app,
+            "POST",
+            "/api/v1/orgs",
+            keys.limited,
+            {"owner": OWNER[COVERED], "forge": "github", "credential_id": own, "probe": False},
+        )
+        await db_with_migrations.execute(
+            "INSERT INTO organizations (owner, forge, credential_id) VALUES ($1, 'github', $2) "
+            "ON CONFLICT (owner) DO UPDATE SET credential_id = EXCLUDED.credential_id",
+            OWNER[COVERED],
+            values_credential := (await _credential(app, MASTER, "admin-forge")),
+        )
+        clear = await call(
+            app, "POST", "/api/v1/orgs", keys.limited, {"owner": OWNER[COVERED], "forge": "github", "probe": False}
+        )
+        per_repo = await call(
+            app,
+            "PUT",
+            f"/api/v1/repos/{COVERED}/-/credentials",
+            keys.limited,
+            {"bindings": [{"credential_id": own, "role": "forge"}]},
+        )
+        stored = await db_with_migrations.fetchval(
+            "SELECT credential_id FROM organizations WHERE owner = $1", OWNER[COVERED]
+        )
+        owner_bindings = await db_with_migrations.fetchval(
+            "SELECT count(*) FROM credential_bindings WHERE scope_kind = 'owner'"
+        )
+    for name, answer in (
+        ("owner binding", owner_binding),
+        ("organization credential", organization),
+        ("clearing it", clear),
+    ):
+        assert answer.status_code == 403 and "takes a key without an allowlist" in answer.json()["detail"], (
+            f"{name}: {answer.status_code} {answer.text}"
+        )
+    assert per_repo.status_code == 200, per_repo.text
+    assert (stored, owner_bindings) == (values_credential, 0), "the organization keeps the admin's credential"
+
+
+async def test_another_s_credential_bound_to_nothing_is_not_there_for_the_key(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An admin made it and has not bound it yet: the key does not list it, and changing or binding it answers as a
+    credential that does not exist. One the key made itself is its own."""
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
+        theirs = await _credential(app, MASTER, "admin-unbound")
+        mine = await _credential(app, keys.limited, "mine-unbound")
+        missing = "cred-" + "0" * (len(theirs) - 5)
+        listed = sorted(c["label"] for c in (await call(app, "GET", "/api/v1/credentials", keys.limited)).json())
+
+        async def answers(cid: str) -> list[tuple[int, str]]:
+            out = []
+            for method, path, body in (
+                ("POST", f"/api/v1/credentials/{cid}/rotate", {"secret": "w" * 30}),
+                ("PUT", f"/api/v1/credentials/{cid}", {"label": "renamed-" + cid[-4:]}),
+                ("DELETE", f"/api/v1/credentials/{cid}", None),
+                (
+                    "PUT",
+                    f"/api/v1/repos/{COVERED}/-/credentials",
+                    {"bindings": [{"credential_id": cid, "role": "forge"}]},
+                ),
+            ):
+                r = await call(app, method, path, keys.limited, body)
+                out.append((r.status_code, r.text.replace(cid, "<id>")))
+            return out
+
+        hidden, absent = await answers(theirs), await answers(missing)
+        own_rotated = await call(app, "POST", f"/api/v1/credentials/{mine}/rotate", keys.limited, {"secret": "w" * 30})
+        still = await db_with_migrations.fetchval("SELECT label FROM credentials WHERE id = $1", theirs)
+    assert listed == ["mine-unbound"], listed
+    assert hidden == absent, f"each answers as for a credential that does not exist: {hidden} against {absent}"
+    assert [code for code, _ in hidden] == [404, 404, 404, 422], hidden
+    assert still == "admin-unbound" and own_rotated.status_code == 200, own_rotated.text
+
+
+async def test_a_repository_registered_under_an_old_slug_renamed_into_the_owner_counts_under_it(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from embry0.storage import repo_renames
+
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
+        # After the app's start, which installs the deployment's own REPO_RENAMES.
+        monkeypatch.setattr(repo_renames, "REPO_RENAMES", {"oldacme/api": SIBLING})
+        await db_with_migrations.execute("INSERT INTO repos (repo, active) VALUES ('oldacme/api', true)")
+        answer = await call(
+            app, "PUT", f"/api/v1/standards/{OWNER[COVERED]}/design", keys.limited, {"schema": {}, "values": {}}
+        )
+    assert answer.status_code == 403 and f"{OWNER[COVERED]}/*" in answer.json()["detail"], answer.text

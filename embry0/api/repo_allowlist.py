@@ -140,11 +140,20 @@ def restricted_key_name(request: Request) -> str | None:
     return str(principal.key_name)
 
 
-def _detail(principal: Principal, shown: str, action: str) -> str:
-    return (
-        f"{REFUSAL_CODE}: API key {principal.key_name!r} may not {action} on {shown}; "
-        "the key is limited to a repository allowlist that does not include it"
-    )
+#: Why a refusal refused, in its detail.
+NOT_LISTED = "the key is limited to a repository allowlist that does not include it"
+OWNER_WIDE_CREDENTIAL = (
+    "a credential for every repository of an owner, present and to come, takes a key without an allowlist; "
+    "bind one to each repository instead"
+)
+OWNER_NOT_COVERED = (
+    "the key is limited to a repository allowlist, and a change to an owner takes one that covers every "
+    "repository registered under the owner"
+)
+
+
+def _detail(principal: Principal, shown: str, action: str, reason: str = NOT_LISTED) -> str:
+    return f"{REFUSAL_CODE}: API key {principal.key_name!r} may not {action} on {shown}; {reason}"
 
 
 def refusal_detail(request: Request, repo: str | None, *, action: str) -> str | None:
@@ -227,7 +236,16 @@ async def enforce_owner_allowlist(request: Request, owner: str | None, *, action
     one repository. The refusal names ``<owner>/*``.
     """
     if not await key_covers_organization(request, owner):
-        await _refuse(request, f"{owner}/*" if owner else "(no owner)", action)
+        await _refuse(request, f"{owner}/*" if owner else "(no owner)", action, OWNER_NOT_COVERED)
+
+
+async def enforce_no_allowlist(request: Request, shown: str, *, action: str, reason: str) -> None:
+    """Refuse every key with an allowlist ``action`` on ``shown``, whatever its list covers, saying why
+    (``reason``); logged and audited as every refusal. For what no list can bound, such as a credential for every
+    repository of an owner, present and to come. No-op for sessions, the master key, AUTH_DEV_MODE and keys
+    without an allowlist."""
+    if restricted_key_name(request) is not None:
+        await _refuse(request, shown, action, reason)
 
 
 async def hide_unless_covered(
@@ -257,10 +275,16 @@ async def answer_as_missing(request: Request, shown: str, missing: HTTPException
     raise missing
 
 
-async def _refuse(request: Request, shown: str, action: str) -> NoReturn:
+async def _refuse(request: Request, shown: str, action: str, reason: str = NOT_LISTED) -> NoReturn:
     """Log, audit and raise the refusal of ``action`` on ``shown`` (a repository, or an owner's ``owner/*``)."""
     await _record_refusal(request, shown, action)
-    raise HTTPException(status_code=403, detail=_detail(request.state.principal, shown, action))
+    raise HTTPException(status_code=403, detail=_detail(request.state.principal, shown, action, reason))
+
+
+async def record_refusal(request: Request, shown: str, action: str) -> None:
+    """Log and audit a refusal whose answer the caller makes itself, such as a missing item's in a route's own
+    words: :func:`answer_as_missing` for an answer that is not an HTTP error."""
+    await _record_refusal(request, shown, action)
 
 
 async def _record_refusal(request: Request, shown: str, action: str) -> None:
