@@ -265,8 +265,9 @@ async def test_a_key_with_an_allowlist_changes_nothing_of_the_deployment(
 async def test_a_key_with_an_allowlist_changes_a_credential_only_when_nothing_beyond_its_list_uses_it(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Bound to its own repository or owner, or to nothing, the credential is the key's to change; bound to another
-    repository or owner, to a host or to every repository, it is the deployment's, refused."""
+    """Bound only to its own repository, or created by it and bound to nothing, the credential is the key's to
+    change; bound to another repository, to an owner (its own included: an owner's credential reaches repositories
+    registered later), to a host or to every repository, it is the deployment's, refused."""
     db = db_with_migrations
     async with repository_writes_app(db, monkeypatch) as (app, keys, values):
 
@@ -320,7 +321,7 @@ async def test_a_key_with_an_allowlist_changes_a_credential_only_when_nothing_be
     assert answers == {
         "nothing": 200,
         "its repository": 200,
-        "its owner": 200,
+        "its owner": 403,
         "another repository": 403,
         "another owner": 403,
         "every repository": 403,

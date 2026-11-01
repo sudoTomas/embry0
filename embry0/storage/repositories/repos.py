@@ -15,6 +15,7 @@ from typing import Any
 
 import structlog
 
+from embry0.storage import repo_renames
 from embry0.storage.database import DatabasePool
 from embry0.storage.repo_renames import repo_slug_variants
 
@@ -137,9 +138,18 @@ class ReposRepository:
         return [dict(r) for r in rows]
 
     async def under_owner(self, owner: str) -> list[str]:
-        """Every repository registered under ``owner`` (its slug's first segment, any case), active or not."""
+        """Every repository registered under ``owner``, active or not: its slug's first segment, any case, and each
+        registered under an old slug ``REPO_RENAMES`` maps to a repository of ``owner``."""
+        renamed_in = sorted(
+            old.lower()
+            for old, new in repo_renames.REPO_RENAMES.items()
+            if new.split("/", 1)[0].lower() == owner.lower()
+        )
         rows = await self._db.fetch(
-            "SELECT repo FROM repos WHERE lower(split_part(repo, '/', 1)) = lower($1) ORDER BY repo", owner
+            "SELECT repo FROM repos WHERE lower(split_part(repo, '/', 1)) = lower($1) OR lower(repo) = ANY($2::text[]) "
+            "ORDER BY repo",
+            owner,
+            renamed_in,
         )
         return [str(r["repo"]) for r in rows]
 

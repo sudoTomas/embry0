@@ -19,7 +19,14 @@ from starlette.types import Scope
 
 from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_owner_named, enforce_repo_allowlist
+from embry0.api.repo_allowlist import (
+    OWNER_WIDE_CREDENTIAL,
+    enforce_no_allowlist,
+    enforce_owner_allowlist,
+    enforce_owner_named,
+    enforce_repo_allowlist,
+    restricted_key_name,
+)
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.api.v1.run_with import checked_run_with
@@ -231,6 +238,14 @@ async def register_organization(body: OrganizationBody, request: Request) -> dic
     owner = _owner_name(body.owner)
     # As PATCH /orgs/{owner} is: registering an owner again rewrites its credential and name.
     await enforce_owner_allowlist(request, owner, action="register an organization")
+    if restricted_key_name(request) is not None:
+        # The organization's credential is every repository's under it, those registered later included, as an
+        # owner binding is: one the call sets, or the stored one it would replace, takes a key without a list.
+        stored = await _repo(request).get(owner)
+        if body.credential_id is not None or (stored is not None and stored.credential_id is not None):
+            await enforce_no_allowlist(
+                request, f"{owner}/*", action="set an organization's credential", reason=OWNER_WIDE_CREDENTIAL
+            )
     try:
         settings = org_service.validate_settings(body.settings)
     except ValueError as exc:

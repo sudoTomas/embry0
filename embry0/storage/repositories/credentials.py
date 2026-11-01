@@ -12,6 +12,7 @@ from __future__ import annotations
 import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -106,6 +107,14 @@ def normalize_scope_value(scope_kind: str, scope_value: str) -> str:
         prefix, sep, owner = scope_value.rpartition(":")
         return prefix + sep + owner.lower().replace("-", "_").replace(".", "_")
     return scope_value
+
+
+@dataclass(frozen=True)
+class Held:
+    """A credential as a bind or a change takes it: who created it, and what uses it."""
+
+    created_by: str
+    holders: list[tuple[str, str]]
 
 
 class CredentialsRepository:
@@ -341,17 +350,25 @@ class CredentialsRepository:
         return out
 
     @asynccontextmanager
-    async def held(self, credential_ids: Iterable[str]) -> AsyncIterator[tuple[Any, dict[str, list[tuple[str, str]]]]]:
-        """A transaction holding the credentials' rows, and what uses each when they were taken.
+    async def held(self, credential_ids: Iterable[str]) -> AsyncIterator[tuple[Any, dict[str, Held]]]:
+        """A transaction holding the credentials' rows, each with who created it and what used it when taken.
 
         ``FOR UPDATE`` conflicts with the key share a new binding or organization takes on the credential it names,
         so nothing comes to use it until the transaction ends: a check of what uses a credential and the write it
-        allows, both on the connection yielded, cannot be split by a binding made between them.
+        allows, both on the connection yielded, cannot be split by a binding made between them. The rows are taken
+        in id order, as every bind takes them (:meth:`replace_bindings`), so two never wait on each other.
         """
         ids = sorted(set(credential_ids))
         async with self._db.transaction() as conn:
-            await conn.execute("SELECT id FROM credentials WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE", ids)
-            yield conn, await self.all_holders(ids, conn=conn)
+            yield conn, await self._take(conn, ids, "FOR UPDATE")
+
+    async def _take(self, conn: Any, ids: list[str], lock: str) -> dict[str, Held]:
+        """Lock the credentials ``ids`` in id order (``lock``), and say who created each and what uses it."""
+        rows = await conn.fetch(
+            f"SELECT id, created_by FROM credentials WHERE id = ANY($1::text[]) ORDER BY id {lock}", ids
+        )
+        holders = await self.all_holders(ids, conn=conn)
+        return {str(r["id"]): Held(str(r["created_by"] or ""), holders.get(str(r["id"]), [])) for r in rows}
 
     async def bindings_for_credential(self, credential_id: str) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
@@ -369,12 +386,15 @@ class CredentialsRepository:
         *,
         created_by: str,
         repo_forge: str | None = None,
-        check: Callable[[dict[str, list[tuple[str, str]]]], Awaitable[None]] | None = None,
+        check: Callable[[dict[str, Held]], Awaitable[None]] | None = None,
     ) -> list[dict[str, Any]]:
         """Replace every binding of one scope. Validates everything first, writes nothing on error.
 
-        ``check``, when given, is awaited with what uses each credential bound, read with their rows held
-        (:meth:`held`), before anything is written; it refuses by raising, and nothing is written.
+        The credentials bound are locked first, in id order, as :meth:`held` locks them: with a key share, which a
+        new binding takes anyway, or with ``check`` given ``FOR UPDATE``, and ``check`` is awaited with who created
+        each and what uses it before anything is written; it refuses by raising, and nothing is written. Every bind
+        taking them in one order, a restricted and an unrestricted one never wait on each other; a deadlock all the
+        same, from a path that does not, is retried once.
         """
         if scope_kind not in SCOPE_KINDS:
             raise BindingValidationError(f"unknown scope kind {scope_kind!r}")
@@ -432,11 +452,34 @@ class CredentialsRepository:
                     )
                 seen.add(key)
             prepared.append((str(cid), role, pinned, priority, str(cred["provider"])))
+        ids = sorted({cid for cid, *_ in prepared})
+        for attempt in (1, 2):
+            try:
+                await self._replace(scope_kind, scope_value, prepared, ids, created_by=created_by, check=check)
+                break
+            except asyncpg.DeadlockDetectedError:
+                if attempt == 2:
+                    raise
+                logger.warning("credential_bindings_deadlock_retried", scope_kind=scope_kind, scope_value=scope_value)
+        logger.info("credential_bindings_replaced", scope_kind=scope_kind, scope_value=scope_value, count=len(prepared))
+        return await self.bindings_for_scope(scope_kind, scope_value)
+
+    async def _replace(
+        self,
+        scope_kind: str,
+        scope_value: str,
+        prepared: list[tuple[str, str, bool, int, str]],
+        ids: list[str],
+        *,
+        created_by: str,
+        check: Callable[[dict[str, Held]], Awaitable[None]] | None,
+    ) -> None:
+        """One transaction of :meth:`replace_bindings`: the credentials taken in id order, checked, then the scope's
+        bindings replaced."""
         async with self._db.transaction() as conn:
+            taken = await self._take(conn, ids, "FOR UPDATE" if check is not None else "FOR KEY SHARE")
             if check is not None:
-                ids = sorted({cid for cid, *_ in prepared})
-                await conn.execute("SELECT id FROM credentials WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE", ids)
-                await check(await self.all_holders(ids, conn=conn))
+                await check(taken)
             await conn.execute(
                 "DELETE FROM credential_bindings WHERE scope_kind = $1 AND scope_value = $2", scope_kind, scope_value
             )
@@ -455,8 +498,6 @@ class CredentialsRepository:
                     priority,
                     created_by,
                 )
-        logger.info("credential_bindings_replaced", scope_kind=scope_kind, scope_value=scope_value, count=len(prepared))
-        return await self.bindings_for_scope(scope_kind, scope_value)
 
     async def candidates(self, *, scope_kind: str, scope_value: str, role: str, provider: str) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
