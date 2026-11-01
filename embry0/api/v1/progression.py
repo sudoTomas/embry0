@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from embry0.api.deps import require_admin
-from embry0.api.repo_allowlist import covered_slugs, key_covers
+from embry0.api.repo_allowlist import covered_slugs, deployment_writes, key_covers
 from embry0.api.v1.ui import require_game
 from embry0.api.v1.world import covered_entries
 from embry0.services.achievements import DERIVED_METRICS
@@ -97,7 +97,9 @@ async def _where_covered(request: Request, where: str) -> bool:
     return issue is not None and key_covers(request, issue.get("repo"))
 
 
-@router.post("/progression/rebuild", dependencies=[require_admin])
+@router.post(
+    "/progression/rebuild", dependencies=[require_admin, deployment_writes("rebuild the deployment's progression")]
+)
 async def rebuild_progression(request: Request) -> dict[str, Any]:
     """Fold every closed day into the rollup again now, and answer once it is written (admin).
 

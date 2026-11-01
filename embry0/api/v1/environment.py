@@ -10,7 +10,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import deployment_writes, enforce_repo_allowlist
 from embry0.api.schemas.environment import (
     DetectedEnvVar,
     DetectResponse,
@@ -123,7 +123,12 @@ async def get_global_environment(request: Request) -> EnvironmentResponse:
     return EnvironmentResponse(variables=await _mask_vars(rows, provider))
 
 
-@router.put("/environment/global", response_model=EnvironmentResponse)
+@router.put(
+    "/environment/global",
+    response_model=EnvironmentResponse,
+    # Every sandbox gets the global variables: not a key with a repository allowlist's to change.
+    dependencies=[deployment_writes("change the deployment's global variables")],
+)
 async def set_global_environment(req: EnvironmentSetRequest, request: Request) -> EnvironmentResponse:
     provider = request.app.state.secrets_provider
     env_repo = request.app.state.env_repo

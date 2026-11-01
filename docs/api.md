@@ -1031,8 +1031,9 @@ organization:
   `POST /repos/{repo}/-/history/{id}/undo`;
 - changing a repository's registration or configuration: `POST /repos`
   (the repository it registers), `DELETE /repos/{repo}`,
-  `PUT /repos/{repo}/-/active`, `/-/docker-access`,
-  `/-/credentials` and `/-/environment`,
+  `PUT /repos/{repo}/-/active`, `/-/credentials` (a credential
+  something beyond the key's list uses is refused too, below) and
+  `/-/environment`,
   `DELETE /repos/{repo}/-/environment/{key}`, `PUT` and
   `DELETE /repos/{repo}/-/preferences` and `/-/qa-config`, `PUT` and
   `DELETE /config/context/repos/{repo}`,
@@ -1046,11 +1047,14 @@ organization:
   credential its repositories use, `POST /orgs/{owner}/probe`, `/discover`,
   `/webhook` and `/actions` (and each repository its `repos` names),
   `POST /orgs/{owner}/needs/{id}/dismiss` and `/reopen`, and
-  `PUT /standards/{owner}/{kind}`. A key covers the owners of the
-  repositories on its list; an owner it does not cover is refused naming
-  `<owner>/*`;
-- the [knowledge maps](#knowledge-maps), which belong to a forge owner: a
-  key covers the owners of the repositories on its list. `PUT /maps/{slug}`,
+  `PUT /standards/{owner}/{kind}`. A key covers an owner when one of its
+  repositories is under it and it covers every repository registered under
+  it, since these change all of them; any other owner is refused naming
+  `<owner>/*`. `POST /orgs/{owner}/context-audit/run` is a repository's
+  work: it takes the repository its `repo` names, under an owner one of the
+  key's repositories is under;
+- the [knowledge maps](#knowledge-maps), which belong to a forge owner,
+  changed only by a key that covers the owner as above. `PUT /maps/{slug}`,
   `POST /maps/{slug}/marks`, `POST /maps/{slug}/send`,
   `DELETE /maps/{slug}` and `PUT /maps/{slug}/owner` on a map of another
   owner are refused naming `<owner>/*`, and a map that belongs to no owner
@@ -1114,9 +1118,30 @@ refusal above for their actions, reviewing a finished job included.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
 every key minted before the allowlist existed is unrestricted. The
-knowledge maps list and answer only the maps of covered owners. What
-belongs to the deployment rather than to a repository or an owner is the
-key's scope's to decide, not the list's. A restricted key may not mint
+knowledge maps list and answer only the maps of covered owners.
+
+A restricted key changes nothing that belongs to the deployment rather than
+to a repository or an owner, as it writes no settings document's
+deployment layer: these steer every repository's jobs. Its writes to the
+global variables (`PUT /environment/global`), the agent context
+(`PUT /config/context`), the agents, the skills, the sandbox profiles, the
+pipeline templates, the hosts (their links to repositories included), the
+people (`/users/{id}/…`), the integrations, the models and their providers,
+the credential import and model-account sign-in, the progression rebuild,
+a repository's Docker access (`PUT /repos/{repo}/-/docker-access`, its own
+repository's included: the daemon runs the proxies and every other
+sandbox), and credential bindings for a host or for every repository are
+refused with
+a 403 `repo_not_allowed` naming `(the deployment)`, logged and audited as
+the refusals above are. It creates credentials, and binds, changes,
+rotates, verifies or deletes one only while nothing beyond its list uses
+it: a binding to another repository, to an owner it does not cover, to a
+host or to every repository, an organization it does not cover or a skill
+source. That check and the write are one transaction holding the
+credential's row, so a binding made meanwhile waits for it.
+`GET /credentials` lists to it only the credentials within its list, bound
+only inside it or to nothing, and `GET /apikeys` only the keys within it.
+`POST /pipelines/validate` stores nothing and stays open to it. A restricted key may not mint
 keys or change any key's allowlist, its own included, since a key it minted
 would carry no restriction. It revokes only keys whose allowlist is within
 its own, itself included, never a key without one; `DELETE /apikeys/{id}`

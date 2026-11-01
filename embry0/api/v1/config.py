@@ -15,7 +15,7 @@ from embry0.api.deps import (
     request_actor,
     require_admin,
 )
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import deployment_writes, enforce_repo_allowlist
 from embry0.api.schemas import (
     BudgetConfigRequest,
     BudgetConfigResponse,
@@ -130,7 +130,10 @@ def _catalog_entry(provider: Any, model: str, enabled: bool, rates: Any, live: A
     return entry
 
 
-@router.post("/config/providers/openrouter/catalog/refresh", dependencies=[require_admin])
+@router.post(
+    "/config/providers/openrouter/catalog/refresh",
+    dependencies=[require_admin, deployment_writes("refresh the deployment's model catalog")],
+)
 async def refresh_openrouter_catalog(request: Request) -> dict[str, Any]:
     """Read OpenRouter's model list now (it is read daily by itself). Returns the list's state.
 
@@ -199,7 +202,7 @@ async def get_global_context(context: ContextConfigRepository = Depends(get_cont
     return ctx or {"system_context": "", "assistant_context": ""}
 
 
-@router.put("/config/context")
+@router.put("/config/context", dependencies=[deployment_writes("change the deployment's agent context")])
 async def set_global_context(
     req: ContextConfigRequest,
     request: Request,
@@ -265,7 +268,9 @@ async def get_integrations(
     return await repo.get()
 
 
-@router.put("/config/integrations", dependencies=[require_admin])
+@router.put(
+    "/config/integrations", dependencies=[require_admin, deployment_writes("change the deployment's integrations")]
+)
 async def update_integrations(
     req: IntegrationConfigUpdate,
     request: Request,
@@ -366,7 +371,7 @@ def _refuse_watcher_local_model(updates: dict[str, Any]) -> None:
 
 # RAV-1056 Phase C: admin-gated like /config/integrations — provider config
 # carries credentials-adjacent settings; operator tier was an inconsistency.
-@router.put("/config/provider", dependencies=[require_admin])
+@router.put("/config/provider", dependencies=[require_admin, deployment_writes("change the deployment's models")])
 async def update_provider(
     req: ProviderConfigUpdate,
     request: Request,
@@ -453,7 +458,7 @@ async def update_provider(
     return await repo.get()
 
 
-@router.post("/config/provider/test")
+@router.post("/config/provider/test", dependencies=[deployment_writes("try the deployment's model provider")])
 async def test_provider_connection(
     request: Request,
     repo: ProviderConfigRepository = Depends(get_provider_repo),
@@ -472,7 +477,10 @@ async def test_provider_connection(
     return result
 
 
-@router.post("/config/providers/{provider_name}/test")
+@router.post(
+    "/config/providers/{provider_name}/test",
+    dependencies=[deployment_writes("try the deployment's model provider")],
+)
 async def test_catalog_provider(
     provider_name: str,
     request: Request,

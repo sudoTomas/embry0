@@ -126,6 +126,8 @@ async def list_keys(request: Request) -> dict[str, Any]:
         rows = await repo.list_for_user(user.id)
     else:
         rows = []
+    # A key with an allowlist sees only keys within it, the keys it may revoke.
+    rows = [r for r in rows if wider_than_allowlist(request, r.allowed_repos) is None]
     return {"keys": [_serialize(r) for r in rows]}
 
 

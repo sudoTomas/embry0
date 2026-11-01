@@ -50,10 +50,10 @@ narrows its query to :func:`covered_slugs` and still keeps only what
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import structlog
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 from embry0.api.deps import Principal, request_actor
 from embry0.audit.helpers import emit_audit
@@ -108,13 +108,6 @@ def key_covers(request: Request, repo: str | None) -> bool:
     keys without an allowlist; for a key with one, whether ``repo`` is on it. Logs and audits nothing."""
     principal = getattr(request.state, "principal", None)
     return principal is None or repo_allowed(principal.allowed_repos, repo)
-
-
-def key_covers_owner(request: Request, owner: str | None) -> bool:
-    """Whether the caller's key covers ``owner``: one of its repositories is under it. As :func:`key_covers`,
-    always for sessions, the master key, AUTH_DEV_MODE and keys without an allowlist; logs and audits nothing."""
-    principal = getattr(request.state, "principal", None)
-    return principal is None or owner_allowed(principal.allowed_repos, owner)
 
 
 def covered_slugs(request: Request) -> list[str] | None:
@@ -175,13 +168,65 @@ async def enforce_repo_allowlist(request: Request, repo: str | None, *, action: 
         await _refuse(request, repo or "(no repository)", action)
 
 
-async def enforce_owner_allowlist(request: Request, owner: str | None, *, action: str) -> None:
-    """Refuse with 403, as :func:`enforce_repo_allowlist` does, when the calling key does not cover ``owner``.
+#: What a refusal of a deployment-wide write names: the deployment, rather than a repository or an owner.
+DEPLOYMENT = "(the deployment)"
 
-    For what belongs to a forge owner rather than one repository. The refusal names ``<owner>/*``.
+
+async def enforce_deployment_allowlist(request: Request, *, action: str) -> None:
+    """Refuse a key with an allowlist ``action`` on what belongs to the deployment rather than to a repository or an
+    owner: what steers every repository's jobs (the global variables, the agents, the sandbox profiles, the pipeline
+    templates, the hosts, the people, the integrations), as the settings document's deployment layer is refused.
+
+    The 403 is :func:`enforce_repo_allowlist`'s, naming :data:`DEPLOYMENT`, logged and audited as it is. No-op for
+    sessions, the master key, AUTH_DEV_MODE and keys without an allowlist.
+    """
+    if restricted_key_name(request) is not None:
+        await _refuse(request, DEPLOYMENT, action)
+
+
+def deployment_writes(action: str) -> Any:
+    """A dependency for a router or a route that refuses :func:`enforce_deployment_allowlist` ``action`` on every
+    request but a read (GET, HEAD, OPTIONS). It runs after the authentication the router is included with."""
+
+    async def refuse(request: Request) -> None:
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            await enforce_deployment_allowlist(request, action=action)
+
+    return Depends(refuse)
+
+
+async def key_covers_organization(request: Request, owner: str | None) -> bool:
+    """Whether the caller's key may change what belongs to ``owner`` as a whole: an organization, its forge
+    credential, its standard, its needs, its maps. A key with an allowlist does when one of its repositories is
+    under ``owner`` and it covers every repository registered under it; a key that covers some of them does not,
+    since the change reaches the others. Always for sessions, the master key, AUTH_DEV_MODE and keys without an
+    allowlist. Logs and audits nothing.
     """
     principal = getattr(request.state, "principal", None)
+    if principal is None or principal.allowed_repos is None:
+        return True
+    if not owner_allowed(principal.allowed_repos, owner):
+        return False
+    registry = getattr(request.app.state, "repos_repo", None)
+    registered = await registry.under_owner(str(owner)) if registry is not None else []
+    return all(repo_allowed(principal.allowed_repos, repo) for repo in registered)
+
+
+async def enforce_owner_named(request: Request, owner: str | None, *, action: str) -> None:
+    """Refuse with 403 naming ``<owner>/*`` unless one of the calling key's repositories is under ``owner``: for a
+    route addressed by an owner whose work is the one repository it names, checked as a repository, such as a
+    context audit run. A change to the owner itself is :func:`enforce_owner_allowlist`'s."""
+    principal = getattr(request.state, "principal", None)
     if principal is not None and not owner_allowed(principal.allowed_repos, owner):
+        await _refuse(request, f"{owner}/*" if owner else "(no owner)", action)
+
+
+async def enforce_owner_allowlist(request: Request, owner: str | None, *, action: str) -> None:
+    """Refuse with 403, as :func:`enforce_repo_allowlist` does, unless the calling key covers ``owner`` as a whole
+    (:func:`key_covers_organization`). The one check of every write to what belongs to a forge owner rather than
+    one repository. The refusal names ``<owner>/*``.
+    """
+    if not await key_covers_organization(request, owner):
         await _refuse(request, f"{owner}/*" if owner else "(no owner)", action)
 
 

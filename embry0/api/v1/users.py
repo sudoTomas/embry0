@@ -14,10 +14,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from embry0.api.deps import bust_user_gate_cache, request_actor
+from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.v1.handoffs import LoginBody, set_login
 from embry0.audit.helpers import emit_audit
 
-router = APIRouter()
+# The people of the deployment.
+router = APIRouter(dependencies=[deployment_writes("change the deployment's people")])
 
 
 def _serialize(row: Any) -> dict[str, Any]:
