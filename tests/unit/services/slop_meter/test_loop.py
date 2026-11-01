@@ -516,13 +516,16 @@ async def test_the_loop_maps_the_logins_its_events_name() -> None:
 async def test_the_mirror_clones_then_fetches_and_keeps_the_token_out_of_its_arguments(tmp_path: Path) -> None:
     calls: list[tuple[list[str], dict[str, str], bytes | None]] = []
 
-    async def run(args: Any, env: dict[str, str], stdin: bytes | None, timeout: float) -> tuple[int, bytes, bytes]:
+    async def run(
+        args: Any, env: dict[str, str], stdin: bytes | None, timeout: float, *, dir_fd: int
+    ) -> tuple[int, bytes, bytes]:
         calls.append((list(args), env, stdin))
+        here = Path(f"/proc/self/fd/{dir_fd}")  # the directory git was started in
         if args[0] == "clone":
-            (Path(args[-1])).mkdir(parents=True)
-            (Path(args[-1]) / "HEAD").write_text("ref: refs/heads/main\n")
+            (here / args[-1]).mkdir()
+            (here / args[-1] / "HEAD").write_text("ref: refs/heads/main\n")
         if "config" in args:
-            (Path(args[1]) / "config").write_text("[core]\n\tbare = true\n[embry0]\n\tslopMeter = true\n")
+            (here / "config").write_text("[core]\n\tbare = true\n[embry0]\n\tslopMeter = true\n")
         return 0, b"", b""
 
     mirror = GitMirror(tmp_path, run=run)
@@ -536,6 +539,7 @@ async def test_the_mirror_clones_then_fetches_and_keeps_the_token_out_of_its_arg
     assert len(calls) == 4, "then the log is read"
     clone, marker, fetch, log = calls
     assert clone[0][:3] == ["clone", "--bare", "--quiet"] and clone[0][3] == f"https://github.com/{REPO}.git"
+    assert clone[0][4] == "web.git", "the clone names the mirror in the directory above it, where git is started"
     assert marker[0][2:] == ["config", "embry0.slopMeter", "true"], "the clone is marked as the meter's own"
     assert fetch[0][2:4] == ["fetch", "--quiet"], "a marked mirror is fetched and not marked again"
     assert all("s3cret" not in " ".join(c[0]) for c in calls), "the token is never an argument"
