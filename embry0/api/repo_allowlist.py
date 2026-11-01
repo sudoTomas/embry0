@@ -25,7 +25,7 @@ still matches work addressed by the new one, and the reverse.
 A refusal is a 403 whose detail starts with :data:`REFUSAL_CODE`, a
 structured ``api_key_repo_refused`` log line naming the key (never its
 secret) and the refused repository, and an ``apikey.repo_refused`` audit row.
-The row's actor is :data:`REFUSAL_ACTOR`, not the key, with the key and its
+The row's actor is ``embry0:repo-allowlist`` (``dispatch_actors.REPO_ALLOWLIST``), not the key, with the key and its
 caller in the details, and ``GET /audit`` never shows such a row to a key
 with an allowlist: an action on an item the key does not cover leaves
 nothing it can read back that an action on a missing item would not.
@@ -57,14 +57,12 @@ from fastapi import HTTPException, Request
 
 from embry0.api.deps import Principal, request_actor
 from embry0.audit.helpers import emit_audit
-from embry0.orchestration.dispatch_actors import RESERVED_PREFIX
+from embry0.orchestration.dispatch_actors import REPO_ALLOWLIST
 from embry0.storage.repo_renames import normalize_repo_slug, repo_slug_variants
 
 logger = structlog.get_logger(__name__)
 
 REFUSAL_CODE = "repo_not_allowed"
-#: The actor of every refusal's audit row: the deployment's record, out of the refused key's own view.
-REFUSAL_ACTOR = f"{RESERVED_PREFIX}repo-allowlist"
 
 
 def _canonical(slug: str) -> str:
@@ -127,6 +125,18 @@ def covered_slugs(request: Request) -> list[str] | None:
     if principal is None or principal.allowed_repos is None:
         return None
     return sorted({v.lower() for entry in principal.allowed_repos for v in repo_slug_variants(entry.strip())})
+
+
+def wider_than_allowlist(request: Request, allowed_repos: Iterable[str] | None) -> str | None:
+    """What of another key's allowlist ``allowed_repos`` the caller's key does not cover, or None when it covers
+    all of it: ``*`` for a key without an allowlist, else the first repository its own list leaves out. Always
+    None for sessions, the master key, AUTH_DEV_MODE and keys without an allowlist."""
+    principal = getattr(request.state, "principal", None)
+    if principal is None or principal.allowed_repos is None:
+        return None
+    if allowed_repos is None:
+        return "*"
+    return next((repo for repo in allowed_repos if not repo_allowed(principal.allowed_repos, repo)), None)
 
 
 def restricted_key_name(request: Request) -> str | None:
@@ -226,7 +236,7 @@ async def _record_refusal(request: Request, shown: str, action: str) -> None:
         "apikey.repo_refused",
         # Under the deployment's actor, not the key's: the key's own /audit view never holds it (GET /audit
         # leaves these rows out for a key with an allowlist). The admins see who in the details.
-        actor=REFUSAL_ACTOR,
+        actor=REPO_ALLOWLIST,
         details={
             "key_id": principal.key_id,
             "key_name": principal.key_name,

@@ -26,6 +26,7 @@ from fastapi import APIRouter, Request
 from httpx import ASGITransport, AsyncClient
 
 from embry0.api import repo_allowlist
+from embry0.orchestration.dispatch_actors import REPO_ALLOWLIST
 from tests.fixtures.offered_work import JOBS, LIMITED, OPEN, PROPOSALS, UNCOVERED, offered_work_app
 from tests.fixtures.routes import app_routes
 
@@ -170,7 +171,7 @@ async def test_each_refusal_is_audited_though_the_answer_is_a_missing_item(
                 f"{method} {path} on {uncovered_id}: the refusal is audited once, naming {UNCOVERED}: "
                 f"{audit.await_args_list}"
             )
-            assert refused[0].kwargs["actor"] == repo_allowlist.REFUSAL_ACTOR, (
+            assert refused[0].kwargs["actor"] == REPO_ALLOWLIST, (
                 f"{method} {path}: the refusal is the deployment's record, out of the key's own audit view"
             )
     audit.reset_mock()

@@ -17,24 +17,33 @@ the ones that name something of no one repository, with what. A new parameter
 fails until it is one or the other, and a new route with a known one is called
 as soon as it exists. :data:`READS` lists the write routes that store nothing,
 and :data:`OWN_RULES` the routes refused by a rule of their own.
+
+A route can name its target in its body or its query instead. The walk reads
+each write route's body model, nested models included, and its query
+parameters; one with a field named for a repository or an owner
+(:data:`TARGET_NAMES`) is called here the same way (:data:`BODY_TARGETS`), or
+:data:`BODY_TARGETS_ELSEWHERE` says which test holds it. A body the route
+reads raw, a YAML document, is not walked.
 """
 
 from __future__ import annotations
 
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 from fastapi import APIRouter, FastAPI, Request
+from pydantic import BaseModel
 
-from embry0.api.repo_allowlist import REFUSAL_ACTOR
 from embry0.api.v1.repo_old_paths import OldPathRoute
 from embry0.config import Embry0Config
+from embry0.orchestration.dispatch_actors import REPO_ALLOWLIST
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.api_keys import ApiKeysRepository
 from tests.fixtures.repository_writes import COVERED, OWNER, UNCOVERED, Keys, call, ids, repository_writes_app
 from tests.fixtures.routes import app_routes
 
@@ -44,7 +53,7 @@ _PARAMETER = re.compile(r"\{(\w+)(?::\w+)?\}")
 NOT_A_REPOSITORYS: dict[str, str] = {
     "agent_type": "an agent definition, the deployment's",
     "skill_name": "a skill of an agent definition, the deployment's",
-    "key_id": "an API key, which its owner and the admins manage",
+    "key_id": "an API key; a key with an allowlist revokes only keys within it (test below)",
     "provider_name": "a model provider of the deployment's catalog",
     "section": "a section of the settings document, whose routes check the layer ?owner= or ?repo= names",
     "credential_id": "a credential of the deployment's registry; binding one to a repository is that repository's",
@@ -210,7 +219,7 @@ async def _refusals(db: DatabasePool) -> list[str]:
     rows = await db.fetch(
         "SELECT actor, details->>'repo' AS repo FROM audit_log WHERE action = 'apikey.repo_refused' ORDER BY id"
     )
-    assert {str(r["actor"]) for r in rows} <= {REFUSAL_ACTOR}, f"a refusal's row names the key: {rows}"
+    assert {str(r["actor"]) for r in rows} <= {REPO_ALLOWLIST}, f"a refusal's row names the key: {rows}"
     return [str(r["repo"]) for r in rows]
 
 
@@ -238,11 +247,21 @@ def _not_reached(response: Any) -> str | None:
 
 
 async def problems(
-    app: FastAPI, keys: Keys, values: Mapping[str, Mapping[str, str]], db: DatabasePool, method: str, path: str
+    app: FastAPI,
+    keys: Keys,
+    values: Mapping[str, Mapping[str, str]],
+    db: DatabasePool,
+    method: str,
+    path: str,
+    *,
+    request: tuple[str, Any] | None = None,
 ) -> list[str]:
-    """What is wrong with ``method path`` acting for the limited key on the uncovered repository; empty when nothing."""
+    """What is wrong with ``method path`` acting for the limited key on the uncovered repository; empty when nothing.
+
+    ``request``, the URL and body, for a route whose target is in its body or query rather than its path.
+    """
     uncovered = values[UNCOVERED]
-    url, body = address(path, uncovered), _body(path, uncovered)
+    url, body = request if request is not None else (address(path, uncovered), _body(path, uncovered))
     out: list[str] = []
     tables, refused, readable = await _tables(db), await _refusals(db), await _audit_seen(app, keys.limited)
     limited = await call(app, method, url, keys.limited, body)
@@ -266,6 +285,96 @@ async def problems(
     return out
 
 
+#: The name of a body field (at any depth) or a query parameter that names the repository or owner a write acts on.
+TARGET_NAMES = frozenset({"repo", "repos", "owner", "scope_value", "stack"})
+
+
+def _fields(model: Any, prefix: str = "") -> list[str]:
+    """``model``'s fields, nested models' as ``outer.inner``."""
+    out: list[str] = []
+    for name, field in getattr(model, "model_fields", {}).items():
+        out.append(prefix + name)
+        for arg in _types(field.annotation):
+            if isinstance(arg, type) and issubclass(arg, BaseModel):
+                out += _fields(arg, f"{prefix}{name}.")
+    return out
+
+
+def _types(annotation: Any) -> list[Any]:
+    """Every type ``annotation`` names: itself, and the arguments of a union, a list or an optional, in depth."""
+    args = getattr(annotation, "__args__", ()) or ()
+    return [annotation, *(t for a in args for t in _types(a))]
+
+
+def body_targets(app: FastAPI) -> dict[tuple[str, str], list[str]]:
+    """Each write route under ``/api/v1`` whose body or query names a repository or an owner, with those names."""
+    found: dict[tuple[str, str], list[str]] = {}
+    for route in app_routes(app):
+        if not route.is_api_route or not route.path.startswith("/api/v1/") or isinstance(route.route, OldPathRoute):
+            continue
+        body = route.route.body_field
+        models = _types(body.field_info.annotation) if body is not None else []
+        names = [
+            *(_fields(arg) for arg in models),
+            [param.name for param in (route.dependant.query_params if route.dependant else [])],
+        ]
+        targets = sorted({n for group in names for n in group if n.rsplit(".", 1)[-1] in TARGET_NAMES})
+        for method in (route.methods or set()) - {"GET", "HEAD", "OPTIONS"}:
+            if targets:
+                found[(method, route.path)] = targets
+    return found
+
+
+#: Write routes whose body or query names the repository or owner they act on, called here as the routes that name
+#: it in their path are: the URL, and a body naming the uncovered repository's, a callable of its values.
+BODY_TARGETS: dict[tuple[str, str], tuple[Callable[[Mapping[str, str]], str], Any]] = {
+    ("PUT", "/api/v1/credentials/bindings"): (
+        lambda v: "/api/v1/credentials/bindings",
+        lambda v: {
+            "scope_kind": "owner",
+            "scope_value": f"github:{v['owner']}",
+            "bindings": [{"credential_id": v["credential_id"], "role": "forge"}],
+        },
+    ),
+    ("POST", "/api/v1/orgs"): (
+        lambda v: "/api/v1/orgs",
+        lambda v: {"owner": v["owner"], "forge": "github", "display_name": "Renamed", "probe": False},
+    ),
+    ("POST", "/api/v1/repos"): (
+        lambda v: "/api/v1/repos",
+        lambda v: {"repo": v["full_repo"], "forge": "github", "notes": "Again"},
+    ),
+    ("POST", "/api/v1/leads/run"): (lambda v: "/api/v1/leads/run", lambda v: {"repo": v["full_repo"]}),
+}
+
+#: Write routes whose body or query names a repository or an owner, held to the list elsewhere, and where.
+BODY_TARGETS_ELSEWHERE: dict[tuple[str, str], str] = {
+    **{
+        ("POST", path): "test_api_key_repo_allowlist.py, the repository named"
+        for path in ("/api/v1/jobs", "/api/v1/issues", "/api/v1/qa/images/build", "/api/v1/repos/bootstrap")
+    },
+    ("POST", "/api/v1/watcher/run"): "test_api_key_repo_allowlist.py, the stack named",
+    ("PUT", "/api/v1/issues/{issue_id}"): "test_api_key_repo_allowlist.py, moving an issue to another repository",
+    ("PUT", "/api/v1/config/settings"): "test_settings_layers_api.py: ?owner= and ?repo= name the layer written",
+    ("PATCH", "/api/v1/config/settings/{section}"): "test_settings_layers_api.py, as PUT /config/settings",
+    ("POST", "/api/v1/orgs/{owner}/actions"): "test_org_actions_api.py, each repository it names",
+    ("POST", "/api/v1/orgs/{owner}/context-audit/run"): "called above by its path, with the repository it names",
+    **{
+        (method, path): "test_knowledge_maps_owner_api.py: ?owner= names the map's owner"
+        for method, path in (
+            ("PUT", "/api/v1/maps/{slug}"),
+            ("DELETE", "/api/v1/maps/{slug}"),
+            ("POST", "/api/v1/maps/{slug}/marks"),
+            ("PUT", "/api/v1/maps/{slug}/owner"),
+            ("POST", "/api/v1/maps/{slug}/send"),
+        )
+    },
+    ("POST", "/api/v1/orgs/probe"): "stores nothing: asks the forge what a credential can do at an owner",
+    ("POST", "/api/v1/hosts"): "a host of the deployment, with the repositories it serves",
+    ("PATCH", "/api/v1/hosts/{host_id}"): "a host of the deployment, with the repositories it serves",
+}
+
+
 _ROUTES = write_routes(_app())
 ROUTES = [(method, path) for method, path in _ROUTES if kind(path) == "repository"]
 
@@ -280,6 +389,30 @@ def test_every_write_route_with_a_path_parameter_is_called_here_or_says_why_not(
     stale = sorted((set(READS) | set(NOT_A_REPOSITORYS_AT) | set(OWN_RULES) | set(BODIES)) - paths)
     assert stale == [], f"listed here but not served: {stale}"
     assert len(ROUTES) >= 60, f"only {len(ROUTES)} of {len(_ROUTES)} write routes are called: the walk lost some"
+
+
+def test_every_write_route_whose_body_names_a_repository_or_an_owner_is_called_here_or_says_where() -> None:
+    found = body_targets(_app())
+    unlisted = {
+        f"{m} {p}": names for (m, p), names in found.items() if (m, p) not in {**BODY_TARGETS, **BODY_TARGETS_ELSEWHERE}
+    }
+    assert unlisted == {}, (
+        f"write routes whose body or query names a repository or an owner: {unlisted}. Call each in BODY_TARGETS, "
+        "with a body naming the uncovered repository's, or say in BODY_TARGETS_ELSEWHERE which test holds it"
+    )
+    stale = sorted(f"{m} {p}" for m, p in {**BODY_TARGETS, **BODY_TARGETS_ELSEWHERE} if (m, p) not in found)
+    assert stale == [], f"listed here, but their body and query name no repository or owner: {stale}"
+
+
+@pytest.mark.parametrize(("method", "path"), list(BODY_TARGETS), ids=[f"{m} {p}" for m, p in BODY_TARGETS])
+async def test_a_key_changes_nothing_of_a_repository_or_owner_its_body_names_and_its_list_does_not_cover(
+    method: str, path: str, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url, body = BODY_TARGETS[(method, path)]
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, values):
+        request = (url(values[UNCOVERED]), body(values[UNCOVERED]))
+        found = await problems(app, keys, values, db_with_migrations, method, path, request=request)
+    assert found == [], f"{method} {path}: {found}"
 
 
 @pytest.mark.parametrize(("method", "path"), ROUTES, ids=[f"{m} {p}" for m, p in ROUTES])
@@ -331,3 +464,75 @@ async def test_an_organization_need_s_case_filed_on_its_owner_is_closed_by_a_key
     assert (other.status_code, other.json()) == (404, {"detail": "case not found"}), other.text
     assert own.status_code == 200 and own.json()["stage"] == "closed", own.text
     assert await _refusals(db_with_migrations) == [f"{OWNER[UNCOVERED]}/*"]
+
+
+async def test_a_key_with_an_allowlist_revokes_only_keys_within_it(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never a key without an allowlist, nor one that lists a repository its own does not; those answer as a key
+    that does not exist. A key within its list, itself included, it revokes."""
+    db = db_with_migrations
+    async with repository_writes_app(db, monkeypatch) as (app, keys, _values):
+        made = ApiKeysRepository(db)
+        wider, _ = await made.create(
+            name="wider", scope="operate", user_id=None, created_by="t", allowed_repos=[COVERED, UNCOVERED]
+        )
+        within, _ = await made.create(
+            name="within", scope="operate", user_id=None, created_by="t", allowed_repos=[COVERED]
+        )
+        open_id = str(await db.fetchval("SELECT id FROM api_keys WHERE name = 'open'"))
+        limited_id = str(await db.fetchval("SELECT id FROM api_keys WHERE name = 'limited'"))
+        answers = {
+            name: await call(app, "DELETE", f"/api/v1/apikeys/{key_id}", keys.limited)
+            for name, key_id in (("open", open_id), ("wider", wider.id), ("missing", "key-0000000000ff"))
+        }
+        revoked = {str(r["name"]) for r in await db.fetch("SELECT name FROM api_keys WHERE revoked_at IS NOT NULL")}
+        within_answer = await call(app, "DELETE", f"/api/v1/apikeys/{within.id}", keys.limited)
+        own_answer = await call(app, "DELETE", f"/api/v1/apikeys/{limited_id}", keys.limited)
+    ids = {"open": open_id, "wider": wider.id, "missing": "key-0000000000ff"}
+    shown = {name: (r.status_code, r.text.replace(ids[name], "<id>")) for name, r in answers.items()}
+    assert shown["open"] == shown["wider"] == shown["missing"], f"each answers as a missing key: {shown}"
+    assert shown["missing"][0] == 404
+    assert revoked == set(), f"neither is revoked: {revoked}"
+    assert within_answer.status_code == 200 and own_answer.status_code == 200, (within_answer.text, own_answer.text)
+
+
+async def test_starting_a_context_audit_refuses_before_reading_the_organization(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A registered organization, a paused one and one that does not exist answer the key that does not cover
+    them alike."""
+    db = db_with_migrations
+    async with repository_writes_app(db, monkeypatch) as (app, keys, _values):
+        await db.execute("INSERT INTO organizations (owner, forge, status) VALUES ('initech', 'github', 'paused')")
+        answers = {
+            owner: await call(
+                app, "POST", f"/api/v1/orgs/{owner}/context-audit/run", keys.limited, {"repo": f"{owner}/gizmos"}
+            )
+            for owner in (OWNER[UNCOVERED], "initech", "nosuch")
+        }
+    shown = {owner: (r.status_code, r.text.replace(owner, "<owner>")) for owner, r in answers.items()}
+    assert len(set(shown.values())) == 1 and shown["nosuch"][0] == 403, f"the same refusal for each: {shown}"
+
+
+class _Target(BaseModel):
+    repo: str
+
+
+class _Nudge(BaseModel):
+    target: _Target
+    note: str = ""
+
+
+def test_the_walk_finds_a_new_route_whose_body_names_a_repository() -> None:
+    """Not quiet by construction: a new write route with a repository in its body, nested or not, is found, so the
+    test above fails until it is called here or placed."""
+    app = _app()
+    extra = APIRouter()
+
+    @extra.post("/nudges-for-a-test")
+    async def nudge(body: _Nudge) -> dict[str, Any]:
+        return {"nudged": body.target.repo}
+
+    app.include_router(extra, prefix="/api/v1")
+    assert body_targets(app).get(("POST", "/api/v1/nudges-for-a-test")) == ["target.repo"]

@@ -76,6 +76,13 @@ class _NoForge:
         return None
 
 
+class _NoFinders:
+    """The leads loop, with nothing to find: a pass reads the repositories asked and finds nothing."""
+
+    async def tick(self, repos: list[str] | None, **_kwargs: Any) -> list[dict[str, Any]]:
+        return [{"repo": repo, "found": 0} for repo in repos or []]
+
+
 class _NoFollowUps:
     """Comment dispatch that starts no follow-up job and says so."""
 
@@ -293,6 +300,7 @@ async def repository_writes_app(
         # The forge is not reached: a draft reads as closed there, and an issue's sync does nothing.
         app.state.github_issues_client = _NoForge()
         app.state.github_sync = _NoForge()
+        app.state.leads_loop = _NoFinders()
         try:
             yield
         finally:
@@ -309,6 +317,17 @@ async def repository_writes_app(
     async with lifespan(app):
         values = await seed(db)
         keys = await mint(db)
+        # A forge credential in the registry, for the routes that bind one.
+        made = await call(
+            app,
+            "POST",
+            "/api/v1/credentials",
+            MASTER,
+            {"kind": "forge_token", "provider": "github", "label": "fixture-forge", "secret": "x" * 24},
+        )
+        assert made.status_code in (200, 201), made.text
+        for repo_values in values.values():
+            repo_values["credential_id"] = str(made.json()["id"])
         yield app, keys, values
     bust_api_key_cache()
 

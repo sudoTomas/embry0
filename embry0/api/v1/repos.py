@@ -102,6 +102,7 @@ async def register_repo(req: RepoRegisterRequest, request: Request) -> dict[str,
     """Register a repo. An omitted ``forge`` inherits the deployment default
     (``DEFAULT_FORGE``); when that is empty the request is refused rather
     than guessed (Spec 1A §3.8)."""
+    await enforce_repo_allowlist(request, req.repo, action="register a repository")
     repos_repo = request.app.state.repos_repo
     forge = req.forge or getattr(request.app.state.config, "default_forge", "") or ""
     if not forge:

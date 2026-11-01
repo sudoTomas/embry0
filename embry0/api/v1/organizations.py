@@ -229,6 +229,8 @@ async def register_organization(body: OrganizationBody, request: Request) -> dic
     PATCH does: a key not named keeps its value.
     """
     owner = _owner_name(body.owner)
+    # As PATCH /orgs/{owner} is: registering an owner again rewrites its credential and name.
+    await enforce_owner_allowlist(request, owner, action="register an organization")
     try:
         settings = org_service.validate_settings(body.settings)
     except ValueError as exc:
@@ -828,8 +830,11 @@ async def run_organization_context_audit(owner: str, body: ContextAuditRunBody, 
     start, under its actor, so the schedule anchors on it; the
     ``organization.context_audit_run`` audit row names the caller. The tier
     of ``POST /jobs``, with its repository allowlist: a key limited to some
-    repositories names one of them.
+    repositories names one of them. Both the owner and that repository are
+    checked before the organization is read, so a refusal says nothing of it.
     """
+    await enforce_owner_allowlist(request, owner, action="start a context audit")
+    await enforce_repo_allowlist(request, body.repo, action="start a context audit")
     org = await _repo(request).get(owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
@@ -838,7 +843,6 @@ async def run_organization_context_audit(owner: str, body: ContextAuditRunBody, 
     schedule = getattr(request.app.state, "context_audit", None)
     if schedule is None:
         raise HTTPException(status_code=503, detail="the context audit schedule is not initialized")
-    await enforce_repo_allowlist(request, body.repo, action="start a context audit")
     run_with = await checked_run_with(request, body.run_with, body.repo)
     try:
         result = await schedule.run(org, repo=body.repo, force=body.force, limit=body.limit, run_with=run_with)
