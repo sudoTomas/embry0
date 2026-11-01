@@ -207,10 +207,12 @@ async def test_a_mirror_carries_the_meter_s_marker_read_through_no_link(root: Pa
 async def test_a_mirror_cloned_before_the_marker_is_marked_on_its_next_fetch(root: Path) -> None:
     calls: list[list[str]] = []
 
-    async def run(args: Any, env: dict[str, str], stdin: bytes | None, timeout: float) -> tuple[int, bytes, bytes]:
+    async def run(
+        args: Any, env: dict[str, str], stdin: bytes | None, timeout: float, *, dir_fd: int
+    ) -> tuple[int, bytes, bytes]:
         calls.append(list(args))
         if "config" in args:
-            _mark(Path(args[1]))
+            _mark(Path(f"/proc/self/fd/{dir_fd}"))  # git -C . in the directory it was started in
         return 0, b"", b""
 
     _mirror_at(root, "acme/old")
@@ -265,17 +267,18 @@ async def test_a_checkout_is_never_a_marked_mirror_whatever_its_files_say(root: 
 
 
 class _Git:
-    """git as the mirror runs it, recording each call; ``config`` writes the marker where git would."""
+    """git as the mirror runs it, recording each call; ``config`` writes the marker where git would: in the
+    directory it was started in (``dir_fd``)."""
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
 
     async def __call__(
-        self, args: Any, env: dict[str, str], stdin: bytes | None, timeout: float
+        self, args: Any, env: dict[str, str], stdin: bytes | None, timeout: float, *, dir_fd: int
     ) -> tuple[int, bytes, bytes]:
         self.calls.append(list(args))
         if "config" in args:
-            _mark(Path(args[1]))
+            _mark(Path(f"/proc/self/fd/{dir_fd}"))
         return 0, b"", b""
 
 
@@ -320,11 +323,13 @@ async def test_a_mirror_swapped_for_a_link_while_it_is_fetched_is_not_marked(roo
     _mark(target, marked=False)
     git = _Git()
 
-    async def swapping(args: Any, env: dict[str, str], stdin: bytes | None, timeout: float) -> tuple[int, bytes, bytes]:
+    async def swapping(
+        args: Any, env: dict[str, str], stdin: bytes | None, timeout: float, *, dir_fd: int
+    ) -> tuple[int, bytes, bytes]:
         if "fetch" in args:  # someone swaps the mirror for a link while git fetches it
             path.rename(root / "acme" / "moved.git")
             path.symlink_to(target, target_is_directory=True)
-        return await git(args, env, stdin, timeout)
+        return await git(args, env, stdin, timeout, dir_fd=dir_fd)
 
     with pytest.raises(refused):
         await GitMirror(root, run=swapping).sync("acme/swapped", forge="github", token="t")
