@@ -4,7 +4,9 @@ The orchestrator image used to install pyproject's ranges, so each build took
 whatever was newest inside them and ran versions CI never tested (fastapi
 0.143.5 against a lock at 0.143.0). Now both images install from the exported
 lock, and `infra/scripts/check-image-lock.py` fails the build when what is
-installed differs from it. These tests pin the recipes and the checker.
+installed differs from it. These tests pin the recipes and the checker,
+and the one uv every image exports the lock with; the sandbox images'
+recipes are in test_sandbox_image_lockfile.py (#288).
 """
 
 from __future__ import annotations
@@ -26,6 +28,13 @@ ROOT = Path(__file__).resolve().parents[3]
 CHECKER = ROOT / "infra" / "scripts" / "check-image-lock.py"
 ORCHESTRATOR = ROOT / "infra" / "Dockerfile.orchestrator"
 PROXY = ROOT / "infra" / "Dockerfile.proxy"
+# Every image that exports the lock with the `uv` stage (#288 added the sandboxes).
+LOCKED_IMAGES = (
+    ORCHESTRATOR,
+    PROXY,
+    ROOT / "infra" / "Dockerfile.sandbox",
+    ROOT / "infra" / "Dockerfile.sandbox.qa",
+)
 
 
 @functools.cache
@@ -339,7 +348,7 @@ def test_proxy_installs_its_group_from_the_lock_and_checks_it_in_full():
 
 def _uv_stages() -> dict[str, tuple[str, str]]:
     stages = {}
-    for dockerfile in (ORCHESTRATOR, PROXY):
+    for dockerfile in LOCKED_IMAGES:
         found = re.findall(
             r"^FROM ghcr\.io/astral-sh/uv:(\S+?)(@sha256:[0-9a-f]{64})? AS uv$",
             dockerfile.read_text(encoding="utf-8"),
@@ -358,12 +367,12 @@ def test_the_images_export_the_lock_with_ci_uv():
             f"{name} exports the lock with uv {tag}, CI installs it with {uv_version}: move them together"
         )
         assert digest, f"{name}: pin the uv image by digest as well as tag"
-    for dockerfile in (ORCHESTRATOR, PROXY):
+    for dockerfile in LOCKED_IMAGES:
         assert all("--mount=from=uv," in ins for ins in _instructions(dockerfile) if "/uv export" in ins), (
             f"{dockerfile.name}: a `uv export` runs a uv that is not the pinned stage"
         )
 
 
-def test_both_images_run_the_same_uv_image():
+def test_every_image_runs_the_same_uv_image():
     digests = {name: digest for name, (_, digest) in _uv_stages().items()}
-    assert len(set(digests.values())) == 1, f"the two Dockerfiles pin different uv images: {digests}"
+    assert len(set(digests.values())) == 1, f"the Dockerfiles pin different uv images: {digests}"
