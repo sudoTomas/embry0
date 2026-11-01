@@ -9,7 +9,7 @@
 # `uv run ruff` agree. tests/unit/test_repo_metadata.py checks that.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.10
+    rev: v0.17.3
     hooks:
       - id: ruff-check
         args: [--fix]
