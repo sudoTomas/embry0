@@ -26,7 +26,8 @@ settled (:meth:`embry0.services.background_scope.Enrollment.settled`):
    (``slop_meter_prune_cancelled``).
 3. **The removal**, once the grace period has passed: its mirror first,
    through :meth:`GitMirror.remove`, which deletes only
-   ``<root>/<owner>/<name>.git`` and never follows a link; then its rows, the
+   ``<root>/<group>/.../<name>.git``, then each directory above it left
+   empty, and never follows a link; then its rows, the
    history as read with its authors' names and emails, the forge events with
    their logins, the judgments, the series and the scores, and each login no
    remaining event refers to. Each removal is logged and audited
