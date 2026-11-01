@@ -36,6 +36,7 @@ from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.document_requests import if_match_versions, read_capped_body
 from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.v1.progression import covered_progression
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services import progression_vocabulary as vocab
@@ -409,7 +410,8 @@ async def preview_pack_draft(request: Request) -> dict[str, Any]:
         before = await service.compute(await service.rules())
         after = await service.compute(rules)
     return {
-        **after.to_dict(),
+        # As GET /progression is, under the draft: narrowed to the repositories the caller's key covers.
+        **await covered_progression(request, after, after.to_dict()),
         "draft": {
             "version": row.version,
             "hash": rules.hash,

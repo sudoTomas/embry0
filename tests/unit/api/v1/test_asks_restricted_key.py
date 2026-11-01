@@ -66,7 +66,9 @@ class World:
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
 
-    async def inbox(self, *, days: int, player_actors: list[str], limit: int = 30) -> list[dict[str, Any]]:
+    async def inbox(
+        self, *, days: int, player_actors: list[str], limit: int = 30, repos: Any = None
+    ) -> list[dict[str, Any]]:
         return [dict(r) for r in self.rows]
 
     async def merge_approval(self, job_id: str) -> dict[str, Any] | None:

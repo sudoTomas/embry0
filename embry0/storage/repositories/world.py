@@ -7,6 +7,7 @@ preferences and watched stacks: the world holds no state of its own.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from embry0.storage.database import DatabasePool
@@ -50,8 +51,9 @@ SELECT job_id, repo, task, status, pipeline_template, job_kind, created_at, star
        pr_url, delivery_state, area, issue_id, dispatched_by, current_stage, error_code, error_message,
        account_wait
 FROM jobs
-WHERE status = ANY($2::text[])
-   OR COALESCE(finished_at, updated_at) > NOW() - make_interval(secs => $1)
+WHERE (status = ANY($2::text[])
+   OR COALESCE(finished_at, updated_at) > NOW() - make_interval(secs => $1))
+  AND ($4::text[] IS NULL OR lower(repo) = ANY($4::text[]))
 ORDER BY created_at DESC
 LIMIT $3
 """
@@ -74,6 +76,7 @@ _LOOT_SQL = """
 SELECT job_id, repo, task, pr_url, delivery_state, delivery_state_at, finished_at, area, pipeline_template
 FROM jobs
 WHERE pr_url IS NOT NULL AND COALESCE(finished_at, created_at) > NOW() - make_interval(days => $1)
+  AND ($3::text[] IS NULL OR lower(repo) = ANY($3::text[]))
 ORDER BY COALESCE(delivery_state_at, finished_at, created_at) DESC
 LIMIT $2
 """
@@ -104,7 +107,7 @@ SELECT j.job_id, j.repo, j.area, j.task, j.status, j.delivery_state, j.pr_url, j
 FROM traces t
 JOIN jobs j ON j.job_id = t.job_id
 LEFT JOIN job_ratings r ON r.job_id = j.job_id
-WHERE t.agent_type = $1
+WHERE t.agent_type = $1 AND ($3::text[] IS NULL OR lower(j.repo) = ANY($3::text[]))
 GROUP BY j.job_id, r.rating, r.verdict
 ORDER BY j.created_at DESC
 LIMIT $2
@@ -161,6 +164,7 @@ WHERE j.finished_at > NOW() - make_interval(days => $1)
   AND (j.pr_url IS NOT NULL OR j.dispatched_by IS NULL OR j.dispatched_by NOT LIKE 'embry0:%'
        OR j.dispatched_by = ANY($2::text[]))
   AND NOT EXISTS (SELECT 1 FROM job_ratings r WHERE r.job_id = j.job_id)
+  AND ($4::text[] IS NULL OR lower(j.repo) = ANY($4::text[]))
 ORDER BY j.finished_at DESC
 LIMIT $3
 """
@@ -181,6 +185,11 @@ ON CONFLICT (job_id) DO UPDATE SET
     rated_at = NOW()
 RETURNING job_id, rating, verdict, note, followup_job_id, rated_by, rated_at
 """
+
+
+def _slugs(repos: Sequence[str] | None) -> list[str] | None:
+    """``repos`` as the query binds it: None selects every repository, a list (lower-cased) only those."""
+    return None if repos is None else [r.lower() for r in repos]
 
 
 def _agent_of(text: str | None) -> str | None:
@@ -204,9 +213,16 @@ class WorldRepository:
         """Registered repositories, for the unexplored land at the map's edge."""
         return [str(r["repo"]) for r in await self._db.fetch(_FRONTIER_SQL, limit)]
 
-    async def jobs(self, *, returning_seconds: float, limit: int = 60) -> list[dict[str, Any]]:
-        """The jobs out now and those finished in the last ``returning_seconds``, newest first."""
-        rows = await self._db.fetch(_JOBS_SQL, float(returning_seconds), list(LIVE_STATUSES), limit)
+    async def jobs(
+        self, *, returning_seconds: float, limit: int = 60, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """The jobs out now and those finished in the last ``returning_seconds``, newest first.
+
+        ``repos`` (lower-cased slugs) narrows them to those repositories before the limit, as each of the
+        world's lists below does: a key's page holds its own repositories' rows however many newer ones
+        another's has.
+        """
+        rows = await self._db.fetch(_JOBS_SQL, float(returning_seconds), list(LIVE_STATUSES), limit, _slugs(repos))
         return [dict(r) for r in rows]
 
     async def agent_runs(self, job_ids: list[str]) -> dict[str, list[tuple[str, str]]]:
@@ -226,8 +242,8 @@ class WorldRepository:
             return {}
         return {str(r["job_id"]): str(r["proposal_id"]) for r in await self._db.fetch(_LEAD_LINKS_SQL, job_ids)}
 
-    async def loot(self, *, days: int, limit: int = 30) -> list[dict[str, Any]]:
-        return [dict(r) for r in await self._db.fetch(_LOOT_SQL, days, limit)]
+    async def loot(self, *, days: int, limit: int = 30, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
+        return [dict(r) for r in await self._db.fetch(_LOOT_SQL, days, limit, _slugs(repos))]
 
     async def cleaned(self, *, days: int) -> dict[tuple[str, str | None], int]:
         """The slop cleanups merged in the last ``days``, by (repository, area)."""
@@ -240,8 +256,10 @@ class WorldRepository:
             return {}
         return {str(r["job_id"]): r["at"] for r in await self._db.fetch(_LAST_EVENT_SQL, job_ids)}
 
-    async def quest_log(self, agent_type: str, *, limit: int = 50) -> list[dict[str, Any]]:
-        return [dict(r) for r in await self._db.fetch(_QUEST_LOG_SQL, agent_type, limit)]
+    async def quest_log(
+        self, agent_type: str, *, limit: int = 50, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        return [dict(r) for r in await self._db.fetch(_QUEST_LOG_SQL, agent_type, limit, _slugs(repos))]
 
     async def stats(self, agent_type: str | None = None) -> dict[str, dict[str, Any]]:
         """Each character's quest totals, by agent type: one character's, or every one's."""
@@ -254,8 +272,10 @@ class WorldRepository:
     async def quest_runs(self, job_id: str) -> list[dict[str, Any]]:
         return [dict(r) for r in await self._db.fetch(_QUEST_RUNS_SQL, job_id)]
 
-    async def inbox(self, *, days: int, player_actors: list[str], limit: int = 30) -> list[dict[str, Any]]:
-        return [dict(r) for r in await self._db.fetch(_INBOX_SQL, days, player_actors, limit)]
+    async def inbox(
+        self, *, days: int, player_actors: list[str], limit: int = 30, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        return [dict(r) for r in await self._db.fetch(_INBOX_SQL, days, player_actors, limit, _slugs(repos))]
 
     async def merge_approval(self, job_id: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow(_MERGE_APPROVAL_SQL, job_id)

@@ -18,6 +18,7 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.asks import AsksRepository
 from embry0.storage.repositories.handoffs import HandoffsRepository
 from embry0.storage.repositories.leads import LeadsRepository
+from embry0.storage.repositories.world import WorldRepository
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -168,3 +169,44 @@ async def test_a_closed_decision_s_repository_is_read_back_from_the_row_it_came_
     )
     assert {r["decision_repo"] for r in page} == {"acme/web", None}, "each with the repository read back"
     assert len(await asks.recent(limit=3, repos=["acme/web"])) == 3, "narrowed before the limit"
+
+
+async def test_the_world_s_pages_hold_the_covered_repositories_rows_before_newer_ones(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """The parties, the inbox, the loot and a character's quest log, each a page of the newest rows."""
+    db = db_with_migrations
+    now = datetime.now(UTC)
+    rows = [("job-web", "acme/web", 3), ("job-old", "acme/old-web", 2), ("job-gizmos", "globex/gizmos", 1)]
+    for job, repo, hours in rows:
+        await db.execute(
+            "INSERT INTO jobs (job_id, repo, task, status, pipeline_template, created_at, started_at, finished_at, "
+            "pr_url, delivery_state, delivery_state_at, dispatched_by) VALUES ($1, $2, 't', 'completed', "
+            "'full-magnum-opus', $3, $3, $4, $5, 'pr_open', $4, 'ada@example.com')",
+            job,
+            repo,
+            now - timedelta(hours=hours, minutes=30),
+            now - timedelta(hours=hours),
+            f"https://github.com/{repo}/pull/1",
+        )
+        await db.execute(
+            "INSERT INTO traces (trace_id, job_id, agent_type, model, result, cost_usd, duration_ms, created_at) "
+            "VALUES ($1, $2, 'developer', 'm', 'success', 1, 1000, $3)",
+            f"tr-{job}",
+            job,
+            now - timedelta(hours=hours),
+        )
+    world = WorldRepository(db)
+    pages = {
+        "parties": await world.jobs(returning_seconds=6 * 3600, limit=2, repos=COVERED),
+        "inbox": await world.inbox(days=7, player_actors=[], limit=2, repos=COVERED),
+        "loot": await world.loot(days=7, limit=2, repos=COVERED),
+        "quest log": await world.quest_log("developer", limit=2, repos=COVERED),
+    }
+    assert {name: sorted(r["job_id"] for r in page) for name, page in pages.items()} == {
+        name: ["job-old", "job-web"] for name in pages
+    }, "the newest job is globex's, yet each page of two narrowed to acme/web holds both of its jobs"
+    assert [r["job_id"] for r in await world.inbox(days=7, player_actors=[], limit=2)] == ["job-gizmos", "job-old"], (
+        "unnarrowed, as before"
+    )
+    assert await world.loot(days=7, repos=[]) == [], "an empty allowlist selects nothing"

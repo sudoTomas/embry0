@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from embry0.api.actor_visibility import caller_scope
 from embry0.api.deps import get_audit_repo
+from embry0.api.repo_allowlist import REFUSAL_ACTOR, restricted_key_name
 from embry0.api.session import TIER_ADMIN
 from embry0.audit.actions import AUDIT_ACTION_LABELS, RETIRED_AUDIT_ACTIONS
 from embry0.storage.repositories.audit import AuditRepository
@@ -116,8 +117,12 @@ async def list_audit(
             return AuditListResponse(entries=[], total=0)
         actors = [actor] if actor else own
 
-    rows = await repo.list_entries(actors=actors, action=action, since=since, until=until, limit=limit, offset=offset)
-    total = await repo.count_entries(actors=actors, action=action, since=since, until=until)
+    # A key with an allowlist never reads a refusal's row back (embry0.api.repo_allowlist.REFUSAL_ACTOR).
+    hidden = [REFUSAL_ACTOR] if restricted_key_name(request) is not None else []
+    rows = await repo.list_entries(
+        actors=actors, action=action, since=since, until=until, limit=limit, offset=offset, hidden_actors=hidden
+    )
+    total = await repo.count_entries(actors=actors, action=action, since=since, until=until, hidden_actors=hidden)
     entries = [
         AuditEntry(
             id=r["id"],

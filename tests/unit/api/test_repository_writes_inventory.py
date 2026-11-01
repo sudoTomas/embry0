@@ -31,6 +31,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import APIRouter, FastAPI, Request
 
+from embry0.api.repo_allowlist import REFUSAL_ACTOR
 from embry0.api.v1.repo_old_paths import OldPathRoute
 from embry0.config import Embry0Config
 from embry0.storage.database import DatabasePool
@@ -205,10 +206,19 @@ async def _tables(db: DatabasePool) -> dict[str, str]:
 
 
 async def _refusals(db: DatabasePool) -> list[str]:
+    """The repository each refusal's row names, in order; every one under the deployment's actor."""
     rows = await db.fetch(
-        "SELECT details->>'repo' AS repo FROM audit_log WHERE action = 'apikey.repo_refused' ORDER BY id"
+        "SELECT actor, details->>'repo' AS repo FROM audit_log WHERE action = 'apikey.repo_refused' ORDER BY id"
     )
+    assert {str(r["actor"]) for r in rows} <= {REFUSAL_ACTOR}, f"a refusal's row names the key: {rows}"
     return [str(r["repo"]) for r in rows]
+
+
+async def _audit_seen(app: FastAPI, token: str) -> int:
+    """How many rows ``GET /audit`` shows ``token``'s caller."""
+    response = await call(app, "GET", "/api/v1/audit?limit=1", token)
+    assert response.status_code == 200, response.text
+    return int(response.json()["total"])
 
 
 def _not_reached(response: Any) -> str | None:
@@ -234,7 +244,7 @@ async def problems(
     uncovered = values[UNCOVERED]
     url, body = address(path, uncovered), _body(path, uncovered)
     out: list[str] = []
-    tables, refused = await _tables(db), await _refusals(db)
+    tables, refused, readable = await _tables(db), await _refusals(db), await _audit_seen(app, keys.limited)
     limited = await call(app, method, url, keys.limited, body)
     if limited.status_code < 400:
         out.append(f"the limited key was not refused: {limited.status_code} {limited.text[:160]}")
@@ -244,6 +254,8 @@ async def problems(
     audited = (await _refusals(db))[len(refused) :]
     if path not in OWN_RULES and audited not in ([UNCOVERED], [f"{OWNER[UNCOVERED]}/*"]):
         out.append(f"the refusal is not audited once naming {UNCOVERED} or {OWNER[UNCOVERED]}/*: {audited}")
+    if await _audit_seen(app, keys.limited) != readable:
+        out.append("the limited key reads back in GET /audit a row its refused call left")
     refused = await _refusals(db)
     reached = await call(app, method, url, keys.open, body)
     why = _not_reached(reached)

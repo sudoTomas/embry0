@@ -28,7 +28,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from embry0.api.repo_allowlist import hide_unless_covered, key_covers
+from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers
 from embry0.api.v1.job_review import GITHUB_PR
 from embry0.api.v1.ui import require_game
 from embry0.services.slop import dungeons
@@ -165,8 +165,14 @@ async def read_world(request: Request) -> dict[str, Any]:
     cache = _cache(request)
     now = datetime.now(UTC)
     # What the caller's key covers only: the parties, quests, inbox, loot, regions and dungeons of its
-    # repositories. The cache holds every repository's, shared by every caller, so each is narrowed after it.
-    jobs = [j for j in await repo.jobs(returning_seconds=RETURN_SECONDS) if key_covers(request, j.get("repo"))]
+    # repositories. The parties, inbox and loot are read narrowed to them, before each list's limit; the cache
+    # holds every repository's, shared by every caller, so what comes from it is narrowed after it.
+    covered = covered_slugs(request)
+    jobs = [
+        j
+        for j in await repo.jobs(returning_seconds=RETURN_SECONDS, repos=covered)
+        if key_covers(request, j.get("repo"))
+    ]
     ids = [str(j["job_id"]) for j in jobs]
     runs, links, last_events, leads, places, stats, inbox, loot, cleaned, meter_rows = await asyncio.gather(
         repo.agent_runs(ids),
@@ -175,8 +181,8 @@ async def read_world(request: Request) -> dict[str, Any]:
         cache.get("leads", lambda: _leads(request)),
         cache.get("regions", lambda: _regions(request)),
         cache.get("stats", repo.stats),
-        repo.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS)),
-        repo.loot(days=LOOT_DAYS),
+        repo.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS), repos=covered),
+        repo.loot(days=LOOT_DAYS, repos=covered),
         cache.get("cleaned", lambda: repo.cleaned(days=CLEANED_DAYS)),
         cache.get("meters", lambda: _meters(request)),
     )
@@ -265,7 +271,7 @@ async def read_character(agent_type: str, request: Request) -> dict[str, Any]:
     if character is None:
         raise HTTPException(status_code=404, detail=f"no character {agent_type}")
     repo = _state(request, "world_repo")
-    stats, log = await asyncio.gather(repo.stats(agent_type), repo.quest_log(agent_type))
+    stats, log = await asyncio.gather(repo.stats(agent_type), repo.quest_log(agent_type, repos=covered_slugs(request)))
     log = [r for r in log if key_covers(request, r.get("repo"))]
     titles = await _brief_titles(request, [str(r["job_id"]) for r in log])
     entry = character_entries([character.to_dict()], [], stats, datetime.now(UTC))[0]

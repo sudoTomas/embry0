@@ -20,7 +20,9 @@ from httpx import ASGITransport
 from embry0.mcp_server import server
 from embry0.mcp_server.client import Embry0APIError, Embry0Client
 from tests.fixtures.offered_work import (
+    CHARACTER_EVIDENCE,
     COVERED,
+    EVIDENCE,
     JOBS,
     LIMITED,
     OPEN,
@@ -28,8 +30,10 @@ from tests.fixtures.offered_work import (
     RECIPIENTS,
     REPO_OF,
     UNCOVERED,
+    achievement,
     get,
     offered_work_app,
+    quest,
 )
 from tests.unit.api.v1.test_asks_api import ask
 
@@ -42,6 +46,12 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
 
 def _repos(rows: list[dict[str, Any]]) -> set[str]:
     return {str(r["repo"]) for r in rows}
+
+
+def _evidence_repos(achievements: list[dict[str, Any]]) -> set[str]:
+    """The repositories the achievements' evidence names: its label, ``acme/web #7``."""
+    labels = [str(a["evidence"]["label"]) for a in achievements if a["evidence"] is not None]
+    return {label.split(" ")[0] for label in labels if "/" in label.split(" ")[0]}
 
 
 #: Each list of offered work: its URL, its query, and the repositories of the offered work it lists.
@@ -69,10 +79,16 @@ LISTS: dict[str, tuple[str, dict[str, Any], Callable[[Any], set[str]]]] = {
     "world-regions": ("/api/v1/world", {}, lambda body: _repos(body["regions"])),
     "world-frontier": ("/api/v1/world", {}, lambda body: set(body["frontier"])),
     "world-dungeons": ("/api/v1/world", {}, lambda body: _repos(body["dungeons"])),
-    "world-recent": ("/api/v1/world", {}, lambda body: _repos(body["recent"])),
+    "world-recent": ("/api/v1/world", {}, lambda body: _repos([r for r in body["recent"] if "repo" in r])),
     "character-quest-log": ("/api/v1/world/characters/developer", {}, lambda body: _repos(body["quest_log"])),
     "progression-diaries": ("/api/v1/progression", {}, lambda body: _repos(body["diaries"])),
-    "progression-recent": ("/api/v1/progression", {}, lambda body: _repos(body["recent"])),
+    "progression-recent": ("/api/v1/progression", {}, lambda body: _repos([r for r in body["recent"] if "repo" in r])),
+    "progression-evidence": ("/api/v1/progression", {}, lambda body: _evidence_repos(body["achievements"])),
+    "progression-quest-where": (
+        "/api/v1/progression",
+        {},
+        lambda body: {str(q["where"]) for q in body["quests"] if q["where"] is not None},
+    ),
 }
 
 
@@ -233,3 +249,61 @@ async def test_the_world_shows_a_key_the_meter_dungeons_of_its_repositories_only
     assert metered(open_.json()) == {(COVERED, "engine"), (UNCOVERED, "engine")}, (
         f"a key without an allowlist is shown both: {sorted(metered(open_.json()))}"
     )
+
+
+@pytest.mark.asyncio
+async def test_an_achievement_s_evidence_shows_a_key_only_its_repositories_and_the_characters(app: Any) -> None:
+    """Evidence that names characters, not work, is the account's; evidence that names no repository the key covers,
+    such as a ticket elsewhere, is left out, and the achievement still shows."""
+    base = app.state.progression
+
+    class Elsewhere:
+        async def read(self) -> Any:
+            progression = await base.read()
+            progression.achievements.append(
+                achievement(progression.rules, "hunt_complete", "Gizmos overheat at noon", "https://tracker.test/T-9")
+            )
+            return progression
+
+    app.state.progression = Elsewhere()
+
+    def evidence(body: dict[str, Any]) -> dict[str, Any]:
+        return {a["id"]: a["evidence"] and a["evidence"]["label"] for a in body["achievements"] if a["tier"]}
+
+    limited = (await get(app, "/api/v1/progression", LIMITED)).json()
+    assert evidence(limited) == {
+        EVIDENCE[COVERED]: f"{COVERED} #7",
+        EVIDENCE[UNCOVERED]: None,
+        CHARACTER_EVIDENCE: "developer · tests",
+        "hunt_complete": None,
+    }, evidence(limited)
+    assert {a["id"] for a in limited["achievements"]} >= {EVIDENCE[UNCOVERED], "hunt_complete"}, "the achievements show"
+    open_ = (await get(app, "/api/v1/progression", OPEN)).json()
+    assert evidence(open_) == {
+        EVIDENCE[COVERED]: f"{COVERED} #7",
+        EVIDENCE[UNCOVERED]: f"{UNCOVERED} #7",
+        CHARACTER_EVIDENCE: "developer · tests",
+        "hunt_complete": "Gizmos overheat at noon",
+    }, evidence(open_)
+
+
+@pytest.mark.asyncio
+async def test_a_quest_done_on_an_issue_shows_where_only_when_the_key_covers_the_issue_s_repository(app: Any) -> None:
+    base = app.state.progression
+
+    class OnIssues:
+        async def read(self) -> Any:
+            progression = await base.read()
+            progression.quests = [quest("gatekeeper", "iss-widgets"), quest("try_again", "iss-gizmos")]
+            return progression
+
+    class Issues:
+        async def get(self, issue_id: str) -> dict[str, Any] | None:
+            return {"iss-widgets": {"repo": COVERED}, "iss-gizmos": {"repo": UNCOVERED}}.get(issue_id)
+
+    app.state.progression = OnIssues()
+    app.state.issues_repo = Issues()
+    limited = (await get(app, "/api/v1/progression", LIMITED)).json()
+    assert {q["id"]: q["where"] for q in limited["quests"]} == {"gatekeeper": "iss-widgets", "try_again": None}
+    open_ = (await get(app, "/api/v1/progression", OPEN)).json()
+    assert {q["id"]: q["where"] for q in open_["quests"]} == {"gatekeeper": "iss-widgets", "try_again": "iss-gizmos"}

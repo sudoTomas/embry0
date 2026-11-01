@@ -170,6 +170,9 @@ async def test_each_refusal_is_audited_though_the_answer_is_a_missing_item(
                 f"{method} {path} on {uncovered_id}: the refusal is audited once, naming {UNCOVERED}: "
                 f"{audit.await_args_list}"
             )
+            assert refused[0].kwargs["actor"] == repo_allowlist.REFUSAL_ACTOR, (
+                f"{method} {path}: the refusal is the deployment's record, out of the key's own audit view"
+            )
     audit.reset_mock()
     await _call(app, "POST", ANSWER, LIMITED, {"code": CODES[0], "action": "decline", "person": "ada@example.com"})
     assert [c.args[1] for c in audit.await_args_list] == ["apikey.repo_refused"], "and the button press's"

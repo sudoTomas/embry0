@@ -1,6 +1,6 @@
 """Per-API-key repository allowlist.
 
-An API key may carry ``allowed_repos``: the repositories it may change and start,
+An API key may carry ``allowed_repos``: the repositories it may read, change and start,
 continue or stop work on. ``None`` — every key minted before the column existed, and
 every key minted without a list — is unrestricted. Sessions and the master
 key are never restricted.
@@ -25,6 +25,10 @@ still matches work addressed by the new one, and the reverse.
 A refusal is a 403 whose detail starts with :data:`REFUSAL_CODE`, a
 structured ``api_key_repo_refused`` log line naming the key (never its
 secret) and the refused repository, and an ``apikey.repo_refused`` audit row.
+The row's actor is :data:`REFUSAL_ACTOR`, not the key, with the key and its
+caller in the details, and ``GET /audit`` never shows such a row to a key
+with an allowlist: an action on an item the key does not cover leaves
+nothing it can read back that an action on a missing item would not.
 
 Something that belongs to a forge owner rather than to one repository (a
 knowledge map, an organization and its needs) is checked with
@@ -53,11 +57,14 @@ from fastapi import HTTPException, Request
 
 from embry0.api.deps import Principal, request_actor
 from embry0.audit.helpers import emit_audit
+from embry0.orchestration.dispatch_actors import RESERVED_PREFIX
 from embry0.storage.repo_renames import normalize_repo_slug, repo_slug_variants
 
 logger = structlog.get_logger(__name__)
 
 REFUSAL_CODE = "repo_not_allowed"
+#: The actor of every refusal's audit row: the deployment's record, out of the refused key's own view.
+REFUSAL_ACTOR = f"{RESERVED_PREFIX}repo-allowlist"
 
 
 def _canonical(slug: str) -> str:
@@ -217,8 +224,15 @@ async def _record_refusal(request: Request, shown: str, action: str) -> None:
     await emit_audit(
         getattr(request.app.state, "db", None),
         "apikey.repo_refused",
-        # Recorded as every other row the key writes, so its owner finds it in /audit.
-        actor=request_actor(request),
-        details={"key_id": principal.key_id, "key_name": principal.key_name, "repo": shown, "action": action},
+        # Under the deployment's actor, not the key's: the key's own /audit view never holds it (GET /audit
+        # leaves these rows out for a key with an allowlist). The admins see who in the details.
+        actor=REFUSAL_ACTOR,
+        details={
+            "key_id": principal.key_id,
+            "key_name": principal.key_name,
+            "caller": request_actor(request),
+            "repo": shown,
+            "action": action,
+        },
         audit_log_path=getattr(config, "audit_log_path", None),
     )

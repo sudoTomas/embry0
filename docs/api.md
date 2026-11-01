@@ -1062,18 +1062,29 @@ they are covered too. Matching ignores case and follows `REPO_RENAMES`
 slug also matches its current one, and the reverse. Each refusal logs
 `api_key_repo_refused` with the key's name and id (never the key), the
 repository and the action, and writes an `apikey.repo_refused` audit row.
+The row's actor is `embry0:repo-allowlist`, with the key and its caller in
+`details`, and `GET /audit` never shows such a row to a key with an
+allowlist: an admin reads it, the refused key does not.
 
-The list also narrows what the key reads and does of a repository's
-decisions, the work offered on it and the game layer's view of its work, by
-one rule (`key_covers` in `embry0/api/repo_allowlist.py`):
+The list is also a read boundary: a key reads only its repositories' work.
+These routes narrow to the key's repositories today, by one rule
+(`key_covers` in `embry0/api/repo_allowlist.py`); the remaining read routes
+follow:
 
 - `GET /decisions`, `GET /proposals`, `GET /asks/due`, `GET /asks`,
   `GET /leads`, `GET /handoffs`, `GET /world` (its parties, quests, inbox,
   loot, regions, frontier, dungeons and recent diary tiers),
-  `GET /world/characters/{agent}` (its quest log) and `GET /progression`
-  (its diaries and recent diary tiers) list only what is in repositories
-  the key covers. The account's and the characters' totals still count
-  every repository's work, without naming any.
+  `GET /world/characters/{agent}` (its quest log), and `GET /progression`
+  and `GET /progression/preview` (their diaries, recent diary tiers,
+  achievements' evidence and quests' places) list only what is in
+  repositories the key covers. A list that pages in its query, the
+  parties, inbox, loot, quest log, quests to review, leads, hand-offs and
+  asks among them, is narrowed before its page is cut, so the key's own
+  work is on it however much newer work another repository has. An
+  achievement or a quest still shows; its evidence or place is null unless
+  it names a repository the key covers, or, for evidence, characters
+  rather than work. The account's and the characters' totals count every
+  repository's work, without naming any.
 - Reading one item of another repository, `GET /proposals/{id}`,
   `GET /decisions/{id}` and `GET /world/quests/{id}`, answers exactly as an
   item that does not exist (404).
@@ -1089,21 +1100,20 @@ one rule (`key_covers` in `embry0/api/repo_allowlist.py`):
 A list or a read is narrowed, not refused, so it logs and audits nothing.
 An action is refused: it logs `api_key_repo_refused` and writes an
 `apikey.repo_refused` audit row as the refusals above do, though its answer
-is the missing item's. An ask names only its decision: its repository is
+is the missing item's, and the key reads nothing back that acting on a
+missing item would not have left. An ask names only its decision: its repository is
 read back from the row the decision comes from (a finished job, an issue, a
 watcher case, a lead, an answered proposal), else from the open decisions.
 An ask about an audit finding that was never answered and is no longer
 offered has no repository to read back, so a key with an allowlist neither
-lists it nor acts on it. The jobs and merge approval routes, which the list
-does not narrow for reading, keep the 403 refusal above for their actions,
-reviewing a finished job included.
+lists it nor acts on it. The jobs and merge approval routes keep the 403
+refusal above for their actions, reviewing a finished job included.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
-every key minted before the allowlist existed is unrestricted. Beyond the
-routes above, the list does not narrow what the key may read (except the
-knowledge maps, which list and answer only the maps of covered owners), nor
-what belongs to the deployment rather than to a repository or an owner,
-which its scope allows. A restricted key may not mint
+every key minted before the allowlist existed is unrestricted. The
+knowledge maps list and answer only the maps of covered owners. What
+belongs to the deployment rather than to a repository or an owner is the
+key's scope's to decide, not the list's. A restricted key may not mint
 keys or change any key's allowlist, its own included, since a key it minted
 would carry no restriction. For an agent that should only dispatch, mint an
 `operate` key with the list.

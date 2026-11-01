@@ -20,7 +20,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from embry0.api.deps import request_actor
-from embry0.api.repo_allowlist import key_covers
+from embry0.api.repo_allowlist import covered_slugs, key_covers
 from embry0.api.v1.ui import ui_settings
 from embry0.services.decisions import Decision, done, offered, ordered
 from embry0.settings.layers import PerRepository
@@ -167,7 +167,8 @@ async def _reviews(request: Request, *, repo: str | None) -> list[Decision]:
     if world is None:
         return []
     game = (await ui_settings(request)).game
-    rows = await world.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS))
+    # Narrowed to the repositories the caller's key covers before the inbox's limit, so its page holds them.
+    rows = await world.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS), repos=covered_slugs(request))
     if repo:
         rows = [r for r in rows if str(r.get("repo") or "").lower() == repo.lower()]
     # The feed's own rule (listed_to), so what the list shows and what the feed hands out cannot drift apart.

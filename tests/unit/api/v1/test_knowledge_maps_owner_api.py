@@ -19,6 +19,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from embry0.api.deps import bust_api_key_cache
+from embry0.api.repo_allowlist import REFUSAL_ACTOR
 from embry0.config import Embry0Config
 from embry0.services.knowledge_maps import FORMAT, source_key
 from embry0.services.leads import lead_id
@@ -178,7 +179,8 @@ async def test_a_key_of_another_owner_can_neither_change_a_map_nor_see_it(client
     assert still.status_code == 200, "a refused delete must leave the map"
     rows = await _audit(app.state.db, "apikey.repo_refused")
     assert {r["details"]["repo"] for r in rows} == {"acme/*"}, "each refusal is audited with the owner it refused"
-    assert len(rows) == len(refused) and {r["actor"] for r in rows} == {"key:zeta-key", "key:zeta-admin-key"}
+    assert len(rows) == len(refused) and {r["actor"] for r in rows} == {REFUSAL_ACTOR}, "the deployment's record"
+    assert {r["details"]["caller"] for r in rows} == {"key:zeta-key", "key:zeta-admin-key"}, "naming who was refused"
 
 
 async def test_a_map_of_no_owner_is_an_admins_alone_until_an_admin_gives_it_one(client: AsyncClient, app: Any) -> None:

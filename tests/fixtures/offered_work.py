@@ -31,8 +31,9 @@ from embry0.api.deps import bust_api_key_cache
 from embry0.api.v1 import proposals as proposals_api
 from embry0.api.v1 import world as world_api
 from embry0.config import Embry0Config
+from embry0.services.achievements import AchievementState, Step
 from embry0.services.proposals import Proposal
-from embry0.services.quests import Diary, DiaryTier, Task
+from embry0.services.quests import Diary, DiaryTier, QuestState, Task
 from embry0.services.world import WorldCache
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 from tests.fixtures.asks import asks_snapshot
@@ -221,23 +222,25 @@ def quest_row(repo: str) -> dict[str, Any]:
 class GameWorld(FakeRepo):
     """The world's rows with work in both repositories: a party out on each, a quest to review, loot, cleanups."""
 
-    async def jobs(self, *, returning_seconds: float, limit: int = 60) -> list[dict[str, Any]]:
+    async def jobs(self, *, returning_seconds: float, limit: int = 60, repos: Any = None) -> list[dict[str, Any]]:
         return [
             {"job_id": f"live-{repo.split('/')[1]}", "repo": repo, "task": TITLES[repo], "status": "running"}
             | {"created_at": NOW, "started_at": NOW}
             for repo in (COVERED, UNCOVERED)
         ]
 
-    async def inbox(self, *, days: int, player_actors: list[str], limit: int = 30) -> list[dict[str, Any]]:
+    async def inbox(
+        self, *, days: int, player_actors: list[str], limit: int = 30, repos: Any = None
+    ) -> list[dict[str, Any]]:
         return [quest_row(COVERED), quest_row(UNCOVERED)]
 
-    async def loot(self, *, days: int, limit: int = 30) -> list[dict[str, Any]]:
+    async def loot(self, *, days: int, limit: int = 30, repos: Any = None) -> list[dict[str, Any]]:
         return [quest_row(COVERED), quest_row(UNCOVERED)]
 
     async def cleaned(self, *, days: int) -> dict[tuple[str, str | None], int]:
         return {(COVERED, None): 1, (UNCOVERED, None): 1}
 
-    async def quest_log(self, agent: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    async def quest_log(self, agent: str, *, limit: int = 50, repos: Any = None) -> list[dict[str, Any]]:
         return [quest_row(COVERED), quest_row(UNCOVERED)]
 
     async def quest(self, job_id: str) -> dict[str, Any] | None:
@@ -247,8 +250,28 @@ class GameWorld(FakeRepo):
         return None
 
 
+#: The achievements whose evidence names each repository's pull request; one whose evidence names a character.
+EVIDENCE = {COVERED: "forged_in_fire", UNCOVERED: "no_death_run"}
+CHARACTER_EVIDENCE = "mastery_cloak"
+#: The quests whose steps happened in each repository.
+QUEST_WHERE = {COVERED: "first_steps", UNCOVERED: "try_again"}
+
+
+def achievement(rules: Any, achievement_id: str, label: str, url: str | None) -> AchievementState:
+    """``achievement_id`` unlocked at its first tier, the step that did it named by ``label`` and ``url``."""
+    rule = next(a for a in rules.achievements if a.id == achievement_id)
+    return AchievementState(
+        rule, value=1.0, tier_ids=rules.tier_ids, tier_at=[NOW], evidence=Step(NOW, 1.0, label, url)
+    )
+
+
+def quest(quest_id: str, where: str) -> QuestState:
+    return QuestState(quest_id, quest_id, 1, "", [Task(text="a step", done_at=NOW)], where=where)
+
+
 class GameProgression(FakeProgression):
-    """The progression snapshot with a diary in each repository, each with a tier completed: a recent unlock."""
+    """The progression snapshot with a diary in each repository, each with a tier completed: a recent unlock; an
+    achievement whose evidence is a pull request in each, and a quest done in each."""
 
     async def read(self) -> Any:
         progression = await super().read()
@@ -256,6 +279,15 @@ class GameProgression(FakeProgression):
             Diary(repo=repo, tiers=[DiaryTier(tier="easy", tasks=[Task(text="a first job", done_at=NOW)])])
             for repo in (COVERED, UNCOVERED)
         ]
+        rules = progression.rules
+        progression.achievements = [
+            *(
+                achievement(rules, EVIDENCE[repo], f"{repo} #7", f"https://github.com/{repo}/pull/7")
+                for repo in (COVERED, UNCOVERED)
+            ),
+            achievement(rules, CHARACTER_EVIDENCE, "developer · tests", None),
+        ]
+        progression.quests = [quest(QUEST_WHERE[repo], repo) for repo in (COVERED, UNCOVERED)]
         return progression
 
 
