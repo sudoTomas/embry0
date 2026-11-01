@@ -5,7 +5,9 @@ Reviewing the work moved to ``/jobs/{job_id}/…``: ``test_job_review_api.py``.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -418,3 +420,59 @@ async def test_a_dungeon_shows_its_slop_o_meter_reading(app: Any, monkeypatch: p
         "provisional": False,
         "computed_at": NOW.isoformat(),
     }
+
+
+async def test_a_request_reads_an_owner_s_organization_once_for_all_its_pull_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#296: the decisions read the pull requests of the newest 30 quests to review in one request; each owner's
+    organization is read, and its forge client made, once. A caller cancelled while the read is under way does not
+    cancel it for the others."""
+    from starlette.requests import Request
+
+    from embry0.api.v1 import organizations as organizations_api
+
+    started, release = asyncio.Event(), asyncio.Event()
+    reads: list[str] = []
+    clients: list[str] = []
+
+    class Organizations:
+        async def get(self, owner: str) -> Any:
+            reads.append(owner)
+            started.set()
+            await release.wait()
+            return SimpleNamespace(owner=owner)
+
+    class Forge:
+        async def get(self, path: str, repo: str | None = None) -> Any:
+            number = int(path.rsplit("/", 1)[1])
+            body = {"state": "open", "changed_files": 1, "additions": number, "deletions": 0}
+            return SimpleNamespace(status_code=200, json=lambda: body)
+
+    async def forge_client(_request: Any, org: Any) -> Forge:
+        clients.append(org.owner)
+        return Forge()
+
+    monkeypatch.setattr(organizations_api, "org_forge_client", forge_client)
+    app = SimpleNamespace(state=SimpleNamespace(organizations_repo=Organizations()))
+    request = Request({"type": "http", "app": app, "method": "GET", "path": "/", "headers": [], "query_string": b""})
+    cancelled = asyncio.create_task(world_api._pr_stats(request, "https://github.com/acme/web/pull/1"))
+    others = [
+        asyncio.create_task(world_api._pr_stats(request, f"https://github.com/acme/web/pull/{n}")) for n in (2, 3)
+    ]
+    await started.wait()
+    await asyncio.sleep(0)
+    cancelled.cancel()
+    release.set()
+    try:
+        answers = [await t for t in others]
+    except asyncio.CancelledError:
+        answers = []
+    assert [a and a["additions"] for a in answers] == [2, 3], (
+        f"the other pull requests are read, though the first caller was cancelled while the organization was "
+        f"read: {answers}"
+    )
+    assert (reads, clients) == (["acme"], ["acme"]), (
+        f"one request read acme's organization, and made its forge client, once for its three pull requests: "
+        f"{reads}, {clients}"
+    )

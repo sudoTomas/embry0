@@ -31,11 +31,17 @@ router = APIRouter()
 
 #: Pull requests read from the forge at once while building quests to review.
 _PR_READS = 6
-_REPORT_CHARS = 8_000
+#: How many quests to review, the newest, read their pull request's changes from the forge: as many as the
+#: inbox's page held. Every quest to review is read (#296), so this keeps the forge reads of a read from growing
+#: with how many wait. An older one's card shows only its pull request's number, from its address, as any card
+#: does when the forge does not answer in time.
+_PR_STATS_ROWS = 30
+#: How much of a finished job's report its card carries in ``details``.
+REPORT_CHARS = 8_000
 
 
-async def _none() -> None:
-    return None
+async def _empty() -> dict[str, Any]:
+    return {}
 
 
 def _json(value: Any) -> Any:
@@ -80,8 +86,16 @@ def listed_to(request: Request, decision: Mapping[str, Any]) -> bool:
     return key_covers(request, decision.get("repo"))
 
 
-async def done_inputs(request: Request, rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Each finished job row with what the card needs: its pull request, checks, done-when and brief."""
+async def done_inputs(
+    request: Request, rows: Sequence[dict[str, Any]], *, report_chars: int = REPORT_CHARS
+) -> list[dict[str, Any]]:
+    """Each finished job row with what the card needs: its pull request, checks, done-when and brief.
+
+    The jobs, their merge approvals, verifications and briefs are each read in
+    one statement, however many rows (#296). ``rows`` come newest first: the
+    first ``_PR_STATS_ROWS`` read their pull request's changes from the forge.
+    Each report is cut to ``report_chars`` as it is read.
+    """
     from embry0.api.v1.world import _outcome, _pr_stats
     from embry0.services.world import failure_words, quest_title
 
@@ -90,24 +104,38 @@ async def done_inputs(request: Request, rows: Sequence[dict[str, Any]]) -> list[
     verifications = getattr(state, "job_verifications_repo", None)
     briefs_repo = getattr(state, "job_briefs_repo", None)
     ids = [str(r["job_id"]) for r in rows]
-    briefs: dict[str, dict[str, Any]] = {}
-    if briefs_repo is not None and ids:
-        try:
-            briefs = await briefs_repo.current(ids)
-        except Exception:  # noqa: BLE001 - a card without its brief still shows its facts
-            logger.warning("decisions_briefs_unread", exc_info=True)
+    if not ids:
+        return []
     gate = asyncio.Semaphore(_PR_READS)
 
-    async def one(row: dict[str, Any]) -> dict[str, Any]:
-        job_id = str(row["job_id"])
+    async def briefs_of() -> dict[str, dict[str, Any]]:
+        if briefs_repo is None:
+            return {}
+        try:
+            return dict(await briefs_repo.current(ids))
+        except Exception:  # noqa: BLE001 - a card without its brief still shows its facts
+            logger.warning("decisions_briefs_unread", exc_info=True)
+            return {}
+
+    async def pr_of(row: dict[str, Any]) -> dict[str, Any] | None:
         async with gate:
-            job, approval, verification, pr = await asyncio.gather(
-                jobs.get(job_id) if jobs is not None else _none(),
-                world.merge_approval(job_id),
-                verifications.get(job_id) if verifications is not None else _none(),
-                _pr_stats(request, row.get("pr_url")),
-            )
-        merged = {**row, **(job or {})}
+            return await _pr_stats(request, row.get("pr_url"))
+
+    async def prs_of() -> list[dict[str, Any] | None]:
+        return list(await asyncio.gather(*(pr_of(r) for r in rows[:_PR_STATS_ROWS])))
+
+    job_rows, approvals, verified, briefs, prs = await asyncio.gather(
+        jobs.card_rows(ids, report_chars=report_chars) if jobs is not None else _empty(),
+        world.merge_approvals(ids),
+        verifications.for_jobs(ids) if verifications is not None else _empty(),
+        briefs_of(),
+        prs_of(),
+    )
+
+    def one(row: dict[str, Any], pr: dict[str, Any] | None) -> dict[str, Any]:
+        job_id = str(row["job_id"])
+        approval, verification = approvals.get(job_id) or {}, verified.get(job_id)
+        merged = {**row, **(job_rows.get(job_id) or {})}
         started, finished = merged.get("started_at") or merged.get("created_at"), merged.get("finished_at")
         seconds = (finished - started).total_seconds() if started is not None and finished is not None else None
         report = str(merged.get("result_summary") or "")
@@ -128,14 +156,33 @@ async def done_inputs(request: Request, rows: Sequence[dict[str, Any]]) -> list[
             "done_when": _json(merged.get("done_when")),
             "pr": pr,
             "verification": verification if isinstance(verification, dict) else None,
-            "approval_ask": _json((approval or {}).get("ask")) or {},
+            "approval_ask": _json(approval.get("ask")) or {},
             # Merge on the card merges through a pending merge approval, as the review bar does.
-            "approval_id": (approval or {}).get("id") if (approval or {}).get("status") == "pending" else None,
+            "approval_id": approval.get("id") if approval.get("status") == "pending" else None,
             "brief": briefs.get(job_id) or {},
-            "report": report[:_REPORT_CHARS],
+            "report": report[:report_chars],
         }
 
-    return list(await asyncio.gather(*(one(r) for r in rows)))
+    return [one(row, prs[i] if i < len(prs) else None) for i, row in enumerate(rows)]
+
+
+async def with_reports(request: Request, shown: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``shown``, each quest to review with its report in ``details``, cut to ``REPORT_CHARS`` as ``GET /decisions``
+    shows it: for a reader that built its decisions without their reports and hands a few of them out, as the asks
+    feed does. One statement, for the quests to review in ``shown`` alone."""
+    jobs = getattr(request.app.state, "jobs_repo", None)
+    ids = [str(d["id"]).removeprefix("done:") for d in shown if d.get("stage") == "done"]
+    if jobs is None or not ids:
+        return list(shown)
+    rows = await jobs.card_rows(ids, report_chars=REPORT_CHARS)
+
+    def report(job_id: str) -> str:
+        return str((rows.get(job_id) or {}).get("result_summary") or "")[:REPORT_CHARS]
+
+    return [
+        {**d, "details": report(str(d["id"]).removeprefix("done:"))} if d.get("stage") == "done" else dict(d)
+        for d in shown
+    ]
 
 
 async def owners_of(request: Request, rows: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -160,20 +207,25 @@ async def owners_of(request: Request, rows: list[dict[str, Any]]) -> dict[str, l
     return out
 
 
-async def _reviews(request: Request, *, repo: str | None) -> list[Decision]:
+async def _reviews(request: Request, *, repo: str | None, report_chars: int) -> list[Decision]:
     from embry0.services.world import INBOX_DAYS, PLAYER_ACTORS
 
     world = getattr(request.app.state, "world_repo", None)
     if world is None:
         return []
     game = (await ui_settings(request)).game
-    # Narrowed to the repositories the caller's key covers before the inbox's limit, so its page holds them.
-    rows = await world.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS), repos=covered_slugs(request))
+    # Every one, not the inbox's page (#296): a quest to review left out reads as answered, and the ask loop would
+    # withdraw its ask. Narrowed in SQL to the repositories the caller's key covers.
+    rows = await world.inbox(
+        days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS), limit=None, repos=covered_slugs(request)
+    )
     if repo:
         rows = [r for r in rows if str(r.get("repo") or "").lower() == repo.lower()]
     # The feed's own rule (listed_to), so what the list shows and what the feed hands out cannot drift apart.
     rows = [r for r in rows if listed_to(request, r)]
-    inputs, owners = await asyncio.gather(done_inputs(request, rows), owners_of(request, rows))
+    inputs, owners = await asyncio.gather(
+        done_inputs(request, rows, report_chars=report_chars), owners_of(request, rows)
+    )
     return [done({**q, "owners": owners.get(str(q["job_id"]), [])}, game=game) for q in inputs]
 
 
@@ -227,18 +279,24 @@ async def waiting(
     owner: str | None = None,
     repo: str | None = None,
     include_held: bool = True,
+    report_chars: int = REPORT_CHARS,
 ) -> list[dict[str, Any]]:
     """Every decision waiting on a person, worst first, each with its open hand-off, none cut off by a page.
 
     What :func:`list_decisions` lists before ``for`` and ``limit``. Every
     decision is built before any is cut, so a reader that needs them all, as
     the asks do, reads them here: a page's limit must not decide whether a
-    decision is open (#273). The quests to review are those of the newest 30
-    finished jobs waiting for review, the inbox's own cut (#296).
+    decision is open (#273). The quests to review are every finished job
+    waiting for review within ``INBOX_DAYS``, not the inbox's newest 30
+    (#296), read in a fixed number of statements however many wait. Each
+    one's ``details`` carries ``report_chars`` of its report: a reader that
+    shows no card, such as the ask loop, reads none (:func:`with_reports`).
     """
     offers, reviews = await asyncio.gather(
         _offers(request, owner=owner, repo=repo) if stage in ("offered", "all") else asyncio.sleep(0, result=[]),
-        _reviews(request, repo=repo) if stage in ("done", "all") else asyncio.sleep(0, result=[]),
+        _reviews(request, repo=repo, report_chars=report_chars)
+        if stage in ("done", "all")
+        else asyncio.sleep(0, result=[]),
     )
     found = [d for d in [*offers, *reviews] if include_held or not d.held]
     return await with_assignees(request, [d.to_dict() for d in ordered(found)])

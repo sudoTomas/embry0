@@ -50,8 +50,7 @@ class AskLoop:
     settings: Callable[[], Awaitable[PerRepository[AsksSettings]]]
     asks: _Asks
     #: Every open decision, with owners, held and assigned_to (the decisions API's shape), none cut off by the
-    #: decisions page (the quests to review are the inbox's newest 30, #296): an ask whose decision is not among
-    #: them is withdrawn.
+    #: decisions page or the inbox's (#273, #296): an ask whose decision is not among them is withdrawn.
     decisions: Callable[[], Awaitable[list[dict[str, Any]]]]
     #: GitHub login (lowercased) to the email of the person who named it.
     people: Callable[[], Awaitable[Mapping[str, str]]]

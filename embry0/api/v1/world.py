@@ -22,6 +22,7 @@ layer off (``ui.game``, ``embry0/api/v1/ui.py``); the review aliases do not.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -298,20 +299,43 @@ async def read_character(agent_type: str, request: Request) -> dict[str, Any]:
     }
 
 
+async def _once(request: Request, memo: str, key: str, read: Callable[[], Awaitable[Any]]) -> Any:
+    """``read()``, read once per request for ``key`` however many callers ask at once; each gets its answer, or
+    its exception."""
+    found: dict[str, asyncio.Future[Any]] | None = getattr(request.state, memo, None)
+    if found is None:
+        found = {}
+        setattr(request.state, memo, found)
+    if key not in found:
+        found[key] = asyncio.ensure_future(read())
+    # Shielded: a caller cancelled while it waits must not cancel the read the others wait for.
+    return await asyncio.shield(found[key])
+
+
+async def _organization(request: Request, owner: str) -> Any:
+    organizations = getattr(request.app.state, "organizations_repo", None)
+    return await organizations.get(owner) if organizations is not None else None
+
+
 async def _pr_stats(request: Request, pr_url: str | None) -> dict[str, Any] | None:
-    """What the forge says the pull request changed; None when it cannot say in time."""
+    """What the forge says the pull request changed; None when it cannot say in time.
+
+    A request reads each owner's organization, and makes its forge client, once
+    however many of its pull requests it reads, as the decisions do for their
+    quests to review (#296).
+    """
     match = GITHUB_PR.match(pr_url or "")
     if match is None:
         return None
     repo, number = match["repo"], int(match["number"])
-    organizations = getattr(request.app.state, "organizations_repo", None)
-    org = await organizations.get(repo.split("/", 1)[0]) if organizations is not None else None
+    owner = repo.split("/", 1)[0]
+    org = await _once(request, "pr_organizations", owner, lambda: _organization(request, owner))
     if org is None:
         return None
     from embry0.api.v1.organizations import org_forge_client
 
     try:
-        client = await org_forge_client(request, org)
+        client = await _once(request, "pr_forges", owner, lambda: org_forge_client(request, org))
         resp = await asyncio.wait_for(client.get(f"/repos/{repo}/pulls/{number}", repo=repo), PR_STATS_SECONDS)
     except Exception:  # noqa: BLE001 - the scroll shows the link without the numbers
         logger.info("world_pr_stats_unread", pr_url=pr_url, exc_info=True)
