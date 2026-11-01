@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
@@ -24,7 +25,8 @@ from embry0.services.hosts import LOG_SOURCE_KINDS, SOURCES, STATUSES, TRANSPORT
 from embry0.storage.repositories.hosts import HostNameTakenError, HostsRepository
 
 logger = structlog.get_logger(__name__)
-router = APIRouter()
+# A host serves any repositories, and its probe writes what embry0 observed: the deployment's.
+router = APIRouter(dependencies=[deployment_writes("change the deployment's hosts")])
 
 _NAME = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
 Role = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9_.-]{0,31}$")]

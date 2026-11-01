@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from embry0.agents.skills import normalize_delta
 from embry0.api.deps import require_admin
+from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.schemas import InlineSkillRequest, SkillSourceCreateRequest, SkillSourcePatchRequest
 from embry0.api.v1._audit import audit
 from embry0.skills.sync import SkillSourceSync, SkillSyncBusy
@@ -20,7 +21,8 @@ from embry0.workflows.issue_to_pr.route_plan import node_config
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter()
+# Skills reach every repository's jobs: not a key with a repository allowlist's to change.
+router = APIRouter(dependencies=[deployment_writes("change the deployment's skills")])
 
 # The source the inline skills are published under.
 _INLINE_SOURCE = "local"

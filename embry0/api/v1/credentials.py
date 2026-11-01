@@ -26,7 +26,15 @@ from fastapi.responses import JSONResponse
 
 from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist
+from embry0.api.repo_allowlist import (
+    deployment_writes,
+    enforce_deployment_allowlist,
+    enforce_owner_allowlist,
+    enforce_repo_allowlist,
+    key_covers,
+    key_covers_owner,
+    restricted_key_name,
+)
 from embry0.api.schemas.credentials import (
     BindingsSet,
     CredentialCreate,
@@ -287,6 +295,9 @@ async def get_bindings(
 @router.put("/credentials/bindings", dependencies=[require_admin])
 async def set_bindings(req: ScopedBindingsSet, request: Request) -> dict[str, Any]:
     st = _state(request)
+    if req.scope_kind in ("host", "global"):
+        # Every repository on the host, or every repository, reads these: the deployment's.
+        await enforce_deployment_allowlist(request, action="bind the deployment's credentials")
     scope_value = normalize_scope_value(req.scope_kind, req.scope_value.strip())
     # The resolver only ever asks for '<forge>:<owner>' and the forge's own host
     # (CredentialResolver.resolve_forge); a binding anywhere else is never read.
@@ -336,7 +347,24 @@ async def set_bindings(req: ScopedBindingsSet, request: Request) -> dict[str, An
     return {"bindings": rows}
 
 
-@router.post("/credentials/import-env", dependencies=[require_admin])
+async def _refuse_beyond_allowlist(request: Request, credential_id: str, *, action: str) -> None:
+    """Refuse a key with an allowlist ``action`` on a credential something beyond its list uses: a binding to a
+    repository or an owner it does not cover, to a host or to every repository, an organization it does not cover
+    or a skill source. A credential nothing uses, or only what the key covers, is its to change."""
+    if restricted_key_name(request) is None:
+        return
+    for kind, value in await _state(request).credentials_repo.holders(credential_id):
+        covered = (kind == "repo" and key_covers(request, value)) or (
+            kind == "owner" and key_covers_owner(request, value.partition(":")[2])
+        )
+        if not covered:
+            await enforce_deployment_allowlist(request, action=action)
+
+
+@router.post(
+    "/credentials/import-env",
+    dependencies=[require_admin, deployment_writes("import the deployment's credentials")],
+)
 async def import_env(req: ImportEnvRequest, request: Request) -> dict[str, list[str]]:
     st = _state(request)
     report = await import_from_env(
@@ -350,7 +378,8 @@ async def import_env(req: ImportEnvRequest, request: Request) -> dict[str, list[
 @router.post(
     "/credentials/xai/device-login",
     response_model=XaiDeviceLoginStarted,
-    dependencies=[require_admin],
+    # The account it signs in is bound for every repository's jobs.
+    dependencies=[require_admin, deployment_writes("sign in the deployment's model account")],
 )
 async def start_xai_device_login(req: XaiDeviceLoginStart, request: Request) -> XaiDeviceLoginStarted:
     """RFC 8628. ``device_code`` stays in ``app.state.xai_device_logins``."""
@@ -490,6 +519,7 @@ async def poll_xai_device_login(login_id: str, request: Request) -> XaiDeviceLog
 
 @router.put("/credentials/{credential_id}", response_model=CredentialOut, dependencies=[require_admin])
 async def update_credential(credential_id: str, req: CredentialUpdate, request: Request) -> CredentialOut:
+    await _refuse_beyond_allowlist(request, credential_id, action="change a credential")
     repo = _state(request).credentials_repo
     try:
         # #440: an author field present in the body is written, null included
@@ -512,6 +542,7 @@ async def update_credential(credential_id: str, req: CredentialUpdate, request: 
 
 @router.post("/credentials/{credential_id}/rotate", response_model=CredentialOut, dependencies=[require_admin])
 async def rotate_credential(credential_id: str, req: CredentialRotate, request: Request) -> CredentialOut:
+    await _refuse_beyond_allowlist(request, credential_id, action="rotate a credential")
     st = _state(request)
     row = await st.credentials_repo.rotate(
         credential_id,
@@ -557,6 +588,7 @@ async def _probe_login(secret: str, provider: str, config: Any) -> str:
 
 @router.post("/credentials/{credential_id}/verify", response_model=CredentialOut, dependencies=[require_admin])
 async def verify_credential(credential_id: str, request: Request) -> CredentialOut:
+    await _refuse_beyond_allowlist(request, credential_id, action="verify a credential")
     st = _state(request)
     row = await st.credentials_repo.get(credential_id)
     if row is None:
@@ -610,6 +642,7 @@ async def verify_credential(credential_id: str, request: Request) -> CredentialO
 
 @router.delete("/credentials/{credential_id}", status_code=204, dependencies=[require_admin])
 async def delete_credential(credential_id: str, request: Request) -> Response:
+    await _refuse_beyond_allowlist(request, credential_id, action="delete a credential")
     try:
         deleted = await _state(request).credentials_repo.delete(credential_id)
     except CredentialBoundError as exc:

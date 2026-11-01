@@ -50,10 +50,10 @@ narrows its query to :func:`covered_slugs` and still keeps only what
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import structlog
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 from embry0.api.deps import Principal, request_actor
 from embry0.audit.helpers import emit_audit
@@ -173,6 +173,33 @@ async def enforce_repo_allowlist(request: Request, repo: str | None, *, action: 
     """
     if refusal_detail(request, repo, action=action) is not None:
         await _refuse(request, repo or "(no repository)", action)
+
+
+#: What a refusal of a deployment-wide write names: the deployment, rather than a repository or an owner.
+DEPLOYMENT = "(the deployment)"
+
+
+async def enforce_deployment_allowlist(request: Request, *, action: str) -> None:
+    """Refuse a key with an allowlist ``action`` on what belongs to the deployment rather than to a repository or an
+    owner: what steers every repository's jobs (the global variables, the agents, the sandbox profiles, the pipeline
+    templates, the hosts, the people, the integrations), as the settings document's deployment layer is refused.
+
+    The 403 is :func:`enforce_repo_allowlist`'s, naming :data:`DEPLOYMENT`, logged and audited as it is. No-op for
+    sessions, the master key, AUTH_DEV_MODE and keys without an allowlist.
+    """
+    if restricted_key_name(request) is not None:
+        await _refuse(request, DEPLOYMENT, action)
+
+
+def deployment_writes(action: str) -> Any:
+    """A dependency for a router or a route that refuses :func:`enforce_deployment_allowlist` ``action`` on every
+    request but a read (GET, HEAD, OPTIONS). It runs after the authentication the router is included with."""
+
+    async def refuse(request: Request) -> None:
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            await enforce_deployment_allowlist(request, action=action)
+
+    return Depends(refuse)
 
 
 async def enforce_owner_allowlist(request: Request, owner: str | None, *, action: str) -> None:

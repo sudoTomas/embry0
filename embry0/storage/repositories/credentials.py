@@ -306,6 +306,19 @@ class CredentialsRepository:
         )
         return [dict(r) for r in rows]
 
+    async def holders(self, credential_id: str) -> list[tuple[str, str]]:
+        """What uses the credential: each binding as ``(scope_kind, scope_value)``, each organization that names it
+        as ``("owner", "<forge>:<owner>")`` and each skill source that names it as ``("skill_source", id)``."""
+        rows = await self._db.fetch(
+            """
+            SELECT scope_kind AS kind, scope_value AS value FROM credential_bindings WHERE credential_id = $1
+            UNION ALL SELECT 'owner', forge || ':' || owner FROM organizations WHERE credential_id = $1
+            UNION ALL SELECT 'skill_source', id FROM skill_sources WHERE credential_id = $1
+            """,
+            credential_id,
+        )
+        return [(str(r["kind"]), str(r["value"])) for r in rows]
+
     async def bindings_for_credential(self, credential_id: str) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
             "SELECT id, scope_kind, scope_value, role, provider, credential_id, pinned, priority, created_by, created_at"

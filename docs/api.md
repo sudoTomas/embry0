@@ -1114,9 +1114,22 @@ refusal above for their actions, reviewing a finished job included.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
 every key minted before the allowlist existed is unrestricted. The
-knowledge maps list and answer only the maps of covered owners. What
-belongs to the deployment rather than to a repository or an owner is the
-key's scope's to decide, not the list's. A restricted key may not mint
+knowledge maps list and answer only the maps of covered owners.
+
+A restricted key changes nothing that belongs to the deployment rather than
+to a repository or an owner, as it writes no settings document's
+deployment layer: these steer every repository's jobs. Its writes to the
+global variables (`PUT /environment/global`), the agent context
+(`PUT /config/context`), the agents, the skills, the sandbox profiles, the
+pipeline templates, the hosts (their links to repositories included), the
+people (`/users/{id}/…`), the integrations, the models and their providers,
+the credential import and model-account sign-in, the progression rebuild,
+and credential bindings for a host or for every repository are refused with
+a 403 `repo_not_allowed` naming `(the deployment)`, logged and audited as
+the refusals above are. It creates credentials, and changes, rotates,
+verifies or deletes one only while nothing beyond its list uses it: a
+binding to another repository or owner, a host, every repository, an
+organization it does not cover or a skill source. A restricted key may not mint
 keys or change any key's allowlist, its own included, since a key it minted
 would carry no restriction. It revokes only keys whose allowlist is within
 its own, itself included, never a key without one; `DELETE /apikeys/{id}`

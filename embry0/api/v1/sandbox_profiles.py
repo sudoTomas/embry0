@@ -5,11 +5,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from embry0.api.deps import get_profiles_repo
+from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.schemas import SandboxProfileRequest
 from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 from embry0.storage.seeds.sandbox_profiles_builtin import BUILTIN_SANDBOX_PROFILES
 
-router = APIRouter()
+# A profile is the sandbox of every repository that names it: not a key with a repository allowlist's to change.
+router = APIRouter(dependencies=[deployment_writes("change the deployment's sandbox profiles")])
 
 
 @router.get("/sandbox-profiles")
