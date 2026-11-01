@@ -378,7 +378,8 @@ BODY_TARGETS_ELSEWHERE: dict[tuple[str, str], str] = {
             ("POST", "/api/v1/maps/{slug}/send"),
         )
     },
-    ("POST", "/api/v1/orgs/probe"): "stores nothing: asks the forge what a credential can do at an owner",
+    ("POST", "/api/v1/orgs/probe"): "stores nothing: asks the forge what a credential can do at an owner; "
+    "test_allowlist_boundary_writes.py, the owner named and the credential named",
     ("POST", "/api/v1/hosts"): "a host of the deployment: refused to a key with an allowlist, "
     "test_deployment_writes_inventory.py",
     ("PATCH", "/api/v1/hosts/{host_id}"): "a host of the deployment: refused to a key with an allowlist, "

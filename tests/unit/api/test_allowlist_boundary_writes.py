@@ -110,6 +110,8 @@ OWNER_ROUTES: dict[str, tuple[str, str, Any]] = {
     "webhook": ("POST", f"/api/v1/orgs/{OWNER[COVERED]}/webhook", None),
     "actions": ("POST", f"/api/v1/orgs/{OWNER[COVERED]}/actions", {"action": "deactivate", "repos": [COVERED]}),
     "need": ("POST", f"/api/v1/orgs/{OWNER[COVERED]}/needs/need-widget/dismiss", None),
+    # With no credential named, the probe acts with the deployment's own token for the owner.
+    "probe": ("POST", "/api/v1/orgs/probe", {"owner": OWNER[COVERED], "forge": "github"}),
 }
 
 
@@ -286,6 +288,34 @@ async def test_a_credential_for_a_whole_owner_takes_a_key_without_an_allowlist(
     assert (stored, owner_bindings) == (values_credential, 0), "the organization keeps the admin's credential"
 
 
+def _missing_like(cid: str) -> str:
+    """A credential id that does not exist, as long as ``cid``."""
+    return "cred-" + "0" * (len(cid) - 5)
+
+
+async def _changes(app: Any, token: str, cid: str) -> list[tuple[int, str]]:
+    """What rotating, renaming, deleting and binding the credential ``cid`` to the covered repository answer, the id
+    written ``<id>``."""
+    out = []
+    for method, path, body in (
+        ("POST", f"/api/v1/credentials/{cid}/rotate", {"secret": "w" * 30}),
+        ("PUT", f"/api/v1/credentials/{cid}", {"label": "renamed-" + cid[-4:]}),
+        ("DELETE", f"/api/v1/credentials/{cid}", None),
+        (
+            "PUT",
+            f"/api/v1/repos/{COVERED}/-/credentials",
+            {"bindings": [{"credential_id": cid, "role": "forge"}]},
+        ),
+    ):
+        r = await call(app, method, path, token, body)
+        out.append((r.status_code, r.text.replace(cid, "<id>")))
+    return out
+
+
+async def _listed(app: Any, token: str) -> list[str]:
+    return sorted(c["label"] for c in (await call(app, "GET", "/api/v1/credentials", token)).json())
+
+
 async def test_another_s_credential_bound_to_nothing_is_not_there_for_the_key(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -294,26 +324,9 @@ async def test_another_s_credential_bound_to_nothing_is_not_there_for_the_key(
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
         theirs = await _credential(app, MASTER, "admin-unbound")
         mine = await _credential(app, keys.limited, "mine-unbound")
-        missing = "cred-" + "0" * (len(theirs) - 5)
-        listed = sorted(c["label"] for c in (await call(app, "GET", "/api/v1/credentials", keys.limited)).json())
-
-        async def answers(cid: str) -> list[tuple[int, str]]:
-            out = []
-            for method, path, body in (
-                ("POST", f"/api/v1/credentials/{cid}/rotate", {"secret": "w" * 30}),
-                ("PUT", f"/api/v1/credentials/{cid}", {"label": "renamed-" + cid[-4:]}),
-                ("DELETE", f"/api/v1/credentials/{cid}", None),
-                (
-                    "PUT",
-                    f"/api/v1/repos/{COVERED}/-/credentials",
-                    {"bindings": [{"credential_id": cid, "role": "forge"}]},
-                ),
-            ):
-                r = await call(app, method, path, keys.limited, body)
-                out.append((r.status_code, r.text.replace(cid, "<id>")))
-            return out
-
-        hidden, absent = await answers(theirs), await answers(missing)
+        missing = _missing_like(theirs)
+        listed = await _listed(app, keys.limited)
+        hidden, absent = await _changes(app, keys.limited, theirs), await _changes(app, keys.limited, missing)
         own_rotated = await call(app, "POST", f"/api/v1/credentials/{mine}/rotate", keys.limited, {"secret": "w" * 30})
         still = await db_with_migrations.fetchval("SELECT label FROM credentials WHERE id = $1", theirs)
     assert listed == ["mine-unbound"], listed
@@ -335,3 +348,308 @@ async def test_a_repository_registered_under_an_old_slug_renamed_into_the_owner_
             app, "PUT", f"/api/v1/standards/{OWNER[COVERED]}/design", keys.limited, {"schema": {}, "values": {}}
         )
     assert answer.status_code == 403 and f"{OWNER[COVERED]}/*" in answer.json()["detail"], answer.text
+
+
+async def test_an_unbound_credential_is_the_key_s_that_created_it_not_another_s_of_the_same_name(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two keys of one name, each covering a repository of its own. An unbound credential one created is that key's
+    alone: the other neither lists, changes nor binds it, and each answer is a missing credential's. Each credential
+    records the id of the key that created it."""
+    from embry0.storage.repositories.api_keys import ApiKeysRepository
+
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
+        made = ApiKeysRepository(db_with_migrations)
+        here_row, here = await made.create(
+            name="dispatch-bot", scope="admin", user_id=None, created_by="t", allowed_repos=[COVERED]
+        )
+        there_row, there = await made.create(
+            name="dispatch-bot", scope="admin", user_id=None, created_by="t", allowed_repos=[UNCOVERED]
+        )
+        theirs = await _credential(app, there, "there-unbound")
+        mine = await _credential(app, here, "here-unbound")
+        listed = await _listed(app, here)
+        hidden, absent = await _changes(app, here, theirs), await _changes(app, here, _missing_like(theirs))
+        own_bound = await call(
+            app,
+            "PUT",
+            f"/api/v1/repos/{COVERED}/-/credentials",
+            here,
+            {"bindings": [{"credential_id": mine, "role": "forge"}]},
+        )
+        their_bound = await call(
+            app,
+            "PUT",
+            f"/api/v1/repos/{UNCOVERED}/-/credentials",
+            there,
+            {"bindings": [{"credential_id": theirs, "role": "forge"}]},
+        )
+    assert listed == ["here-unbound"], f"the key lists only what it created, not its namesake's: {listed}"
+    assert hidden == absent, f"its namesake's credential answers as a missing one: {hidden} against {absent}"
+    assert (own_bound.status_code, their_bound.status_code) == (200, 200), (own_bound.text, their_bound.text)
+    creators = {
+        str(r["id"]): r["created_by_key_id"]
+        for r in await db_with_migrations.fetch(
+            "SELECT id, created_by_key_id FROM credentials WHERE id = ANY($1::text[])", [theirs, mine]
+        )
+    }
+    assert creators == {theirs: there_row.id, mine: here_row.id}, f"each records the key that created it: {creators}"
+
+
+async def test_a_credential_from_before_the_creating_key_was_recorded_is_no_key_s_with_an_allowlist(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row from before the key's id was recorded names its creator only as ``key:<name>``, which a key of the same
+    name could claim. Unbound, it is not a key's with an allowlist, its creator's included; a key without one sees
+    and changes it as before."""
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
+        # As the limited key created it before the column: its name, and no id.
+        old = "cred-000000000042"
+        await db_with_migrations.execute(
+            "INSERT INTO credentials (id, kind, provider, host, label, secret_ciphertext, masked_preview, created_by) "
+            "VALUES ($1, 'forge_token', 'github', 'github.com', 'made-before', $2, '****', 'key:limited')",
+            old,
+            await app.state.secrets_provider.encrypt("x" * 30),
+        )
+        listed = await _listed(app, keys.limited)
+        hidden, absent = await _changes(app, keys.limited, old), await _changes(app, keys.limited, _missing_like(old))
+        open_listed = await _listed(app, keys.open)
+        open_rotated = await call(app, "POST", f"/api/v1/credentials/{old}/rotate", keys.open, {"secret": "v" * 30})
+    assert "made-before" not in listed, f"a key with an allowlist does not list it: {listed}"
+    assert hidden == absent, f"it answers as a missing credential: {hidden} against {absent}"
+    assert "made-before" in open_listed and open_rotated.status_code == 200, (open_listed, open_rotated.text)
+
+
+async def test_a_probe_with_a_credential_not_the_key_s_answers_as_a_missing_one(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``POST /orgs/probe`` decrypts the credential it names and calls the forge with it. A key with an allowlist
+    probes only with its own; another's, unbound or bound beyond its list, answers as an id that does not exist,
+    before its secret is decrypted, and the refusal is audited. A key without a list probes with any."""
+    from embry0.api.v1 import organizations
+    from embry0.services.organizations import AccessProbe
+
+    probed: list[str] = []
+
+    async def probe_access(_request: Any, owner: str, _forge: str, _token: str) -> AccessProbe:
+        probed.append(owner)
+        return AccessProbe("bot", "Organization", True, None, None, 1, None, "ok")
+
+    monkeypatch.setattr(organizations, "probe_access", probe_access)
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
+        unbound = await _credential(app, MASTER, "admin-unbound")
+        # Not a forge token: one the key may see would answer 422 for that, after the existence step.
+        unbound_llm = await _credential(app, MASTER, "admin-llm", kind="llm_api_key", provider="anthropic")
+        beyond = await _credential(app, MASTER, "theirs-forge")
+        bound = await call(
+            app,
+            "PUT",
+            f"/api/v1/repos/{UNCOVERED}/-/credentials",
+            MASTER,
+            {"bindings": [{"credential_id": beyond, "role": "forge"}]},
+        )
+        assert bound.status_code == 200, bound.text
+        own = await _credential(app, keys.limited, "own-forge")
+
+        async def probe(token: str, cid: str) -> tuple[int, bytes, int]:
+            before = await db_with_migrations.fetchval(
+                "SELECT count(*) FROM audit_log WHERE action = 'apikey.repo_refused'"
+            )
+            r = await call(
+                app,
+                "POST",
+                "/api/v1/orgs/probe",
+                token,
+                {"owner": OWNER[COVERED], "forge": "github", "credential_id": cid},
+            )
+            after = await db_with_migrations.fetchval(
+                "SELECT count(*) FROM audit_log WHERE action = 'apikey.repo_refused'"
+            )
+            return r.status_code, r.content, after - before
+
+        answers = {
+            "unbound": await probe(keys.limited, unbound),
+            "unbound llm": await probe(keys.limited, unbound_llm),
+            "beyond": await probe(keys.limited, beyond),
+            "missing": await probe(keys.limited, _missing_like(unbound)),
+        }
+        refused_probes = list(probed)
+        own_answer = await probe(keys.limited, own)
+        open_answer = await probe(keys.open, unbound)
+    missing = (404, b'{"detail":"credential not found"}')
+    for name in ("unbound", "unbound llm", "beyond"):
+        assert answers[name][:2] == missing, f"another's {name} credential answers as a missing one: {answers[name]}"
+        assert answers[name][2] == 1, f"the {name} probe is refused on record: {answers[name][2]} audit rows"
+    assert answers["missing"] == (*missing, 0), answers["missing"]
+    assert refused_probes == [], f"no probe ran with a credential not the key's: {refused_probes}"
+    assert own_answer[0] == 200 and open_answer[0] == 200, (own_answer, open_answer)
+
+
+#: What else is wrong with a binding of a forge token to the covered repository, by role: what a missing credential
+#: answers there.
+WRONG_TOO = {
+    "tailnet": "scope 'repo' is not valid for role 'tailnet'",
+    "deploy": "scope 'repo' is not valid for role 'deploy'",
+    # A forge token is not an llm account: the existence step comes first, so a missing one answers that.
+    "llm": "does not exist",
+}
+
+
+@pytest.mark.parametrize("role", WRONG_TOO)
+async def test_a_hidden_credential_answers_as_a_missing_one_whatever_else_is_wrong_with_the_binding(
+    role: str, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The binding is wrong besides (the role does not bind at a repository, or the credential is of another kind):
+    a missing credential answers with what is wrong at its first step, and so must one the key may not see, byte for
+    byte, rather than with words of its own."""
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
+        theirs = await _credential(app, MASTER, "admin-unbound")
+
+        async def bind(cid: str) -> tuple[int, bytes, dict[str, str]]:
+            r = await call(
+                app,
+                "PUT",
+                f"/api/v1/repos/{COVERED}/-/credentials",
+                keys.limited,
+                {"bindings": [{"credential_id": cid, "role": role}]},
+            )
+            return (
+                r.status_code,
+                r.content.replace(cid.encode(), b"<id>"),
+                {k: v for k, v in r.headers.items() if k != "date"},
+            )
+
+        hidden, absent = await bind(theirs), await bind(_missing_like(theirs))
+    assert hidden == absent, f"{role}: the hidden credential answers {hidden[:2]}, a missing one {absent[:2]}"
+    assert absent[0] == 422 and WRONG_TOO[role].encode() in absent[1], absent
+
+
+async def test_a_probe_with_the_deployment_s_token_answers_only_at_an_owner_the_key_covers(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no credential named, ``POST /orgs/probe`` acts with the deployment's own token for the owner. To a key
+    with an allowlist an owner it does not cover is refused as every change to an owner is, before that token is
+    looked up; an owner it covers is probed. A key without a list probes any owner."""
+    from embry0.api.v1 import organizations
+    from embry0.execution import github_tokens
+    from embry0.services.organizations import AccessProbe
+
+    looked_up: list[str] = []
+    probed: list[str] = []
+
+    def resolve_github_token(owner: str, _default: str) -> str:
+        looked_up.append(owner)
+        return "t" * 20
+
+    async def probe_access(_request: Any, owner: str, _forge: str, _token: str) -> AccessProbe:
+        probed.append(owner)
+        return AccessProbe("bot", "Organization", True, None, None, 1, f"{owner}/repo", "ok")
+
+    monkeypatch.setattr(github_tokens, "resolve_github_token", resolve_github_token)
+    monkeypatch.setattr(organizations, "probe_access", probe_access)
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
+
+        async def probe(token: str, owner: str) -> Any:
+            return await call(app, "POST", "/api/v1/orgs/probe", token, {"owner": owner, "forge": "github"})
+
+        uncovered = await probe(keys.limited, OWNER[UNCOVERED])
+        refused_lookups, refused_probes = list(looked_up), list(probed)
+        covered = await probe(keys.limited, OWNER[COVERED])
+        open_key = await probe(keys.open, OWNER[UNCOVERED])
+    detail = uncovered.json().get("detail", "") if uncovered.status_code == 403 else ""
+    assert detail.startswith("repo_not_allowed") and f"{OWNER[UNCOVERED]}/*" in detail, (
+        f"an owner the key does not cover is refused as an owner: {uncovered.status_code} {uncovered.text}"
+    )
+    assert (refused_lookups, refused_probes) == ([], []), (
+        f"the deployment's token was not looked up or used for it: {refused_lookups} {refused_probes}"
+    )
+    assert covered.status_code == 200 and covered.json()["source"].startswith("env:"), covered.text
+    assert open_key.status_code == 200, open_key.text
+
+
+async def _llm_credential(app: Any, token: str, label: str) -> str:
+    return await _credential(app, token, label, kind="llm_api_key", provider="anthropic")
+
+
+async def test_run_with_a_key_the_repository_does_not_resolve_answers_as_a_missing_one(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job's ``run_with`` names a stored LLM key. To a key with an allowlist, one that is not its own and that no job
+    on a repository its list covers resolves answers byte for byte as an id that does not exist, with no label or
+    status, and the refusal is audited: another repository's key, for the key's repository or for that one, and
+    someone else's unbound key. A key the repository resolves, the global pool's included, stays offered and
+    choosable, as does the key's own; a key without a list is answered as before. A key that passes the check stops at
+    the branch a QA run needs, so nothing starts."""
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
+        theirs = await _llm_credential(app, MASTER, "theirs-llm")
+        unbound = await _llm_credential(app, MASTER, "admin-llm")
+        pool = await _llm_credential(app, MASTER, "pool-llm")
+        mine = await _llm_credential(app, keys.limited, "mine-llm")
+        mine_unbound = await _llm_credential(app, keys.limited, "mine-spare-llm")
+        for token, path, body in (
+            (
+                MASTER,
+                f"/api/v1/repos/{UNCOVERED}/-/credentials",
+                {"bindings": [{"credential_id": theirs, "role": "llm"}]},
+            ),
+            (
+                MASTER,
+                "/api/v1/credentials/bindings",
+                {"scope_kind": "global", "scope_value": "", "bindings": [{"credential_id": pool, "role": "llm"}]},
+            ),
+            (
+                keys.limited,
+                f"/api/v1/repos/{COVERED}/-/credentials",
+                {"bindings": [{"credential_id": mine, "role": "llm"}]},
+            ),
+        ):
+            bound = await call(app, "PUT", path, token, body)
+            assert bound.status_code == 200, bound.text
+
+        async def run_with(token: str, cid: str, repo: str = COVERED) -> tuple[int, bytes, dict[str, str], int]:
+            before = await db_with_migrations.fetchval(
+                "SELECT count(*) FROM audit_log WHERE action = 'apikey.repo_refused'"
+            )
+            r = await call(
+                app,
+                "POST",
+                "/api/v1/jobs",
+                token,
+                {"repo": repo, "pipeline": "qa", "run_with": {"credential_id": cid}},
+            )
+            after = await db_with_migrations.fetchval(
+                "SELECT count(*) FROM audit_log WHERE action = 'apikey.repo_refused'"
+            )
+            headers = {k: v for k, v in r.headers.items() if k != "date"}
+            return r.status_code, r.content.replace(cid.encode(), b"<id>"), headers, after - before
+
+        absent = await run_with(keys.limited, _missing_like(theirs))
+        hidden = {
+            "another repository's key": await run_with(keys.limited, theirs),
+            "another repository's key, on that repository": await run_with(keys.limited, theirs, UNCOVERED),
+            "someone else's unbound key": await run_with(keys.limited, unbound),
+        }
+        chosen = {
+            "the pool's key": await run_with(keys.limited, pool),
+            "its own key": await run_with(keys.limited, mine),
+            "the pool's key, without a list": await run_with(keys.open, pool),
+        }
+        own_unbound = await run_with(keys.limited, mine_unbound)
+        open_theirs = await run_with(keys.open, theirs)
+        offered = await call(app, "GET", f"/api/v1/run-with/keys?repo={COVERED}", keys.limited)
+        jobs = await db_with_migrations.fetchval("SELECT count(*) FROM jobs WHERE repo = $1", COVERED)
+    assert absent[:2] == (422, b'{"detail":"run_with: <id> is not a stored LLM key"}') and absent[3] == 0, absent
+    for name, answer in hidden.items():
+        assert answer[:3] == absent[:3], f"{name} answers {answer[:2]}, a missing one {absent[:2]}"
+        assert answer[3] == 1, f"{name}: the refusal is on record, {answer[3]} audit rows"
+    needs_branch = (400, b'{"detail":"qa pipeline requires \'branch\'"}')
+    for name, answer in chosen.items():
+        assert answer[:2] == needs_branch and answer[3] == 0, f"{name} is choosable: {answer[:2]}"
+    assert [k["label"] for k in offered.json()["keys"]] == ["mine-llm", "pool-llm"], (
+        f"the keys the repository resolves are offered: {offered.text}"
+    )
+    assert own_unbound[0] == 422 and b"'mine-spare-llm' is not bound for acme/web" in own_unbound[1], (
+        f"its own key, bound nowhere, is answered as its own: {own_unbound[:2]}"
+    )
+    assert open_theirs[0] == 422 and b"'theirs-llm' is not bound for acme/web" in open_theirs[1], open_theirs[:2]
+    assert jobs == 1, f"nothing started: {jobs} jobs on {COVERED}, the fixture's own"

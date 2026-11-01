@@ -129,7 +129,7 @@ Every route that starts agent work takes an optional `run_with`: `{"model": "<mo
 - Taken by `POST /jobs` (every pipeline), `POST /issues/{id}/triage`, `POST /cases/{id}/accept`, `POST /proposals/{id}/accept`, `POST /repos/{repo}/-/setup/propose`, `POST /standards/{owner}/{kind}/audit/{repo}`, `POST /orgs/{owner}/context-audit/run`, `POST /orgs/{owner}/actions` (onboard) and `POST /watcher/run`.
 - Refused with 422, before anything starts, when the model is unpriced or disabled, the key is not a usable LLM key, it is not bound to the repository, its owner or the global pool, or it is not of the model's provider.
 - The job's `pipeline_config.run_with` says what was chosen (`model`, `credential_id`, `provider`, `credential_label`); the job page shows it.
-- `GET /api/v1/run-with/keys?repo=` (read): the keys a job on `repo` may use, `{"keys": [{"id", "label", "provider", "scope", "status"}]}`, each once from its most specific binding (`repo`, `owner`, `global`). Without `repo`, the global ones. Never a secret.
+- `GET /api/v1/run-with/keys?repo=` (read): the keys a job on `repo` may use, `{"keys": [{"id", "label", "provider", "scope", "status"}]}`, each once from its most specific binding (`repo`, `owner`, `global`). Without `repo`, the global ones. Never a secret. To a key with a repository allowlist, a `run_with` key that is neither its own nor one of these, for a repository its list covers, answers as a key that does not exist ([Repository allowlist](#repository-allowlist)).
 
 ## Runtime configuration
 
@@ -1142,11 +1142,21 @@ sandbox), and credential bindings for a host or for every repository are
 refused with
 a 403 `repo_not_allowed` naming `(the deployment)`, logged and audited as
 the refusals above are. It creates credentials, and binds, changes,
-rotates, verifies or deletes only its own: one only its repositories use,
-or one it created that nothing uses yet. One something else uses (another
-repository, an owner, a host, every repository, an organization, a skill
-source) is refused as the deployment's; one someone else created that
-nothing uses yet answers as a credential that does not exist. That check
+rotates, verifies, deletes or probes an owner with (`POST /orgs/probe`)
+only its own: one only its repositories use, or one it created that nothing
+uses yet. A credential records the id of the key that created it, so
+another key of the same name never counts as its creator, and one created
+before that id was recorded is no restricted key's. One something else uses
+(another repository, an owner, a host, every repository, an organization, a
+skill source) is refused as the deployment's, and a probe with it answers
+as with a credential that does not exist; one someone else created that
+nothing uses yet answers as a credential that does not exist, a bind of it
+whatever else is wrong with the binding. A probe that names no credential
+acts with the deployment's own token for the owner, and is refused, as a
+change to an owner is, at an owner the key does not cover as a whole. A
+`run_with` naming a key that is neither its own nor one a job on the
+repository resolves (bound to it, its owner or the global pool, for a
+repository its list covers) answers as a key that does not exist. That check
 and the write are one transaction holding the credential's row, so a
 binding made meanwhile waits for it; every bind takes the credentials in
 id order, so two binds never wait on each other. `GET /credentials` lists

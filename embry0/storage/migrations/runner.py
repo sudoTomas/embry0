@@ -38,10 +38,15 @@ logger = structlog.get_logger(__name__)
 # but FIXED: changing it breaks mutual exclusion against replicas still
 # running the old value mid-rollout. Advisory-lock keys share one global,
 # database-wide namespace, so any future advisory lock in embry0 MUST pick a
-# different key and be registered here (grep `pg_advisory` for the roster).
-# The others hash a prefixed text key with hashtextextended:
-# `qa_image_tags:<repo>`, `org_needs:<owner>`, `standards:<owner>:<kind>`,
-# `org_discovery:<owner>` and `progression_rollup`.
+# different key and be registered here (grep `pg_advisory` for the roster;
+# tests/unit/storage/test_advisory_lock_roster.py checks it is complete).
+# The progression packs' writes take a fixed key too, 0x65307061636B, ASCII
+# "e0pack" (progression_packs.WRITE_LOCK_KEY). The others hash a text key
+# with hashtextextended: `qa_image_tags:<repo>`, `org_needs:<owner>`,
+# `standards:<owner>:<kind>`, `org_discovery:<owner>`,
+# `credential_bindings:<scope_kind>:<scope_value>`,
+# `settings_documents:<scope>`, `asks:hand_out`, `local_model_slots` and
+# `progression_rollup`.
 MIGRATIONS_ADVISORY_LOCK_KEY = 0x656D62727930
 
 # Acquisition is usually instantaneous; anything slower means another replica
@@ -3935,6 +3940,22 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE asks ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
         COMMENT ON COLUMN asks.lease_until IS
             '#293: until when the poll that handed the ask out holds it; NULL when not handed out or reported sent since.';
+        """,
+    ),
+    (
+        140,
+        "credentials.created_by_key_id: the API key that created a credential",
+        # A credential nothing uses yet is a key's with a repository allowlist
+        # only when that key created it. created_by holds the actor's name,
+        # key:<name>, and key names are not unique: two keys of one name could
+        # each claim the other's. The key's id is. NULL for a credential a
+        # session, the master key or the importer created, and for every row
+        # before this one: none is back-filled, so no credential made before
+        # it is ever one a key with an allowlist created.
+        """
+        ALTER TABLE credentials ADD COLUMN IF NOT EXISTS created_by_key_id TEXT;
+        COMMENT ON COLUMN credentials.created_by_key_id IS
+            'The id of the API key that created the credential; NULL for a session, the master key, the importer and rows created before this column.';
         """,
     ),
 ]

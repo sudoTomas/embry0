@@ -21,6 +21,7 @@ from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import (
     OWNER_WIDE_CREDENTIAL,
+    answer_as_missing,
     enforce_no_allowlist,
     enforce_owner_allowlist,
     enforce_owner_named,
@@ -29,6 +30,7 @@ from embry0.api.repo_allowlist import (
 )
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import validate_repo_path
+from embry0.api.v1.credentials import key_owns_credential
 from embry0.api.v1.run_with import checked_run_with
 from embry0.api.v1.settings import set_section_keys
 from embry0.audit.helpers import emit_audit
@@ -90,6 +92,10 @@ class PatchBody(BaseModel):
     )
 
 
+#: What a probe naming a credential the key may not see is refused, in the log and the audit row.
+_PROBE_WITH = "probe an owner with a credential"
+
+
 def _repo(request: Request) -> OrganizationsRepository:
     repository = getattr(request.app.state, "organizations_repo", None)
     if repository is None:
@@ -97,8 +103,15 @@ def _repo(request: Request) -> OrganizationsRepository:
     return cast("OrganizationsRepository", repository)
 
 
-async def _token_for(request: Request, owner: str, forge: str, credential_id: str | None) -> tuple[str, str]:
-    """The secret embry0 would act with at ``owner``, and where it came from."""
+async def _token_for(
+    request: Request, owner: str, forge: str, credential_id: str | None, *, own_only: bool = False
+) -> tuple[str, str]:
+    """The secret embry0 would act with at ``owner``, and where it came from.
+
+    ``own_only``: a credential the caller names that is not its key's own (:func:`key_owns_credential`) answers as
+    one that does not exist, at the step that finds it does, before anything else about it is checked or its secret
+    decrypted; the refusal logged and audited. For a route whose caller names any credential by its id.
+    """
     st = request.app.state
     if credential_id:
         credentials_repo = getattr(st, "credentials_repo", None)
@@ -106,8 +119,11 @@ async def _token_for(request: Request, owner: str, forge: str, credential_id: st
         if credentials_repo is None or secrets is None:
             raise HTTPException(status_code=503, detail="credential storage not initialized")
         row = await credentials_repo.get(credential_id)
+        missing = HTTPException(status_code=404, detail="credential not found")
         if row is None:
-            raise HTTPException(status_code=404, detail="credential not found")
+            raise missing
+        if own_only and not await key_owns_credential(request, row):
+            await answer_as_missing(request, f"credential {credential_id}", missing, action=_PROBE_WITH)
         if row["kind"] != "forge_token" or row["provider"] != forge:
             raise HTTPException(status_code=422, detail=f"credential {credential_id} is not a {forge} forge token")
         if row["status"] != "ok":
@@ -209,9 +225,17 @@ async def probe_organization(body: ProbeBody, request: Request) -> dict[str, Any
     The same probe ``POST /orgs`` runs before it registers, so an operator
     sees the answer before committing. A credential that cannot list the
     owner is an answer here (``read`` false), not a refusal.
+
+    A key with a repository allowlist probes only with a credential that is
+    its own, as it binds only those; any other answers as one that does not
+    exist. Without a credential the probe acts with the deployment's own
+    token for the owner, which answers for such a key only at an owner it
+    covers as a whole, as every change to an owner takes.
     """
     owner = _owner_name(body.owner)
-    token, source = await _token_for(request, owner, body.forge, body.credential_id)
+    if not body.credential_id:
+        await enforce_owner_allowlist(request, owner, action="probe an owner with the deployment's token")
+    token, source = await _token_for(request, owner, body.forge, body.credential_id, own_only=True)
     probe = await probe_access(request, owner, body.forge, token)
     return {**probe.to_dict(), "source": source}
 
