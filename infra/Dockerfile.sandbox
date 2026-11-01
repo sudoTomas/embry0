@@ -1,3 +1,8 @@
+# The uv that reads uv.lock: CI's UV_VERSION, by digest, as in
+# Dockerfile.orchestrator. RUN steps below mount its one binary; it is
+# never copied into an image.
+FROM ghcr.io/astral-sh/uv:0.11.17@sha256:03bdc89bb9798628846e60c3a9ad19006c8c3c724ccd2985a33145c039a0577b AS uv
+
 FROM python:3.12.15-slim-bookworm AS base
 
 # Upgrade OS packages first: a pinned base tag can ship a CRITICAL whose fix
@@ -40,19 +45,28 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     # CRITICAL CVE-2026-59873 (fixed in tar >= 7.5.19).
     && npm install -g npm@latest
 
-# Python dependencies for sandbox
+# Python packages for the sandbox runner and the code baked with it, at the
+# versions uv.lock pins (#288): the ones CI tests. pyproject's `sandbox`
+# dependency group names them, so the export of that group alone is them
+# and everything they need, with hashes; pip installs it with every hash
+# checked. Then the drift check, the same full check as the orchestrator's:
+# every installed distribution but pip is in that export at its version,
+# and every pin in it is installed. pyproject and the lock are mounted, not
+# copied; the image does not carry them.
+#
 # claude-agent-sdk is the ONE source of the Claude CLI version (#497): every
-# agent query() runs the CLI bundled in its wheel (claude_agent_sdk/_bundled,
-# 2.1.292 for 0.2.164), and embry0 never passes cli_path. There is no npm
-# @anthropic-ai/claude-code here on purpose; a CLI bump is an SDK bump.
-# langchain-core: embry0.sandbox.runner uses RunnableConfig (type hint only,
-# but imported at module load via cast()).
-RUN pip install --no-cache-dir \
-    "claude-agent-sdk==0.2.164" \
-    "anthropic>=0.69,<1" \
-    "structlog>=26.1,<27" \
-    "httpx>=0.27,<1" \
-    "langchain-core>=0.3,<1"
+# agent query() runs the CLI bundled in its wheel (claude_agent_sdk/_bundled),
+# and embry0 never passes cli_path. There is no npm @anthropic-ai/claude-code
+# here on purpose; a CLI bump is an SDK bump, which is a uv.lock change.
+RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
+    --mount=type=bind,source=pyproject.toml,target=/opt/lock/pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=/opt/lock/uv.lock \
+    --mount=type=bind,source=infra/scripts/check-image-lock.py,target=/opt/check-image-lock.py \
+    /opt/uv/uv export --project /opt/lock --locked --only-group sandbox --no-emit-project --no-cache --quiet \
+        --output-file /tmp/requirements.lock.txt \
+    && pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock.txt \
+    && python /opt/check-image-lock.py /tmp/requirements.lock.txt --allow pip \
+    && rm /tmp/requirements.lock.txt
 
 # Sandbox code (runs inside container).
 # embry0/agents/ + the docker_client/auth_provider/agent_runner subset are
@@ -105,7 +119,18 @@ RUN home=$(mktemp -d) && HOME="$home" python -m embry0.agents.sdk_support && rm 
 # installed per-job by the agent (`poetry install`), not baked here.
 FROM base AS dev-python
 USER root
-RUN pip install --no-cache-dir "poetry==1.8.4"
+# Poetry runs the target repository's checks; it is not an embry0
+# dependency, and its own dependencies are not in uv.lock. It installs into
+# the interpreter the sandbox runner uses, so the `sandbox` group's locked
+# versions go in as pip constraints: Poetry may share them but cannot move
+# one, and a Poetry that needs another version fails the build here.
+RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
+    --mount=type=bind,source=pyproject.toml,target=/opt/lock/pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=/opt/lock/uv.lock \
+    /opt/uv/uv export --project /opt/lock --locked --only-group sandbox --no-emit-project --no-hashes --no-cache --quiet \
+        --output-file /tmp/constraints.lock.txt \
+    && pip install --no-cache-dir -c /tmp/constraints.lock.txt "poetry==1.8.4" \
+    && rm /tmp/constraints.lock.txt
 USER agent
 WORKDIR /workspace
 
@@ -134,6 +159,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends \
         temurin-21-jdk \
     && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir "poetry==1.8.4"
+# Poetry with the `sandbox` group's locked versions as constraints, as in
+# dev-python.
+RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
+    --mount=type=bind,source=pyproject.toml,target=/opt/lock/pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=/opt/lock/uv.lock \
+    /opt/uv/uv export --project /opt/lock --locked --only-group sandbox --no-emit-project --no-hashes --no-cache --quiet \
+        --output-file /tmp/constraints.lock.txt \
+    && pip install --no-cache-dir -c /tmp/constraints.lock.txt "poetry==1.8.4" \
+    && rm /tmp/constraints.lock.txt
 USER agent
 WORKDIR /workspace

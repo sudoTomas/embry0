@@ -4,6 +4,10 @@
 # Vibium + Chrome for Testing — see docs/glossary.md#browser-backend),
 # qa-compose wrapper.
 
+# The uv that reads uv.lock: CI's UV_VERSION, by digest, as in
+# Dockerfile.orchestrator. Mounted into one RUN step, never copied in.
+FROM ghcr.io/astral-sh/uv:0.11.17@sha256:03bdc89bb9798628846e60c3a9ad19006c8c3c724ccd2985a33145c039a0577b AS uv
+
 FROM python:3.12.15-slim-bookworm
 
 # Upgrade OS packages first: a pinned base tag can ship a CRITICAL whose fix
@@ -96,18 +100,21 @@ RUN node /usr/lib/node_modules/@playwright/mcp/node_modules/playwright-core/cli.
 RUN vibium install \
     && chmod -R a+rwX /opt/vibium
 
-# Python deps — same set as the slim image. MinIO uploads from inside the
-# sandbox use presigned URLs via curl/httpx, so no MinIO SDK is needed here.
-# claude-agent-sdk is the ONE source of the Claude CLI version, as in the slim
-# image (#497): agents run the CLI bundled in its wheel; no npm claude-code.
-# langchain-core: embry0.sandbox.runner uses RunnableConfig (type hint only,
-# but imported at module load via cast()).
-RUN pip install --no-cache-dir \
-    "claude-agent-sdk==0.2.164" \
-    "anthropic>=0.69,<1" \
-    "structlog>=26.1,<27" \
-    "httpx>=0.27,<1" \
-    "langchain-core>=0.3,<1"
+# Python packages — the slim image's: pyproject's `sandbox` dependency group
+# at uv.lock's versions, with every hash checked, then the same full drift
+# check (#288). MinIO uploads from inside the sandbox use presigned URLs via
+# curl/httpx, so no MinIO SDK is needed here. claude-agent-sdk is the ONE
+# source of the Claude CLI version, as in the slim image (#497): agents run
+# the CLI bundled in its wheel; no npm claude-code.
+RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
+    --mount=type=bind,source=pyproject.toml,target=/opt/lock/pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=/opt/lock/uv.lock \
+    --mount=type=bind,source=infra/scripts/check-image-lock.py,target=/opt/check-image-lock.py \
+    /opt/uv/uv export --project /opt/lock --locked --only-group sandbox --no-emit-project --no-cache --quiet \
+        --output-file /tmp/requirements.lock.txt \
+    && pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock.txt \
+    && python /opt/check-image-lock.py /tmp/requirements.lock.txt --allow pip \
+    && rm /tmp/requirements.lock.txt
 
 # Sandbox code (same layout as base image).
 # embry0/agents/ + the docker_client/sandbox_manager/auth_provider/agent_runner
