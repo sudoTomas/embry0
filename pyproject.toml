@@ -36,6 +36,7 @@ dependencies = [
     "uvicorn[standard]>=0.54,<0.55",
     "httpx>=0.27,<1",
     "langgraph>=1.2.14,<1.3",
+    "langchain-core>=1,<2",
     "langgraph-checkpoint-postgres>=3.1.2,<3.2",
     "aiohttp>=3.14.4,<4",
     "claude-agent-sdk>=0.2.164,<0.3",
@@ -81,6 +82,11 @@ dev = [
     "mypy>=2.4,<2.5",
     "pytest-aiohttp>=1.0,<2",
     "types-PyYAML>=6,<7",
+    # Imported only inside a sandbox, by the direct xAI executor
+    # (embry0/agents/executor_xai.py), so not a dependency of the
+    # orchestrator. Here so the lock pins it and CI tests and type-checks
+    # the version the sandbox images install (the `sandbox` group below).
+    "anthropic>=0.69,<1",
 ]
 
 [dependency-groups]
@@ -89,6 +95,13 @@ dev = [
 # hashes, with everything they need. Not a default group: `uv sync` and the
 # orchestrator image leave it out (its packages are dependencies anyway).
 proxy = ["aiohttp", "httpx", "structlog"]
+# What infra/Dockerfile.sandbox and Dockerfile.sandbox.qa install (#288):
+# the packages the sandbox runner and the code baked with it import. Each
+# is named here and given its range above, in the dependencies or, for
+# anthropic, the dev extra; `uv export --only-group sandbox` gives the
+# images their locked versions and hashes, with everything they need. Not a
+# default group either.
+sandbox = ["anthropic", "claude-agent-sdk", "httpx", "langchain-core", "structlog"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["embry0"]
