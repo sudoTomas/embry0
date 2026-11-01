@@ -420,6 +420,26 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL
 
+      - name: Trivy — orchestrator libraries
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: embry0-orchestrator:ci
+          format: table
+          # The orchestrator's libraries gate on fixable HIGHs too (#305).
+          # They are the Python packages of uv.lock, so a fix is a lock bump
+          # (pip, from the base image, is the one exception), and the image
+          # has no Node packages any more. A finding that cannot be fixed yet
+          # is accepted in the allowlist, with its reason and the date the
+          # acceptance expires. OS packages stay on the CRITICAL gate above:
+          # their fixes come from Debian whenever it publishes them, and
+          # reach the image through OS_PACKAGES_REFRESHED, not through the
+          # pull request that happens to run next.
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: library
+          severity: HIGH,CRITICAL
+          trivyignores: infra/trivy/orchestrator.trivyignore.yaml
+
       - name: Trivy — sandbox
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

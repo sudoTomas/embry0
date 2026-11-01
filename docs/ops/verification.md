@@ -105,7 +105,10 @@ forks run it, so it must never be given a self-hosted runner. Jobs:
 - `mypy`, `frontend`: the type check and the frontend gates.
 - `build-images`, `build-qa-sandbox-image`: build the images with
   `push: false` and smoke-test the QA image. Nothing leaves the runner.
-- `security`: hadolint, Trivy (fixable CRITICALs) and gitleaks.
+- `security`: hadolint, Trivy and gitleaks. Trivy fails on a fixable
+  CRITICAL in any image, and on a fixable HIGH too in the orchestrator
+  image's libraries, unless `infra/trivy/orchestrator.trivyignore.yaml`
+  accepts it with a reason and an expiry date.
 - `integration`: the integration suite against its own Postgres, with the
   proxy image on the runner's daemon.
 - `denylist`: the name denylist, above.
