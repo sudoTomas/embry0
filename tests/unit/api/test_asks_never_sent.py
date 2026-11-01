@@ -108,13 +108,14 @@ async def _due(client: AsyncClient) -> list[dict[str, Any]]:
     return list((await client.get("/api/v1/asks/due")).json()["asks"])
 
 
-async def test_an_ask_handed_out_but_never_reported_sent_frees_its_slot_then_is_asked_again(
+async def test_an_ask_handed_out_but_never_reported_sent_holds_its_place_until_it_expires_then_is_asked_again(
     app: Any,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The assistant cannot deliver one of ada's asks and never reports it sent. The ask never handed out goes
-    before it for her third place; it expires expire_days after it was handed out, and she is asked about
-    that decision again expire_days after that."""
+    """The assistant cannot deliver one of ada's asks and never reports it sent. While its lease runs it holds her
+    third place; once the lease lapses the same ask is handed out again, not the one behind it (#293). It expires
+    expire_days after it was first handed out, the ask behind it goes out then, and she is asked about the
+    undelivered decision again expire_days after that (#295)."""
     await _put(app, DEPLOYMENT.replace("09-18", "00-24").replace("mon-fri", "mon-sun"))
     await app.state.repo_preferences_repo.upsert("acme/widgets", owners=["ada"])
     for k in range(4):
@@ -127,27 +128,31 @@ async def test_an_ask_handed_out_but_never_reported_sent_frees_its_slot_then_is_
         transport=ASGITransport(app=app), base_url="http://test", headers={"X-Requested-With": "XMLHttpRequest"}
     ) as client:
         first = await _due(client)
-        stuck = first[0]["decision"]["id"]
+        stuck = first[0]
         for ask in first[1:]:
             await client.post(f"/api/v1/asks/{ask['id']}/sent", json={"message_ref": "m"})
-        second = await _due(client)
-        assert len(second) == 1 and second[0]["decision"]["id"] != stuck, (
-            f"ada holds two sent asks; her third place goes to the ask never handed out, not the undelivered one: "
-            f"{[a['decision']['id'] for a in second]}"
+        assert await _due(client) == [], "ada holds two sent asks, and the undelivered one's lease holds her third"
+        later[0] = timedelta(minutes=16)
+        again = await _due(client)
+        assert [a["id"] for a in again] == [stuck["id"]], (
+            f"its lease lapsed: the undelivered ask goes out again, not the one behind it: "
+            f"{[a['decision']['id'] for a in again]}"
         )
-        await client.post(f"/api/v1/asks/{second[0]['id']}/sent", json={"message_ref": "m"})
-        assert await _due(client) == [], "she holds three: the undelivered one waits"
 
         later[0] = timedelta(days=7, minutes=1)
         week_on = await loop.tick()
-        assert week_on["expired"] == 4, f"the three sent asks and the undelivered one expire a week on: {week_on}"
-        assert await _due(client) == [], "the undelivered ask is not handed out again"
-        assert (await loop.tick())["queued"] == 0, "nor asked again about the undelivered decision yet"
+        assert week_on["expired"] == 3, f"the two sent asks and the undelivered one expire a week on: {week_on}"
+        behind = await _due(client)
+        assert len(behind) == 1 and behind[0]["decision"]["id"] != stuck["decision"]["id"], (
+            f"the ask behind it goes out now: {[a['decision']['id'] for a in behind]}"
+        )
+        await client.post(f"/api/v1/asks/{behind[0]['id']}/sent", json={"message_ref": "m"})
+        assert (await loop.tick())["queued"] == 0, "she is not asked again about the undelivered decision yet"
 
         later[0] = timedelta(days=14, minutes=2)
         assert (await loop.tick())["queued"] == 1, "expire_days after it expired, ada is asked about it again"
         live = {a["decision_id"] for a in await app.state.asks_repo.live() if a["state"] == "queued"}
-        assert f"{stuck}" in live, f"the new ask is about the undelivered decision: {live}"
+        assert stuck["decision"]["id"] in live, f"the new ask is about the undelivered decision: {live}"
 
 
 async def _skipped_owners(app: Any, quests_each: int) -> None:  # noqa: F811 - the app, not the fixture
@@ -165,13 +170,16 @@ def _ada_in(due: list[dict[str, Any]]) -> bool:
     return any(a["recipient"]["github_login"] == "ada" for a in due)
 
 
+@pytest.mark.parametrize("minutes", [10, 20], ids=["while-their-leases-run", "once-their-leases-lapsed"])
 async def test_ada_reaches_the_page_while_owners_the_assistant_skips_hold_many_asks(
     app: Any,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
+    minutes: int,
 ) -> None:
     """Twenty owners the assistant skips hold 80 asks, which fill the first page of 50 ahead of ada, whose
-    quest ranks last. The asks they were handed are not reported sent, so the next page puts the asks never
-    handed out first, ada's among them."""
+    quest ranks last. The asks they were handed are not reported sent. While their leases run they count toward
+    their owners' limits (#293); once the leases lapse they are handed out again, and the page puts the asks
+    never handed out first (#295): either way the next page has ada's."""
     await _skipped_owners(app, quests_each=4)
     later = [timedelta(0)]
     loop = _loop_at(app, later)
@@ -182,10 +190,10 @@ async def test_ada_reaches_the_page_while_owners_the_assistant_skips_hold_many_a
     ) as client:
         page = await _due(client)
         assert len(page) == 50 and not _ada_in(page), "the skipped owners' asks fill the first page"
-        later[0] = timedelta(minutes=10)
+        later[0] = timedelta(minutes=minutes)
         page = await _due(client)
         assert _ada_in(page), (
-            f"the next poll hands out the asks never handed out first, ada's among them: "
+            f"the next poll, {minutes} minutes on, hands out ada's ask: "
             f"{[a['recipient']['github_login'] for a in page]}"
         )
 

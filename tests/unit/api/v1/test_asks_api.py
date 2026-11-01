@@ -40,14 +40,20 @@ class FakeAsks:
     async def code(self, decision_id: str) -> str:
         return self.codes[decision_id]
 
-    async def hand_out(self, ask_ids: Any, *, now: datetime) -> dict[str, datetime]:
-        """As the table stamps them: the first time a queued ask is handed out, kept after that."""
-        stamped: dict[str, datetime] = {}
+    async def lease_out(self, decide: Any, *, now: datetime, until: datetime) -> dict[str, datetime | None]:
+        """As the table leases them (#293): what ``decide`` picks from the live asks, each still what was picked
+        and with no lease running, a queued one stamped the first time it is handed out (#295)."""
+        picked = dict(decide(await self.live()))
+        leased: dict[str, datetime | None] = {}
         for r in self.rows:
-            if r["id"] in set(ask_ids) and r["state"] == "queued":
-                r["handed_out_at"] = r.get("handed_out_at") or now
-                stamped[r["id"]] = r["handed_out_at"]
-        return stamped
+            if r["id"] not in picked or (r.get("lease_until") and r["lease_until"] > now):
+                continue
+            if r["state"] == ("sent" if picked[r["id"]] else "queued"):
+                if r["state"] == "queued":
+                    r["handed_out_at"] = r.get("handed_out_at") or now
+                r["lease_until"] = until
+                leased[r["id"]] = r.get("handed_out_at")
+        return leased
 
     async def decision_of(self, code: str) -> str | None:
         return next((d for d, c in self.codes.items() if c == code), None)
@@ -58,13 +64,26 @@ class FakeAsks:
                 r["state"] = state
         return 1
 
-    async def sent(self, ask_id: str, *, message_ref: str, now: datetime) -> dict[str, Any] | None:
+    async def sent(
+        self, ask_id: str, *, message_ref: str, now: datetime, duplicate_within: timedelta
+    ) -> dict[str, Any] | None:
+        """As the table does: a second report within ``duplicate_within`` of the first, with no reminder handed out
+        since, changes nothing but the lease (#293)."""
         for r in self.rows:
             if r["id"] == ask_id and r["state"] in ("queued", "sent"):
-                r["reminders"] += 0 if r["state"] == "queued" else 1
-                r["state"] = "sent" if r["state"] == "queued" else "reminded"
+                first = r.get("sent_at")
+                again = (
+                    r["state"] == "sent"
+                    and not r.get("lease_until")
+                    and isinstance(first, datetime)
+                    and now - first < duplicate_within
+                )
+                if not again:
+                    r["reminders"] += 0 if r["state"] == "queued" else 1
+                    r["state"] = "sent" if r["state"] == "queued" else "reminded"
                 r["message_ref"] = message_ref or r.get("message_ref")
                 r.setdefault("sent_at", now)
+                r["lease_until"] = None
                 return dict(r)
         return None
 
@@ -282,10 +301,13 @@ async def test_the_feed_reads_the_document_on_each_request(app: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_sent_report_moves_the_ask_on_and_a_second_counts_as_the_reminder(app: Any) -> None:
+async def test_a_sent_report_moves_the_ask_on_and_a_later_one_counts_as_the_reminder(app: Any) -> None:
     app.state.asks_repo.rows = [ask("a1", "offer:crack:1", "ada@example.com")]
     first = (await call(app, "POST", "/api/v1/asks/a1/sent", json={"message_ref": "msg-1"})).json()
     assert first["state"] == "sent" and first["message_ref"] == "msg-1"
+    copy = (await call(app, "POST", "/api/v1/asks/a1/sent", json={})).json()
+    assert (copy["state"], copy["reminders"]) == ("sent", 0), "a second poll's copy right after it is not the reminder"
+    app.state.asks_repo.rows[0]["sent_at"] -= timedelta(days=1)
     second = (await call(app, "POST", "/api/v1/asks/a1/sent", json={})).json()
     assert second["state"] == "reminded" and second["reminders"] == 1
     assert (await call(app, "POST", "/api/v1/asks/a1/sent", json={})).status_code == 409

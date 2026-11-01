@@ -28,6 +28,7 @@ pytestmark = pytest.mark.requires_postgres
 NOW = datetime(2026, 10, 27, 15, 0, tzinfo=UTC)
 #: When each expired ask closed: a day ago.
 CLOSED = NOW - timedelta(days=1)
+LEASE = timedelta(minutes=15)
 
 
 async def _row(db: DatabasePool, ask_id: str, decision_id: str, *, sent: bool, handed_out: bool) -> None:
@@ -87,21 +88,30 @@ async def test_who_is_kept_from_being_asked_again_and_for_how_long(db_with_migra
     )
 
 
-async def test_two_polls_that_hand_an_ask_out_at_once_keep_one_time(db_with_migrations: DatabasePool) -> None:
-    """The stamp is set in the statement that hands the ask out, so concurrent polls cannot each set their own."""
+async def test_polls_that_hand_an_ask_out_keep_its_first_time(db_with_migrations: DatabasePool) -> None:
+    """The stamp is set in the statement that hands the ask out: of four polls at once one hands it out (#293), and
+    a poll after its lease lapsed hands it out again and keeps that first time."""
     asks = AsksRepository(db_with_migrations)
     (ask_id,) = await asks.queue([("offer:issue:1", "ada@example.com", NOW)])
     assert ask_id is not None
+
+    def first_send(_live: list[dict[str, Any]]) -> list[tuple[str, bool]]:
+        return [(ask_id, False)]
+
     first, second = NOW, NOW + timedelta(seconds=1)
-    results = await asyncio.gather(*(asks.hand_out([ask_id], now=t) for t in (first, second, first, second)))
-    stamped = {r[ask_id] for r in results}
+    results = await asyncio.gather(
+        *(asks.lease_out(first_send, now=t, until=t + LEASE) for t in (first, second, first, second))
+    )
     stored = (await asks.get(ask_id) or {}).get("handed_out_at")
-    assert len(stamped) == 1 and stamped == {stored}, (
-        f"four polls at once handed the ask out: one time is kept, the same in every answer and stored: "
-        f"{sorted(stamped)} stored {stored}"
+    assert [r for r in results if r] == [{ask_id: stored}], (
+        f"four polls at once: one hands the ask out, at the time stored: {results} stored {stored}"
     )
-    assert (await asks.hand_out([ask_id], now=NOW + timedelta(days=3)))[ask_id] == stored, (
-        "a later poll keeps the first time"
+    later = NOW + timedelta(days=3)
+    assert await asks.lease_out(first_send, now=later, until=later + LEASE) == {ask_id: stored}, (
+        "a later poll hands it out again and keeps the first time"
     )
-    await asks.sent(ask_id, message_ref="m-1", now=NOW + timedelta(days=3))
-    assert await asks.hand_out([ask_id], now=NOW + timedelta(days=4)) == {}, "a sent ask is not stamped again"
+    await asks.sent(ask_id, message_ref="m-1", now=later, duplicate_within=LEASE)
+    later += timedelta(days=1)
+    assert await asks.lease_out(first_send, now=later, until=later + LEASE) == {}, (
+        "a sent ask is not handed out as a first send again"
+    )

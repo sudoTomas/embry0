@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Sequence
-from datetime import datetime
+from collections.abc import Callable, Iterable, Sequence
+from datetime import datetime, timedelta
 from typing import Any
 
 from embry0.services.asks import LIVE, code_candidates
@@ -28,6 +28,19 @@ LEFT JOIN LATERAL (
 
 #: Passes at making the codes a batch lacks: each pass after the first follows another writer taking a code first.
 _CODE_PASSES = 3
+
+#: The advisory lock every hand-out takes (:meth:`AsksRepository.lease_out`), hashed with ``hashtextextended``: one
+#: poll of the feed decides and leases at a time, so no poll counts a person's held asks before another's leases are
+#: written (#293).
+HAND_OUT_LOCK = "asks:hand_out"
+
+_LIVE_SQL = "SELECT * FROM asks WHERE state = ANY($1::text[]) ORDER BY due_at"
+
+#: Every write that changes several asks locks them first with one of these, in id order, then writes: a hand-out
+#: and the ask loop's close() or an answer then never each hold a row the other waits for (#293). An UPDATE alone
+#: locks its rows in the order it scans them, which the plan decides.
+_LOCK_IDS = "SELECT 1 FROM asks WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE"
+_LOCK_DECISION = "SELECT 1 FROM asks WHERE decision_id = $1 AND state = ANY($2::text[]) ORDER BY id FOR UPDATE"
 
 
 class AsksRepository:
@@ -113,8 +126,29 @@ class AsksRepository:
         return {str(r["decision_id"]): str(r["code"]) for r in rows}
 
     async def live(self) -> list[dict[str, Any]]:
-        rows = await self._db.fetch("SELECT * FROM asks WHERE state = ANY($1::text[]) ORDER BY due_at", list(LIVE))
+        rows = await self._db.fetch(_LIVE_SQL, list(LIVE))
         return [dict(r) for r in rows]
+
+    async def lease_out(
+        self,
+        decide: Callable[[list[dict[str, Any]]], Sequence[tuple[str, bool]]],
+        *,
+        now: datetime,
+        until: datetime,
+    ) -> dict[str, datetime | None]:
+        """Hand out the asks ``decide`` picks from the live asks, each leased until ``until`` (#293).
+
+        ``decide`` answers ``(ask id, is_reminder)`` pairs. One transaction
+        holds :data:`HAND_OUT_LOCK`, reads the live asks, lets ``decide`` pick
+        and leases what it picked, so another poll reads the leases this one
+        wrote: two polls never both hand out an ask, nor together more of a
+        person's asks than their limit. The asks leased, each with the time it
+        was first handed out (:meth:`_lease`).
+        """
+        async with self._db.transaction() as conn:
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", HAND_OUT_LOCK)
+            live = [dict(r) for r in await conn.fetch(_LIVE_SQL, list(LIVE))]
+            return await self._lease(conn, decide(live), now=now, until=until)
 
     async def queue(self, asks: Iterable[tuple[str, str, datetime]]) -> list[str]:
         """Queue an ask for each ``(decision id, recipient, due_at)`` its person holds no live ask about,
@@ -150,48 +184,73 @@ class AsksRepository:
         ids = sorted(set(ask_ids))
         if not ids:
             return 0
-        result = await self._db.execute(
-            "UPDATE asks SET state = $2, closed_at = $3 WHERE id = ANY($1::text[]) AND state = ANY($4::text[])",
-            ids,
-            state,
-            now,
-            list(LIVE),
-        )
+        async with self._db.transaction() as conn:
+            await conn.execute(_LOCK_IDS, ids)
+            result = await conn.execute(
+                "UPDATE asks SET state = $2, closed_at = $3 WHERE id = ANY($1::text[]) AND state = ANY($4::text[])",
+                ids,
+                state,
+                now,
+                list(LIVE),
+            )
         try:
             return int(str(result).rsplit(" ", 1)[-1])
         except ValueError:
             return 0
 
-    async def sent(self, ask_id: str, *, message_ref: str, now: datetime) -> dict[str, Any] | None:
-        """A first send moves queued to sent; a reminder's send counts as one."""
+    async def sent(
+        self, ask_id: str, *, message_ref: str, now: datetime, duplicate_within: timedelta
+    ) -> dict[str, Any] | None:
+        """A first send moves queued to sent; a reminder's send counts as one. Either ends the hand-out's lease.
+
+        A second report within ``duplicate_within`` of the first, when no
+        reminder was handed out since, is the same message sent again by a
+        second poll that took the ask once the first poll's lease lapsed
+        (#293): it is not the reminder, which still goes out later. A
+        reminder handed out leases the ask again, and the first send's
+        report ends any lease, so ``lease_until`` set on a sent ask means its
+        reminder was handed out. Each expression reads the row as it was
+        before this statement.
+        """
         row = await self._db.fetchrow(
             """
             UPDATE asks SET
-                state = CASE WHEN state = 'queued' THEN 'sent' ELSE 'reminded' END,
+                state = CASE
+                    WHEN state = 'queued' THEN 'sent'
+                    WHEN lease_until IS NULL AND sent_at > $3::timestamptz - $4::interval THEN state
+                    ELSE 'reminded'
+                END,
                 sent_at = CASE WHEN state = 'queued' THEN $3 ELSE sent_at END,
-                reminders = reminders + CASE WHEN state = 'queued' THEN 0 ELSE 1 END,
-                message_ref = COALESCE(NULLIF($2, ''), message_ref)
+                reminders = reminders + CASE
+                    WHEN state = 'queued' OR (lease_until IS NULL AND sent_at > $3::timestamptz - $4::interval) THEN 0
+                    ELSE 1
+                END,
+                message_ref = COALESCE(NULLIF($2, ''), message_ref),
+                lease_until = NULL
             WHERE id = $1 AND state IN ('queued', 'sent') RETURNING *
             """,
             ask_id,
             message_ref,
             now,
+            duplicate_within,
         )
         return dict(row) if row else None
 
     async def answered(self, decision_id: str, *, answer: str, by: str, now: datetime) -> list[dict[str, Any]]:
         """Every live ask of the decision, answered: what they were, so the chat updates each message."""
-        rows = await self._db.fetch(
-            """
-            UPDATE asks SET state = 'answered', answer = $2, answered_by = $3, answered_at = $4, closed_at = $4
-            WHERE decision_id = $1 AND state = ANY($5::text[]) RETURNING *
-            """,
-            decision_id,
-            answer,
-            by,
-            now,
-            list(LIVE),
-        )
+        async with self._db.transaction() as conn:
+            await conn.execute(_LOCK_DECISION, decision_id, list(LIVE))
+            rows = await conn.fetch(
+                """
+                UPDATE asks SET state = 'answered', answer = $2, answered_by = $3, answered_at = $4, closed_at = $4
+                WHERE decision_id = $1 AND state = ANY($5::text[]) RETURNING *
+                """,
+                decision_id,
+                answer,
+                by,
+                now,
+                list(LIVE),
+            )
         return [dict(r) for r in rows]
 
     async def last_answer(self, decision_id: str) -> dict[str, Any] | None:
@@ -223,21 +282,34 @@ class AsksRepository:
         )
         return {(str(r["decision_id"]), str(r["r"])): None if r["sent"] else r["cooling_since"] for r in rows}
 
-    async def hand_out(self, ask_ids: Iterable[str], *, now: datetime) -> dict[str, datetime]:
-        """Record that the feed handed these queued asks out: ``now`` the first time, kept after that.
-
-        One statement stamps and answers, so two polls that hand the same ask
-        out at once keep the same, earlier time. The ids of the asks still
-        queued, each with the time it was first handed out.
+    @staticmethod
+    async def _lease(
+        conn: Any, picked: Iterable[tuple[str, bool]], *, now: datetime, until: datetime
+    ) -> dict[str, datetime | None]:
+        """Lease the picked asks until ``until``, locked in id order (:data:`_LOCK_IDS`), in one statement, each only
+        while it is still what was picked: a first send still queued, a reminder's ask still sent and not reminded,
+        and no lease running on it. A
+        queued ask's ``handed_out_at`` is ``now`` the first time, kept after that (#295). The ids leased, each with
+        its ``handed_out_at``.
         """
-        ids = sorted(set(ask_ids))
-        if not ids:
+        pairs = dict(picked)
+        if not pairs:
             return {}
-        rows = await self._db.fetch(
-            "UPDATE asks SET handed_out_at = COALESCE(handed_out_at, $2) "
-            "WHERE id = ANY($1::text[]) AND state = 'queued' RETURNING id, handed_out_at",
-            ids,
+        await conn.execute(_LOCK_IDS, sorted(pairs))
+        rows = await conn.fetch(
+            """
+            UPDATE asks SET
+                handed_out_at = CASE WHEN state = 'queued' THEN COALESCE(handed_out_at, $3) ELSE handed_out_at END,
+                lease_until = $4
+            WHERE ((id = ANY($1::text[]) AND state = 'queued')
+                   OR (id = ANY($2::text[]) AND state = 'sent' AND reminders = 0))
+              AND (lease_until IS NULL OR lease_until <= $3)
+            RETURNING id, handed_out_at
+            """,
+            sorted(i for i, reminder in pairs.items() if not reminder),
+            sorted(i for i, reminder in pairs.items() if reminder),
             now,
+            until,
         )
         return {str(r["id"]): r["handed_out_at"] for r in rows}
 

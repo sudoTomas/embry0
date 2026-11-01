@@ -109,7 +109,10 @@ async def asks_due(
     limit: int = Query(default=50, ge=1, le=200),
     peek: bool = Query(
         default=False,
-        description="Return the page without handing it out: its first sends are not stamped, so no expiry starts",
+        description=(
+            "Return the page without handing it out: nothing is leased, and its first sends are not stamped, "
+            "so no expiry starts"
+        ),
     ),
 ) -> dict[str, Any]:
     """The asks to send now: due reminders, then queued ones, worst first, while their person holds
@@ -119,11 +122,17 @@ async def asks_due(
     out, but every unanswered ask counts toward its person's limit. An empty list while
     ``asks.enabled`` is false in the settings document, whatever is stored; ``enabled`` says which.
 
-    A call is the assistant's hand-out: each first send on the page is stamped
-    ``handed_out_at`` and expires ``asks.expire_days`` later unless it is
-    reported sent (#295). Queued asks never handed out come before those handed
-    out and unreported. ``?peek=1`` returns the same page and stamps nothing,
-    for a person or a probe that only looks."""
+    A call is the assistant's hand-out: each ask on the page is leased to it
+    for ``asks.lease_minutes`` (#293). Until it is reported sent or the lease
+    lapses, it counts toward its person's limit and goes to no other poll; once
+    the lease lapses unreported it is handed out again, before any other ask of
+    its person. Each first send is stamped ``handed_out_at`` the first time and
+    expires ``asks.expire_days`` later unless it is reported sent (#295). On the
+    page, queued asks never handed out come before those handed out again. The
+    decision and the leases are taken under one lock, so two polls never hand
+    out the same ask or one past its person's limit. ``?peek=1`` returns the
+    same page and leases and stamps nothing, for a person or a probe that only
+    looks."""
     from embry0.api.v1.decisions import listed_to
 
     section = await ask_policy(request)
@@ -135,16 +144,29 @@ async def asks_due(
     policy = AskPolicy(section, decisions)
     by_id = {str(d["id"]): d for d in decisions}
     order = {str(d["id"]): i for i, d in enumerate(decisions)}
-    # An ask whose decision is not open any more was answered or moved on: the ask loop withdraws it.
-    # The rest count toward their person's limit, the ones in repositories the caller's key does not
-    # cover too; only what the caller may read is handed out.
-    live = [a for a in await asks.live() if str(a["decision_id"]) in by_id]
 
     def shown(ask: Mapping[str, Any]) -> bool:
         return listed_to(request, by_id[str(ask["decision_id"])])
 
+    page: list[tuple[Mapping[str, Any], bool]] = []
+
+    def pick(rows: list[dict[str, Any]]) -> list[tuple[str, bool]]:
+        # An ask whose decision is not open any more was answered or moved on: the ask loop withdraws it.
+        # The rest count toward their person's limit, the ones in repositories the caller's key does not
+        # cover too; only what the caller may read is handed out.
+        live = [a for a in rows if str(a["decision_id"]) in by_id]
+        page[:] = release(live, order, now, policy, shown)[:limit]
+        return [(str(ask["id"]), reminder) for ask, reminder in page]
+
+    if peek:
+        pick(await asks.live())
+    else:
+        lease = timedelta(minutes=section.deployment().lease_minutes)
+        leased = await asks.lease_out(pick, now=now, until=now + lease)
+        # What changed since the decision, a report of its send or a close, is not handed out.
+        page[:] = [(ask, reminder) for ask, reminder in page if str(ask["id"]) in leased]
     out: list[dict[str, Any]] = []
-    for ask, reminder in release(live, order, now, policy, shown):
+    for ask, reminder in page:
         decision = by_id[str(ask["decision_id"])]
         out.append(
             {
@@ -157,12 +179,6 @@ async def asks_due(
                 "dashboard_url": dashboard_link(request, decision),
             }
         )
-        if len(out) >= limit:
-            break
-    # Each first send handed out is stamped, once (#295): if it is never reported sent, it expires expire_days
-    # after this, instead of holding its person's slot for ever. A peek hands nothing out.
-    if not peek:
-        await asks.hand_out([o["id"] for o in out if not o["reminder"]], now=now)
     return {"asks": out, "count": len(out), "enabled": True}
 
 
@@ -189,7 +205,9 @@ def _not_waiting() -> HTTPException:
 @router.post("/asks/{ask_id}/sent")
 async def ask_sent(ask_id: str, body: SentBody, request: Request) -> dict[str, Any]:
     """The assistant sent the ask (or its reminder). An ask about a decision in a repository the caller's key
-    does not cover answers as one that is not waiting to be sent."""
+    does not cover answers as one that is not waiting to be sent. A second report within ``asks.lease_minutes`` of
+    the first, with no reminder handed out since, is the same message sent by a second poll: it does not count as
+    the reminder."""
     asks = _repo(request, "asks_repo")
     if restricted_key_name(request) is not None:
         ask = await asks.get(ask_id)
@@ -197,7 +215,9 @@ async def ask_sent(ask_id: str, body: SentBody, request: Request) -> dict[str, A
             raise _not_waiting()
         repo = (await decision_repos(request, [str(ask["decision_id"])])).get(str(ask["decision_id"]))
         await hide_unless_covered(request, repo, _not_waiting(), action="report an ask sent")
-    row = await asks.sent(ask_id, message_ref=body.message_ref, now=datetime.now(UTC))
+    # A second report within the lease of the first is a second poll's copy, not the reminder (#293).
+    lease = timedelta(minutes=(await ask_policy(request)).deployment().lease_minutes)
+    row = await asks.sent(ask_id, message_ref=body.message_ref, now=datetime.now(UTC), duplicate_within=lease)
     if row is None:
         raise _not_waiting()
     return {k: _iso(v) for k, v in row.items()}

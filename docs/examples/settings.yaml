@@ -51,6 +51,14 @@ asks:
   # expires.
   # max_open_per_person: 3
 
+  # Minutes an ask handed out by `GET /asks/due` stays with the poll that took
+  # it: it counts toward its person's limit and goes to no other poll until it
+  # is reported sent or this lapses. Then it is handed out again, before any
+  # other ask of its person. A second report of a send within this many
+  # minutes of the first, with no reminder handed out between, is a second
+  # poll's copy, not the reminder.
+  # lease_minutes: 15.0
+
   # How often the ask loop runs: it expires asks past `expire_days`, withdraws
   # those whose decision was answered or moved on, and queues one for each
   # person a decision now waits on.

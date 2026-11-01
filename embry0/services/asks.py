@@ -222,42 +222,60 @@ def release(
     only those are released. Every unanswered ask in ``live`` counts toward
     its person's limit whether it is shown or not, so a caller that sees only
     some of a person's asks never releases one past the limit (#272).
+
+    An ask handed out whose lease still runs (:func:`leased`, #293) is waiting
+    for its report: it counts toward its person's limit, and neither it nor
+    its reminder is released again. Once its lease lapses unreported it is
+    released again before any other ask of its person, so a person is handed
+    the same asks again rather than fresh ones past them. On the page, the
+    asks never handed out come first, whatever their ranks (#295).
     """
 
     def counted(a: Mapping[str, Any]) -> tuple[str, str]:
         return str(a["recipient"]).lower(), policy.organization(str(a["decision_id"]))
 
+    def rank(a: Mapping[str, Any]) -> tuple[int, datetime]:
+        return order.get(str(a["decision_id"]), 1_000_000), a.get("created_at") or now
+
     held: dict[tuple[str, str], int] = {}
     for a in live:
-        if a.get("state") in ("sent", "reminded"):
+        if a.get("state") in ("sent", "reminded") or (a.get("state") == "queued" and leased(a, now)):
             held[counted(a)] = held.get(counted(a), 0) + 1
-    handed = [a for a in live if shown is None or shown(a)]
+    handed = [a for a in live if (shown is None or shown(a)) and not leased(a, now)]
     out: list[tuple[Mapping[str, Any], bool]] = []
     for a in handed:
         s = policy.settings(str(a["decision_id"]))
         if reminder_due(a, now, s) and working(now, s):
             out.append((a, True))
     queued = [a for a in handed if a.get("state") == "queued" and a["due_at"] <= now]
-    for a in sorted(
-        queued,
-        key=lambda a: (_handed_out_before(a), order.get(str(a["decision_id"]), 1_000_000), a.get("created_at") or now),
-    ):
+    picked: list[Mapping[str, Any]] = []
+    # Each person's places: the asks handed out before and unreported, whose leases lapsed, first.
+    for a in sorted(queued, key=lambda a: (not _handed_out_before(a), *rank(a))):
         # Outside working hours a queued ask waits, its slot freed or not, for the next working time (#276).
         s = policy.settings(str(a["decision_id"]))
         key = counted(a)
         if working(now, s) and held.get(key, 0) < s.max_open_per_person:
-            out.append((a, False))
+            picked.append(a)
             held[key] = held.get(key, 0) + 1
+    out.extend((a, False) for a in sorted(picked, key=lambda a: (_handed_out_before(a), *rank(a))))
     return out
+
+
+def leased(ask: Mapping[str, Any], now: datetime) -> bool:
+    """Whether the feed handed ``ask`` out and its lease still runs: it waits for the assistant that took it to
+    report it sent (#293)."""
+    until = ask.get("lease_until")
+    return isinstance(until, datetime) and until > now
 
 
 def _handed_out_before(ask: Mapping[str, Any]) -> bool:
     """Whether the feed handed ``ask`` out before and no one reported it sent.
 
-    Such an ask goes after every queued ask never handed out, whatever their
-    ranks (#295): the asks of people the assistant skips and never reports
-    would otherwise fill every page, poll after poll, ahead of the fresh ones
-    of people it does reach.
+    On the page such an ask goes after every queued ask never handed out,
+    whatever their ranks (#295): the asks of people the assistant skips and
+    never reports would otherwise fill every page, poll after poll, ahead of
+    the fresh ones of people it does reach. Among its own person's asks it
+    goes first, once its lease lapsed (#293).
     """
     return ask.get("handed_out_at") is not None
 

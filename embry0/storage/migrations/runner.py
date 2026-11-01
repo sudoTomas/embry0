@@ -3922,6 +3922,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             '#166: a hash of the system prompt the brief was written with; NULL is the prompt sent before #166.';
         """,
     ),
+    (
+        139,
+        "asks.lease_until: until when an ask GET /asks/due handed out is held for the poll that took it (#293)",
+        # A poll leases each ask it hands out for asks.lease_minutes: until it
+        # is reported sent or the lease lapses, the ask counts toward its
+        # person's limit and goes to no other poll. handed_out_at stays the
+        # first hand-out, which the expiry of an ask never reported sent
+        # counts from (#295); a lease starts at each one. NULL is an ask
+        # never handed out, or reported sent since.
+        """
+        ALTER TABLE asks ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+        COMMENT ON COLUMN asks.lease_until IS
+            '#293: until when the poll that handed the ask out holds it; NULL when not handed out or reported sent since.';
+        """,
+    ),
 ]
 
 

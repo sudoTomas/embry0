@@ -121,20 +121,53 @@ async def test_an_ask_held_from_friday_evening_to_the_next_monday_is_still_asked
     assert (await loop.tick())["expired"] == 1, "once sent, it expires a week after it was sent"
 
 
-def test_a_queued_ask_never_handed_out_goes_before_one_handed_out_and_unreported() -> None:
-    """Whatever their ranks: the one handed out before had its turn (#295)."""
+def test_a_person_s_lapsed_ask_goes_again_before_their_fresh_one_and_fresh_asks_lead_the_page() -> None:
+    """ada may hold one. Her ask handed out and never reported holds her place while its lease runs, and once it
+    lapses goes again, not her fresh ask past it (#293). On the page, asks never handed out still come first,
+    whatever their ranks (#295)."""
     section = asks_read({"enabled": True, "hours": "00-24", "weekdays": "mon-sun", "max_open_per_person": 1})
-    decisions = [{"id": "worse", "repo": "acme/web"}, {"id": "better", "repo": "acme/web"}]
+    decisions = [{"id": d, "repo": "acme/web"} for d in ("worse", "better", "theirs")]
     policy = AskPolicy(section, decisions)
+    order = {"worse": 0, "better": 1, "theirs": 2}
     ask = {"recipient": "ada@example.com", "state": "queued", "due_at": QUEUED, "created_at": QUEUED, "reminders": 0}
-    handed = {**ask, "id": "a-worse", "decision_id": "worse", "handed_out_at": QUEUED}
+    lapsed = {**ask, "id": "a-worse", "decision_id": "worse", "handed_out_at": QUEUED, "lease_until": QUEUED}
     fresh = {**ask, "id": "a-better", "decision_id": "better"}
-    released = [a["id"] for a, _ in release([handed, fresh], {"worse": 0, "better": 1}, MONDAY_09, policy)]
-    assert released == ["a-better"], (
-        f"ada may hold one: the ask never handed out goes, though the other's decision ranks first: {released}"
+
+    def released(*live: dict[str, Any]) -> list[str]:
+        return [a["id"] for a, _ in release(list(live), order, MONDAY_09, policy)]
+
+    assert released(lapsed, fresh) == ["a-worse"], (
+        f"its lease lapsed: ada's undelivered ask goes again, not her fresh one: {released(lapsed, fresh)}"
     )
-    assert [a["id"] for a, _ in release([handed], {"worse": 0}, MONDAY_09, policy)] == ["a-worse"], (
-        "alone, the one handed out before goes again"
+    running = {**lapsed, "lease_until": MONDAY_09 + timedelta(minutes=1)}
+    assert released(running, fresh) == [], "while its lease runs it holds her place"
+    bo = {**ask, "recipient": "bo@example.com", "id": "b-theirs", "decision_id": "theirs"}
+    assert released(lapsed, fresh, bo) == ["b-theirs", "a-worse"], (
+        f"on the page bo's ask never handed out goes first, though ada's ranks first: {released(lapsed, fresh, bo)}"
+    )
+
+
+def test_an_ask_whose_lease_runs_is_not_released_again_and_frees_no_place() -> None:
+    """ada may hold two. One ask leased to a poll counts toward them and is not released again, so the next poll
+    gets her fresh ask for the other place, not the leased one. A reminder leased to a poll is not released again
+    while its lease runs either."""
+    section = asks_read(
+        {"enabled": True, "hours": "00-24", "weekdays": "mon-sun", "max_open_per_person": 2, "remind_hours": 1}
+    )
+    decisions = [{"id": d, "repo": "acme/web"} for d in ("worse", "better", "sent")]
+    policy = AskPolicy(section, decisions)
+    order = {"worse": 0, "better": 1, "sent": 2}
+    runs = MONDAY_09 + timedelta(minutes=1)
+    ask = {"recipient": "ada@example.com", "state": "queued", "due_at": QUEUED, "created_at": QUEUED, "reminders": 0}
+    leased = {**ask, "id": "a-worse", "decision_id": "worse", "handed_out_at": QUEUED, "lease_until": runs}
+    fresh = {**ask, "id": "a-better", "decision_id": "better"}
+    released = [a["id"] for a, _ in release([leased, fresh], order, MONDAY_09, policy)]
+    assert released == ["a-better"], f"the leased ask holds one place; the fresh ask takes the other: {released}"
+
+    reminder = {**ask, "id": "a-sent", "decision_id": "sent", "state": "sent", "sent_at": QUEUED}
+    assert release([reminder], order, MONDAY_09, policy) == [(reminder, True)], "its reminder is due"
+    assert release([{**reminder, "lease_until": runs}], order, MONDAY_09, policy) == [], (
+        "while the reminder's lease runs it is not released again"
     )
 
 
