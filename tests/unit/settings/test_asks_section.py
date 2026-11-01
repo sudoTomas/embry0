@@ -120,6 +120,8 @@ def test_every_bad_value_is_named_at_once_and_none_is_repeated_back() -> None:
         ("max_open_per_person", 2.5),
         ("tick_seconds", 10),
         ("tick_seconds", 1e12),
+        ("lease_minutes", 0),
+        ("lease_minutes", 1441),
     ],
 )
 def test_a_number_or_switch_out_of_bounds_is_refused_naming_the_key(key: str, value: Any) -> None:
@@ -155,7 +157,10 @@ def test_what_an_organization_may_override_and_where_each_key_came_from() -> Non
         "remind_hours",
         "expire_days",
         "max_open_per_person",
-    }, "an organization may set when and how often its people are asked; whether asks run, and the tick, stay global"
+    }, (
+        "an organization may set when and how often its people are asked; whether asks run, the tick and the "
+        "hand-out's lease stay global"
+    )
     assert section.repo_keys == frozenset()
     assert {key: env_name(imported.attr) for key, imported in section.imports().items()} == {
         "enabled": "ASKS_ENABLED",

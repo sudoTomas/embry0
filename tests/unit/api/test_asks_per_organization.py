@@ -299,7 +299,7 @@ async def test_the_feed_reads_each_organization_s_layer_from_the_real_store(feed
         asks: AsksRepository = feed.state.asks_repo
         now = datetime.now(UTC)
         [held] = await asks.queue([("acme-1", "ada@example.com", now - timedelta(hours=1))])
-        assert await asks.sent(held, message_ref="m-1", now=now) is not None
+        assert await asks.sent(held, message_ref="m-1", now=now, duplicate_within=timedelta(minutes=15)) is not None
         await asks.queue((d, "ada@example.com", now - timedelta(minutes=1)) for d in ("acme-2", "globex-1"))
         due = (await client.get("/api/v1/asks/due")).json()["asks"]
     assert sorted(a["decision"]["id"] for a in due) == ["acme-2", "globex-1"], (

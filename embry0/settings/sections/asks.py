@@ -136,6 +136,17 @@ class AsksSettings(SectionModel):
             "worst first, is released as one is answered or expires."
         ),
     )
+    lease_minutes: float = Field(
+        default=15.0,
+        gt=0,
+        le=1440,
+        description=(
+            "Minutes an ask handed out by `GET /asks/due` stays with the poll that took it: it counts toward "
+            "its person's limit and goes to no other poll until it is reported sent or this lapses. Then it is "
+            "handed out again, before any other ask of its person. A second report of a send within this many "
+            "minutes of the first, with no reminder handed out between, is a second poll's copy, not the reminder."
+        ),
+    )
     tick_seconds: float = Field(
         default=120.0,
         ge=30,

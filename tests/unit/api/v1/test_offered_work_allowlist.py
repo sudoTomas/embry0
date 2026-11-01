@@ -62,7 +62,9 @@ LISTS: dict[str, tuple[str, dict[str, Any], Callable[[Any], set[str]]]] = {
         lambda body: _repos([d for d in body["decisions"] if d["stage"] == "offered"]),
     ),
     "proposals": ("/api/v1/proposals", {"include_held": "true"}, lambda body: _repos(body["proposals"])),
-    "asks-due": ("/api/v1/asks/due", {}, lambda body: _repos([a["decision"] for a in body["asks"]])),
+    # A peek: a plain call leases what it hands the limited key, so the open key's call after it would not get it
+    # (#293). The plain call is test_a_plain_call_hands_a_key_only_its_repositories_asks below.
+    "asks-due": ("/api/v1/asks/due", {"peek": "1"}, lambda body: _repos([a["decision"] for a in body["asks"]])),
     "world-quests": ("/api/v1/world", {}, lambda body: _repos(body["quests"])),
     "leads": ("/api/v1/leads", {}, lambda body: _repos(body["leads"])),
     "handoffs-all": ("/api/v1/handoffs", {"for": "all"}, lambda body: _repos(body["handoffs"])),
@@ -112,6 +114,24 @@ async def test_a_list_of_offered_work_shows_a_key_only_the_repositories_its_allo
     assert open_.status_code == 200, open_.text
     assert repos_of(open_.json()) == {COVERED, UNCOVERED}, (
         f"a key without an allowlist still reads every repository's offered work: {sorted(repos_of(open_.json()))}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_plain_call_hands_a_key_only_its_repositories_asks(app: Any) -> None:
+    """The hand-out itself: the limited key's call hands out the covered repository's ask and leases it; the open
+    key's call after it hands out the uncovered one's, and not the ask leased to the limited key's call."""
+    limited = await get(app, "/api/v1/asks/due", LIMITED)
+    assert limited.status_code == 200, limited.text
+    assert _repos([a["decision"] for a in limited.json()["asks"]]) == {COVERED}, limited.text
+    assert UNCOVERED not in limited.text and RECIPIENTS[UNCOVERED] not in limited.text, (
+        f"the hand-out names {UNCOVERED}, and the person asked about it, nowhere in its answer to the limited key"
+    )
+    open_ = await get(app, "/api/v1/asks/due", OPEN)
+    assert open_.status_code == 200, open_.text
+    assert _repos([a["decision"] for a in open_.json()["asks"]]) == {UNCOVERED}, (
+        f"the open key's call gets the uncovered repository's ask, not the one leased to the limited key's call: "
+        f"{open_.text}"
     )
 
 
