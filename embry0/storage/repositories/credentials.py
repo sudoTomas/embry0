@@ -68,7 +68,7 @@ KEEP = _Keep()
 
 _PUBLIC_COLUMNS = (
     "id, kind, provider, host, label, git_author_name, git_author_email, public_material, "
-    "masked_preview, verified_login, status, status_reason, quarantined_until, created_by, "
+    "masked_preview, verified_login, status, status_reason, quarantined_until, created_by, created_by_key_id, "
     "created_at, updated_at, rotated_at, last_used_at, metadata"
 )
 _ALL_COLUMNS = _PUBLIC_COLUMNS + ", secret_ciphertext"
@@ -111,9 +111,10 @@ def normalize_scope_value(scope_kind: str, scope_value: str) -> str:
 
 @dataclass(frozen=True)
 class Held:
-    """A credential as a bind or a change takes it: who created it, and what uses it."""
+    """A credential as a bind or a change takes it: the API key that created it (None for a session, the master key,
+    the importer, and every credential created before the column), and what uses it."""
 
-    created_by: str
+    created_by_key_id: str | None
     holders: list[tuple[str, str]]
 
 
@@ -133,12 +134,16 @@ class CredentialsRepository:
         secret_ciphertext: str,
         masked_preview: str,
         created_by: str,
+        created_by_key_id: str | None = None,
         git_author_name: str | None = None,
         git_author_email: str | None = None,
         public_material: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """``metadata`` holds non-secret settings that go with the secret (a tailnet key's tailnet)."""
+        """``metadata`` holds non-secret settings that go with the secret (a tailnet key's tailnet).
+
+        ``created_by`` is the actor's name, for people to read; ``created_by_key_id`` the id of the API key that
+        created it, when one did, which is what decides whether it is that key's (key names are not unique)."""
         if kind not in KINDS:
             raise ValueError(f"unknown credential kind {kind!r}")
         if provider not in PROVIDERS:
@@ -147,8 +152,9 @@ class CredentialsRepository:
         row = await self._db.fetchrow(
             f"""
             INSERT INTO credentials (id, kind, provider, host, label, git_author_name, git_author_email,
-                                     secret_ciphertext, public_material, masked_preview, created_by, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+                                     secret_ciphertext, public_material, masked_preview, created_by, metadata,
+                                     created_by_key_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
             RETURNING {_PUBLIC_COLUMNS}
             """,
             cid,
@@ -163,6 +169,7 @@ class CredentialsRepository:
             masked_preview,
             created_by,
             dict(metadata or {}),
+            created_by_key_id,
         )
         assert row is not None, "INSERT ... RETURNING must return a row"
         logger.info("credential_created", credential_id=cid, provider=provider, label=label, kind=kind)
@@ -351,7 +358,7 @@ class CredentialsRepository:
 
     @asynccontextmanager
     async def held(self, credential_ids: Iterable[str]) -> AsyncIterator[tuple[Any, dict[str, Held]]]:
-        """A transaction holding the credentials' rows, each with who created it and what used it when taken.
+        """A transaction holding the credentials' rows, each with the key that created it and what used it when taken.
 
         ``FOR UPDATE`` conflicts with the key share a new binding or organization takes on the credential it names,
         so nothing comes to use it until the transaction ends: a check of what uses a credential and the write it
@@ -363,12 +370,12 @@ class CredentialsRepository:
             yield conn, await self._take(conn, ids, "FOR UPDATE")
 
     async def _take(self, conn: Any, ids: list[str], lock: str) -> dict[str, Held]:
-        """Lock the credentials ``ids`` in id order (``lock``), and say who created each and what uses it."""
+        """Lock the credentials ``ids`` in id order (``lock``), and say which key created each and what uses it."""
         rows = await conn.fetch(
-            f"SELECT id, created_by FROM credentials WHERE id = ANY($1::text[]) ORDER BY id {lock}", ids
+            f"SELECT id, created_by_key_id FROM credentials WHERE id = ANY($1::text[]) ORDER BY id {lock}", ids
         )
         holders = await self.all_holders(ids, conn=conn)
-        return {str(r["id"]): Held(str(r["created_by"] or ""), holders.get(str(r["id"]), [])) for r in rows}
+        return {str(r["id"]): Held(r["created_by_key_id"], holders.get(str(r["id"]), [])) for r in rows}
 
     async def bindings_for_credential(self, credential_id: str) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
@@ -387,14 +394,21 @@ class CredentialsRepository:
         created_by: str,
         repo_forge: str | None = None,
         check: Callable[[dict[str, Held]], Awaitable[None]] | None = None,
+        hidden: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
     ) -> list[dict[str, Any]]:
         """Replace every binding of one scope. Validates everything first, writes nothing on error.
 
-        The credentials bound are locked first, in id order, as :meth:`held` locks them: with a key share, which a
-        new binding takes anyway, or with ``check`` given ``FOR UPDATE``, and ``check`` is awaited with who created
-        each and what uses it before anything is written; it refuses by raising, and nothing is written. Every bind
-        taking them in one order, a restricted and an unrestricted one never wait on each other; a deadlock all the
-        same, from a path that does not, is retried once.
+        ``hidden`` is awaited with each bound credential's row at the step that finds it exists: True answers it as a
+        credential that does not exist, at that step, so whatever else is wrong with the bindings answers as it would
+        for a missing one.
+
+        Two replaces of one scope run one after the other: each takes the scope's advisory lock before anything else,
+        so neither inserts a binding the other's delete did not see. The credentials bound are locked next, in id
+        order, as :meth:`held` locks them: with a key share, which a new binding takes anyway, or with ``check``
+        given ``FOR UPDATE``, and ``check`` is awaited with the key that created each and what uses it before
+        anything is written; it refuses by raising, and nothing is written. Every bind taking them in one order, a
+        restricted and an unrestricted one never wait on each other; a deadlock all the same, from a path that does
+        not, is retried once.
         """
         if scope_kind not in SCOPE_KINDS:
             raise BindingValidationError(f"unknown scope kind {scope_kind!r}")
@@ -426,7 +440,7 @@ class CredentialsRepository:
             if scope_kind not in SCOPES_FOR_ROLE[role]:
                 raise BindingValidationError(f"scope '{scope_kind}' is not valid for role '{role}'")
             cred = await self.get(str(cid))
-            if cred is None:
+            if cred is None or (hidden is not None and await hidden(cred)):
                 raise BindingValidationError(f"credential {cid!r} does not exist")
             if cred["kind"] not in KIND_FOR_ROLE[role]:
                 raise BindingValidationError(
@@ -474,9 +488,17 @@ class CredentialsRepository:
         created_by: str,
         check: Callable[[dict[str, Held]], Awaitable[None]] | None,
     ) -> None:
-        """One transaction of :meth:`replace_bindings`: the credentials taken in id order, checked, then the scope's
-        bindings replaced."""
+        """One transaction of :meth:`replace_bindings`: the scope's advisory lock, the credentials taken in id order,
+        checked, then the scope's bindings replaced.
+
+        The scope's lock comes first, before any row: a replace holds no row while it waits for it, so it adds no
+        cycle to the credentials' id order. Without it two replaces of one scope each delete the bindings they see and
+        insert their own, and the second insert conflicts with the first's (``credential_bindings_single``)."""
         async with self._db.transaction() as conn:
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                f"credential_bindings:{scope_kind}:{scope_value}",
+            )
             taken = await self._take(conn, ids, "FOR UPDATE" if check is not None else "FOR KEY SHARE")
             if check is not None:
                 await check(taken)

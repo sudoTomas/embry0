@@ -10,7 +10,7 @@ import json
 import math
 import re
 import secrets
-from collections.abc import AsyncIterator, Iterable, Mapping
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, NoReturn
@@ -205,6 +205,14 @@ async def _bindings_view(request: Request, bindings: list[dict[str, Any]]) -> li
     return [with_actors(b, shown, "created_by") for b in bindings]
 
 
+def _creating_key(request: Request) -> str | None:
+    """The id of the API key making the request, which a credential it creates records: what makes the credential
+    that key's (:func:`_standing`), as its name, which another key may share, cannot. None for a session or the
+    master key."""
+    principal = getattr(request.state, "principal", None)
+    return principal.key_id if principal is not None and principal.kind == "key" else None
+
+
 # Literal paths first: /credentials/resolve, /credentials/bindings,
 # /credentials/import-env and /credentials/xai/device-login must never be
 # captured by /credentials/{credential_id}.
@@ -222,7 +230,7 @@ async def list_credentials(request: Request) -> list[CredentialOut]:
     return [
         _out(r)
         for r in rows
-        if await _standing(request, Held(str(r.get("created_by") or ""), holders.get(str(r["id"]), []))) == OWN
+        if await _standing(request, Held(r.get("created_by_key_id"), holders.get(str(r["id"]), []))) == OWN
     ]
 
 
@@ -242,6 +250,7 @@ async def create_credential(req: CredentialCreate, request: Request) -> Credenti
             secret_ciphertext=await st.secrets_provider.encrypt(req.secret),
             masked_preview=masked_preview(req.secret),
             created_by=request_actor(request),
+            created_by_key_id=_creating_key(request),
             git_author_name=req.git_author_name,
             git_author_email=req.git_author_email,
             metadata=req.metadata,
@@ -351,7 +360,7 @@ async def set_bindings(req: ScopedBindingsSet, request: Request) -> dict[str, An
             scope_value,
             [b.model_dump() for b in req.bindings],
             created_by=request_actor(request),
-            **await _bind_check(request, [b.credential_id for b in req.bindings]),
+            **await _bind_check(request),
         )
     except BindingValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -377,15 +386,28 @@ async def _standing(request: Request, held: Held) -> str:
     """How the credential ``held`` stands to the caller's key: :data:`OWN` when only repositories its list covers use
     it, or nothing does and the key created it; :data:`BEYOND` when anything else uses it, an owner or an
     organization included, since those reach repositories registered later; :data:`HIDDEN` when nothing uses it and
-    someone else created it. Always :data:`OWN` for a caller without an allowlist."""
+    something else created it: another key, a session, the master key, the importer, or anything before the key's id
+    was recorded. The key that created it is the one whose id it records, never one of the same name. Always
+    :data:`OWN` for a caller without an allowlist."""
     if restricted_key_name(request) is None:
         return OWN
     if not held.holders:
-        return OWN if held.created_by == request_actor(request) else HIDDEN
+        created_it = held.created_by_key_id is not None and held.created_by_key_id == request.state.principal.key_id
+        return OWN if created_it else HIDDEN
     return OWN if all(kind == "repo" and key_covers(request, value) for kind, value in held.holders) else BEYOND
 
 
 _MISSING = HTTPException(status_code=404, detail="credential not found")
+
+
+async def key_owns_credential(request: Request, row: Mapping[str, Any]) -> bool:
+    """Whether the credential ``row`` is the caller's key's own (:func:`_standing`), read without holding its row: for
+    a route that only uses a credential, never changes it, such as a probe of what it can do. Always for a caller
+    without an allowlist."""
+    if restricted_key_name(request) is None:
+        return True
+    held = Held(row.get("created_by_key_id"), await _state(request).credentials_repo.holders(str(row["id"])))
+    return await _standing(request, held) == OWN
 
 
 async def _refuse_unless_own(request: Request, standing: str, credential_id: str, *, action: str) -> None:
@@ -405,7 +427,7 @@ async def _refuse_beyond_allowlist(request: Request, credential_id: str, *, acti
     repo = _state(request).credentials_repo
     row = await repo.get(credential_id)
     if row is not None:
-        held = Held(str(row.get("created_by") or ""), await repo.holders(credential_id))
+        held = Held(row.get("created_by_key_id"), await repo.holders(credential_id))
         await _refuse_unless_own(request, await _standing(request, held), credential_id, action=action)
 
 
@@ -440,21 +462,21 @@ async def _not_there(request: Request, credential_id: str) -> NoReturn:
     raise BindingValidationError(f"credential {credential_id!r} does not exist")
 
 
-async def _bind_check(request: Request, credential_ids: Iterable[str]) -> dict[str, Any]:
-    """For a key with an allowlist, a first look at the credentials it binds, before they are checked as bindings
-    (so a credential it may not see answers as a missing one, whatever else is wrong with it), and the ``check``
-    :meth:`replace_bindings` awaits with their rows held: a credential not the key's own is not its to bind, even
-    to its own repository. Nothing to pass for a caller without an allowlist."""
+async def _bind_check(request: Request) -> dict[str, Any]:
+    """For a key with an allowlist, what :meth:`replace_bindings` awaits: ``hidden``, at the step that finds each
+    bound credential exists, so one the key may not see answers as a missing one whatever else is wrong with the
+    bindings, the refusal logged and audited; and ``check``, with their rows held: a credential not the key's own is
+    not its to bind, even to its own repository. Nothing to pass for a caller without an allowlist."""
     if restricted_key_name(request) is None:
         return {}
     repo = _state(request).credentials_repo
-    for cid in sorted(set(credential_ids)):
-        row = await repo.get(cid)
-        if (
-            row is not None
-            and await _standing(request, Held(str(row.get("created_by") or ""), await repo.holders(cid))) == HIDDEN
-        ):
-            await _not_there(request, cid)
+
+    async def hidden(row: dict[str, Any]) -> bool:
+        cid = str(row["id"])
+        if await _standing(request, Held(row.get("created_by_key_id"), await repo.holders(cid))) != HIDDEN:
+            return False
+        await record_refusal(request, f"credential {cid}", _BIND)
+        return True
 
     async def check(taken: dict[str, Held]) -> None:
         for cid, held in taken.items():
@@ -464,7 +486,7 @@ async def _bind_check(request: Request, credential_ids: Iterable[str]) -> dict[s
             if standing == BEYOND:
                 await enforce_deployment_allowlist(request, action="bind a credential used beyond its repositories")
 
-    return {"check": check}
+    return {"check": check, "hidden": hidden}
 
 
 @router.post(
@@ -584,6 +606,7 @@ async def poll_xai_device_login(login_id: str, request: Request) -> XaiDeviceLog
             secret_ciphertext=await st.secrets_provider.encrypt(_xai_oauth_secret(refresh, client_id, token_endpoint)),
             masked_preview=masked_preview(refresh),
             created_by=request_actor(request),
+            created_by_key_id=_creating_key(request),
         )
     except asyncpg.UniqueViolationError:
         raise HTTPException(status_code=409, detail=f"a xai credential labelled {label!r} already exists") from None
@@ -844,7 +867,7 @@ async def bind_repo_credentials(
         bindings,
         created_by=actor,
         repo_forge=repo_forge,
-        **await _bind_check(request, [str(b["credential_id"]) for b in bindings]),
+        **await _bind_check(request),
     )
     await emit_audit(
         st.db,

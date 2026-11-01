@@ -275,6 +275,10 @@ ACTOR_COLUMNS: dict[str, tuple[str, str | tuple[str, ...]]] = {
     "users.github_login": (_UNSERVED, "the admin-only users router; GET /people lists who signs in, not who did what"),
     "api_keys.created_by": (_UNSERVED, "GET /apikeys shows a caller who is not an admin only its own keys"),
     "credentials.created_by": (_UNSERVED, "no route returns it: CredentialOut leaves it out"),
+    "credentials.created_by_key_id": (
+        _UNSERVED,
+        "no route returns it: CredentialOut leaves it out; it says which key an unbound credential belongs to",
+    ),
     "proposal_decisions.decided_by": (_UNSERVED, "no route returns it: it only tells which proposals are answered"),
     "qa_image_tags.built_by": (_UNSERVED, "no route returns it"),
     "slop_meter_commits.author_email": (_UNSERVED, _SLOP),

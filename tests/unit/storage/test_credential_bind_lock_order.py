@@ -5,11 +5,16 @@ A restricted bind takes the bound credentials ``FOR UPDATE`` in id order, then r
 the same order, with a key share, before it deletes or inserts anything. The two replays below are the restricted
 side run statement by statement on one connection against the repository's unrestricted bind on another: each must
 finish with both committed, and without a deadlock retried.
+
+Two replaces of one scope run one after the other: each takes the scope's advisory lock first, so the second's delete
+sees the first's bindings once it commits, and its insert does not conflict with them.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
@@ -136,3 +141,72 @@ async def test_a_deadlock_from_another_path_is_retried_once(
     monkeypatch.setattr(repo, "_replace", once_deadlocked)
     rows = await repo.replace_bindings("repo", "acme/web", [{"credential_id": A, "role": "forge"}], created_by="t")
     assert len(calls) == 2 and [r["credential_id"] for r in rows] == [A]
+
+
+class _PausedAfterInsert:
+    """A pool whose transactions stop after their first binding insert, until ``go`` is set: a replace caught between
+    writing its bindings and committing them."""
+
+    def __init__(self, db: DatabasePool) -> None:
+        self._db = db
+        self.inserted = asyncio.Event()
+        self.go = asyncio.Event()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._db, name)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[Any]:
+        async with self._db.transaction() as conn:
+            yield _PausingConnection(conn, self)
+
+
+class _PausingConnection:
+    def __init__(self, conn: Any, pool: _PausedAfterInsert) -> None:
+        self._conn, self._pool = conn, pool
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
+    async def execute(self, sql: str, *args: Any) -> Any:
+        out = await self._conn.execute(sql, *args)
+        if sql.lstrip().startswith("INSERT INTO credential_bindings"):
+            self._pool.inserted.set()
+            await self._pool.go.wait()
+        return out
+
+
+async def test_two_replaces_of_one_scope_run_one_after_the_other(db_with_migrations: DatabasePool) -> None:
+    """The first replace has written its binding and not committed; a second of the same scope starts. Without a
+    lock it deletes what it sees, not the first's binding, and its insert then conflicts with it: a unique violation,
+    a 500 at the API. It must wait for the first, then replace its binding."""
+    await _credentials(db_with_migrations)
+    paused = _PausedAfterInsert(db_with_migrations)
+    first = asyncio.create_task(
+        CredentialsRepository(paused).replace_bindings(  # type: ignore[arg-type]
+            "repo", "acme/web", [{"credential_id": A, "role": "forge"}], created_by="first"
+        )
+    )
+    await asyncio.wait_for(paused.inserted.wait(), timeout=10)
+    second = asyncio.create_task(
+        CredentialsRepository(db_with_migrations).replace_bindings(
+            "repo",
+            "acme/web",
+            [{"credential_id": A, "role": "forge"}, {"credential_id": B, "role": "llm"}],
+            created_by="second",
+        )
+    )
+    await asyncio.sleep(0.5)
+    waited = not second.done()
+    paused.go.set()
+    outcome = await asyncio.wait_for(asyncio.gather(first, second, return_exceptions=True), timeout=20)
+    rows = await db_with_migrations.fetch(
+        "SELECT credential_id, created_by FROM credential_bindings WHERE scope_kind = 'repo' AND scope_value = 'acme/web'"
+        " ORDER BY credential_id"
+    )
+    errors = [type(o).__name__ for o in outcome if isinstance(o, BaseException)]
+    assert errors == [], f"both replaces commit, one after the other: {errors}"
+    assert waited, "the second replace waited for the first to commit"
+    assert [(r["credential_id"], r["created_by"]) for r in rows] == [(A, "second"), (B, "second")], (
+        f"the second replaced the first's binding: {[tuple(r) for r in rows]}"
+    )
