@@ -36,7 +36,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import ensure_admin, get_healing_cases_repo, request_actor
-from embry0.api.repo_allowlist import answer_as_missing, enforce_repo_allowlist, key_covers, key_covers_owner
+from embry0.api.repo_allowlist import answer_as_missing, enforce_repo_allowlist, key_covers, key_covers_organization
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.cases import CaseDetailResponse, CaseListResponse, CaseSummary
 from embry0.api.schemas.person_name import PersonName
@@ -209,7 +209,7 @@ async def close_case(
     filed_on = str(case.get("repo") or "")
     if filed_on and "/" not in filed_on:
         # An organization need's case covering several repositories is filed on its owner.
-        if not key_covers_owner(request, filed_on):
+        if not await key_covers_organization(request, filed_on):
             await answer_as_missing(request, f"{filed_on}/*", missing, action=CLOSE_A_CASE)
     elif not key_covers(request, filed_on):
         await answer_as_missing(request, filed_on or "(no repository)", missing, action=CLOSE_A_CASE)

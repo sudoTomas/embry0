@@ -10,7 +10,8 @@ import json
 import math
 import re
 import secrets
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -32,7 +33,7 @@ from embry0.api.repo_allowlist import (
     enforce_owner_allowlist,
     enforce_repo_allowlist,
     key_covers,
-    key_covers_owner,
+    key_covers_organization,
     restricted_key_name,
 )
 from embry0.api.schemas.credentials import (
@@ -208,7 +209,14 @@ async def _bindings_view(request: Request, bindings: list[dict[str, Any]]) -> li
 
 @router.get("/credentials", response_model=list[CredentialOut])
 async def list_credentials(request: Request) -> list[CredentialOut]:
-    return [_out(r) for r in await _state(request).credentials_repo.list_all()]
+    """Every credential; to a key with an allowlist, those nothing beyond its list uses: bound only to its
+    repositories or owners, or to nothing."""
+    repo = _state(request).credentials_repo
+    rows = await repo.list_all()
+    if restricted_key_name(request) is None:
+        return [_out(r) for r in rows]
+    holders = await repo.all_holders()
+    return [_out(r) for r in rows if not await _used_beyond(request, holders.get(str(r["id"]), []))]
 
 
 @router.post("/credentials", response_model=CredentialOut, status_code=201, dependencies=[require_admin])
@@ -330,7 +338,11 @@ async def set_bindings(req: ScopedBindingsSet, request: Request) -> dict[str, An
                 )
     try:
         rows = await st.credentials_repo.replace_bindings(
-            req.scope_kind, scope_value, [b.model_dump() for b in req.bindings], created_by=request_actor(request)
+            req.scope_kind,
+            scope_value,
+            [b.model_dump() for b in req.bindings],
+            created_by=request_actor(request),
+            **_bind_check(request),
         )
     except BindingValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -347,18 +359,63 @@ async def set_bindings(req: ScopedBindingsSet, request: Request) -> dict[str, An
     return {"bindings": rows}
 
 
+async def _used_beyond(request: Request, holders: list[tuple[str, str]]) -> bool:
+    """Whether something the caller's key does not cover uses a credential, by its ``holders``: a binding to a
+    repository it does not cover or to an owner it does not cover as a whole, to a host or to every repository, an
+    organization it does not cover as a whole, or a skill source. Never for a caller without an allowlist."""
+    if restricted_key_name(request) is None:
+        return False
+    for kind, value in holders:
+        if kind == "repo" and key_covers(request, value):
+            continue
+        if kind == "owner" and await key_covers_organization(request, value.partition(":")[2]):
+            continue
+        return True
+    return False
+
+
 async def _refuse_beyond_allowlist(request: Request, credential_id: str, *, action: str) -> None:
-    """Refuse a key with an allowlist ``action`` on a credential something beyond its list uses: a binding to a
-    repository or an owner it does not cover, to a host or to every repository, an organization it does not cover
-    or a skill source. A credential nothing uses, or only what the key covers, is its to change."""
+    """Refuse a key with an allowlist ``action`` on a credential something beyond its list uses
+    (:func:`_used_beyond`). A credential nothing uses, or only what the key covers, is its to change. A check
+    that stands before a slow step, a forge's answer; the write that follows checks again (:func:`_held`)."""
     if restricted_key_name(request) is None:
         return
-    for kind, value in await _state(request).credentials_repo.holders(credential_id):
-        covered = (kind == "repo" and key_covers(request, value)) or (
-            kind == "owner" and key_covers_owner(request, value.partition(":")[2])
-        )
-        if not covered:
+    if await _used_beyond(request, await _state(request).credentials_repo.holders(credential_id)):
+        await enforce_deployment_allowlist(request, action=action)
+
+
+@asynccontextmanager
+async def _held(request: Request, credential_id: str, *, action: str) -> AsyncIterator[Any]:
+    """For a key with an allowlist, the connection of a transaction holding the credential's row, refused first as
+    :func:`_refuse_beyond_allowlist` is: what uses it cannot change between the check and the write made on the
+    connection yielded. Without an allowlist there is nothing to check, and None: the write takes the pool."""
+    if restricted_key_name(request) is None:
+        yield None
+        return
+    async with _state(request).credentials_repo.held([credential_id]) as (conn, holders):
+        if await _used_beyond(request, holders.get(credential_id, [])):
             await enforce_deployment_allowlist(request, action=action)
+        yield conn
+
+
+def _on(conn: Any) -> dict[str, Any]:
+    """The ``conn`` a repository write takes, when :func:`_held` holds the credential's row."""
+    return {} if conn is None else {"conn": conn}
+
+
+def _bind_check(request: Request) -> dict[str, Any]:
+    """For a key with an allowlist, the ``check`` :meth:`replace_bindings` awaits with the bound credentials' rows
+    held: a credential something beyond the key's list uses is not the key's to bind, even to its own repository.
+    Nothing to pass for a caller without an allowlist."""
+    if restricted_key_name(request) is None:
+        return {}
+
+    async def check(holders: dict[str, list[tuple[str, str]]]) -> None:
+        for used_by in holders.values():
+            if await _used_beyond(request, used_by):
+                await enforce_deployment_allowlist(request, action="bind a credential used beyond its repositories")
+
+    return {"check": check}
 
 
 @router.post(
@@ -519,19 +576,20 @@ async def poll_xai_device_login(login_id: str, request: Request) -> XaiDeviceLog
 
 @router.put("/credentials/{credential_id}", response_model=CredentialOut, dependencies=[require_admin])
 async def update_credential(credential_id: str, req: CredentialUpdate, request: Request) -> CredentialOut:
-    await _refuse_beyond_allowlist(request, credential_id, action="change a credential")
     repo = _state(request).credentials_repo
+    # #440: an author field present in the body is written, null included
+    # (null clears it back to branding); an omitted one is kept.
+    author = req.model_dump(include={"git_author_name", "git_author_email"}, exclude_unset=True)
     try:
-        # #440: an author field present in the body is written, null included
-        # (null clears it back to branding); an omitted one is kept.
-        author = req.model_dump(include={"git_author_name", "git_author_email"}, exclude_unset=True)
-        row = await repo.update_meta(credential_id, label=req.label, **author)
+        async with _held(request, credential_id, action="change a credential") as conn:
+            row = await repo.update_meta(credential_id, label=req.label, **_on(conn), **author)
+            if row is None:
+                raise HTTPException(status_code=404, detail="credential not found")
+            if req.status is not None:
+                row = await repo.set_status(credential_id, req.status, **_on(conn))
     except asyncpg.UniqueViolationError:
         raise HTTPException(status_code=409, detail=f"a credential labelled {req.label!r} already exists") from None
-    if row is None:
-        raise HTTPException(status_code=404, detail="credential not found")
     if req.status is not None:
-        row = await repo.set_status(credential_id, req.status)
         await _audit(request, "credential.status_changed", {"credential_id": credential_id, "status": req.status})
     meta_fields = sorted([*author, *(["label"] if req.label is not None else [])])
     if meta_fields:
@@ -542,13 +600,12 @@ async def update_credential(credential_id: str, req: CredentialUpdate, request: 
 
 @router.post("/credentials/{credential_id}/rotate", response_model=CredentialOut, dependencies=[require_admin])
 async def rotate_credential(credential_id: str, req: CredentialRotate, request: Request) -> CredentialOut:
-    await _refuse_beyond_allowlist(request, credential_id, action="rotate a credential")
     st = _state(request)
-    row = await st.credentials_repo.rotate(
-        credential_id,
-        secret_ciphertext=await st.secrets_provider.encrypt(req.secret),
-        masked_preview=masked_preview(req.secret),
-    )
+    secret_ciphertext = await st.secrets_provider.encrypt(req.secret)
+    async with _held(request, credential_id, action="rotate a credential") as conn:
+        row = await st.credentials_repo.rotate(
+            credential_id, secret_ciphertext=secret_ciphertext, masked_preview=masked_preview(req.secret), **_on(conn)
+        )
     if row is None:
         raise HTTPException(status_code=404, detail="credential not found")
     await _audit(request, "credential.rotated", {"credential_id": credential_id})
@@ -634,7 +691,8 @@ async def verify_credential(credential_id: str, request: Request) -> CredentialO
         matched = _PROBE_STATUS.fullmatch(text)
         reason = matched.group(0) if matched else (text if text in _SAFE_PROBE_REASONS else type(exc).__name__)
         raise HTTPException(status_code=502, detail=f"{row['provider']} rejected the token: {reason}") from None
-    await st.credentials_repo.set_verified_login(credential_id, login)
+    async with _held(request, credential_id, action="verify a credential") as conn:
+        await st.credentials_repo.set_verified_login(credential_id, login, **_on(conn))
     await _audit(request, "credential.verified", {"credential_id": credential_id, "login": login})
     fresh = await st.credentials_repo.get(credential_id)
     return await _out_with_count(request, fresh)
@@ -642,9 +700,9 @@ async def verify_credential(credential_id: str, request: Request) -> CredentialO
 
 @router.delete("/credentials/{credential_id}", status_code=204, dependencies=[require_admin])
 async def delete_credential(credential_id: str, request: Request) -> Response:
-    await _refuse_beyond_allowlist(request, credential_id, action="delete a credential")
     try:
-        deleted = await _state(request).credentials_repo.delete(credential_id)
+        async with _held(request, credential_id, action="delete a credential") as conn:
+            deleted = await _state(request).credentials_repo.delete(credential_id, **_on(conn))
     except CredentialBoundError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     if not deleted:
@@ -731,7 +789,9 @@ async def bind_repo_credentials(
     """
     scope_value = full_repo.lower()
     st = _state(request)
-    await st.credentials_repo.replace_bindings("repo", scope_value, bindings, created_by=actor, repo_forge=repo_forge)
+    await st.credentials_repo.replace_bindings(
+        "repo", scope_value, bindings, created_by=actor, repo_forge=repo_forge, **_bind_check(request)
+    )
     await emit_audit(
         st.db,
         "credential.bound",

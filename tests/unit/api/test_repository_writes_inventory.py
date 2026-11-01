@@ -74,6 +74,13 @@ NOT_A_REPOSITORYS_AT: dict[str, str] = {
     ),
 }
 
+#: Repository routes refused to every key with an allowlist, its own repository's included: the deployment's.
+DEPLOYMENT_AT: dict[str, str] = {
+    "/api/v1/repos/{full_repo:repo}/-/docker-access": (
+        "the shared daemon runs the proxies and every sandbox: test_deployment_writes_inventory.py"
+    ),
+}
+
 #: Write routes that store nothing: a read sent as a POST.
 READS: dict[str, str] = {
     "/api/v1/jobs/{job_id}/events-token": "mints a signed token to stream the job's events; stores nothing",
@@ -177,6 +184,8 @@ def kind(path: str) -> str:
     """``read``, ``none`` (no repository's), ``repository`` (called here), or what is unknown about the route."""
     if path in READS:
         return "read"
+    if path in DEPLOYMENT_AT:
+        return "deployment"
     if path in NOT_A_REPOSITORYS_AT:
         return "none"
     names = _PARAMETER.findall(path)
@@ -388,7 +397,7 @@ def test_every_write_route_with_a_path_parameter_is_called_here_or_says_why_not(
         "item in tests/fixtures/repository_writes.ids, or say what it names in NOT_A_REPOSITORYS"
     )
     paths = {path for _method, path in _ROUTES}
-    stale = sorted((set(READS) | set(NOT_A_REPOSITORYS_AT) | set(OWN_RULES) | set(BODIES)) - paths)
+    stale = sorted((set(READS) | set(DEPLOYMENT_AT) | set(NOT_A_REPOSITORYS_AT) | set(OWN_RULES) | set(BODIES)) - paths)
     assert stale == [], f"listed here but not served: {stale}"
     assert len(ROUTES) >= 60, f"only {len(ROUTES)} of {len(_ROUTES)} write routes are called: the walk lost some"
 

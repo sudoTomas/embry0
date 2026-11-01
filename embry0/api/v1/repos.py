@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_deployment_allowlist, enforce_repo_allowlist
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.api.v1.standards import standards_for_repo
 from embry0.audit.helpers import emit_audit
@@ -180,6 +180,8 @@ async def set_repo_docker_access(full_repo: str, req: RepoDockerAccessRequest, r
     those proxies hold and reach the Docker host. Hence admin-tier, audited,
     and never settable through a profile, a qa.yaml or a job.
     """
+    # The daemon runs the proxies and every other sandbox: a grant is the deployment's, whoever's repository.
+    await enforce_deployment_allowlist(request, action="change a repository's Docker access")
     await enforce_repo_allowlist(request, full_repo, action="change a repository's Docker access")
     repos_repo = request.app.state.repos_repo
     row: dict[str, Any] | None = await repos_repo.set_docker_access(full_repo, req.enabled)

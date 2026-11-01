@@ -136,6 +136,13 @@ class ReposRepository:
         rows = await self._db.fetch(f"SELECT {_COLUMNS} FROM repos {where} ORDER BY repo")
         return [dict(r) for r in rows]
 
+    async def under_owner(self, owner: str) -> list[str]:
+        """Every repository registered under ``owner`` (its slug's first segment, any case), active or not."""
+        rows = await self._db.fetch(
+            "SELECT repo FROM repos WHERE lower(split_part(repo, '/', 1)) = lower($1) ORDER BY repo", owner
+        )
+        return [str(r["repo"]) for r in rows]
+
     async def forge_for(self, repo: str) -> str:
         """Forge for ``repo``; the configured default for unregistered paths.
 

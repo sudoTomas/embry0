@@ -10,6 +10,8 @@ API is not the only guard.
 from __future__ import annotations
 
 import secrets
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -191,6 +193,7 @@ class CredentialsRepository:
         label: str | None = None,
         git_author_name: str | None | _Keep = KEEP,
         git_author_email: str | None | _Keep = KEEP,
+        conn: Any = None,
     ) -> dict[str, Any] | None:
         """Change a credential's label and git author identity.
 
@@ -199,7 +202,7 @@ class CredentialsRepository:
         """
         set_name = not isinstance(git_author_name, _Keep)
         set_email = not isinstance(git_author_email, _Keep)
-        row = await self._db.fetchrow(
+        row = await (conn or self._db).fetchrow(
             f"""
             UPDATE credentials
                SET label = COALESCE($2, label),
@@ -218,8 +221,10 @@ class CredentialsRepository:
         )
         return dict(row) if row else None
 
-    async def rotate(self, credential_id: str, *, secret_ciphertext: str, masked_preview: str) -> dict[str, Any] | None:
-        row = await self._db.fetchrow(
+    async def rotate(
+        self, credential_id: str, *, secret_ciphertext: str, masked_preview: str, conn: Any = None
+    ) -> dict[str, Any] | None:
+        row = await (conn or self._db).fetchrow(
             f"""
             UPDATE credentials
                SET secret_ciphertext = $2, masked_preview = $3, rotated_at = NOW(), updated_at = NOW(),
@@ -243,10 +248,11 @@ class CredentialsRepository:
         *,
         reason: str | None = None,
         quarantined_until: datetime | None = None,
+        conn: Any = None,
     ) -> dict[str, Any] | None:
         if status not in ("ok", "disabled", "quarantined"):
             raise ValueError(f"unknown status {status!r}")
-        row = await self._db.fetchrow(
+        row = await (conn or self._db).fetchrow(
             f"""
             UPDATE credentials
                SET status = $2, status_reason = $3, quarantined_until = $4, updated_at = NOW()
@@ -262,19 +268,20 @@ class CredentialsRepository:
             logger.info("credential_status_changed", credential_id=credential_id, status=status, reason=reason)
         return dict(row) if row else None
 
-    async def set_verified_login(self, credential_id: str, login: str) -> None:
-        await self._db.execute(
+    async def set_verified_login(self, credential_id: str, login: str, *, conn: Any = None) -> None:
+        await (conn or self._db).execute(
             "UPDATE credentials SET verified_login = $2, updated_at = NOW() WHERE id = $1", credential_id, login
         )
 
-    async def delete(self, credential_id: str) -> bool:
-        bound = await self._db.fetchrow(
+    async def delete(self, credential_id: str, *, conn: Any = None) -> bool:
+        db = conn or self._db
+        bound = await db.fetchrow(
             "SELECT COUNT(*) AS n FROM credential_bindings WHERE credential_id = $1", credential_id
         )
         if bound and bound["n"]:
             raise CredentialBoundError(f"credential {credential_id} has {bound['n']} binding(s); unbind first")
         try:
-            result = await self._db.execute("DELETE FROM credentials WHERE id = $1", credential_id)
+            result = await db.execute("DELETE FROM credentials WHERE id = $1", credential_id)
         except asyncpg.ForeignKeyViolationError as exc:
             # A binding was created between the count and the delete.
             raise CredentialBoundError(f"credential {credential_id} is bound; unbind first") from exc
@@ -306,18 +313,45 @@ class CredentialsRepository:
         )
         return [dict(r) for r in rows]
 
-    async def holders(self, credential_id: str) -> list[tuple[str, str]]:
+    async def holders(self, credential_id: str, *, conn: Any = None) -> list[tuple[str, str]]:
         """What uses the credential: each binding as ``(scope_kind, scope_value)``, each organization that names it
         as ``("owner", "<forge>:<owner>")`` and each skill source that names it as ``("skill_source", id)``."""
-        rows = await self._db.fetch(
+        return (await self.all_holders([credential_id], conn=conn)).get(credential_id, [])
+
+    async def all_holders(
+        self, credential_ids: Iterable[str] | None = None, *, conn: Any = None
+    ) -> dict[str, list[tuple[str, str]]]:
+        """:meth:`holders` of each of ``credential_ids``, or of every credential, by id; a credential nothing uses is
+        left out."""
+        ids = None if credential_ids is None else sorted(set(credential_ids))
+        rows = await (conn or self._db).fetch(
             """
-            SELECT scope_kind AS kind, scope_value AS value FROM credential_bindings WHERE credential_id = $1
-            UNION ALL SELECT 'owner', forge || ':' || owner FROM organizations WHERE credential_id = $1
-            UNION ALL SELECT 'skill_source', id FROM skill_sources WHERE credential_id = $1
+            SELECT credential_id AS id, scope_kind AS kind, scope_value AS value FROM credential_bindings
+             WHERE $1::text[] IS NULL OR credential_id = ANY($1::text[])
+            UNION ALL SELECT credential_id, 'owner', forge || ':' || owner FROM organizations
+             WHERE credential_id IS NOT NULL AND ($1::text[] IS NULL OR credential_id = ANY($1::text[]))
+            UNION ALL SELECT credential_id, 'skill_source', id FROM skill_sources
+             WHERE credential_id IS NOT NULL AND ($1::text[] IS NULL OR credential_id = ANY($1::text[]))
             """,
-            credential_id,
+            ids,
         )
-        return [(str(r["kind"]), str(r["value"])) for r in rows]
+        out: dict[str, list[tuple[str, str]]] = {}
+        for r in rows:
+            out.setdefault(str(r["id"]), []).append((str(r["kind"]), str(r["value"])))
+        return out
+
+    @asynccontextmanager
+    async def held(self, credential_ids: Iterable[str]) -> AsyncIterator[tuple[Any, dict[str, list[tuple[str, str]]]]]:
+        """A transaction holding the credentials' rows, and what uses each when they were taken.
+
+        ``FOR UPDATE`` conflicts with the key share a new binding or organization takes on the credential it names,
+        so nothing comes to use it until the transaction ends: a check of what uses a credential and the write it
+        allows, both on the connection yielded, cannot be split by a binding made between them.
+        """
+        ids = sorted(set(credential_ids))
+        async with self._db.transaction() as conn:
+            await conn.execute("SELECT id FROM credentials WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE", ids)
+            yield conn, await self.all_holders(ids, conn=conn)
 
     async def bindings_for_credential(self, credential_id: str) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
@@ -335,8 +369,13 @@ class CredentialsRepository:
         *,
         created_by: str,
         repo_forge: str | None = None,
+        check: Callable[[dict[str, list[tuple[str, str]]]], Awaitable[None]] | None = None,
     ) -> list[dict[str, Any]]:
-        """Replace every binding of one scope. Validates everything first, writes nothing on error."""
+        """Replace every binding of one scope. Validates everything first, writes nothing on error.
+
+        ``check``, when given, is awaited with what uses each credential bound, read with their rows held
+        (:meth:`held`), before anything is written; it refuses by raising, and nothing is written.
+        """
         if scope_kind not in SCOPE_KINDS:
             raise BindingValidationError(f"unknown scope kind {scope_kind!r}")
         scope_value = normalize_scope_value(scope_kind, scope_value)
@@ -394,6 +433,10 @@ class CredentialsRepository:
                 seen.add(key)
             prepared.append((str(cid), role, pinned, priority, str(cred["provider"])))
         async with self._db.transaction() as conn:
+            if check is not None:
+                ids = sorted({cid for cid, *_ in prepared})
+                await conn.execute("SELECT id FROM credentials WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE", ids)
+                await check(await self.all_holders(ids, conn=conn))
             await conn.execute(
                 "DELETE FROM credential_bindings WHERE scope_kind = $1 AND scope_value = $2", scope_kind, scope_value
             )

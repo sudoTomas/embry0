@@ -19,7 +19,7 @@ from starlette.types import Scope
 
 from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_owner_named, enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.api.v1.run_with import checked_run_with
@@ -833,7 +833,8 @@ async def run_organization_context_audit(owner: str, body: ContextAuditRunBody, 
     repositories names one of them. Both the owner and that repository are
     checked before the organization is read, so a refusal says nothing of it.
     """
-    await enforce_owner_allowlist(request, owner, action="start a context audit")
+    # The run is the repository's work, under an owner of the key's: both before the organization is read.
+    await enforce_owner_named(request, owner, action="start a context audit")
     await enforce_repo_allowlist(request, body.repo, action="start a context audit")
     org = await _repo(request).get(owner)
     if org is None:

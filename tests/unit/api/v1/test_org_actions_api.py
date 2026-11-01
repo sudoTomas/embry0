@@ -116,6 +116,9 @@ class FakeRegistry:
             row["active"] = active
         return row
 
+    async def under_owner(self, owner: str) -> list[str]:
+        return sorted(r for r in self.rows if r.split("/", 1)[0].lower() == owner.lower())
+
 
 class FakeStacks:
     def __init__(self) -> None:
@@ -416,9 +419,9 @@ async def test_onboard_starts_the_job_under_the_callers_actor(keyed_app: Any) ->
 
 @pytest.mark.asyncio
 async def test_onboard_honors_the_callers_repository_allowlist(keyed_app: Any) -> None:
-    """POST /jobs would refuse this key on acme/two, so the action must not start a job there."""
-    for repo in ("acme/one", "acme/two"):
-        keyed_app.state.repos_repo.rows[repo] = {"repo": repo}
+    """POST /jobs would refuse this key on acme/two, so the action must not start a job there. acme/two is seen by
+    discovery, not registered: a registered one the key does not cover would put acme beyond the key."""
+    keyed_app.state.repos_repo.rows["acme/one"] = {"repo": "acme/one"}
     body = {"action": "onboard", "repos": ["acme/one", "acme/two"]}
     async with _client(keyed_app, LIMITED_ADMIN_TOKEN) as client:
         dry = await client.post("/api/v1/orgs/acme/actions", json={**body, "dry_run": True})
@@ -441,9 +444,9 @@ async def test_onboard_honors_the_callers_repository_allowlist(keyed_app: Any) -
 async def test_every_action_leaves_alone_a_repository_the_callers_allowlist_does_not_cover(
     keyed_app: Any, action: str
 ) -> None:
-    """The key covers acme/one: acme/two fails with the refusal and is not touched, whatever the action."""
-    if action != "register":
-        keyed_app.state.repos_repo.rows["acme/two"] = {"repo": "acme/two", "active": True}
+    """The key covers acme/one, acme's one registered repository: acme/two, seen by discovery, fails with the
+    refusal and is not touched, whatever the action."""
+    keyed_app.state.repos_repo.rows["acme/one"] = {"repo": "acme/one", "active": True}
     before = {repo: dict(row) for repo, row in keyed_app.state.repos_repo.rows.items()}
     body = {"action": action, "repos": ["acme/two"]}
     async with _client(keyed_app, LIMITED_ADMIN_TOKEN) as client:
@@ -461,6 +464,18 @@ async def test_every_action_leaves_alone_a_repository_the_callers_allowlist_does
     assert keyed_app.state.watcher_stacks_repo.rows == {}, "no stack is watched"
     assert keyed_app.state.fake_forge.posts == [], "no webhook is made"
     assert [d["repo"] for _actor, d in _audits(keyed_app, "apikey.repo_refused")] == ["acme/two"]
+
+
+@pytest.mark.asyncio
+async def test_an_owner_with_a_registered_repository_the_key_does_not_cover_is_refused_whole(keyed_app: Any) -> None:
+    """The key covers acme/one; acme/two is registered too, so an action on acme reaches beyond the key."""
+    for repo in ("acme/one", "acme/two"):
+        keyed_app.state.repos_repo.rows[repo] = {"repo": repo, "active": True}
+    async with _client(keyed_app, LIMITED_ADMIN_TOKEN) as client:
+        resp = await client.post("/api/v1/orgs/acme/actions", json={"action": "deactivate", "repos": ["acme/one"]})
+    assert resp.status_code == 403 and resp.json()["detail"].startswith("repo_not_allowed"), resp.text
+    assert keyed_app.state.repos_repo.rows["acme/one"]["active"] is True
+    assert [d["repo"] for _actor, d in _audits(keyed_app, "apikey.repo_refused")] == ["acme/*"]
 
 
 @pytest.mark.asyncio

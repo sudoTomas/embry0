@@ -18,8 +18,10 @@ from embry0.workflows.issue_to_pr.route_plan import node_config
 
 logger = structlog.get_logger(__name__)
 
-# A template is the pipeline of every repository's jobs that use it: not a key with a repository allowlist's.
-router = APIRouter(dependencies=[deployment_writes("change the deployment's pipeline templates")])
+router = APIRouter()
+# A template is the pipeline of every repository's jobs that use it: not a key with a repository allowlist's to
+# change. POST /pipelines/validate stores nothing, and stays open to it.
+_TEMPLATE_WRITE = deployment_writes("change the deployment's pipeline templates")
 
 
 def _reject_unpriced(graph: dict[str, Any] | None) -> None:
@@ -114,7 +116,7 @@ async def get_template(
     return template
 
 
-@router.post("/pipelines/templates", status_code=201)
+@router.post("/pipelines/templates", status_code=201, dependencies=[_TEMPLATE_WRITE])
 async def create_template(
     req: TemplateCreateRequest,
     request: Request,
@@ -143,7 +145,7 @@ async def create_template(
     return {**created, "warnings": warnings}
 
 
-@router.put("/pipelines/templates/{template_id}")
+@router.put("/pipelines/templates/{template_id}", dependencies=[_TEMPLATE_WRITE])
 async def update_template(
     template_id: str,
     req: TemplateUpdateRequest,
@@ -190,7 +192,7 @@ async def update_template(
     return {**updated, "warnings": warnings}
 
 
-@router.delete("/pipelines/templates/{template_id}")
+@router.delete("/pipelines/templates/{template_id}", dependencies=[_TEMPLATE_WRITE])
 async def delete_template(
     template_id: str,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
@@ -199,7 +201,7 @@ async def delete_template(
     return {"id": template_id, "status": "deleted"}
 
 
-@router.post("/pipelines/templates/{template_id}/duplicate", status_code=201)
+@router.post("/pipelines/templates/{template_id}/duplicate", status_code=201, dependencies=[_TEMPLATE_WRITE])
 async def duplicate_template(
     template_id: str,
     req: TemplateDuplicateRequest,

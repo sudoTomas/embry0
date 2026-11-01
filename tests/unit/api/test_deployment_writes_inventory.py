@@ -74,7 +74,7 @@ DEPLOYMENT_WIDE: dict[tuple[str, str], Callable[[Mapping[str, str]], Any]] = {
     ("PUT", "/api/v1/pipelines/templates/{template_id}"): lambda v: {"description": "Changed."},
     ("DELETE", "/api/v1/pipelines/templates/{template_id}"): lambda v: None,
     ("POST", "/api/v1/pipelines/templates/{template_id}/duplicate"): lambda v: {"name": "probe-copy"},
-    ("POST", "/api/v1/pipelines/validate"): lambda v: v["graph"],
+    ("PUT", "/api/v1/repos/{full_repo:repo}/-/docker-access"): lambda v: {"enabled": True},
     ("POST", "/api/v1/hosts"): lambda v: {"name": "probe-host", "transport": "http", "address": "https://h.test"},
     ("PATCH", "/api/v1/hosts/{host_id}"): lambda v: {"tags": ["probe"]},
     ("DELETE", "/api/v1/hosts/{host_id}"): lambda v: None,
@@ -95,6 +95,11 @@ NO_ANSWER_HERE: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/config/providers/openrouter/catalog/refresh"): "OpenRouter's list is read where it is configured",
     ("POST", "/api/v1/skills/sources/{source_id}/sync"): "skill sync starts with the production lifespan",
     ("POST", "/api/v1/credentials/xai/device-login"): "asks xAI for a device code over the network",
+}
+
+#: Write routes without a path parameter that store nothing: a read sent as a POST, open to a key with an allowlist.
+READS_HERE: dict[tuple[str, str], str] = {
+    ("POST", "/api/v1/pipelines/validate"): "checks a template's graph and stores nothing (the MCP template_validate)",
 }
 
 #: Write routes held to a rule of their own, or not called with an API key, and why.
@@ -143,8 +148,8 @@ OTHER_RULES: dict[tuple[str, str], str] = {
 
 
 def _scoped_elsewhere() -> set[tuple[str, str]]:
-    """The write routes the repository writes inventory calls or places."""
-    reads = {(m, p) for m, p in scoped._ROUTES if p in scoped.READS}
+    """The write routes the repository writes inventory calls or places, and the reads sent as a POST."""
+    reads = {(m, p) for m, p in scoped._ROUTES if p in scoped.READS} | set(READS_HERE)
     elsewhere = {route for route, why in scoped.BODY_TARGETS_ELSEWHERE.items() if HERE not in why}
     return set(scoped.ROUTES) | set(scoped.BODY_TARGETS) | elsewhere | reads
 
@@ -205,6 +210,8 @@ async def _deployment(app: FastAPI, db: DatabasePool) -> dict[str, str]:
         "template_id": str(template["id"]),
         "graph": template.get("graph_definition") or {},
         "host_id": str(host.json()["id"]),
+        # A key's own repository: the refusal holds there too.
+        "full_repo": COVERED,
         "user_id": "usr-bo",
     }
 
