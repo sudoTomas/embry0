@@ -66,16 +66,12 @@ RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
     && rm /tmp/requirements.lock.txt \
     && touch README.md && pip install --no-cache-dir --no-deps -e .
 
-# Install Node.js. No Claude CLI here (#497): the orchestrator never runs an
-# agent — every query() runs in a sandbox image, on the CLI bundled in that
-# image's claude-agent-sdk — so an npm @anthropic-ai/claude-code here was a
-# second, unused CLI version.
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    # npm self-upgrade — nodesource bundles an npm whose vendored tar carries
-    # CRITICAL CVE-2026-59873 (fixed in tar >= 7.5.19).
-    && npm install -g npm@latest
+# No Node.js, npm or Claude CLI here (#497, #305). The orchestrator never
+# runs an agent: every query() runs in a sandbox image, on the CLI bundled in
+# that image's claude-agent-sdk. Every node, npm and npx command embry0 issues
+# (installs, boot commands, screenshots, MCP servers) runs inside a sandbox
+# through `docker exec`. Node here only shipped npm's vendored packages and
+# their advisories (undici, #305) with nothing to run them.
 
 # Application code (overwrite with full source)
 COPY embry0/ /app/embry0/

@@ -1,0 +1,21 @@
+# Findings accepted in the orchestrator image's libraries (#305).
+#
+# CI's "Trivy — orchestrator libraries" step fails on a fixable HIGH or
+# CRITICAL in a library of the orchestrator image: the Python packages from
+# uv.lock and anything else Trivy reads as a language package. Fix one with
+# a lock bump. When that cannot happen yet, accept it here, one entry per
+# finding:
+#
+#   vulnerabilities:
+#     - id: CVE-0000-00000
+#       paths:
+#         - usr/local/lib/python3.12/site-packages/example-1.0.0.dist-info/METADATA
+#       statement: why it is accepted and what removes it
+#       expired_at: 2026-12-31
+#
+# `statement` and `expired_at` are required
+# (tests/unit/infra/test_orchestrator_image_scan.py). Trivy stops honouring an
+# entry on its `expired_at` date, so the step fails again then and the
+# acceptance is decided anew. `paths` narrows an entry to one package; leave
+# it out only for a finding that has no single path.
+vulnerabilities: []
