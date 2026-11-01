@@ -90,7 +90,7 @@ async def test_who_is_kept_from_being_asked_again_and_for_how_long(db_with_migra
 async def test_two_polls_that_hand_an_ask_out_at_once_keep_one_time(db_with_migrations: DatabasePool) -> None:
     """The stamp is set in the statement that hands the ask out, so concurrent polls cannot each set their own."""
     asks = AsksRepository(db_with_migrations)
-    ask_id = await asks.add(decision_id="offer:issue:1", recipient="ada@example.com", due_at=NOW)
+    (ask_id,) = await asks.queue([("offer:issue:1", "ada@example.com", NOW)])
     assert ask_id is not None
     first, second = NOW, NOW + timedelta(seconds=1)
     results = await asyncio.gather(*(asks.hand_out([ask_id], now=t) for t in (first, second, first, second)))

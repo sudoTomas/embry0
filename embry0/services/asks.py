@@ -142,13 +142,21 @@ def working(now: datetime, s: AskSettings) -> bool:
     return next_working_time(now, s) == now
 
 
-def code_for(decision_id: str, taken: Collection[str]) -> str:
-    """Four letters from the decision's id, lengthened while another decision holds them."""
+def code_candidates(decision_id: str) -> list[str]:
+    """Every code :func:`code_for` may give the decision, shortest first: four letters from its id, then each longer.
+
+    So whether a code is taken need only be asked of these, never of every code stored.
+    """
     digest = base64.b32encode(hashlib.sha256(decision_id.encode()).digest()).decode().rstrip("=")
     letters = "".join(c for c in digest if c.isalpha())
-    for size in range(4, len(letters) + 1):
-        if letters[:size] not in taken:
-            return letters[:size]
+    return [letters[:size] for size in range(4, len(letters) + 1)]
+
+
+def code_for(decision_id: str, taken: Collection[str]) -> str:
+    """Four letters from the decision's id, lengthened while another decision holds them."""
+    for code in code_candidates(decision_id):
+        if code not in taken:
+            return code
     raise ValueError("no free code")
 
 
@@ -187,9 +195,11 @@ def plan(
     # In the decisions' own order (worst first), so the asks queue that way.
     wanted = list(dict.fromkeys((str(d["id"]), r) for d in decisions for r in recipients(d, email_of)))
     have = {(str(a["decision_id"]), str(a["recipient"]).lower()): str(a["id"]) for a in live}
+    # Sets built once: a tick reads every open decision (#273), so a comparison per pair must stay linear.
+    still = set(wanted)
     return Plan(
         ask=[pair for pair in wanted if pair not in have],
-        withdraw=sorted(ask_id for pair, ask_id in have.items() if pair not in set(wanted)),
+        withdraw=sorted(ask_id for pair, ask_id in have.items() if pair not in still),
     )
 
 

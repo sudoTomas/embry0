@@ -115,6 +115,15 @@ class FakeAsks:
         self.rows.append({**row, "due_at": due_at, "created_at": NOW})
         return ask_id
 
+    async def queue(self, asks: Any) -> list[str]:
+        """As the repository does: each decision gets its code, then each ask its person holds no live one of."""
+        queued = []
+        for decision_id, recipient, due_at in asks:
+            await self.code(decision_id)
+            if not any(r["decision_id"] == decision_id and r["recipient"] == recipient for r in await self.live()):
+                queued.append(await self.add(decision_id=decision_id, recipient=recipient, due_at=due_at))
+        return [q for q in queued if q]
+
     async def close(self, ask_ids: Any, *, state: str, now: datetime) -> int:
         for r in self.rows:
             if r["id"] in set(ask_ids):

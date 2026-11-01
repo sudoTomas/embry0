@@ -85,20 +85,22 @@ async def _person(request: Request, who: str) -> dict[str, Any]:
 
 
 async def open_decisions(app: Any) -> list[dict[str, Any]]:
-    """Every open decision, worst first, read once for a whole feed, whatever the caller's key may read.
+    """Every open decision, worst first, whatever any caller's key may read: what the ask loop reads
+    every tick and the feed on every request.
 
     A person's unanswered asks count toward their limit whether or not the
     caller's key covers their decisions, and each counts in its decision's
     organization, so the feed reads every decision, as the ask loop does, and
-    hands out only those the key may read (#272).
+    hands out only those the key may read (#272). None is cut off by the
+    list's page: a decision left out would read as answered, and the loop
+    would withdraw its asks (#273). The decisions list builds every decision
+    before it cuts any, so reading them all costs no more than reading the
+    first page. Quests to review still come from the inbox's newest 30 (#296).
     """
-    from embry0.api.v1.decisions import list_decisions
+    from embry0.api.v1.decisions import waiting
     from embry0.api.v1.organizations import app_request
 
-    listed = await list_decisions(
-        app_request(app), stage="all", owner=None, repo=None, include_held=True, for_="all", limit=500
-    )
-    return list(listed["decisions"])
+    return await waiting(app_request(app), stage="all", owner=None, repo=None, include_held=True)
 
 
 @router.get("/asks/due")

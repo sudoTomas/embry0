@@ -220,6 +220,30 @@ async def mine(request: Request, shown: list[dict[str, Any]]) -> list[dict[str, 
     return out
 
 
+async def waiting(
+    request: Request,
+    *,
+    stage: Literal["offered", "done", "all"] = "all",
+    owner: str | None = None,
+    repo: str | None = None,
+    include_held: bool = True,
+) -> list[dict[str, Any]]:
+    """Every decision waiting on a person, worst first, each with its open hand-off, none cut off by a page.
+
+    What :func:`list_decisions` lists before ``for`` and ``limit``. Every
+    decision is built before any is cut, so a reader that needs them all, as
+    the asks do, reads them here: a page's limit must not decide whether a
+    decision is open (#273). The quests to review are those of the newest 30
+    finished jobs waiting for review, the inbox's own cut (#296).
+    """
+    offers, reviews = await asyncio.gather(
+        _offers(request, owner=owner, repo=repo) if stage in ("offered", "all") else asyncio.sleep(0, result=[]),
+        _reviews(request, repo=repo) if stage in ("done", "all") else asyncio.sleep(0, result=[]),
+    )
+    found = [d for d in [*offers, *reviews] if include_held or not d.held]
+    return await with_assignees(request, [d.to_dict() for d in ordered(found)])
+
+
 @router.get("/decisions")
 async def list_decisions(
     request: Request,
@@ -233,12 +257,7 @@ async def list_decisions(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> dict[str, Any]:
     """Every decision waiting on a person: the quests on offer and the quests to review, worst first."""
-    offers, reviews = await asyncio.gather(
-        _offers(request, owner=owner, repo=repo) if stage in ("offered", "all") else asyncio.sleep(0, result=[]),
-        _reviews(request, repo=repo) if stage in ("done", "all") else asyncio.sleep(0, result=[]),
-    )
-    found = [d for d in [*offers, *reviews] if include_held or not d.held]
-    shown = await with_assignees(request, [d.to_dict() for d in ordered(found)])
+    shown = await waiting(request, stage=stage, owner=owner, repo=repo, include_held=include_held)
     if for_ == "me":
         shown = await mine(request, shown)
     shown = shown[:limit]
