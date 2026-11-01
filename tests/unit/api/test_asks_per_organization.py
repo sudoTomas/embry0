@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -363,3 +364,83 @@ async def test_the_production_loop_keeps_the_ask_of_a_decision_ranked_past_500(a
     )
     live = await production.asks.live()
     assert len(live) == 501, f"one live ask for each of the 501 open decisions: {len(live)}"
+
+
+def _no_network(*_args: Any, **_kwargs: Any) -> Any:
+    raise httpx.ConnectError("tests reach no network")
+
+
+async def _finished_job(db: Any, i: int, *, minutes_ago: float) -> None:
+    """``job-<i>`` in acme/widgets, finished ``minutes_ago`` and not rated: a quest to review."""
+    finished = datetime.now(UTC) - timedelta(minutes=minutes_ago)
+    await db.execute(
+        "INSERT INTO jobs (job_id, repo, task, status, pipeline_template, created_at, started_at, finished_at, "
+        "dispatched_by) VALUES ($1, 'acme/widgets', $2, 'completed', 'full-magnum-opus', $3, $3, $4, "
+        "'ada@example.com')",
+        f"job-{i:03d}",
+        f"Fix widgets, case {i}",
+        finished - timedelta(minutes=5),
+        finished,
+    )
+
+
+async def test_the_production_loop_keeps_the_ask_of_a_review_ranked_past_30(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#296: the decisions read every quest to review, not the world inbox's newest 30.
+
+    The issue's probe: 30 finished jobs in one repository, one owner. A loop
+    that read the inbox's newest 30 took the oldest for answered once a 31st
+    finished: it withdrew that ask and asked about the 31st, then asked about
+    the oldest again once the newest was rated. The decisions, the asks table
+    and the settings reader are all the production loop's own.
+    """
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _no_network)
+    await _put(app, DEPLOYMENT)
+    await app.state.repo_preferences_repo.upsert("acme/widgets", owners=["ada"])
+    for i in range(30):
+        await _finished_job(app.state.db, i, minutes_ago=100 - i)  # job-000 is the oldest
+    production = app.state.ask_loop
+    loop = AskLoop(
+        settings=production.settings,
+        asks=production.asks,
+        decisions=production.decisions,
+        people=production.people,
+        clock=lambda: NOW,
+    )
+
+    first = await loop.tick()
+    assert first == {"expired": 0, "withdrawn": 0, "queued": 30}, (
+        f"one ask for each of the 30 quests to review: {first}"
+    )
+    oldest = [a["id"] for a in await production.asks.live() if a["decision_id"] == "done:job-000"]
+
+    await _finished_job(app.state.db, 30, minutes_ago=1)
+    second = await loop.tick()
+    assert second == {"expired": 0, "withdrawn": 0, "queued": 1}, (
+        "a 31st quest to review pushes job-000 past the inbox's newest 30: its ask stays, and only the 31st is "
+        f"asked about: {second}"
+    )
+    await app.state.world_repo.rate("job-030", rated_by="ada@example.com", rating="good")
+    third = await loop.tick()
+    assert third == {"expired": 0, "withdrawn": 1, "queued": 0}, (
+        f"rating the newest withdraws its ask alone, and job-000 is not asked about again: {third}"
+    )
+    still = [a["id"] for a in await production.asks.live() if a["decision_id"] == "done:job-000"]
+    assert len(oldest) == 1 and still == oldest, (
+        f"job-000's first ask is the one still live, never withdrawn and queued again: {oldest} then {still}"
+    )
+
+
+async def test_the_production_loop_reads_the_decisions_without_their_reports(app: Any) -> None:
+    """The ask loop shows no card, so the decisions it reads every tick carry no report (#296's review: at 10,000
+    quests to review the reports were most of a tick's memory). ``GET /decisions`` still shows each one's."""
+    await _finished_job(app.state.db, 0, minutes_ago=10)
+    await app.state.db.execute("UPDATE jobs SET result_summary = $1 WHERE job_id = 'job-000'", "The report. " * 1_000)
+    read = {d["id"]: d for d in await app.state.ask_loop.decisions()}
+    assert read["done:job-000"]["details"] == "", (
+        f"the production loop's decisions carry no report: {len(read['done:job-000']['details'])} characters"
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=HEADERS) as client:
+        shown = (await client.get("/api/v1/decisions/done:job-000")).json()
+    assert len(shown["details"]) == 8_000, f"GET /decisions/{{id}} shows the report: {len(shown['details'])}"

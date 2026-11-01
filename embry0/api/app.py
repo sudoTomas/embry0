@@ -2813,8 +2813,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.settings.store import scoped_reader as _scoped_reader
 
     async def _asked_decisions() -> list[dict[str, Any]]:
-        # Every open decision, none cut off by a page's limit (#273): the feed reads the same. Quests to review
-        # are the inbox's newest 30 (#296).
+        # Every open decision, none cut off by a page's limit, the quests to review included (#273, #296): the
+        # feed reads the same.
         return await _ask_decisions(app)
 
     async def _ask_people() -> dict[str, str]:

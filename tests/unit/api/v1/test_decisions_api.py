@@ -73,22 +73,24 @@ class FakeWorld:
     async def quest(self, job_id: str) -> dict[str, Any] | None:
         return dict(self.row) if job_id == "job-1" else None
 
-    async def merge_approval(self, job_id: str) -> dict[str, Any] | None:
-        return {
+    async def merge_approvals(self, job_ids: Any) -> dict[str, dict[str, Any]]:
+        approval = {
             "id": "ma-1",
             "status": "pending",
             "ask": '{"checks_state": "success", "recommendation": {"verdict": "merge"}}',
         }
+        return {job_id: dict(approval) for job_id in job_ids}
 
 
 class FakeJobs:
-    async def get(self, job_id: str) -> dict[str, Any] | None:
-        return {
+    async def card_rows(self, job_ids: Any, *, report_chars: int) -> dict[str, dict[str, Any]]:
+        job = {
             "result_summary": "The report.",
             "done_when": None,
             "work_nature": None,
             "started_at": NOW - timedelta(hours=1),
         }
+        return {job_id: dict(job) for job_id in job_ids}
 
 
 class FakeBriefs:

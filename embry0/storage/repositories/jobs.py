@@ -19,6 +19,15 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# What a finished job's decision card reads of the job (embry0/api/v1/decisions.py, done_inputs).
+_CARD_ROWS_SQL = """
+SELECT job_id, repo, area, task, status, delivery_state, pr_url, pipeline_template, created_at, started_at,
+       finished_at, total_cost_usd, error_code, error_message, work_nature, done_when,
+       left(result_summary, $2) AS result_summary
+FROM jobs
+WHERE job_id = ANY($1::text[])
+"""
+
 
 class StatusTransitionConflict(RuntimeError):
     """Raised when a CAS status update finds no matching row.
@@ -359,6 +368,15 @@ class JobsRepository:
             "SELECT job_id, result_summary FROM jobs WHERE job_id = ANY($1::text[])", sorted(set(job_ids))
         )
         return {str(r["job_id"]): r["result_summary"] for r in rows}
+
+    async def card_rows(self, job_ids: Collection[str], *, report_chars: int) -> dict[str, dict[str, Any]]:
+        """The columns a finished job's decision card reads, for the jobs in ``job_ids`` that exist, in one
+        statement: its report (``result_summary``) cut to ``report_chars``, and none of the job's large
+        columns the card does not read, such as its context."""
+        if not job_ids:
+            return {}
+        rows = await self._db.fetch(_CARD_ROWS_SQL, sorted(set(job_ids)), report_chars)
+        return {str(r["job_id"]): dict(r) for r in rows}
 
     async def count_dispatched_by(
         self,

@@ -10,6 +10,7 @@ worth filtering on.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from embry0.storage.database import DatabasePool
@@ -65,6 +66,15 @@ class JobVerificationsRepository:
     async def get(self, job_id: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow(f"SELECT {_COLUMNS} FROM job_verifications WHERE job_id = $1", job_id)
         return dict(row) if row else None
+
+    async def for_jobs(self, job_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+        """Each job's result, as :meth:`get` reads it, in one statement; a job with none is left out."""
+        if not job_ids:
+            return {}
+        rows = await self._db.fetch(
+            f"SELECT {_COLUMNS} FROM job_verifications WHERE job_id = ANY($1::text[])", sorted(set(job_ids))
+        )
+        return {str(r["job_id"]): dict(r) for r in rows}
 
     async def latest_for_head(self, repo: str, head_sha: str) -> dict[str, Any] | None:
         """The newest result for exactly this commit of ``repo`` — a verdict
