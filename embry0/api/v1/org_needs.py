@@ -14,6 +14,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.repo_allowlist import enforce_owner_allowlist
 from embry0.audit.helpers import emit_audit
 from embry0.services.org_needs import OrgNeedsService
 from embry0.storage.repositories.organizations import OrganizationsRepository
@@ -65,6 +66,7 @@ async def organization_needs(owner: str, request: Request) -> dict[str, Any]:
 async def dismiss_need(owner: str, need_id: str, request: Request) -> dict[str, Any]:
     """Dismiss a need: its status becomes dismissed and its case is closed.
     Rediscovery keeps the answer for the same kind and repositories."""
+    await enforce_owner_allowlist(request, owner, action="dismiss an organization need")
     owner = await _owner(request, owner)
     service = cast("OrgNeedsService", needs_service(request))
     need = await service.dismiss(owner, need_id)
@@ -83,6 +85,7 @@ async def dismiss_need(owner: str, need_id: str, request: Request) -> dict[str, 
 async def reopen_need(owner: str, need_id: str, request: Request) -> dict[str, Any]:
     """Reopen a dismissed or done need: its status becomes open and a case
     awaiting decision is filed for it again."""
+    await enforce_owner_allowlist(request, owner, action="reopen an organization need")
     owner = await _owner(request, owner)
     service = cast("OrgNeedsService", needs_service(request))
     need = await service.reopen(owner, need_id)

@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import REPO_PATH_ERROR, REPO_PATH_PATTERN
 from embry0.api.v1.run_with import checked_run_with
@@ -193,6 +193,7 @@ async def put_standard(owner: str, kind: str, body: StandardBody, request: Reque
     schema holds a key other than roles, type_scale and rules, or a value
     names a role the schema does not declare.
     """
+    await enforce_owner_allowlist(request, owner, action="change an owner's standard")
     owner, kind = _owner(owner), _kind(kind)
     problems = standards_service.validate_standard(body.schema_, body.values, body.prose, list(body.references))
     if problems:
@@ -236,6 +237,7 @@ async def put_repo_standard_state(
     owner: str, kind: str, repo: str, body: RepoModeBody, request: Request
 ) -> dict[str, Any]:
     """Set the repository's mode (off, advise, enforce), and its exceptions when sent."""
+    await enforce_repo_allowlist(request, repo, action="set a repository's standard")
     owner, kind = _owner(owner), _kind(kind)
     await _registered_repo_under(request, owner, repo)
     exceptions = [e.model_dump() for e in body.exceptions] if body.exceptions is not None else None

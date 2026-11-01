@@ -11,6 +11,7 @@ import structlog
 from httpx import ASGITransport, AsyncClient
 
 from embry0.api.app import create_app
+from embry0.api.repo_allowlist import key_covers
 from embry0.api.v1 import decisions as decisions_api
 from embry0.api.v1 import proposals as proposals_api
 from embry0.api.v1 import world as world_api
@@ -64,7 +65,9 @@ class FakeWorld:
             "agent_type": "developer",
         }
 
-    async def inbox(self, *, days: int, player_actors: list[str], limit: int = 30) -> list[dict[str, Any]]:
+    async def inbox(
+        self, *, days: int, player_actors: list[str], limit: int = 30, repos: Any = None
+    ) -> list[dict[str, Any]]:
         return [dict(self.row)]
 
     async def quest(self, job_id: str) -> dict[str, Any] | None:
@@ -169,8 +172,8 @@ async def test_a_key_limited_to_some_repos_lists_only_theirs_and_refuses_nothing
         app=app,
     )
     with structlog.testing.capture_logs() as logs:
-        assert decisions_api._allowed(request, "acme/web") is True
-        assert decisions_api._allowed(request, "acme/other") is False
+        assert key_covers(request, "acme/web") is True
+        assert key_covers(request, "acme/other") is False
     assert not logs and not audited, "a list read every minute hides another repo's decisions without a refusal"
 
 
@@ -200,3 +203,15 @@ async def test_a_finished_job_is_a_job_while_the_game_is_off(app: Any) -> None:
     assert labels == ["Job done"], f"no game word on a decision card while the game is off: {labels}"
     one = (await get(app, "/api/v1/decisions/done:job-1")).json()
     assert one["kind_label"] == "Job done", f"nor on the one read by its id: {one['kind_label']}"
+
+
+@pytest.mark.parametrize("stage", ["offered", "done", "a-stage-added-later", None])
+def test_a_decision_of_any_stage_is_listed_only_to_a_key_that_covers_its_repository(stage: str | None) -> None:
+    """``listed_to`` grants by the repository alone: a stage it does not know is hidden from a key that does not
+    cover the repository, not shown by default."""
+    limited = SimpleNamespace(state=SimpleNamespace(principal=SimpleNamespace(allowed_repos=("acme/web",))))
+    session = SimpleNamespace(state=SimpleNamespace())
+    other = {"stage": stage, "repo": "globex/gizmos"}
+    assert decisions_api.listed_to(limited, other) is False, f"stage {stage!r} of an uncovered repository is hidden"
+    assert decisions_api.listed_to(limited, {**other, "repo": "acme/web"}) is True, "its own repository is listed"
+    assert decisions_api.listed_to(session, other) is True, "a session reads every repository's decisions"

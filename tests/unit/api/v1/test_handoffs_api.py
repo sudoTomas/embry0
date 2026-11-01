@@ -116,7 +116,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     app.state.handoffs_repo = FakeHandoffs()
     app.state.webhook_notifier = FakeNotifier()
 
-    async def get_decision(decision_id: str, _request: Any) -> dict[str, Any]:
+    async def read_decision(_request: Any, decision_id: str, *, action: str | None = None) -> dict[str, Any]:
         found = next((d for d in DECISIONS if d["id"] == decision_id), None)
         if found is None:
             from fastapi import HTTPException
@@ -127,7 +127,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def offers(_request: Any, **_kw: Any) -> list[Any]:
         return []
 
-    monkeypatch.setattr(decisions_api, "get_decision", get_decision)
+    monkeypatch.setattr(decisions_api, "read_decision", read_decision)
     monkeypatch.setattr(handoffs_api, "request_actor", lambda _r: ME)
     monkeypatch.setattr(decisions_api, "request_actor", lambda _r: ME)
     return app

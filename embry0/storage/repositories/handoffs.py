@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -66,8 +66,16 @@ class HandoffsRepository:
         )
         return [dict(r) for r in rows]
 
-    async def recent(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        rows = await self._db.fetch("SELECT * FROM handoffs ORDER BY created_at DESC LIMIT $1", limit)
+    async def recent(self, *, limit: int = 100, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
+        """The newest hand-offs; ``repos`` (lower-cased slugs) narrows them to those repositories."""
+        if repos is None:
+            rows = await self._db.fetch("SELECT * FROM handoffs ORDER BY created_at DESC LIMIT $1", limit)
+        else:
+            rows = await self._db.fetch(
+                "SELECT * FROM handoffs WHERE LOWER(repo) = ANY($2::text[]) ORDER BY created_at DESC LIMIT $1",
+                limit,
+                list(repos),
+            )
         return [dict(r) for r in rows]
 
     async def close(

@@ -10,6 +10,22 @@ from typing import Any
 from embry0.services.asks import LIVE, code_for
 from embry0.storage.database import DatabasePool
 
+#: The repository of the decision ``{id}`` names, read at the time from the row it comes from: a finished job's,
+#: an issue's, a watcher case's, a lead's, or, for any quest on offer that was answered, its answer's. NULL for an
+#: audit finding no one answered: its id is a digest, so only the open decisions name its repository.
+_DECISION_REPO = """
+LEFT JOIN LATERAL (
+    SELECT COALESCE(
+        (SELECT j.repo FROM jobs j WHERE {id} LIKE 'done:%' AND j.job_id = substr({id}, 6)),
+        (SELECT i.repo FROM issues i WHERE {id} LIKE 'offer:issue:%' AND i.id = substr({id}, 13)),
+        (SELECT c.repo FROM healing_cases c WHERE {id} LIKE 'offer:case:%' AND c.id = substr({id}, 12)),
+        (SELECT l.repo FROM leads l WHERE {id} LIKE 'offer:%' AND l.id = substr({id}, 7)),
+        (SELECT pd.repo FROM proposal_decisions pd WHERE {id} LIKE 'offer:%' AND pd.proposal_id = substr({id}, 7)
+         ORDER BY pd.created_at DESC LIMIT 1)
+    ) AS repo
+) decision ON TRUE
+"""
+
 
 class AsksRepository:
     def __init__(self, db: DatabasePool) -> None:
@@ -160,6 +176,32 @@ class AsksRepository:
         )
         return {str(r["id"]): r["handed_out_at"] for r in rows}
 
-    async def recent(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        rows = await self._db.fetch("SELECT * FROM asks ORDER BY created_at DESC LIMIT $1", limit)
+    async def recent(
+        self, *, limit: int = 100, repos: Iterable[str] | None = None, decision_ids: Iterable[str] = ()
+    ) -> list[dict[str, Any]]:
+        """The newest asks. With ``repos`` (lower-cased slugs), only the asks whose decision's repository is one of
+        them (``decision_repo``, read at the time), or whose decision is in ``decision_ids``, before the limit."""
+        if repos is None:
+            rows = await self._db.fetch("SELECT * FROM asks ORDER BY created_at DESC LIMIT $1", limit)
+            return [dict(r) for r in rows]
+        rows = await self._db.fetch(
+            "SELECT a.*, decision.repo AS decision_repo FROM asks a"
+            + _DECISION_REPO.format(id="a.decision_id")
+            + "WHERE LOWER(decision.repo) = ANY($2::text[]) OR a.decision_id = ANY($3::text[]) "
+            "ORDER BY a.created_at DESC LIMIT $1",
+            limit,
+            list(repos),
+            sorted(set(decision_ids)),
+        )
         return [dict(r) for r in rows]
+
+    async def decision_repos(self, decision_ids: Iterable[str]) -> dict[str, str]:
+        """Each decision's repository, read at the time from the row it comes from; a decision whose repository
+        cannot be read back, an audit finding no one answered, is left out."""
+        ids = sorted(set(decision_ids))
+        if not ids:
+            return {}
+        rows = await self._db.fetch(
+            "SELECT d.id, decision.repo FROM unnest($1::text[]) AS d(id)" + _DECISION_REPO.format(id="d.id"), ids
+        )
+        return {str(r["id"]): str(r["repo"]) for r in rows if r["repo"] is not None}

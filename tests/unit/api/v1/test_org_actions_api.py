@@ -437,6 +437,42 @@ async def test_onboard_honors_the_callers_repository_allowlist(keyed_app: Any) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["register", "hook", "watch", "deactivate"])
+async def test_every_action_leaves_alone_a_repository_the_callers_allowlist_does_not_cover(
+    keyed_app: Any, action: str
+) -> None:
+    """The key covers acme/one: acme/two fails with the refusal and is not touched, whatever the action."""
+    if action != "register":
+        keyed_app.state.repos_repo.rows["acme/two"] = {"repo": "acme/two", "active": True}
+    before = {repo: dict(row) for repo, row in keyed_app.state.repos_repo.rows.items()}
+    body = {"action": action, "repos": ["acme/two"]}
+    async with _client(keyed_app, LIMITED_ADMIN_TOKEN) as client:
+        dry = await client.post("/api/v1/orgs/acme/actions", json={**body, "dry_run": True})
+        assert _audits(keyed_app, "apikey.repo_refused") == [], (
+            "a dry run says what it would refuse, and audits nothing"
+        )
+        real = await client.post("/api/v1/orgs/acme/actions", json=body)
+    for resp in (dry, real):
+        assert resp.status_code == 200, resp.text
+        (result,) = resp.json()["results"]
+        assert (result["repo"], result["outcome"]) == ("acme/two", "failed"), result
+        assert result["detail"].startswith("repo_not_allowed"), result
+    assert keyed_app.state.repos_repo.rows == before, "the registry is untouched"
+    assert keyed_app.state.watcher_stacks_repo.rows == {}, "no stack is watched"
+    assert keyed_app.state.fake_forge.posts == [], "no webhook is made"
+    assert [d["repo"] for _actor, d in _audits(keyed_app, "apikey.repo_refused")] == ["acme/two"]
+
+
+@pytest.mark.asyncio
+async def test_an_owner_the_callers_allowlist_does_not_cover_is_refused_whole(keyed_app: Any) -> None:
+    keyed_app.state.organizations_repo.orgs["globex"] = Organization(owner="globex", forge="github")
+    async with _client(keyed_app, LIMITED_ADMIN_TOKEN) as client:
+        resp = await client.post("/api/v1/orgs/globex/actions", json={"action": "deactivate", "repos": ["globex/x"]})
+    assert resp.status_code == 403 and resp.json()["detail"].startswith("repo_not_allowed"), resp.text
+    assert [d["repo"] for _actor, d in _audits(keyed_app, "apikey.repo_refused")] == ["globex/*"]
+
+
+@pytest.mark.asyncio
 async def test_onboard_holds_a_rerun_after_a_completed_job_unless_forced(app: Any) -> None:
     app.state.repos_repo.rows["acme/widgets"] = {"repo": "acme/widgets"}
     app.state.jobs_repo.rows.append(

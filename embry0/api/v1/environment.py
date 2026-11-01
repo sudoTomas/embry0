@@ -10,6 +10,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas.environment import (
     DetectedEnvVar,
     DetectResponse,
@@ -187,6 +188,7 @@ async def resolve_repo_environment(full_repo: str, request: Request) -> Environm
 
 @router.put("/repos/{full_repo:repo}/-/environment", response_model=EnvironmentResponse)
 async def set_repo_environment(full_repo: str, req: EnvironmentSetRequest, request: Request) -> EnvironmentResponse:
+    await enforce_repo_allowlist(request, full_repo, action="change a repository's variables")
     provider = request.app.state.secrets_provider
     env_repo = request.app.state.env_repo
     raw = [v.model_dump() for v in req.variables]
@@ -228,6 +230,7 @@ async def reveal_repo_secret(full_repo: str, key: str, request: Request) -> Reve
 
 @router.delete("/repos/{full_repo:repo}/-/environment/{key}", status_code=204, response_model=None)
 async def delete_repo_env_var(full_repo: str, key: str, request: Request) -> None:
+    await enforce_repo_allowlist(request, full_repo, action="change a repository's variables")
     env_repo = request.app.state.env_repo
     await env_repo.delete_repo_var(full_repo, key)
 

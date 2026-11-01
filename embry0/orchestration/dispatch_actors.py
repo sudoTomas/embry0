@@ -87,6 +87,11 @@ SETTINGS_BOOTSTRAP = f"{RESERVED_PREFIX}bootstrap"
 # The Slop-O-Meter removing what it kept of a repository that left its scope
 # (#165). It writes audit rows and never dispatches.
 SLOP_METER = f"{RESERVED_PREFIX}slop-meter"
+# The audit row of a request refused by a key's repository allowlist
+# (embry0.api.repo_allowlist): the deployment's record rather than the key's,
+# so the refused key never reads it back. It writes audit rows and never
+# dispatches.
+REPO_ALLOWLIST = f"{RESERVED_PREFIX}repo-allowlist"
 
 RATE_LIMIT_EXEMPT: frozenset[str] = frozenset({WATCHER, AUTO_RETRIAGE, ANSWER_RESUME, CONTEXT_AUDIT, SCOUT})
 

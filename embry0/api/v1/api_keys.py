@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from embry0.api.deps import bust_api_key_cache, request_actor, unidentified_caller_tier
-from embry0.api.repo_allowlist import restricted_key_name
+from embry0.api.repo_allowlist import answer_as_missing, restricted_key_name, wider_than_allowlist
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.api.session import TIER_ADMIN
 from embry0.audit.helpers import emit_audit
@@ -227,11 +227,17 @@ async def set_allowed_repos(key_id: str, body: AllowedReposBody, request: Reques
 
 @router.delete("/apikeys/{key_id}")
 async def revoke_key(key_id: str, request: Request) -> dict[str, Any]:
+    """Revoke a key: the key's owner or an admin. A key with an allowlist revokes only keys whose allowlist is
+    within its own, never a key without one; any other key answers as one that does not exist."""
     repo = request.app.state.api_keys_repo
     tier, user = await _caller(request)
     existing = await repo.get(key_id)
+    missing = HTTPException(status_code=404, detail=f"key {key_id!r} not found")
     if existing is None:
-        raise HTTPException(status_code=404, detail=f"key {key_id!r} not found")
+        raise missing
+    wider = wider_than_allowlist(request, existing.allowed_repos)
+    if wider is not None:
+        await answer_as_missing(request, wider, missing, action="revoke an API key")
     is_owner = user is not None and existing.user_id == user.id
     if tier != TIER_ADMIN and not is_owner:
         raise HTTPException(status_code=403, detail="only the key owner or an admin can revoke")

@@ -21,12 +21,16 @@ def _where(
     action: str | None,
     since: datetime | None,
     until: datetime | None,
+    hidden_actors: Sequence[str] = (),
 ) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     args: list[Any] = []
     if actors is not None:
         args.append(list(actors))
         clauses.append(f"actor = ANY(${len(args)})")
+    if hidden_actors:
+        args.append(list(hidden_actors))
+        clauses.append(f"actor <> ALL(${len(args)})")
     if action is not None:
         # A renamed action's filter also finds the rows written under its old names.
         names = names_of(action)
@@ -56,14 +60,15 @@ class AuditRepository:
         until: datetime | None = None,
         limit: int = 50,
         offset: int = 0,
+        hidden_actors: Sequence[str] = (),
     ) -> list[dict[str, Any]]:
-        """Newest-first page of audit rows; ``actors=None`` = unrestricted.
+        """Newest-first page of audit rows; ``actors=None`` = unrestricted, ``hidden_actors`` left out.
 
         Explicit column list — trace_id is ops-internal and never leaves the
         repository. ``id DESC`` tiebreak keeps same-timestamp rows stable
         across pages.
         """
-        where, args = _where(actors, action, since, until)
+        where, args = _where(actors, action, since, until, hidden_actors)
         args.extend((limit, offset))
         rows = await self._db.fetch(
             f"""
@@ -83,8 +88,9 @@ class AuditRepository:
         action: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        hidden_actors: Sequence[str] = (),
     ) -> int:
-        where, args = _where(actors, action, since, until)
+        where, args = _where(actors, action, since, until, hidden_actors)
         row = await self._db.fetchrow(f"SELECT COUNT(*) AS n FROM audit_log{where}", *args)
         return int(row["n"]) if row else 0
 

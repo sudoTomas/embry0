@@ -423,10 +423,10 @@ One message to one person about one decision, tracked from `queued` to `answered
 - **Whose policy.** Each ask follows the organization its decision's repository belongs to (the first segment of the slug): that organization's [layer](configuration.md#settings-document) may set any of the six keys above (`PUT /api/v1/config/settings?owner=acme`), and the deployment's document supplies the rest. So two organizations' asks go out in their own working hours in the same tick, and someone asked about both organizations' decisions may hold each one's number. An ask about a decision with no repository, such as a non-git job's, follows the deployment's document, and its limit counts apart from every organization's. `asks.enabled` and `asks.tick_seconds` are the deployment's alone. `GET /api/v1/config/settings/effective?owner=acme` shows what an organization's asks read.
 - **Expiry.** `asks.expire_days` counts from when an ask was sent. An ask still queued, waiting behind its person's limit or for working hours, does not expire; it is withdrawn when its decision closes. A plain call to `GET /asks/due` is the assistant's hand-out: each first send on its page is stamped as handed out, and if it is never reported sent (`POST /asks/{id}/sent`), such as one to a person the assistant cannot reach, it expires `asks.expire_days` after it was first handed out, so it does not hold its person's place for ever. `GET /asks/due?peek=1` returns the same page and stamps nothing: use it to look without starting that clock. A page puts the asks never handed out before those handed out and unreported, so a person's fresh ask reaches it within a few polls however many asks of people the assistant skips are waiting. An ask that reached its person and expired keeps them from being asked about that decision again; one handed out and never reported sent keeps them from it for another `asks.expire_days`, then they may be asked again, a second message if the first did reach them.
 - **Codes.** Each decision gets one code: four letters from its id, lengthened on a collision, never given to another decision. A late press cannot land on the wrong quest.
-- `GET /api/v1/asks/due?limit=` lists what to send now: queued and due, or a first reminder due within its organization's working hours. It answers `{"asks", "count", "enabled"}`; while `asks.enabled` is false `asks` is empty, whatever is stored, and the stored asks wait. Each item is `{"id", "code", "recipient": {"email", "name", "github_login"}, "reminder", "decision", "actions", "dashboard_url"}`. `decision` is the decision as `GET /decisions/{id}` shows it. `actions` are what a chat may answer by itself: `start`, `decline`, `later` and `send_to` on offer; `merge` (through a pending merge approval) and `send_to` on a quest to review. Everything else opens `dashboard_url`. It lists only decisions in repositories the caller's key covers; an ask whose decision was answered meanwhile is left out here and withdrawn by the ask loop, which reads every decision. A person's unanswered asks count toward their limit whether or not the key covers their decisions, so a key limited to some repositories never releases an ask past it.
+- `GET /api/v1/asks/due?limit=` lists what to send now: queued and due, or a first reminder due within its organization's working hours. It answers `{"asks", "count", "enabled"}`; while `asks.enabled` is false `asks` is empty, whatever is stored, and the stored asks wait. Each item is `{"id", "code", "recipient": {"email", "name", "github_login"}, "reminder", "decision", "actions", "dashboard_url"}`. `decision` is the decision as `GET /decisions/{id}` shows it. `actions` are what a chat may answer by itself: `start`, `decline`, `later` and `send_to` on offer; `merge` (through a pending merge approval) and `send_to` on a quest to review. Everything else opens `dashboard_url`. Through a key with a [repository allowlist](#repository-allowlist) it hands out only asks about decisions, on offer or to review, in the repositories the key covers; an ask whose decision was answered meanwhile is left out here and withdrawn by the ask loop, which reads every decision. A person's unanswered asks count toward their limit whether or not the key covers their decisions, so a key limited to some repositories never releases an ask past it.
 - `POST /api/v1/asks/{id}/sent` (`{"message_ref"}`): the assistant sent it. A second report counts as the reminder.
 - `POST /api/v1/asks/answer` (`{"code", "action", "person", "reason", "to", "note"}`): a button press by `person` (an email the assistant verified). It is answered through the paths the dashboard uses, as that person, and only when they may decide: the hand-off's person while one is open, else an owner (by their GitHub login) or an admin. Every live ask of the decision closes as `answered`, and the `ask.answered` event lists each message to update. A second press returns `{"already": true, "answer", "by"}` and runs nothing.
-- `GET /api/v1/asks?limit=`: the latest asks.
+- `GET /api/v1/asks?limit=`: the latest asks. Through a key with a [repository allowlist](#repository-allowlist), only those about decisions in the repositories the key covers, closed ones included.
 
 ## Leads
 
@@ -675,7 +675,7 @@ An owner with the `context_audit_days` setting on has its instruction files audi
 
 `GET /api/v1/orgs/{owner}/context-audit` answers what that schedule reads, whatever the setting says, and starts nothing: `{"owner", "context_audit_days", "read_at", "template": "context-audit", "repos": [...], "unread": [{"repo", "detail"}]}`. It serves each repository's last reading of its default branch, the schedule's or an earlier read's, with the jobs as they are now; `read_at` is when the oldest reading was taken. `?refresh=true` reads every default branch again, eight repositories at a time, and so does the first read of a repository nothing read yet. `repos` holds one entry per active registered repository with at least one instruction file: `{"repo", "files", "fingerprint", "head_sha", "newest_job": {"job_id", "status", "created_at", "finished_at", "total_cost_usd", "error_code", "pr_url", "stale", "files_read"} | null, "refused_at", "due", "reason"}`. `stale` and `files_read` are the counts the report of a job that finished its work starts with (`completed`, and `pr_merged` or `pr_closed` once merge sync recorded what became of its pull request), its outdated claims and the instruction files it read; they are `null` for any other job and for a report that lost them. `files` counts the instruction files on the default branch, `fingerprint` is the sha256 over their sorted `path<TAB>blob sha` lines, and `refused_at` is when the schedule's last start for the repository was refused before a job existed (`null` when none was). `reason` is one of `first` (no context-audit job yet), `changed` (the fingerprint differs from the one the newest job recorded), `aged` (the newest job is `context_audit_days` old, from when it finished, whatever became of its pull request since, or, when it did not complete, from when it started, and the branch head moved since), `live` (one is pending, running, awaiting input or paused), `current` or `off`; `due` is true for the first three. A finding's fix job, dispatched by `embry0:proposals` when an owner accepts a `finding` proposal, is no audit: it is never `newest_job` and never anchors these reasons, but while it runs its repository reads `live`, as with any context-audit job. `unread` lists the repositories whose newest commit or tree the forge did not return, with why. An unknown owner answers 404, a GitLab owner 422, a credential that cannot be resolved the 404 or 422 the other organization routes answer, and an orchestrator that did not start the schedule 503.
 
-`POST /api/v1/orgs/{owner}/context-audit/run` starts the owner's due audits now, whether or not `context_audit_days` is on. Body, every field optional: `{"repo": "acme/widgets", "force": false, "limit": 3}`. Without `repo` it starts every due repository, at most `limit` (1 to 50; absent, `budget.context_audit_max_jobs_per_tick` as the owner reads it). With `repo`, one of the owner's active registered repositories, it starts that one when it is due, or with `force: true` whatever the due rule says; `force` without `repo` answers 422. Due is the schedule's rule without its off switch: with the setting off no interval applies, so a repository is due with no context-audit job yet or with changed files. Nothing starts while a context-audit job of the repository is live, `force` or not: right before each start the jobs are read again, under one lock that the schedule's own starts also hold. Each job starts the way the schedule starts one, under the actor `embry0:context-audit`, with `budget.context_audit_job_usd` as the owner reads it as its hard cap and the fingerprint and head it was read at, so the schedule anchors on it and does not repeat it. One `organization.context_audit_run` audit row names the caller, with the ids of the jobs started. The response: `{"owner", "context_audit_days", "repo", "force", "limit", "budget_usd", "started": [{"repo", "job_id", "reason"}], "skipped": [{"repo", "reason", "detail"}]}`, where `limit` is `null` with `repo`. A started job's `reason` is `first`, `changed`, `aged` or `forced` (started with `force` while the due rule said `current`); a skipped repository's is `live`, `current`, `limit` (past the limit), `refused` (the start was refused before a job existed, `detail` says why, such as no `context-audit` template; the schedule then waits an interval on that repository, as on its own refusals), `gated` (the budget gate refused the start, `detail` says which limit; every repository the run would have started after it is `gated` too, no job is written and none counts as an attempt, so each is due again once the gate lets jobs through), `unread` (the forge did not answer, `detail` says how) or `no_instruction_files` (only for the named `repo`). The tier is that of `POST /api/v1/jobs`, an operate-scope key or above, and a key limited to a repository allowlist must name one of its repositories with `repo`. An unknown owner, or a `repo` that is not one of its active registered repositories, answers 404, a paused or removed owner 409, a GitLab owner 422, a credential that cannot be resolved the 404 or 422 the other organization routes answer, and an orchestrator that did not start the schedule 503.
+`POST /api/v1/orgs/{owner}/context-audit/run` starts the owner's due audits now, whether or not `context_audit_days` is on. Body, every field optional: `{"repo": "acme/widgets", "force": false, "limit": 3}`. Without `repo` it starts every due repository, at most `limit` (1 to 50; absent, `budget.context_audit_max_jobs_per_tick` as the owner reads it). With `repo`, one of the owner's active registered repositories, it starts that one when it is due, or with `force: true` whatever the due rule says; `force` without `repo` answers 422. Due is the schedule's rule without its off switch: with the setting off no interval applies, so a repository is due with no context-audit job yet or with changed files. Nothing starts while a context-audit job of the repository is live, `force` or not: right before each start the jobs are read again, under one lock that the schedule's own starts also hold. Each job starts the way the schedule starts one, under the actor `embry0:context-audit`, with `budget.context_audit_job_usd` as the owner reads it as its hard cap and the fingerprint and head it was read at, so the schedule anchors on it and does not repeat it. One `organization.context_audit_run` audit row names the caller, with the ids of the jobs started. The response: `{"owner", "context_audit_days", "repo", "force", "limit", "budget_usd", "started": [{"repo", "job_id", "reason"}], "skipped": [{"repo", "reason", "detail"}]}`, where `limit` is `null` with `repo`. A started job's `reason` is `first`, `changed`, `aged` or `forced` (started with `force` while the due rule said `current`); a skipped repository's is `live`, `current`, `limit` (past the limit), `refused` (the start was refused before a job existed, `detail` says why, such as no `context-audit` template; the schedule then waits an interval on that repository, as on its own refusals), `gated` (the budget gate refused the start, `detail` says which limit; every repository the run would have started after it is `gated` too, no job is written and none counts as an attempt, so each is due again once the gate lets jobs through), `unread` (the forge did not answer, `detail` says how) or `no_instruction_files` (only for the named `repo`). The tier is that of `POST /api/v1/jobs`, an operate-scope key or above, and a key limited to a repository allowlist must name one of its repositories with `repo`, under an owner it covers; both are checked before the owner is read. An unknown owner, or a `repo` that is not one of its active registered repositories, answers 404, a paused or removed owner 409, a GitLab owner 422, a credential that cannot be resolved the 404 or 422 the other organization routes answer, and an orchestrator that did not start the schedule 503.
 
 `GET /api/v1/orgs/{owner}/needs` is the needs list ([ADR 0011](adr/0011-organization-needs.md)): what embry0 still needs from a person to maintain the owner, derived from the newest finished discovery run, one need per kind and repository set. `dismiss` and `reopen` keep a person's answer across rediscovery. `repo_vanished` lists the repositories an earlier run listed, the newest did not and confirmed gone with a direct read, that embry0 still holds as active registrations; its action is `deactivate`, which a person runs: nothing is deactivated on its own. Each open need is also a healing case with origin `org`, listed by `GET /api/v1/cases?awaiting_decision=true` ([Healing cases](#healing-cases)); closing that case dismisses the need.
 
@@ -1007,7 +1007,8 @@ proposals (read, and answer proposals: `POST /proposals/{id}/accept`,
 A key may be limited to a list of repositories with `allowed_repos`. A
 restricted key is refused, with a 403 whose detail starts with
 `repo_not_allowed:`, whenever it would start, continue or stop work on any
-other repository:
+other repository, or change its registration, its configuration or its
+organization:
 
 - `POST /jobs` (every pipeline; a job with no repository, such as an `http`
   or `none` context, is refused too), `POST /jobs/{id}/resume`,
@@ -1021,14 +1022,33 @@ other repository:
   names none is refused, since it would start work on any repository under
   the owner);
 - `POST /cases/{id}/accept`, `POST /merge-approvals/{id}/decide`,
-  `POST /proposals/{id}/accept`, `/decline` and `/snooze` (the proposal's
-  repository), `POST /watcher/run` (the stack ticked; with none named, every watched
+  `POST /watcher/run` (the stack ticked; with none named, every watched
   stack, all checked before any ticks), `POST /qa/images/build` and
   `POST /repos/bootstrap`;
 - the steps of setting up testing: `POST /repos/{repo}/-/setup/propose`,
   `POST /repos/{repo}/-/setup/proposal/{id}/apply` and `.../reject`,
   `POST /repos/{repo}/-/setup/skip-testing` and
   `POST /repos/{repo}/-/history/{id}/undo`;
+- changing a repository's registration or configuration: `POST /repos`
+  (the repository it registers), `DELETE /repos/{repo}`,
+  `PUT /repos/{repo}/-/active`, `/-/docker-access`,
+  `/-/credentials` and `/-/environment`,
+  `DELETE /repos/{repo}/-/environment/{key}`, `PUT` and
+  `DELETE /repos/{repo}/-/preferences` and `/-/qa-config`, `PUT` and
+  `DELETE /config/context/repos/{repo}`,
+  `PUT /standards/{owner}/{kind}/repos/{repo}` and `PUT` and
+  `DELETE /watcher/stacks/{owner}/{name}` (the stack's repository). The
+  repository is the one the path names, checked before anything is read, so
+  the answer is the same whether it is registered or not;
+- changing an organization: `POST /orgs` (registering an owner, again
+  or not), `PATCH /orgs/{owner}`, `PUT /orgs/{owner}/status`,
+  `PUT /credentials/bindings` with an `owner` scope, which sets the forge
+  credential its repositories use, `POST /orgs/{owner}/probe`, `/discover`,
+  `/webhook` and `/actions` (and each repository its `repos` names),
+  `POST /orgs/{owner}/needs/{id}/dismiss` and `/reopen`, and
+  `PUT /standards/{owner}/{kind}`. A key covers the owners of the
+  repositories on its list; an owner it does not cover is refused naming
+  `<owner>/*`;
 - the [knowledge maps](#knowledge-maps), which belong to a forge owner: a
   key covers the owners of the repositories on its list. `PUT /maps/{slug}`,
   `POST /maps/{slug}/marks`, `POST /maps/{slug}/send`,
@@ -1045,16 +1065,63 @@ they are covered too. Matching ignores case and follows `REPO_RENAMES`
 slug also matches its current one, and the reverse. Each refusal logs
 `api_key_repo_refused` with the key's name and id (never the key), the
 repository and the action, and writes an `apikey.repo_refused` audit row.
+The row's actor is `embry0:repo-allowlist`, with the key and its caller in
+`details`, and `GET /audit` never shows such a row to a key with an
+allowlist: an admin reads it, the refused key does not.
+
+The list is also a read boundary: a key reads only its repositories' work.
+These routes narrow to the key's repositories today, by one rule
+(`key_covers` in `embry0/api/repo_allowlist.py`); the remaining read routes
+follow:
+
+- `GET /decisions`, `GET /proposals`, `GET /asks/due`, `GET /asks`,
+  `GET /leads`, `GET /handoffs`, `GET /world` (its parties, quests, inbox,
+  loot, regions, frontier, dungeons and recent diary tiers),
+  `GET /world/characters/{agent}` (its quest log), and `GET /progression`
+  and `GET /progression/preview` (their diaries, recent diary tiers,
+  achievements' evidence and quests' places) list only what is in
+  repositories the key covers. A list that pages in its query, the
+  parties, inbox, loot, quest log, quests to review, leads, hand-offs and
+  asks among them, is narrowed before its page is cut, so the key's own
+  work is on it however much newer work another repository has. An
+  achievement or a quest still shows; its evidence or place is null unless
+  it names a repository the key covers, or, for evidence, characters
+  rather than work. The account's and the characters' totals count every
+  repository's work, without naming any.
+- Reading one item of another repository, `GET /proposals/{id}`,
+  `GET /decisions/{id}` and `GET /world/quests/{id}`, answers exactly as an
+  item that does not exist (404).
+- Acting on one item of another repository answers exactly as acting on an
+  item that does not exist: `POST /proposals/{id}/accept`, `/decline` and
+  `/snooze` and `POST /decisions/{id}/send-to` with 404,
+  `POST /handoffs/{id}/return` and `/cancel` with 404,
+  `POST /asks/{id}/sent` with 409, `POST /asks/answer` with 404 and
+  `POST /cases/{id}/close` with 404 (a case an organization need filed on
+  its owner is checked against the owner, and its refusal names
+  `<owner>/*`). So no answer tells whether the item exists.
+
+A list or a read is narrowed, not refused, so it logs and audits nothing.
+An action is refused: it logs `api_key_repo_refused` and writes an
+`apikey.repo_refused` audit row as the refusals above do, though its answer
+is the missing item's, and the key reads nothing back that acting on a
+missing item would not have left. An ask names only its decision: its repository is
+read back from the row the decision comes from (a finished job, an issue, a
+watcher case, a lead, an answered proposal), else from the open decisions.
+An ask about an audit finding that was never answered and is no longer
+offered has no repository to read back, so a key with an allowlist neither
+lists it nor acts on it. The jobs and merge approval routes keep the 403
+refusal above for their actions, reviewing a finished job included.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
-every key minted before the allowlist existed is unrestricted. Beyond the
-routes above, the list does not narrow what the key may read (except the
-knowledge maps, which list and answer only the maps of covered owners), nor
-the settings routes its scope allows, `PUT /repos/{repo}/-/qa-config` and
-`PUT /repos/{repo}/-/preferences` among them. A restricted key may not mint
+every key minted before the allowlist existed is unrestricted. The
+knowledge maps list and answer only the maps of covered owners. What
+belongs to the deployment rather than to a repository or an owner is the
+key's scope's to decide, not the list's. A restricted key may not mint
 keys or change any key's allowlist, its own included, since a key it minted
-would carry no restriction. For an agent that should only dispatch, mint an
-`operate` key with the list.
+would carry no restriction. It revokes only keys whose allowlist is within
+its own, itself included, never a key without one; `DELETE /apikeys/{id}`
+on any other key answers as on a key that does not exist. For an agent
+that should only dispatch, mint an `operate` key with the list.
 
 ```bash
 # Mint a key that may only start work on acme/widgets

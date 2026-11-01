@@ -19,7 +19,7 @@ from starlette.types import Scope
 
 from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.api.v1.run_with import checked_run_with
@@ -229,6 +229,8 @@ async def register_organization(body: OrganizationBody, request: Request) -> dic
     PATCH does: a key not named keeps its value.
     """
     owner = _owner_name(body.owner)
+    # As PATCH /orgs/{owner} is: registering an owner again rewrites its credential and name.
+    await enforce_owner_allowlist(request, owner, action="register an organization")
     try:
         settings = org_service.validate_settings(body.settings)
     except ValueError as exc:
@@ -274,6 +276,7 @@ async def register_organization(body: OrganizationBody, request: Request) -> dic
 @router.post("/orgs/{owner}/probe", dependencies=[require_admin])
 async def reprobe_organization(owner: str, request: Request) -> dict[str, Any]:
     """Ask the forge again what the stored credential can do at this owner."""
+    await enforce_owner_allowlist(request, owner, action="probe an organization")
     repository = _repo(request)
     org = await repository.get(owner)
     if org is None:
@@ -308,6 +311,7 @@ async def patch_organization(owner: str, body: PatchBody, request: Request) -> d
     layer instead, by the rules of ``PATCH /config/settings/{section}?owner=``,
     and the answer's ``deprecated`` names its key there.
     """
+    await enforce_owner_allowlist(request, owner, action="change an organization")
     repository = _repo(request)
     org = await repository.get(owner)
     if org is None:
@@ -335,6 +339,7 @@ async def patch_organization(owner: str, body: PatchBody, request: Request) -> d
 
 @router.put("/orgs/{owner}/status", dependencies=[require_admin])
 async def set_organization_status(owner: str, body: StatusBody, request: Request) -> dict[str, Any]:
+    await enforce_owner_allowlist(request, owner, action="change an organization")
     org = await _repo(request).set_status(owner, body.status)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
@@ -569,6 +574,7 @@ async def discover_organization(owner: str, request: Request) -> dict[str, Any]:
     Runs in the orchestrator process and returns the run at once; poll
     ``GET /orgs/{owner}/runs`` for progress. One run per owner at a time.
     """
+    await enforce_owner_allowlist(request, owner, action="discover an organization")
     org = await _repo(request).get(owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
@@ -686,6 +692,7 @@ async def install_organization_webhook(owner: str, request: Request) -> dict[str
     webhook secret. Refused unless the probe found the credential can manage
     hooks. Idempotent: a hook already pointing here is ``already``.
     """
+    await enforce_owner_allowlist(request, owner, action="install an organization's webhook")
     org, client = await _org_for_hooks(request, owner)
     if org.status != "active":
         raise HTTPException(status_code=409, detail=f"organization {owner} is {org.status}")
@@ -823,8 +830,11 @@ async def run_organization_context_audit(owner: str, body: ContextAuditRunBody, 
     start, under its actor, so the schedule anchors on it; the
     ``organization.context_audit_run`` audit row names the caller. The tier
     of ``POST /jobs``, with its repository allowlist: a key limited to some
-    repositories names one of them.
+    repositories names one of them. Both the owner and that repository are
+    checked before the organization is read, so a refusal says nothing of it.
     """
+    await enforce_owner_allowlist(request, owner, action="start a context audit")
+    await enforce_repo_allowlist(request, body.repo, action="start a context audit")
     org = await _repo(request).get(owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
@@ -833,7 +843,6 @@ async def run_organization_context_audit(owner: str, body: ContextAuditRunBody, 
     schedule = getattr(request.app.state, "context_audit", None)
     if schedule is None:
         raise HTTPException(status_code=503, detail="the context audit schedule is not initialized")
-    await enforce_repo_allowlist(request, body.repo, action="start a context audit")
     run_with = await checked_run_with(request, body.run_with, body.repo)
     try:
         result = await schedule.run(org, repo=body.repo, force=body.force, limit=body.limit, run_with=run_with)

@@ -105,6 +105,9 @@ class ActionContext:
     deployment without a watcher or an executor still gets an honest answer
     for the other actions. ``force`` is for onboard only: start another job
     even when the last one completed without storing a QA config.
+    ``refusal`` says what the caller is refused with on a repository, or
+    None: a repository it is refused on fails with that reason, and the
+    action does not touch it.
     """
 
     owner: str
@@ -120,6 +123,7 @@ class ActionContext:
     webhook_url: str | None = None
     webhook_secret: str = ""
     force: bool = False
+    refusal: Callable[[str], Awaitable[str | None]] | None = None
 
 
 def webhook_url_for(config: Any) -> str | None:
@@ -328,6 +332,10 @@ async def run_action(ctx: ActionContext, action: str, repos: list[str], *, dry_r
             results.append(ActionResult(asked.strip(), "skipped", "not seen by discovery; run discovery first"))
             continue
         repo = str(row.get("repo") or key)
+        refused = await ctx.refusal(repo) if ctx.refusal is not None else None
+        if refused is not None:
+            results.append(ActionResult(repo, "failed", refused))
+            continue
         if row.get("archived") and action != "deactivate":
             results.append(ActionResult(repo, "skipped", "archived"))
             continue

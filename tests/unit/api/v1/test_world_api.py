@@ -46,7 +46,7 @@ class FakeRepo:
             "rated_at": None,
         }
 
-    async def jobs(self, *, returning_seconds: float, limit: int = 60) -> list[dict[str, Any]]:
+    async def jobs(self, *, returning_seconds: float, limit: int = 60, repos: Any = None) -> list[dict[str, Any]]:
         return [
             {
                 "job_id": "job-live",
@@ -72,16 +72,18 @@ class FakeRepo:
     async def stats(self, agent: str | None = None) -> dict[str, dict[str, Any]]:
         return {"developer": {"quests": 2, "succeeded": 1, "last_quest_at": NOW}}
 
-    async def inbox(self, *, days: int, player_actors: list[str], limit: int = 30) -> list[dict[str, Any]]:
+    async def inbox(
+        self, *, days: int, player_actors: list[str], limit: int = 30, repos: Any = None
+    ) -> list[dict[str, Any]]:
         return [{**self.quest_row, "agent_type": "developer"}]  # type: ignore[dict-item]
 
-    async def loot(self, *, days: int, limit: int = 30) -> list[dict[str, Any]]:
+    async def loot(self, *, days: int, limit: int = 30, repos: Any = None) -> list[dict[str, Any]]:
         return [{**self.quest_row, "delivery_state_at": NOW}]  # type: ignore[dict-item]
 
     async def cleaned(self, *, days: int) -> dict[tuple[str, str | None], int]:
         return {("acme/web", "Billing"): 1}
 
-    async def quest_log(self, agent: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    async def quest_log(self, agent: str, *, limit: int = 50, repos: Any = None) -> list[dict[str, Any]]:
         return [{**self.quest_row, "cost_usd": 1.2, "duration_ms": 90_000}]  # type: ignore[dict-item]
 
     async def quest(self, job_id: str) -> dict[str, Any] | None:

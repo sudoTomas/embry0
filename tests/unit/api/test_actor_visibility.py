@@ -117,9 +117,11 @@ async def test_a_caller_with_no_identity_is_refused_outside_dev_mode() -> None:
     assert refused.value.status_code == 401
 
 
-async def test_a_repository_refusal_is_recorded_under_the_key_owner() -> None:
-    """The refusal row is the key's own: recorded as ``request_actor`` names it, so its owner finds it in /audit."""
+async def test_a_repository_refusal_is_recorded_out_of_the_key_s_own_view() -> None:
+    """The refusal row is the deployment's record: the key reads nothing back that a missing item would not have
+    left. Who was refused is in its details, for the admins."""
     from embry0.api.repo_allowlist import enforce_repo_allowlist
+    from embry0.orchestration.dispatch_actors import REPO_ALLOWLIST
 
     request = _request(
         principal=_key("operate", key_name="laptop", email="ada@example.com", allowed_repos=("acme/widgets",))
@@ -127,5 +129,6 @@ async def test_a_repository_refusal_is_recorded_under_the_key_owner() -> None:
     with patch("embry0.api.repo_allowlist.emit_audit", AsyncMock()) as audit, pytest.raises(HTTPException):
         await enforce_repo_allowlist(request, "acme/gadgets", action="start a job")
     actor = audit.await_args.kwargs["actor"]
-    assert actor == request_actor(request), f"the refusal was recorded as {actor!r}, which its owner cannot see"
-    assert actor in (await caller_scope(request))[1]
+    assert actor == REPO_ALLOWLIST, f"the refusal was recorded as {actor!r}"
+    assert actor not in (await caller_scope(request))[1], "out of the key's own audit view"
+    assert audit.await_args.kwargs["details"]["caller"] == request_actor(request), "naming who was refused"

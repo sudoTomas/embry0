@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 
 from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist
 from embry0.api.schemas.credentials import (
     BindingsSet,
     CredentialCreate,
@@ -297,6 +298,8 @@ async def set_bindings(req: ScopedBindingsSet, request: Request) -> dict[str, An
                 status_code=422,
                 detail=f"owner scope_value must be 'github:<owner>' or 'gitlab:<owner>', got {scope_value!r}",
             )
+        # The owner's repositories read their forge credential from it, as PATCH /orgs/{owner} changes them.
+        await enforce_owner_allowlist(request, owner, action="bind credentials to an owner")
     for b in req.bindings if req.scope_kind in ("owner", "host") else []:
         cred = await st.credentials_repo.get(b.credential_id)
         if b.role != "forge" or cred is None:
@@ -662,6 +665,7 @@ async def get_repo_credentials(full_repo: str, request: Request) -> dict[str, An
 async def set_repo_credentials(full_repo: str, req: BindingsSet, request: Request) -> dict[str, Any]:
     st = _state(request)
     full_repo = _repo_path(full_repo)
+    await enforce_repo_allowlist(request, full_repo, action="bind credentials to a repository")
     row = await st.repos_repo.get(full_repo)
     if row is None:
         try:
