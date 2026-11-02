@@ -1,9 +1,17 @@
-"""QA dashboard routes — GET /api/v1/qa/... endpoints."""
+"""QA dashboard routes — GET /api/v1/qa/... endpoints.
+
+A QA run is a job. A key with a repository allowlist reads only the runs of
+the repositories it covers (``embry0.api.job_allowlist``): the lists and the
+aggregates leave out the other runs in their query, and one such run reads
+as a run that does not exist.
+"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from embry0.api.job_allowlist import job_hidden
+from embry0.api.repo_allowlist import covered_slugs
 from embry0.api.schemas.qa_dashboard import (
     _OVERALL,
     AffectedSetResponse,
@@ -84,7 +92,7 @@ async def list_repos(
 ) -> list[RepoEntry]:
     """List repos that have at least one QA run, latest first."""
     repo = request.app.state.qa_app_results_repo
-    rows = await repo.list_repos_with_runs(limit=limit)
+    rows = await repo.list_repos_with_runs(limit=limit, repos=covered_slugs(request))
     return [
         RepoEntry(
             repo=r.repo,
@@ -106,7 +114,7 @@ async def list_runs_for_repo(
 ) -> list[RunListItem]:
     """Paginated run list for one repo, newest first."""
     qa_repo = request.app.state.qa_app_results_repo
-    rows = await qa_repo.list_runs_for_repo(repo, limit=limit, offset=offset)
+    rows = await qa_repo.list_runs_for_repo(repo, limit=limit, offset=offset, repos=covered_slugs(request))
     return [
         RunListItem(
             job_id=r.job_id,
@@ -131,7 +139,7 @@ async def list_app_history(
 ) -> list[AppHistoryItem]:
     """Last-N runs that included this (repo, app) pair, newest first."""
     qa_repo = request.app.state.qa_app_results_repo
-    rows = await qa_repo.list_history_for_app(repo, app, limit=limit)
+    rows = await qa_repo.list_history_for_app(repo, app, limit=limit, repos=covered_slugs(request))
     return [
         AppHistoryItem(
             job_id=r.job_id,
@@ -151,7 +159,7 @@ async def get_run(run_id: str, request: Request) -> RunDetail:
     qa_repo = request.app.state.qa_app_results_repo
     jobs_repo = request.app.state.jobs_repo
 
-    job = await jobs_repo.get(run_id)
+    job = None if await job_hidden(request, run_id) else await jobs_repo.get(run_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
 
@@ -172,7 +180,7 @@ async def get_run(run_id: str, request: Request) -> RunDetail:
 async def get_run_app(run_id: str, app: str, request: Request) -> AppResult:
     """One per-app result inside a run."""
     qa_repo = request.app.state.qa_app_results_repo
-    rows = await qa_repo.list_for_job(run_id)
+    rows = [] if await job_hidden(request, run_id) else await qa_repo.list_for_job(run_id)
     for r in rows:
         if r.app_name == app:
             return _to_app_result(r)
@@ -203,7 +211,7 @@ async def get_run_affected_set(
       - the run_id is unknown
     """
     repo = request.app.state.qa_run_metadata_repo
-    md = await repo.get(run_id)
+    md = None if await job_hidden(request, run_id) else await repo.get(run_id)
     if md is None:
         raise HTTPException(
             status_code=404,
@@ -239,7 +247,7 @@ async def get_repo_cache_analytics(
     >= 3 sub-tasks) are surfaced separately.
     """
     qa_repo = request.app.state.qa_app_results_repo
-    payload = await qa_repo.cache_analytics_window(repo=repo, days=window_days)
+    payload = await qa_repo.cache_analytics_window(repo=repo, days=window_days, repos=covered_slugs(request))
     return CacheAnalyticsResponse(**payload)
 
 
@@ -261,7 +269,7 @@ async def get_repo_flake(
     grows linearly with the window.
     """
     qa_repo = request.app.state.qa_app_results_repo
-    rows = await qa_repo.flake_window(repo=repo, days=window_days)
+    rows = await qa_repo.flake_window(repo=repo, days=window_days, repos=covered_slugs(request))
     return FlakeResponse(
         repo=repo,
         window_days=window_days,

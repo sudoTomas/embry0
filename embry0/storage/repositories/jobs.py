@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -146,6 +147,30 @@ def _text_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def job_repository_sql(alias: str = "") -> str:
+    """The repository a job works on, in SQL, for the ``jobs`` row named ``alias`` (or the only one): its
+    ``repo``, else the repository its git context names. ``POST /jobs`` with a ``context`` and no ``repo`` stores
+    the repository in the context alone, and the job clones it from there."""
+    table = f"{alias}." if alias else ""
+    return f"COALESCE({table}repo, {table}context->>'repo')"
+
+
+def job_repository(job: Mapping[str, Any]) -> str | None:
+    """The repository a job works on, as :func:`job_repository_sql` reads it from a stored row: its ``repo``, else
+    its context's. None for a job with no repository, such as one over a URL (an ``http`` or ``none`` context)."""
+    repo = job.get("repo")
+    if repo:
+        return str(repo)
+    context = job.get("context")
+    if isinstance(context, str):
+        try:
+            context = json.loads(context)
+        except ValueError:
+            return None
+    named = context.get("repo") if isinstance(context, Mapping) else None
+    return str(named) if named else None
+
+
 class JobsRepository:
     """CRUD operations for the jobs table."""
 
@@ -227,6 +252,17 @@ class JobsRepository:
             return None
         return dict(row)
 
+    async def repositories_of(self, job_ids: Collection[str]) -> dict[str, str | None]:
+        """The repository each job in ``job_ids`` that exists works on (:func:`job_repository_sql`), None for a job
+        with no repository. A job that does not exist is absent."""
+        if not job_ids:
+            return {}
+        rows = await self._db.fetch(
+            f"SELECT job_id, {job_repository_sql()} AS repo FROM jobs WHERE job_id = ANY($1::text[])",
+            sorted(set(job_ids)),
+        )
+        return {str(r["job_id"]): (str(r["repo"]) if r["repo"] else None) for r in rows}
+
     async def latest_interrupt(self, job_id: str) -> dict[str, Any] | None:
         """The job's newest ``interrupt`` event (why it paused or what it asks), or None."""
         import json as json_mod
@@ -266,12 +302,21 @@ class JobsRepository:
         offset: int = 0,
         pipeline_template: str | None = None,
         exclude_dispatched_by: list[str] | None = None,
+        repos: Sequence[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        """List jobs with optional filters. Returns (rows, total_count)."""
+        """List jobs with optional filters. Returns (rows, total_count).
+
+        ``repos`` (lower-cased slugs) keeps only the jobs working on those repositories, by
+        :func:`job_repository_sql`, before the page is cut and the total counted; None keeps every job.
+        """
         conditions: list[str] = []
         args: list[Any] = []
         idx = 1
 
+        if repos is not None:
+            conditions.append(f"lower({job_repository_sql()}) = ANY(${idx}::text[])")
+            args.append(list(repos))
+            idx += 1
         if status:
             conditions.append(f"status = ${idx}")
             args.append(status)
@@ -767,7 +812,7 @@ class JobsRepository:
         )
         return {row["job_id"]: row["status"] for row in rows}
 
-    async def queue_summary(self) -> dict[str, int]:
+    async def queue_summary(self, repos: Sequence[str] | None = None) -> dict[str, int]:
         """Return per-status counts for currently-active jobs.
 
         Used by GET /api/v1/queue. Statuses returned:
@@ -775,11 +820,15 @@ class JobsRepository:
         - running: jobs currently executing
         - awaiting_input: jobs paused on user questions
         - paused: jobs paused by the reaper or operator
+
+        ``repos`` (lower-cased slugs) counts only the jobs working on those repositories; None counts every job.
         """
         rows = await self._db.fetch(
             "SELECT status, COUNT(*) AS n FROM jobs "
             "WHERE status IN ('pending', 'running', 'awaiting_input', 'paused') "
-            "GROUP BY status"
+            f"AND ($1::text[] IS NULL OR lower({job_repository_sql()}) = ANY($1::text[])) "
+            "GROUP BY status",
+            None if repos is None else list(repos),
         )
         result = {"pending": 0, "running": 0, "awaiting_input": 0, "paused": 0}
         for row in rows:

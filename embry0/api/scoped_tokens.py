@@ -61,6 +61,27 @@ def mint_scoped_token(
     return _sign(material, scope, expires_at), ttl_seconds
 
 
+#: Prefixes the scope of a token minted for a stream its minter may not read. Such a token opens the stream, which
+#: then streams nothing, as the stream of a resource that does not exist; the two answers are the same, so the token
+#: never tells whether the resource exists. No resource scope starts with it, so it never opens one that reads.
+_READS_NOTHING = "reads-nothing:"
+
+
+def reads_nothing(scope: str) -> str:
+    """The scope a token for ``scope``'s stream is signed for when its minter may not read the resource."""
+    return _READS_NOTHING + scope
+
+
+def token_reads(material: str, scope: str, token: str, *, now: float | None = None) -> bool | None:
+    """What ``token`` opens on ``scope``'s stream: True, the stream; False, a stream that reads nothing (a token
+    minted for :func:`reads_nothing`); None, nothing: the token is not valid for ``scope``."""
+    if verify_scoped_token(material, scope, token, now=now):
+        return True
+    if verify_scoped_token(material, reads_nothing(scope), token, now=now):
+        return False
+    return None
+
+
 def verify_scoped_token(material: str, scope: str, token: str, *, now: float | None = None) -> bool:
     """Constant-time verify of a scoped token: version, expiry, signature.
 

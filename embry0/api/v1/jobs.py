@@ -11,7 +11,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from embry0.api.deps import get_jobs_repo, request_actor, require_operator
-from embry0.api.repo_allowlist import enforce_repo_allowlist, refusal_detail
+from embry0.api.job_allowlist import hide_job_unless_covered, job_hidden, stream_scope
+from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, refusal_detail
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
 from embry0.api.schemas.jobs import DoneWhenEditRequest, JobResumeRequest
 from embry0.api.v1.run_with import checked_run_with
@@ -285,8 +286,14 @@ async def list_jobs(
     jobs: JobsRepository = Depends(get_jobs_repo),
 ) -> JobListResponse:
     excluded = [a.strip() for a in (exclude_dispatched_by or "").split(",") if a.strip()] or None
+    # A key with a repository allowlist lists only its repositories' jobs, narrowed before the page and the total.
     rows, total = await jobs.list_all(
-        status=status, repo=repo, limit=limit, offset=offset, exclude_dispatched_by=excluded
+        status=status,
+        repo=repo,
+        limit=limit,
+        offset=offset,
+        exclude_dispatched_by=excluded,
+        repos=covered_slugs(request),
     )
     items = [JobResponse(**r) for r in rows]
     if brief:
@@ -338,11 +345,18 @@ async def _brief_and_words(
     return (brief_view(row) if row else None), status_words(job, interrupt, failure=failure)
 
 
+def _job_not_found() -> HTTPException:
+    """What the routes that read or act on a job's row answer for a job that does not exist, and for one the
+    caller's key does not cover (``embry0.api.job_allowlist``)."""
+    return HTTPException(status_code=404, detail="Job not found")
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict[str, Any]:
     job = await jobs.get(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise _job_not_found()
+    await hide_job_unless_covered(request, job, _job_not_found())
     if job.get("account_wait") and job.get("status") != "paused":
         # Spent account waits: only a paused job waits; a cancelled one keeps the stale record.
         job["account_wait"] = None
@@ -372,6 +386,8 @@ async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(
 @router.get("/jobs/{job_id}/inputs")
 async def get_job_inputs(job_id: str, request: Request) -> list[Any]:
     """Get all inputs (questions) for a job."""
+    if await job_hidden(request, job_id):
+        return []
     inputs_repo = request.app.state.inputs_repo
     result: list[Any] = await inputs_repo.list_by_job(job_id)
     return result
@@ -384,6 +400,7 @@ LOG_EVENTS_PAGE_MAX = 1000
 @router.get("/jobs/{job_id}/logs/events")
 async def get_job_log_events(
     job_id: str,
+    request: Request,
     since_seq: int = Query(0, ge=0, description="Return only events with a seq greater than this."),
     limit: int = Query(LOG_EVENTS_PAGE_DEFAULT, ge=1, le=LOG_EVENTS_PAGE_MAX),
     jobs: JobsRepository = Depends(get_jobs_repo),
@@ -394,8 +411,10 @@ async def get_job_log_events(
     uses). To read the whole log, call again with
     ``since_seq=next_since_seq`` while ``has_more`` is true (#203).
     """
-    # One row past the page tells "exactly limit rows" from "more to come".
-    rows = await jobs.get_log_events(job_id, since_seq=since_seq, limit=limit + 1)
+    # One row past the page tells "exactly limit rows" from "more to come". A job the caller's key does not cover
+    # has no events, as a job that does not exist has none.
+    hidden = await job_hidden(request, job_id)
+    rows = [] if hidden else await jobs.get_log_events(job_id, since_seq=since_seq, limit=limit + 1)
     has_more = len(rows) > limit
     result = []
     next_since_seq = since_seq
@@ -427,7 +446,7 @@ async def get_job_verification(job_id: str, request: Request) -> dict[str, Any]:
     """The job's verification result (docs/verification.md, "The result"): the
     ``job_verifications`` row the verify node wrote, 404 when the job has none."""
     repo = getattr(request.app.state, "job_verifications_repo", None)
-    row = await repo.get(job_id) if repo is not None else None
+    row = await repo.get(job_id) if repo is not None and not await job_hidden(request, job_id) else None
     if row is None:
         raise HTTPException(status_code=404, detail="No verification for this job")
     row = dict(row)
@@ -476,7 +495,7 @@ async def get_agent_session(job_id: str, agent_type: str, request: Request) -> R
     sandbox, scrubbed after the fact, where the event stream was scrubbed as
     it was written; a read key gets 403."""
     repo = getattr(request.app.state, "agent_sessions_repo", None)
-    row = await repo.get(job_id, agent_type) if repo is not None else None
+    row = await repo.get(job_id, agent_type) if repo is not None and not await job_hidden(request, job_id) else None
     if row is None:
         raise HTTPException(status_code=404, detail="No stored session for this agent")
     messages = _as_object(row.get("messages"))
@@ -509,7 +528,9 @@ async def create_events_token(job_id: str, request: Request) -> dict[str, Any]:
     # RAV-1070; the SSE events-token precedent is RAV-1060.
     from embry0.api.scoped_tokens import mint_scoped_token, signing_material
 
-    token, expires_in = mint_scoped_token(signing_material(request.app.state.config), f"ws:{job_id}")
+    # A job the caller's key does not cover gets a token whose stream reads nothing, as for a job that does not exist.
+    scope = await stream_scope(request, f"ws:{job_id}", job_id)
+    token, expires_in = mint_scoped_token(signing_material(request.app.state.config), scope)
     return {"token": token, "expires_in": expires_in}
 
 
@@ -533,9 +554,9 @@ async def answer_job_input(
     # EMB-43.
     job = await jobs.get(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise _job_not_found()
     # An answer resumes the job once no blocking question is left.
-    await enforce_repo_allowlist(request, job.get("repo"), action="answer a question on a job")
+    await hide_job_unless_covered(request, job, _job_not_found(), action="answer a question on a job")
 
     inputs_repo = request.app.state.inputs_repo
     inp = await inputs_repo.get(input_id)
@@ -593,8 +614,8 @@ async def resume_job(
     """Resume a paused job with optional guidance."""
     job = await jobs.get(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    await enforce_repo_allowlist(request, job.get("repo"), action="resume a job")
+        raise _job_not_found()
+    await hide_job_unless_covered(request, job, _job_not_found(), action="resume a job")
     if job["status"] != "paused":
         raise HTTPException(status_code=409, detail=f"Job is {job['status']}, not paused")
 
@@ -667,8 +688,8 @@ async def edit_done_when(
 
     job = await jobs.get(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    await enforce_repo_allowlist(request, job.get("repo"), action="edit a job's done-when list")
+        raise _job_not_found()
+    await hide_job_unless_covered(request, job, _job_not_found(), action="edit a job's done-when list")
     if job["status"] not in ("pending", "running", "awaiting_input", "paused"):
         raise HTTPException(status_code=409, detail=f"Cannot edit the done-when list of a job in {job['status']} state")
     actor = request_actor(request)
@@ -691,8 +712,8 @@ async def edit_done_when(
 async def cancel_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict[str, Any]:
     job = await jobs.get(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    await enforce_repo_allowlist(request, job.get("repo"), action="cancel a job")
+        raise _job_not_found()
+    await hide_job_unless_covered(request, job, _job_not_found(), action="cancel a job")
     if job["status"] not in ("pending", "running", "awaiting_input", "paused"):
         raise HTTPException(status_code=409, detail=f"Cannot cancel job in {job['status']} state")
 

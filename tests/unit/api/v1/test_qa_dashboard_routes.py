@@ -101,7 +101,7 @@ def test_get_repos_respects_limit_query_param():
 
     resp = client.get("/api/v1/qa/repos?limit=10", headers=_AUTH)
     assert resp.status_code == 200
-    qa_repo.list_repos_with_runs.assert_called_once_with(limit=10)
+    qa_repo.list_repos_with_runs.assert_called_once_with(limit=10, repos=None)
 
 
 # ─── GET /api/v1/qa/repos/{repo}/runs ────────────────────────────────────────
@@ -130,7 +130,7 @@ def test_list_runs_for_repo_returns_pagination():
     body = resp.json()
     assert len(body) == 3
     assert body[0]["job_id"] == "j-0"
-    qa_repo.list_runs_for_repo.assert_called_once_with("org/r1", limit=3, offset=0)
+    qa_repo.list_runs_for_repo.assert_called_once_with("org/r1", limit=3, offset=0, repos=None)
 
 
 def test_list_runs_for_repo_default_pagination():
@@ -142,7 +142,7 @@ def test_list_runs_for_repo_default_pagination():
         headers=_AUTH,
     )
     assert resp.status_code == 200
-    qa_repo.list_runs_for_repo.assert_called_once_with("org/r2", limit=50, offset=0)
+    qa_repo.list_runs_for_repo.assert_called_once_with("org/r2", limit=50, offset=0, repos=None)
 
 
 def test_list_runs_for_repo_requires_auth():
@@ -179,7 +179,7 @@ def test_get_app_history_returns_rows():
     body = resp.json()
     assert len(body) == 3
     assert body[1]["status"] == "qa_failure"
-    qa_repo.list_history_for_app.assert_called_once_with("org/r1", "hub", limit=10)
+    qa_repo.list_history_for_app.assert_called_once_with("org/r1", "hub", limit=10, repos=None)
 
 
 def test_get_app_history_default_limit():
@@ -191,7 +191,7 @@ def test_get_app_history_default_limit():
         headers=_AUTH,
     )
     assert resp.status_code == 200
-    qa_repo.list_history_for_app.assert_called_once_with("org/r1", "hub", limit=20)
+    qa_repo.list_history_for_app.assert_called_once_with("org/r1", "hub", limit=20, repos=None)
 
 
 def test_get_app_history_requires_auth():
@@ -497,7 +497,7 @@ def test_cache_analytics_route_default_window():
     assert by_layer["shared_volume"]["hits"] == 20
     assert by_layer["turbo_remote"]["hits"] == 80
     assert body["cold_cache_apps"] == ["legacy-app"]
-    qa_repo.cache_analytics_window.assert_called_once_with(repo="org/r1", days=30)
+    qa_repo.cache_analytics_window.assert_called_once_with(repo="org/r1", days=30, repos=None)
 
 
 def test_cache_analytics_route_custom_window():
@@ -519,7 +519,7 @@ def test_cache_analytics_route_custom_window():
         headers=_AUTH,
     )
     assert resp.status_code == 200
-    qa_repo.cache_analytics_window.assert_called_once_with(repo="org/r1", days=7)
+    qa_repo.cache_analytics_window.assert_called_once_with(repo="org/r1", days=7, repos=None)
 
 
 def test_cache_analytics_route_window_validation():
@@ -621,7 +621,7 @@ def test_flake_route_default_window():
     assert row["flake_count"] == 2
     assert row["flake_score"] == 0.5
     assert len(row["daily"]) == 7
-    qa_repo.flake_window.assert_called_once_with(repo="org/r1", days=7)
+    qa_repo.flake_window.assert_called_once_with(repo="org/r1", days=7, repos=None)
 
 
 def test_flake_route_custom_window():
@@ -637,7 +637,7 @@ def test_flake_route_custom_window():
     body = resp.json()
     assert body["window_days"] == 30
     assert body["apps"] == []
-    qa_repo.flake_window.assert_called_once_with(repo="org/r1", days=30)
+    qa_repo.flake_window.assert_called_once_with(repo="org/r1", days=30, repos=None)
 
 
 def test_flake_route_window_validation():

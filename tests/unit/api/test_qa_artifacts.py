@@ -1,4 +1,6 @@
 import asyncio
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -679,10 +681,17 @@ def test_an_artifact_name_ending_in_a_newline_is_refused(check):
     raise AssertionError("a name ending in a newline must be refused")
 
 
+def _unrestricted() -> Any:
+    """A request from a caller without a repository allowlist: the routes read every job and look none up."""
+    return SimpleNamespace(state=SimpleNamespace())
+
+
 async def test_a_log_service_ending_in_a_newline_is_refused_before_a_stream_starts():
     runtime = MagicMock(compose_log_stream=AsyncMock())
     try:
-        await qa_artifacts.get_log("job-1", "web\n", follow=True, qa_minio=AsyncMock(), runtime=runtime)
+        await qa_artifacts.get_log(
+            "job-1", "web\n", request=_unrestricted(), follow=True, qa_minio=AsyncMock(), runtime=runtime
+        )
     except HTTPException as exc:
         assert exc.status_code == 404, f"the refusal is a 404: {exc.status_code}"
     else:
@@ -692,5 +701,5 @@ async def test_a_log_service_ending_in_a_newline_is_refused_before_a_stream_star
 
 async def test_a_compose_service_ending_in_a_newline_is_not_listed():
     runtime = MagicMock(compose_services=AsyncMock(return_value=["web", "worker\n"]))
-    listed = await qa_artifacts.list_qa_services("job-1", runtime=runtime)
+    listed = await qa_artifacts.list_qa_services("job-1", request=_unrestricted(), runtime=runtime)
     assert listed == {"services": ["web"]}, f"a service ending in a newline must not be offered: {listed}"
