@@ -99,6 +99,9 @@ prefix and all (`embry0/api/deps.py:MERGE_SCOPE_MUTATIONS`, read through
   - the dashboard's: `{decision}` alone, admin tier (an admin session or an admin-scope key); the actor is who authenticated, the stored `chat_id` is the literal `dashboard`, and no chat needs to be configured.
   A body with one of `decided_by` and `chat_id` but not the other is 422.
   Each decision writes a `merge.decided` audit row carrying `via` (`chat` or `dashboard`).
+- A key limited to a [repository allowlist](api.md#repository-allowlist) lists and reads only the approvals of the
+  repositories it covers; another repository's approval reads, and is decided, as one that does not exist (404),
+  the decision's refusal logged and audited.
 - MCP: `merge_approval_list`, `merge_approval_get`, `merge_decide` (confirm-gated).
 
 ## Deciding from the dashboard

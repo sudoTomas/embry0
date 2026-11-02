@@ -30,7 +30,7 @@ async def test_list_runs(app):
         resp = await client.get("/api/v1/watcher/runs")
     assert resp.status_code == 200
     assert resp.json()[0]["action"] == "skipped_quiet"
-    app.state.watcher_runs_repo.list_recent.assert_awaited_once_with(limit=50, repo=None)
+    app.state.watcher_runs_repo.list_recent.assert_awaited_once_with(limit=50, repo=None, repos=None)
 
 
 @pytest.mark.asyncio

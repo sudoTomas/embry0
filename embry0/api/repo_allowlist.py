@@ -5,7 +5,7 @@ continue or stop work on. ``None`` — every key minted before the column existe
 every key minted without a list — is unrestricted. Sessions and the master
 key are never restricted.
 
-Each route that starts, continues or stops work (cancelling a job, deleting
+Each route that starts, continues or stops work (starting a job, deleting
 an issue), each step of setting up testing (apply or turn down a setup
 proposal, skip testing, undo a change), and each route that changes a
 repository's registration or configuration (its variables, preferences,
@@ -45,6 +45,10 @@ refused, so nothing is logged or audited. A route that acts on one such item
 answers the same, and logs and audits the refusal. A list that pages in SQL
 narrows its query to :func:`covered_slugs` and still keeps only what
 :func:`key_covers` passes.
+
+Jobs are held to the same rule by :mod:`embry0.api.job_allowlist`: a job
+outside the list reads, streams and is acted on as a job that does not
+exist, and the lists and counts of jobs leave it out in their query.
 """
 
 from __future__ import annotations

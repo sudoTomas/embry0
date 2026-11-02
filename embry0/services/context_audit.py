@@ -647,7 +647,13 @@ class ContextAuditLoop:
         return audits, {repo for repo, row in every.items() if row.get("live")}
 
     async def survey(
-        self, org: Organization, *, now: datetime | None = None, refresh: bool = True, reports: bool = False
+        self,
+        org: Organization,
+        *,
+        now: datetime | None = None,
+        refresh: bool = True,
+        reports: bool = False,
+        hidden: Callable[[str], bool] | None = None,
     ) -> Survey:
         """Every active registered repository of ``org`` with instruction files, and whether each is due.
 
@@ -664,9 +670,14 @@ class ContextAuditLoop:
         owner on a forge whose trees are not read this way, and what
         ``client_for`` raises when the owner's credential cannot be resolved
         and the forge has to be read.
+
+        ``hidden`` names the repositories whose jobs the reader may not see:
+        each is surveyed as if it had no context-audit job, none newest and
+        none live, so its entry and its reason are those of a repository
+        never audited.
         """
         repos = await self._registered(org)
-        survey = await self._survey(org, repos, now=now or self._clock(), refresh=refresh)
+        survey = await self._survey(org, repos, now=now or self._clock(), refresh=refresh, hidden=hidden)
         return await self._with_reports(survey) if reports else survey
 
     async def _with_reports(self, survey: Survey) -> Survey:
@@ -688,7 +699,14 @@ class ContextAuditLoop:
         return replace(survey, repos=repos)
 
     async def _survey(
-        self, org: Organization, repos: list[str], *, now: datetime, by_hand: bool = False, refresh: bool = True
+        self,
+        org: Organization,
+        repos: list[str],
+        *,
+        now: datetime,
+        by_hand: bool = False,
+        refresh: bool = True,
+        hidden: Callable[[str], bool] | None = None,
     ) -> Survey:
         """:meth:`survey` over ``repos``, each due by :func:`due_reason` with ``by_hand``."""
         days = context_audit_days(org.settings)
@@ -721,10 +739,11 @@ class ContextAuditLoop:
             context = reading.context
             if context is None or not context.files:
                 continue
-            job = newest.get(repo)
+            unseen = hidden is not None and hidden(repo)
+            job = None if unseen else newest.get(repo)
             refused = self._refused.get(repo)
             attempt = _newer(Attempt.from_job(job) if job else None, refused)
-            live = repo in live_repos
+            live = not unseen and repo in live_repos
             reason = due_reason(attempt, context, days=days, now=now, live=live, by_hand=by_hand)
             states.append(RepoState(context, job, refused.started_at if refused else None, reason))
         return Survey(org.owner, days, tuple(states), tuple(unread), min(read_at))

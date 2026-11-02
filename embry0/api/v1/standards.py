@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
+from embry0.api.job_allowlist import without_job
 from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import REPO_PATH_ERROR, REPO_PATH_PATTERN
@@ -160,7 +161,13 @@ async def standards_for_repo(request: Request, repo: str) -> list[dict[str, Any]
     """One state per kind for ``GET /repos/{repo}``: the stored row, or mode off when there is none."""
     repository = getattr(request.app.state, "repo_standard_state_repo", None)
     stored = {s.kind: s for s in await repository.list_for_repo(repo)} if repository is not None else {}
-    return [(stored.get(kind) or standards_service.default_state(repo, kind)).to_dict() for kind in KINDS]
+    return [_state_view(request, stored.get(kind) or standards_service.default_state(repo, kind)) for kind in KINDS]
+
+
+def _state_view(request: Request, state: RepoStandardState) -> dict[str, Any]:
+    """A repository's state under a standard, naming its last audit's job only to a key that covers the repository
+    (``embry0.api.job_allowlist``)."""
+    return without_job(request, state.repo, state.to_dict(), "last_audit_job_id")
 
 
 @router.get("/standards/{owner}")
@@ -175,7 +182,7 @@ async def list_standards(owner: str, request: Request) -> dict[str, Any]:
         "kinds": list(KINDS),
         "modes": list(MODES),
         "standards": [_standard_view(s, shown) for s in active],
-        "repos": [s.to_dict() for s in states],
+        "repos": [_state_view(request, s) for s in states],
     }
 
 
@@ -229,7 +236,7 @@ async def get_repo_standard_state(owner: str, kind: str, repo: str, request: Req
     """The repository's mode, exceptions and newest audit under this standard; mode off when never set."""
     owner, kind = _owner(owner), _kind(kind)
     await _registered_repo_under(request, owner, repo)
-    return (await _state_or_default(request, repo, kind)).to_dict()
+    return _state_view(request, await _state_or_default(request, repo, kind))
 
 
 @router.put("/standards/{owner}/{kind}/repos/{repo:path}", dependencies=[require_admin])

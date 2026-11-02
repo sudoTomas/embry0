@@ -99,7 +99,12 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
     # handshake — browsers send cookies on same-origin WS upgrades for free.
     # #518: only AUTH_DEV_MODE skips this. An empty API_KEY does not, and a
     # token signed with empty material never verifies (scoped_tokens).
+    # A token minted for a job its minter's key does not cover, or for one
+    # that does not exist, opens a stream that reads nothing: it is accepted,
+    # and sends nothing until the client leaves, as the stream of a job that
+    # does not exist does (embry0.api.job_allowlist).
     matched_subprotocol: str | None = None
+    reads = True
     if not config.auth_dev_mode:
         session_ok = False
         if config.sso_enabled:
@@ -112,14 +117,16 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
                 and session.tier in (TIER_ADMIN, TIER_OPERATOR)
                 and await validate_session_user(websocket.app, session)
             )
-        from embry0.api.scoped_tokens import signing_material, verify_scoped_token
+        from embry0.api.scoped_tokens import signing_material, token_reads
 
         subprotocols = websocket.scope.get("subprotocols", [])
         for sp in subprotocols:
             if sp.startswith("embry0.token."):
                 presented = sp[len("embry0.token.") :]
-                if verify_scoped_token(signing_material(config), f"ws:{job_id}", presented):
+                opens = token_reads(signing_material(config), f"ws:{job_id}", presented)
+                if opens is not None:
                     matched_subprotocol = sp
+                    reads = opens or session_ok
                     break
         if matched_subprotocol is None and not session_ok:
             logger.warning(
@@ -131,6 +138,11 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
             return
 
     await websocket.accept(subprotocol=matched_subprotocol)
+    if not reads:
+        logger.info("ws_connected", job_id=job_id, reads=False)
+        await _wait_for_disconnect(websocket)
+        logger.info("ws_disconnected", job_id=job_id)
+        return
 
     # Parse the replay cursor. Clients resuming a dropped connection pass
     # ``?since_seq=<last_event_seq>``; fresh clients pass 0 or omit it.

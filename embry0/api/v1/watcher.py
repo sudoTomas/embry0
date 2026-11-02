@@ -6,7 +6,7 @@ from typing import Any, cast
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 
@@ -16,11 +16,14 @@ router = APIRouter()
 @router.get("/watcher/runs")
 async def list_watcher_runs(request: Request, limit: int = 50, stack: str | None = None) -> list[dict[str, Any]]:
     """Recent ticks, newest first. ``stack`` ("owner/name") narrows to one
-    watched stack; omitted, every stack's ticks are interleaved."""
+    watched stack; omitted, every stack's ticks are interleaved. A key with a
+    repository allowlist reads only its repositories' ticks, and the jobs
+    they started, narrowed before the limit."""
     runs_repo = getattr(request.app.state, "watcher_runs_repo", None)
     if runs_repo is None:
         raise HTTPException(status_code=503, detail="watcher storage not initialized")
-    return cast("list[dict[str, Any]]", await runs_repo.list_recent(limit=min(max(limit, 1), 200), repo=stack))
+    ticks = await runs_repo.list_recent(limit=min(max(limit, 1), 200), repo=stack, repos=covered_slugs(request))
+    return cast("list[dict[str, Any]]", ticks)
 
 
 class WatcherRunBody(BaseModel):

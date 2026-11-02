@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
@@ -84,12 +85,17 @@ class MergeApprovalsRepository:
             )
         )
 
-    async def list_recent(self, *, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    async def list_recent(
+        self, *, status: str | None = None, limit: int = 50, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """The newest asks; ``repos`` (lower-cased slugs) keeps those of these repositories, before the limit."""
         rows = await self._db.fetch(
             f"SELECT {_COLUMNS} FROM merge_approvals WHERE ($1::text IS NULL OR status = $1) "
+            "AND ($3::text[] IS NULL OR lower(repo) = ANY($3::text[])) "
             "ORDER BY created_at DESC LIMIT $2",
             status,
             limit,
+            None if repos is None else list(repos),
         )
         return [r for r in (_row(x) for x in rows) if r is not None]
 

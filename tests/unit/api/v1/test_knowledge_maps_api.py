@@ -107,7 +107,9 @@ class FakeMaps:
         self.sends.append(row)
         return len(self.sends)
 
-    async def work(self, slug: str, node_id: str | None = None, *, owner: str | None) -> list[dict[str, Any]]:
+    async def work(
+        self, slug: str, node_id: str | None = None, *, owner: str | None, repos: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         newest: dict[str, dict[str, Any]] = {}
         for s in self.sends:
             if (s["owner"], s["slug"]) == (owner, slug) and node_id in (None, s["node_id"]):

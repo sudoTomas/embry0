@@ -17,7 +17,7 @@ Marks and sends carry their map's owner the same way (``map_owner``).
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -285,12 +285,19 @@ class KnowledgeMapsRepository:
             )
         )
 
-    async def work(self, slug: str, node_id: str | None = None, *, owner: str | None) -> list[dict[str, Any]]:
-        """The newest send of each part (of one part, given ``node_id``), with its job's state."""
+    async def work(
+        self, slug: str, node_id: str | None = None, *, owner: str | None, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """The newest send of each part (of one part, given ``node_id``), with its job's state. ``repos``
+        (lower-cased slugs) keeps the sends to those repositories, before the newest of each part is taken."""
         where = "s.map_slug = $1 AND s.map_owner IS NOT DISTINCT FROM $2"
         args: list[Any] = [slug, owner]
         if node_id is not None:
-            where, args = f"{where} AND s.node_id = $3", [*args, node_id]
+            args.append(node_id)
+            where = f"{where} AND s.node_id = ${len(args)}"
+        if repos is not None:
+            args.append(list(repos))
+            where = f"{where} AND lower(s.repo) = ANY(${len(args)}::text[])"
         rows = await self._db.fetch(
             f"""
             SELECT DISTINCT ON (s.node_id)

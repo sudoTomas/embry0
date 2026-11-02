@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, cast
 
@@ -173,13 +174,18 @@ class WatcherRunsRepository:
         logger.info("watcher_run_recorded", run_id=run_id, action=action, log_lines=log_lines, repo=repo)
         return run_id
 
-    async def list_recent(self, limit: int = 50, repo: str | None = None) -> list[dict[str, Any]]:
+    async def list_recent(
+        self, limit: int = 50, repo: str | None = None, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
         """Newest ticks. ``repo=None`` spans every stack (the dashboard's view);
-        a value narrows to one stack."""
+        a value narrows to one stack. ``repos`` (lower-cased slugs) keeps the
+        ticks of those stacks, before the limit."""
         rows = await self._db.fetch(
-            "SELECT * FROM watcher_runs WHERE ($2::text IS NULL OR repo = $2) ORDER BY created_at DESC LIMIT $1",
+            "SELECT * FROM watcher_runs WHERE ($2::text IS NULL OR repo = $2) "
+            "AND ($3::text[] IS NULL OR lower(repo) = ANY($3::text[])) ORDER BY created_at DESC LIMIT $1",
             limit,
             repo,
+            None if repos is None else list(repos),
         )
         return [dict(r) for r in rows]
 

@@ -22,10 +22,12 @@ from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import (
     OWNER_WIDE_CREDENTIAL,
     answer_as_missing,
+    covered_slugs,
     enforce_no_allowlist,
     enforce_owner_allowlist,
     enforce_owner_named,
     enforce_repo_allowlist,
+    key_covers,
     restricted_key_name,
 )
 from embry0.api.schemas import RunWithRequest
@@ -832,8 +834,11 @@ async def organization_context_audit(owner: str, request: Request, refresh: bool
     schedule = getattr(request.app.state, "context_audit", None)
     if schedule is None:
         raise HTTPException(status_code=503, detail="the context audit schedule is not initialized")
+    # A repository the caller's key does not cover is surveyed as one with no context-audit job
+    # (embry0.api.job_allowlist).
+    hidden = None if covered_slugs(request) is None else (lambda repo: not key_covers(request, repo))
     try:
-        survey = await schedule.survey(org, refresh=refresh, reports=True)
+        survey = await schedule.survey(org, refresh=refresh, reports=True, hidden=hidden)
     except UnsupportedForge as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return cast("dict[str, Any]", survey.to_dict())
