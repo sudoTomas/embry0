@@ -37,6 +37,12 @@ curl -X POST http://localhost:8200/api/v1/issues/{issue_id}/inputs/{input_id}/an
 
 ## Jobs (high-level)
 
+A job names its repository as `repo` or as a git `context`
+(`{"context": {"type": "git", "repo": "owner/repo", "ref": "..."}}`). Either
+way the job is stored under that repository, so `GET /jobs?repo=`, the world
+view and the stats find it there. A job over a URL (an `http` context) or
+with no context names none.
+
 ```bash
 # Create a job
 curl -X POST http://localhost:8200/api/v1/jobs \

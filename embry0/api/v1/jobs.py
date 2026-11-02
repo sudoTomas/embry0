@@ -204,7 +204,9 @@ async def create_job(
 
     trace_id = f"trc-{uuid.uuid4().hex[:12]}"
     job_id = await jobs.create(
-        repo=req.repo,
+        # The repository the job works on, also when it is named by a git context alone, so the row says so:
+        # GET /jobs?repo=, the world view and the stats find the job under it.
+        repo=run_repo,
         task=req.task,
         issue_number=req.issue_number,
         pipeline_template=req.pipeline_template,
@@ -222,7 +224,7 @@ async def create_job(
         db,
         "job_created",
         actor=request_actor(request),
-        details={"job_id": job_id, "repo": req.repo},
+        details={"job_id": job_id, "repo": run_repo},
         audit_log_path=config.audit_log_path,
     )
 
