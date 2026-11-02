@@ -12,6 +12,7 @@ test_ring2_cli_parity.py checks the same table against the real CLI.
 
 from __future__ import annotations
 
+import inspect
 import re
 
 import pytest
@@ -38,18 +39,15 @@ def _path_rules(rules: list[str]) -> list[tuple[str, str]]:
 
 @pytest.mark.parametrize("agent_type", AGENT_TYPES)
 def test_rendered_rules_root_absolute_paths_with_a_double_slash(agent_type: str) -> None:
-    """A single leading ``/`` is project-relative to the CLI, so no rendered rule may use one."""
-    permissions = render_settings_json(default_policy_for_agent(agent_type))["permissions"]
-    for section in ("deny", "allow"):
-        rooted_at_project = [
-            f"{tool}({path})"
-            for tool, path in _path_rules(permissions[section])
-            if path.startswith("/") and not path.startswith("//")
-        ]
-        assert not rooted_at_project, (
-            f"{agent_type}: these {section} rules are relative to the project root in Claude Code, "
-            f"not absolute; write them with '//': {rooted_at_project}"
-        )
+    """A single leading ``/`` is project-relative to the CLI, so no rule it receives may use one."""
+    rendered = render_settings_json(default_policy_for_agent(agent_type))["permissions"]["deny"]
+    rooted_at_project = [
+        f"{tool}({path})" for tool, path in _path_rules(rendered) if path.startswith("/") and not path.startswith("//")
+    ]
+    assert not rooted_at_project, (
+        f"{agent_type}: these deny rules are relative to the project root in Claude Code, "
+        f"not absolute; write them with '//': {rooted_at_project}"
+    )
 
 
 def test_rendered_deny_rules_name_the_host_paths_they_guard() -> None:
@@ -163,3 +161,19 @@ def test_an_unanchored_rule_fails_closed() -> None:
     verdict = evaluate_ring2_paths(pol, "Read", {"file_path": "/workspace/README.md"}, home=HOME)
     assert not verdict.allowed, f"a rule the predicate cannot read as the CLI does must deny; got {verdict}"
     assert "not anchored" in verdict.reason
+
+
+def test_a_single_slash_rule_stays_at_the_project_root_when_the_session_moves() -> None:
+    """A cd moves where relative paths resolve, not where a project-anchored rule points."""
+    assert "project_root" in inspect.signature(evaluate_ring2_paths).parameters, (
+        "evaluate_ring2_paths must take the project root apart from the directory the call runs in"
+    )
+    pol = SafetyPolicy(deny_rules=["Read(/secrets/**)"])
+    moved = evaluate_ring2_paths(
+        pol, "Read", {"file_path": "../secrets/key"}, cwd="/workspace/src", home=HOME, project_root="/workspace"
+    )
+    assert not moved.allowed, f"Read(/secrets/**) is /workspace/secrets/** wherever the session is; got {moved}"
+    elsewhere = evaluate_ring2_paths(
+        pol, "Read", {"file_path": "secrets/key"}, cwd="/workspace/src", home=HOME, project_root="/workspace"
+    )
+    assert elsewhere.allowed, f"/workspace/src/secrets is not under the rule; got {elsewhere}"

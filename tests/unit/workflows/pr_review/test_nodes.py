@@ -697,7 +697,8 @@ async def test_a_read_only_review_gets_no_server_that_runs_a_command() -> None:
         },
     )
     assert shipped["mcp_servers"] == _REMOTE_SERVER, f"a read-only review was given {shipped['mcp_servers']}"
-    assert shipped["tools"] == ["Read", "mcp__lint__check", "mcp__docs__search"], shipped["tools"]
+    # mcp__lint__check names a server the review no longer has: the resolver drops it (gated_tools).
+    assert shipped["tools"] == ["Read", "mcp__docs__search"], shipped["tools"]
 
 
 async def test_a_full_review_keeps_the_operators_command_server() -> None:

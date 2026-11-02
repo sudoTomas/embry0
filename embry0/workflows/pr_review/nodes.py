@@ -278,9 +278,11 @@ def _read_only_definition(definition: dict[str, Any]) -> dict[str, Any]:
 
     Every shell tool (``SHELL_TOOLS``) is taken out, and every MCP server
     that runs a command; the ``mcp__<server>__*`` names of such a server stay
-    and reach nothing. Unset tools are the agent type's defaults, stripped
-    the same way. A list of shell tools only is left empty, which is no
-    tools (the read-only tools are not shell tools, so it had none to keep).
+    here, and the resolver drops them as tools of no server the agent has
+    (``embry0.agents.resolver.gated_tools``). Unset tools are the agent
+    type's defaults, stripped the same way. A list of shell tools only is
+    left empty, which is no tools (the read-only tools are not shell tools,
+    so it had none to keep).
     What is taken out is logged (``pr_review_read_only_dropped``).
     """
     from embry0.agents.mcp_servers import logged_names, runs_command

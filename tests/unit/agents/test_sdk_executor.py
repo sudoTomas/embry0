@@ -173,8 +173,9 @@ async def test_sdk_executor_writes_settings_json(tmp_path, monkeypatch) -> None:
     settings_path = tmp_path / ".claude" / "settings.json"
     assert settings_path.exists()
     data = json.loads(settings_path.read_text())
-    assert "permissions" in data
-    assert any("/workspace" in r for r in data["permissions"]["allow"])
+    assert data["permissions"] == {"deny": default_policy_for_agent("developer").deny_rules}, (
+        f"settings.json must carry exactly the policy's deny rules, got {data['permissions']}"
+    )
 
 
 @pytest.mark.asyncio

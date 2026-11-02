@@ -23,7 +23,7 @@ async def test_tools_catalog_lists_builtin_browser_and_context_tools(app):
     assert resp.status_code == 200
     rows = resp.json()
     names = {r["name"]: r["source"] for r in rows}
-    builtins = ("Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "NotebookEdit", "Task")
+    builtins = ("Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "NotebookEdit", "Agent")
     assert {n: names.get(n) for n in builtins} == dict.fromkeys(builtins, "builtin")
     for backend in backend_names():
         assert any(src == f"mcp:{backend}" for src in names.values()), f"no tool from browser backend {backend!r}"

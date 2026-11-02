@@ -32,7 +32,8 @@ from embry0.agents.session import render_transcript_block
 from embry0.execution import events
 from embry0.execution.agent_runner import AgentOutput
 from embry0.safety.error_codes import ACCOUNT_FAILURE_CODES, ErrorCode
-from embry0.safety.policy import SafetyPolicy, evaluate_policy, render_settings_json
+from embry0.safety.policy import SafetyPolicy, gate_tool_call, render_settings_json
+from embry0.safety.skill_commands import SkillError, SkillSnapshot
 
 if TYPE_CHECKING:
     from langchain_core.runnables.config import RunnableConfig
@@ -319,6 +320,27 @@ def _extract_hook_call(hook_input: Any) -> tuple[str, dict[str, Any]]:
     return name, tool_input
 
 
+async def _hold_config(hook_input: Any, tool_use_id: str | None, context: Any) -> Any:  # noqa: ARG001
+    """The ConfigChange hook: refuse every reload of settings or skills during the session.
+
+    The CLI watches the workspace's ``.claude/`` and, unless a ConfigChange
+    hook refuses, loads a changed settings file or skill again mid-session.
+    The workspace is writable, so the session keeps what it started with:
+    the deny rules it was given, and the skills embry0 read before it began
+    (whose commands the PreToolUse hook checks).
+    """
+    source = hook_input.get("source") if isinstance(hook_input, dict) else None
+    path = hook_input.get("file_path") if isinstance(hook_input, dict) else None
+    logger.info("config_change_refused", source=source, file_path=path)
+    return {"decision": "block", "reason": "embry0 keeps the settings and skills this session started with"}
+
+
+def _hook_cwd(hook_input: Any) -> str | None:
+    """The session's working directory a PreToolUse payload carries, when it is an absolute path."""
+    raw = hook_input.get("cwd") if isinstance(hook_input, dict) else getattr(hook_input, "cwd", None)
+    return raw if isinstance(raw, str) and raw.startswith("/") else None
+
+
 def _denial_guidance(reason: str, attempts: int) -> str:
     """Turn a bare policy reason into something the agent can act on.
 
@@ -359,8 +381,20 @@ async def _evaluate_hook(
     policy_denials: dict[str, int] | None = None,
     *,
     ids: dict[str, str] | None = None,
+    skills: SkillSnapshot | None = None,
+    session_cwd: str | None = None,
 ) -> dict[str, Any]:
-    """Ring-3 PreToolUse hook — delegates to evaluate_policy, fail-closed.
+    """The PreToolUse hook — delegates to gate_tool_call, fail-closed.
+
+    gate_tool_call applies the tool-name allowlist and the Ring-3 content
+    checks, then the Ring-2 path rules to the file tools and to the paths a
+    shell command names, and checks the shell commands a skill runs against
+    ``skills``, the skills the session loaded (read before it started).
+    Relative paths resolve against ``session_cwd``, the directory the CLI says
+    the session is in (a ``cd`` carries from one Bash call to the next, and a
+    skill's commands run there); the workspace stays the project root. The
+    hook runs in this process, so nothing the agent writes in the sandbox
+    changes what it refuses.
 
     Returns the SDK's PreToolUseHookSpecificOutput shape:
     ``{"hookSpecificOutput": {"hookEventName": "PreToolUse",
@@ -378,7 +412,12 @@ async def _evaluate_hook(
     """
     if not isinstance(tool_input, dict):
         tool_input = {}
-    verdict = evaluate_policy(policy, tool_name, tool_input)
+    root = str(_workspace_root())
+    if skills is not None:
+        # The CLI has loaded its skills by its first tool call: a skill file
+        # that changed since the snapshot may have loaded in another form.
+        skills.settle()
+    verdict = gate_tool_call(policy, tool_name, tool_input, cwd=session_cwd or root, project_root=root, skills=skills)
     if not verdict.allowed:
         # Count it as well as emit it. A denial that only exists as an event is
         # invisible to every consumer that reads state — including the pause
@@ -420,8 +459,9 @@ class SdkAgentExecutor:
 
     Responsibilities:
     - Render invocation → ClaudeAgentOptions via config_builder.
-    - Write Ring-2 settings.json into <workspace>/.claude/settings.json.
-    - Register Ring-3 PreToolUse hook that delegates to evaluate_policy.
+    - Write the Ring-2 deny rules into <workspace>/.claude/settings.json (they
+      also reach the CLI on its command line, from build_sdk_options).
+    - Register the PreToolUse hook that delegates to gate_tool_call.
     - Stream SDK messages through the writer as embry0 events.
     - Aggregate into AgentOutput.
 
@@ -537,7 +577,9 @@ class SdkAgentExecutor:
         captured_messages: list[dict[str, Any]] = []
         captured_session_id: str | None = None
 
-        # --- Ring 2: write settings.json
+        # --- Ring 2: write settings.json. It replaces any settings file the
+        # repository carries; the deny rules in it also reach the CLI on its
+        # command line (build_sdk_options) and the hook below.
         ws = _workspace_root()
         claude_dir = ws / ".claude"
         claude_dir.mkdir(parents=True, exist_ok=True)
@@ -631,7 +673,24 @@ class SdkAgentExecutor:
         # "the agent spent its turns on a tool it was never going to be allowed".
         policy_denials: dict[str, int] = {}
 
-        # --- Ring 3: PreToolUse hook as Python callable
+        # --- The skills the CLI can load, read before it starts. A skill's
+        # inline commands run from the text the CLI loaded, so a Skill call is
+        # checked against this snapshot (and against its file as it is then);
+        # the ConfigChange hook below keeps the CLI from loading one again.
+        # A run whose skills are hidden loads none (build_sdk_options), so every
+        # Skill call is refused.
+        skill_dirs = {m["plugin_name"]: m["container_path"] for m in invocation.skill_mounts}
+        if invocation.skills_hidden:
+            skills = SkillSnapshot({}, skill_dirs=skill_dirs, hidden=True)
+        else:
+            try:
+                skills = SkillSnapshot.take(str(ws), skill_dirs)
+            except (SkillError, OSError) as exc:
+                logger.warning("skill_snapshot_failed", error=str(exc))
+                skills = SkillSnapshot({}, skill_dirs=skill_dirs)  # every Skill call is then refused
+
+        # --- The PreToolUse hook as a Python callable: Ring 3, and Ring 2 again.
+
         async def pre_tool_use_hook(  # noqa: ARG001 — tool_use_id/context unused by design
             hook_input: HookInput,
             tool_use_id: str | None,  # noqa: ARG001
@@ -649,13 +708,21 @@ class SdkAgentExecutor:
                 writer,
                 policy_denials,
                 ids=ids,
+                skills=skills,
+                session_cwd=_hook_cwd(hook_input),
             )
 
-        # Attach hook to options. The SDK's hook support was asserted at the
-        # top of run() and fails closed; a try/except around this assignment
-        # would silently fail-open, the explicit anti-pattern the 2026-04-28
-        # review (S3) flagged. Set unconditionally.
-        options.hooks = {"PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use_hook])]}
+        # Attach the hooks to options. The SDK's hook support was asserted at
+        # the top of run() and fails closed; a try/except around this
+        # assignment would silently fail-open, the explicit anti-pattern the
+        # 2026-04-28 review (S3) flagged. Set unconditionally. ConfigChange
+        # keeps the settings and skills the session started with: the CLI
+        # watches .claude/ and loads a changed file again unless this refuses.
+        hooks: dict[Any, list[HookMatcher]] = {
+            "PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use_hook])],
+            "ConfigChange": [HookMatcher(matcher=None, hooks=[_hold_config])],
+        }
+        options.hooks = hooks
 
         # --- Prompt assembly: system_context prepended (legacy behavior).
         prompt = invocation.prompt

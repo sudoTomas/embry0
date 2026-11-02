@@ -1,4 +1,8 @@
-"""Tests for resolve_agent_config()."""
+"""Tests for resolve_agent_config().
+
+The tool names are the tool catalog's: resolve_agent_config drops any other
+(embry0.agents.resolver.gated_tools).
+"""
 
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ AGENT_TYPE = "triage"
 
 BASE_DEFINITION = {
     "model": "gpt-4o",
-    "tools": ["search", "calculator"],
+    "tools": ["Grep", "Glob"],
     "skills": ["summarise"],
     "system_prompt": "You are a triage agent.",
 }
@@ -31,7 +35,7 @@ def test_agent_definition_only():
 
     assert isinstance(cfg, ResolvedAgentConfig)
     assert cfg.model == "gpt-4o"
-    assert cfg.tools == ["search", "calculator"]
+    assert cfg.tools == ["Grep", "Glob"]
     assert cfg.skills == ["summarise"]
     assert cfg.system_prompt == "You are a triage agent."
 
@@ -44,17 +48,17 @@ def test_template_overrides_model():
 
     assert cfg.model == "claude-3-5-sonnet"
     # Other fields unchanged
-    assert cfg.tools == ["search", "calculator"]
+    assert cfg.tools == ["Grep", "Glob"]
     assert cfg.skills == ["summarise"]
 
 
 def test_template_overrides_tools():
     """template_config agent_tools replaces the definition tools."""
-    template = {"agent_tools": {AGENT_TYPE: ["web_search", "code_exec"]}}
+    template = {"agent_tools": {AGENT_TYPE: ["WebSearch", "Bash"]}}
 
     cfg = resolve_agent_config(AGENT_TYPE, BASE_DEFINITION, template_config=template)
 
-    assert cfg.tools == ["web_search", "code_exec"]
+    assert cfg.tools == ["WebSearch", "Bash"]
     assert cfg.model == "gpt-4o"
 
 
@@ -85,11 +89,11 @@ def test_runtime_overrides_template():
 def test_runtime_narrows_skills_and_tools():
     """pipeline_config's skills and tools only narrow the template's lists."""
     template = {
-        "agent_tools": {AGENT_TYPE: ["web_search", "code_exec"]},
+        "agent_tools": {AGENT_TYPE: ["WebSearch", "Bash"]},
         "agent_skills": {AGENT_TYPE: ["translate", "classify"]},
     }
     pipeline = {
-        "agent_tools": {AGENT_TYPE: ["code_exec", "file_io"]},
+        "agent_tools": {AGENT_TYPE: ["Bash", "Write"]},
         "agent_skills": {AGENT_TYPE: ["classify"]},
     }
 
@@ -100,7 +104,7 @@ def test_runtime_narrows_skills_and_tools():
         pipeline_config=pipeline,
     )
 
-    assert cfg.tools == ["code_exec"], f"triage's tools must only narrow the template's: {cfg.tools}"
+    assert cfg.tools == ["Bash"], f"triage's tools must only narrow the template's: {cfg.tools}"
     assert cfg.skills == ["classify"], f"triage's skills must only narrow the template's: {cfg.skills}"
 
 
@@ -129,7 +133,7 @@ def test_no_override_for_different_agent():
     """Overrides keyed under 'developer' do not affect 'validator' resolution."""
     template = {
         "agent_models": {"developer": "gpt-4o-mini"},
-        "agent_tools": {"developer": ["code_exec"]},
+        "agent_tools": {"developer": ["Bash"]},
     }
     pipeline = {
         "agent_skills": {"developer": ["lint"]},
@@ -144,7 +148,7 @@ def test_no_override_for_different_agent():
 
     # None of the 'developer' overrides should bleed through
     assert cfg.model == "gpt-4o"
-    assert cfg.tools == ["search", "calculator"]
+    assert cfg.tools == ["Grep", "Glob"]
     assert cfg.skills == ["summarise"]
 
 
@@ -158,7 +162,7 @@ def test_empty_overrides():
     )
 
     assert cfg.model == "gpt-4o"
-    assert cfg.tools == ["search", "calculator"]
+    assert cfg.tools == ["Grep", "Glob"]
     assert cfg.skills == ["summarise"]
     assert cfg.system_prompt == "You are a triage agent."
 
@@ -167,14 +171,14 @@ def test_jsonb_tools_parsed():
     """tools and skills stored as JSON strings (from DB JSONB column) are parsed."""
     definition_with_jsonb = {
         "model": "gpt-4o",
-        "tools": json.dumps(["search", "calculator"]),
+        "tools": json.dumps(["Grep", "Glob"]),
         "skills": json.dumps(["summarise"]),
         "system_prompt": "You are a triage agent.",
     }
 
     cfg = resolve_agent_config(AGENT_TYPE, definition_with_jsonb)
 
-    assert cfg.tools == ["search", "calculator"]
+    assert cfg.tools == ["Grep", "Glob"]
     assert cfg.skills == ["summarise"]
     assert isinstance(cfg.tools, list)
     assert isinstance(cfg.skills, list)

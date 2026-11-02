@@ -78,6 +78,12 @@ def test_bash_captures_output_and_exit(tmp_path):
     assert "[exit 3]" in out
 
 
+def test_bash_runs_the_command_in_bash(tmp_path):
+    """The Ring-2 check reads a command as bash does; dash reads $'…' as $ and a quoted string."""
+    out, err = execute_tool("Bash", {"command": "printf '[%s]' $'a\\x41'"}, cwd=str(tmp_path))
+    assert not err and "[aA]" in out, f"the command ran in a shell that is not bash: {out!r}"
+
+
 def test_bash_timeout(tmp_path):
     out, err = execute_tool("Bash", {"command": "sleep 5", "timeout": 1}, cwd=str(tmp_path))
     assert err and "timed out" in out

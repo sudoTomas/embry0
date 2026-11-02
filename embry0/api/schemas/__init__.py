@@ -14,6 +14,7 @@ from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.execution.auth_provider import env_override_refusal
 from embry0.execution.profile_isolation import ISOLATION_FIELDS, field_problem
 from embry0.git_refs import REF_RULE, valid_ref
+from embry0.services.tool_catalog import check_agent_tools
 from embry0.workflows._validation import FIXED_NODE_TYPES
 
 # Slash-separated alnum + . _ - : segments. Colon allowed for ISO timestamps in
@@ -463,6 +464,12 @@ class AgentCreateRequest(BaseModel):
     @classmethod
     def _color(cls, v: str) -> str:
         return validate_color(v)
+
+    @model_validator(mode="after")
+    def _tools_in_catalog(self) -> "AgentCreateRequest":
+        # A tool embry0 does not gate cannot be granted (GET /tools lists the ones it does).
+        check_agent_tools(self.type, self.tools, mcp_servers=self.mcp_servers)
+        return self
 
 
 class AgentUpdateRequest(BaseModel):

@@ -293,7 +293,7 @@ An agent runs with its *effective* skills: the definition's list, then the templ
 
 ## Tools
 
-`GET /api/v1/tools` (read) lists the tool names an agent definition can name, as `[{name, source, description}]`: the Claude Code builtins under `source: "builtin"` (`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `NotebookEdit`, `Task`), each registered browser backend's MCP tools under `source: "mcp:<backend>"` (`embry0/workflows/qa/browser_backends.py`), and the log tool under `source: "mcp:context"`.
+`GET /api/v1/tools` (read) lists the tool names an agent definition can name, as `[{name, source, description}]`: the Claude Code builtins under `source: "builtin"` (`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `NotebookEdit`, `Agent`), each registered browser backend's MCP tools under `source: "mcp:<backend>"` (`embry0/workflows/qa/browser_backends.py`), and the log tool under `source: "mcp:context"`. `Task`, the subagent tool's older name, is still accepted and runs as `Agent`. An agent definition may list only these and the `mcp__<server>__<tool>` tools of its own `mcp_servers`. `POST /api/v1/agents` answers any other name with a 422 that names it, and so does `PUT /api/v1/agents/{type}`, which checks the whole list, names already stored included, whenever it changes `tools` or `mcp_servers`. A tool a pipeline template node names outside the catalog is dropped when the agent runs, before triage narrows the list, and logged (`agent_tools_dropped`); triage (`agent_tools`) only narrows, so it adds no tool at all. Claude Code's other tools are not offered to agents; `Monitor`, `Workflow` and `EnterWorktree` are withheld from the CLI outright.
 
 ## Agents
 

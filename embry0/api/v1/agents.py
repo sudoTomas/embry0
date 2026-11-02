@@ -23,6 +23,7 @@ from embry0.services.provider_readiness import (
     annotate_agents,
     ensure_model_provider_ready,
 )
+from embry0.services.tool_catalog import unknown_tools, unknown_tools_message
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 
 # Agent definitions run in every repository's jobs: not a key with a repository allowlist's to change.
@@ -211,6 +212,15 @@ async def update_agent(
         )
         if problem:
             raise HTTPException(status_code=422, detail=problem)
+    if "tools" in updates or "mcp_servers" in updates:
+        # The whole list is checked, names the row already has included: a
+        # definition can only be saved with tools embry0 gates.
+        stored = await repo.get(agent_type) or {}
+        tools = updates["tools"] if "tools" in updates else stored.get("tools")
+        servers = updates["mcp_servers"] if "mcp_servers" in updates else stored.get("mcp_servers")
+        unknown = unknown_tools(tools or [], mcp_servers=servers or {})
+        if unknown:
+            raise HTTPException(status_code=422, detail=unknown_tools_message(agent_type, unknown))
     warnings: list[str] = []
     if updates.get("skills"):
         # Only the names this write adds are checked: the form sends the whole list
