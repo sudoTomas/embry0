@@ -3958,6 +3958,26 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'The id of the API key that created the credential; NULL for a session, the master key, the importer and rows created before this column.';
         """,
     ),
+    (
+        141,
+        "jobs.repo: the repository of a job posted with a git context alone",
+        # POST /jobs with a git context and no repo stored the repository in the
+        # context alone, so the row named none: GET /jobs?repo=, the world view
+        # and the stats left the job out, though it cloned and worked on that
+        # repository. The route stores it now; this fills the rows written
+        # before. Only a git context names a repository. A row that names one
+        # already keeps it, so running this again changes nothing. updated_at
+        # is not touched: it says when the job last changed, and the reaper
+        # reads it.
+        """
+        ALTER TABLE jobs DISABLE TRIGGER trg_jobs_updated_at;
+        UPDATE jobs SET repo = context->>'repo'
+         WHERE repo IS NULL
+           AND context->>'type' = 'git'
+           AND COALESCE(context->>'repo', '') <> '';
+        ALTER TABLE jobs ENABLE TRIGGER trg_jobs_updated_at;
+        """,
+    ),
 ]
 
 
