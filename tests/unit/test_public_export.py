@@ -137,6 +137,24 @@ def test_dependabot_config_is_the_validated_one():
     )
 
 
+def test_dependabot_bumps_the_agent_sdk_alone():
+    """claude-agent-sdk bundles the Claude CLI agents run (#497, #288): its bump is a pull request of its own."""
+    copies = {"scripts/export_public.py": ex.ADD[".github/dependabot.yml"]}
+    if (ROOT / ".github" / "dependabot.yml").exists():
+        copies[".github/dependabot.yml"] = (ROOT / ".github" / "dependabot.yml").read_text()
+    for where, text in copies.items():
+        uv = next(u for u in yaml.safe_load(text)["updates"] if u["package-ecosystem"] == "uv")
+        groups = uv.get("groups", {})
+        alone = [name for name, group in groups.items() if group.get("patterns") == ["claude-agent-sdk"]]
+        assert alone, f"{where}: no uv group holds claude-agent-sdk alone, so its bump rides with others: {groups}"
+        for name, group in groups.items():
+            if name in alone:
+                continue
+            assert "claude-agent-sdk" in group.get("exclude-patterns", []), (
+                f"{where}: the uv group {name!r} could take claude-agent-sdk: exclude it there"
+            )
+
+
 def test_canonical_allowances_cover_only_the_public_repository():
     owner = ex.PUBLIC_REPO.split("/")[0]
     assert ex.canonical_allowances() == [(None, f"github.com/{ex.PUBLIC_REPO}"), (".github/CODEOWNERS", f"@{owner}")]

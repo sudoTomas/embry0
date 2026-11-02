@@ -62,7 +62,12 @@ class SandboxImageManager:
         ).exists()
 
     def _compute_build_hash(self) -> str:
-        """Compute SHA256 hash of Dockerfile.sandbox + sandbox source files."""
+        """Compute SHA256 hash of Dockerfile.sandbox + uv.lock + sandbox source files.
+
+        The image installs its Python packages from uv.lock (#288), so a lock
+        change alone (a claude-agent-sdk bump, and with it the Claude CLI
+        agents run) must mark the image stale too.
+        """
         hasher = hashlib.sha256()
 
         dockerfile = self._app_root / "infra" / "Dockerfile.sandbox"
@@ -74,6 +79,7 @@ class SandboxImageManager:
             self._app_root / "embry0" / "safety",
         ]
         source_files = [
+            self._app_root / "uv.lock",
             self._app_root / "embry0" / "execution" / "events.py",
         ]
 
