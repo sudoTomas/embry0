@@ -11,10 +11,11 @@
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 from embry0.api.deps import get_deliverables_repo, get_qa_minio
+from embry0.api.job_allowlist import job_hidden
 from embry0.storage.repositories.deliverables import DeliverablesRepository
 
 router = APIRouter()
@@ -28,8 +29,12 @@ _MAX_PASSTHROUGH_BYTES = 50 * 1024 * 1024
 @router.get("/jobs/{job_id}/deliverables")
 async def list_deliverables(
     job_id: str,
+    request: Request,
     repo: DeliverablesRepository = Depends(get_deliverables_repo),
 ) -> list[dict[str, Any]]:
+    # A job the caller's key does not cover has none, as a job that does not exist has none.
+    if await job_hidden(request, job_id):
+        return []
     return await repo.list_for_job(job_id)
 
 
@@ -37,11 +42,12 @@ async def list_deliverables(
 async def download_deliverable(
     job_id: str,
     deliverable_id: str,
+    request: Request,
     repo: DeliverablesRepository = Depends(get_deliverables_repo),
     qa_minio: Any = Depends(get_qa_minio),
 ) -> Response:
     """Stream an artifact deliverable's bytes with a download disposition."""
-    deliverable = await repo.get(deliverable_id)
+    deliverable = None if await job_hidden(request, job_id) else await repo.get(deliverable_id)
     if deliverable is None or deliverable.get("job_id") != job_id:
         raise HTTPException(status_code=404, detail="Deliverable not found")
     if deliverable.get("type") != "artifact":

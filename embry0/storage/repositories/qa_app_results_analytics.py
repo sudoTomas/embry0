@@ -12,10 +12,15 @@ without instantiating the repo class.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.jobs import job_repository_sql
+
+#: Keeps only the jobs of the repositories ``$3`` names (lower-cased slugs); NULL keeps every job.
+_NARROWED = f"($3::text[] IS NULL OR lower({job_repository_sql('j')}) = ANY($3::text[]))"
 
 
 async def cache_analytics_window(
@@ -23,6 +28,7 @@ async def cache_analytics_window(
     *,
     repo: str,
     days: int = 30,
+    repos: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Phase 5E: aggregate per-layer cache hit/miss for a repo over a window.
 
@@ -44,6 +50,9 @@ async def cache_analytics_window(
     three layers, weighted by event count) falls below 0.25 AND whose
     sub-task count is at least 3 (so a single bad run doesn't poison
     the list). Returned alphabetically.
+
+    ``repos`` (lower-cased slugs) counts only the runs of jobs working on
+    those repositories; None counts every run.
     """
     # cache_hits is a JSONB object — read fields directly with ->> and
     # array entries with jsonb_array_length(... -> ...). Earlier versions
@@ -51,7 +60,7 @@ async def cache_analytics_window(
     # an upsert-side double-encode bug; that bug is now fixed (codec
     # encodes once, repo passes Python objects) and a migration recasts
     # legacy rows, so the workaround is gone.
-    sql = """
+    sql = f"""
     WITH window_results AS (
         SELECT
             r.app_name,
@@ -70,6 +79,7 @@ async def cache_analytics_window(
         JOIN jobs j ON j.job_id = r.job_id
         WHERE j.repo = $1
           AND j.created_at >= NOW() - ($2::int * INTERVAL '1 day')
+          AND {_NARROWED}
     )
     SELECT
         app_name,
@@ -84,7 +94,7 @@ async def cache_analytics_window(
     FROM window_results
     GROUP BY app_name
     """
-    rows = await db.fetch(sql, repo, int(days))
+    rows = await db.fetch(sql, repo, int(days), None if repos is None else list(repos))
 
     # Empty window: short-circuit with the canonical zero payload so
     # the API response shape is always predictable.
@@ -180,6 +190,7 @@ async def flake_window(
     *,
     repo: str,
     days: int = 7,
+    repos: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Phase 5F: per-app flake counts over the last ``days`` days for ``repo``.
 
@@ -215,8 +226,11 @@ async def flake_window(
       List of dicts, one per app, sorted by ``flake_score DESC, app_name
       ASC`` so the dashboard's "rows = apps" axis surfaces the worst
       offenders first.
+
+    ``repos`` (lower-cased slugs) counts only the runs of jobs working on
+    those repositories; None counts every run.
     """
-    sql = """
+    sql = f"""
     WITH joined AS (
         SELECT
             r.app_name,
@@ -230,6 +244,7 @@ async def flake_window(
         WHERE j.repo = $1
           AND j.created_at >= NOW() - ($2::int * INTERVAL '1 day')
           AND m.head_sha <> ''
+          AND {_NARROWED}
     ),
     with_prev AS (
         SELECT
@@ -264,7 +279,7 @@ async def flake_window(
     GROUP BY app_name
     ORDER BY app_name
     """
-    rows = await db.fetch(sql, repo, int(days))
+    rows = await db.fetch(sql, repo, int(days), None if repos is None else list(repos))
 
     # Build the canonical day grid for the window so every app's `daily`
     # array has identical keys — keeps the heatmap CSS grid stable

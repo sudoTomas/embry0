@@ -13,6 +13,12 @@ material. Deriving (rather than a random per-boot secret) keeps tokens valid
 across orchestrator restarts within their TTL, and means rotating the
 underlying secret also invalidates all outstanding tokens — exactly the
 semantics rotation should have.
+
+A token is checked once, when it is minted. For its TTL it outlives the
+minting key being revoked, and in the same way it keeps what the key's
+repository allowlist covered then: a token minted for a job the key did not
+cover reads nothing (:func:`reads_nothing`), and one minted for a job it
+covered reads it, whatever the list becomes meanwhile.
 """
 
 from __future__ import annotations
@@ -59,6 +65,27 @@ def mint_scoped_token(
     """Mint a token for *scope*. Returns ``(token, expires_in_seconds)``."""
     expires_at = int(now if now is not None else time.time()) + ttl_seconds
     return _sign(material, scope, expires_at), ttl_seconds
+
+
+#: Prefixes the scope of a token minted for a stream its minter may not read. Such a token opens the stream, which
+#: then streams nothing, as the stream of a resource that does not exist; the two answers are the same, so the token
+#: never tells whether the resource exists. No resource scope starts with it, so it never opens one that reads.
+_READS_NOTHING = "reads-nothing:"
+
+
+def reads_nothing(scope: str) -> str:
+    """The scope a token for ``scope``'s stream is signed for when its minter may not read the resource."""
+    return _READS_NOTHING + scope
+
+
+def token_reads(material: str, scope: str, token: str, *, now: float | None = None) -> bool | None:
+    """What ``token`` opens on ``scope``'s stream: True, the stream; False, a stream that reads nothing (a token
+    minted for :func:`reads_nothing`); None, nothing: the token is not valid for ``scope``."""
+    if verify_scoped_token(material, scope, token, now=now):
+        return True
+    if verify_scoped_token(material, reads_nothing(scope), token, now=now):
+        return False
+    return None
 
 
 def verify_scoped_token(material: str, scope: str, token: str, *, now: float | None = None) -> bool:

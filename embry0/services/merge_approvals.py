@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
@@ -546,8 +546,10 @@ class MergeApprovalService:
     async def get(self, approval_id: str) -> dict[str, Any] | None:
         return await self._repo.get(approval_id)
 
-    async def list_recent(self, *, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        return await self._repo.list_recent(status=status, limit=limit)
+    async def list_recent(
+        self, *, status: str | None = None, limit: int = 50, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        return await self._repo.list_recent(status=status, limit=limit, repos=repos)
 
     # -- decide -----------------------------------------------------------
 
@@ -559,13 +561,17 @@ class MergeApprovalService:
         decided_by: str,
         chat_id: str,
         via: Literal["chat", "dashboard"] = "chat",
+        hidden: Callable[[Mapping[str, Any]], Awaitable[bool]] | None = None,
     ) -> dict[str, Any]:
         """Take a human's decision. ``via="chat"`` is the relay's: the answer must
         come from the configured approval chat. ``via="dashboard"`` is an admin
         on the dashboard (the route has already applied the admin gate and named
         ``decided_by`` from who authenticated): no chat is involved, and the
         stored ``chat_id`` is :data:`DASHBOARD_CHANNEL`. Everything after the
-        channel check is the same for both."""
+        channel check is the same for both. ``hidden``, awaited with the stored
+        ask where an unknown id answers 404, makes the ask answer as one that
+        does not exist (a key that does not cover its repository), after every
+        check an unknown id answers first."""
         word = (decision or "").strip().lower()
         if word not in APPROVE_WORDS | REJECT_WORDS:
             raise DecisionRefused(422, f"decision must be 'approve' or 'reject', not {decision!r}")
@@ -582,7 +588,7 @@ class MergeApprovalService:
                 raise DecisionRefused(403, "merge decisions are accepted only from the embry0 approval chat")
 
         row = await self._repo.get(approval_id)
-        if row is None:
+        if row is None or (hidden is not None and await hidden(row)):
             raise DecisionRefused(404, f"no merge approval {approval_id!r}")
         if not self.handles(row["repo"]):
             raise DecisionRefused(403, f"{row['repo']} is not enabled for merge approvals")

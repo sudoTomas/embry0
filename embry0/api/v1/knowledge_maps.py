@@ -39,7 +39,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.actor_visibility import caller_scope
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist, owner_allowed, repo_allowed
+from embry0.api.repo_allowlist import (
+    covered_slugs,
+    enforce_owner_allowlist,
+    enforce_repo_allowlist,
+    owner_allowed,
+    repo_allowed,
+)
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.person_name import PersonName
 from embry0.api.session import TIER_ADMIN
@@ -533,7 +539,7 @@ async def get_part(slug: str, node_id: str, request: Request, owner: OwnerParam 
     if node is None:
         raise HTTPException(status_code=404, detail="no such part on this map")
     maps = _maps(request)
-    work = await maps.work(slug, node_id, owner=target)
+    work = await maps.work(slug, node_id, owner=target, repos=covered_slugs(request))
     repo = part_repo(part["repo"], node)
     lead = await _leads(request).get(lead_id("weed", repo, source_key(slug, node_id))) if repo else None
     if lead is not None and not _made_by(lead, target):
@@ -864,8 +870,9 @@ async def send_parts(slug: str, body: SendBody, request: Request, owner: OwnerPa
 
 @router.get("/maps/{slug}/work")
 async def list_work(slug: str, request: Request, owner: OwnerParam = None) -> dict[str, Any]:
-    """Each part's newest send and its job: running, a pull request, merged, failed."""
+    """Each part's newest send and its job: running, a pull request, merged, failed. A key with a repository
+    allowlist reads only the sends to the repositories it covers (``embry0.api.job_allowlist``)."""
     target = await _map_owner(request, slug, owner)
-    rows = await _maps(request).work(slug, owner=target)
+    rows = await _maps(request).work(slug, owner=target, repos=covered_slugs(request))
     base = _base_url(request)
     return {"work": {str(r["node_id"]): _work_view(r, base) for r in rows}}

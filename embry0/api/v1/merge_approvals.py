@@ -17,10 +17,17 @@ would be attributing a decision to a name of their choosing.
 Who decided (``decided_by``) is shown as ``GET /audit`` shows actors
 (:mod:`embry0.api.actor_visibility`): an admin sees every name, anyone else
 their own and ``null`` for anyone else's.
+
+A merge approval is a job's. To a key with a repository allowlist, the list
+holds only the approvals of the repositories it covers, narrowed before its
+limit, and another repository's approval reads, and is decided, as one that
+does not exist (404), the decision's refusal logged and audited
+(``embry0.api.job_allowlist``).
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -28,7 +35,7 @@ from pydantic import BaseModel, Field
 
 from embry0.api.actor_visibility import Shown, actor_shown, with_actors
 from embry0.api.deps import TIER_MERGE, ensure_admin, request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist, restricted_key_name
+from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers, record_refusal
 from embry0.api.schemas.person_name import PersonName
 from embry0.audit.helpers import emit_audit
 from embry0.services.merge_approvals import DASHBOARD_CHANNEL, DecisionRefused, MergeApprovalService
@@ -98,7 +105,7 @@ async def list_merge_approvals(
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict[str, Any]:
     service = _service(request)
-    rows = await service.list_recent(status=status, limit=limit)
+    rows = await service.list_recent(status=status, limit=limit, repos=covered_slugs(request))
     shown = await actor_shown(request)
     return {"items": [_serialize(r, shown) for r in rows], "mode": service.mode}
 
@@ -106,8 +113,10 @@ async def list_merge_approvals(
 @router.get("/merge-approvals/{approval_id}")
 async def get_merge_approval(approval_id: str, request: Request) -> dict[str, Any]:
     row = await _service(request).get(approval_id)
+    missing = HTTPException(status_code=404, detail=f"no merge approval {approval_id!r}")
     if row is None:
-        raise HTTPException(status_code=404, detail=f"no merge approval {approval_id!r}")
+        raise missing
+    await hide_unless_covered(request, row.get("repo"), missing)
     return _serialize(row, await actor_shown(request))
 
 
@@ -135,15 +144,23 @@ async def decide_merge_approval(approval_id: str, body: DecideBody, request: Req
         # The relay's form: the relay's key, or an admin standing in for it.
         await _ensure_relay(request)
         via, decided_by, chat_id = "chat", body.decided_by, body.chat_id
-    if restricted_key_name(request) is not None:
-        # Only a restricted key pays for the extra read; an unknown id falls
-        # through to decide(), which owns the 404.
-        row = await service.get(approval_id)
-        if row is not None:
-            await enforce_repo_allowlist(request, row.get("repo"), action="decide a merge")
+
+    async def hidden(row: Mapping[str, Any]) -> bool:
+        """Another repository's ask answers as one that does not exist, where decide() answers an unknown id;
+        the refusal is logged and audited."""
+        if key_covers(request, row.get("repo")):
+            return False
+        await record_refusal(request, str(row.get("repo") or "(no repository)"), "decide a merge")
+        return True
+
     try:
         result = await service.decide(
-            approval_id, decision=body.decision, decided_by=decided_by, chat_id=chat_id, via=via
+            approval_id,
+            decision=body.decision,
+            decided_by=decided_by,
+            chat_id=chat_id,
+            via=via,
+            hidden=hidden if covered_slugs(request) is not None else None,
         )
     except DecisionRefused as refused:
         raise HTTPException(status_code=refused.status_code, detail=refused.detail) from None
@@ -188,7 +205,8 @@ async def _holds_handoff(request: Request, service: Any, approval_id: str) -> bo
     """Whether the caller is the recipient of the open hand-off of this approval's quest."""
     repo = getattr(request.app.state, "handoffs_repo", None)
     row = await service.get(approval_id)
-    if repo is None or row is None or not row.get("job_id"):
+    # Another repository's ask is no one's to hold for a key that does not cover it: it answers as a missing one.
+    if repo is None or row is None or not row.get("job_id") or not key_covers(request, row.get("repo")):
         return False
     decision_id = f"done:{row['job_id']}"
     held = (await repo.open_for([decision_id])).get(decision_id)
