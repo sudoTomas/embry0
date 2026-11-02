@@ -249,6 +249,9 @@ class GameWorld(FakeRepo):
     async def merge_approval(self, job_id: str) -> dict[str, Any] | None:
         return None
 
+    async def merge_approvals(self, job_ids: Any) -> dict[str, dict[str, Any]]:
+        return {}
+
 
 #: The achievements whose evidence names each repository's pull request; one whose evidence names a character.
 EVIDENCE = {COVERED: "forged_in_fire", UNCOVERED: "no_death_run"}

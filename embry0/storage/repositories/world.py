@@ -173,6 +173,13 @@ _MERGE_APPROVAL_SQL = """
 SELECT id, status, pr_url, pr_number, ask FROM merge_approvals WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1
 """
 
+# Each job's newest merge approval, as _MERGE_APPROVAL_SQL reads one job's.
+_MERGE_APPROVALS_SQL = """
+SELECT DISTINCT ON (job_id) job_id, id, status, pr_url, pr_number, ask
+FROM merge_approvals WHERE job_id = ANY($1::text[])
+ORDER BY job_id, created_at DESC
+"""
+
 _RATE_SQL = """
 INSERT INTO job_ratings (job_id, rating, verdict, note, followup_job_id, rated_by)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -273,13 +280,22 @@ class WorldRepository:
         return [dict(r) for r in await self._db.fetch(_QUEST_RUNS_SQL, job_id)]
 
     async def inbox(
-        self, *, days: int, player_actors: list[str], limit: int = 30, repos: Sequence[str] | None = None
+        self, *, days: int, player_actors: list[str], limit: int | None = 30, repos: Sequence[str] | None = None
     ) -> list[dict[str, Any]]:
+        """The finished jobs waiting for review, newest first: the newest ``limit``, or every one when None."""
         return [dict(r) for r in await self._db.fetch(_INBOX_SQL, days, player_actors, limit, _slugs(repos))]
 
     async def merge_approval(self, job_id: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow(_MERGE_APPROVAL_SQL, job_id)
         return dict(row) if row else None
+
+    async def merge_approvals(self, job_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+        """Each job's newest merge approval, as :meth:`merge_approval` reads it, in one statement; a job with none
+        is left out."""
+        if not job_ids:
+            return {}
+        rows = await self._db.fetch(_MERGE_APPROVALS_SQL, sorted(set(job_ids)))
+        return {str(r["job_id"]): {k: v for k, v in dict(r).items() if k != "job_id"} for r in rows}
 
     async def rate(
         self,

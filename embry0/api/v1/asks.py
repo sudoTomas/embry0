@@ -95,12 +95,15 @@ async def open_decisions(app: Any) -> list[dict[str, Any]]:
     list's page: a decision left out would read as answered, and the loop
     would withdraw its asks (#273). The decisions list builds every decision
     before it cuts any, so reading them all costs no more than reading the
-    first page. Quests to review still come from the inbox's newest 30 (#296).
+    first page. That holds for the quests to review too, every one waiting,
+    not the inbox's newest 30 (#296). They carry no report in ``details``:
+    neither reader shows a card, and the feed reads the reports of the asks it
+    hands out (:func:`~embry0.api.v1.decisions.with_reports`).
     """
     from embry0.api.v1.decisions import waiting
     from embry0.api.v1.organizations import app_request
 
-    return await waiting(app_request(app), stage="all", owner=None, repo=None, include_held=True)
+    return await waiting(app_request(app), stage="all", owner=None, repo=None, include_held=True, report_chars=0)
 
 
 @router.get("/asks/due")
@@ -133,7 +136,7 @@ async def asks_due(
     out the same ask or one past its person's limit. ``?peek=1`` returns the
     same page and leases and stamps nothing, for a person or a probe that only
     looks."""
-    from embry0.api.v1.decisions import listed_to
+    from embry0.api.v1.decisions import listed_to, with_reports
 
     section = await ask_policy(request)
     if not section.deployment().enabled:
@@ -165,9 +168,11 @@ async def asks_due(
         leased = await asks.lease_out(pick, now=now, until=now + lease)
         # What changed since the decision, a report of its send or a close, is not handed out.
         page[:] = [(ask, reminder) for ask, reminder in page if str(ask["id"]) in leased]
+    # The decisions were read without their reports; the page's cards carry theirs, as GET /decisions shows them.
+    cards = {str(d["id"]): d for d in await with_reports(request, [by_id[str(a["decision_id"])] for a, _ in page])}
     out: list[dict[str, Any]] = []
     for ask, reminder in page:
-        decision = by_id[str(ask["decision_id"])]
+        decision = cards[str(ask["decision_id"])]
         out.append(
             {
                 "id": ask["id"],

@@ -71,8 +71,8 @@ class World:
     ) -> list[dict[str, Any]]:
         return [dict(r) for r in self.rows]
 
-    async def merge_approval(self, job_id: str) -> dict[str, Any] | None:
-        return None
+    async def merge_approvals(self, job_ids: Any) -> dict[str, dict[str, Any]]:
+        return {}
 
 
 class Settings:
