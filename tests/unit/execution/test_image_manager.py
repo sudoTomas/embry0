@@ -352,6 +352,45 @@ async def test_ensure_image_self_builds_when_context_present(tmp_path):
     assert any("build" in cmd for cmd in issued), "self-build must still occur"
 
 
+class _LabelRuntime:
+    """A daemon holding one sandbox image, labelled with the build hash of its last build."""
+
+    def __init__(self) -> None:
+        self.label: str | None = None
+        self.builds: list[str] = []
+
+    async def image_label(self, image: str, label: str, *, timeout: int = 60) -> str | None:
+        return self.label
+
+    async def image_exists(self, image: str, *, timeout: int = 60) -> bool:
+        return self.label is not None
+
+    async def build_image(self, tag: str, *, labels: dict[str, str], **_kwargs: Any) -> None:
+        self.builds.append(tag)
+        self.label = labels["embry0.build-hash"]
+
+
+@pytest.mark.asyncio
+async def test_a_lock_change_alone_marks_the_sandbox_image_stale(tmp_path):
+    """The image installs its packages from uv.lock (#288): an SDK bump is a lock-only change."""
+    (tmp_path / "infra").mkdir()
+    (tmp_path / "infra" / "Dockerfile.sandbox").write_text("FROM scratch\n")
+    lock = tmp_path / "uv.lock"
+    lock.write_text('[[package]]\nname = "claude-agent-sdk"\nversion = "0.2.176"\n')
+    runtime = _LabelRuntime()
+    mgr = SandboxImageManager(runtime, app_root=str(tmp_path))  # type: ignore[arg-type]
+
+    assert await mgr.ensure_image() is True, "the first call builds the missing image"
+    assert await mgr.ensure_image() is False, "an unchanged tree must reuse the image it built"
+
+    lock.write_text('[[package]]\nname = "claude-agent-sdk"\nversion = "0.2.180"\n')
+    assert await mgr.ensure_image() is True, (
+        "a uv.lock change moves the packages the image installs (the SDK, and the Claude CLI it bundles): "
+        "the image built from the old lock must count as stale"
+    )
+    assert len(runtime.builds) == 2, runtime.builds
+
+
 class _RegistryRuntime:
     """Runtime stub for #622: the daemon's local store lacks the image; the registry may have it."""
 
