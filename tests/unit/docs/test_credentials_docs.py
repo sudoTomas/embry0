@@ -60,13 +60,25 @@ def test_credentials_doc_covers_llm_accounts():
         "CREDENTIAL_QUOTA_QUARANTINE_SECONDS",
         "ERR_CREDENTIAL_MISSING",
         "agent definitions",
-        "claude-agent-sdk==0.2.164",
         "/home/orchestrator/.grok/auth.json",
         "proxy-image-builder",
     ):
         assert needle in text, needle
     later = text.split("## Later releases", 1)[1]
     assert "LLM accounts" not in later, "LLM accounts are still listed as a later release"
+
+
+def test_credentials_doc_takes_the_sandbox_sdk_version_from_the_lock():
+    """The sandbox images install claude-agent-sdk from uv.lock (#288), so the doc names no version."""
+    text = (ROOT / "docs" / "credentials.md").read_text()
+    paragraphs = [p for p in text.split("\n\n") if p.startswith("**Sandbox SDK")]
+    assert len(paragraphs) == 1, "credentials.md lost its paragraph on the sandbox's Claude Agent SDK"
+    paragraph = paragraphs[0]
+    assert "claude-agent-sdk" in paragraph and "uv.lock" in paragraph, (
+        f"the sandbox SDK paragraph must say the version comes from uv.lock: {paragraph!r}"
+    )
+    pinned = re.findall(r"==\s*\S+|\b\d+\.\d+\.\d+\b", paragraph)
+    assert not pinned, f"the sandbox SDK paragraph names a version, which the lock moves without it: {pinned}"
 
 
 def test_providers_doc_uses_the_registry():

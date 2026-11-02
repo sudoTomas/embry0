@@ -12,7 +12,7 @@ and runner consume `find_session_file` / `canonical_session_path_for` and
 don't carry a path string of their own.
 
 See docs/contracts/claude-cli-session-file-layout.md for the full
-on-disk format spec, verified on claude-code 2.1.292 (#501).
+on-disk format spec, verified on claude-code 2.1.316 (#288; first on 2.1.292, #501).
 """
 
 from __future__ import annotations

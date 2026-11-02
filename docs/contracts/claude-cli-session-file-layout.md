@@ -1,11 +1,12 @@
 # Claude CLI Session File Layout (External Contract)
 
-> **Verified on claude-code 2.1.292** (2026-10-08, #501): the CLI bundled
-> in `claude-agent-sdk` 0.2.164, which is the CLI every agent runs. A CLI
-> upgrade is an SDK upgrade. When upgrading, check the layout below on the
-> new CLI (`tests/integration/test_claude_cli_session_layout.py` is still a
-> scaffold). If it moved, update this doc + `claude_cli_session.py`'s
-> discovery hierarchy.
+> **Verified on claude-code 2.1.316** (2026-11-02, #288): the CLI bundled
+> in `claude-agent-sdk` 0.2.176, the version `uv.lock` pins and every agent
+> runs. First verified on 2.1.292 (2026-10-08, #501). A CLI upgrade is an
+> SDK upgrade, which is a lock change. When upgrading, check the layout
+> below on the new CLI (`tests/integration/test_claude_cli_session_layout.py`
+> is still a scaffold). If it moved, update this doc +
+> `claude_cli_session.py`'s discovery hierarchy.
 
 ## What is this?
 
@@ -20,7 +21,7 @@ conversation-continuity layer (Plan C) needs to:
 Both operations route through `embry0/agents/claude_cli_session.py` —
 the single source of truth.
 
-## Current on-disk layout (claude-code 2.1.292; unchanged since 2.1.92)
+## Current on-disk layout (claude-code 2.1.316; unchanged since 2.1.92)
 
 ```
 ~/.claude/
@@ -37,6 +38,29 @@ the single source of truth.
   or as `result.session_id` in the SDK).
 - File contents = JSONL, one event per line (user message, assistant
   message, tool calls, etc.).
+
+## Request records (claude-code 2.1.316)
+
+2.1.316 writes four entry types 2.1.292 did not: one `api-request-shape`
+per session, an `api-request` and an `api-request-blob` per model request,
+and `tools-used`. Discovery, restore and resume ignore them; the path and
+the `cost-state` line below are unchanged.
+
+They make the file larger, and the whole file is the resume blob, which
+`MAX_RESUME_BLOB_BYTES` (5 MiB, `embry0/agents/session.py`) caps. Above
+it a resume skips the session file (`resume_skipped_blob_too_large`) and
+falls back to a bounded transcript replay. Measured offline against a
+scripted model, the same runs on both CLIs:
+
+| Run | 2.1.292 | 2.1.316 |
+|---|---|---|
+| 11 model requests, small tool results | 185,845 bytes | 325,724 bytes |
+| 9 model requests, eight 20,000-line Bash outputs | 460,011 bytes | 612,816 bytes |
+
+`api-request-shape` is about 89 KB once per session; `api-request` and
+`api-request-blob` add roughly 2.5 to 4.5 KB per model request. A long
+session therefore reaches the cap sooner, by about 90 KB plus a few KB
+per request.
 
 ## Saved cost totals (claude-code 2.1.277+)
 

@@ -103,8 +103,16 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # claude-agent-sdk bundles the Claude CLI every agent runs (#497), and
+      # the sandbox images install it from uv.lock (#288), so its bump
+      # changes agent behaviour and needs the sandbox rebuild recipe in
+      # docs/ops/deploy.md. It gets a pull request of its own, never one
+      # shared with unrelated packages.
+      claude-agent-sdk:
+        patterns: ["claude-agent-sdk"]
       python-minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns: ["claude-agent-sdk"]
 
   - package-ecosystem: npm
     directory: /frontend
@@ -129,7 +137,7 @@ updates:
       - dependency-name: python
         update-types: [version-update:semver-major, version-update:semver-minor]
     groups:
-      # The `uv` stage of infra/Dockerfile.orchestrator and Dockerfile.proxy
+      # The `uv` stage of the infra/Dockerfile.* images that install uv.lock
       # moves with UV_VERSION in ci.yml, which Dependabot does not track. It
       # gets a pull request of its own, which fails
       # tests/unit/infra/test_image_lockfile.py until UV_VERSION is raised in
