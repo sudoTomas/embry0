@@ -9,6 +9,11 @@ Path layout (bucket: qa-artifacts):
 
 The "latest attempt" is the highest <attempt_n> directory present in MinIO
 under <job_id>/. Routes that don't specify an attempt resolve it dynamically.
+
+A job the caller's key does not cover (``embry0.api.job_allowlist``) has no
+artifacts and no live workspace here, as a job that does not exist has none:
+each route reads nothing of it and answers what it answers for a job with
+nothing stored. A sub-task's artifacts (``<job_id>__<app>``) are its job's.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterable, Iterable
 from typing import Any, cast
 
 import httpx
@@ -24,6 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 
 from embry0.api.deps import authenticate_stream, get_qa_minio, get_runtime
+from embry0.api.job_allowlist import artifact_job, job_hidden, stream_scope
 from embry0.api.scoped_tokens import mint_scoped_token, signing_material
 
 router = APIRouter()
@@ -104,6 +110,15 @@ _MAX_RESULT_BYTES = 5 * 1024 * 1024  # 5 MiB
 # that the orchestrator should refuse rather than OOM on.
 _MAX_ARTIFACT_BYTES = 50 * 1024 * 1024  # 50 MiB
 
+#: What :func:`get_result` answers when the attempt stored no ``result.json``, or the job none at all.
+_NO_RESULT = "result.json not found for this attempt"
+
+
+async def _hidden(request: Request, job_id: str) -> bool:
+    """Whether the job ``job_id``'s artifacts belong to (a sub-task's are its job's) answers the caller as a job
+    that does not exist: its routes then read nothing."""
+    return await job_hidden(request, artifact_job(job_id))
+
 
 def _check_safe(path: str) -> None:
     # Reject empty segments and segments that are entirely dots (`.`, `..`,
@@ -143,6 +158,7 @@ async def _resolve_latest_attempt(minio: Any, job_id: str) -> int | None:
 @router.get("/jobs/{job_id}/artifacts/screenshots/latest")
 async def get_latest_screenshot(
     job_id: str,
+    request: Request,
     qa_minio: Any = Depends(get_qa_minio),
 ) -> RedirectResponse:
     """302 to a presigned GET of the newest screenshot.
@@ -153,13 +169,13 @@ async def get_latest_screenshot(
     """
     # Validate input BEFORE any storage work.
     _check_safe_job_id(job_id)
-    latest_key = await _latest_screenshot_key(qa_minio, job_id)
+    latest_key = await _latest_screenshot_key(qa_minio, job_id, hidden=await _hidden(request, job_id))
     url = await qa_minio.presign_get("qa-artifacts", latest_key, expires_seconds=300)
     return RedirectResponse(url=url, status_code=302)
 
 
-async def _latest_screenshot_key(qa_minio: Any, job_id: str) -> str:
-    """Key of the newest screenshot of any attempt of ``job_id``; 404 when none."""
+async def _latest_screenshot_key(qa_minio: Any, job_id: str, *, hidden: bool) -> str:
+    """Key of the newest screenshot of any attempt of ``job_id``; 404 when none, as for a ``hidden`` job."""
     # Find every .png under any attempt's screenshots/ for this job. The prefix
     # is `{job_id}/` (not scoped to a single attempt) so a job that has rolled
     # over to a new attempt while the dashboard is polling still surfaces the
@@ -168,7 +184,7 @@ async def _latest_screenshot_key(qa_minio: Any, job_id: str) -> str:
     # Use `list_objects_with_meta` so we get `last_modified` from the listing
     # itself — this endpoint is polled every ~5s by the dashboard, and the
     # previous "list + N stat_object" approach was N+1 round trips per poll.
-    objs = await qa_minio.list_objects_with_meta("qa-artifacts", prefix=f"{job_id}/")
+    objs = [] if hidden else await qa_minio.list_objects_with_meta("qa-artifacts", prefix=f"{job_id}/")
     screenshots = [o for o in objs if o["key"].endswith(".png") and "/screenshots/" in o["key"]]
     if not screenshots:
         raise HTTPException(status_code=404, detail="no screenshots yet")
@@ -203,8 +219,8 @@ async def _latest_screenshot_key(qa_minio: Any, job_id: str) -> str:
     return str(keyed[0][0]["key"])
 
 
-async def _redirect_to_artifact(qa_minio: Any, job_id: str, path: str) -> RedirectResponse:
-    """Resolve latest attempt and return a 302 to the MinIO presigned GET URL.
+async def _redirect_to_artifact(qa_minio: Any, job_id: str, path: str, *, hidden: bool) -> RedirectResponse:
+    """Resolve latest attempt and return a 302 to the MinIO presigned GET URL; 404 for a ``hidden`` job.
 
     Shared by both the catch-all `get_artifact` route and the `follow=false`
     fallback in `get_log`. Centralised so the SSE endpoint isn't coupled to
@@ -215,7 +231,7 @@ async def _redirect_to_artifact(qa_minio: Any, job_id: str, path: str) -> Redire
     _check_safe(path)
 
     # Resolve latest attempt for this job.
-    n = await _resolve_latest_attempt(qa_minio, job_id)
+    n = None if hidden else await _resolve_latest_attempt(qa_minio, job_id)
     if n is None:
         raise HTTPException(status_code=404, detail="no attempts found")
     key = f"{job_id}/{n}/{path}"
@@ -232,6 +248,7 @@ async def _redirect_to_artifact(qa_minio: Any, job_id: str, path: str) -> Redire
 async def get_log(
     job_id: str,
     service: str,
+    request: Request,
     follow: bool = False,
     qa_minio: Any = Depends(get_qa_minio),
     runtime: Any = Depends(get_runtime),
@@ -243,10 +260,14 @@ async def get_log(
     _check_safe_job_id(job_id)
     if "/" in service or not _SAFE_SERVICE.fullmatch(service):
         raise HTTPException(status_code=404, detail="not found")
+    hidden = await _hidden(request, job_id)
 
     if not follow:
         # Static-file path: redirect to MinIO presigned GET.
-        return await _redirect_to_artifact(qa_minio, job_id, f"logs/{service}.log")
+        return await _redirect_to_artifact(qa_minio, job_id, f"logs/{service}.log", hidden=hidden)
+    if hidden:
+        # No workspace is read for a job the caller's key does not cover, nor for one that does not exist.
+        return _event_stream(iter(()))
 
     project = f"qa_{job_id}"
     # docker compose -p <project> logs -f --tail 200 -- <service>
@@ -313,8 +334,12 @@ async def get_log(
             async with _log_stream_lock:
                 _active_log_streams -= 1
 
+    return _event_stream(_stream())
+
+
+def _event_stream(lines: AsyncIterable[bytes] | Iterable[bytes]) -> StreamingResponse:
     return StreamingResponse(
-        _stream(),
+        lines,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -331,13 +356,16 @@ async def create_log_stream_token(job_id: str, request: Request) -> dict[str, An
     only credential the browser's EventSource puts in the URL (#634).
     """
     _check_safe_job_id(job_id)
-    token, expires_in = mint_scoped_token(signing_material(request.app.state.config), f"qa-log:{job_id}")
+    # A job the caller's key does not cover gets a token whose stream reads nothing, as for a job that does not exist.
+    scope = await stream_scope(request, f"qa-log:{job_id}", artifact_job(job_id))
+    token, expires_in = mint_scoped_token(signing_material(request.app.state.config), scope)
     return {"token": token, "expires_in": expires_in}
 
 
 @router.get("/jobs/{job_id}/qa/services")
 async def list_qa_services(
     job_id: str,
+    request: Request,
     runtime: Any = Depends(get_runtime),
 ) -> dict[str, list[str]]:
     """Compose services of the job's live QA workspace.
@@ -349,6 +377,8 @@ async def list_qa_services(
     """
     # RAV-1058.
     _check_safe_job_id(job_id)
+    if await _hidden(request, job_id):
+        return {"services": []}
 
     try:
         names = await runtime.compose_services(f"qa_{job_id}", timeout=10)
@@ -361,6 +391,7 @@ async def list_qa_services(
 @router.get("/jobs/{job_id}/qa/attempts")
 async def list_attempts(
     job_id: str,
+    request: Request,
     qa_minio: Any = Depends(get_qa_minio),
 ) -> dict[str, Any]:
     """Enumerate attempts present in MinIO with per-attempt metadata.
@@ -373,7 +404,8 @@ async def list_attempts(
     """
     _check_safe_job_id(job_id)
 
-    objs = await qa_minio.list_objects("qa-artifacts", prefix=f"{job_id}/")
+    hidden = await _hidden(request, job_id)
+    objs = [] if hidden else await qa_minio.list_objects("qa-artifacts", prefix=f"{job_id}/")
     attempts: dict[int, dict[str, Any]] = {}
     # No pagination — single-job listings are bounded by the per-job retention policy.
     # If a job ever accumulates >10k screenshots this should switch to chunked listing.
@@ -400,6 +432,7 @@ async def list_attempts(
 async def get_result(
     job_id: str,
     attempt_n: int,
+    request: Request,
     qa_minio: Any = Depends(get_qa_minio),
 ) -> dict[str, Any]:
     """Server-side download of ``result.json`` for a specific attempt.
@@ -413,6 +446,9 @@ async def get_result(
     # negatives explicitly before they get concatenated into the MinIO key.
     if attempt_n <= 0:
         raise HTTPException(status_code=404, detail="not found")
+    if await _hidden(request, job_id):
+        # The storage's answer for a job that stored nothing.
+        raise HTTPException(status_code=404, detail=_NO_RESULT)
 
     key = f"{job_id}/{attempt_n}/result.json"
     url = await qa_minio.presign_get("qa-artifacts", key, expires_seconds=60)
@@ -428,7 +464,7 @@ async def get_result(
         try:
             async with client.stream("GET", url) as r:
                 if r.status_code == 404:
-                    raise HTTPException(status_code=404, detail="result.json not found for this attempt")
+                    raise HTTPException(status_code=404, detail=_NO_RESULT)
                 if r.status_code != 200:
                     raise HTTPException(status_code=502, detail=f"upstream {r.status_code}")
 
@@ -477,9 +513,11 @@ async def get_result(
 # ---------------------------------------------------------------------------
 
 
-async def _artifact_response(qa_minio: Any, key: str, *, cache_control: str) -> Response:
-    """Body of ``key`` with a media type from its extension; 404 missing, 413 oversized."""
+async def _artifact_response(qa_minio: Any, key: str, *, cache_control: str, hidden: bool) -> Response:
+    """Body of ``key`` with a media type from its extension; 404 missing, as for a ``hidden`` job, 413 oversized."""
     try:
+        if hidden:
+            raise FileNotFoundError(key)
         stat = await qa_minio.stat_object("qa-artifacts", key)
     except Exception as exc:
         # The SDK raises S3Error(NoSuchKey) for a missing object; any lookup
@@ -498,12 +536,14 @@ async def _artifact_response(qa_minio: Any, key: str, *, cache_control: str) -> 
 @router.get("/jobs/{job_id}/qa/screenshots/latest")
 async def get_latest_screenshot_bytes(
     job_id: str,
+    request: Request,
     qa_minio: Any = Depends(get_qa_minio),
 ) -> Response:
     """The newest screenshot's bytes — the live view polls this (#541)."""
     _check_safe_job_id(job_id)
-    key = await _latest_screenshot_key(qa_minio, job_id)
-    return await _artifact_response(qa_minio, key, cache_control="no-store")
+    hidden = await _hidden(request, job_id)
+    key = await _latest_screenshot_key(qa_minio, job_id, hidden=hidden)
+    return await _artifact_response(qa_minio, key, cache_control="no-store", hidden=hidden)
 
 
 @router.get("/jobs/{job_id}/qa/attempts/{attempt_n}/artifacts/{path:path}")
@@ -511,6 +551,7 @@ async def get_attempt_artifact_bytes(
     job_id: str,
     attempt_n: int,
     path: str,
+    request: Request,
     qa_minio: Any = Depends(get_qa_minio),
 ) -> Response:
     """Bytes of ``<job_id>/<attempt_n>/<path>`` — evidence links (#541).
@@ -521,16 +562,22 @@ async def get_attempt_artifact_bytes(
     if attempt_n <= 0:
         raise HTTPException(status_code=404, detail="not found")
     _check_safe(path)
-    return await _artifact_response(qa_minio, f"{job_id}/{attempt_n}/{path}", cache_control="private, max-age=300")
+    return await _artifact_response(
+        qa_minio,
+        f"{job_id}/{attempt_n}/{path}",
+        cache_control="private, max-age=300",
+        hidden=await _hidden(request, job_id),
+    )
 
 
 @router.get("/jobs/{job_id}/artifacts/{path:path}")
 async def get_artifact(
     job_id: str,
     path: str,
+    request: Request,
     qa_minio: Any = Depends(get_qa_minio),
 ) -> RedirectResponse:
-    return await _redirect_to_artifact(qa_minio, job_id, path)
+    return await _redirect_to_artifact(qa_minio, job_id, path, hidden=await _hidden(request, job_id))
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +681,7 @@ async def list_app_artifacts(
     run_id: str,
     app: str,
     kind: str,
+    request: Request,
     qa_minio: Any = Depends(get_qa_minio),
 ) -> dict[str, list[str]]:
     """List basenames available for `kind` on the latest attempt of this sub-task.
@@ -648,7 +696,7 @@ async def list_app_artifacts(
     _check_artifact_kind(kind)
 
     sub = f"{run_id}__{app}"
-    n = await _find_latest_attempt_for_kind(qa_minio, sub, kind)
+    n = None if await _hidden(request, run_id) else await _find_latest_attempt_for_kind(qa_minio, sub, kind)
     if n is None:
         return {"filenames": []}
 
@@ -670,6 +718,7 @@ async def get_app_artifact(
     app: str,
     kind: str,
     filename: str,
+    request: Request,
     qa_minio: Any = Depends(get_qa_minio),
 ) -> Response:
     """Stream a per-sub-task artifact (screenshot / HAR / console log) from MinIO.
@@ -684,7 +733,8 @@ async def get_app_artifact(
     _check_safe_filename(filename)
 
     sub = f"{run_id}__{app}"
-    n = await _find_latest_attempt_with_artifact(qa_minio, sub, kind, filename)
+    hidden = await _hidden(request, run_id)
+    n = None if hidden else await _find_latest_attempt_with_artifact(qa_minio, sub, kind, filename)
     if n is None:
         raise HTTPException(status_code=404, detail="artifact not found")
     key = f"{sub}/{n}/{kind}/{filename}"

@@ -138,7 +138,7 @@ GROUP BY q.agent_type
 """
 
 _QUEST_SQL = """
-SELECT j.job_id, j.repo, j.area, j.task, j.status, j.delivery_state, j.delivery_state_at, j.pr_url,
+SELECT j.job_id, j.repo, j.context, j.area, j.task, j.status, j.delivery_state, j.delivery_state_at, j.pr_url,
        j.pipeline_template, j.job_kind, j.created_at, j.started_at, j.finished_at, j.error_code, j.error_message,
        j.total_cost_usd, j.result_summary, j.dispatched_by, j.issue_id, j.account_wait, j.work_nature,
        r.rating, r.verdict, r.note, r.followup_job_id, r.rated_by, r.rated_at

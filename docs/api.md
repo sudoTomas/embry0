@@ -100,7 +100,7 @@ A paused job that waits for an LLM account carries `account_wait` on `GET /jobs/
 
 ### Reviewing a job
 
-A person's verdict on a finished job's work, and what they do with it. Each answer is stored as the job's evaluation, settles the job's [hand-off](#hand-offs) when it has one, and is audited as `job.review.evaluated`, `job.review.sent_back`, `job.review.rejected`, `job.review.restarted` or `job.review.dismissed`. Each answers with the evaluation as it now stands, `{"job_id", "rating", "verdict", "note", "followup_job_id", "by", "at"}`; `by` is who reviewed it, a [collaboration field](#who-changed-something-outside-the-audit-log). An unknown job answers 404, and a key limited to a [repository allowlist](#repository-allowlist) gets 403 for a job outside it.
+A person's verdict on a finished job's work, and what they do with it. Each answer is stored as the job's evaluation, settles the job's [hand-off](#hand-offs) when it has one, and is audited as `job.review.evaluated`, `job.review.sent_back`, `job.review.rejected`, `job.review.restarted` or `job.review.dismissed`. Each answers with the evaluation as it now stands, `{"job_id", "rating", "verdict", "note", "followup_job_id", "by", "at"}`; `by` is who reviewed it, a [collaboration field](#who-changed-something-outside-the-audit-log). An unknown job answers 404, and so does a job outside the calling key's [repository allowlist](#repository-allowlist), whose refusal is logged and audited.
 
 - `PUT /api/v1/jobs/{job_id}/evaluation` (`{"rating": "good"|"needs_work"|"bad", "verdict": "merged", "note"}`, any of them): 409 while the job has not finished, 422 with none of them.
 - `POST /api/v1/jobs/{job_id}/send-back` (`{"notes", "run_with"}`, 202): a pr-followup job on the job's GitHub pull request branch with the notes; 409 without one, or when the pull request is not open.
@@ -1012,8 +1012,7 @@ other repository, or change its registration, its configuration or its
 organization:
 
 - `POST /jobs` (every pipeline; a job with no repository, such as an `http`
-  or `none` context, is refused too), `POST /jobs/{id}/resume`,
-  `POST /jobs/{id}/inputs/{input_id}/answer` and `POST /jobs/{id}/cancel`;
+  or `none` context, is refused too);
 - `POST /issues` (an issue without a repository is refused),
   `PUT /issues/{id}` (the issue's repository and, when it changes, the new
   one), `POST /issues/{id}/triage`, `POST /issues/{id}/sync`,
@@ -1100,6 +1099,28 @@ follow:
   it names a repository the key covers, or, for evidence, characters
   rather than work. The account's and the characters' totals count every
   repository's work, without naming any.
+- Jobs. A job belongs to the repository it works on: its `repo`, else the
+  repository its git `context` names. `GET /jobs` (with every filter, its
+  pages and its `total`), `GET /queue`, `GET /sandboxes/active`,
+  `GET /qa/repos` and, for a repository, `GET /qa/repos/{repo}/runs`,
+  `/apps/{app}/history`, `/cache/analytics` and `/flake` count and list only
+  the jobs and QA runs of repositories the key covers, narrowed in the query
+  before the page is cut. Another repository's job, a job with no
+  repository among them, reads exactly as a job that does not exist, status,
+  headers and body: `GET /jobs/{id}` and every route under it (its inputs,
+  events, verification, agents' sessions, deliverables and their downloads,
+  QA workspace, attempts, results, screenshots and artifacts), and a QA run,
+  `GET /qa/runs/{id}` and every route under it. The MCP job tools read
+  through these routes, so they are narrowed too.
+- A job's streams. `POST /jobs/{id}/events-token`,
+  `POST /jobs/{id}/qa/log-stream-token` and `POST /qa/runs/{id}/events-token`
+  mint, for another repository's job, a token like any other, as they do for
+  a job that does not exist. The stream it opens, the job's WebSocket, its
+  live QA log or its QA run's events, sends nothing, as the stream of a job
+  that does not exist sends nothing. A stream opened with the key in an
+  `Authorization` header holds it to the same rule. For its 15 minutes a
+  token keeps what its key covered when it was minted, as it outlives a
+  revoked key.
 - Reading one item of another repository, `GET /proposals/{id}`,
   `GET /decisions/{id}` and `GET /world/quests/{id}`, answers exactly as an
   item that does not exist (404).
@@ -1107,10 +1128,15 @@ follow:
   item that does not exist: `POST /proposals/{id}/accept`, `/decline` and
   `/snooze` and `POST /decisions/{id}/send-to` with 404,
   `POST /handoffs/{id}/return` and `/cancel` with 404,
-  `POST /asks/{id}/sent` with 409, `POST /asks/answer` with 404 and
+  `POST /asks/{id}/sent` with 409, `POST /asks/answer` with 404,
   `POST /cases/{id}/close` with 404 (a case an organization need filed on
   its owner is checked against the owner, and its refusal names
-  `<owner>/*`). So no answer tells whether the item exists.
+  `<owner>/*`), and every action on one job with the job's 404:
+  `POST /jobs/{id}/resume`, `/cancel` and `/inputs/{input_id}/answer`,
+  `PUT /jobs/{id}/done-when`, and the [review](#reviewing-a-job)
+  `PUT /jobs/{id}/evaluation`, `POST /jobs/{id}/send-back`, `/run-again`,
+  `/dismiss` and `/reject` (and their old paths under `/world/quests/`). So
+  no answer tells whether the item exists.
 
 A list or a read is narrowed, not refused, so it logs and audits nothing.
 An action is refused: it logs `api_key_repo_refused` and writes an
@@ -1121,8 +1147,8 @@ read back from the row the decision comes from (a finished job, an issue, a
 watcher case, a lead, an answered proposal), else from the open decisions.
 An ask about an audit finding that was never answered and is no longer
 offered has no repository to read back, so a key with an allowlist neither
-lists it nor acts on it. The jobs and merge approval routes keep the 403
-refusal above for their actions, reviewing a finished job included.
+lists it nor acts on it. The merge approval routes keep the 403 refusal
+above for their actions.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
 every key minted before the allowlist existed is unrestricted. The
@@ -1257,7 +1283,10 @@ The handshake takes a short-lived token scoped to one job, never an API key.
 Mint it with an operator or admin key; a read or merge key gets 403, and can
 page the same events from `GET /api/v1/jobs/{job_id}/logs/events?since_seq=`
 instead. A browser signed in with SSO needs no token: the session cookie
-authenticates the handshake.
+authenticates the handshake. A key limited to a
+[repository allowlist](#repository-allowlist) that mints a token for a job
+outside it gets a token like any other, and the stream it opens sends
+nothing, as the stream of a job that does not exist does.
 
 ```javascript
 // 1. Mint a token for this job (expires_in: 900 seconds).

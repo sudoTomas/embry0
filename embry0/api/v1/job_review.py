@@ -32,7 +32,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import ensure_admin, request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.job_allowlist import hide_job_unless_covered
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
@@ -91,11 +91,14 @@ def _json_field(value: Any) -> Any:
 
 
 async def _job_or_404(request: Request, job_id: str) -> dict[str, Any]:
-    """The job with its evaluation so far; 404 for an unknown job, 403 outside the key's repositories."""
+    """The job with its evaluation so far; 404 for an unknown job, and for one outside the key's repositories,
+    whose refusal is logged and audited (``embry0.api.job_allowlist``)."""
     job = await _state(request, "world_repo").quest(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"no job {job_id}")
-    await enforce_repo_allowlist(request, job.get("repo"), action="review a job")
+    await hide_job_unless_covered(
+        request, job, HTTPException(status_code=404, detail=f"no job {job_id}"), action="review a job"
+    )
     return dict(job)
 
 

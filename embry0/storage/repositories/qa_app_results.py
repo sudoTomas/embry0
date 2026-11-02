@@ -8,10 +8,12 @@ per sub-task at orchestrator-aggregation time.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.jobs import job_repository_sql
 from embry0.storage.repositories.qa_app_results_analytics import (
     cache_analytics_window as _cache_analytics_window,
 )
@@ -23,6 +25,16 @@ from embry0.workflows.qa.subtask_result_schema import (
     SubTaskResult,
     SubTaskStatus,
 )
+
+
+def _narrowed(param: int) -> str:
+    """Keeps only the runs of jobs ``j`` working on the repositories parameter ``param`` names (lower-cased
+    slugs); NULL keeps every run."""
+    return f"(${param}::text[] IS NULL OR lower({job_repository_sql('j')}) = ANY(${param}::text[]))"
+
+
+def _slugs(repos: Sequence[str] | None) -> list[str] | None:
+    return None if repos is None else list(repos)
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,12 +213,14 @@ class QAAppResultsRepository:
             )
         return out
 
-    async def list_repos_with_runs(self, limit: int = 50) -> list[RepoSummary]:
+    async def list_repos_with_runs(self, limit: int = 50, repos: Sequence[str] | None = None) -> list[RepoSummary]:
         """Distinct repos that have at least one qa_app_results row.
 
         For each repo, returns the latest job_id (by started_at), its overall
         status (passed if every per-app row passed; failed otherwise), and
-        the number of apps in that latest run.
+        the number of apps in that latest run. ``repos`` (lower-cased slugs)
+        keeps only the runs of jobs working on those repositories, before the
+        limit; None keeps every run.
         """
         # `started_at IS NOT NULL` filter excludes rows that never reached
         # the IssueExecutor.start_job() call site (e.g. rows synthesized by
@@ -214,7 +228,7 @@ class QAAppResultsRepository:
         # workflow took over). The dashboard's RepoEntry schema declares
         # latest_started_at as non-null datetime, so a NULL would raise
         # Pydantic validation at serialization time and 500 the endpoint.
-        sql = """
+        sql = f"""
         WITH latest_per_repo AS (
             SELECT
                 j.repo,
@@ -224,6 +238,7 @@ class QAAppResultsRepository:
             FROM jobs j
             WHERE j.started_at IS NOT NULL
               AND EXISTS (SELECT 1 FROM qa_app_results q WHERE q.job_id = j.job_id)
+              AND {_narrowed(2)}
         )
         SELECT
             l.repo,
@@ -242,7 +257,7 @@ class QAAppResultsRepository:
         ORDER BY l.started_at DESC
         LIMIT $1
         """
-        rows = await self.db.fetch(sql, limit)
+        rows = await self.db.fetch(sql, limit, _slugs(repos))
         return [
             RepoSummary(
                 repo=r["repo"],
@@ -260,10 +275,12 @@ class QAAppResultsRepository:
         *,
         limit: int = 50,
         offset: int = 0,
+        repos: Sequence[str] | None = None,
     ) -> list[RunSummary]:
         """Recent runs for a repo, newest first. Each row aggregates per-app
-        results into an overall status."""
-        sql = """
+        results into an overall status. ``repos`` (lower-cased slugs) keeps
+        only the runs of jobs working on those repositories; None keeps every run."""
+        sql = f"""
         SELECT
             j.job_id,
             j.repo,
@@ -276,12 +293,12 @@ class QAAppResultsRepository:
             END AS overall_status
         FROM jobs j
         JOIN qa_app_results q ON q.job_id = j.job_id
-        WHERE j.repo = $1
+        WHERE j.repo = $1 AND {_narrowed(4)}
         GROUP BY j.job_id, j.repo, j.started_at
         ORDER BY j.started_at DESC NULLS LAST
         LIMIT $2 OFFSET $3
         """
-        rows = await self.db.fetch(sql, repo, limit, offset)
+        rows = await self.db.fetch(sql, repo, limit, offset, _slugs(repos))
         return [
             RunSummary(
                 job_id=r["job_id"],
@@ -298,6 +315,7 @@ class QAAppResultsRepository:
         *,
         repo: str,
         days: int = 30,
+        repos: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """Thin pass-through to ``qa_app_results_analytics.cache_analytics_window``.
 
@@ -305,13 +323,14 @@ class QAAppResultsRepository:
         stays focused on per-row CRUD. The repo-class API is unchanged so
         callers (api routes, tests, integration) need no edits.
         """
-        return await _cache_analytics_window(self.db, repo=repo, days=days)
+        return await _cache_analytics_window(self.db, repo=repo, days=days, repos=repos)
 
     async def flake_window(
         self,
         *,
         repo: str,
         days: int = 7,
+        repos: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Thin pass-through to ``qa_app_results_analytics.flake_window``.
 
@@ -319,7 +338,7 @@ class QAAppResultsRepository:
         stays focused on per-row CRUD. The repo-class API is unchanged so
         callers (api routes, tests, integration) need no edits.
         """
-        return await _flake_window(self.db, repo=repo, days=days)
+        return await _flake_window(self.db, repo=repo, days=days, repos=repos)
 
     async def list_history_for_app(
         self,
@@ -327,9 +346,11 @@ class QAAppResultsRepository:
         app_name: str,
         *,
         limit: int = 20,
+        repos: Sequence[str] | None = None,
     ) -> list[AppHistoryRow]:
-        """Last-N qa_app_results rows for one (repo, app_name) pair, newest first."""
-        sql = """
+        """Last-N qa_app_results rows for one (repo, app_name) pair, newest first. ``repos`` (lower-cased
+        slugs) keeps only the runs of jobs working on those repositories; None keeps every run."""
+        sql = f"""
         SELECT
             q.job_id,
             q.app_name,
@@ -339,11 +360,11 @@ class QAAppResultsRepository:
             q.failure_summary
         FROM qa_app_results q
         JOIN jobs j ON j.job_id = q.job_id
-        WHERE j.repo = $1 AND q.app_name = $2
+        WHERE j.repo = $1 AND q.app_name = $2 AND {_narrowed(4)}
         ORDER BY j.started_at DESC NULLS LAST
         LIMIT $3
         """
-        rows = await self.db.fetch(sql, repo, app_name, limit)
+        rows = await self.db.fetch(sql, repo, app_name, limit, _slugs(repos))
         return [
             AppHistoryRow(
                 job_id=r["job_id"],

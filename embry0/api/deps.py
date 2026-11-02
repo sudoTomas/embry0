@@ -76,7 +76,7 @@ PROPOSE_SCOPE_MUTATIONS = frozenset(
 class Principal:
     """Who authenticated this request (RAV-1056 Phase B)."""
 
-    kind: str  # "master" | "key" | "session"
+    kind: str  # "master" | "key" | "session" | "token" (READS_NOTHING)
     tier: str  # "read" | "operator" | "admin"
     key_id: str | None = None
     key_name: str | None = None
@@ -87,6 +87,11 @@ class Principal:
     allowed_repos: tuple[str, ...] | None = None
     # An unowned key: minted by an admin or rotated by the orchestrator at boot.
     service: bool = False
+
+
+#: Who opened a stream with a token minted for what its minter may not read (``scoped_tokens.reads_nothing``): a
+#: caller whose repository allowlist covers nothing, so the stream reads as one of a resource that does not exist.
+READS_NOTHING = Principal(kind="token", tier="read", allowed_repos=())
 
 
 # RAV-1056 Phase A: per-request session gate against the users table
@@ -402,14 +407,21 @@ async def authenticate_stream(request: Request, scope: str, token: str | None) -
     accepts a short-lived token minted for ``scope`` by an authenticated POST
     (RAV-1060). The API key itself is never accepted from the query string:
     a URL lands in access logs, history and Referer. Raises 401 otherwise.
+
+    The caller is ``request.state.principal``, as for every other route, so the
+    stream applies its key's repository allowlist. A token minted for what its
+    minter may not read (``scoped_tokens.reads_nothing``) makes the caller
+    :data:`READS_NOTHING`, unless a session or a key authenticates it too, as
+    the jobs WebSocket reads it.
     """
-    from embry0.api.scoped_tokens import signing_material, verify_scoped_token
+    from embry0.api.scoped_tokens import signing_material, token_reads
 
     config = request.app.state.config
     # #518: only AUTH_DEV_MODE skips this, never an empty API_KEY.
     if config.auth_dev_mode:
         return
-    if token is not None and verify_scoped_token(signing_material(config), scope, token):
+    reads = token_reads(signing_material(config), scope, token) if token is not None else None
+    if reads:
         return
     # RAV-1069: an SSO session (operator+) authenticates the stream directly —
     # same-origin EventSource sends the cookie with no header plumbing.
@@ -423,7 +435,11 @@ async def authenticate_stream(request: Request, scope: str, token: str | None) -
     if authorization.startswith("Bearer "):
         principal = await resolve_bearer_principal(request.app, authorization[7:])
         if principal is not None:
+            request.state.principal = principal
             return
+    if reads is False:
+        request.state.principal = READS_NOTHING
+        return
     raise HTTPException(status_code=401, detail="Missing or invalid credentials")
 
 

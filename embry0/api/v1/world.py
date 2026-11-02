@@ -28,7 +28,8 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers
+from embry0.api.job_allowlist import hide_job_unless_covered
+from embry0.api.repo_allowlist import covered_slugs, key_covers
 from embry0.api.v1.job_review import GITHUB_PR
 from embry0.api.v1.ui import require_game
 from embry0.services.slop import dungeons
@@ -336,8 +337,8 @@ async def _quest_or_404(request: Request, job_id: str, *, action: str | None = N
     quest = await _state(request, "world_repo").quest(job_id)
     if quest is None:
         raise HTTPException(status_code=404, detail=f"no quest {job_id}")
-    await hide_unless_covered(
-        request, quest.get("repo"), HTTPException(status_code=404, detail=f"no quest {job_id}"), action=action
+    await hide_job_unless_covered(
+        request, quest, HTTPException(status_code=404, detail=f"no quest {job_id}"), action=action
     )
     return dict(quest)
 

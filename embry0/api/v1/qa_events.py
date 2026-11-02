@@ -20,6 +20,7 @@ dashboard's 15 s polling fallback covers liveness.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from embry0.api.deps import authenticate_stream, require_auth
+from embry0.api.job_allowlist import job_hidden, stream_scope
 from embry0.api.scoped_tokens import mint_scoped_token, signing_material, verify_scoped_token
 
 if TYPE_CHECKING:
@@ -70,9 +72,12 @@ async def create_events_token(run_id: str, request: Request) -> dict[str, Any]:
     """Mint a short-lived, single-run SSE token for EventSource clients.
 
     Authenticated with the normal Bearer header; the returned token is the
-    only credential the browser puts in the SSE URL.
+    only credential the browser puts in the SSE URL. For a run the caller's
+    key does not cover (``embry0.api.job_allowlist``) it opens a stream that
+    reads nothing, as for a run that does not exist.
     """
-    token, expires_in = mint_sse_token(signing_material(request.app.state.config), run_id)
+    scope = await stream_scope(request, f"sse:{run_id}", run_id)
+    token, expires_in = mint_scoped_token(signing_material(request.app.state.config), scope)
     return {"token": token, "expires_in": expires_in}
 
 
@@ -90,6 +95,9 @@ async def stream_run_events(run_id: str, request: Request) -> EventSourceRespons
     bus = getattr(request.app.state, "qa_event_bus", None)
     if bus is None:
         raise HTTPException(status_code=503, detail="qa event bus not initialised")
+    if await job_hidden(request, run_id):
+        # A run the caller's key does not cover sends nothing, as a run that does not exist sends nothing.
+        return EventSourceResponse(_nothing())
 
     async def event_stream() -> AsyncIterator[dict[str, Any]]:
         # ``bus.subscribe`` returns an async generator that registers a queue
@@ -109,3 +117,10 @@ async def stream_run_events(run_id: str, request: Request) -> EventSourceRespons
                 return
 
     return EventSourceResponse(event_stream())
+
+
+async def _nothing() -> AsyncIterator[dict[str, Any]]:
+    """The events of a run the caller does not read: none, until the client leaves, as for a run that does not
+    exist, whose subscription never hears a thing."""
+    await asyncio.Event().wait()
+    yield {}  # never reached; makes this an async generator

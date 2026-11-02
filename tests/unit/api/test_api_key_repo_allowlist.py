@@ -3,7 +3,9 @@
 A key minted with ``allowed_repos`` may start, continue, stop or delete work
 only on those repositories; a key without one is unaffected. Each entry point is driven
 through the real app (``create_app``) with three callers: an unrestricted
-key, a key restricted to ``acme/widgets``, and the master key.
+key, a key restricted to ``acme/widgets``, and the master key. A route that
+acts on one job answers such a key, on another repository's job, as on a job
+that does not exist; the refusal is logged all the same.
 """
 
 from __future__ import annotations
@@ -219,14 +221,6 @@ ENTRY_POINTS: list[tuple[str, str, str, Any, Any]] = [
         {"repo": OTHER, "pipeline": "onboard"},
     ),
     (
-        "resume a job",
-        "POST",
-        "/api/v1/jobs/{job}/resume",
-        {"choice": "continue_retrying"},
-        {"choice": "continue_retrying"},
-    ),
-    ("answer on a job", "POST", "/api/v1/jobs/{job}/inputs/{input}/answer", _ANSWER, _ANSWER),
-    (
         "create an issue",
         "POST",
         "/api/v1/issues",
@@ -238,13 +232,27 @@ ENTRY_POINTS: list[tuple[str, str, str, Any, Any]] = [
     ("sync an issue", "POST", "/api/v1/issues/{issue}/sync", None, None),
     ("answer on an issue", "POST", "/api/v1/issues/{issue}/inputs/{input}/answer", _ANSWER, _ANSWER),
     # Stopping or destroying a repository's work is work on that repository.
-    ("cancel a job", "POST", "/api/v1/jobs/{job}/cancel", None, None),
     ("delete an issue", "DELETE", "/api/v1/issues/{issue}", None, None),
     ("accept a finding", "POST", "/api/v1/cases/{case}/accept", {}, {}),
     ("decide a merge", "POST", "/api/v1/merge-approvals/{approval}/decide", _DECIDE, _DECIDE),
     ("run the watcher", "POST", "/api/v1/watcher/run?stack={stack}", None, None),
     ("build a QA image", "POST", "/api/v1/qa/images/build", {"repo": ALLOWED}, {"repo": OTHER}),
     ("bootstrap a repo", "POST", "/api/v1/repos/bootstrap", {"repo": ALLOWED}, {"repo": OTHER}),
+]
+
+
+# The routes that act on one job: to a key whose list does not cover the job's repository, the job answers as one
+# that does not exist (embry0.api.job_allowlist), and the refusal is logged and audited all the same.
+JOB_ACTIONS: list[tuple[str, str, str, Any, Any]] = [
+    (
+        "resume a job",
+        "POST",
+        "/api/v1/jobs/{job}/resume",
+        {"choice": "continue_retrying"},
+        {"choice": "continue_retrying"},
+    ),
+    ("answer on a job", "POST", "/api/v1/jobs/{job}/inputs/{input}/answer", _ANSWER, _ANSWER),
+    ("cancel a job", "POST", "/api/v1/jobs/{job}/cancel", None, None),
 ]
 
 
@@ -277,6 +285,24 @@ def test_a_restricted_key_is_refused_on_another_repository(app, label, method, t
         f"{label}: a key limited to {ALLOWED} reached {OTHER}: {response.status_code} {response.text}"
     )
     assert "dispatch-bot" in response.json()["detail"], f"{label}: the refusal must name the key"
+    _assert_refusal_logged_and_nothing_done(app, label, logs)
+
+
+@pytest.mark.parametrize(("label", "method", "template", "allowed_body", "other_body"), JOB_ACTIONS)
+def test_a_restricted_key_acting_on_another_repository_s_job_gets_a_missing_job_s_answer(
+    app, label, method, template, allowed_body, other_body
+):
+    with capture_logs() as logs:
+        response = _call(app, LIMITED_TOKEN, method, template, other_body, "other")
+    missing = _call(app, LIMITED_TOKEN, method, template, other_body, "missing")
+    answers = [(r.status_code, r.headers.get("content-type"), r.content) for r in (response, missing)]
+    assert answers[0] == answers[1] and response.status_code == 404, (
+        f"{label}: a key limited to {ALLOWED} is answered on {OTHER}'s job as on a missing one: {answers}"
+    )
+    _assert_refusal_logged_and_nothing_done(app, label, logs)
+
+
+def _assert_refusal_logged_and_nothing_done(app: Any, label: str, logs: list[dict[str, Any]]) -> None:
     refusals = [e for e in logs if e["event"] == "api_key_repo_refused"]
     assert refusals, f"{label}: no api_key_repo_refused log line"
     assert refusals[0]["key_name"] == "dispatch-bot" and refusals[0]["repo"] == OTHER, refusals[0]
@@ -293,7 +319,7 @@ def test_a_restricted_key_is_refused_on_another_repository(app, label, method, t
     assert not state.watcher_services[OTHER].run_once.await_count, f"{label}: the watcher ran anyway"
 
 
-@pytest.mark.parametrize(("label", "method", "template", "allowed_body", "other_body"), ENTRY_POINTS)
+@pytest.mark.parametrize(("label", "method", "template", "allowed_body", "other_body"), ENTRY_POINTS + JOB_ACTIONS)
 def test_a_restricted_key_reaches_its_listed_repository(app, label, method, template, allowed_body, other_body):
     response = _call(app, LIMITED_TOKEN, method, template, allowed_body, "allowed")
     assert not _refused(response), f"{label}: a key limited to {ALLOWED} was refused on it: {response.text}"
@@ -302,7 +328,7 @@ def test_a_restricted_key_reaches_its_listed_repository(app, label, method, temp
 
 
 @pytest.mark.parametrize("token", [OPEN_TOKEN, "master-key"], ids=["unrestricted-key", "master-key"])
-@pytest.mark.parametrize(("label", "method", "template", "allowed_body", "other_body"), ENTRY_POINTS)
+@pytest.mark.parametrize(("label", "method", "template", "allowed_body", "other_body"), ENTRY_POINTS + JOB_ACTIONS)
 def test_an_unrestricted_caller_is_unaffected(app, token, label, method, template, allowed_body, other_body):
     response = _call(app, token, method, template, other_body, "other")
     assert not _refused(response), f"{label}: an unrestricted caller was refused: {response.text}"
