@@ -240,6 +240,61 @@ async def test_a_finding_fix_is_an_audit_job_on_its_one_file_that_opens_a_pull_r
     assert "The claim at AGENTS.md:3: Run make check" in started["task"]
 
 
+async def test_a_finding_fix_lists_the_instruction_files_its_repository_reads(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#170: the fix job's command lists the files the repository's settings name, as the schedule's audits do."""
+    from embry0.settings.sections import CATALOG
+    from embry0.settings.store import build_snapshot
+
+    async def read_head(client: Any, repo: str) -> tuple[str, str]:
+        return "abc123", "tree1"
+
+    async def no_audit(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    created: list[dict[str, Any]] = []
+
+    class Jobs:
+        async def create(self, **kwargs: Any) -> str:
+            created.append(kwargs)
+            return "job-fix"
+
+    class Templates:
+        async def list_all(self) -> list[dict[str, Any]]:
+            return [{"name": "context-audit"}]
+
+    class Documents:
+        """The deployment's document and the acme organization's layer, which names its own files."""
+
+        async def snapshot(self) -> Any:
+            layer = {"context_audit": {"files": ["**/AGENTS.md", "**/CONVENTIONS.md"]}}
+            rows = [
+                {"scope": "deployment", "data": {}, "generation": 1, "updated_at": None},
+                {"scope": "organization:acme", "data": layer, "generation": 1, "updated_at": None},
+            ]
+            return build_snapshot(CATALOG, rows, token=(), log=False)
+
+    monkeypatch.setattr("embry0.services.context_audit.read_head", read_head)
+    monkeypatch.setattr("embry0.services.context_audit.emit_audit", no_audit)
+    app.state.issue_executor = SimpleNamespace(
+        dispatch_refusal=lambda actor: _resolved(None), submit_job=lambda *args, **kwargs: None
+    )
+    app.state.jobs_repo, app.state.templates_repo = Jobs(), Templates()
+    app.state.settings = Documents()
+
+    async with await _client(app) as client:
+        finding_id = next(
+            p["id"] for p in (await client.get("/api/v1/proposals")).json()["proposals"] if p["kind"] == "finding"
+        )
+        accepted = await client.post(f"/api/v1/proposals/{finding_id}/accept", json={"by": "docs-owner"})
+    assert accepted.status_code == 202, accepted.text
+    task = str(created[0]["task"])
+    assert "':(glob)**/CONVENTIONS.md'" in task, "the fix's command does not list the organization's own files"
+    assert "':(glob)**/HANDOFF.md'" not in task, "the fix's command lists the built-in files the layer replaced"
+    assert task.startswith("Fix one outdated claim"), "the fix's own task stays first"
+
+
 async def _resolved(value: Any) -> Any:
     return value
 

@@ -19,6 +19,7 @@ from embry0.settings.sections.asks import ASKS
 from embry0.settings.sections.background import BACKGROUND
 from embry0.settings.sections.background_models import BACKGROUND_MODELS
 from embry0.settings.sections.budget import BUDGET
+from embry0.settings.sections.context_audit import CONTEXT_AUDIT
 from embry0.settings.sections.done_when import DONE_WHEN
 from embry0.settings.sections.leads import LEADS
 from embry0.settings.sections.salvage import SALVAGE
@@ -31,6 +32,7 @@ CATALOG: Catalog = Catalog(
         BACKGROUND,
         BACKGROUND_MODELS,
         BUDGET,
+        CONTEXT_AUDIT,
         DONE_WHEN,
         LEADS,
         SALVAGE,

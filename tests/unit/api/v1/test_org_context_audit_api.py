@@ -197,6 +197,22 @@ async def test_the_read_refuses_an_unknown_owner_another_forge_and_a_missing_sch
 
 
 @pytest.mark.asyncio
+async def test_the_read_answers_503_while_the_settings_documents_cannot_be_read(app: Any) -> None:
+    """#170: which files a repository reads is its settings; without them the read serves no guess."""
+    from embry0.services.budget_policy import BudgetView
+
+    async def unreadable(organizations: Any = ()) -> BudgetView:
+        return BudgetView(None)
+
+    app.state.context_audit._budget = unreadable  # noqa: SLF001 - the reader the loop was built with
+    async with _client(app) as client:
+        resp = await client.get("/api/v1/orgs/acme/context-audit", params={"refresh": "true"})
+    assert resp.status_code == 503, f"the read guessed each repository's files with no settings: {resp.text}"
+    assert "settings documents" in resp.json()["detail"]
+    assert app.state.forge.calls == [], "nothing is read from the forge with files nobody can say"
+
+
+@pytest.mark.asyncio
 async def test_the_read_answers_a_credential_it_cannot_resolve_as_the_routes_do(app: Any) -> None:
     app.state.config.github_token = ""
     async with _client(app) as client:

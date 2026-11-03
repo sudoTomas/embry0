@@ -3,8 +3,10 @@
 The context-auditor agent's system prompt (``CONTEXT_AUDITOR_SYSTEM_PROMPT``)
 says how to audit. What embry0's code fixes reaches the agent in the job's
 task instead, written when the task is built: the command that lists the
-instruction files, from the list in :mod:`embry0.services.instruction_files`,
-and the report's shape, which :func:`embry0.services.context_audit.report_counts`,
+instruction files, from the :class:`~embry0.services.instruction_files.FileRules`
+the repository reads then (the settings document's ``context_audit`` section,
+its organization's layer and its own over the deployment's), and the
+report's shape, which :func:`embry0.services.context_audit.report_counts`,
 :func:`embry0.services.proposals.parse_findings` and
 :mod:`embry0.workflows.issue_to_pr.audit_delivery` read back.
 
@@ -19,12 +21,17 @@ no agent reset is needed.
 
 A context-audit task built anywhere else, such as one created with
 ``POST /jobs``, gets the same section when the agent runs
-(:func:`with_command`, called by the generic agent node).
+(:func:`with_command`, called by the generic agent node, with the rules the
+job read for its repository when it started).
+
+Every function here takes the rules it writes the command from: none reads
+a list of its own, so no caller can hand an agent the built-in list while
+its repository's settings name another.
 """
 
 from __future__ import annotations
 
-from embry0.services import instruction_files
+from embry0.services.instruction_files import FileRules
 from embry0.workflows.issue_to_pr.specialist_agents import REPORT_TARGET_CHARS
 
 #: The line the section opens with. A task holding it carries a command already.
@@ -34,26 +41,28 @@ HEADING = "## How to run this audit"
 MAX_AUDIT_FINDING_ROWS = 40
 
 
-def list_command() -> str:
-    """The ``git ls-files`` command that lists the instruction files, from the list as it is now.
+def list_command(rules: FileRules) -> str:
+    """The ``git ls-files`` command that lists the instruction files ``rules`` select.
 
     Each glob becomes a git pathspec with glob magic, which matches ``**/``
-    and ``*`` the way :func:`~embry0.services.instruction_files.instruction_files`
-    does, and each skipped directory an exclude at any depth. The list is
-    read on each call, never when this module is imported.
+    and ``*`` the way :meth:`~embry0.services.instruction_files.FileRules.select`
+    does for a glob the settings section accepts, and each skipped directory
+    an exclude at any depth.
     """
     return "git ls-files -- " + " ".join(
-        [f"':(glob){glob}'" for glob in instruction_files.INSTRUCTION_FILE_GLOBS]
-        + [f"':(exclude,glob)**/{directory}/**'" for directory in sorted(instruction_files.SKIPPED_DIRS)]
+        [f"':(glob){glob}'" for glob in rules.globs]
+        + [f"':(exclude,glob)**/{directory}/**'" for directory in sorted(rules.skipped_dirs)]
     )
 
 
-def _skipped_dir_names() -> str:
-    return ", ".join(f"`{directory}`" for directory in sorted(instruction_files.SKIPPED_DIRS))
+def _skipped_dir_names(rules: FileRules) -> str:
+    return ", ".join(f"`{directory}`" for directory in sorted(rules.skipped_dirs))
 
 
-def command() -> str:
-    """The section a context-audit task ends with: the files to read, the severities and the report's shape."""
+def command(rules: FileRules) -> str:
+    """The section a context-audit task ends with: the files ``rules`` select, the severities and the report's shape."""
+    skipped = _skipped_dir_names(rules)
+    outside = f", outside vendored and generated trees ({skipped})" if skipped else ""
     return f"""{HEADING}
 
 embry0 writes this section from its own code, so it is current. Where \
@@ -63,13 +72,12 @@ severities or another report shape, follow this section.
 ### The instruction files
 
 The instruction files are every tracked file that matches one of the globs \
-in this command, outside vendored and generated trees \
-({_skipped_dir_names()}). In a glob, `**/` matches any number of \
+in this command{outside}. In a glob, `**/` matches any number of \
 directories, none included, and `*` stays inside one path segment. The \
 command lists exactly those files; run it as written:
 
 ```
-{list_command()}
+{list_command(rules)}
 ```
 
 ### Severity
@@ -132,12 +140,13 @@ def carries_command(task: str) -> bool:
     return any(line.strip() == HEADING for line in task.splitlines())
 
 
-def with_command(task: str) -> str:
-    """``task`` ending with :func:`command`; ``task`` unchanged when it carries one already.
+def with_command(task: str, *, rules: FileRules) -> str:
+    """``task`` ending with :func:`command` for ``rules``; ``task`` unchanged when it carries one already.
 
     The task's own lines come first and stay as they are: its first line is
     the job's title, and the branch an audit pushes is named from its start.
     """
     if carries_command(task):
         return task
-    return f"{task.rstrip()}\n\n{command()}" if task.strip() else command()
+    section = command(rules)
+    return f"{task.rstrip()}\n\n{section}" if task.strip() else section

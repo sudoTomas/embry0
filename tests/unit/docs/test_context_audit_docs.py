@@ -17,6 +17,17 @@ def test_the_doc_lists_every_instruction_file_glob_and_skipped_directory():
     assert not skipped, f"docs/context-audit.md does not name the skipped directories {skipped}"
 
 
+def test_the_doc_says_how_to_choose_the_files_with_every_key_of_the_section():
+    from embry0.settings.sections import CATALOG
+
+    section = CATALOG.get("context_audit")
+    assert section is not None, "the settings document has no context_audit section for the doc to describe"
+    text = (ROOT / "docs" / "context-audit.md").read_text()
+    assert "### Choosing the files" in text, "docs/context-audit.md does not say how to choose the files"
+    missing = [key for key in section.fields if f"`{key}`" not in text and f"`context_audit.{key}`" not in text]
+    assert not missing, f"docs/context-audit.md does not name the context_audit keys {missing}"
+
+
 def test_adr_0020_indexed():
     assert (ROOT / "docs" / "adr" / "0020-context-audit-schedule.md").exists()
     assert "0020-context-audit-schedule.md" in (ROOT / "docs" / "adr" / "README.md").read_text()

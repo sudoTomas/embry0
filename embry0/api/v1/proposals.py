@@ -268,10 +268,16 @@ async def get_proposal(proposal_id: str, request: Request) -> dict[str, Any]:
 
 
 async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | None = None) -> str:
-    """A context-audit job narrowed to the finding's file, opening a pull request: the owner asked for this one."""
+    """A context-audit job narrowed to the finding's file, opening a pull request: the owner asked for this one.
+
+    Its task's command lists the instruction files the repository reads now (the settings document's
+    ``context_audit`` section, its organization's layer and its own over the deployment's), as the
+    schedule's audits of it do.
+    """
     from embry0.api.budget import unattended_cap
     from embry0.api.v1.organizations import org_forge_client
     from embry0.services.context_audit import RepoContext, read_head, start_context_audit_job
+    from embry0.settings.sections.context_audit import CONTEXT_AUDIT, file_rules
 
     config = request.app.state.config
     org = await _state(request, "organizations_repo").get(proposal.repo.split("/", 1)[0])
@@ -284,8 +290,12 @@ async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | N
     refusal = await executor.dispatch_refusal(actor=ACTOR) if executor is not None else None
     if refusal is not None:
         raise HTTPException(status_code=429, detail=refusal.public_message)
-    context = RepoContext(proposal.repo, head[0], (str(proposal.extra["path"]),), f"{ACTOR}:{proposal.id}")
     budget_usd = await unattended_cap(request, proposal.repo, "fix_job_usd")
+    store: SettingsStore | None = getattr(request.app.state, "settings", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="settings storage not initialized")
+    rules = file_rules((await store.snapshot()).get(CONTEXT_AUDIT, repo=proposal.repo))
+    context = RepoContext(proposal.repo, head[0], (str(proposal.extra["path"]),), f"{ACTOR}:{proposal.id}", rules=rules)
     try:
         return await start_context_audit_job(
             context,

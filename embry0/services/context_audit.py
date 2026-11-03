@@ -5,13 +5,25 @@ a skill, a rules directory: :mod:`embry0.services.instruction_files`) as
 instructions, so a line in one that went stale reaches the agent as a fact.
 An organization whose ``settings.context_audit_days`` is set has those files
 audited without anyone starting a job: one loop in the orchestrator wakes
-every :data:`TICK_SECONDS`, reads the default branch of each active
-registered repository under each such owner with the organization's
-credential, and starts a :data:`TEMPLATE` job for each repository that is
-due (:func:`due_reason`), at most the owner's cap per wake, each job with the
-owner's hard budget: the settings document's ``budget`` section, its
-``context_audit_max_jobs_per_tick`` and ``context_audit_job_usd`` as the
-owner's layer resolves them, read at the top of every wake.
+every ``context_audit.check_minutes`` of the settings document, reads the
+default branch of each active registered repository under each such owner
+with the organization's credential, and starts a :data:`TEMPLATE` job for
+each repository that is due (:func:`due_reason`), at most the owner's cap
+per wake, each job with the owner's hard budget: the settings document's
+``budget`` section, its ``context_audit_max_jobs_per_tick`` and
+``context_audit_job_usd`` as the owner's layer resolves them.
+
+Which files a repository's audit reads is the ``context_audit`` section's
+``files`` and ``exclude_dirs`` as the repository resolves them (its
+organization's layer and its own over the deployment's), a
+:class:`~embry0.services.instruction_files.FileRules`. The schedule selects
+and fingerprints the files with it, and the job's task lists them with the
+same rules (:func:`audit_task`). A wake reads every setting it uses from one
+snapshot of the settings documents, the one the budget was read from
+(:class:`TickSettings`), at its top, so a change applies on the next wake with
+no restart and a write that lands during a wake never hands it two
+versions. A repository's reading of the forge is kept for the next wake
+only while its head and its rules both stay the same.
 
 A person can start the same jobs at once (:meth:`ContextAuditLoop.run`,
 ``POST /orgs/{owner}/context-audit/run``), through the same start, so a job
@@ -44,7 +56,7 @@ import hashlib
 import re
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
@@ -53,7 +65,7 @@ import structlog
 from embry0.audit.helpers import emit_audit
 from embry0.orchestration import dispatch_actors
 from embry0.services.context_audit_command import with_command
-from embry0.services.instruction_files import instruction_files
+from embry0.services.instruction_files import FileRules
 from embry0.services.loop_schedule import seconds_until_next_run
 from embry0.services.organizations import (
     Organization,
@@ -61,9 +73,11 @@ from embry0.services.organizations import (
     context_audit_open_prs,
 )
 from embry0.services.run_with import apply_run_with
+from embry0.settings.sections.context_audit import CHECK_MINUTES_MIN, CONTEXT_AUDIT, ContextAuditSettings, file_rules
 from embry0.storage.schemas import FINISHED_WELL_STATUSES
 
 if TYPE_CHECKING:
+    from embry0.settings.layers import PerRepository
     from embry0.settings.sections.budget import BudgetSettings
 
 logger = structlog.get_logger(__name__)
@@ -86,18 +100,13 @@ ACTOR = dispatch_actors.CONTEXT_AUDIT
 #: rewrite the template column.
 FIX_ACTOR = dispatch_actors.PROPOSALS
 
-#: How often the loop wakes. A wake reads the forge, one commit listing per
-#: repository and its tree when the head moved, so it is longer than
-#: rediscovery's, and still short against an interval of days.
-TICK_SECONDS = 900
-
 #: Files the task names one by one; past it the task says how many more.
 TASK_FILE_LIMIT = 200
 
-#: Repositories read from the forge at once. One after another, an owner
-#: with 150 repositories took 40 seconds to read, longer than a browser
-#: waits; a handful at a time stays far below the forge's limits.
-READ_CONCURRENCY = 8
+#: The longest the loop sleeps before it reads ``check_minutes`` again while
+#: it waits: the key's least value, so the default wait is one sleep, and a
+#: shorter interval written during a longer wait applies within it.
+RECHECK_SECONDS = CHECK_MINUTES_MIN * 60
 
 # Why a repository is due, or why not.
 #: A context-audit job of the repository is pending, running, awaiting input
@@ -134,12 +143,19 @@ FORCED = "forced"
 
 @dataclass(frozen=True)
 class RepoContext:
-    """A repository's instruction files at the head of its default branch."""
+    """A repository's instruction files at the head of its default branch, and the rules that selected them.
+
+    ``rules`` are the ``context_audit`` section's files as the repository
+    resolved them when it was read; its job's task lists the files with the
+    same rules (:func:`audit_task`).
+    """
 
     repo: str
     head_sha: str
     files: tuple[str, ...]
     fingerprint: str
+    #: Required, by keyword: a builder that left it out would hand the agent the built-in list.
+    rules: FileRules = field(kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -508,6 +524,8 @@ class _Reading(NamedTuple):
     context: RepoContext | None
     #: Why the forge did not answer, when it did not.
     unread: str | None
+    #: The rules the reading selected its files with: a survey with other rules reads the forge again.
+    rules: FileRules
 
 
 #: The client that reads an organization's repositories with its credential.
@@ -529,13 +547,52 @@ AskGate = Callable[[], Awaitable[_Refusal | None]]
 
 
 class _BudgetView(Protocol):
+    #: The snapshot of the settings documents the budget was read from; None when none could be read.
+    @property
+    def snapshot(self) -> Any: ...
+
     def organization(self, owner: str, settings: Mapping[str, Any] | None = None) -> BudgetSettings: ...
 
 
 #: The ``budget`` section at one moment, read for these organizations
 #: (:meth:`embry0.services.budget_policy.BudgetPolicy.view`): each one's caps,
-#: its own settings read for a moved key its layer has not imported yet.
+#: its own settings read for a moved key its layer has not imported yet, and
+#: the snapshot it was read from, which the ``context_audit`` section is read
+#: from too (:class:`TickSettings`).
 BudgetReader = Callable[[Sequence[Organization]], Awaitable[_BudgetView]]
+
+
+class SettingsUnreadable(RuntimeError):
+    """No snapshot of the settings documents could be read, so which files each repository reads is unknown.
+
+    Nothing is read or started then: the built-in files in place of an
+    organization's own would make each of its repositories due at once.
+    """
+
+
+@dataclass(frozen=True)
+class TickSettings:
+    """What one wake, one survey or one run by hand reads, all from one snapshot of the settings documents."""
+
+    #: The ``budget`` section's caps, as each organization reads them.
+    budget: _BudgetView
+    #: The ``context_audit`` section, read per repository.
+    section: PerRepository[ContextAuditSettings]
+
+    def rules(self, repo: str) -> FileRules:
+        """The files ``repo`` reads: ``files`` and ``exclude_dirs`` as its organization's layer and its own resolve
+        them over the deployment's."""
+        return file_rules(self.section.repo(repo))
+
+    @property
+    def interval_seconds(self) -> int:
+        """Seconds between two wakes: the deployment's ``check_minutes``."""
+        return self.section.deployment().check_minutes * 60
+
+    @property
+    def read_concurrency(self) -> int:
+        """Repositories of one organization read from the forge at once: the deployment's ``read_concurrency``."""
+        return self.section.deployment().read_concurrency
 
 
 def _detail(exc: Exception) -> str:
@@ -563,7 +620,6 @@ class ContextAuditLoop:
         ask_gate: AskGate,
         budget: BudgetReader,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-        tick_seconds: float = TICK_SECONDS,
     ) -> None:
         self._organizations = organizations
         self._registry = registry
@@ -574,15 +630,19 @@ class ContextAuditLoop:
         # becomes a failed job that anchors its repository for an interval.
         self._ask_gate = ask_gate
         # The caps, read from the settings document at the top of each tick
-        # and each run, as each owner's layer resolves them.
+        # and each run, as each owner's layer resolves them, and the snapshot
+        # they were read from, which the context_audit section is read from.
         self._budget = budget
         self._clock = clock
-        self._tick_seconds = tick_seconds
+        # The interval the last read of the section said, for a wait whose
+        # read fails: the default until one succeeds.
+        self._interval = CONTEXT_AUDIT.defaults().check_minutes * 60
         # Each repository's last start refused before a job row existed, the
         # one attempt nothing else records.
         self._refused: dict[str, Attempt] = {}
         # The last reading of each repository: a head that has not moved has
-        # the same tree, so it is not read again.
+        # the same tree, so it is not read again while the rules that
+        # selected its files are the same.
         self._contexts: dict[str, RepoContext] = {}
         # Each repository's last reading and when it was taken, for a survey
         # that asks for no fresh one.
@@ -596,27 +656,34 @@ class ContextAuditLoop:
         # the tick and a start by hand run in this one process.
         self._starting = asyncio.Lock()
 
-    async def caps(self, org: Organization) -> tuple[int, float]:
-        """The most jobs one tick starts for ``org``, and the hard cap in USD of each: the ``budget`` section's
-        ``context_audit_max_jobs_per_tick`` and ``context_audit_job_usd``, the organization's layer over the
-        deployment's, read now."""
-        return _caps((await self._budget([org])).organization(org.owner, org.settings))
+    async def settings(self, organizations: Sequence[Organization] = ()) -> TickSettings:
+        """Every setting a wake reads, now, from one snapshot of the settings documents: the budget as
+        ``organizations`` read it, and the ``context_audit`` section from the snapshot it was read from.
 
-    async def _read(self, client: _Forge, repo: str) -> RepoContext | None:
+        Raises :class:`SettingsUnreadable` when no snapshot could be read.
+        """
+        view = await self._budget(organizations)
+        snapshot = view.snapshot
+        if snapshot is None:
+            raise SettingsUnreadable("no snapshot of the settings documents could be read")
+        return TickSettings(budget=view, section=snapshot.scoped(CONTEXT_AUDIT))
+
+    async def _read(self, client: _Forge, repo: str, rules: FileRules) -> RepoContext | None:
         head = await read_head(client, repo)
         if head is None:
             return None
         head_sha, tree_sha = head
         cached = self._contexts.get(repo)
-        if cached is not None and cached.head_sha == head_sha:
+        if cached is not None and cached.head_sha == head_sha and cached.rules == rules:
             return cached
         blobs = await read_blobs(client, repo, tree_sha)
-        files = instruction_files(blobs)
+        files = rules.select(blobs)
         context = RepoContext(
             repo=repo,
             head_sha=head_sha,
             files=tuple(files),
             fingerprint=fingerprint({path: blobs[path] for path in files}),
+            rules=rules,
         )
         self._contexts[repo] = context
         return context
@@ -654,6 +721,7 @@ class ContextAuditLoop:
         refresh: bool = True,
         reports: bool = False,
         hidden: Callable[[str], bool] | None = None,
+        settings: TickSettings | None = None,
     ) -> Survey:
         """Every active registered repository of ``org`` with instruction files, and whether each is due.
 
@@ -675,9 +743,18 @@ class ContextAuditLoop:
         each is surveyed as if it had no context-audit job, none newest and
         none live, so its entry and its reason are those of a repository
         never audited.
+
+        Each repository's files are those its rules select (:meth:`TickSettings.rules`),
+        from ``settings``, a tick's, else read now; a reading taken with other
+        rules is never used, ``refresh`` or not. Raises :class:`SettingsUnreadable`
+        when no snapshot of the settings documents can be read.
         """
         repos = await self._registered(org)
-        survey = await self._survey(org, repos, now=now or self._clock(), refresh=refresh, hidden=hidden)
+        if settings is None:
+            settings = await self.settings([org])
+        survey = await self._survey(
+            org, repos, now=now or self._clock(), settings=settings, refresh=refresh, hidden=hidden
+        )
         return await self._with_reports(survey) if reports else survey
 
     async def _with_reports(self, survey: Survey) -> Survey:
@@ -704,26 +781,33 @@ class ContextAuditLoop:
         repos: list[str],
         *,
         now: datetime,
+        settings: TickSettings,
         by_hand: bool = False,
         refresh: bool = True,
         hidden: Callable[[str], bool] | None = None,
     ) -> Survey:
-        """:meth:`survey` over ``repos``, each due by :func:`due_reason` with ``by_hand``."""
+        """:meth:`survey` over ``repos``, each due by :func:`due_reason` with ``by_hand``, read with ``settings``."""
         days = context_audit_days(org.settings)
         if not repos:
             return Survey(org.owner, days, ())
         newest, live_repos = await self._audits(repos)
-        stale = [repo for repo in repos if refresh or repo not in self._last_read]
+        rules = {repo: settings.rules(repo) for repo in repos}
+        stale = [
+            repo
+            for repo in repos
+            if refresh or repo not in self._last_read or self._last_read[repo].rules != rules[repo]
+        ]
         if stale:
             client = await self._client_for(org)
-            slots = asyncio.Semaphore(READ_CONCURRENCY)
+            slots = asyncio.Semaphore(settings.read_concurrency)
 
             async def read(repo: str) -> _Reading:
                 async with slots:
                     try:
-                        return _Reading(now, await self._read(client, repo), None)
+                        return _Reading(now, await self._read(client, repo, rules[repo]), None, rules[repo])
                     except Exception as exc:  # noqa: BLE001 - one repository's failure is its own entry
-                        return _Reading(now, None, str(exc) if isinstance(exc, ForgeReadError) else type(exc).__name__)
+                        detail = str(exc) if isinstance(exc, ForgeReadError) else type(exc).__name__
+                        return _Reading(now, None, detail, rules[repo])
 
             for repo, fresh in zip(stale, await asyncio.gather(*(read(repo) for repo in stale)), strict=True):
                 self._last_read[repo] = fresh
@@ -767,10 +851,11 @@ class ContextAuditLoop:
     async def tick(self) -> list[str]:
         """Start a job for every due repository, at most each owner's cap, and return the repositories started.
 
-        Only active owners with ``context_audit_days`` set are read. Each
-        owner's cap is its ``context_audit_max_jobs_per_tick`` (:meth:`caps`,
-        read once per tick): its due repositories past it wait for the next
-        tick, and an owner whose cap is 0 is not read. Each job gets the
+        Every setting it reads comes from one snapshot, read once at its top
+        (:meth:`settings`). Only active owners with ``context_audit_days`` set
+        are read. Each owner's cap is its ``context_audit_max_jobs_per_tick``:
+        its due repositories past it wait for the next tick, and an owner
+        whose cap is 0 is not read. Each job gets the
         owner's ``context_audit_job_usd``. An owner that cannot be read
         (a forge whose trees are not read this way, a credential that cannot
         be resolved) and a repository that cannot be read are skipped, each
@@ -785,16 +870,17 @@ class ContextAuditLoop:
         now = self._clock()
         started: list[str] = []
         organizations = await self._organizations.list_all()
-        budgets = await self._budget(organizations)
+        settings = await self.settings(organizations)
+        self._interval = settings.interval_seconds
         for org in organizations:
             days = context_audit_days(org.settings)
             if org.status != "active" or days is None:
                 continue
-            cap, budget = _caps(budgets.organization(org.owner, org.settings))
+            cap, budget = _caps(settings.budget.organization(org.owner, org.settings))
             if cap < 1:
                 continue
             try:
-                survey = await self.survey(org, now=now)
+                survey = await self.survey(org, now=now, settings=settings)
             except UnsupportedForge as exc:
                 self._note(org.owner, level="info", detail=str(exc))
                 continue
@@ -890,7 +976,7 @@ class ContextAuditLoop:
         """Start the due context audits of ``org`` now, whatever its schedule says, and say what started and what not.
 
         Without ``repo``, every due repository, at most ``limit`` of them, the
-        owner's cap per tick (:meth:`caps`) when None. With ``repo``, that one when
+        owner's ``context_audit_max_jobs_per_tick`` when None. With ``repo``, that one when
         it is due, or when ``force`` is true whatever the due rule says. Due
         is :func:`due_reason` with ``by_hand``: the setting may be off, and
         then no interval applies. Never while a context-audit job of the
@@ -915,8 +1001,9 @@ class ContextAuditLoop:
             if not repos:
                 raise UnknownRepository(f"{repo} is not an active registered repository of {org.owner}")
         now = self._clock()
-        survey = await self._survey(org, repos, now=now, by_hand=True)
-        per_tick, budget = await self.caps(org)
+        settings = await self.settings([org])
+        survey = await self._survey(org, repos, now=now, settings=settings, by_hand=True)
+        per_tick, budget = _caps(settings.budget.organization(org.owner, org.settings))
         cap = 1 if repo is not None else limit if limit is not None else per_tick
         open_pr = context_audit_open_prs(org.settings)
         started: list[Started] = []
@@ -987,9 +1074,32 @@ class ContextAuditLoop:
             skipped=tuple(skipped),
         )
 
-    async def start(self) -> None:  # pragma: no cover - exercised by the app
+    async def interval_seconds(self) -> int:
+        """Seconds between two wakes, read now: the deployment's ``check_minutes``. When it cannot be read,
+        the last value read, the default until one was."""
+        try:
+            self._interval = (await self.settings()).interval_seconds
+        except Exception:  # noqa: BLE001 - the loop waits as it last read
+            logger.warning("context_audit_interval_unread", seconds=self._interval, exc_info=True)
+        return self._interval
+
+    async def wait(self) -> None:
+        """Sleep until the next wake is due: ``check_minutes`` after this call.
+
+        It reads the key again at least every :data:`RECHECK_SECONDS`, so a
+        shorter interval written during a longer wait applies within that,
+        and a wait the default sets is one sleep of 15 minutes.
+        """
+        waited = 0
+        while (interval := await self.interval_seconds()) > waited:
+            step = min(interval - waited, RECHECK_SECONDS)
+            await asyncio.sleep(step)
+            waited += step
+
+    async def start(self) -> None:
+        """Wake every ``check_minutes``, from one wake's end to the next one's start, for ever."""
         while True:
-            await asyncio.sleep(self._tick_seconds)
+            await self.wait()
             try:
                 await self.tick()
             except Exception:
@@ -1015,9 +1125,9 @@ def audit_task(context: RepoContext) -> str:
     """The job's task: the repository, the commit read, the instruction files found there, and the command.
 
     The command (:func:`~embry0.services.context_audit_command.command`) is
-    built now, from the instruction-file list as it is when the task is
-    written, and says how to list the files and how to report. It reaches
-    the agent whatever prompt the deployment stored for it.
+    built now, from the rules that selected ``context``'s files, and says how
+    to list the files and how to report. It reaches the agent whatever prompt
+    the deployment stored for it.
     """
     lines = [
         f"Audit the files that steer a coding agent in {context.repo} for statements that are stale or wrong.",
@@ -1029,7 +1139,7 @@ def audit_task(context: RepoContext) -> str:
     ]
     if len(context.files) > TASK_FILE_LIMIT:
         lines.append(f"- and {len(context.files) - TASK_FILE_LIMIT} more")
-    return with_command("\n".join(lines))
+    return with_command("\n".join(lines), rules=context.rules)
 
 
 async def start_context_audit_job(
@@ -1057,7 +1167,7 @@ async def start_context_audit_job(
     code job, rather than failing it.
 
     ``task`` replaces the audit's own (a fix an owner asked for names its one
-    claim) and ends with the same command, and ``dispatched_by`` the
+    claim) and ends with the same command, for ``context.rules``, and ``dispatched_by`` the
     schedule's actor. A fix an owner asked for is dispatched by
     :data:`FIX_ACTOR`, and that makes it no audit: the schedule's due rule
     never anchors on it (while it runs it still holds the repository) and
@@ -1074,7 +1184,7 @@ async def start_context_audit_job(
         raise LookupError(f"no pipeline template named {TEMPLATE!r}")
     if executor is None:
         raise RuntimeError("executor not initialized")
-    task = with_command(task) if task else audit_task(context)
+    task = with_command(task, rules=context.rules) if task else audit_task(context)
     pipeline_config = {
         # Nobody watches a scheduled audit, so its cap is a hard stop
         # whatever the fleet-wide overrun mode is, as the watcher's (#275).

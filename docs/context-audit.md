@@ -6,7 +6,7 @@ The schedule is off for every organization until an admin sets it.
 
 ## What it audits
 
-The instruction files are the paths that match one glob list, `INSTRUCTION_FILE_GLOBS` in `embry0/services/instruction_files.py`; the schedule fingerprints those files, and each audit's task hands the auditor the same list as a `git ls-files` command. `**/` stands for any number of directories, none included, and `*` stays inside one path segment:
+The instruction files are the paths that match one glob list; the schedule fingerprints those files, and each audit's task hands the auditor the same list as a `git ls-files` command. `**/` stands for any number of directories, none included, and `*` stays inside one path segment. Unless the [settings document](#choosing-the-files) names other files, the list is the built-in one, `INSTRUCTION_FILE_GLOBS` in `embry0/services/instruction_files.py`:
 
 ```
 **/CLAUDE.md                **/CLAUDE.local.md          **/AGENTS.md
@@ -21,7 +21,36 @@ The instruction files are the paths that match one glob list, `INSTRUCTION_FILE_
 **/.codex/**/*.md           **/.agents/**/*.md
 ```
 
-A file inside `.git`, `.venv`, `venv`, `node_modules`, `vendor`, `build` or `dist` is never one: those trees belong to another project.
+A file inside `.git`, `.venv`, `venv`, `node_modules`, `vendor`, `build` or `dist` is never one, unless the settings document names other directories: those trees belong to another project.
+
+### Choosing the files
+
+Repositories differ: an organization may keep its agents' rules in `.roo/rules`, `.kiro/steering` or `docs/agents/*.md`, write a `CONVENTIONS.md`, or never use a handoff note. The settings document's `context_audit` section names the files instead ([its keys](configuration.md#settings-reference)):
+
+```yaml
+context_audit:
+  files:                       # null, the default, is the built-in list above
+    - "**/CLAUDE.md"
+    - "**/AGENTS.md"
+    - "**/CONVENTIONS.md"
+    - ".roo/rules/**/*.md"
+  exclude_dirs: [node_modules, vendor, dist, third_party]   # null is the built-in directories
+```
+
+- **Per organization and per repository.** The deployment's document sets the files for every repository, an organization's layer for its own repositories, and a repository's layer for itself, each over the one before ([layers](configuration.md#settings-document)). `files` and `exclude_dirs` are each replaced whole: a list names every glob or directory read, not the ones added, so copy the built-in list to extend it. `null` in a layer goes back to the built-in list under a layer that names another, and `exclude_dirs: []` skips no directory.
+- **What a glob may hold.** Letters, digits, `.`, `_`, `-`, `+`, `@`, `*` and `/`, starting at the repository's root: `**` stands alone between slashes, and never last (`docs/**/*.md`, not `docs/**`). Those are the globs the schedule's matcher and git's glob pathspec read alike, so the files the schedule fingerprints are the files the auditor lists.
+- **A directory selects everything under it.** A glob with no wildcard that names a directory, such as `.kiro/steering` or `.roo/rules`, selects every tracked file under it at any depth, as git's pathspec does: images and other binaries included, which the audit then fingerprints and lists. Neither side can tell a binary from the tree alone, so nothing is left out by kind; to read only the Markdown, write `.kiro/steering/**/*.md`. A glob or a directory outside them is refused with a 422 naming the key and which entry, and nothing is stored. A list holds at most 64 globs and 32 directories.
+- **When it applies.** The schedule reads the section at every wake, and each audit's task lists the files the repository resolves at that moment. A change that selects other files changes a repository's fingerprint, so each repository whose files it changes is due once at the next wake, within the organization's cap per wake. A job created with `POST /api/v1/jobs` lists the files its repository resolved when the job started, and a finding's fix those of its repository when it is accepted.
+
+```bash
+curl -X PATCH "http://localhost:8200/api/v1/config/settings/context_audit?owner=acme" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"files": ["**/CLAUDE.md", "**/AGENTS.md", "**/CONVENTIONS.md", ".roo/rules/**/*.md"]}'
+```
+
+Use `?repo=acme/widgets` for one repository's layer, and `null` for a key to hand it back to the layer below. On the dashboard, the organization's page and the repository's page link to their layers on the Settings → Policy tab.
 
 Each audit is a job on the `context-audit` pipeline template ([specialist-agents.md](specialist-agents.md)), over a clone of the repository. Its task names the repository, the commit that was read and every instruction file found there. A repository with no instruction file gets no job.
 
@@ -29,7 +58,7 @@ The task then says how to run the audit: the command that lists the instruction 
 
 ## When a repository is due
 
-Every 15 minutes the orchestrator reads, for each active organization with the setting on, the default branch of each of its active registered repositories, with the organization's credential: the newest commit, then the recursive tree when the head moved since the last read. The **fingerprint** is the sha256 over the sorted `path<TAB>blob sha` lines of the instruction files, so it changes when one is added, removed, renamed or edited, and only then.
+Every `context_audit.check_minutes` of the settings document, 15 minutes by default, the orchestrator reads, for each active organization with the setting on, the default branch of each of its active registered repositories, with the organization's credential: the newest commit, then the recursive tree when the head moved since the last read, or when the files the repository reads changed. It reads `context_audit.read_concurrency` repositories of an organization at once, 8 by default. Both are the deployment's alone, from 15 minutes to a day and from 1 to 32: they pace the forge calls every organization's audits make together, on the credentials jobs use too. The schedule reads them at every wake, and while it waits it reads `check_minutes` again at least every 15 minutes, so a shorter interval applies within 15 minutes. The **fingerprint** is the sha256 over the sorted `path<TAB>blob sha` lines of the instruction files, so it changes when one is added, removed, renamed or edited, and only then.
 
 A repository is due when:
 
@@ -160,6 +189,9 @@ The embry0 MCP server (`embry0-mcp`) does all of it. A tool that changes somethi
 |---|---|
 | Turn it on for an owner, every 7 days | `org_update(owner="acme", settings={"context_audit_days": 7}, confirm=true)` |
 | Set the caps: 5 USD a job, 2 jobs a tick | `settings_set_keys(section="budget", values={"context_audit_job_usd": 5, "context_audit_max_jobs_per_tick": 2}, owner="acme", confirm=true)` |
+| Name the organization's own instruction files | `settings_set_keys(section="context_audit", values={"files": ["**/CLAUDE.md", "**/CONVENTIONS.md"]}, owner="acme", confirm=true)` |
+| Hand them back to the built-in list | `settings_set_keys(section="context_audit", values={"files": null}, owner="acme", confirm=true)` |
+| Look every hour instead of every 15 minutes | `settings_set_keys(section="context_audit", values={"check_minutes": 60}, confirm=true)` |
 | Hand the caps back to the deployment | `settings_set_keys(section="budget", values={"context_audit_job_usd": null, "context_audit_max_jobs_per_tick": null}, owner="acme", confirm=true)` |
 | Read what it sees, and why each repository is due or not | `context_audit_status(owner="acme")` |
 | Run one repository now, when it is due | `context_audit_run(owner="acme", repo="acme/widgets", confirm=true)` |

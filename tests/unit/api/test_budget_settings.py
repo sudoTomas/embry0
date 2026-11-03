@@ -654,14 +654,19 @@ async def test_the_lifespan_imports_the_row_and_the_organizations_and_reads_the_
         from embry0.services.organizations import Organization
 
         audit = app.state.context_audit
-        assert hasattr(audit, "caps"), "the context audit loop reads its caps from the budget section"
-        assert await audit.caps(Organization(owner="acme", forge="github")) == (3, 7.5)
+        assert hasattr(audit, "settings"), "the context audit loop reads its caps from the budget section"
+        acme_org = Organization(owner="acme", forge="github")
+
+        async def caps() -> tuple[int, float]:
+            # What a tick reads for the organization: the budget its settings read was read with.
+            budget = (await audit.settings([acme_org])).budget.organization(acme_org.owner, acme_org.settings)
+            return budget.context_audit_max_jobs_per_tick, budget.context_audit_job_usd
+
+        assert await caps() == (3, 7.5)
         await store.set_keys(
             "budget", {"context_audit_max_jobs_per_tick": 1}, actor="alex@example.com", scope=Scope.organization("acme")
         )
-        assert await audit.caps(Organization(owner="acme", forge="github")) == (1, 7.5), (
-            "the context audit loop reads the section as it is now"
-        )
+        assert await caps() == (1, 7.5), "the context audit loop reads the section as it is now"
         kept = len(await store.revisions())
 
     second = create_app(config)

@@ -1416,9 +1416,10 @@ async def _run_workflow(
         # into the developer prompt for EVERY dispatch path.
         if pref and pref.get("dev_checks"):
             initial_state["dev_checks"] = pref["dev_checks"]
-        # #182: the done_when and salvage sections, read once for the job's
-        # repository and kept on its checkpointed state, so every node and a
-        # resume read what the job started with. getattr: unit tests build
+        # #182: the done_when and salvage sections, and the context audit's
+        # instruction files (#170), read once for the job's repository and
+        # kept on its checkpointed state, so every node and a resume read
+        # what the job started with. getattr: unit tests build
         # the executor via __new__ and set only what their path touches.
         from embry0.services.job_settings import STATE_KEY, read_for_job
 
