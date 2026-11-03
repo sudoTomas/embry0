@@ -1030,16 +1030,16 @@ async def org_update(
     auto_register (boolean): a webhook delivery for an unregistered repository under the owner
     registers it first.
     rediscover_hours (integer 1 to 168, or null for off): rediscover the owner on a schedule.
-    context_audit_days (integer 1 to 365, or null for off): audit the files that steer a coding agent
-    (CLAUDE.md, AGENTS.md, skills, rules) in each registered repository on a schedule, when they
-    change and this many days after the newest audit once the branch moved.
+    context_audit_days and context_audit_open_prs: deprecated. They are the organization's layer of
+    the settings document's context_audit section now (days and open_prs): set them with
+    settings_set_keys(section="context_audit", owner=...), where days is 1 to 365 or false for off.
     context_audit_budget_usd and context_audit_max_jobs_per_tick: deprecated. They are the
     organization's layer of the settings document's budget section now (context_audit_job_usd and
     context_audit_max_jobs_per_tick): set them with settings_set_keys(section="budget", owner=...).
-    Until 0.2.0 this tool still takes them (a number more than 0 and at most 50, an integer 0 to 50,
-    or null for the deployment's) and writes them into that layer; the answer's deprecated says so.
-    context_audit_open_prs (boolean, default false): a context audit that finds outdated claims opens
-    a pull request from the patch it checked, one at a time per repository, for a person to merge.
+    Until 0.2.0 this tool still takes all four, checked as before (context_audit_days an integer 1 to
+    365 or null, context_audit_open_prs a boolean, the caps a number more than 0 and at most 50 and an
+    integer 0 to 50, or null for the deployment's), and writes them into that layer; the answer's
+    deprecated says so.
     slop_meter_bots (list of up to 100 strings): the owner's own bots, as commit names, addresses
     or forge logins, which the Slop-O-Meter counts as a bot's work, not a person's attention.
     An unknown key, a wrong type or a value out of range is refused. Returns the organization. Needs
@@ -1053,14 +1053,17 @@ async def org_update(
 
 @_tool
 async def context_audit_status(owner: str, refresh: bool = False) -> dict[str, Any]:
-    """What the context audit reads for one GitHub organization: its context_audit_days (null is
-    off) and, for each active registered repository with files that steer a coding agent (CLAUDE.md,
+    """What the context audit reads for one GitHub organization: its context_audit_days, its
+    layer's context_audit.days over the deployment's (null is off), and, for each active registered
+    repository with files that steer a coding agent (CLAUDE.md,
     AGENTS.md, skills, rules), how many there are, their fingerprint, the head read, the newest
     context-audit job (job_id, status, created_at, finished_at, total_cost_usd, error_code, and for
     one that finished its work, completed or its pull request merged or closed since, stale and
     files_read, the counts its report starts with), whether the schedule
-    would start one now (due) and why (reason: first, changed, aged, live, current or off). unread
-    lists the repositories the forge did not answer for, with why. Each repository's last reading
+    would start one now (due) and why (reason: first, changed, aged, live, current or off), and its own
+    days, its repository's layer included. unread lists the repositories the forge did not answer
+    for, with why; deferred, those not read while the organization's credential is down to
+    context_audit.rate_reserve_percent of its rate limit. Each repository's last reading
     is served, read_at says when the oldest was taken; refresh=true reads every default branch again,
     one repository after another, so it is slow. Starts nothing, whatever the setting says.
     Read-only."""

@@ -168,9 +168,11 @@ async def test_the_read_lists_each_repository_with_instruction_files_and_why_it_
                 "refused_at": None,
                 "due": True,
                 "reason": "changed",
+                "days": 7,
             }
         ],
         "unread": [],
+        "deferred": [],
     }
     assert app.state.tokens == ["env-token"], "the forge is read with the organization's credential"
     assert not any(c.startswith("/repos/other/") for c in app.state.forge.calls)

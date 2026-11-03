@@ -50,7 +50,7 @@ curl -X PATCH "http://localhost:8200/api/v1/config/settings/context_audit?owner=
   -d '{"files": ["**/CLAUDE.md", "**/AGENTS.md", "**/CONVENTIONS.md", ".roo/rules/**/*.md"]}'
 ```
 
-Use `?repo=acme/widgets` for one repository's layer, and `null` for a key to hand it back to the layer below. On the dashboard, the organization's page and the repository's page link to their layers on the Settings → Policy tab.
+Use `?repo=acme/widgets` for one repository's layer, and `null` for a key to hand it back to the layer below. On the dashboard, the organization's Settings tab holds its **Instruction files** and **Skipped directories** fields, beside the schedule, and the organization's page and the repository's page link to their layers on the Settings → Policy tab.
 
 Each audit is a job on the `context-audit` pipeline template ([specialist-agents.md](specialist-agents.md)), over a clone of the repository. Its task names the repository, the commit that was read and every instruction file found there. A repository with no instruction file gets no job.
 
@@ -58,13 +58,19 @@ The task then says how to run the audit: the command that lists the instruction 
 
 ## When a repository is due
 
-Every `context_audit.check_minutes` of the settings document, 15 minutes by default, the orchestrator reads, for each active organization with the setting on, the default branch of each of its active registered repositories, with the organization's credential: the newest commit, then the recursive tree when the head moved since the last read, or when the files the repository reads changed. It reads `context_audit.read_concurrency` repositories of an organization at once, 8 by default. Both are the deployment's alone, from 15 minutes to a day and from 1 to 32: they pace the forge calls every organization's audits make together, on the credentials jobs use too. The schedule reads them at every wake, and while it waits it reads `check_minutes` again at least every 15 minutes, so a shorter interval applies within 15 minutes. The **fingerprint** is the sha256 over the sorted `path<TAB>blob sha` lines of the instruction files, so it changes when one is added, removed, renamed or edited, and only then.
+Every `context_audit.check_minutes` of the settings document, 15 minutes by default, the orchestrator reads the default branch of each active registered repository of an active organization whose `context_audit.days` is set ([turning it on](#turning-it-on)), with the organization's credential: the newest commit, then the recursive tree when the head moved since the last read, or when the files the repository reads changed. It reads `context_audit.read_concurrency` repositories of an organization at once, 8 by default. Both are the deployment's alone, from 15 minutes to a day and from 1 to 32: they pace the forge calls every organization's audits make together, on the credentials jobs use too. The schedule reads them at every wake, and while it waits it reads `check_minutes` again at least every 15 minutes, so a shorter interval applies within 15 minutes. The **fingerprint** is the sha256 over the sorted `path<TAB>blob sha` lines of the instruction files, so it changes when one is added, removed, renamed or edited, and only then.
+
+**What it spends of the forge's rate limit.** Each head read sends the `ETag` of the last one as `If-None-Match`. A branch that has not moved answers `304 Not Modified`, which GitHub does not count against the credential's limit, and nothing more is read for that repository: its last reading stands. A branch that moved costs that read and one tree read. Every answer's `X-RateLimit-Remaining`, `X-RateLimit-Limit` and `X-RateLimit-Reset` are kept per credential, and once the calls left fall below `context_audit.rate_reserve_percent` of its limit (20% by default, the deployment's alone; 0 never defers) the organizations reading with that credential are **deferred**: no paid read and no start until the low window ends, so the jobs that use the same credential keep the last calls. 20% of GitHub's usual 5,000 an hour is 1,000, and a token with a smaller limit keeps the same share; a forge that sends no `X-RateLimit-Limit` is never deferred.
+
+- **The window** is the reset the forge named, when it lies ahead by the orchestrator's clock, an hour at most. With no reset it can use (none, not a number, or already past because the two clocks disagree), it is 15 minutes; then one call, the probe, asks the forge again (`context_audit_rate_reserve_probe`, info, once per window), and every other call waits for its answer. A credential found low is never deferred for good.
+- **While deferred**, a head read that carries an `ETag` still goes out: a branch that did not move answers 304 for free, and its rate headers keep the state current (one that names no reset starts its 15 minutes again: the forge has just said the calls are still low). The first such read the forge answers with a moved branch costs one call and closes reading for the rest of that survey, so a low credential pays at most one call per survey. Nothing is started.
+- The warning `context_audit_rate_reserve_reached` says so once per window. A deferred repository is not refused and counts as no attempt: the first tick after the window reads it. A read of the [Context audit tab](#reading-what-it-sees) and a run by hand stop reading at the reserve too, and list the repositories they did not read under `deferred`; a run by hand starts nothing while the credential is low, and lists a repository it read for free under `deferred` as well.
 
 A repository is due when:
 
 1. it has no context-audit job yet; or
 2. the fingerprint differs from the one its newest context-audit job recorded; or
-3. that job is `context_audit_days` old and the branch head moved since it was started.
+3. that job is `days` old (the repository's `context_audit.days`) and the branch head moved since it was started.
 
 It is never due while one of its context-audit jobs is pending, running, awaiting input or paused, whoever started it, a finding's fix job (below) included.
 
@@ -76,17 +82,19 @@ The schedule reads GitHub repositories in this release. An organization on GitLa
 
 ## Turning it on
 
-The setting is `context_audit_days` on the organization, a whole number of days from 1 to 365. It needs the `admin` tier:
+The setting is the [settings document](configuration.md#settings-document)'s `context_audit.days`, a whole number of days from 1 to 365; `false` or `null` is off, the default. The deployment's document sets it for every organization, an organization's layer for its repositories and a repository's layer for itself, each over the one before ([its keys](configuration.md#settings-reference)). It needs the `admin` tier:
 
 ```bash
-curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
+curl -X PATCH "http://localhost:8200/api/v1/config/settings/context_audit?owner=acme" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
-  -d '{"settings": {"context_audit_days": 7}}'
+  -d '{"days": 7}'
 ```
 
-In the dashboard, open **Organizations**, then the organization (`/orgs/<owner>`): the field **Audit agent instructions every … days** sits in the header, under the rediscovery schedule. Type the number of days and press Save. Without the admin tier the header says what the setting is and cannot change it.
+- **One repository out, or more often.** `?repo=acme/widgets` with `{"days": false}` takes that repository off its organization's schedule, and `{"days": 2}` audits it every two days. `null` takes the key out of a layer, so it reads the layer below again.
+- **In the dashboard**, open **Organizations**, then the organization (`/orgs/<owner>`), then its **Settings** tab: the **Context audit** fields hold the schedule, the pull request switch and the [files](#choosing-the-files), each with where its value comes from (the organization's own, the deployment's, or the default) and "As the deployment" to hand it back. The header says how often the organization's repositories are audited and links there. Without the admin tier the fields show their values and change nothing.
+- **Moved from the organization (#170).** Until this release the setting was `context_audit_days` on the organization row (`PATCH /api/v1/orgs/{owner}`). The first start of the release copied each organization's value into its layer once; until an organization's copy succeeds, its audits read its row, and the copy is tried again while the orchestrator runs. While it is pending, choosing *As the deployment* writes nothing, since the layer holds no `days` yet: the row still applies, and the copy writes it later; choose *Off* or a number instead. A repository that `REPO_RENAMES` moves to another owner reads that owner's layer, so the copy also wrote its old organization's values into the repository's own layer, and it is audited as before. `PATCH /api/v1/orgs/{owner}` still takes `context_audit_days` until 0.2.0 and writes it into the layer ([api.md](api.md#organizations)).
 
 The organization must be `active` and its credential must be able to read the repositories, the same credential discovery uses. Only registered, active repositories are read ([onboarding.md](onboarding.md)).
 
@@ -99,7 +107,7 @@ Two keys of the [settings document](configuration.md#settings-document)'s `budge
 | `context_audit_job_usd`: more than 0 | `2.0` | Each job's cap in USD, always a hard stop (`ERR_BUDGET_OVERRUN`) whatever `budget.overrun_mode` says: nobody watches a scheduled job. Never unlimited, and bounded by `budget.max_budget_per_job_usd` where the job runs |
 | `context_audit_max_jobs_per_tick`: 0 to 50 | `3` | Jobs one tick starts for the organization. Its due repositories left over wait for the next tick; `0` starts none |
 
-They are written with the `admin` tier, as the rest of the document is; taking a key out of the organization's layer (`null`) hands it back to the deployment. On the dashboard, the organization's page links to its layer on the Settings → Policy tab:
+They are written with the `admin` tier, as the rest of the document is; taking a key out of the organization's layer (`null`) hands it back to the deployment. On the dashboard, they are the **What context audits may spend** fields of the organization's Settings tab, beside `budget.fix_job_usd`, the cap of a finding's fix (below), each with where its value comes from; the organization's page also links to its layer on the Settings → Policy tab:
 
 ```bash
 curl -X PATCH "http://localhost:8200/api/v1/config/settings/budget?owner=acme" \
@@ -154,15 +162,17 @@ A job created with `POST /api/v1/jobs` and `"pipeline_template": "context-audit"
 
 ## Pull requests from its fixes
 
-An organization can have each audit's fixes opened as a pull request ([ADR 0022](adr/0022-context-audit-pull-requests.md)). The setting is `context_audit_open_prs`, `false` by default, and needs the `admin` tier; in the dashboard it is the **Context audit pull requests** switch on the organization's Settings tab:
+Each audit's fixes can be opened as a pull request ([ADR 0022](adr/0022-context-audit-pull-requests.md)). The setting is `context_audit.open_prs`, `false` by default, set like `days` above: by the deployment, an organization or a repository, with the `admin` tier. In the dashboard it is the **Pull requests** field of the organization's Context audit settings, on its Settings tab:
 
 ```bash
-curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
+curl -X PATCH "http://localhost:8200/api/v1/config/settings/context_audit?owner=acme" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
-  -d '{"settings": {"context_audit_open_prs": true}}'
+  -d '{"open_prs": true}'
 ```
+
+It was `context_audit_open_prs` on the organization row until #170, copied into each organization's layer once, as `days` was, and with the same catch: while an organization's copy is pending, *As the deployment* writes nothing and the row still applies; `PATCH /api/v1/orgs/{owner}` still takes it until 0.2.0. A job reads it for its repository when it starts.
 
 With it on, a job that finds outdated claims takes the patch from its report, the one it checked with `git apply --check`, commits it on its own branch and pushes it through the git proxy. At completion embry0 opens the pull request: titled with the number of claims it corrects, its body the report's findings table, labelled `embry0`, and asked about in the merge-approval chat when the repository has merge approvals on. The pull request changes only instruction files, and a person merges it.
 
@@ -187,7 +197,8 @@ The embry0 MCP server (`embry0-mcp`) does all of it. A tool that changes somethi
 
 | To | Call |
 |---|---|
-| Turn it on for an owner, every 7 days | `org_update(owner="acme", settings={"context_audit_days": 7}, confirm=true)` |
+| Turn it on for an owner, every 7 days | `settings_set_keys(section="context_audit", values={"days": 7}, owner="acme", confirm=true)` |
+| Take one repository off its organization's schedule | `settings_set_keys(section="context_audit", values={"days": false}, repo="acme/widgets", confirm=true)` |
 | Set the caps: 5 USD a job, 2 jobs a tick | `settings_set_keys(section="budget", values={"context_audit_job_usd": 5, "context_audit_max_jobs_per_tick": 2}, owner="acme", confirm=true)` |
 | Name the organization's own instruction files | `settings_set_keys(section="context_audit", values={"files": ["**/CLAUDE.md", "**/CONVENTIONS.md"]}, owner="acme", confirm=true)` |
 | Hand them back to the built-in list | `settings_set_keys(section="context_audit", values={"files": null}, owner="acme", confirm=true)` |
@@ -197,23 +208,24 @@ The embry0 MCP server (`embry0-mcp`) does all of it. A tool that changes somethi
 | Run one repository now, when it is due | `context_audit_run(owner="acme", repo="acme/widgets", confirm=true)` |
 | Run one repository now, whatever the due rule says | `context_audit_run(owner="acme", repo="acme/widgets", force=true, confirm=true)` |
 | Run every due repository now | `context_audit_run(owner="acme", confirm=true)`, or with `limit=2` for at most two |
-| Open a pull request from each audit's fixes | `org_update(owner="acme", settings={"context_audit_open_prs": true}, confirm=true)` |
-| Turn it off | `org_update(owner="acme", settings={"context_audit_days": null}, confirm=true)` |
+| Open a pull request from each audit's fixes | `settings_set_keys(section="context_audit", values={"open_prs": true}, owner="acme", confirm=true)` |
+| Defer at 10% of the rate limit left instead of 20% | `settings_set_keys(section="context_audit", values={"rate_reserve_percent": 10}, confirm=true)` |
+| Turn it off for an owner | `settings_set_keys(section="context_audit", values={"days": false}, owner="acme", confirm=true)` |
 
-`org_update` and `settings_set_keys` need an admin-scope key and `context_audit_run` an operate-scope key; `context_audit_status` reads. `org_update` merges: the settings it names change and the rest stay. Each job a run starts is a job like any other: follow it with `job_wait(job_id=...)` and read its report with `job_deliverables(job_id=...)`.
+`settings_set_keys` needs an admin-scope key and `context_audit_run` an operate-scope key; `context_audit_status` reads. `settings_set_keys` changes the keys it names and leaves the rest of the layer as it is. `org_update(settings={"context_audit_days": 7})` and `{"context_audit_open_prs": true}` still work until 0.2.0, writing into the organization's layer and answering `deprecated`. Each job a run starts is a job like any other: follow it with `job_wait(job_id=...)` and read its report with `job_deliverables(job_id=...)`.
 
 `job_create(task=..., repo="acme/widgets", pipeline_template="context-audit")` runs the auditor on a repository too, but the schedule does not see that job's fingerprint: it records none, names no instruction files in its task and has a hard cap only if given one, so a file changed after it is not compared with it. `context_audit_run` is the way to run one by hand.
 
 ## Turning it off
 
-Set the setting to `null`:
+Set `days` to `false` in the organization's layer, which turns it off there whatever the deployment's document says; `null` hands the key back to the deployment's, off unless the deployment set one:
 
 ```bash
-curl -X PATCH http://localhost:8200/api/v1/orgs/acme \
+curl -X PATCH "http://localhost:8200/api/v1/config/settings/context_audit?owner=acme" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
-  -d '{"settings": {"context_audit_days": null}}'
+  -d '{"days": false}'
 ```
 
-In the dashboard, press **Turn off** beside the field, then Save. No new job starts for the organization from the next tick; a job already running finishes. Pausing the organization (`PUT /api/v1/orgs/{owner}/status`) stops it too, and so does `budget.context_audit_max_jobs_per_tick: 0` in its layer; in the deployment's document, that stops it for every organization that sets no cap of its own.
+In the dashboard, choose **Off** for the schedule in the organization's Context audit settings, then Save. No new job starts for the organization from the next tick; a job already running finishes. Pausing the organization (`PUT /api/v1/orgs/{owner}/status`) stops it too, and so does `budget.context_audit_max_jobs_per_tick: 0` in its layer; in the deployment's document, that stops it for every organization that sets no cap of its own.

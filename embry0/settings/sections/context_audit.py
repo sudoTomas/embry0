@@ -1,8 +1,10 @@
-"""The ``context_audit`` section: which files the context audit reads, and how often its schedule looks.
+"""The ``context_audit`` section: whether and how often a repository is audited, what an audit reads, and how the schedule paces the forge.
 
 An operator writes it the way they would say it::
 
     context_audit:
+      days: 7                  # audit every 7 days; null or false: off
+      open_prs: true           # open a pull request from each audit's fixes
       files:                   # null, the default, reads the built-in list
         - "**/CLAUDE.md"
         - "**/AGENTS.md"
@@ -11,27 +13,34 @@ An operator writes it the way they would say it::
       exclude_dirs: [node_modules, vendor, dist]
       check_minutes: 60
       read_concurrency: 4
+      rate_reserve_percent: 20
 
-``files`` and ``exclude_dirs`` are a repository's own conventions, so an
-organization's layer and a repository's may set each, and a layer replaces
-the list it inherits whole. The schedule selects and fingerprints a
+``days`` and ``open_prs`` were an organization's own settings,
+``context_audit_days`` and ``context_audit_open_prs`` on its row (ADR 0020,
+ADR 0022); the first start of the release that moved them copies each
+organization's into its layer, once (:mod:`embry0.settings.org_import`), and
+``PATCH /orgs/{owner}`` takes the old names for one release, writing them
+into the layer. An organization's layer and a repository's may set both,
+as they may ``files`` and ``exclude_dirs``, a repository's own conventions;
+a layer replaces the list it inherits whole. The schedule selects and fingerprints a
 repository's files with them, and each audit's task lists the same files
 with git (:mod:`embry0.services.context_audit_command`), so both read the
-rules the repository resolves at that moment. How often the schedule looks
-and how many repositories it reads at once pace the forge calls every
-organization's audits make together, so they are the deployment's alone.
+rules the repository resolves at that moment. How often the schedule looks,
+how many repositories it reads at once and the forge calls it leaves to
+the jobs pace the forge calls every organization's audits make together,
+so they are the deployment's alone.
 
-None of the four was a variable: each was a constant in the code, so there
-is nothing to import from the environment, and a deployment that writes
-nothing reads what it read before. What an audit may spend is the
+No key here was ever a variable: the files and the pacing were constants in
+the code, and ``days`` and ``open_prs`` lived on the organization row. So
+there is nothing to import from the environment, and a deployment that
+writes nothing reads what it read before. What an audit may spend is the
 ``budget`` section's (``context_audit_job_usd``,
-``context_audit_max_jobs_per_tick``), and whether an organization's
-repositories are audited at all is its ``context_audit_days`` setting.
+``context_audit_max_jobs_per_tick``).
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Final
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import Field, StringConstraints, field_validator
 
@@ -51,6 +60,10 @@ from embry0.settings.registry import Section, SectionModel
 #: least this often while it waits, so a shorter interval applies within it.
 CHECK_MINUTES_MIN: Final = 15
 
+#: The bounds of ``days``, as the organization setting it replaced took them.
+DAYS_MIN: Final = 1
+DAYS_MAX: Final = 365
+
 #: A glob as the section stores it; :func:`check_glob` checks the rest.
 Glob = Annotated[str, StringConstraints(max_length=MAX_GLOB_LENGTH)]
 #: A directory name as the section stores it; :func:`check_dir_name` checks the rest.
@@ -58,6 +71,24 @@ DirName = Annotated[str, StringConstraints(max_length=MAX_DIR_LENGTH)]
 
 
 class ContextAuditSettings(SectionModel):
+    days: Annotated[int, Field(ge=DAYS_MIN, le=DAYS_MAX)] | Literal[False] | None = Field(
+        default=None,
+        description=(
+            "Days between a repository's scheduled audits: the schedule audits it when its instruction files "
+            "change, and again this many days after its newest audit once its default branch moved. 1 to 365; "
+            "false or null is off, the default, so nothing is audited until the deployment, an organization or "
+            "a repository sets it. Written with PATCH, null takes the key out of a layer, which then reads the "
+            "layer below, and false turns the schedule off in it. Was the organization's context_audit_days."
+        ),
+    )
+    open_prs: bool = Field(
+        default=False,
+        description=(
+            "An audit that finds outdated claims commits the fixes it checked on a branch of its own and opens a "
+            "pull request for a person to review and merge (ADR 0022), one open at a time per repository; false "
+            "leaves the findings in the job's report. Was the organization's context_audit_open_prs."
+        ),
+    )
     files: tuple[Glob, ...] | None = Field(
         default=None,
         max_length=MAX_GLOBS,
@@ -108,6 +139,34 @@ class ContextAuditSettings(SectionModel):
             "GET /orgs/{owner}/context-audit and by a run by hand. The deployment's alone."
         ),
     )
+    # GitHub answers a head read that has not changed with 304, which costs
+    # nothing against its limit; a read that has changed costs one call and
+    # its tree one more, and the jobs read and write with the same credential.
+    # A share, not a count: 20% of GitHub's usual 5,000 is 1,000, below the
+    # Slop-O-Meter's 2,000 and above merge sync's floor of 500, and a token
+    # with a smaller limit keeps the same share.
+    rate_reserve_percent: int = Field(
+        default=20,
+        ge=0,
+        le=90,
+        description=(
+            "The share of a credential's forge rate limit (X-RateLimit-Limit), in percent, below which the "
+            "schedule defers for the organizations reading with it: no paid read and no audit started until the "
+            "window ends, so the last calls stay with the jobs that use the same credential. The window is the "
+            "reset the forge names, at most an hour; with none it can use, 15 minutes, then one call asks again. "
+            "A head read with an ETag still goes out, since a branch that did not move answers 304 for free. A "
+            "run by hand and GET /orgs/{owner}/context-audit read no further either, and a run by hand starts "
+            "nothing. A forge that sends no limit is never deferred, and 0 never defers. The deployment's alone."
+        ),
+    )
+
+    @field_validator("days", mode="before")
+    @classmethod
+    def _days(cls, value: Any) -> Any:
+        # Before the union, so every refusal is one message naming the key, and a 0 is never read as false.
+        if value is None or value is False or (type(value) is int and DAYS_MIN <= value <= DAYS_MAX):
+            return value
+        raise ValueError(f"a whole number of days from {DAYS_MIN} to {DAYS_MAX}, or false or null for off")
 
     @field_validator("files")
     @classmethod
@@ -145,6 +204,12 @@ def file_rules(settings: ContextAuditSettings) -> FileRules:
     return FileRules.of(settings.files, settings.exclude_dirs)
 
 
+def audit_days(settings: ContextAuditSettings) -> int | None:
+    """The days between a repository's scheduled audits, or None when its schedule is off (false or null)."""
+    days = settings.days
+    return days if type(days) is int else None
+
+
 CONTEXT_AUDIT = Section(
     name="context_audit",
     model=ContextAuditSettings,
@@ -152,11 +217,14 @@ CONTEXT_AUDIT = Section(
         "Which files the context audit reads in a repository, how often its schedule looks, and how many "
         "repositories it reads at once."
     ),
-    # Which files steer an agent is a repository's own convention, so an
-    # organization and a repository may each name theirs. How often the
-    # schedule looks and how many repositories it reads at once bound the
-    # forge calls every organization's audits make together, so they stay
-    # the deployment's. No env: none of the four was ever a variable.
-    org_keys=frozenset({"files", "exclude_dirs"}),
-    repo_keys=frozenset({"files", "exclude_dirs"}),
+    # Whether a repository is audited, how often and with a pull request,
+    # and which files steer an agent there are its owner's choices: an
+    # organization may set them for its repositories and a repository for
+    # itself (one taken out with days: false, one audited more often). How
+    # often the schedule looks, how many repositories it reads at once and
+    # what it leaves of a credential's rate limit bound the forge calls every
+    # organization's audits make together, so they stay the deployment's. No
+    # env: no key was ever a variable.
+    org_keys=frozenset({"days", "open_prs", "files", "exclude_dirs"}),
+    repo_keys=frozenset({"days", "open_prs", "files", "exclude_dirs"}),
 )

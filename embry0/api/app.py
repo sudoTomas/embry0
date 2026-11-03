@@ -2329,12 +2329,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.org_rediscovery = None
         logger.critical("org_rediscovery_unavailable", exc_info=True)
 
-    # ADR 0020: the context audit on a schedule. For the owners whose
-    # context_audit_days setting is on (it is off by default), the loop reads
-    # each registered repository's default branch with the organization's
-    # credential and starts a context-audit job, the way POST /jobs starts
-    # one, for each repository that is due. GET /orgs/{owner}/context-audit
-    # reads through the same loop.
+    # ADR 0020: the context audit on a schedule. For the repositories whose
+    # context_audit.days resolves to a number of days (off by default; #170
+    # moved it from the organization row into the settings document), the
+    # loop reads each one's default branch with its organization's credential
+    # and starts a context-audit job, the way POST /jobs starts one, for each
+    # that is due. GET /orgs/{owner}/context-audit reads through the same loop.
     try:
         from embry0.api.v1.organizations import app_request as _audit_request
         from embry0.api.v1.organizations import org_forge_client

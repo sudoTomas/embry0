@@ -2,8 +2,9 @@
 
 The context-auditor ends its report with the patch it checked with
 ``git apply --check`` against a copy of the workspace, in a ``diff`` fenced
-block under a ``## Pull`` heading. When the job's organization turned
-``context_audit_open_prs`` on, the output step applies that patch to the
+block under a ``## Pull`` heading. When the job's repository reads
+``context_audit.open_prs`` on (its organization's or its own layer of the
+settings document, #170), the output step applies that patch to the
 workspace, commits it on the one branch the sandbox may push, and pushes it
 through the git proxy. The step then hands the executor the branch, a title
 and a body, and the executor opens the pull request at completion the way it

@@ -31,11 +31,14 @@ def budget_reader(
     deployment: Mapping[str, Any] | None = None, **orgs: Mapping[str, Any]
 ) -> Callable[..., Awaitable[BudgetView]]:
     """A reader as :meth:`embry0.services.budget_policy.BudgetPolicy.view` is one, over :func:`budget_snapshot`,
-    with every key imported."""
+    with every deployment key imported. No organization's layer imported its moved settings, so each reads them
+    from its row where its layer does not set them."""
     snapshot = budget_snapshot(deployment, **orgs)
+    from embry0.services.organizations import MOVED_SETTINGS
 
     async def read(organizations: Any = ()) -> BudgetView:
-        return BudgetView(snapshot)
+        # As production's policy: an organization's moved settings read from its row until its layer imported them.
+        return BudgetView(snapshot, moved=MOVED_SETTINGS)
 
     return read
 

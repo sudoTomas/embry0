@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import patch
 
@@ -33,14 +34,17 @@ WIDGETS, GIZMOS, GADGETS = "acme/widgets", "acme/gizmos", "globex/gadgets"
 FILES = ("CLAUDE.md", "CONVENTIONS.md", "docs/CONVENTIONS.md", "HANDOFF.md", "vendor/lib/CLAUDE.md", "src/app.py")
 
 
-@pytest.fixture
-async def app(
-    db_with_migrations: DatabasePool,
-    stub_container_runtime: Any,  # noqa: F811
-    monkeypatch: pytest.MonkeyPatch,
+@asynccontextmanager
+async def _running(
+    db: DatabasePool, monkeypatch: pytest.MonkeyPatch, rows: Mapping[str, dict[str, Any]] | None = None
 ) -> AsyncIterator[Any]:
     """The real app through its real lifespan, its organizations' forge faked: ``acme`` with two repositories
-    and ``globex`` with one, each holding the same files."""
+    and ``globex`` with one, each holding the same files. ``rows`` are organizations stored with their
+    settings before the release first starts, as an upgrade finds them."""
+    from embry0.storage.repositories.organizations import OrganizationsRepository
+
+    for owner, settings in (rows or {}).items():
+        await OrganizationsRepository(db).register(owner, "github", settings=dict(settings))
     forge = FakeForge()
     for repo in (WIDGETS, GIZMOS, GADGETS):
         forge.put(repo, HEAD, {path: hashlib.sha1(path.encode()).hexdigest() for path in FILES})
@@ -53,7 +57,7 @@ async def app(
     with patch.dict(os.environ, {}, clear=True):
         config = Embry0Config(  # type: ignore[call-arg]
             _env_file=None,
-            database_url=db_with_migrations._url,  # noqa: SLF001
+            database_url=db._url,  # noqa: SLF001
             auth_dev_mode=True,
             webhook_dev_mode=True,
             api_key="",
@@ -68,10 +72,21 @@ async def app(
     app = create_app(config)
     async with lifespan(app):
         for owner in ("acme", "globex"):
-            await app.state.organizations_repo.register(owner, "github")
+            if owner not in (rows or {}):
+                await app.state.organizations_repo.register(owner, "github")
         for repo in (WIDGETS, GIZMOS, GADGETS):
             await app.state.repos_repo.register(repo, forge="github")
         yield app
+
+
+@pytest.fixture
+async def app(
+    db_with_migrations: DatabasePool,
+    stub_container_runtime: Any,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[Any]:
+    async with _running(db_with_migrations, monkeypatch) as running:
+        yield running
 
 
 def _client(app: Any) -> AsyncClient:
@@ -128,3 +143,85 @@ async def test_a_value_the_section_refuses_is_a_422_naming_the_key_and_nothing_i
         f"an organization may not pace the deployment's schedule: {paced.text}"
     )
     assert await _files(app, "acme") == {WIDGETS: 2, GIZMOS: 2}, "a refused write changed what the schedule reads"
+
+
+# ---- the organization settings that moved into the section (#170) --------------------------------
+
+
+async def _effective(app: Any, owner: str) -> dict[str, dict[str, Any]]:
+    """The organization's context_audit keys as GET /config/settings/effective?owner= answers them."""
+    async with _client(app) as client:
+        resp = await client.get(f"{URL}/effective", params={"owner": owner})
+    assert resp.status_code == 200, resp.text
+    section = next(s for s in resp.json()["sections"] if s["name"] == "context_audit")
+    return {key["key"]: key for key in section["keys"]}
+
+
+async def test_the_first_start_copies_each_organization_s_schedule_and_pull_requests_into_its_layer(
+    db_with_migrations: DatabasePool,
+    stub_container_runtime: Any,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from embry0.settings.scope import Scope
+
+    rows = {
+        "acme": {"context_audit_days": 7, "context_audit_open_prs": True},
+        "globex": {"context_audit_days": None, "context_audit_open_prs": False, "auto_register": True},
+    }
+    async with _running(db_with_migrations, monkeypatch, rows) as app:
+        store = app.state.settings
+        acme = await store.document(Scope.organization("acme"))
+        assert acme["data"].get("context_audit") == {"days": 7, "open_prs": True}, (
+            f"the first start did not copy acme's schedule and pull requests into its layer: {acme['data']}"
+        )
+        assert {"context_audit.days", "context_audit.open_prs"} <= set(acme["bootstrapped_keys"]), "once"
+        globex = await store.document(Scope.organization("globex"))
+        assert "context_audit" not in globex["data"], "a value the old reader read as the default is nothing to copy"
+
+        keys = await _effective(app, "acme")
+        assert (keys["days"]["value"], keys["days"]["source"], keys["days"]["set_by"]) == (
+            7,
+            "organization",
+            "embry0:bootstrap",
+        )
+        assert keys["open_prs"]["value"] is True
+        async with _client(app) as client:
+            shown = (await client.get("/api/v1/orgs/acme")).json()["settings"]
+            survey = (await client.get("/api/v1/orgs/acme/context-audit", params={"refresh": "true"})).json()
+        assert "context_audit_days" not in shown and "context_audit_open_prs" not in shown, (
+            "the row's are read by nothing"
+        )
+        assert survey["context_audit_days"] == 7 and {r["days"] for r in survey["repos"]} == {7}, survey
+
+        loop = app.state.context_audit
+        settings = await loop.settings([await app.state.organizations_repo.get("acme")])
+        assert settings.open_prs(await app.state.organizations_repo.get("acme"), WIDGETS) is True
+
+
+async def test_the_old_route_writes_the_schedule_into_the_organization_s_layer_the_loop_reads(app: Any) -> None:
+    async with _client(app) as client:
+        resp = await client.patch(
+            "/api/v1/orgs/acme", json={"settings": {"context_audit_days": 3, "context_audit_open_prs": True}}
+        )
+        survey = (await client.get("/api/v1/orgs/acme/context-audit", params={"refresh": "true"})).json()
+    assert resp.status_code == 200, resp.text
+    assert [note["moved_to"] for note in resp.json().get("deprecated", [])] == [
+        "context_audit.days",
+        "context_audit.open_prs",
+    ], f"PATCH /orgs did not write the moved settings into the layer: {resp.json()}"
+    assert survey["context_audit_days"] == 3, "the production loop reads the layer the old route wrote"
+    keys = await _effective(app, "acme")
+    assert (keys["days"]["value"], keys["days"]["source"]) == (3, "organization")
+    assert (keys["open_prs"]["value"], keys["open_prs"]["source"]) == (True, "organization")
+
+
+async def test_the_running_loop_reads_the_deployment_s_rate_reserve(app: Any) -> None:
+    settings = await app.state.context_audit.settings()
+    assert getattr(settings, "rate_reserve_percent", None) == 20, "the production loop reads no rate reserve"
+    deployment = await _put(app, "context_audit:\n  rate_reserve_percent: 5\n")
+    assert deployment.status_code == 200, deployment.text
+    assert (await app.state.context_audit.settings()).rate_reserve_percent == 5
+    refused = await _put(app, "context_audit:\n  rate_reserve_percent: 5\n", owner="acme")
+    assert refused.status_code == 422 and ["context_audit", "rate_reserve_percent"] in [
+        e["loc"] for e in refused.json()["detail"]
+    ], f"an organization may not set the reserve: {refused.text}"

@@ -276,7 +276,15 @@ def _resumer(builder: StateGraph, store: Any) -> IssueExecutor:
 async def test_without_a_store_or_with_one_that_fails_a_job_runs_on_the_defaults() -> None:
     js = _job_settings()
     defaults = {
-        "context_audit": {"files": None, "exclude_dirs": None, "check_minutes": 15, "read_concurrency": 8},
+        "context_audit": {
+            "days": None,
+            "open_prs": False,
+            "files": None,
+            "exclude_dirs": None,
+            "check_minutes": 15,
+            "read_concurrency": 8,
+            "rate_reserve_percent": 20,
+        },
         "done_when": {"retries": 1, "ticket_sections": ["Acceptance criteria"]},
         "salvage": {"commit_subject": WIP},
     }

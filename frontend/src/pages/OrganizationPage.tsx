@@ -32,7 +32,8 @@ import {
   useReprobeOrganization,
 } from "@/hooks/useOrgs";
 import { useOwnerStandards } from "@/hooks/useStandards";
-import { ORG_WIZARD_PATH, contextAuditDays } from "@/lib/orgs";
+import { ORG_WIZARD_PATH } from "@/lib/orgs";
+import { useOrgContextAudit } from "@/hooks/useOrgContextAudit";
 import { ORG_TABS, orgTab } from "@/lib/orgTabs";
 import { useIsAdmin } from "@/stores/authStore";
 import { cn, formatDate } from "@/lib/utils";
@@ -69,6 +70,8 @@ export function OrganizationPage() {
   const credentials = useCredentials();
   const discover = useDiscoverOrganization(owner);
   const reprobe = useReprobeOrganization(owner);
+  // The context audit's schedule is the settings document's now (#170), as the organization reads it.
+  const audit = useOrgContextAudit(owner);
   // The open tab lives in the URL so a setting can be linked to.
   const [params, setParams] = useSearchParams();
   const tab = orgTab(params.get("tab")).value;
@@ -152,7 +155,7 @@ export function OrganizationPage() {
           {` · discovered ${o.discovered_at ? formatDate(o.discovered_at) : "never"}`}
         </p>
         <RediscoverSetting org={o} isAdmin={isAdmin} />
-        <ContextAuditSetting org={o} isAdmin={isAdmin} />
+        <ContextAuditSetting owner={o.owner} />
         {typeof o.access.detail === "string" && o.access.detail && (
           <p className="text-xs text-muted-foreground">{o.access.detail}</p>
         )}
@@ -208,7 +211,7 @@ export function OrganizationPage() {
           </Section>
         </TabsContent>
         <TabsContent value="context-audit" className="mt-6">
-          <ContextAuditTab owner={o.owner} days={contextAuditDays(o)} />
+          <ContextAuditTab owner={o.owner} days={audit.days} />
         </TabsContent>
         <TabsContent value="settings" className="mt-6 space-y-4">
           <PolicyLayerLink layer={{ layer: "organization", owner: o.owner }} />

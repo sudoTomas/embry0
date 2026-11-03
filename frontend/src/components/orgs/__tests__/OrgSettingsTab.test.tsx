@@ -13,6 +13,13 @@ vi.mock("@/hooks/useOrgs", () => ({
   useInstallOrganizationWebhook: () => ({ mutate: install, isPending: false }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() } }));
+// The context audit's fields read and write the settings document; their own tests cover them.
+vi.mock("../OrgContextAuditSettings", () => ({
+  OrgContextAuditSettings: ({ owner }: { owner: string }) => <p data-testid="context-audit-fields">{owner}</p>,
+}));
+vi.mock("../OrgContextAuditCaps", () => ({
+  OrgContextAuditCaps: ({ owner }: { owner: string }) => <p data-testid="context-audit-caps">{owner}</p>,
+}));
 
 import { toast } from "sonner";
 import { OrgSettingsTab } from "../OrgSettingsTab";
@@ -71,12 +78,11 @@ describe("OrgSettingsTab", () => {
     expect(update).toHaveBeenCalledWith({ settings: { auto_register: true } }, expect.anything());
   });
 
-  it("switches pull requests from context audits on through the settings patch, off by default", async () => {
+  it("holds the organization's context audit settings, which no longer go through the organization patch", async () => {
     render(<OrgSettingsTab org={org()} isAdmin />);
-    const prs = screen.getByRole("switch", { name: "Open a pull request from each audit's fixes" });
-    expect(prs).toHaveAttribute("aria-checked", "false");
-    await userEvent.click(prs);
-    expect(update).toHaveBeenCalledWith({ settings: { context_audit_open_prs: true } }, expect.anything());
+    expect(within(screen.getByTestId("org-context-audit")).getByTestId("context-audit-fields")).toHaveTextContent("acme");
+    expect(within(screen.getByTestId("org-context-audit-spend")).getByTestId("context-audit-caps")).toHaveTextContent("acme");
+    expect(screen.queryByRole("switch", { name: "Open a pull request from each audit's fixes" })).toBeNull();
   });
 
   it("shows whether the webhook points here, lists the hooks the credential sees, and installs one", async () => {
@@ -129,7 +135,6 @@ describe("OrgSettingsTab", () => {
     const auto = screen.getByRole("switch", { name: "Register repositories automatically" });
     expect(auto).toBeDisabled();
     expect(auto).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("switch", { name: "Open a pull request from each audit's fixes" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Install webhook" })).toBeDisabled();
     const gold = [...document.querySelectorAll("*")].filter((el) => /(^|\s)(bg-primary|bg-primary-dim|text-primary)(\s|$)/.test(el.getAttribute("class") ?? ""));

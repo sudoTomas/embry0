@@ -14,6 +14,11 @@ it did not have:
   (:data:`embry0.services.organizations.MOVED_SETTINGS`) until its layer's
   ledger names them, unless its layer sets them already.
 
+The same holds for every organization setting another section took over
+(``context_audit.days`` and ``open_prs``, #170): :meth:`BudgetView.moved_values`
+answers what such a section's reader reads from the organization meanwhile,
+and the retry below copies them with the budget's.
+
 That happens when the import failed, as after a database that dropped the
 connection at the first start of the release. Every read that finds a key
 not imported tries the import again in this process, at most once every
@@ -126,25 +131,39 @@ class BudgetView:
             scope = Scope.organization(owner)
         except ScopeError:
             return out
-        own: set[str] = set()
-        if self.snapshot is not None:
-            own = set(self.snapshot.resolve(BUDGET, owner=owner).applied.get(str(scope), {}))
-        pending = self._moved_values(own, settings, scope)
-        if pending:
-            out[str(scope)] = {
-                (BUDGET.name, key): NotImported(
+        org_pending: dict[tuple[str, str], NotImported] = {}
+        for name in dict.fromkeys(m.section for m in self.moved):
+            for key, value in self.moved_values(name, owner, settings).items():
+                org_pending[(name, key)] = NotImported(
                     value=value, read_from="organization", label=f"{scope.name}'s own settings"
                 )
-                for key, value in pending.items()
-            }
+        if org_pending:
+            out[str(scope)] = org_pending
         return out
 
-    def _moved_values(self, own: set[str], settings: Mapping[str, Any], scope: Scope | None) -> dict[str, Any]:
-        """The moved settings of an organization read from its ``settings``: not set in its layer, and not
-        imported into it yet."""
+    def moved_values(self, section: str, owner: str, settings: Mapping[str, Any]) -> dict[str, Any]:
+        """The settings of ``section`` that moved off the organization row and that ``owner`` still reads from its
+        ``settings``: its layer has not imported them, and does not set them. Empty once every one is imported, as
+        it is after the first start of the release that moved them."""
+        try:
+            scope: Scope | None = Scope.organization(owner)
+        except ScopeError:
+            scope = None
+        own: set[str] = set()
+        if self.snapshot is not None and scope is not None:
+            found = self.snapshot.catalog.get(section) if self.snapshot.catalog is not None else None
+            if found is not None:
+                own = set(self.snapshot.resolve(found, owner=owner).applied.get(str(scope), {}))
+        return self._moved_values(own, settings, scope, section)
+
+    def _moved_values(
+        self, own: set[str], settings: Mapping[str, Any], scope: Scope | None, section: str = BUDGET.name
+    ) -> dict[str, Any]:
+        """The moved settings of ``section`` an organization reads from its ``settings``: not set in its layer,
+        and not imported into it yet."""
         values: dict[str, Any] = {}
         for moved in self.moved:
-            if moved.section != BUDGET.name or moved.key in own:
+            if moved.section != section or moved.key in own:
                 continue
             path = f"{moved.section}.{moved.key}"
             if self.snapshot is not None and scope is not None and self.snapshot.imported(path, scope):
@@ -245,10 +264,9 @@ class BudgetPolicy:
                 scope = Scope.organization(org.owner)
             except ScopeError:
                 continue
+            # Every section's moved settings, the budget's and the context audit's: one copy takes them all.
             if any(
-                moved.section == BUDGET.name
-                and moved.read(org.settings) is not None
-                and not snapshot.imported(f"{moved.section}.{moved.key}", scope)
+                moved.read(org.settings) is not None and not snapshot.imported(f"{moved.section}.{moved.key}", scope)
                 for moved in self._moved
             ):
                 out.append(org)

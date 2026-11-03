@@ -753,8 +753,8 @@ class Embry0Config(BaseSettings):
     # a container uses or a live job's repo needs.
     qa_image_retention_days: int | None = Field(default=None, gt=0, le=3650)
 
-    # Context audit on a schedule (ADR 0020), off until an organization sets
-    # settings.context_audit_days. Its caps are the settings document's
+    # Context audit on a schedule (ADR 0020), off until the settings
+    # document's context_audit.days is set for a repository. Its caps are the settings document's
     # `budget` section now (context_audit_job_usd, area_map_job_usd and
     # fix_job_usd, all three imported from CONTEXT_AUDIT_JOB_BUDGET_USD, and
     # context_audit_max_jobs_per_tick), an organization's layer over the
