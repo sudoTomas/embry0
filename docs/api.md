@@ -411,9 +411,9 @@ Every choice waiting on a person, a quest on offer or a quest to review, in one 
 
 Send a decision to the teammate better placed to make it; it is then theirs to decide ([the design](superpowers/specs/2026-10-27-decisions-design.md)).
 
-- `GET /api/v1/people`: who a decision can go to, everyone who signs in (`operator` or `admin`), as `{"people": [{"id", "email", "name", "github_login", "tier"}]}`.
+- `GET /api/v1/people`: who a decision can go to, everyone who signs in (`operator` or `admin`) or is named by a GitHub login (a chat assistant can ask them), as `{"people": [{"id", "email", "name", "github_login", "tier"}]}`.
 - `PUT /api/v1/me/github-login` (`{"login": "octocat"}`, empty to clear): the GitHub login you are, which owners are named by. A login belongs to one person (409 otherwise). `PUT /api/v1/users/{id}/github-login` does the same for someone else (admin).
-- `POST /api/v1/decisions/{id}/send-to` (`{"to": "<email>", "note": "..."}`, 201): opens a hand-off to someone else who signs in. A hand-off already open for that decision closes as `passed`. It writes a `handoff.created` audit row and emits the `handoff.created` event.
+- `POST /api/v1/decisions/{id}/send-to` (`{"to": "<email>", "note": "..."}`, 201): opens a hand-off to someone else on that list. A hand-off already open for that decision closes as `passed`. It writes a `handoff.created` audit row and emits the `handoff.created` event.
 - **What the recipient may do.** The recipient may take every action the decision lists, including merge (merge approvals admit them for that quest's approval only).
 - **How it closes.** Whoever answers the decision closes its open hand-off as `decided`, with the outcome: `start`, `decline`, `later`, `merge`, `send_back`, `reject`, `run_again`, `good`, `bad` or `dismiss`. This emits `handoff.closed`.
 - `GET /api/v1/handoffs?for=me|all`: the open hand-offs sent to you, or the latest of all.

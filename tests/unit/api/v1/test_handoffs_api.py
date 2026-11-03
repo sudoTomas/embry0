@@ -29,6 +29,7 @@ class FakeUsers:
             user("u1", ME, name="Ada", login="ada"),
             user("u2", "bo@example.com", name="Bo", login="bo"),
             user("u3", "guest@example.com", tier="none"),
+            user("u4", "cy@example.com", name="Cy", tier="none", login="cy"),
         ]
 
     async def people(self) -> list[Any]:
@@ -139,10 +140,17 @@ async def call(app: Any, method: str, url: str, **kw: Any) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_the_people_a_decision_can_go_to_are_those_who_sign_in(app: Any) -> None:
+async def test_the_people_a_decision_can_go_to_sign_in_or_have_a_github_login(app: Any) -> None:
     people = (await call(app, "GET", "/api/v1/people")).json()["people"]
-    assert [p["email"] for p in people] == [ME, "bo@example.com"]
+    assert [p["email"] for p in people] == [ME, "bo@example.com", "cy@example.com"], "not a guest with neither"
     assert people[1] == {"id": "u2", "email": "bo@example.com", "name": "Bo", "github_login": "bo", "tier": "operator"}
+
+
+@pytest.mark.asyncio
+async def test_a_decision_can_go_to_someone_named_by_a_login_who_never_signed_in(app: Any) -> None:
+    resp = await call(app, "POST", "/api/v1/decisions/offer:crack:1/send-to", json={"to": "cy@example.com"})
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["to_email"] == "cy@example.com"
 
 
 @pytest.mark.asyncio
