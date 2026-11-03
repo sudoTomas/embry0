@@ -372,9 +372,14 @@ class _LabelRuntime:
 
 @pytest.mark.asyncio
 async def test_a_lock_change_alone_marks_the_sandbox_image_stale(tmp_path):
-    """The image installs its packages from uv.lock (#288): an SDK bump is a lock-only change."""
+    """The image installs its packages from uv.lock (#288): an SDK bump is a lock-only change.
+
+    The Dockerfile mounts the lock, as infra/Dockerfile.sandbox does: the hash follows what the Dockerfile reads (#320).
+    """
     (tmp_path / "infra").mkdir()
-    (tmp_path / "infra" / "Dockerfile.sandbox").write_text("FROM scratch\n")
+    (tmp_path / "infra" / "Dockerfile.sandbox").write_text(
+        "FROM scratch\nRUN --mount=type=bind,source=uv.lock,target=/opt/lock/uv.lock pip install -r /opt/lock/uv.lock\n"
+    )
     lock = tmp_path / "uv.lock"
     lock.write_text('[[package]]\nname = "claude-agent-sdk"\nversion = "0.2.176"\n')
     runtime = _LabelRuntime()

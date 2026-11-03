@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from embry0.execution.dockerfile_sources import context_sources
 from embry0.execution.image_registry import is_registry_qualified, qualify_image
 from embry0.execution.runtime import AgentRuntime
 from embry0.execution.sandbox_listing import list_sandbox_containers, parse_ps_created
@@ -24,6 +26,16 @@ logger = structlog.get_logger(__name__)
 # The sandbox image is pulled at startup only when the daemon lacks it; the
 # in-stack registry is local, so this bounds a hung registry, not a slow one.
 _REGISTRY_PULL_TIMEOUT_SECONDS = 300
+
+#: The Dockerfile the self-build path builds, relative to the app root.
+SANDBOX_DOCKERFILE = Path("infra") / "Dockerfile.sandbox"
+
+
+_WILDCARD = re.compile(r"[*?\[]")
+
+
+def _bytecode(path: Path) -> bool:
+    return "__pycache__" in path.parts or path.suffix in (".pyc", ".pyo")
 
 
 class SandboxImageManager:
@@ -61,37 +73,40 @@ class SandboxImageManager:
             "/app/infra/Dockerfile.sandbox"
         ).exists()
 
-    def _compute_build_hash(self) -> str:
-        """Compute SHA256 hash of Dockerfile.sandbox + uv.lock + sandbox source files.
+    def build_inputs(self) -> list[Path]:
+        """The files the sandbox image is built from: its Dockerfile, then every file of every build-context path
+        the Dockerfile copies or mounts (#320), each once, by path.
 
-        The image installs its Python packages from uv.lock (#288), so a lock
-        change alone (a claude-agent-sdk bump, and with it the Claude CLI
-        agents run) must mark the image stale too.
+        Read from the Dockerfile itself, so the hash cannot drift from what the image copies. A directory gives
+        every file under it but compiled bytecode, which the interpreter writes beside the code. A path that is
+        missing gives nothing (the build would fail on it).
+        """
+        dockerfile = self._app_root / SANDBOX_DOCKERFILE
+        if not dockerfile.exists():
+            return []
+        files: set[Path] = set()
+        for source in context_sources(dockerfile.read_text(encoding="utf-8")):
+            # A source is relative to the build context, a leading slash included, and may be a wildcard.
+            name = source.lstrip("/") or "."
+            paths = self._app_root.glob(name) if _WILDCARD.search(name) else [self._app_root / name]
+            for path in paths:
+                if path.is_file():
+                    files.add(path)
+                elif path.is_dir():
+                    files.update(f for f in path.rglob("*") if f.is_file() and not _bytecode(f.relative_to(path)))
+        return [dockerfile, *sorted(files - {dockerfile})]
+
+    def _compute_build_hash(self) -> str:
+        """SHA256 of :meth:`build_inputs`, each file's path beside its contents, so a moved file counts too.
+
+        The image installs its Python packages from uv.lock (#288), which the Dockerfile mounts: a lock change
+        alone (a claude-agent-sdk bump, and with it the Claude CLI agents run) marks the image stale too.
         """
         hasher = hashlib.sha256()
-
-        dockerfile = self._app_root / "infra" / "Dockerfile.sandbox"
-        if dockerfile.exists():
-            hasher.update(dockerfile.read_bytes())
-
-        source_dirs = [
-            self._app_root / "embry0" / "sandbox",
-            self._app_root / "embry0" / "safety",
-        ]
-        source_files = [
-            self._app_root / "uv.lock",
-            self._app_root / "embry0" / "execution" / "events.py",
-        ]
-
-        for src_dir in source_dirs:
-            if src_dir.exists():
-                for f in sorted(src_dir.rglob("*.py")):
-                    hasher.update(f.read_bytes())
-
-        for f in source_files:
-            if f.exists():
-                hasher.update(f.read_bytes())
-
+        for f in self.build_inputs():
+            data = f.read_bytes()
+            hasher.update(f"{f.relative_to(self._app_root).as_posix()}\0{len(data)}\0".encode())
+            hasher.update(data)
         return hasher.hexdigest()[:16]
 
     async def _get_image_hash(self, image: str) -> str | None:
