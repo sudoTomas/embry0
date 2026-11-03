@@ -96,7 +96,8 @@ async def test_the_tools_that_name_a_job_elsewhere_name_none_of_another_reposito
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """merge_approval_get gives another repository's approval as a missing one; merge_approval_list, watcher_runs,
-    context_audit_status and repo_get name none of its jobs."""
+    context_audit_status and repo_get name none of its jobs (the last two answer as for a repository, and an owner,
+    nobody registered)."""
     async with job_reads_app(db_with_migrations, monkeypatch) as (app, keys, _values):
         limited = _use(monkeypatch, app, keys.limited)
         uncovered = await _outcome(server.merge_approval_get(ids(UNCOVERED)["approval_id"]))
@@ -104,8 +105,10 @@ async def test_the_tools_that_name_a_job_elsewhere_name_none_of_another_reposito
         shown = {
             "merge_approval_list": await server.merge_approval_list(),
             "watcher_runs": await server.watcher_runs(),
-            "context_audit_status": await server.context_audit_status(OWNER[UNCOVERED]),
-            "repo_get": await server.repo_get(UNCOVERED),
+            # Since the repository reads, a repository the key does not cover, and an owner it does not cover as a
+            # whole, are not registered for it.
+            "context_audit_status": await _outcome(server.context_audit_status(OWNER[UNCOVERED])),
+            "repo_get": await _outcome(server.repo_get(UNCOVERED)),
         }
         await limited.aclose()
         everyone_client = _use(monkeypatch, app, keys.open)

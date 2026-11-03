@@ -43,9 +43,11 @@ from embry0.api.repo_allowlist import (
     covered_slugs,
     enforce_owner_allowlist,
     enforce_repo_allowlist,
+    key_covers,
     owner_allowed,
     repo_allowed,
 )
+from embry0.api.repository_reads import owner_hidden
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.person_name import PersonName
 from embry0.api.session import TIER_ADMIN
@@ -136,6 +138,23 @@ def _covers(request: Request, tier: str, owner: str | None) -> bool:
     return owner_allowed(allowed, owner)
 
 
+async def _reads(request: Request, tier: str, owner: str | None, repo: str | None) -> bool:
+    """Whether this caller reads ``owner``'s map of ``repo`` (None: a map of no repository).
+
+    A map of a repository is that repository's: a key with an allowlist reads
+    it when its list covers the repository. A map of no repository is the
+    owner's as a whole: such a key reads it when it covers the owner as a
+    whole, the rule that lets it change the owner's maps
+    (embry0.api.repository_reads). Either way only of an owner the caller
+    sees (:func:`_covers`).
+    """
+    if not _covers(request, tier, owner):
+        return False
+    if repo:
+        return key_covers(request, repo)
+    return not await owner_hidden(request, owner)
+
+
 async def _may_change(request: Request, tier: str, owner: str | None, action: str) -> None:
     """Refuse with 403 a change the caller may not make to ``owner``'s maps; a key's refusal is audited."""
     if owner is None and tier != TIER_ADMIN:
@@ -159,7 +178,10 @@ async def _map_owner(request: Request, slug: str, owner: str | None, *, action: 
     _slug(slug)
     owners = await _maps(request).owners(slug)
     tier, _ = await caller_scope(request)
-    seen = [o for o in owners if _covers(request, tier, o)]
+    if action is None:
+        seen = [o for o in owners if await _reads(request, tier, o, await _map_repo(request, slug, o))]
+    else:
+        seen = [o for o in owners if _covers(request, tier, o)]
     if owner is not None:
         target = _owner_arg(owner)
         if target not in owners:
@@ -175,9 +197,15 @@ async def _map_owner(request: Request, slug: str, owner: str | None, *, action: 
         raise HTTPException(status_code=404, detail="no such map")
     if action is not None:
         await _may_change(request, tier, target, action)
-    elif not _covers(request, tier, target):
+    elif target not in seen:
         raise HTTPException(status_code=404, detail="no such map")
     return target
+
+
+async def _map_repo(request: Request, slug: str, owner: str | None) -> str | None:
+    """The repository ``owner``'s map of ``slug`` is of, None for a map of no repository."""
+    meta = await _maps(request).meta(slug, owner=owner)
+    return str(meta["repo"]) if meta is not None and meta.get("repo") else None
 
 
 def _allowed_repos(request: Request) -> tuple[str, ...] | None:
@@ -331,9 +359,9 @@ async def _sync_lead(
 
 @router.get("/maps")
 async def list_maps(request: Request) -> dict[str, Any]:
-    """The maps of the owners the caller sees: every owned map without an allowlist, and an admin's the unowned."""
+    """The maps the caller reads (:func:`_reads`): every owned map without an allowlist, and an admin's the unowned."""
     tier, _ = await caller_scope(request)
-    rows = [r for r in await _maps(request).summaries() if _covers(request, tier, r.get("owner"))]
+    rows = [r for r in await _maps(request).summaries() if await _reads(request, tier, r.get("owner"), r.get("repo"))]
     return {
         "maps": [
             {

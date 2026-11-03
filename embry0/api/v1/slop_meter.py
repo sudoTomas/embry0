@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import key_covers
 from embry0.services.slop import meter_view
 
 router = APIRouter()
@@ -27,11 +27,11 @@ def _iso(value: Any) -> Any:
 async def read_slop_meter(full_repo: str, request: Request, area: str = Query(default="")) -> dict[str, Any]:
     """The repository's Slop-O-Meter: its score, its areas', and the weekly series of ``area`` ('' the repository)."""
     registry = getattr(request.app.state, "repos_repo", None)
-    repo = await registry.registered_as(full_repo) if registry is not None else None
+    # A repository the caller's key does not cover is not registered for it (embry0.api.repository_reads).
+    repo = await registry.registered_as(full_repo) if registry is not None and key_covers(request, full_repo) else None
     if repo is None:
         raise HTTPException(status_code=404, detail=f"{full_repo} is not a registered repository")
     repo = str(repo)
-    await enforce_repo_allowlist(request, repo, action="read a repository's slop-o-meter")
     store = getattr(request.app.state, "slop_meter_repo", None)
     if store is None:
         raise HTTPException(status_code=503, detail="the slop-o-meter store is not initialized")

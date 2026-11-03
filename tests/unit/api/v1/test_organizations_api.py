@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -76,9 +77,15 @@ class FakeFactsRepo:
     async def refresh_state(self, repo: str, state: dict[str, Any]) -> None:
         self.facts[repo]["facts"] = {**self.facts[repo]["facts"], **state}
 
-    async def list_for_owner(self, owner: str, *, include_archived: bool = True) -> list[dict[str, Any]]:
+    async def list_for_owner(
+        self, owner: str, *, include_archived: bool = True, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
         return [
-            f for f in self.facts.values() if f["owner"] == owner.lower() and (include_archived or not f["archived"])
+            f
+            for f in self.facts.values()
+            if f["owner"] == owner.lower()
+            and (include_archived or not f["archived"])
+            and (repos is None or f["repo"].lower() in repos)
         ]
 
     async def start_run(self, owner: str) -> dict[str, Any] | None:

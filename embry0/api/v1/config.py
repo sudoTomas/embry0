@@ -15,7 +15,8 @@ from embry0.api.deps import (
     request_actor,
     require_admin,
 )
-from embry0.api.repo_allowlist import deployment_writes, enforce_repo_allowlist
+from embry0.api.repo_allowlist import covered_slugs, deployment_writes, enforce_repo_allowlist, key_covers
+from embry0.api.repository_reads import covered
 from embry0.api.schemas import (
     BudgetConfigRequest,
     BudgetConfigResponse,
@@ -227,8 +228,11 @@ async def set_global_context(
 
 
 @router.get("/config/context/repos/{repo:path}")
-async def get_repo_context(repo: str, context: ContextConfigRepository = Depends(get_context_repo)) -> dict[str, Any]:
-    ctx = await context.get_repo(repo)
+async def get_repo_context(
+    repo: str, request: Request, context: ContextConfigRepository = Depends(get_context_repo)
+) -> dict[str, Any]:
+    # A repository the caller's key does not cover has nothing stored for it (embry0.api.repository_reads).
+    ctx = await context.get_repo(repo) if key_covers(request, repo) else None
     return ctx or {"system_context": "", "assistant_context": ""}
 
 
@@ -579,9 +583,11 @@ def job_key_resolver(state: Any) -> Any:
 
 @router.get("/config/context/repos")
 async def list_repo_contexts(
+    request: Request,
     context: ContextConfigRepository = Depends(get_context_repo),
 ) -> list[dict[str, Any]]:
-    return await context.list_repos()
+    """Every repository's agent context; to a key with an allowlist, those of the repositories it covers."""
+    return covered(request, await context.list_repos(repos=covered_slugs(request)))
 
 
 @router.delete("/config/context/repos/{repo:path}")

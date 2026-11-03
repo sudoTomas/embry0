@@ -19,7 +19,6 @@ changes anything. Who asked for a proposal and who decided it are shown as
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -27,8 +26,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor
-from embry0.api.job_allowlist import without_job
-from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers
+from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers
+from embry0.api.repository_reads import covered
 from embry0.api.schemas import RunWithRequest
 from embry0.api.trigger_context import resolve_trigger_labels
 from embry0.api.v1.jobs import CREATE_A_JOB, start_onboard_job
@@ -81,7 +80,8 @@ async def _audit(request: Request, action: AuditAction, details: dict[str, Any])
 
 @router.get("/repos/{full_repo:repo}/-/setup/cost")
 async def get_setup_cost(full_repo: str, request: Request) -> dict[str, Any]:
-    return await cost_facts(request.app.state, full_repo)
+    # A repository the caller's key does not cover has no account resolved for it (embry0.api.repository_reads).
+    return await cost_facts(request.app.state, full_repo, resolve_account=key_covers(request, full_repo))
 
 
 @router.post("/repos/{full_repo:repo}/-/setup/propose")
@@ -126,12 +126,11 @@ async def propose_setup(full_repo: str, request: Request, req: ProposeRequest | 
 
 @router.get("/repos/{full_repo:repo}/-/setup/proposal")
 async def get_setup_proposal(full_repo: str, request: Request) -> dict[str, Any]:
-    view = await proposal_view(request.app.state, full_repo)
+    # A repository the caller's key does not cover has no proposal for it, nor the job that drafted one
+    # (embry0.api.repository_reads).
+    view = await proposal_view(request.app.state, full_repo) if key_covers(request, full_repo) else None
     if view is None:
         raise HTTPException(status_code=404, detail="embry0 has not proposed a test setup for this repository.")
-    # The job that drafted it is named only to a key that covers the repository (embry0.api.job_allowlist); the
-    # proposal itself is the repository's setup state, a later stage's.
-    view = without_job(request, full_repo, view, "job_id", "job_status")
     return with_actors(view, await actor_shown(request), "created_by", "decided_by")
 
 
@@ -180,19 +179,16 @@ async def skip_setup_testing(full_repo: str, request: Request) -> dict[str, int 
 @router.get("/repos/{full_repo:repo}/-/readiness")
 async def get_readiness(full_repo: str, request: Request) -> dict[str, Any]:
     """The checklist the repo page opens on (``build_readiness``). It reads
-    stored facts only: no model call and no forge call."""
-    registered = await request.app.state.repos_repo.get(full_repo)
+    stored facts only: no model call and no forge call. A repository the
+    caller's key does not cover is not registered for it
+    (embry0.api.repository_reads)."""
+    registered = await request.app.state.repos_repo.get(full_repo) if key_covers(request, full_repo) else None
     if registered is None:
         raise HTTPException(status_code=404, detail="repo not registered")
     labels = await resolve_trigger_labels(request)
     inputs = await readiness_inputs(
         request.app.state, full_repo, registered, trigger_label=labels[0] if labels else "embry0"
     )
-    if not key_covers(request, full_repo):
-        # The checklist names no job id to a key that does not cover the repository: neither the setup job nor a
-        # pull request a job opened (embry0.api.job_allowlist). The repository's own setup state is a later stage's.
-        proposal = {**inputs.proposal, "job_id": None} if inputs.proposal is not None else None
-        inputs = replace(inputs, proposal=proposal, pr_url=None)
     return build_readiness(inputs)
 
 
@@ -201,8 +197,10 @@ async def list_setup_proposals(
     request: Request, status: Literal["pending"] = Query("pending")
 ) -> dict[str, list[dict[str, Any]]]:
     """Every proposal waiting for a person, newest first, for the Overview.
-    ``pending`` is the one status listed; any other is a 422."""
-    pending = await request.app.state.repo_setup_proposals_repo.list_pending()
+    ``pending`` is the one status listed; any other is a 422. To a key with
+    an allowlist, those of the repositories it covers."""
+    proposals = request.app.state.repo_setup_proposals_repo
+    pending = covered(request, await proposals.list_pending(repos=covered_slugs(request)))
     return {
         "proposals": [{"id": p["id"], "repo": p["repo"], "created_at": p["created_at"].isoformat()} for p in pending]
     }

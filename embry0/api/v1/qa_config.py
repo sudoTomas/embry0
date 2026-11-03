@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from embry0.api.deps import request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services.qa_config_check import check_qa_config
@@ -40,7 +40,8 @@ async def _audit(request: Request, action: AuditAction, details: dict[str, Any])
 @router.get("/repos/{full_repo:repo}/-/qa-config")
 async def get_qa_config(full_repo: str, request: Request) -> Response:
     configs_repo = request.app.state.qa_configs_repo
-    row = await configs_repo.get(full_repo)
+    # A repository the caller's key does not cover has nothing stored for it (embry0.api.repository_reads).
+    row = await configs_repo.get(full_repo) if key_covers(request, full_repo) else None
     if row is None:
         raise HTTPException(status_code=404, detail="no QA config stored for this repo")
     return Response(content=row["yaml_text"], media_type="application/yaml")
@@ -82,16 +83,21 @@ async def delete_qa_config(full_repo: str, request: Request) -> None:
 
 @router.post("/repos/{full_repo:repo}/-/qa-config/check")
 async def check_repo_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
-    """Check a test setup the way a run would use it. Stores nothing."""
+    """Check a test setup the way a run would use it. Stores nothing.
+
+    A repository the caller's key does not cover is checked as one nobody
+    registered: no variables of its own and no Docker access
+    (embry0.api.repository_reads)."""
     text = (await request.body()).decode("utf-8", errors="replace")
     if not text.strip():
         raise HTTPException(status_code=400, detail="empty body — send the qa.yaml v2 text")
     state = request.app.state
+    reads = key_covers(request, full_repo)
     env_keys = {str(v["key"]) for v in await state.env_repo.get_global()}
-    env_keys |= {str(v["key"]) for v in await state.env_repo.get_repo(full_repo)}
+    env_keys |= {str(v["key"]) for v in (await state.env_repo.get_repo(full_repo) if reads else [])}
     return await check_qa_config(
         text,
         profiles_repo=state.profiles_repo,
         env_keys=env_keys,
-        docker_access=await state.repos_repo.docker_access(full_repo),
+        docker_access=await state.repos_repo.docker_access(full_repo) if reads else False,
     )

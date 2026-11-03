@@ -30,6 +30,7 @@ from embry0.api.repo_allowlist import (
     key_covers,
     restricted_key_name,
 )
+from embry0.api.repository_reads import covered, owner_hidden
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.api.v1.credentials import key_owns_credential
@@ -203,17 +204,81 @@ async def _write_moved(request: Request, owner: str, moved: dict[str, Any]) -> l
     ]
 
 
-def _org_view(org: Organization, shown: Shown) -> dict[str, Any]:
-    """An owner as a reader sees it: who registered it, as ``GET /audit`` shows actors."""
-    return {**org.to_dict(), "created_by": shown(org.created_by)}
+async def _org_view(request: Request, org: Organization, shown: Shown) -> dict[str, Any]:
+    """An owner as a reader sees it: who registered it, as ``GET /audit`` shows actors, and the repository its forge
+    probe sampled only when the caller's key covers it (embry0.api.repository_reads).
+
+    To a key with an allowlist the owner's repository counts count only the repositories it covers: ``repo_count``
+    is its newest finished discovery run's count of them (:func:`_run_view`), and the forge probe's
+    ``repo_count``, a count of every repository the credential sees, is null."""
+    view = {**org.to_dict(), "created_by": shown(org.created_by)}
+    sample = view["access"].get("sample_repo")
+    if sample is not None and not key_covers(request, str(sample)):
+        view["access"] = {**view["access"], "sample_repo": None}
+    if covered_slugs(request) is not None:
+        runs = await _runs_shown(request, org.owner, limit=20)
+        finished = next((run for run in runs if run["status"] == "done"), None)
+        view["repo_count"] = finished["summary"].get("repos") if finished is not None else None
+        if "repo_count" in view["access"]:
+            view["access"] = {**view["access"], "repo_count": None}
+    return view
+
+
+def _run_view(run: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """A discovery run counted over ``rows``, the facts discovery keeps of the repositories a key covers: the run's
+    repository counts (``repos_total``, ``repos_seen`` and each count of its summary) are those of the rows the run
+    stamped, and ``vanished``, ``vanished_confirmed`` the rows it found gone. Its comparison of the owner's record
+    with the whole listing (``count_gap``) is left out: it counts repositories the key does not cover."""
+    stamped = [row for row in rows if row.get("run_id") == run["id"]]
+    shown = dict(run, repos_seen=len(stamped), repos_total=None if run["repos_total"] is None else len(stamped))
+    if not run["summary"]:
+        return shown  # a run still reading has no summary yet
+    facts = [
+        org_discovery.RepoFacts(
+            owner=str(row["owner"]), repo=str(row["repo"]), archived=bool(row["archived"]), facts=dict(row["facts"])
+        )
+        for row in stamped
+    ]
+    summary = org_discovery.summarize(facts)
+    gone = sum(1 for row in rows if (row.get("facts") or {}).get("vanished_run") == run["id"])
+    summary.update(vanished=gone, vanished_confirmed=gone)
+    if "listing_complete" in run["summary"]:
+        summary["listing_complete"] = run["summary"]["listing_complete"]
+    shown["summary"] = summary
+    return shown
+
+
+async def _runs_shown(request: Request, owner: str, *, limit: int) -> list[dict[str, Any]]:
+    """The owner's discovery runs, newest first, as the caller reads them: to a key with an allowlist, counted over
+    the facts of the repositories it covers (:func:`_run_view`)."""
+    facts_repo = _facts_repo(request)
+    runs = await facts_repo.list_runs(owner, limit=limit)
+    slugs = covered_slugs(request)
+    if slugs is None:
+        return runs
+    rows = covered(request, await facts_repo.list_for_owner(owner, repos=slugs))
+    return [_run_view(run, rows) for run in runs]
+
+
+async def _org_read(request: Request, owner: str) -> Organization | None:
+    """The organization ``owner`` as the caller reads it: None when nobody registered it, and for an owner its key does
+    not cover as a whole, which is not registered for it (embry0.api.repository_reads)."""
+    if await owner_hidden(request, owner):
+        return None
+    return await _repo(request).get(owner)
 
 
 @router.get("/orgs")
 async def list_organizations(request: Request, include_removed: bool = False) -> dict[str, Any]:
-    orgs = await _repo(request).list_all(include_removed=include_removed)
+    """The registered owners; to a key with an allowlist, those it covers as a whole."""
+    orgs = [
+        o
+        for o in await _repo(request).list_all(include_removed=include_removed)
+        if not await owner_hidden(request, o.owner)
+    ]
     shown = await actor_shown(request)
     return {
-        "organizations": [_org_view(o, shown) for o in orgs],
+        "organizations": [await _org_view(request, o, shown) for o in orgs],
         "forges": list(FORGES),
         "statuses": list(STATUSES),
     }
@@ -244,10 +309,10 @@ async def probe_organization(body: ProbeBody, request: Request) -> dict[str, Any
 
 @router.get("/orgs/{owner}")
 async def get_organization(owner: str, request: Request) -> dict[str, Any]:
-    org = await _repo(request).get(owner)
+    org = await _org_read(request, owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
-    return _org_view(org, await actor_shown(request))
+    return await _org_view(request, org, await actor_shown(request))
 
 
 @router.post("/orgs", status_code=201, dependencies=[require_admin])
@@ -693,7 +758,7 @@ def make_forge_client(request: Request, org: Organization, token: str) -> Any:
 
 
 async def _org_for_hooks(request: Request, owner: str) -> tuple[Organization, Any]:
-    org = await _repo(request).get(owner)
+    org = await _org_read(request, owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
     if org.forge != "github":
@@ -778,11 +843,13 @@ async def organization_repositories(owner: str, request: Request, include_archiv
     that sentence names in the order they are taken (ADR 0015). Both are read
     from the row's facts and the organization's probe by rules, never a model.
     """
-    org = await _repo(request).get(owner)
+    org = await _org_read(request, owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
     facts_repo = _facts_repo(request)
-    rows = await facts_repo.list_for_owner(owner, include_archived=include_archived)
+    # Only the repositories the caller's key covers, registered or not (embry0.api.repository_reads).
+    found = await facts_repo.list_for_owner(owner, include_archived=include_archived, repos=covered_slugs(request))
+    rows = covered(request, found)
     current = org_maintain.current_runs(await facts_repo.list_runs(owner))
     access = org.access if isinstance(org.access, dict) else {}
     repos = [{**row, **org_maintain.maintain_hint(row, access, current=current).to_dict()} for row in rows]
@@ -791,9 +858,9 @@ async def organization_repositories(owner: str, request: Request, include_archiv
 
 @router.get("/orgs/{owner}/runs")
 async def organization_runs(owner: str, request: Request, limit: int = 20) -> dict[str, Any]:
-    if await _repo(request).get(owner) is None:
+    if await _org_read(request, owner) is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
-    return {"owner": owner.lower(), "runs": await _facts_repo(request).list_runs(owner, limit=max(1, min(limit, 100)))}
+    return {"owner": owner.lower(), "runs": await _runs_shown(request, owner, limit=max(1, min(limit, 100)))}
 
 
 # ---- the context audit schedule (ADR 0020) ----
@@ -828,14 +895,13 @@ async def organization_context_audit(owner: str, request: Request, refresh: bool
     organization's credential. Starts nothing, whatever
     ``context_audit.days`` says.
     """
-    org = await _repo(request).get(owner)
+    org = await _org_read(request, owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
     schedule = getattr(request.app.state, "context_audit", None)
     if schedule is None:
         raise HTTPException(status_code=503, detail="the context audit schedule is not initialized")
-    # A repository the caller's key does not cover is surveyed as one with no context-audit job
-    # (embry0.api.job_allowlist).
+    # A repository the caller's key does not cover is left out of the survey, unread (embry0.api.repository_reads).
     hidden = None if covered_slugs(request) is None else (lambda repo: not key_covers(request, repo))
     try:
         survey = await schedule.survey(org, refresh=refresh, reports=True, hidden=hidden)

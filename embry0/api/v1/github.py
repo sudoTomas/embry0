@@ -23,6 +23,8 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from embry0.api.repo_allowlist import key_covers, restricted_key_name
+from embry0.api.v1.credentials import discovery_entries
 from embry0.execution.github_client import GitHubClient
 from embry0.services.credentials.discovery import ForgeCredentialEntry, forge_credential_entries
 
@@ -215,7 +217,16 @@ async def list_repos(
     Fans out across the global GITHUB_TOKEN and every GITHUB_TOKEN__<OWNER>,
     merged and deduped — so the create-issue dropdown shows repos from every
     configured owner.
+
+    A key with a repository allowlist lists with its own credentials only, and
+    only the repositories its list covers (``embry0.api.v1.credentials.discovery_entries``).
     """
+    if restricted_key_name(request) is not None:
+        by_name, _, _ = await _fetch_all_repo_entries(
+            await discovery_entries(request, "github"), per_page=per_page, sort=sort
+        )
+        own = (_to_repo_response(raw) for name, (_, raw) in by_name.items() if key_covers(request, name))
+        return RepoListResponse(repos=sorted(own, key=lambda r: r.full_name))
     config = request.app.state.config
     repos = await _fetch_all_repos(config.github_token or "", per_page=per_page, sort=sort)
     return RepoListResponse(repos=repos)
@@ -241,36 +252,45 @@ async def list_discoverable_repos(
     Feeds the central Add-repo dropdown. A registry row names its
     credential; an env row names the env key. ``failed`` is labels whose
     listing raised. ``refresh=true`` bypasses the fan-out cache.
+
+    A key with a repository allowlist lists with its own credentials only,
+    never the environment's tokens nor a credential it may not use, and sees
+    only the repositories its list covers; its listing is read for it alone,
+    never from or into the shared cache (``cached`` false). With no
+    credential of its own it is answered as a deployment with no token
+    (``embry0.api.v1.credentials.discovery_entries``).
     """
-    state = request.app.state
-    now = time.monotonic()
-    cached = (
-        not refresh
-        and bool(_DISCOVERY_CACHE["by_name"])
-        and now - _DISCOVERY_CACHE["at"] < _DISCOVERY_CACHE_TTL_SECONDS
-    )
-    if not cached:
-        entries = await forge_credential_entries(
-            getattr(state, "credentials_repo", None),
-            getattr(state, "secrets_provider", None),
-            state.config,
-            "github",
+    if restricted_key_name(request) is not None:
+        by_name, truncated, failed = await _fetch_all_repo_entries(
+            await discovery_entries(request, "github"), per_page=100, sort="updated"
         )
-        by_name, truncated, failed = await _fetch_all_repo_entries(entries, per_page=100, sort="updated")
-        _DISCOVERY_CACHE["at"] = time.monotonic()
-        _DISCOVERY_CACHE["by_name"] = by_name
-        _DISCOVERY_CACHE["truncated"] = truncated
-        _DISCOVERY_CACHE["failed"] = failed
+        listing: dict[str, Any] = {"by_name": by_name, "truncated": truncated, "failed": failed}
+        cached = False
+    else:
+        now = time.monotonic()
+        cached = (
+            not refresh
+            and bool(_DISCOVERY_CACHE["by_name"])
+            and now - _DISCOVERY_CACHE["at"] < _DISCOVERY_CACHE_TTL_SECONDS
+        )
+        if not cached:
+            entries = await discovery_entries(request, "github")
+            by_name, truncated, failed = await _fetch_all_repo_entries(entries, per_page=100, sort="updated")
+            _DISCOVERY_CACHE["at"] = time.monotonic()
+            _DISCOVERY_CACHE["by_name"] = by_name
+            _DISCOVERY_CACHE["truncated"] = truncated
+            _DISCOVERY_CACHE["failed"] = failed
+        listing = _DISCOVERY_CACHE
 
     # include_inactive: a deactivated repo is still registered — offering it
     # for (no-op) re-registration would only confuse the operator.
     registered = {row["repo"] for row in await request.app.state.repos_repo.list_all(include_inactive=True)}
 
     repos: list[DiscoverableRepo] = []
-    for full_name in sorted(_DISCOVERY_CACHE["by_name"]):
-        if full_name in registered:
+    for full_name in sorted(listing["by_name"]):
+        if full_name in registered or not key_covers(request, full_name):
             continue
-        entry, raw = _DISCOVERY_CACHE["by_name"][full_name]
+        entry, raw = listing["by_name"][full_name]
         permissions = raw.get("permissions") or {}
         repos.append(
             DiscoverableRepo(
@@ -282,8 +302,8 @@ async def list_discoverable_repos(
             )
         )
 
-    truncated_env_keys = list(_DISCOVERY_CACHE["truncated"])
-    failed = list(_DISCOVERY_CACHE["failed"])
+    truncated_env_keys = list(listing["truncated"])
+    failed = list(listing["failed"])
     logger.info(
         "discoverable_repos_listed",
         count=len(repos),

@@ -20,8 +20,8 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.job_allowlist import without_job
-from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist
+from embry0.api.repo_allowlist import covered_slugs, enforce_owner_allowlist, enforce_repo_allowlist, key_covers
+from embry0.api.repository_reads import owner_hidden
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import REPO_PATH_ERROR, REPO_PATH_PATTERN
 from embry0.api.v1.run_with import checked_run_with
@@ -116,22 +116,25 @@ def _kind(raw: str) -> str:
         raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
-async def _registered_repo_under(request: Request, owner: str, repo: str) -> str:
-    """The registry's spelling of ``repo``, which must sit under ``owner``: 422 when it does not, 404 when unregistered."""
+async def _registered_repo_under(request: Request, owner: str, repo: str, *, reads: bool = True) -> str:
+    """The registry's spelling of ``repo``, which must sit under ``owner``: 422 when it does not, 404 when unregistered
+    or, unless the caller ``reads`` it, whatever is registered."""
     if not REPO_PATH_PATTERN.match(repo):
         raise HTTPException(status_code=422, detail=REPO_PATH_ERROR)
     if standards_service.owner_of(repo) != owner:
         raise HTTPException(
             status_code=422, detail=f"{repo} is not under {owner}: a standard applies to its owner's repositories"
         )
-    row = await request.app.state.repos_repo.get(repo)
+    row = await request.app.state.repos_repo.get(repo) if reads else None
     if row is None:
         raise HTTPException(status_code=404, detail="repo not registered")
     return str(row["repo"])
 
 
 async def _active_or_404(request: Request, owner: str, kind: str) -> Standard:
-    standard = await _standards(request).get_active(owner, kind)
+    """The owner's active standard of ``kind``; 404 when none was written, or for an owner the caller's key does not
+    cover as a whole, which has none for it (embry0.api.repository_reads)."""
+    standard = None if await owner_hidden(request, owner) else await _standards(request).get_active(owner, kind)
     if standard is None:
         raise HTTPException(status_code=404, detail=f"no active {kind} standard for {owner}")
     return standard
@@ -161,28 +164,26 @@ async def standards_for_repo(request: Request, repo: str) -> list[dict[str, Any]
     """One state per kind for ``GET /repos/{repo}``: the stored row, or mode off when there is none."""
     repository = getattr(request.app.state, "repo_standard_state_repo", None)
     stored = {s.kind: s for s in await repository.list_for_repo(repo)} if repository is not None else {}
-    return [_state_view(request, stored.get(kind) or standards_service.default_state(repo, kind)) for kind in KINDS]
-
-
-def _state_view(request: Request, state: RepoStandardState) -> dict[str, Any]:
-    """A repository's state under a standard, naming its last audit's job only to a key that covers the repository
-    (``embry0.api.job_allowlist``)."""
-    return without_job(request, state.repo, state.to_dict(), "last_audit_job_id")
+    return [(stored.get(kind) or standards_service.default_state(repo, kind)).to_dict() for kind in KINDS]
 
 
 @router.get("/standards/{owner}")
 async def list_standards(owner: str, request: Request) -> dict[str, Any]:
-    """The owner's active standard of each kind, and every repository under it with a stored mode."""
+    """The owner's active standard of each kind, and every repository under it with a stored mode.
+
+    To a key with an allowlist: the repositories it covers, and the owner's
+    standards only when it covers the owner as a whole; any other owner has
+    none for it (embry0.api.repository_reads)."""
     owner = _owner(owner)
-    active = await _standards(request).list_active(owner)
-    states = await _states(request).list_for_owner(owner)
+    active = [] if await owner_hidden(request, owner) else await _standards(request).list_active(owner)
+    states = await _states(request).list_for_owner(owner, repos=covered_slugs(request))
     shown = await actor_shown(request)
     return {
         "owner": owner,
         "kinds": list(KINDS),
         "modes": list(MODES),
         "standards": [_standard_view(s, shown) for s in active],
-        "repos": [_state_view(request, s) for s in states],
+        "repos": [s.to_dict() for s in states if key_covers(request, s.repo)],
     }
 
 
@@ -224,19 +225,21 @@ async def put_standard(owner: str, kind: str, body: StandardBody, request: Reque
 
 @router.get("/standards/{owner}/{kind}/versions")
 async def list_standard_versions(owner: str, kind: str, request: Request) -> dict[str, Any]:
-    """Every version of the owner's standard of ``kind``, newest first, with its status."""
+    """Every version of the owner's standard of ``kind``, newest first, with its status; none for an owner the caller's
+    key does not cover as a whole (embry0.api.repository_reads)."""
     owner, kind = _owner(owner), _kind(kind)
-    versions = await _standards(request).list_versions(owner, kind)
+    versions = [] if await owner_hidden(request, owner) else await _standards(request).list_versions(owner, kind)
     shown = await actor_shown(request)
     return {"owner": owner, "kind": kind, "versions": [_standard_view(v, shown) for v in versions]}
 
 
 @router.get("/standards/{owner}/{kind}/repos/{repo:path}")
 async def get_repo_standard_state(owner: str, kind: str, repo: str, request: Request) -> dict[str, Any]:
-    """The repository's mode, exceptions and newest audit under this standard; mode off when never set."""
+    """The repository's mode, exceptions and newest audit under this standard; mode off when never set. A repository
+    the caller's key does not cover is not registered for it (embry0.api.repository_reads)."""
     owner, kind = _owner(owner), _kind(kind)
-    await _registered_repo_under(request, owner, repo)
-    return _state_view(request, await _state_or_default(request, repo, kind))
+    await _registered_repo_under(request, owner, repo, reads=key_covers(request, repo))
+    return (await _state_or_default(request, repo, kind)).to_dict()
 
 
 @router.put("/standards/{owner}/{kind}/repos/{repo:path}", dependencies=[require_admin])

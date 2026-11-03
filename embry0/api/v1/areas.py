@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from embry0.api.budget import unattended_cap
 from embry0.api.deps import request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.jobs import CREATE_A_JOB
 from embry0.api.v1.run_with import checked_run_with
@@ -33,9 +33,10 @@ class MapBody(BaseModel):
     run_with: RunWithRequest | None = None
 
 
-async def _registered(request: Request, repo: str) -> str:
+async def _registered(request: Request, repo: str, *, reads: bool = True) -> str:
+    """The registry's spelling of ``repo``; 404 when it is not registered, or when the caller may not ``reads`` it."""
     registry = getattr(request.app.state, "repos_repo", None)
-    registered = await registry.registered_as(repo) if registry is not None else None
+    registered = await registry.registered_as(repo) if registry is not None and reads else None
     if registered is None:
         raise HTTPException(status_code=404, detail=f"{repo} is not a registered repository")
     return str(registered)
@@ -63,9 +64,9 @@ async def _newest_job(request: Request, repo: str) -> dict[str, Any] | None:
 
 @router.get("/repos/{full_repo:repo}/-/areas")
 async def get_areas(full_repo: str, request: Request, fresh: bool = Query(default=False)) -> dict[str, Any]:
-    """The areas the file names (read again with ``fresh``), and the newest map-areas job."""
-    repo = await _registered(request, full_repo)
-    await enforce_repo_allowlist(request, repo, action="read a repository's areas")
+    """The areas the file names (read again with ``fresh``), and the newest map-areas job. A repository the
+    caller's key does not cover is not registered for it (embry0.api.repository_reads)."""
+    repo = await _registered(request, full_repo, reads=key_covers(request, full_repo))
 
     async def read(name: str, path: str) -> str | None:
         return await _read_file(request, name)
@@ -87,10 +88,12 @@ async def map_areas(full_repo: str, request: Request, body: MapBody | None = Non
     """Start an agent job that writes the file and opens its pull request.
 
     Refused with 409 while an earlier map of the repository is live, 429 while
-    the budget gate refuses, and 422 for a model or key that cannot run.
+    the budget gate refuses, and 422 for a model or key that cannot run. A key
+    whose allowlist does not cover the repository is refused before anything
+    is read, so the answer is the same whether or not it is registered.
     """
+    await enforce_repo_allowlist(request, full_repo, action=CREATE_A_JOB)
     repo = await _registered(request, full_repo)
-    await enforce_repo_allowlist(request, repo, action=CREATE_A_JOB)
     run_with = await checked_run_with(request, body.run_with if body else None, repo)
     newest = await _newest_job(request, repo)
     if newest and newest.get("live"):

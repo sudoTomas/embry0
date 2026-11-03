@@ -48,7 +48,11 @@ narrows its query to :func:`covered_slugs` and still keeps only what
 
 Jobs are held to the same rule by :mod:`embry0.api.job_allowlist`: a job
 outside the list reads, streams and is acted on as a job that does not
-exist, and the lists and counts of jobs leave it out in their query.
+exist, and the lists and counts of jobs leave it out in their query. What
+embry0 stores about a repository and an owner is held to it by
+:mod:`embry0.api.repository_reads`: a repository outside the list reads as
+one nobody registered, and what belongs to an owner as a whole reads only to
+a key that covers the owner as a whole (:func:`key_covers_organization`).
 """
 
 from __future__ import annotations

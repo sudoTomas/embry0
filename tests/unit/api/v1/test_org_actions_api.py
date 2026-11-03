@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -69,8 +69,10 @@ class FakeFactsRepo:
         self.rows: list[dict[str, Any]] = []
         self.runs: list[dict[str, Any]] = []
 
-    async def list_for_owner(self, owner: str, *, include_archived: bool = True) -> list[dict[str, Any]]:
-        return [r for r in self.rows if r["owner"] == owner.lower()]
+    async def list_for_owner(
+        self, owner: str, *, include_archived: bool = True, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        return [r for r in self.rows if r["owner"] == owner.lower() and (repos is None or r["repo"].lower() in repos)]
 
     async def start_run(self, owner: str) -> dict[str, Any]:
         run = {"id": f"odr-{len(self.runs) + 1}", "owner": owner, "status": "running", "error": None}

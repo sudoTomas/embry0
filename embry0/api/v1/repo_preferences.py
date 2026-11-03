@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from embry0.api.deps import request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers
 from embry0.api.schemas.repo_preferences import (
     RepoPreferencesResponse,
     RepoPreferencesUpdateRequest,
@@ -35,7 +35,8 @@ async def _audit(request: Request, action: AuditAction, details: dict[str, Any])
 @router.get("/repos/{full_repo:repo}/-/preferences", response_model=RepoPreferencesResponse | None)
 async def get_repo_preferences(full_repo: str, request: Request) -> RepoPreferencesResponse | None:
     prefs_repo = request.app.state.repo_preferences_repo
-    row = await prefs_repo.get(full_repo)
+    # A repository the caller's key does not cover has nothing stored for it (embry0.api.repository_reads).
+    row = await prefs_repo.get(full_repo) if key_covers(request, full_repo) else None
     if row is None:
         return None
     pr_review = row.get("pr_review")

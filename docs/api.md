@@ -448,7 +448,7 @@ Work embry0 finds by itself and offers as owner proposals ([leads.md](leads.md),
 
 A scanner's map of a codebase or an organization, marked and sent to agents ([maps.md](maps.md), [the design](superpowers/specs/2026-10-27-knowledge-maps-design.md)).
 
-**Owners and addresses.** Each map belongs to a forge owner, lowercased: the document's `owner`, else its `repo`'s owner; a map with neither belongs to no one (`owner: null`). A slug names a map within its owner. Every route below takes an optional `?owner=<owner>` that names the map (`?owner=` empty names the map of no owner). Without it, the address names the one map of the slug the caller sees, so the addresses from before owners still work while they are unambiguous; when the caller sees several, the route answers 409 naming their owners, and when it sees none, 404. A caller sees and changes the maps of the owners its key's [repository allowlist](#repository-allowlist) covers, every owner without one. A map it may not see answers 404 and is not listed; a change it may not make answers 403 `repo_not_allowed` naming `<owner>/*`, audited as a refused repository is. A map of no owner is an admin's alone (an admin without an allowlist): anyone else does not see it and is refused with 403 `map_has_no_owner`. See [maps.md](maps.md#who-owns-a-map).
+**Owners and addresses.** Each map belongs to a forge owner, lowercased: the document's `owner`, else its `repo`'s owner; a map with neither belongs to no one (`owner: null`). A slug names a map within its owner. Every route below takes an optional `?owner=<owner>` that names the map (`?owner=` empty names the map of no owner). Without it, the address names the one map of the slug the caller sees, so the addresses from before owners still work while they are unambiguous; when the caller sees several, the route answers 409 naming their owners, and when it sees none, 404. A caller sees and changes the maps of the owners its key's [repository allowlist](#repository-allowlist) covers, every owner without one; a key with an allowlist reads a map of a repository only when its list covers the repository, and a map of no repository (an organization map) only when it covers the owner as a whole. A map it may not see answers 404 and is not listed; a change it may not make answers 403 `repo_not_allowed` naming `<owner>/*`, audited as a refused repository is. A map of no owner is an admin's alone (an admin without an allowlist): anyone else does not see it and is refused with 403 `map_has_no_owner`. See [maps.md](maps.md#who-owns-a-map).
 
 - `GET /api/v1/maps` (read): the maps the caller sees, `{"maps": [{"slug", "owner", "title", "repo", "commit", "source", "generated_at", "uploaded_at", "uploaded_by", "nodes", "edges"}]}`.
 - `PUT /api/v1/maps/{slug}`: stores an `embry0.map/1` document (`Content-Encoding: gzip` or plain JSON; at most 64 MB decompressed, and 32 MB on the wire through the LAN vhost), replacing the last upload of the same owner and slug. The owner is the document's `owner`, else its `repo`'s owner, else `?owner=`; an `?owner=` that names another owner than the document is refused with 422, and so is a part whose `repo` is not one of the owner's repositories, or a document holding `NaN`, `Infinity`, a NUL character or a lone surrogate. Answers `{"slug", "owner", "nodes", "edges", "leads", "leads_closed"}`: the weed leads of parts still marked bloat, refreshed, and those of parts that left the map, closed (only this map's, never another owner's map of the slug, and only in repositories the key may act on). 422 names what is wrong with a document that is not a map; a key limited to a repository allowlist may upload only a map of a repository on it whose parts name only repositories on it, and replace only a stored map of a repository on it; a map of no owner is uploaded by an admin only.
@@ -580,7 +580,7 @@ curl -X POST http://localhost:8200/api/v1/credentials/import-env \
 
 ### Discovery
 
-`GET /api/v1/github/discoverable-repos` and `GET /api/v1/gitlab/discoverable-projects` fan out across registry credentials for that forge and the env tokens, then drop repos already registered. Behavior is in [credentials.md](credentials.md). `refresh=true` bypasses the cache.
+`GET /api/v1/github/discoverable-repos` and `GET /api/v1/gitlab/discoverable-projects` fan out across registry credentials for that forge and the env tokens, then drop repos already registered. Behavior is in [credentials.md](credentials.md). `refresh=true` bypasses the cache. A key with a [repository allowlist](#repository-allowlist) lists with its own credentials alone and sees only the repositories its list covers (below).
 
 | Field | GitHub | GitLab |
 |---|---|---|
@@ -703,7 +703,7 @@ A repository whose `context_audit.days` is set (the [settings document](configur
 
 `GET` and `POST /api/v1/orgs/{owner}/webhook` inspect and install the organization's one GitHub webhook, and the receiver's gate handles deliveries for repositories nobody registered ([webhooks.md](webhooks.md#organization-webhooks-github), [ADR 0012](adr/0012-organization-webhook.md)).
 
-`POST /api/v1/orgs/{owner}/actions` runs one action over repositories discovery saw under the owner. Body: `{"action": "register" | "hook" | "onboard" | "watch" | "deactivate", "repos": ["acme/widgets"], "dry_run": false, "force": false}`. The response carries one result per repository: `{"repo", "outcome", "detail"}` with `outcome` one of `done`, `already` (the state exists), `skipped` (a reason the caller can fix) or `failed` (one repository's error, or a refusal from the path the action reuses; the rest still run). `repo` is the spelling the forge reported, whatever case was asked; a repository discovery has not seen, an archived one (for every action but `deactivate`), or one under another owner is `skipped`. Every action reuses an existing path and is idempotent: a second identical call reports `already` for every repository the first one changed, and changes nothing. `dry_run` reports what would happen without side effects and writes no audit row; a real run writes one `organization.action` row with every repository's outcome, plus the rows the reused paths write. A real run with any `done` result starts a discovery run for the owner, the one `POST /orgs/{owner}/discover` starts, so the needs list catches up; the response's `rediscovery` is that run's id, or `null` when nothing changed, a dry run, or a run already in progress.
+`POST /api/v1/orgs/{owner}/actions` runs one action over repositories discovery saw under the owner. Body: `{"action": "register" | "hook" | "onboard" | "watch" | "deactivate", "repos": ["acme/widgets"], "dry_run": false, "force": false}`. The response carries one result per repository: `{"repo", "outcome", "detail"}` with `outcome` one of `done`, `already` (the state exists), `skipped` (a reason the caller can fix) or `failed` (one repository's error, or a refusal from the path the action reuses; the rest still run). `repo` is the spelling the forge reported, whatever case was asked; a repository discovery has not seen, an archived one (for every action but `deactivate`), or one under another owner is `skipped`. A repository the calling key's [repository allowlist](#repository-allowlist) does not cover is `failed` with the refusal, under the name the body gives, whether or not discovery saw it. Every action reuses an existing path and is idempotent: a second identical call reports `already` for every repository the first one changed, and changes nothing. `dry_run` reports what would happen without side effects and writes no audit row; a real run writes one `organization.action` row with every repository's outcome, plus the rows the reused paths write. A real run with any `done` result starts a discovery run for the owner, the one `POST /orgs/{owner}/discover` starts, so the needs list catches up; the response's `rediscovery` is that run's id, or `null` when nothing changed, a dry run, or a run already in progress.
 
 - `register` adds the repository to the repo registry under the organization's forge, the call `POST /repos` makes. A row under any case counts as `already`.
 - `hook` creates a GitHub webhook on the repository posting to `WEBHOOK_PUBLIC_URL` + `/api/v1/webhook` with `GITHUB_WEBHOOK_SECRET`, for issues, issue comments and pull requests ([webhooks.md](webhooks.md#github)). It runs only when the owner's probe found the credential can manage webhooks, and it is skipped while `WEBHOOK_PUBLIC_URL` is unset or a loopback address, or the secret is empty. A hook in the forge's live listing whose URL starts with `WEBHOOK_PUBLIC_URL` is `already`; a hook on the dashboard's origin is not, since that vhost answers 404 on the webhook paths. GitHub only in this release.
@@ -1030,8 +1030,10 @@ organization:
   the owner);
 - `POST /cases/{id}/accept`,
   `POST /watcher/run` (the stack ticked; with none named, every watched
-  stack, all checked before any ticks), `POST /qa/images/build` and
-  `POST /repos/bootstrap`;
+  stack, all checked before any ticks), `POST /qa/images/build`,
+  `POST /repos/bootstrap` and `POST /repos/{repo}/-/areas/map` (checked
+  before the registration is read, so the answer is the same whether the
+  repository is registered or not);
 - the steps of setting up testing: `POST /repos/{repo}/-/setup/propose`,
   `POST /repos/{repo}/-/setup/proposal/{id}/apply` and `.../reject`,
   `POST /repos/{repo}/-/setup/skip-testing` and
@@ -1051,7 +1053,9 @@ organization:
 - changing an organization: `POST /orgs` (registering an owner, again
   or not), `PATCH /orgs/{owner}`, `PUT /orgs/{owner}/status`,
   `POST /orgs/{owner}/probe`, `/discover`,
-  `/webhook` and `/actions` (and each repository its `repos` names),
+  `/webhook` and `/actions` (and each repository its `repos` names, a
+  `failed` result under the name the body gives, before discovery's facts
+  are read, so the same whether or not discovery saw it),
   `POST /orgs/{owner}/needs/{id}/dismiss` and `/reopen`, and
   `PUT /standards/{owner}/{kind}`. A key covers an owner when one of its
   repositories is under it and it covers every repository registered under
@@ -1087,10 +1091,11 @@ The row's actor is `embry0:repo-allowlist`, with the key and its caller in
 `details`, and `GET /audit` never shows such a row to a key with an
 allowlist: an admin reads it, the refused key does not.
 
-The list is also a read boundary: a key reads only its repositories' work.
-These routes narrow to the key's repositories today, by one rule
-(`key_covers` in `embry0/api/repo_allowlist.py`); the remaining read routes
-follow:
+The list is also a read boundary: a key reads only its repositories' work
+and data. These routes narrow to the key's repositories today, by one rule
+(`key_covers` in `embry0/api/repo_allowlist.py`, applied to what is stored
+about repositories and owners by `embry0/api/repository_reads.py`); the
+issues, cases, traces, stats, audit and container log reads follow:
 
 - `GET /decisions`, `GET /proposals`, `GET /asks/due`, `GET /asks`,
   `GET /leads`, `GET /handoffs`, `GET /world` (its parties, quests, inbox,
@@ -1131,11 +1136,77 @@ follow:
   `GET /standards/{owner}` and `GET /standards/{owner}/{kind}/repos/{repo}`,
   and `job_id` and `job_status` in `GET /repos/{repo}/-/setup/proposal`,
   are null, and the checklist (`GET /repos/{repo}/-/readiness`) names
-  neither the setup job nor a pull request a job opened. The repository's
-  own setup and audit state in these views are covered by a later stage.
-  `GET /orgs/{owner}/context-audit` surveys a repository the key does not
-  cover as one never audited (no `newest_job`, and its `reason` as with
-  none).
+  neither the setup job nor a pull request a job opened.
+  Since the repository reads (below), such a view of a repository the key
+  does not cover reads as a repository nobody registered, and an owner's
+  context audits survey only the repositories the key covers.
+- Repositories. Another repository, registered or not, reads exactly as a
+  repository nobody registered, with nothing stored for it, status, headers
+  and body: `GET /repos/{repo}` and every read under it (its preferences,
+  variables and the merged ones, a variable's value, test setup, credential
+  bindings, history, checklist, test setup proposal, setup cost, slop-o-meter
+  and areas, and their old paths without `/-/`), its agent context
+  (`GET /config/context/repos/{repo}`), its standard's state
+  (`GET /standards/{owner}/{kind}/repos/{repo}`), its watched stack
+  (`GET /watcher/stacks/{owner}/{name}`) and its settings layer
+  (`GET /config/settings?repo=`, the effective values, the revisions and a
+  revision; and undoing one of its changes,
+  `POST /config/settings/revisions/{id}/undo`, answers as a change that
+  does not exist, naming no repository). So none of its setup state shows: a proposal's status, timing,
+  failure, notes, smoke results and proposed setup, a standard's audit score,
+  findings and exceptions. Nothing is read past what is stored for it:
+  `GET /repos/{repo}/-/credentials` resolves nothing (a key without a list
+  sees what an unregistered repository would fall back to, its owner's and
+  the deployment's credentials), `/-/setup/cost` names no account to pay,
+  and `/-/environment/detect` does not ask the forge.
+  `POST /repos/{repo}/-/qa-config/check`, which stores nothing, checks the
+  setup as for an unregistered repository: no variables of its own and no
+  Docker access. An old path that also names a registered repository the key
+  does not cover keeps its old meaning, as when nobody registered it, instead
+  of answering 409. `GET /credentials/resolve?repo=` another repository is
+  refused (403), whatever is stored, as `GET /run-with/keys?repo=` is. The
+  lists, `GET /repos`, `GET /setup/proposals`, `GET /config/context/repos`,
+  `GET /watcher/stacks` and `GET /config/settings/layers`, hold only the
+  repositories the key covers, narrowed in their query; `GET /hosts` and
+  `GET /hosts/{id}` link each host only to them; `GET /credentials/bindings`
+  has no bindings for another repository.
+- Owners. What belongs to an owner as a whole is read only by a key that
+  covers the owner as a whole, the rule that lets it change them: one of its
+  repositories is under the owner and it covers every repository registered
+  there. To any other key the owner reads as one nobody registered:
+  `GET /orgs/{owner}` and its repositories' facts, discovery runs, webhook,
+  needs and context audits answer 404 `no organization <owner>`, `GET /orgs`
+  leaves it out, its standard (`GET /standards/{owner}/{kind}`, its versions,
+  and the `standards` of `GET /standards/{owner}`) is not there, its settings
+  layer answers 404, `GET /credentials/bindings` has no `owner` bindings for
+  it, and its map of no repository is not there. Within an owner it covers
+  as a whole, a key reads only the repositories it covers, though discovery
+  reads every repository under the owner: the facts of a repository nobody
+  registered and its list leaves out are not listed; each need names only
+  its repositories, its title and what its action names counted again for
+  them (the webhook hosts it lists are only those their hooks deliver to,
+  kept per repository in `hosts_by_repo`), and a need naming none of them, or comparing the owner's record
+  with the whole listing (`count_gap`), is not there for it, and dismissing
+  or reopening one answers as a missing need (404); a discovery run's
+  counts (`repos_total`, `repos_seen` and its summary's) count only its
+  repositories, without the `count_gap`; the organization's `repo_count`
+  is its newest finished run's count of them, the forge probe's
+  `repo_count` is null, and its `sample_repo` is null unless it names one
+  the key covers.
+  `GET /standards/{owner}` lists the states of the repositories it covers
+  under any owner. A repository's own effective settings
+  (`GET /config/settings/effective?repo=`) still show what its
+  organization's layer sets for it.
+- Repository discovery. `GET /github/discoverable-repos`,
+  `GET /gitlab/discoverable-projects` and `GET /github/repos` list, to a key
+  with an allowlist, with the credentials that are its own only (as
+  `GET /credentials` lists them: one only its repositories use, or one it
+  created that nothing uses yet), never another repository's, an owner's or
+  the environment's token, and only the repositories its list covers. Its
+  listing is read for it alone, never from or into the cache every other
+  caller shares. With no credential of its own it is answered as a
+  deployment with none: `400 No GitHub token configured`, or GitLab's
+  `configured: false`.
 - A job's streams. `POST /jobs/{id}/events-token`,
   `POST /jobs/{id}/qa/log-stream-token` and `POST /qa/runs/{id}/events-token`
   mint, for another repository's job, a token like any other, as they do for
@@ -1178,7 +1249,7 @@ lists it nor acts on it.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
 every key minted before the allowlist existed is unrestricted. The
-knowledge maps list and answer only the maps of covered owners.
+knowledge maps list and answer only the maps a key reads (above).
 
 A restricted key changes nothing that belongs to the deployment rather than
 to a repository or an owner, as it writes no settings document's

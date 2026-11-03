@@ -16,9 +16,11 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from embry0.api.repo_allowlist import key_covers, restricted_key_name
+from embry0.api.v1.credentials import discovery_entries
 from embry0.execution.gitlab_client import GitLabClient
 from embry0.execution.tls import load_ca_pem
-from embry0.services.credentials.discovery import ForgeCredentialEntry, forge_credential_entries
+from embry0.services.credentials.discovery import ForgeCredentialEntry
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -73,12 +75,23 @@ async def list_discoverable_projects(
     request: Request,
     refresh: bool = Query(default=False),
 ) -> DiscoverableProjectsResponse:
-    """Projects the configured GitLab accounts can see, minus registered ones."""
+    """Projects the configured GitLab accounts can see, minus registered ones.
+
+    A key with a repository allowlist lists with its own credentials only,
+    never the environment's token nor a credential it may not use, and sees
+    only the projects its list covers; its listing is read for it alone,
+    never from or into the shared cache. With no GitLab credential of its own
+    it is answered as a deployment with none (``configured`` false).
+    """
     config = request.app.state.config
+    restricted = restricted_key_name(request) is not None
+    own = await discovery_entries(request, "gitlab") if restricted else []
     # The registry or the environment may hold the credential; an app built
     # without the lifespan has no resolver, so fall back to the env token.
     resolver = getattr(request.app.state, "credential_resolver", None)
-    if resolver is not None:
+    if restricted:
+        configured = bool(own)
+    elif resolver is not None:
         configured = await resolver.has_forge_credential("gitlab")
     else:
         configured = bool(getattr(config, "gitlab_token", "") or "")
@@ -87,28 +100,29 @@ async def list_discoverable_projects(
         # hides the GitLab option rather than showing an empty failing list.
         return DiscoverableProjectsResponse(projects=[], cached=False, configured=False, failed=[])
 
-    now = time.monotonic()
-    cached = not refresh and bool(_CACHE["by_path"]) and now - _CACHE["at"] < _CACHE_TTL_SECONDS
-    if not cached:
-        entries = await forge_credential_entries(
-            getattr(request.app.state, "credentials_repo", None),
-            getattr(request.app.state, "secrets_provider", None),
-            config,
-            "gitlab",
-        )
-        by_path, failed = await _projects_for_entries(entries, config)
-        _CACHE["at"] = time.monotonic()
-        _CACHE["by_path"] = by_path
-        _CACHE["failed"] = failed
+    if restricted:
+        by_path, failed = await _projects_for_entries(own, config)
+        listing: dict[str, Any] = {"by_path": by_path, "failed": failed}
+        cached = False
+    else:
+        now = time.monotonic()
+        cached = not refresh and bool(_CACHE["by_path"]) and now - _CACHE["at"] < _CACHE_TTL_SECONDS
+        if not cached:
+            entries = await discovery_entries(request, "gitlab")
+            by_path, failed = await _projects_for_entries(entries, config)
+            _CACHE["at"] = time.monotonic()
+            _CACHE["by_path"] = by_path
+            _CACHE["failed"] = failed
+        listing = _CACHE
 
     registered = {row["repo"] for row in await request.app.state.repos_repo.list_all(include_inactive=True)}
     projects: list[GitLabProject] = []
-    for path in sorted(_CACHE["by_path"]):
-        if path in registered:
+    for path in sorted(listing["by_path"]):
+        if path in registered or not key_covers(request, path):
             continue
-        entry, raw = _CACHE["by_path"][path]
+        entry, raw = listing["by_path"][path]
         projects.append(_to_project(raw, entry))
-    failed = list(_CACHE["failed"])
+    failed = list(listing["failed"])
 
     logger.info(
         "gitlab_projects_listed",

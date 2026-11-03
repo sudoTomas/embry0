@@ -1,5 +1,6 @@
 """Context config repository — global and per-repo context injection settings."""
 
+from collections.abc import Sequence
 from typing import Any
 
 import structlog
@@ -58,10 +59,13 @@ class ContextConfigRepository:
         row = await self._db.fetchrow("SELECT * FROM context_config WHERE id = $1", f"repo:{repo}")
         return dict(row) if row else None
 
-    async def list_repos(self) -> list[dict[str, Any]]:
-        """List all repos that have context configured."""
+    async def list_repos(self, *, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
+        """List all repos that have context configured. ``repos`` (lower-cased slugs) keeps only those; None keeps
+        every one."""
         rows = await self._db.fetch(
-            "SELECT repo, system_context, assistant_context FROM context_config WHERE scope = 'repo' ORDER BY repo",
+            "SELECT repo, system_context, assistant_context FROM context_config WHERE scope = 'repo' "
+            "AND ($1::text[] IS NULL OR lower(repo) = ANY($1::text[])) ORDER BY repo",
+            None if repos is None else list(repos),
         )
         return [dict(r) for r in rows]
 

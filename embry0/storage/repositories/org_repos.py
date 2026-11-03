@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from collections.abc import Sequence
 from typing import Any
 
 from embry0.services.org_discovery import RepoFacts
@@ -189,11 +190,17 @@ class OrgReposRepository:
         )
         return _fact(row) if row else None
 
-    async def list_for_owner(self, owner: str, *, include_archived: bool = True) -> list[dict[str, Any]]:
+    async def list_for_owner(
+        self, owner: str, *, include_archived: bool = True, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """The facts of each repository discovery saw under ``owner``. ``repos`` (lower-cased slugs) keeps only
+        those repositories'; None keeps every one."""
         rows = await self._db.fetch(
-            f"SELECT {_FACT_COLUMNS} FROM org_repo_facts WHERE owner = $1 AND ($2::boolean OR NOT archived) ORDER BY pushed_at DESC NULLS LAST, repo",
+            f"SELECT {_FACT_COLUMNS} FROM org_repo_facts WHERE owner = $1 AND ($2::boolean OR NOT archived) "
+            "AND ($3::text[] IS NULL OR lower(repo) = ANY($3::text[])) ORDER BY pushed_at DESC NULLS LAST, repo",
             owner.lower(),
             include_archived,
+            None if repos is None else list(repos),
         )
         return [_fact(r) for r in rows]
 

@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers
 from embry0.audit.helpers import emit_audit
 from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack, check_settings
 from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
@@ -75,13 +75,16 @@ async def save_stack(
 
 @router.get("/watcher/stacks")
 async def list_stacks(request: Request, enabled_only: bool = False) -> dict[str, Any]:
-    stacks = await _repo(request).list_all(enabled_only=enabled_only)
+    """Every watched stack; to a key with an allowlist, those of the repositories it covers."""
+    found = await _repo(request).list_all(enabled_only=enabled_only, repos=covered_slugs(request))
+    stacks = [stack for stack in found if key_covers(request, stack.repo)]
     return {"stacks": [s.to_dict() for s in stacks], "overridable_settings": sorted(SETTING_KEYS)}
 
 
 @router.get("/watcher/stacks/{owner}/{name}")
 async def get_stack(owner: str, name: str, request: Request) -> dict[str, Any]:
-    stack = await _repo(request).get(f"{owner}/{name}")
+    # A repository the caller's key does not cover has no stack for it (embry0.api.repository_reads).
+    stack = await _repo(request).get(f"{owner}/{name}") if key_covers(request, f"{owner}/{name}") else None
     if stack is None:
         raise HTTPException(status_code=404, detail=f"no watched stack {owner}/{name}")
     return stack.to_dict()

@@ -1,5 +1,6 @@
 """Watcher stacks API (#378): reading and editing what embry0 watches."""
 
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -24,8 +25,12 @@ class FakeStacksRepo:
         self.stacks: dict[str, WatcherStack] = {}
         self.deleted: list[str] = []
 
-    async def list_all(self, *, enabled_only: bool = False) -> list[WatcherStack]:
-        return [s for s in self.stacks.values() if s.enabled or not enabled_only]
+    async def list_all(self, *, enabled_only: bool = False, repos: Sequence[str] | None = None) -> list[WatcherStack]:
+        return [
+            s
+            for s in self.stacks.values()
+            if (s.enabled or not enabled_only) and (repos is None or s.repo.lower() in repos)
+        ]
 
     async def get(self, repo: str) -> WatcherStack | None:
         return self.stacks.get(repo)

@@ -17,7 +17,7 @@ Closing that case anywhere is the same answer as dismissing the need.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -79,6 +79,139 @@ def _action(kind: str, **params: Any) -> dict[str, Any]:
     return {"type": kind, "params": params}
 
 
+#: The kinds whose action names repositories, by the parameter that maps each one to what it lacks or holds.
+_PER_REPO_PARAMS = {"access_limited": "missing", "env_values_needed": "keys", "hook_origin_unknown": "hosts_by_repo"}
+#: The kinds whose action also carries one value gathered from several repositories at once: that parameter, and the
+#: per-repository map it is gathered from, so a narrowed need gathers it again from the repositories it keeps.
+_GATHERED_PARAMS = {"hook_origin_unknown": ("hosts", "hosts_by_repo")}
+
+
+def need_text(kind: str, repos: Sequence[str], action: Mapping[str, Any]) -> tuple[str, str]:
+    """A need's title and detail, from its kind, the repositories it covers and its action: the one place a need's
+    words are written, by :func:`derive_needs` and again by :func:`narrow_need`, so a count in them is always the
+    count of what the need names."""
+    count = len(repos)
+    params: Mapping[str, Any] = action.get("params") or {}
+    if kind == "hook_origin_unknown":
+        hosts = list(params.get("hosts") or [])
+        seen = f" Their hooks deliver to {', '.join(sorted(hosts))}." if hosts else ""
+        return (
+            "Name the webhook URL of this deployment",
+            f"{_n(count)} {'has' if count == 1 else 'have'} webhooks, and {WEBHOOK_URL_SETTING} is not set, so "
+            f"whether one of them points at this deployment (a webhooks tunnel hostname, for example) is "
+            f"unknown.{seen} Set {WEBHOOK_URL_SETTING} to the public URL forges deliver webhooks to, then run "
+            "discovery again.",
+        )
+    if kind == "not_registered":
+        return (
+            f"Register {_n(count)}",
+            "embry0 has no row for these repositories, so no intake, QA or watching can be switched on for them.",
+        )
+    if kind == "no_webhook":
+        return (
+            f"Add the webhook to {_n(count)}",
+            "Their webhooks are visible and none points at this deployment, so issues and pull requests there "
+            "reach embry0 only through polling.",
+        )
+    if kind == "onboarding_candidate":
+        return (
+            f"Onboard {_n(count)}",
+            "Each has something to run (a start script or a compose file) or a UI to serve, and no QA "
+            "configuration yet; the onboard pipeline can analyze it and write one.",
+        )
+    if kind == "no_qa_config":
+        return (
+            f"Write QA configuration for {_n(count)}",
+            "Registered, with no QA configuration and nothing discovered to boot or serve, so the configuration "
+            "has to be written by hand.",
+        )
+    if kind == "not_watched":
+        return (
+            f"Add a disabled watcher stack to {_n(count)}",
+            "Registered and runnable, but no watcher stack reads their logs, so nothing there is noticed until "
+            "someone reports it.",
+        )
+    if kind == "no_log_source":
+        return (
+            f"Find a log source for {_n(count)}",
+            "Registered and unwatched, and discovery found no start script or compose file, so there is no "
+            "obvious service whose logs a watcher stack could read.",
+        )
+    if kind == "no_deploy_marker":
+        return (
+            f"Name a deploy marker for {_n(count)}",
+            "Watched, but neither the stack nor the deployment names a deploy query, so a merged fix can never be "
+            "confirmed as healed.",
+        )
+    if kind == "access_limited":
+        missing: Mapping[str, Sequence[str]] = params.get("missing") or {}
+        parts = sorted({name for names in missing.values() for name in names})
+        return (
+            f"Widen the credential for {_n(count)}",
+            f"The credential cannot read their {' and '.join(parts)}, so discovery reports what it could not see "
+            "as unknown rather than absent.",
+        )
+    if kind == "env_values_needed":
+        keys: Mapping[str, Sequence[str]] = params.get("keys") or {}
+        total = sum(len(v) for v in keys.values())
+        return (
+            f"Provide {_n(total, 'environment value', 'environment values')} for {_n(count)}",
+            "Their env examples declare variables a sandbox would need, and embry0 holds no value for them yet, "
+            "neither for the repository nor globally.",
+        )
+    if kind == "repo_vanished":
+        return (
+            f"Deactivate {_n(count)} no longer listed",
+            "An earlier discovery run listed these repositories, the newest one did not, and a direct read of each "
+            "on the forge confirmed it gone: not found, or now under another name. embry0 still holds each as an "
+            "active registration. A repository is gone when it is deleted, transferred or renamed, and reads as "
+            "not found when the credential can no longer see it; an archived one stays listed. Nothing is "
+            "deactivated until a person says so: run the deactivate action, or dismiss this need when they are "
+            "only out of the credential's sight.",
+        )
+    if kind == "count_gap":
+        gap = dict(params)
+        return (
+            f"Account for {_n(abs(int(gap.get('gap') or 0)))} the counts disagree on",
+            f"The owner record says {gap.get('owner_says')} repositories and the listing returned "
+            f"{gap.get('listed')} ({gap.get('public', 0)} public, {gap.get('private', 0)} private, "
+            f"{gap.get('internal', 0)} internal; {gap.get('forks', 0)} forks, {gap.get('archived', 0)} archived), "
+            "and no reading of those counts explains the difference. A record larger than the listing is usually "
+            "repositories the credential cannot see.",
+        )
+    raise ValueError(f"unknown need kind {kind!r}")
+
+
+def narrow_need(need: Mapping[str, Any], keep: Callable[[str], bool]) -> dict[str, Any] | None:
+    """``need`` (as :func:`need_response` answers it) as a reader who reads only the repositories ``keep`` passes sees
+    it: its repositories, and what its action names of each, only those; a value its action gathers from several
+    repositories (the webhook hosts) gathered again from those alone; its title and detail written again for them
+    (:func:`need_text`). None when nothing of it is left to show: it names repositories and keeps none, or names
+    none, a count of the owner's whole listing (``count_gap``)."""
+    repos = [repo for repo in need["repos"] if keep(repo)]
+    if not repos:
+        return None
+    action = dict(need["action"])
+    params = dict(action.get("params") or {})
+    per_repo = _PER_REPO_PARAMS.get(need["kind"])
+    if per_repo is not None and isinstance(params.get(per_repo), Mapping):
+        params[per_repo] = {repo: value for repo, value in params[per_repo].items() if keep(repo)}
+    gathered = _GATHERED_PARAMS.get(need["kind"])
+    if gathered is not None:
+        name, source = gathered
+        by_repo = params.get(source)
+        # A need stored before the per-repository map existed cannot say whose each value is: it keeps none.
+        params[name] = (
+            sorted({value for values in by_repo.values() for value in values}) if isinstance(by_repo, Mapping) else []
+        )
+    action["params"] = params
+    try:
+        title, detail = need_text(need["kind"], repos, action)
+    except ValueError:  # a kind this release does not write: its stored words stand, its repositories narrowed
+        title, detail = need["title"], need["detail"]
+    return {**need, "repos": repos, "action": action, "title": title, "detail": detail}
+
+
 def derive_needs(
     owner: str,
     rows: list[dict[str, Any]],
@@ -103,7 +236,7 @@ def derive_needs(
     by_kind: dict[str, list[str]] = {kind: [] for kind in KINDS}
     env_missing: dict[str, list[str]] = {}
     limited: dict[str, list[str]] = {}
-    hosts: set[str] = set()
+    hosts: dict[str, list[str]] = {}
 
     for row in rows:
         if row.get("archived"):
@@ -118,7 +251,7 @@ def derive_needs(
         if facts.get("hooks_visible") is True:
             if facts.get("hook_present") is None:
                 by_kind["hook_origin_unknown"].append(repo)
-                hosts.update(str(h) for h in facts.get("hook_hosts") or [])
+                hosts[repo] = sorted({str(h) for h in facts.get("hook_hosts") or []})
             elif facts.get("hook_present") is False:
                 by_kind["no_webhook"].append(repo)
         if not facts.get("qa_config"):
@@ -160,122 +293,47 @@ def derive_needs(
 
     needs: list[Need] = []
 
-    def add(kind: str, title: str, detail: str, action: dict[str, Any], repos: list[str] | None = None) -> None:
+    def add(kind: str, action: dict[str, Any], repos: list[str] | None = None) -> None:
         chosen = tuple(sorted(by_kind[kind] if repos is None else repos))
+        title, detail = need_text(kind, chosen, action)
         needs.append(Need(kind=kind, title=title, detail=detail, repos=chosen, action=action))
 
     if by_kind["hook_origin_unknown"]:
-        count = len(by_kind["hook_origin_unknown"])
-        seen = f" Their hooks deliver to {', '.join(sorted(hosts))}." if hosts else ""
         add(
             "hook_origin_unknown",
-            "Name the webhook URL of this deployment",
-            f"{_n(count)} {'has' if count == 1 else 'have'} webhooks, and {WEBHOOK_URL_SETTING} is not set, so "
-            f"whether one of them points at this deployment (a webhooks tunnel hostname, for example) is "
-            f"unknown.{seen} Set {WEBHOOK_URL_SETTING} to the public URL forges deliver webhooks to, then run "
-            "discovery again.",
-            _action("setting", setting=WEBHOOK_URL_SETTING, hosts=sorted(hosts)),
+            _action(
+                "setting",
+                setting=WEBHOOK_URL_SETTING,
+                hosts=sorted({host for repo_hosts in hosts.values() for host in repo_hosts}),
+                hosts_by_repo=dict(sorted(hosts.items())),
+            ),
         )
     if by_kind["not_registered"]:
-        add(
-            "not_registered",
-            f"Register {_n(len(by_kind['not_registered']))}",
-            "embry0 has no row for these repositories, so no intake, QA or watching can be switched on for them.",
-            _action("register"),
-        )
+        add("not_registered", _action("register"))
     if by_kind["no_webhook"]:
-        add(
-            "no_webhook",
-            f"Add the webhook to {_n(len(by_kind['no_webhook']))}",
-            "Their webhooks are visible and none points at this deployment, so issues and pull requests there "
-            "reach embry0 only through polling.",
-            _action("hook"),
-        )
+        add("no_webhook", _action("hook"))
     if by_kind["onboarding_candidate"]:
-        add(
-            "onboarding_candidate",
-            f"Onboard {_n(len(by_kind['onboarding_candidate']))}",
-            "Each has something to run (a start script or a compose file) or a UI to serve, and no QA "
-            "configuration yet; the onboard pipeline can analyze it and write one.",
-            _action("onboard"),
-        )
+        add("onboarding_candidate", _action("onboard"))
     if by_kind["no_qa_config"]:
-        add(
-            "no_qa_config",
-            f"Write QA configuration for {_n(len(by_kind['no_qa_config']))}",
-            "Registered, with no QA configuration and nothing discovered to boot or serve, so the configuration "
-            "has to be written by hand.",
-            _action("setting", setting="qa_config"),
-        )
+        add("no_qa_config", _action("setting", setting="qa_config"))
     if by_kind["not_watched"]:
-        add(
-            "not_watched",
-            f"Add a disabled watcher stack to {_n(len(by_kind['not_watched']))}",
-            "Registered and runnable, but no watcher stack reads their logs, so nothing there is noticed until "
-            "someone reports it.",
-            _action("watch"),
-        )
+        add("not_watched", _action("watch"))
     if by_kind["no_log_source"]:
-        add(
-            "no_log_source",
-            f"Find a log source for {_n(len(by_kind['no_log_source']))}",
-            "Registered and unwatched, and discovery found no start script or compose file, so there is no "
-            "obvious service whose logs a watcher stack could read.",
-            _action("setting", setting="logql"),
-        )
+        add("no_log_source", _action("setting", setting="logql"))
     if by_kind["no_deploy_marker"]:
-        add(
-            "no_deploy_marker",
-            f"Name a deploy marker for {_n(len(by_kind['no_deploy_marker']))}",
-            "Watched, but neither the stack nor the deployment names a deploy query, so a merged fix can never be "
-            "confirmed as healed.",
-            _action("setting", setting="deploy_logql"),
-        )
+        add("no_deploy_marker", _action("setting", setting="deploy_logql"))
     if by_kind["access_limited"]:
-        parts = sorted({name for names in limited.values() for name in names})
-        add(
-            "access_limited",
-            f"Widen the credential for {_n(len(by_kind['access_limited']))}",
-            f"The credential cannot read their {' and '.join(parts)}, so discovery reports what it could not see "
-            "as unknown rather than absent.",
-            _action("credential", missing={repo: names for repo, names in sorted(limited.items())}),
-        )
+        add("access_limited", _action("credential", missing={repo: names for repo, names in sorted(limited.items())}))
     if by_kind["env_values_needed"]:
-        total = sum(len(v) for v in env_missing.values())
         add(
             "env_values_needed",
-            f"Provide {_n(total, 'environment value', 'environment values')} for "
-            f"{_n(len(by_kind['env_values_needed']))}",
-            "Their env examples declare variables a sandbox would need, and embry0 holds no value for them yet, "
-            "neither for the repository nor globally.",
             _action("setting", setting="environment", keys={repo: keys for repo, keys in sorted(env_missing.items())}),
         )
     if by_kind["repo_vanished"]:
-        add(
-            "repo_vanished",
-            f"Deactivate {_n(len(by_kind['repo_vanished']))} no longer listed",
-            "An earlier discovery run listed these repositories, the newest one did not, and a direct read of each "
-            "on the forge confirmed it gone: not found, or now under another name. embry0 still holds each as an "
-            "active registration. A repository is gone when it is deleted, transferred or renamed, and reads as "
-            "not found when the credential can no longer see it; an archived one stays listed. Nothing is "
-            "deactivated until a person says so: run the deactivate action, or dismiss this need when they are "
-            "only out of the credential's sight.",
-            _action("deactivate"),
-        )
+        add("repo_vanished", _action("deactivate"))
     gap = (summary or {}).get("count_gap")
     if isinstance(gap, dict) and isinstance(gap.get("gap"), int) and gap["gap"] and not gap.get("explained_by"):
-        size = abs(int(gap["gap"]))
-        add(
-            "count_gap",
-            f"Account for {_n(size)} the counts disagree on",
-            f"The owner record says {gap.get('owner_says')} repositories and the listing returned "
-            f"{gap.get('listed')} ({gap.get('public', 0)} public, {gap.get('private', 0)} private, "
-            f"{gap.get('internal', 0)} internal; {gap.get('forks', 0)} forks, {gap.get('archived', 0)} archived), "
-            "and no reading of those counts explains the difference. A record larger than the listing is usually "
-            "repositories the credential cannot see.",
-            _action("credential" if gap["gap"] > 0 else "none", **gap),
-            repos=[],
-        )
+        add("count_gap", _action("credential" if gap["gap"] > 0 else "none", **gap), repos=[])
     return needs
 
 
@@ -356,27 +414,32 @@ class OrgNeedsService:
             await self._sync_locked(owner)
         return await self.listing(owner)
 
-    async def read(self, owner: str) -> dict[str, Any]:
+    async def read(self, owner: str, *, keep: Callable[[str], bool] | None = None) -> dict[str, Any]:
         """The needs as stored, for a page or a tool. It writes nothing,
         except one catch-up per run: when the newest run finished and its
         needs were never synced (it finished before this code existed, or its
         sync failed), the read syncs it. A read that finds a sync under way
         in another process waits for it, at most READ_LOCK_WAIT_SECONDS, and
-        then answers with what is stored.
+        then answers with what is stored. With ``keep``, each need is narrowed to
+        the repositories it passes (:func:`narrow_need`) before the counts.
         """
         owner = owner.lower()
         if await self._behind(owner):
             async with self._needs.owner_lock(owner, timeout=READ_LOCK_WAIT_SECONDS) as held:
                 if held and await self._behind(owner):
                     await self._sync_locked(owner)
-        return await self.listing(owner)
+        return await self.listing(owner, keep=keep)
 
-    async def listing(self, owner: str) -> dict[str, Any]:
+    async def listing(self, owner: str, *, keep: Callable[[str], bool] | None = None) -> dict[str, Any]:
         """The stored needs and their counts per status; ``run_id`` is the run
         they were synced from. Read-only: an open need whose case a person
-        closed elsewhere reads as dismissed, and the next sync records it."""
+        closed elsewhere reads as dismissed, and the next sync records it.
+        With ``keep``, each need narrowed to the repositories it passes, and
+        one with none left out (:func:`narrow_need`), before the counts."""
         owner = owner.lower()
         needs = [need_response(r) for r in await self._needs.list_for_owner(owner)]
+        if keep is not None:
+            needs = [shown for need in needs if (shown := narrow_need(need, keep)) is not None]
         for need in needs:
             if need["status"] == "open" and await self._case_closed(need["case_id"]):
                 need["status"] = "dismissed"
@@ -469,6 +532,11 @@ class OrgNeedsService:
             return False
         case = await self._cases.get(case_id)
         return case is not None and case.get("stage") == "closed"
+
+    async def get(self, owner: str, need_id: str) -> dict[str, Any] | None:
+        """One of ``owner``'s needs as stored, or None."""
+        row = await self._owned(owner, need_id)
+        return need_response(row) if row is not None else None
 
     async def _owned(self, owner: str, need_id: str) -> dict[str, Any] | None:
         row = await self._needs.get(need_id)
