@@ -195,6 +195,20 @@ def _done_when(done_when: Any) -> Fact | None:
     return Fact("Done-when", f"{met}/{len(items)} met", "good" if met == len(items) else "warn")
 
 
+#: The verification gate's verdict (``job_verifications.gate_verdict``, ``GateVerdict`` in
+#: ``embry0/workflows/verification/gate.py``) as a card's ``Checks`` fact (#312). ``unstable`` found
+#: nothing new, but some tests fail without the change or only sometimes; ``error`` ran no
+#: comparison at all. Neither blocks the pull request, and both leave a person to check the tests.
+GATE_CHECKS: dict[str, tuple[str, str]] = {
+    "passed": ("verified", "good"),
+    "new_failures": ("verification failed", "bad"),
+    "unstable": ("no new failures, some unstable", "warn"),
+    "error": ("could not verify", "warn"),
+}
+#: The gate's verdicts that ran no test, so say nothing about the checks: no fact.
+GATE_NOT_RUN = frozenset({"not_configured", "no_matching_targets"})
+
+
 def _checks(ask: Mapping[str, Any], verification: Mapping[str, Any] | None) -> Fact | None:
     state = str(ask.get("checks_state") or "").lower()
     if state in ("success", "passed", "pass"):
@@ -203,12 +217,8 @@ def _checks(ask: Mapping[str, Any], verification: Mapping[str, Any] | None) -> F
         return Fact("Checks", "failing", "bad")
     if state == "pending":
         return Fact("Checks", "running", "warn")
-    verdict = str((verification or {}).get("verdict") or "").lower()
-    if verdict in ("pass", "passed", "approved", "verified"):
-        return Fact("Checks", "verified", "good")
-    if verdict in ("fail", "failed", "rejected"):
-        return Fact("Checks", "verification failed", "bad")
-    return None
+    gate = GATE_CHECKS.get(str((verification or {}).get("gate_verdict") or "").lower())
+    return Fact("Checks", *gate) if gate else None
 
 
 def _pr(pr: Mapping[str, Any] | None, pr_url: str | None) -> Fact | None:

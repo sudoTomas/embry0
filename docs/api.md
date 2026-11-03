@@ -402,6 +402,7 @@ Every choice waiting on a person, a quest on offer or a quest to review, in one 
   - `kind_label`: a quest on offer reads its kind's name; a quest to review reads `Quest done`, or `Job done` while the settings document turns the game layer off (`ui.game: false`).
   - `verdict`: a quest on offer reads its severity, else its kind's name. A quest to review reads `Ready to merge` (checks passing, the merge recommendation is merge, every done-when item met), `Checks failing`, `Needs a look`, `Failed`, `Recalled`, `Merged`, `Closed` or `Report ready`.
   - `facts`: at most six, in a fixed order, with no empty ones.
+  - A quest to review's `Checks` fact reads its merge approval's checks (`passing`, `failing`, `running`), else the job's [verification](verification.md) gate verdict: `verified` (`passed`, good), `verification failed` (`new_failures`, bad), `no new failures, some unstable` (`unstable`, warn) or `could not verify` (`error`, warn). A verification that ran no test (`not_configured`, `no_matching_targets`) adds no fact.
   - `actions`: on offer `start`, `decline`, `later`, `send_to`; to review, what the quest allows (`merge`, `send_back`, `reject`, `run_again`, `good`, `bad`, `dismiss`), then `send_to`.
   - `owner` keeps the quests on offer a GitHub login owns; `include_held=false` leaves out what a chat does not ask.
 - `GET /api/v1/decisions/{id}`: one decision by its id; 404 for an answered proposal or an unknown job.

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import get_args
 
-from embry0.services.decisions import MAX_FACTS, done, done_actions, offered, ordered
+from embry0.services.decisions import GATE_CHECKS, GATE_NOT_RUN, MAX_FACTS, done, done_actions, offered, ordered
+from embry0.workflows.verification.gate import GateVerdict
 
 T0 = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
 
@@ -115,6 +117,16 @@ def test_failing_checks_unmet_items_or_no_recommendation_need_a_look() -> None:
     assert done(job(done_when=unmet)).to_dict()["verdict"]["label"] == "Needs a look"
     assert {"label": "Done-when", "value": "1/2 met", "tone": "warn"} in done(job(done_when=unmet)).to_dict()["facts"]
     assert done(job(approval_ask={})).to_dict()["verdict"]["label"] == "Needs a look"
+
+
+def test_every_gate_verdict_is_either_a_checks_fact_or_one_that_ran_no_test() -> None:
+    """A word the gate gains is decided here, not dropped from every card without a word."""
+    words = set(get_args(GateVerdict))
+    assert set(GATE_CHECKS) | GATE_NOT_RUN == words, (
+        f"every gate verdict reads as a Checks fact or as not run: mapped {sorted(GATE_CHECKS)}, "
+        f"not run {sorted(GATE_NOT_RUN)}, the gate's {sorted(words)}"
+    )
+    assert not set(GATE_CHECKS) & GATE_NOT_RUN, "a verdict is a Checks fact or not run, never both"
 
 
 def test_a_sensitive_path_is_a_careful_fact() -> None:
