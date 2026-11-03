@@ -187,9 +187,6 @@ async def _start_review(request: Request, row: dict[str, Any], by: str, run_with
     executor = getattr(request.app.state, "issue_executor", None)
     if executor is None:
         raise HTTPException(status_code=503, detail="executor not initialized")
-    refusal = await executor.dispatch_refusal(actor=by)
-    if refusal is not None:
-        raise HTTPException(status_code=429, detail=refusal.public_message)
     task = lead_task(row)
     jobs = request.app.state.jobs_repo
     job_id: str = await jobs.create(
@@ -208,10 +205,18 @@ async def _start_review(request: Request, row: dict[str, Any], by: str, run_with
 
 
 async def start_lead(request: Request, lead_id: str, *, by: str, run_with: RunWith | None) -> str:
-    """Start the work an open lead offers and return the job's id; HTTPException as the routes answer."""
+    """Start the work an open lead offers and return the job's id; HTTPException as the routes answer.
+
+    The budget gate is asked first, as whoever answered, whatever the kind: a refused start creates nothing and
+    records no answer, so the lead stays open to answer again, rather than becoming a failed job behind a yes.
+    """
     row = await _repo(request).get(lead_id)
     if row is None or row.get("state") != "open":
         raise HTTPException(status_code=404, detail="no open lead with that id")
+    executor = getattr(request.app.state, "issue_executor", None)
+    refusal = await executor.dispatch_refusal(actor=by) if executor is not None else None
+    if refusal is not None:
+        raise HTTPException(status_code=429, detail=refusal.public_message)
     kind = str(row["kind"])
     if kind == "ticket":
         return await _start_ticket(request, row, by, run_with)

@@ -456,6 +456,23 @@ async def test_one_decision_reads_by_its_code(app: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_start_the_gate_refuses_says_why_and_the_ask_stays_open(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app.state.asks_repo.rows = [ask("a1", "offer:crack:1", "ada@example.com", state="sent")]
+
+    async def refused(*args: Any, **kwargs: Any) -> Any:
+        raise HTTPException(status_code=429, detail="dispatch refused: dispatch rate limit reached")
+
+    monkeypatch.setattr(proposals_api, "accept_proposal", refused)
+    response = await call(
+        app, "POST", "/api/v1/asks/answer", json={"code": "ABCD", "action": "start", "person": "ada@example.com"}
+    )
+    assert response.status_code == 429 and "rate limit" in response.json()["detail"]
+    assert app.state.asks_repo.rows[0]["state"] == "sent", "it can be answered again"
+
+
+@pytest.mark.asyncio
 async def test_a_press_may_not_name_an_embry0_actor(app: Any) -> None:
     """The person is who the answer is recorded as and who starts the work; an embry0 actor's name is not a person's."""
     resp = await call(
