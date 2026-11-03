@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection, Sequence
 from typing import Any
 
 import structlog
 
 from embry0.storage.database import DatabasePool
-from embry0.storage.repositories.jobs import StatusTransitionConflict
+from embry0.storage.repositories.jobs import StatusTransitionConflict, job_repository_sql
 from embry0.storage.schemas import IssueStatus
 
 logger = structlog.get_logger(__name__)
@@ -36,6 +37,36 @@ _ALLOWED_UPDATE_FIELDS = frozenset(
 )
 
 _ALLOWED_SORT_COLUMNS = frozenset({"created_at", "updated_at", "priority"})
+
+
+def _within(column: str, repos: str | None) -> str:
+    """`` AND`` ``column`` names one of the repositories in the ``text[]`` placeholder ``repos`` (lower-cased slugs;
+    NULL keeps every repository), or nothing when there is no placeholder."""
+    if repos is None:
+        return ""
+    return f" AND ({repos}::text[] IS NULL OR lower({column}) = ANY({repos}::text[]))"
+
+
+def _issue_columns(repos: str | None = None) -> str:
+    """What an issue row ``i`` is read with: the row, how many children it has (and how many are closed), how many
+    jobs, and the agent of its newest running job. ``repos``, a ``text[]`` placeholder of lower-cased slugs, counts
+    only the children and the jobs of those repositories (a job's by :func:`job_repository_sql`)."""
+    child, job = _within("c.repo", repos), _within(job_repository_sql("j"), repos)
+    return f"""
+                i.*,
+                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id{child}) AS children_count,
+                (SELECT COUNT(*) FROM issues c
+                 WHERE c.parent_issue_id = i.id AND c.status = 'closed'{child}) AS children_closed_count,
+                (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id{job}) AS jobs_count,
+                (SELECT t.agent_type FROM jobs j
+                 JOIN traces t ON t.job_id = j.job_id
+                 WHERE j.issue_id = i.id AND j.status = 'running'{job}
+                 ORDER BY t.created_at DESC LIMIT 1) AS active_agent"""
+
+
+def _repos_arg(repos: Sequence[str] | None) -> list[str] | None:
+    return None if repos is None else list(repos)
+
 
 # Valid issue status transitions: current_status -> set of allowed next statuses
 VALID_ISSUE_TRANSITIONS: dict[str, set[str]] = {
@@ -148,32 +179,35 @@ class IssuesRepository:
         logger.info("issue_created", issue_id=issue_id, title=title)
         return issue_id
 
-    async def get(self, issue_id: str | None) -> dict[str, Any] | None:
+    async def get(self, issue_id: str | None, *, repos: Sequence[str] | None = None) -> dict[str, Any] | None:
         """Fetch a single issue by ID, including children_count, jobs_count, and active_agent.
 
-        ``issue_id=None`` (issue-less API-submitted jobs) returns None.
+        ``issue_id=None`` (issue-less API-submitted jobs) returns None. ``repos`` (lower-cased slugs) answers None
+        for an issue of any other repository, or of none, and counts only those repositories' children and jobs;
+        None reads every issue and counts everything.
         """
         if issue_id is None:
             return None
         row = await self._db.fetchrow(
-            """
-            SELECT
-                i.*,
-                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
-                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id AND c.status = 'closed') AS children_closed_count,
-                (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
-                (SELECT t.agent_type FROM jobs j
-                 JOIN traces t ON t.job_id = j.job_id
-                 WHERE j.issue_id = i.id AND j.status = 'running'
-                 ORDER BY t.created_at DESC LIMIT 1) AS active_agent
+            f"""
+            SELECT {_issue_columns("$2")}
             FROM issues i
-            WHERE i.id = $1
+            WHERE i.id = $1 AND ($2::text[] IS NULL OR lower(i.repo) = ANY($2::text[]))
             """,
             issue_id,
+            _repos_arg(repos),
         )
         if row is None:
             return None
         return dict(row)
+
+    async def repositories_of(self, issue_ids: Collection[str]) -> dict[str, str | None]:
+        """The repository of each issue in ``issue_ids`` that exists, None for one with no repository. An issue that
+        does not exist is absent."""
+        if not issue_ids:
+            return {}
+        rows = await self._db.fetch("SELECT id, repo FROM issues WHERE id = ANY($1::text[])", sorted(set(issue_ids)))
+        return {str(r["id"]): (str(r["repo"]) if r["repo"] else None) for r in rows}
 
     async def list_all(
         self,
@@ -187,12 +221,23 @@ class IssuesRepository:
         order: str = "desc",
         limit: int = 50,
         offset: int = 0,
+        repos: Sequence[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        """List issues with optional filters. Returns (rows, total_count)."""
+        """List issues with optional filters. Returns (rows, total_count).
+
+        ``repos`` (lower-cased slugs) keeps only the issues of those repositories, before the page is cut and the
+        total counted, and counts only their children and jobs; None keeps every issue.
+        """
         conditions: list[str] = []
         args: list[Any] = []
         idx = 1
+        within: str | None = None
 
+        if repos is not None:
+            within = f"${idx}"
+            conditions.append(f"lower(i.repo) = ANY({within}::text[])")
+            args.append(list(repos))
+            idx += 1
         if status:
             conditions.append(f"i.status = ${idx}")
             args.append(status)
@@ -230,15 +275,7 @@ class IssuesRepository:
         args.extend([limit, offset])
         rows = await self._db.fetch(
             f"""
-            SELECT
-                i.*,
-                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
-                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id AND c.status = 'closed') AS children_closed_count,
-                (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
-                (SELECT t.agent_type FROM jobs j
-                 JOIN traces t ON t.job_id = j.job_id
-                 WHERE j.issue_id = i.id AND j.status = 'running'
-                 ORDER BY t.created_at DESC LIMIT 1) AS active_agent
+            SELECT {_issue_columns(within)}
             FROM issues i
             {where}
             ORDER BY i.{sort_col} {sort_dir}
@@ -423,24 +460,18 @@ class IssuesRepository:
             )
         return [dict(r) for r in rows]
 
-    async def get_children(self, parent_issue_id: str) -> list[dict[str, Any]]:
-        """Fetch all direct children of an issue."""
+    async def get_children(self, parent_issue_id: str, *, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
+        """Fetch all direct children of an issue. ``repos`` (lower-cased slugs) keeps only the children of those
+        repositories, and counts only their children and jobs; None keeps every child."""
         rows = await self._db.fetch(
-            """
-            SELECT
-                i.*,
-                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
-                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id AND c.status = 'closed') AS children_closed_count,
-                (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
-                (SELECT t.agent_type FROM jobs j
-                 JOIN traces t ON t.job_id = j.job_id
-                 WHERE j.issue_id = i.id AND j.status = 'running'
-                 ORDER BY t.created_at DESC LIMIT 1) AS active_agent
+            f"""
+            SELECT {_issue_columns("$2")}
             FROM issues i
-            WHERE i.parent_issue_id = $1
+            WHERE i.parent_issue_id = $1 AND ($2::text[] IS NULL OR lower(i.repo) = ANY($2::text[]))
             ORDER BY i.created_at ASC
             """,
             parent_issue_id,
+            _repos_arg(repos),
         )
         return [dict(r) for r in rows]
 
@@ -464,15 +495,7 @@ class IssuesRepository:
             params.append(repo)
         row = await self._db.fetchrow(
             f"""
-            SELECT
-                i.*,
-                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
-                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id AND c.status = 'closed') AS children_closed_count,
-                (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
-                (SELECT t.agent_type FROM jobs j
-                 JOIN traces t ON t.job_id = j.job_id
-                 WHERE j.issue_id = i.id AND j.status = 'running'
-                 ORDER BY t.created_at DESC LIMIT 1) AS active_agent
+            SELECT {_issue_columns()}
             FROM issues i
             WHERE {" AND ".join(conditions)}
             """,

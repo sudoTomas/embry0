@@ -32,12 +32,15 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import ensure_admin, request_actor
+from embry0.api.issue_allowlist import hidden_issue_ids
 from embry0.api.job_allowlist import hide_job_unless_covered
+from embry0.api.repo_allowlist import enforce_reach
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services.run_with import apply_run_with, models_with
+from embry0.storage.repositories.jobs import job_repository
 
 router = APIRouter()
 
@@ -155,6 +158,12 @@ async def evaluate_job(job_id: str, body: EvaluationBody, request: Request) -> d
     )
 
 
+#: Why sending a job back is refused when its pull request is in a repository the key does not cover.
+SEND_BACK_REACHES_BEYOND = (
+    "the job's pull request is in a repository the key does not cover, so its follow-up would start work there"
+)
+
+
 class SendBackBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -169,6 +178,11 @@ async def send_back(job_id: str, body: SendBackBody, request: Request) -> dict[s
     match = GITHUB_PR.match(str(job.get("pr_url") or ""))
     if match is None:
         raise HTTPException(status_code=409, detail="the job opened no GitHub pull request to send back")
+    # The follow-up runs in the pull request's repository: a key may not start work in one it does not cover, and is
+    # refused naming the job's repository only (the audit row names the other).
+    await enforce_reach(
+        request, str(job_repository(job)), [match["repo"]], action="send a job back", reason=SEND_BACK_REACHES_BEYOND
+    )
     run_with = await checked_run_with(request, body.run_with, match["repo"])
     dispatch = _state(request, "comment_dispatch")
     actor = request_actor(request)
@@ -212,6 +226,12 @@ async def run_again(job_id: str, request: Request, body: RunAgainBody | None = N
     The new job copies the repo, task, pipeline and its settings; a model or
     key chosen with Run with replaces the old choice. The job's evaluation
     records the new job as its follow-up, so it leaves the review inbox.
+
+    The new job is linked to the old one's issue, unless the caller's key does
+    not read that issue (``embry0.api.issue_allowlist``): a key's action never
+    links new work to an issue it does not read. The new job then has no issue
+    and no issue number, and an issue's workflow runs from the job's own task,
+    as an issue-less job's does. ``followup_issue_id`` says which.
     """
     _refuse_unfinished(await _job_or_404(request, job_id), "run it again")
     jobs = _state(request, "jobs_repo")
@@ -228,11 +248,15 @@ async def run_again(job_id: str, request: Request, body: RunAgainBody | None = N
     if run_with is not None and run_with.model and launch.get("runner") in ("qa", "onboard"):
         launch = {**launch, "agent_models": models_with(launch.get("agent_models"), run_with)}
     actor = request_actor(request)
+    issue_id, issue_number = job.get("issue_id"), job.get("issue_number")
+    if await hidden_issue_ids(request, [issue_id, launch.get("issue_id")]):
+        issue_id, issue_number = None, None
+        launch = _without_issue(launch, job)
     new_id = await jobs.create(
         repo=job.get("repo"),
         task=job.get("task"),
-        issue_number=job.get("issue_number"),
-        issue_id=job.get("issue_id"),
+        issue_number=issue_number,
+        issue_id=issue_id,
         pipeline_template=job.get("pipeline_template"),
         pipeline_config=pipeline_config,
         sandbox_profile=job.get("sandbox_profile"),
@@ -243,11 +267,28 @@ async def run_again(job_id: str, request: Request, body: RunAgainBody | None = N
     if carried:
         await jobs.update(new_id, **carried)
     _state(request, "issue_executor").run_again(
-        new_id, launch, issue_id=job.get("issue_id"), message=f"Started again from {job_id} by {actor}."
+        new_id, launch, issue_id=issue_id, message=f"Started again from {job_id} by {actor}."
     )
     evaluation = await _audit(request, "job.review.restarted", job_id, followup_job_id=new_id)
     _stats_changed(request)
-    return {**evaluation, "followup_job_id": new_id}
+    return {**evaluation, "followup_job_id": new_id, "followup_issue_id": issue_id}
+
+
+#: What a workflow's launch record carries from its issue: the issue itself, and the issue's answered questions
+#: (``additional_context``, which the answer flow gathers from every job on the issue).
+_FROM_THE_ISSUE = frozenset({"issue_id", "issue", "additional_context"})
+
+
+def _without_issue(launch: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    """``launch`` with nothing of its issue: an issue's workflow runs from the job's own task, which its issue's title
+    and body made (``IssueExecutor.execute``), as an issue-less job's does, with no tracker reference and none of the
+    issue's answered questions. Other runners name no issue."""
+    if launch.get("runner") != "workflow" or not launch.get("issue_id"):
+        return launch
+    title, _, body = str(job.get("task") or "").partition("\n\n")
+    issue = {"repo": job_repository(job), "title": title, "body": body, "tracker": None, "tracker_key": None}
+    kept = {key: value for key, value in launch.items() if key not in _FROM_THE_ISSUE}
+    return {**kept, "issue_id": None, "issue": issue, "additional_context": ""}
 
 
 @router.post("/jobs/{job_id}/dismiss")

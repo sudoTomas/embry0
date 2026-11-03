@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from embry0.api.deps import get_jobs_repo, request_actor, require_operator
+from embry0.api.issue_allowlist import hide_input_unless_covered, without_hidden_issues
 from embry0.api.job_allowlist import hide_job_unless_covered, job_hidden, stream_scope
 from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, refusal_detail
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
@@ -297,6 +298,8 @@ async def list_jobs(
         exclude_dispatched_by=excluded,
         repos=covered_slugs(request),
     )
+    # Nor does it name an issue the key does not read.
+    await without_hidden_issues(request, rows)
     items = [JobResponse(**r) for r in rows]
     if brief:
         for item in items:
@@ -359,6 +362,7 @@ async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(
     if not job:
         raise _job_not_found()
     await hide_job_unless_covered(request, job, _job_not_found())
+    await without_hidden_issues(request, [job])
     if job.get("account_wait") and job.get("status") != "paused":
         # Spent account waits: only a paused job waits; a cancelled one keeps the stale record.
         job["account_wait"] = None
@@ -391,7 +395,8 @@ async def get_job_inputs(job_id: str, request: Request) -> list[Any]:
     if await job_hidden(request, job_id):
         return []
     inputs_repo = request.app.state.inputs_repo
-    result: list[Any] = await inputs_repo.list_by_job(job_id)
+    # A question about an issue the key does not read is left out (embry0.api.issue_allowlist).
+    result: list[Any] = await inputs_repo.list_by_job(job_id, repos=covered_slugs(request))
     return result
 
 
@@ -570,12 +575,17 @@ async def answer_job_input_as(
     if not job:
         raise _job_not_found()
     # An answer resumes the job once no blocking question is left.
-    await hide_job_unless_covered(request, job, _job_not_found(), action="answer a question on a job")
+    action = "answer a question on a job"
+    await hide_job_unless_covered(request, job, _job_not_found(), action=action)
 
     inputs_repo = request.app.state.inputs_repo
     inp = await inputs_repo.get(input_id)
+    missing_input = HTTPException(status_code=404, detail="Input not found")
     if not inp or inp["job_id"] != job_id:
-        raise HTTPException(status_code=404, detail="Input not found")
+        raise missing_input
+    # A question about an issue the key does not read answers as one that does not exist; the answer would reach
+    # that issue (its tracker's comment, its status).
+    await hide_input_unless_covered(request, inp, missing_input, action=action)
     # RAV-1059: auto_answered rows stay answerable — a human answer overrides
     # the orchestrator's auto-answer post-hoc (the state.py contract). The
     # override lands in the accumulated Q&A context the agent sees on its

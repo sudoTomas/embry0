@@ -4,8 +4,8 @@ A key minted with ``allowed_repos`` may start, continue, stop or delete work
 only on those repositories; a key without one is unaffected. Each entry point is driven
 through the real app (``create_app``) with three callers: an unrestricted
 key, a key restricted to ``acme/widgets``, and the master key. A route that
-acts on one job answers such a key, on another repository's job, as on a job
-that does not exist; the refusal is logged all the same.
+acts on one job, or one issue, answers such a key, on another repository's,
+as on one that does not exist; the refusal is logged all the same.
 """
 
 from __future__ import annotations
@@ -99,6 +99,14 @@ def _issue_row(issue_id: str) -> dict[str, Any] | None:
     }
 
 
+def _read_issue(issue_id: str, *, repos: list[str] | None = None) -> dict[str, Any] | None:
+    """IssuesRepository.get: with ``repos``, an issue of another repository is not found."""
+    row = _issue_row(issue_id)
+    if row is None or (repos is not None and str(row["repo"]).lower() not in repos):
+        return None
+    return row
+
+
 @pytest.fixture
 def app() -> Any:
     from embry0.api.app import create_app
@@ -122,6 +130,9 @@ def app() -> Any:
         side_effect=lambda job_id: JOBS.get(job_id) or ({"job_id": job_id} if job_id == "job-new" else None)
     )
     jobs.create = AsyncMock(return_value="job-new")
+    jobs.repositories_of = AsyncMock(
+        side_effect=lambda job_ids: {j: JOBS[j]["repo"] for j in job_ids if j in JOBS},
+    )
     state.jobs_repo = jobs
 
     executor = MagicMock()
@@ -134,7 +145,10 @@ def app() -> Any:
     jobs.list_all = AsyncMock(return_value=([], 0))
 
     issues = MagicMock()
-    issues.get = AsyncMock(side_effect=lambda issue_id: _issue_row(issue_id) or _issue_row("iss-allowed"))
+    issues.get = AsyncMock(side_effect=_read_issue)
+    issues.repositories_of = AsyncMock(
+        side_effect=lambda issue_ids: {i: ISSUES[i]["repo"] for i in issue_ids if i in ISSUES},
+    )
     issues.create = AsyncMock(return_value="iss-allowed")
     issues.update = AsyncMock()
     issues.update_parent_status = AsyncMock()
@@ -227,12 +241,6 @@ ENTRY_POINTS: list[tuple[str, str, str, Any, Any]] = [
         {"title": "t", "repo": ALLOWED, "auto_triage": True},
         {"title": "t", "repo": OTHER, "auto_triage": True},
     ),
-    ("update an issue", "PUT", "/api/v1/issues/{issue}", {"title": "new"}, {"title": "new"}),
-    ("triage an issue", "POST", "/api/v1/issues/{issue}/triage", None, None),
-    ("sync an issue", "POST", "/api/v1/issues/{issue}/sync", None, None),
-    ("answer on an issue", "POST", "/api/v1/issues/{issue}/inputs/{input}/answer", _ANSWER, _ANSWER),
-    # Stopping or destroying a repository's work is work on that repository.
-    ("delete an issue", "DELETE", "/api/v1/issues/{issue}", None, None),
     ("accept a finding", "POST", "/api/v1/cases/{case}/accept", {}, {}),
     ("run the watcher", "POST", "/api/v1/watcher/run?stack={stack}", None, None),
     ("build a QA image", "POST", "/api/v1/qa/images/build", {"repo": ALLOWED}, {"repo": OTHER}),
@@ -252,6 +260,17 @@ JOB_ACTIONS: list[tuple[str, str, str, Any, Any]] = [
     ),
     ("answer on a job", "POST", "/api/v1/jobs/{job}/inputs/{input}/answer", _ANSWER, _ANSWER),
     ("cancel a job", "POST", "/api/v1/jobs/{job}/cancel", None, None),
+]
+
+# The routes that act on one issue: to a key whose list does not cover the issue's repository, the issue answers as one
+# that does not exist (embry0.api.issue_allowlist), and the refusal is logged and audited all the same.
+ISSUE_ACTIONS: list[tuple[str, str, str, Any, Any]] = [
+    ("update an issue", "PUT", "/api/v1/issues/{issue}", {"title": "new"}, {"title": "new"}),
+    ("triage an issue", "POST", "/api/v1/issues/{issue}/triage", None, None),
+    ("sync an issue", "POST", "/api/v1/issues/{issue}/sync", None, None),
+    ("answer on an issue", "POST", "/api/v1/issues/{issue}/inputs/{input}/answer", _ANSWER, _ANSWER),
+    # Stopping or destroying a repository's work is work on that repository.
+    ("delete an issue", "DELETE", "/api/v1/issues/{issue}", None, None),
 ]
 
 # A merge approval is a job's: another repository's answers as one that does not exist, decided in the service where
@@ -294,8 +313,8 @@ def test_a_restricted_key_is_refused_on_another_repository(app, label, method, t
     _assert_refusal_logged_and_nothing_done(app, label, logs)
 
 
-@pytest.mark.parametrize(("label", "method", "template", "allowed_body", "other_body"), JOB_ACTIONS)
-def test_a_restricted_key_acting_on_another_repository_s_job_gets_a_missing_job_s_answer(
+@pytest.mark.parametrize(("label", "method", "template", "allowed_body", "other_body"), JOB_ACTIONS + ISSUE_ACTIONS)
+def test_a_restricted_key_acting_on_another_repository_s_item_gets_a_missing_item_s_answer(
     app, label, method, template, allowed_body, other_body
 ):
     with capture_logs() as logs:
@@ -303,7 +322,7 @@ def test_a_restricted_key_acting_on_another_repository_s_job_gets_a_missing_job_
     missing = _call(app, LIMITED_TOKEN, method, template, other_body, "missing")
     answers = [(r.status_code, r.headers.get("content-type"), r.content) for r in (response, missing)]
     assert answers[0] == answers[1] and response.status_code == 404, (
-        f"{label}: a key limited to {ALLOWED} is answered on {OTHER}'s job as on a missing one: {answers}"
+        f"{label}: a key limited to {ALLOWED} is answered on {OTHER}'s item as on a missing one: {answers}"
     )
     _assert_refusal_logged_and_nothing_done(app, label, logs)
 
@@ -326,7 +345,8 @@ def _assert_refusal_logged_and_nothing_done(app: Any, label: str, logs: list[dic
 
 
 @pytest.mark.parametrize(
-    ("label", "method", "template", "allowed_body", "other_body"), ENTRY_POINTS + JOB_ACTIONS + APPROVAL_ACTIONS
+    ("label", "method", "template", "allowed_body", "other_body"),
+    ENTRY_POINTS + JOB_ACTIONS + ISSUE_ACTIONS + APPROVAL_ACTIONS,
 )
 def test_a_restricted_key_reaches_its_listed_repository(app, label, method, template, allowed_body, other_body):
     response = _call(app, LIMITED_TOKEN, method, template, allowed_body, "allowed")
@@ -337,7 +357,8 @@ def test_a_restricted_key_reaches_its_listed_repository(app, label, method, temp
 
 @pytest.mark.parametrize("token", [OPEN_TOKEN, "master-key"], ids=["unrestricted-key", "master-key"])
 @pytest.mark.parametrize(
-    ("label", "method", "template", "allowed_body", "other_body"), ENTRY_POINTS + JOB_ACTIONS + APPROVAL_ACTIONS
+    ("label", "method", "template", "allowed_body", "other_body"),
+    ENTRY_POINTS + JOB_ACTIONS + ISSUE_ACTIONS + APPROVAL_ACTIONS,
 )
 def test_an_unrestricted_caller_is_unaffected(app, token, label, method, template, allowed_body, other_body):
     response = _call(app, token, method, template, other_body, "other")
@@ -360,9 +381,13 @@ def test_a_restricted_key_cannot_move_its_issue_to_another_repository(app) -> No
 def test_a_restricted_key_cannot_delete_its_issue_with_a_child_in_another_repository(app) -> None:
     child = {**_issue_row("iss-other"), "id": "iss-child", "parent_issue_id": "iss-allowed"}
     app.state.issues_repo.get_children = AsyncMock(return_value=[child])
-    response = _call(app, LIMITED_TOKEN, "DELETE", "/api/v1/issues/{issue}", None, "allowed")
+    with capture_logs() as logs:
+        response = _call(app, LIMITED_TOKEN, "DELETE", "/api/v1/issues/{issue}", None, "allowed")
     assert _refused(response), f"a child issue on {OTHER} was cancelled through its parent: {response.text}"
+    assert OTHER not in response.text, f"the refusal names the issue's own repository, not the child's: {response.text}"
+    assert [e["repo"] for e in logs if e["event"] == "api_key_repo_refused"] == [OTHER], "the log names the child's"
     assert not app.state.issues_repo.update.await_count, "an issue was cancelled anyway"
+    assert not app.state.issue_executor.cancel_job.await_count, "a job was cancelled anyway"
 
 
 def test_a_restricted_key_runs_the_only_watcher_only_when_it_is_listed(app) -> None:

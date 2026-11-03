@@ -29,12 +29,14 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from embry0.api.issue_allowlist import hidden_issue_ids, hide_input_unless_covered
 from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers, restricted_key_name
 from embry0.api.schemas.person_name import PersonName
 from embry0.api.session import TIER_ADMIN, TIER_OPERATOR
 from embry0.services.asks import AskPolicy, ask_settings, asked_order, release, working
 from embry0.settings.sections.asks import ASKS, AsksSettings
 from embry0.settings.store import Scoped, SettingsStore
+from embry0.storage.repositories.jobs import job_repository
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -511,16 +513,19 @@ async def _their_waiting_jobs(request: Request, who: str) -> dict[str, list[dict
         return {"questions": [], "paused": []}
     questions: list[dict[str, Any]] = []
     paused: list[dict[str, Any]] = []
-    for job in await jobs.started_and_waiting(who):
-        if not listed_to(request, job):
-            continue
-        about = {"job_id": job["job_id"], "repo": job.get("repo"), "title": job.get("title")}
+    started = [job for job in await jobs.started_and_waiting(who) if listed_to(request, job)]
+    # A job the key reads names no issue it does not read (embry0.api.issue_allowlist): such an issue's title is not
+    # the job's, and its questions about such an issue are left out.
+    hidden = await hidden_issue_ids(request, (job.get("issue_id") for job in started))
+    for job in started:
+        title = job.get("task_title") if job.get("issue_id") in hidden else job.get("title")
+        about = {"job_id": job["job_id"], "repo": job.get("repo"), "title": title}
         if job["status"] == "paused":
             paused.append(about)
         elif inputs is not None:
             questions += [
                 {**about, "input_id": i["id"], "question": i["question"]}
-                for i in await inputs.list_by_job(job["job_id"])
+                for i in await inputs.list_by_job(job["job_id"], repos=covered_slugs(request))
                 if i.get("status") == "pending" and i.get("importance") == "blocking"
             ]
     return {"questions": questions, "paused": paused}
@@ -537,7 +542,8 @@ async def _their_job(request: Request, job_id: str, person: str, *, action: str)
     if job is None:
         raise none
     if restricted_key_name(request) is not None:
-        await hide_unless_covered(request, job.get("repo"), none, action=action)
+        # The job's repository: its repo, else its git context's (a job posted with a context alone stores none).
+        await hide_unless_covered(request, job_repository(job), none, action=action)
     users = getattr(request.app.state, "users_repo", None)
     me = await users.get_by_email(person) if users is not None else None
     started_by = person_who_started(job)
@@ -569,8 +575,11 @@ async def answer_job_question(job_id: str, body: JobAnswerBody, request: Request
     await _their_job(request, job_id, body.person, action="answer a question on a job")
     inputs = _repo(request, "inputs_repo")
     question = await inputs.get(body.input_id)
+    none = HTTPException(status_code=404, detail="that job has no such question")
     if question is None or question.get("job_id") != job_id:
-        raise HTTPException(status_code=404, detail="that job has no such question")
+        raise none
+    # A question about an issue the key does not read answers as one the job does not have (embry0.api.issue_allowlist).
+    await hide_input_unless_covered(request, question, none, action="answer a question on a job")
     if question.get("issue_id"):
         answered = await answer_issue_input_as(
             str(question["issue_id"]),

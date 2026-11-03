@@ -617,6 +617,13 @@ class IssueExecutor:
             run_slot=False,
         )
 
+    async def waiting_job(self, issue_id: str) -> dict[str, Any] | None:
+        """The job :meth:`resume_or_execute` resumes for ``issue_id``: its newest job awaiting input, None when none
+        is (then it starts a new one)."""
+        jobs_list, _ = await self._jobs.list_all(issue_id=issue_id, limit=10, offset=0)
+        # list_all orders by created_at DESC: the first is the newest.
+        return next((dict(j) for j in jobs_list if j["status"] == "awaiting_input"), None)
+
     async def resume_or_execute(
         self, issue_id: str, additional_context: str = "", dispatched_by: str | None = None
     ) -> None:
@@ -628,12 +635,9 @@ class IssueExecutor:
         if dispatch fails; ``additional_context`` (the accumulated Q&A) is
         threaded into the fresh run so triage sees prior answers.
         """
-        jobs_list, _ = await self._jobs.list_all(issue_id=issue_id, limit=10, offset=0)
-        awaiting_jobs = [j for j in jobs_list if j["status"] == "awaiting_input"]
-
-        if awaiting_jobs:
-            # list_all orders by created_at DESC — [0] is the latest.
-            job_id = awaiting_jobs[0]["job_id"]
+        waiting = await self.waiting_job(issue_id)
+        if waiting is not None:
+            job_id = waiting["job_id"]
             self.schedule_resume(issue_id, job_id, additional_context, kind="resume_via_answer")
             logger.info("pipeline_resumed", issue_id=issue_id, job_id=job_id)
             return

@@ -154,6 +154,8 @@ READ_ROUTES: dict[str, str] = {
     "/api/v1/merge-approvals/{approval_id}": "reads another repository's approval as a missing one, since #318",
     "/api/v1/watcher/runs": "lists the ticks of the stacks the key covers, since #318",
     "/api/v1/qa/repos": "lists the QA runs of the repositories the key covers, since #318",
+    "/api/v1/issues": "lists the issues of the repositories the key covers, narrowed in the query (the issue reads)",
+    "/api/v1/issues/{issue_id}": "reads another repository's issue as a missing one, 404 (the issue reads)",
     **{
         path: "reads another repository's job, or its QA runs, as missing, since #318"
         for path in (
@@ -180,8 +182,6 @@ READ_ROUTES: dict[str, str] = {
 
 #: GET routes that show another repository's data, each narrowed in a stage of its own, and which.
 ELSEWHERE: dict[str, str] = {
-    "/api/v1/issues": "the issue reads",
-    "/api/v1/issues/{issue_id}": "the issue reads",
     "/api/v1/cases": "the case reads",
     "/api/v1/cases/{case_id}": "the case reads",
     "/api/v1/traces": "the trace reads",
