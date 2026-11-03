@@ -15,6 +15,7 @@ repository: it is also the lock against two setup runs at once.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Literal
 
@@ -99,10 +100,13 @@ class RepoSetupProposalsRepository:
         )
         return dict(row) if row else None
 
-    async def list_pending(self) -> list[dict[str, Any]]:
-        """Every proposal waiting for a person, newest first."""
+    async def list_pending(self, *, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
+        """Every proposal waiting for a person, newest first. ``repos`` (lower-cased slugs) keeps only those
+        repositories'; None keeps every one."""
         rows = await self._db.fetch(
-            f"SELECT {_COLUMNS} FROM repo_setup_proposals WHERE status = 'pending' ORDER BY created_at DESC"
+            f"SELECT {_COLUMNS} FROM repo_setup_proposals WHERE status = 'pending' "
+            "AND ($1::text[] IS NULL OR lower(repo) = ANY($1::text[])) ORDER BY created_at DESC",
+            None if repos is None else list(repos),
         )
         return [dict(r) for r in rows]
 

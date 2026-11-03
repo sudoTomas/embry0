@@ -26,7 +26,7 @@ from pydantic import ValidationError
 
 from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers
 from embry0.api.schemas.repo_preferences import RepoPreferencesUpdateRequest
 from embry0.audit.helpers import emit_audit
 from embry0.storage.repositories.repo_config_revisions import RevisionSurface
@@ -114,10 +114,12 @@ async def _current(request: Request, repo: str, surface: RevisionSurface) -> dic
 @router.get("/repos/{full_repo:repo}/-/history")
 async def get_history(full_repo: str, request: Request, limit: int = Query(50, ge=1, le=200)) -> dict[str, Any]:
     revisions = request.app.state.repo_config_revisions_repo
-    rows = await revisions.list_for_repo(full_repo, limit=limit)
+    # A repository the caller's key does not cover has nothing stored for it (embry0.api.repository_reads).
+    reads = key_covers(request, full_repo)
+    rows = await revisions.list_for_repo(full_repo, limit=limit) if reads else []
     current = {
-        "qa_config": await _current(request, full_repo, "qa_config"),
-        "preferences": await _current(request, full_repo, "preferences"),
+        "qa_config": await _current(request, full_repo, "qa_config") if reads else None,
+        "preferences": await _current(request, full_repo, "preferences") if reads else None,
     }
     shown = await actor_shown(request)
     # Newest first, so the first row of a surface is that surface's newest change.

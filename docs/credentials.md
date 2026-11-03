@@ -155,8 +155,8 @@ All under `/api/v1`. Reads need any authenticated principal; every mutation need
 | `POST /credentials/{id}/rotate` | admin | new `secret`; sets `rotated_at`, clears `decryption_failed` |
 | `POST /credentials/{id}/verify` | admin | forge tokens only: asks the forge `GET /user` and stores `verified_login` |
 | `DELETE /credentials/{id}` | admin | 409 while bindings reference it |
-| `GET /credentials/resolve?repo=&role=forge` | read | dry run: which credential a job on `repo` would get, and why |
-| `GET /credentials/bindings?scope_kind=&scope_value=` | read | the bindings of one owner, host or global scope |
+| `GET /credentials/resolve?repo=&role=forge` | read | dry run: which credential a job on `repo` would get, and why; a key with a repository allowlist only for a repository on its list |
+| `GET /credentials/bindings?scope_kind=&scope_value=` | read | the bindings of one owner, host or global scope; to a key with a repository allowlist, none of a repository off its list or an owner it does not cover as a whole |
 | `PUT /credentials/bindings` | admin | replace the bindings of one owner, host or global scope |
 | `POST /credentials/import-env` | admin | the importer above |
 | `POST /credentials/xai/device-login` | admin | body `{label}`. Starts an xAI device-code login. Returns `login_id`, `user_code`, `verification_uri_complete`, `interval`, `expires_at`. Does not return `device_code` |
@@ -199,11 +199,11 @@ The dry run for `acme/gadgets`, which has no repo binding but whose owner is bou
 
 On a deployment that has not imported yet, the same call ends in `"source": "env"`, `"id": null`, a label naming the env key, and a trace step such as `env:GITHUB_TOKEN__ACME`. A skipped credential shows as `owner:github:acme -> acme-bot skipped (disabled)`. The call answers 404 for an unregistered repo or when nothing resolves, and 409 when a pinned credential is unavailable.
 
-**Discovery.** `GET /api/v1/github/discoverable-repos` and `GET /api/v1/gitlab/discoverable-projects` fan out across every registry credential for that forge that is not `disabled`, then the env tokens (`GITHUB_TOKEN` / `GITHUB_TOKEN__<OWNER>`, or the GitLab pair), and subtract repos already registered. Owner-scoped and repo-scoped credentials are included. The same token stored in the registry and the environment is listed once, as the registry credential. When two different tokens can both see a path, the first one wins: registry accounts are walked in label order, then the env tokens.
+**Discovery.** `GET /api/v1/github/discoverable-repos` and `GET /api/v1/gitlab/discoverable-projects` fan out across every registry credential for that forge that is not `disabled`, then the env tokens (`GITHUB_TOKEN` / `GITHUB_TOKEN__<OWNER>`, or the GitLab pair), and subtract repos already registered. Owner-scoped and repo-scoped credentials are included. The same token stored in the registry and the environment is listed once, as the registry credential. When two different tokens can both see a path, the first one wins: registry accounts are walked in label order, then the env tokens. An API key with a [repository allowlist](api.md#repository-allowlist) is the exception: it lists with the registry credentials that are its own (those `GET /credentials` lists to it) and never the env tokens, sees only the repositories its list covers, and its listing bypasses the shared cache both ways; with no credential of its own it gets the answer of a deployment with none.
 
 A row has `credential_id` and `credential_label`. `credential_id` is null for an env token. On GitHub, `token_env_key` is that env key for an env row and empty for a registry row. GitLab rows have no `token_env_key`: an env row puts the env key in `credential_label`. `failed` on the response is the labels whose listing raised, never the token. `?refresh=true` bypasses the cache. The field list is in [api.md](api.md#discovery).
 
-`GET /api/v1/github/repos` is a different list, for the create-issue dropdown, and still walks env tokens only.
+`GET /api/v1/github/repos` is a different list, for the create-issue dropdown, and still walks env tokens only; to a key with a repository allowlist, its own registry credentials instead, and its own repositories.
 
 ## xAI device-code login
 

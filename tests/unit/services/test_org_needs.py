@@ -15,6 +15,7 @@ from embry0.services.org_needs import (
     Need,
     OrgNeedsService,
     derive_needs,
+    narrow_need,
     repos_signature,
 )
 
@@ -125,7 +126,11 @@ def test_unknown_hook_origin_is_one_need_and_never_a_missing_webhook() -> None:
     assert need.repos == ("acme/api", "acme/web")
     assert need.action == {
         "type": "setting",
-        "params": {"setting": "WEBHOOK_PUBLIC_URL", "hosts": ["ci.example.org", "hooks.example.net"]},
+        "params": {
+            "setting": "WEBHOOK_PUBLIC_URL",
+            "hosts": ["ci.example.org", "hooks.example.net"],
+            "hosts_by_repo": {"acme/api": ["hooks.example.net"], "acme/web": ["ci.example.org", "hooks.example.net"]},
+        },
     }
     assert "deliver to ci.example.org, hooks.example.net" in need.detail
     assert need.detail.startswith("2 repositories have webhooks, and WEBHOOK_PUBLIC_URL is not set")
@@ -720,3 +725,32 @@ async def test_a_case_closed_elsewhere_reads_as_dismissed_without_a_write() -> N
     reopened = await service.reopen("acme", need["id"])
     assert reopened is not None and reopened["status"] == "open" and reopened["case_id"] != need["case_id"]
     assert cases.cases[reopened["case_id"]]["parent_case_id"] == need["case_id"]
+
+
+def test_a_narrowed_hook_need_names_only_the_hosts_of_the_repositories_it_keeps() -> None:
+    """The webhook hosts are gathered from every repository with hooks; a need narrowed to some of them gathers them
+    again from those alone, and writes its detail for them. One stored before the hosts were kept per repository
+    cannot say whose each host is, so a narrowed copy names none. Unnarrowed, the wording is the derivation's."""
+    maintained = {"registered": True, "qa_config": True, "watcher_stack": True, "deploy_marker": True}
+    rows = [
+        _row("acme/web", **SEEN, **maintained, hook_present=None, hook_count=1, hook_hosts=["web.test"]),
+        _row("acme/other", **SEEN, **maintained, hook_present=None, hook_count=1, hook_hosts=["hidden.test"]),
+    ]
+    need = _by_kind(derive_needs("acme", rows))["hook_origin_unknown"]
+    shown = {"id": "need-1", "kind": need.kind, "title": need.title, "detail": need.detail, "repos": list(need.repos)}
+    stored = {**shown, "action": need.action, "status": "open", "case_id": None}
+    narrowed = narrow_need(stored, lambda repo: repo == "acme/web")
+    assert narrowed is not None and "hidden.test" not in str(narrowed), f"no host of acme/other is named: {narrowed}"
+    assert narrowed["action"]["params"]["hosts"] == ["web.test"], narrowed["action"]
+    assert narrowed["detail"].startswith("1 repository has webhooks") and "deliver to web.test." in narrowed["detail"]
+    everything = narrow_need(stored, lambda _repo: True)
+    assert everything is not None and (everything["title"], everything["detail"]) == (need.title, need.detail), (
+        "narrowed to every repository, the wording is the derivation's"
+    )
+    old = {
+        **stored,
+        "action": {"type": "setting", "params": {"setting": "WEBHOOK_PUBLIC_URL", "hosts": ["hidden.test"]}},
+    }
+    from_before = narrow_need(old, lambda repo: repo == "acme/web")
+    assert from_before is not None and from_before["action"]["params"]["hosts"] == [], from_before
+    assert "hidden.test" not in str(from_before), from_before

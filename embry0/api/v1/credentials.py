@@ -38,6 +38,7 @@ from embry0.api.repo_allowlist import (
     record_refusal,
     restricted_key_name,
 )
+from embry0.api.repository_reads import owner_hidden
 from embry0.api.schemas.credentials import (
     BindingsSet,
     CredentialCreate,
@@ -55,6 +56,7 @@ from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.safety.redaction import register_known_secrets
+from embry0.services.credentials.discovery import ForgeCredentialEntry, forge_credential_entries
 from embry0.services.credentials.import_env import import_from_env
 from embry0.services.credentials.preview import masked_preview
 from embry0.services.credentials.providers import base_url_host, default_host, llm_providers
@@ -279,6 +281,9 @@ async def resolve_credential(
 ) -> ResolveOut:
     st = _state(request)
     repo = _repo_path(repo)
+    # Names a repository rather than an item, as GET /run-with/keys does: another repository is refused whatever is
+    # stored, so the answer tells nothing about it.
+    await enforce_repo_allowlist(request, repo, action="resolve a repository's credential")
     if role == "llm":
         if not provider:
             raise HTTPException(status_code=422, detail="provider is required when role=llm")
@@ -312,7 +317,13 @@ async def get_bindings(
     scope_kind: Literal["repo", "owner", "host", "global"] = Query(...),
     scope_value: str = Query(default=""),
 ) -> dict[str, Any]:
-    bindings = await _state(request).credentials_repo.bindings_for_scope(scope_kind, scope_value.strip())
+    """One scope's bindings. To a key with an allowlist, a repository it does not cover, or an owner it does not
+    cover as a whole, has none (embry0.api.repository_reads); a host's and the global ones are every repository's."""
+    value = scope_value.strip()
+    hidden = (scope_kind == "repo" and not key_covers(request, value)) or (
+        scope_kind == "owner" and await owner_hidden(request, value.partition(":")[2] or value)
+    )
+    bindings = [] if hidden else await _state(request).credentials_repo.bindings_for_scope(scope_kind, value)
     return {"bindings": await _bindings_view(request, bindings)}
 
 
@@ -408,6 +419,23 @@ async def key_owns_credential(request: Request, row: Mapping[str, Any]) -> bool:
         return True
     held = Held(row.get("created_by_key_id"), await _state(request).credentials_repo.holders(str(row["id"])))
     return await _standing(request, held) == OWN
+
+
+async def discovery_entries(request: Request, forge: str) -> list[ForgeCredentialEntry]:
+    """The accounts a repository listing of ``forge`` uses (``GET /github/discoverable-repos``, ``GET /github/repos``,
+    ``GET /gitlab/discoverable-projects``). To a key with an allowlist, only the registry credentials that are its own
+    (:func:`key_owns_credential`): never one another repository, an owner or the deployment uses, nor the
+    environment's tokens, so it lists nothing with a credential it may not use. Every account, the environment's
+    included, for a caller without an allowlist."""
+    st = _state(request)
+    repo, secrets = getattr(st, "credentials_repo", None), getattr(st, "secrets_provider", None)
+    if restricted_key_name(request) is None:
+        return await forge_credential_entries(repo, secrets, st.config, forge)
+
+    async def own(row: Mapping[str, Any]) -> bool:
+        return await key_owns_credential(request, row)
+
+    return await forge_credential_entries(repo, secrets, st.config, forge, keep=own, with_env=False)
 
 
 async def _refuse_unless_own(request: Request, standing: str, credential_id: str, *, action: str) -> None:
@@ -789,6 +817,10 @@ async def get_repo_credentials(full_repo: str, request: Request) -> dict[str, An
     st = _state(request)
     full_repo = _repo_path(full_repo)
     scope_value = full_repo.lower()
+    if not key_covers(request, full_repo):
+        # A repository the caller's key does not cover has nothing bound to it, and nothing is resolved for it: what
+        # it would fall back to is its owner's and the deployment's, not the key's (embry0.api.repository_reads).
+        return {"repo": scope_value, "bindings": [], "effective": {}}
     bindings = await st.credentials_repo.bindings_for_scope("repo", scope_value)
     effective: dict[str, Any] = {}
     try:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,8 +34,21 @@ class ForgeCredentialEntry:
 
 
 async def forge_credential_entries(
-    repo: Any, secrets: Any, config: Any, forge: str, *, environ: Mapping[str, str] | None = None
+    repo: Any,
+    secrets: Any,
+    config: Any,
+    forge: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+    keep: Callable[[Mapping[str, Any]], Awaitable[bool]] | None = None,
+    with_env: bool = True,
 ) -> list[ForgeCredentialEntry]:
+    """The accounts that list ``forge``'s repositories: each registry credential of it, then the environment's tokens.
+
+    ``keep``, when given, is awaited with each registry credential's row before its secret is decrypted, and one it
+    answers False for is left out; ``with_env`` False leaves the environment's tokens out. For a caller that may list only
+    with credentials of its own.
+    """
     if forge not in _ENV_PREFIX:
         raise ValueError(f"unknown forge {forge!r}")
     env = os.environ if environ is None else environ
@@ -56,6 +69,8 @@ async def forge_credential_entries(
                 key=lambda r: str(r["label"]),
             )
             for row in rows:
+                if keep is not None and not await keep(row):
+                    continue
                 full = await repo.get(str(row["id"]))
                 if full is None:
                     continue
@@ -72,6 +87,8 @@ async def forge_credential_entries(
         except Exception as exc:  # noqa: BLE001 — a registry outage must not hide env-discoverable repos
             logger.warning("discovery_registry_error", forge=forge, error=str(exc)[:200])
 
+    if not with_env:
+        return out
     prefix = _ENV_PREFIX[forge]
     default = str(getattr(config, f"{forge}_token", "") or "")
     add(ForgeCredentialEntry(prefix, None, prefix, default, "env"))

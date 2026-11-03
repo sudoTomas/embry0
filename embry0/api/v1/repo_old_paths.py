@@ -52,6 +52,7 @@ from fastapi.routing import APIRoute
 from starlette.datastructures import MutableHeaders
 from starlette.types import Message, Receive, Scope, Send
 
+from embry0.api.repo_allowlist import key_covers
 from embry0.api.repo_route import REPO_ADDRESS, SUB_RESOURCES
 from embry0.api.route_table import route_template
 from embry0.api.schemas.repo_path import REPO_PATH_PATTERN
@@ -221,7 +222,12 @@ async def refuse_two_readings(request: Request) -> None:
     if not others:
         return
     repos_repo = request.app.state.repos_repo
-    registered = [reading for reading in others if await repos_repo.get(reading.repo) is not None]
+    # A repository the caller's key does not cover is not registered for it (embry0.api.repository_reads).
+    registered = [
+        reading
+        for reading in others
+        if key_covers(request, reading.repo) and await repos_repo.get(reading.repo) is not None
+    ]
     if not registered:
         return
     prefix = _prefix(request)

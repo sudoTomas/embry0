@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import deployment_writes
+from embry0.api.repository_reads import covered
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
@@ -137,6 +138,14 @@ async def _host_or_404(request: Request, host_id: str) -> Host:
     return host
 
 
+def _host_view(request: Request, host: Host) -> dict[str, Any]:
+    """A host as the caller reads it: linked to the repositories its key covers, every one without an allowlist. The
+    host itself is the deployment's (embry0.api.repository_reads)."""
+    view = host.to_dict()
+    view["repos"] = covered(request, view["repos"])
+    return view
+
+
 async def _audit(request: Request, action: AuditAction, details: dict[str, Any]) -> None:
     config = getattr(request.app.state, "config", None)
     await emit_audit(
@@ -172,7 +181,7 @@ async def list_hosts(
 ) -> dict[str, Any]:
     hosts = await _repo(request).list_all(source=source, include_removed=include_removed)
     return {
-        "hosts": [h.to_dict() for h in hosts],
+        "hosts": [_host_view(request, h) for h in hosts],
         "transports": list(TRANSPORTS),
         "sources": list(SOURCES),
         "statuses": list(STATUSES),
@@ -232,7 +241,7 @@ async def import_tailnet_hosts(body: TailnetImportBody, request: Request) -> dic
 
 @router.get("/hosts/{host_id}")
 async def get_host(host_id: str, request: Request) -> dict[str, Any]:
-    return (await _host_or_404(request, host_id)).to_dict()
+    return _host_view(request, await _host_or_404(request, host_id))
 
 
 @router.patch("/hosts/{host_id}", dependencies=[require_admin])

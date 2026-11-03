@@ -11,6 +11,7 @@ config/env rows.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import structlog
@@ -132,9 +133,17 @@ class ReposRepository:
         )
         return await self.get(repo)
 
-    async def list_all(self, include_inactive: bool = False) -> list[dict[str, Any]]:
-        where = "" if include_inactive else "WHERE active"
-        rows = await self._db.fetch(f"SELECT {_COLUMNS} FROM repos {where} ORDER BY repo")
+    async def list_all(
+        self, include_inactive: bool = False, *, repos: Sequence[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Every registered repository, the inactive too with ``include_inactive``. ``repos`` (lower-cased slugs)
+        keeps only those; None keeps every one."""
+        rows = await self._db.fetch(
+            f"SELECT {_COLUMNS} FROM repos WHERE ($1::boolean OR active) "
+            "AND ($2::text[] IS NULL OR lower(repo) = ANY($2::text[])) ORDER BY repo",
+            include_inactive,
+            None if repos is None else list(repos),
+        )
         return [dict(r) for r in rows]
 
     async def under_owner(self, owner: str) -> list[str]:

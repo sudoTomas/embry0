@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack
@@ -30,10 +31,14 @@ class WatcherStacksRepository:
     async def count(self) -> int:
         return int(await self._db.fetchval("SELECT count(*) FROM watcher_stacks") or 0)
 
-    async def list_all(self, *, enabled_only: bool = False) -> list[WatcherStack]:
+    async def list_all(self, *, enabled_only: bool = False, repos: Sequence[str] | None = None) -> list[WatcherStack]:
+        """Every watched stack, only the enabled with ``enabled_only``. ``repos`` (lower-cased slugs) keeps only
+        those repositories' stacks; None keeps every one."""
         rows = await self._db.fetch(
-            f"SELECT {_COLUMNS} FROM watcher_stacks WHERE (NOT $1::boolean OR enabled) ORDER BY repo",
+            f"SELECT {_COLUMNS} FROM watcher_stacks WHERE (NOT $1::boolean OR enabled) "
+            "AND ($2::text[] IS NULL OR lower(repo) = ANY($2::text[])) ORDER BY repo",
             enabled_only,
+            None if repos is None else list(repos),
         )
         return [_stack(r) for r in rows]
 

@@ -18,7 +18,8 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_deployment_allowlist, enforce_repo_allowlist
+from embry0.api.repo_allowlist import covered_slugs, enforce_deployment_allowlist, enforce_repo_allowlist, key_covers
+from embry0.api.repository_reads import covered
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.api.v1.standards import standards_for_repo
 from embry0.audit.helpers import emit_audit
@@ -79,9 +80,10 @@ class RepoDockerAccessRequest(BaseModel):
 
 @router.get("/repos")
 async def list_repos(request: Request, include_inactive: bool = False) -> list[dict[str, Any]]:
+    """The registered repositories; to a key with an allowlist, those it covers (embry0.api.repository_reads)."""
     repos_repo = request.app.state.repos_repo
     configs_repo = request.app.state.qa_configs_repo
-    rows = await repos_repo.list_all(include_inactive=include_inactive)
+    rows = covered(request, await repos_repo.list_all(include_inactive=include_inactive, repos=covered_slugs(request)))
     configured = set(await configs_repo.list_repos())
     # RAV-1294: annotate each repo with its env-var footprint so pickers can
     # show where variables live without N per-repo requests.
@@ -127,10 +129,12 @@ async def register_repo(req: RepoRegisterRequest, request: Request) -> dict[str,
 @router.get("/repos/{full_repo:repo}/-", name="get_repo_at_separator_without_slash", include_in_schema=False)
 async def get_repo(full_repo: str, request: Request) -> dict[str, Any]:
     """Unified per-repo view: registry row + which repo-scoped config
-    surfaces hold state for it (values live behind their own endpoints)."""
+    surfaces hold state for it (values live behind their own endpoints).
+    A repository the caller's key does not cover is not registered for it
+    (embry0.api.repository_reads)."""
     full = full_repo
     repos_repo = request.app.state.repos_repo
-    row = await repos_repo.get(full)
+    row = await repos_repo.get(full) if key_covers(request, full) else None
     if row is None:
         raise HTTPException(status_code=404, detail="repo not registered")
 

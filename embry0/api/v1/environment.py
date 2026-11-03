@@ -10,7 +10,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import deployment_writes, enforce_repo_allowlist
+from embry0.api.repo_allowlist import deployment_writes, enforce_repo_allowlist, key_covers
 from embry0.api.schemas.environment import (
     DetectedEnvVar,
     DetectResponse,
@@ -171,10 +171,18 @@ async def reveal_global_secret(key: str, request: Request) -> RevealResponse:
 # ----- Per-repo endpoints -----
 
 
+async def _repo_vars(request: Request, full_repo: str) -> list[dict[str, Any]]:
+    """The repository's own variables; none for a repository the caller's key does not cover, which has nothing
+    stored for it (embry0.api.repository_reads)."""
+    if not key_covers(request, full_repo):
+        return []
+    rows: list[dict[str, Any]] = await request.app.state.env_repo.get_repo(full_repo)
+    return rows
+
+
 @router.get("/repos/{full_repo:repo}/-/environment", response_model=EnvironmentResponse)
 async def get_repo_environment(full_repo: str, request: Request) -> EnvironmentResponse:
-    env_repo = request.app.state.env_repo
-    rows = await env_repo.get_repo(full_repo)
+    rows = await _repo_vars(request, full_repo)
     provider = getattr(request.app.state, "secrets_provider", None)
     return EnvironmentResponse(variables=await _mask_vars(rows, provider))
 
@@ -185,7 +193,7 @@ async def resolve_repo_environment(full_repo: str, request: Request) -> Environm
     merged: dict[str, dict[str, object]] = {}
     for v in await env_repo.get_global():
         merged[v["key"]] = dict(v)
-    for v in await env_repo.get_repo(full_repo):
+    for v in await _repo_vars(request, full_repo):
         merged[v["key"]] = dict(v)
     provider = getattr(request.app.state, "secrets_provider", None)
     return EnvironmentResponse(variables=await _mask_vars(list(merged.values()), provider))
@@ -208,8 +216,7 @@ async def set_repo_environment(full_repo: str, req: EnvironmentSetRequest, reque
     "/repos/{full_repo:repo}/-/environment/{key}/reveal", response_model=RevealResponse, dependencies=[require_admin]
 )
 async def reveal_repo_secret(full_repo: str, key: str, request: Request) -> RevealResponse:
-    env_repo = request.app.state.env_repo
-    rows = await env_repo.get_repo(full_repo)
+    rows = await _repo_vars(request, full_repo)
     var = next((r for r in rows if r["key"] == key), None)
     if not var:
         raise HTTPException(status_code=404, detail=f"Variable '{key}' not found")
@@ -290,7 +297,10 @@ def _parse_env_file(content: str) -> list[dict[str, Any]]:
 
 @router.get("/repos/{full_repo:repo}/-/environment/detect", response_model=DetectResponse)
 async def detect_repo_environment(full_repo: str, request: Request) -> DetectResponse:
-    full_repo = full_repo
+    if not key_covers(request, full_repo):
+        # A repository the caller's key does not cover has no template it may read, as one whose files name none:
+        # the forge is not asked with a credential the key may not use (embry0.api.repository_reads).
+        return DetectResponse(source_file="", variables=[], unconfigured_count=0)
     # Route by owner: fine-grained PATs are single-owner, so the default token
     # 404s on GITHUB_TOKEN__<OWNER> repos. Default still comes from config
     # (single source of truth), not a raw env read.
@@ -330,7 +340,7 @@ async def detect_repo_environment(full_repo: str, request: Request) -> DetectRes
     detected = _parse_env_file(content)
     env_repo = request.app.state.env_repo
     global_keys = {v["key"] for v in await env_repo.get_global()}
-    repo_keys = {v["key"] for v in await env_repo.get_repo(full_repo)}
+    repo_keys = {v["key"] for v in await _repo_vars(request, full_repo)}
     configured_keys = global_keys | repo_keys
 
     def _source(key: str) -> str | None:

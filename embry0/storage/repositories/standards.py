@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -158,17 +159,23 @@ class RepoStandardStateRepository:
         )
         return _state(row) if row else None
 
-    async def list_for_owner(self, owner: str, kind: str | None = None) -> list[RepoStandardState]:
+    async def list_for_owner(
+        self, owner: str, kind: str | None = None, *, repos: Sequence[str] | None = None
+    ) -> list[RepoStandardState]:
+        """The stored states of ``owner``'s repositories, of ``kind`` or every kind. ``repos`` (lower-cased slugs)
+        keeps only those repositories'; None keeps every one."""
         if kind is not None:
             check_kind(kind)
         rows = await self._db.fetch(
             f"""
             SELECT {_STATE_COLUMNS} FROM repo_standard_state
              WHERE owner = $1 AND ($2::text IS NULL OR kind = $2)
+               AND ($3::text[] IS NULL OR lower(repo) = ANY($3::text[]))
              ORDER BY repo, kind
             """,
             normalize_owner(owner),
             kind,
+            None if repos is None else list(repos),
         )
         return [_state(r) for r in rows]
 

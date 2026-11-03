@@ -57,9 +57,12 @@ async def medium_model(app_state: Any) -> str:
     return str(provider_cfg.get("model_medium") or app_state.config.model_medium)
 
 
-async def cost_facts(app_state: Any, repo: str) -> dict[str, Any]:
+async def cost_facts(app_state: Any, repo: str, *, resolve_account: bool = True) -> dict[str, Any]:
     """What setup runs cost on this embry0, the per-job budget, the model and
-    the AI account that would pay. Recorded facts only, never an estimate."""
+    the AI account that would pay. Recorded facts only, never an estimate.
+    Without ``resolve_account`` no account is resolved for ``repo``, as for a
+    caller that may not read what it would use: ``paid_from`` is None, as
+    when none is usable."""
     db = app_state.db
     recorded_runs = await db.fetchval(
         "SELECT count(*) FROM jobs WHERE pipeline_template = 'onboard' AND status = 'completed'"
@@ -78,7 +81,7 @@ async def cost_facts(app_state: Any, repo: str) -> dict[str, Any]:
         "typical_cost_usd": statistics.median(costs) if costs else None,
         "per_job_budget_usd": float(budget.max_budget_per_job_usd),
         "model": model,
-        "paid_from": await _paid_from(app_state, repo, model),
+        "paid_from": await _paid_from(app_state, repo, model) if resolve_account else None,
     }
 
 

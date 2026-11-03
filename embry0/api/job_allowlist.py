@@ -17,12 +17,12 @@ exist:
   (:func:`stream_scope`, ``scoped_tokens.reads_nothing``);
 - a route that acts on one such job answers as for a job that does not
   exist, and logs and audits the refusal (:func:`hide_job_unless_covered`);
-- something else that names such a job, a repository's test setup proposal,
-  a standard's last audit, a merge approval, a watcher tick, a knowledge
-  map's work, an organization's context audits, either leaves it out of its
-  list, as a list of jobs does, or names no job id (:func:`without_job`).
-  A view of a repository keeps the repository's own setup and audit state,
-  which a later stage covers.
+- something else that names such a job, a merge approval, a watcher tick, a
+  knowledge map's work, leaves it out of its list, as a list of jobs does;
+  a view of the job's repository, its test setup proposal, its checklist, a
+  standard's last audit, its owner's context audits, reads for such a key as
+  a repository nobody registered (:mod:`embry0.api.repository_reads`), so it
+  names no job of it.
 
 A key with an allowlist cannot start a job with no repository
 (``POST /jobs`` refuses it), so it never reads one. Sessions, the master key,
@@ -67,15 +67,6 @@ async def hide_job_unless_covered(
     ``job``'s repository. An ``action`` is logged and audited as refused; a read is not
     (:func:`embry0.api.repo_allowlist.hide_unless_covered`)."""
     await hide_unless_covered(request, job_repository(job), missing, action=action)
-
-
-def without_job(request: Request, repo: str | None, view: Mapping[str, Any], *fields: str) -> dict[str, Any]:
-    """``view``, which names a job of ``repo``, as the caller reads it: unchanged when its key covers ``repo``;
-    otherwise with ``fields``, the job's id and what was read from the job, null, so it names no job id. A read:
-    logs and audits nothing."""
-    if key_covers(request, repo):
-        return dict(view)
-    return {**view, **dict.fromkeys(fields)}
 
 
 async def stream_scope(request: Request, scope: str, job_id: str) -> str:

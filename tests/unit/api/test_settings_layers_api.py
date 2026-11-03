@@ -259,8 +259,10 @@ async def test_each_document_says_whether_the_key_s_allowlist_lets_it_write_ther
             for params in targets:
                 where = next(iter(params.values()), "deployment")
                 got = await client.get(URL, params=params)
-                assert got.status_code == 200, got.text
-                answered[(who, where)] = got.json().get("allowlist_covers")
+                # A layer the key may not read, another repository's or an owner's it covers in part, is not there for
+                # it (embry0.api.repository_reads): it answers as a layer nobody registered.
+                assert got.status_code in (200, 404), got.text
+                answered[(who, where)] = got.json().get("allowlist_covers") if got.status_code == 200 else None
                 refused[(who, where)] = (await _put(client, "", dry_run="1", **params)).status_code == 403
         read = (await reader.get(URL, params={"owner": "acme"})).json()
     assert answered == {
@@ -269,12 +271,13 @@ async def test_each_document_says_whether_the_key_s_allowlist_lets_it_write_ther
         ("admin", "acme/widgets"): True,
         ("admin", "acme/gadgets"): True,
         ("widgets-only", "deployment"): False,
-        ("widgets-only", "acme"): False,
+        ("widgets-only", "acme"): None,
         ("widgets-only", "acme/widgets"): True,
-        ("widgets-only", "acme/gadgets"): False,
+        ("widgets-only", "acme/gadgets"): None,
     }, f"allowlist_covers does not say where a key limited to acme/widgets may write: {answered}"
     assert {where: not covers for where, covers in answered.items()} == refused, (
-        "allowlist_covers disagrees with what a PUT of the same document by the same key refuses"
+        "allowlist_covers disagrees with what a PUT of the same document by the same key refuses: a layer the key "
+        "may not read, it may not write either"
     )
     assert read.get("allowlist_covers") is True, (
         "a key with no allowlist is covered everywhere; its tier is checked apart"

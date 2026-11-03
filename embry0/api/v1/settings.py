@@ -28,8 +28,9 @@ it is read in full, with or without a ``Content-Length``.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
@@ -37,7 +38,8 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.document_requests import if_match_versions, read_capped_body
-from embry0.api.repo_allowlist import enforce_repo_allowlist, refusal_detail
+from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers, refusal_detail
+from embry0.api.repository_reads import owner_hidden
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.settings.document import (
@@ -62,6 +64,7 @@ from embry0.settings.store import (
     RevisionNotFound,
     SaveResult,
     SettingsStore,
+    Snapshot,
 )
 
 router = APIRouter()
@@ -118,6 +121,32 @@ async def _registered(request: Request, scope: Scope) -> bool:
                 continue
         return False
     return True
+
+
+async def _hidden(request: Request, scope: Scope) -> bool:
+    """Whether the layer at ``scope`` answers the caller as a layer nobody wrote of an organization or a repository
+    nobody registered: a repository's for a key that does not cover it, an organization's for one that does not
+    cover the owner as a whole (embry0.api.repository_reads). Never the deployment's document."""
+    if scope.layer == "repository":
+        return not key_covers(request, scope.name)
+    if scope.layer == "organization":
+        return await owner_hidden(request, scope.name)
+    return False
+
+
+def _without_layers(snapshot: Snapshot, hidden: Collection[Scope]) -> Snapshot:
+    """``snapshot`` with no layer stored at ``hidden``, a repository's under any slug it was stored under: what the
+    view reads for a caller that may not read them, as if nobody wrote them."""
+    names = {str(current(scope)) for scope in hidden}
+
+    def kept(stored: str) -> bool:
+        try:
+            return str(current(Scope.parse(stored))) not in names
+        except ScopeError:
+            return True
+
+    layers = {stored: values for stored, values in snapshot.layers.items() if kept(stored)}
+    return replace(snapshot, layers=layers, _memo={}, _logged=set(), _rows=[])
 
 
 def _not_registered(scope: Scope) -> HTTPException:
@@ -286,6 +315,9 @@ async def get_settings(
     """
     store = _store(request)
     scope = _scope(owner, repo)
+    if await _hidden(request, scope):
+        # Nobody wrote it, and its organization or repository is not registered, for the caller.
+        raise _not_registered(scope)
     row = await store.document(scope)
     if scope.layer != "deployment" and int(row["generation"]) == 0 and not await _registered(request, scope):
         raise _not_registered(scope)
@@ -457,7 +489,17 @@ async def get_effective_settings(
             org_scope = Scope.organization(owner)
     except ScopeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+    # A layer the caller may not read is one nobody wrote (embry0.api.repository_reads): the view names a layer's
+    # changes only for the keys it sets. A repository the caller reads shows what its organization's layer sets for
+    # it: that is its own settings.
+    hidden: list[Scope] = []
+    if repo_scope is not None and await _hidden(request, repo_scope):
+        hidden.append(repo_scope)
+    if org_scope is not None and (repo_scope is None or hidden) and await _hidden(request, org_scope):
+        hidden.append(org_scope)
     snapshot = await store.snapshot()
+    if hidden:
+        snapshot = _without_layers(snapshot, hidden)
     revisions: dict[str, list[dict[str, Any]]] = {"deployment": await store.revisions(limit=100)}
     for scope in (org_scope, repo_scope):
         if scope is not None:
@@ -469,7 +511,7 @@ async def get_effective_settings(
         request.app.state.config,
         owner=org_scope.name if org_scope is not None and repo_scope is None else None,
         repo=repo_scope.name if repo_scope is not None else None,
-        not_imported=await _not_imported(request, org_scope),
+        not_imported=await _not_imported(request, None if org_scope in hidden else org_scope),
     )
     shown = await actor_shown(request)
     for section in view["sections"]:
@@ -512,6 +554,8 @@ async def list_settings_layers(request: Request) -> dict[str, Any]:
         except ScopeError:
             continue
         scope = current(stored)
+        if await _hidden(request, scope):
+            continue  # a layer the caller may not read (embry0.api.repository_reads)
         data = row["data"]
         keys = sorted(f"{name}.{key}" for name, values in data.items() if isinstance(values, dict) for key in values)
         out.append(
@@ -572,11 +616,12 @@ async def list_settings_revisions(
     owner: str | None = _OWNER,
     repo: str | None = _REPO,
 ) -> dict[str, Any]:
-    """A document's changes, newest first; only the newest can be undone, while it is still what is stored."""
+    """A document's changes, newest first; only the newest can be undone, while it is still what is stored. A layer
+    the caller may not read has none (embry0.api.repository_reads)."""
     store = _store(request)
     scope = _scope(owner, repo)
-    rows = await store.revisions(limit=limit, scope=scope)
-    current = (await store.document(scope))["yaml_text"]
+    rows = [] if await _hidden(request, scope) else await store.revisions(limit=limit, scope=scope)
+    current = (await store.document(scope))["yaml_text"] if rows else ""
     newest = rows[0]["id"] if rows else None
     shown = await actor_shown(request)
     return {"revisions": [_revision_entry(row, newest, current, shown) for row in rows]}
@@ -587,6 +632,8 @@ async def get_settings_revision(revision_id: int, request: Request) -> dict[str,
     """One change, of whichever document it changed (``scope``): its text before and after, and each key it changed."""
     store = _store(request)
     revision = await store.revision(revision_id)
+    if revision is not None and await _hidden(request, _revision_scope(revision)):
+        revision = None  # a change of a layer the caller may not read (embry0.api.repository_reads)
     if revision is None:
         raise HTTPException(status_code=404, detail="That change was not found.")
     scope = _revision_scope(revision)
@@ -610,10 +657,14 @@ async def get_settings_revision(revision_id: int, request: Request) -> dict[str,
 async def undo_settings_revision(revision_id: int, request: Request) -> dict[str, Any]:
     """Put back what the newest change of a document replaced. 409 for any other change; recorded with source ``restore``.
 
-    Authorized for the document the change belongs to, as a write to it is.
+    Authorized for the document the change belongs to, as a write to it is. A change of a layer the caller may not
+    read is, to it, a change that does not exist (embry0.api.repository_reads): its answer, log line and audit row
+    are a missing change's, so they never name another repository.
     """
     store = _store(request)
     revision = await store.revision(revision_id)
+    if revision is not None and await _hidden(request, _revision_scope(revision)):
+        revision = None
     # Authorized before a missing change is reported, so a restricted key learns nothing about which exist.
     scope = _revision_scope(revision) if revision is not None else Scope.deployment()
     await _may_write(request, scope)

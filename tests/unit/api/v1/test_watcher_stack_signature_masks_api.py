@@ -6,6 +6,7 @@ thousands is refused at write with a 422 naming ``signature_masks`` and the
 entry, before anything is stored.
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -24,8 +25,8 @@ class StoredStacks:
     def __init__(self) -> None:
         self.stacks: dict[str, WatcherStack] = {}
 
-    async def list_all(self, *, enabled_only: bool = False) -> list[WatcherStack]:
-        return list(self.stacks.values())
+    async def list_all(self, *, enabled_only: bool = False, repos: Sequence[str] | None = None) -> list[WatcherStack]:
+        return [s for s in self.stacks.values() if repos is None or s.repo.lower() in repos]
 
     async def get(self, repo: str) -> WatcherStack | None:
         return self.stacks.get(repo)

@@ -311,6 +311,9 @@ async def run_action(ctx: ActionContext, action: str, repos: list[str], *, dry_r
     proposes deactivating (ADR 0016). It is acted on under the spelling the
     forge reported, whatever case was asked. One repository's error, or a refusal from the path an action
     reuses, is its own ``failed`` result and the rest still run.
+
+    A repository the caller may not act on (``ctx.refusal``) is refused before discovery's facts are read: its
+    ``failed`` result, under the name it was asked by, is the same whether or not discovery saw it.
     """
     runner = _RUNNERS.get(action)
     if runner is None:
@@ -327,15 +330,15 @@ async def run_action(ctx: ActionContext, action: str, repos: list[str], *, dry_r
         if not key.startswith(prefix):
             results.append(ActionResult(asked.strip(), "skipped", f"not under {ctx.owner}"))
             continue
+        refused = await ctx.refusal(asked.strip()) if ctx.refusal is not None else None
+        if refused is not None:
+            results.append(ActionResult(asked.strip(), "failed", refused))
+            continue
         row = facts_by_key.get(key)
         if row is None:
             results.append(ActionResult(asked.strip(), "skipped", "not seen by discovery; run discovery first"))
             continue
         repo = str(row.get("repo") or key)
-        refused = await ctx.refusal(repo) if ctx.refusal is not None else None
-        if refused is not None:
-            results.append(ActionResult(repo, "failed", refused))
-            continue
         if row.get("archived") and action != "deactivate":
             results.append(ActionResult(repo, "skipped", "archived"))
             continue

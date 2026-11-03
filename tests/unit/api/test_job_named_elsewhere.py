@@ -4,12 +4,10 @@ On the real app over a real database (:mod:`tests.fixtures.job_reads`). A
 list of things that are each a job's, the merge approvals, the watcher's
 ticks and a knowledge map's work, holds only those of the repositories the
 key covers, narrowed before its limit. A view of a repository that names a
-job, its test setup proposal, its checklist, its place under a standard,
-names no job id of a repository the key does not cover; the repository's own
-setup and audit state are a later stage's. An organization's context audits
-survey such a repository as never audited. The checklist and the context
-audits are compared with what a key without a list reads once the job is
-unlinked or removed.
+job, its test setup proposal, its checklist, its place under a standard, an
+owner's context audits, names no job of a repository the key does not cover:
+since the repository reads, the view reads as one of a repository, or an
+owner, nobody registered.
 """
 
 from __future__ import annotations
@@ -24,6 +22,7 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeysRepository
 from embry0.storage.repositories.users import UsersRepository
 from tests.fixtures.job_reads import JOB, audit_job, job_reads_app, same_answer
+from tests.fixtures.repository_reads import same_answer as same_repository_answer
 from tests.fixtures.repository_writes import COVERED, NOW, OWNER, UNCOVERED, call, ids
 from tests.unit.api.test_job_reads_inventory import MISSING_APPROVAL
 
@@ -166,85 +165,57 @@ async def test_a_map_s_work_shows_only_the_sends_to_the_key_s_repositories(
     )
 
 
-def _without(body: Any, *fields: str) -> Any:
-    """``body`` with each of ``fields``, at any depth, null."""
-    if isinstance(body, dict):
-        return {k: (None if k in fields else _without(v, *fields)) for k, v in body.items()}
-    if isinstance(body, list):
-        return [_without(v, *fields) for v in body]
-    return body
+#: A repository and an owner nobody registered, each as long as the uncovered repository's and its owner's.
+NOWHERE, NOWHERE_OWNER = "zyxwvu/gizmos", "zyxwvu"
+
+
+def _nowhere(path: str) -> str:
+    """``path`` naming :data:`NOWHERE` and :data:`NOWHERE_OWNER` instead of the uncovered repository and its owner."""
+    return path.replace(UNCOVERED, NOWHERE).replace(f"/{OWNER[UNCOVERED]}", f"/{NOWHERE_OWNER}")
+
+
+def _as_nowhere(a: Any, b: Any) -> Any:
+    """None when the answer about the uncovered repository ``a`` is the one about :data:`NOWHERE` ``b``."""
+    names = {UNCOVERED: "<repo>", OWNER[UNCOVERED]: "<owner>"}
+    nowhere = {NOWHERE: "<repo>", NOWHERE_OWNER: "<owner>"}
+    return same_repository_answer(a, names, b, nowhere)
 
 
 @pytest.mark.parametrize(
-    ("path", "fields"),
+    "path",
     [
-        (f"/api/v1/repos/{UNCOVERED}/-/setup/proposal", ("job_id", "job_status")),
-        (f"/api/v1/repos/{UNCOVERED}", ("last_audit_job_id",)),
-        (f"/api/v1/standards/{OWNER[UNCOVERED]}", ("last_audit_job_id",)),
-        (f"/api/v1/standards/{OWNER[UNCOVERED]}/design/repos/{UNCOVERED}", ("last_audit_job_id",)),
+        f"/api/v1/repos/{UNCOVERED}/-/setup/proposal",
+        f"/api/v1/repos/{UNCOVERED}",
+        f"/api/v1/standards/{OWNER[UNCOVERED]}",
+        f"/api/v1/standards/{OWNER[UNCOVERED]}/design/repos/{UNCOVERED}",
+        f"/api/v1/repos/{UNCOVERED}/-/readiness",
+        f"/api/v1/orgs/{OWNER[UNCOVERED]}/context-audit",
     ],
 )
 async def test_a_view_names_no_job_of_a_repository_the_key_does_not_cover(
-    path: str, fields: tuple[str, ...], db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+    path: str, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A view of a repository the key does not cover, or of an owner it does not cover as a whole, names none of its
+    jobs: the setup job, a pull request a job opened, a standard's last audit, the owner's context audits. Since the
+    repository reads, each answers as the view of a repository, or an owner, nobody registered
+    (``test_repository_reads.py``); a key without a list reads the job there, and the key its own."""
     async with job_reads_app(db_with_migrations, monkeypatch) as (app, keys, _values):
+        await db_with_migrations.execute(
+            "UPDATE organizations SET settings = $2 WHERE owner = $1", OWNER[UNCOVERED], {"context_audit_days": 7}
+        )
         limited = await call(app, "GET", path, keys.limited)
+        nowhere = await call(app, "GET", _nowhere(path), keys.limited)
         everyone = await call(app, "GET", path, keys.open)
         own = await call(
             app, "GET", path.replace(UNCOVERED, COVERED).replace(OWNER[UNCOVERED], OWNER[COVERED]), keys.limited
         )
-    assert JOB[UNCOVERED] in everyone.text, f"{path} names the job to a key without a list: {everyone.text[:300]}"
-    assert limited.status_code == 200 and limited.json() == _without(everyone.json(), *fields), (
-        f"{path} reads to the limited key as to everyone, naming no job: {limited.text[:400]}"
+    named = (JOB[UNCOVERED], audit_job(UNCOVERED), f"github.com/{UNCOVERED}/pull")
+    assert any(n in everyone.text for n in named), (
+        f"{path} names the job to a key without a list: {everyone.text[:300]}"
     )
-    assert JOB[COVERED] in own.text, f"{path} names the limited key's own job: {own.text[:300]}"
-
-
-async def test_a_repository_s_checklist_names_no_job_id(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The limited key's checklist of another repository names neither its setup job nor a pull request a job
-    opened: it is what a key without a list reads once those are unlinked."""
-    db = db_with_migrations
-    path = f"/api/v1/repos/{UNCOVERED}/-/readiness"
-    async with job_reads_app(db, monkeypatch) as (app, keys, _values):
-        await db.execute("UPDATE repo_setup_proposals SET status = 'running' WHERE repo = $1", UNCOVERED)
-        await db.execute("UPDATE jobs SET status = 'running' WHERE job_id = $1", JOB[UNCOVERED])
-        limited = (await call(app, "GET", path, keys.limited)).json()
-        before = (await call(app, "GET", path, keys.open)).json()
-        await db.execute("UPDATE repo_setup_proposals SET job_id = NULL WHERE repo = $1", UNCOVERED)
-        await db.execute("UPDATE jobs SET pr_url = NULL WHERE repo = $1", UNCOVERED)
-        after = (await call(app, "GET", path, keys.open)).json()
-    assert JOB[UNCOVERED] in str(before) and f"github.com/{UNCOVERED}/pull" in str(before), (
-        f"the checklist names the job and its pull request to a key without a list: {before}"
-    )
-    assert limited == after, f"the limited key's checklist names no job id: {limited} against {after}"
-
-
-@pytest.mark.parametrize("status", ["completed", "running"])
-async def test_an_organization_s_context_audits_read_as_with_no_job(
-    status: str, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The limited key's survey of another owner's repositories is the one they have before their first audit,
-    whether the audit finished or still runs (a live audit makes the reason ``live``)."""
-    db = db_with_migrations
-    path = f"/api/v1/orgs/{OWNER[UNCOVERED]}/context-audit"
-    async with job_reads_app(db, monkeypatch) as (app, keys, _values):
-        if status == "running":
-            await db.execute(
-                "UPDATE jobs SET status = 'running', finished_at = NULL WHERE job_id = $1", audit_job(UNCOVERED)
-            )
-        await db.execute(
-            "UPDATE organizations SET settings = $2 WHERE owner = $1", OWNER[UNCOVERED], {"context_audit_days": 7}
-        )
-        limited = (await call(app, "GET", path, keys.limited)).json()
-        before = (await call(app, "GET", path, keys.open)).json()
-        await db.execute("DELETE FROM jobs WHERE job_id = $1", audit_job(UNCOVERED))
-        after = (await call(app, "GET", path, keys.open)).json()
-    assert audit_job(UNCOVERED) in str(before), f"the survey names the audit to a key without a list: {before}"
-    assert limited == after and audit_job(UNCOVERED) not in str(limited), (
-        f"the limited key's survey is the one with no audit: {limited} against {after}"
-    )
-    assert [r["reason"] for r in limited["repos"]] != [r["reason"] for r in before["repos"]], (
-        f"the reason is read as with no audit, not only the job hidden: {limited} against {before}"
+    assert not any(n in limited.text for n in named), f"{path} names no job to the limited key: {limited.text[:300]}"
+    differ = _as_nowhere(limited, nowhere)
+    assert differ is None, f"{path} reads to the limited key as for a repository nobody registered: {differ}"
+    assert any(n in own.text for n in (JOB[COVERED], audit_job(COVERED), f"github.com/{COVERED}/pull")), (
+        f"{path} names the limited key's own job: {own.text[:300]}"
     )

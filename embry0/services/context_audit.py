@@ -999,22 +999,18 @@ class ContextAuditLoop:
         ``client_for`` raises when the owner's credential cannot be resolved
         and the forge has to be read.
 
-        ``hidden`` names the repositories whose jobs the reader may not see:
-        each is surveyed as if it had no context-audit job, none newest and
-        none live, so its entry and its reason are those of a repository
-        never audited.
+        ``hidden`` names the repositories the reader may not read: each is
+        left out of the survey, neither read from the forge nor listed.
 
         Each repository's files are those its rules select (:meth:`TickSettings.rules`),
         from ``settings``, a tick's, else read now; a reading taken with other
         rules is never used, ``refresh`` or not. Raises :class:`SettingsUnreadable`
         when no snapshot of the settings documents can be read.
         """
-        repos = await self._registered(org)
+        repos = [repo for repo in await self._registered(org) if hidden is None or not hidden(repo)]
         if settings is None:
             settings = await self.settings([org])
-        survey = await self._survey(
-            org, repos, now=now or self._clock(), settings=settings, refresh=refresh, hidden=hidden
-        )
+        survey = await self._survey(org, repos, now=now or self._clock(), settings=settings, refresh=refresh)
         return await self._with_reports(survey) if reports else survey
 
     async def _with_reports(self, survey: Survey) -> Survey:
@@ -1044,7 +1040,6 @@ class ContextAuditLoop:
         settings: TickSettings,
         by_hand: bool = False,
         refresh: bool = True,
-        hidden: Callable[[str], bool] | None = None,
     ) -> Survey:
         """:meth:`survey` over ``repos``, each due by :func:`due_reason` with ``by_hand``, read with ``settings``.
 
@@ -1107,11 +1102,10 @@ class ContextAuditLoop:
             context = reading.context
             if context is None or not context.files:
                 continue
-            unseen = hidden is not None and hidden(repo)
-            job = None if unseen else newest.get(repo)
+            job = newest.get(repo)
             refused = self._refused.get(repo)
             attempt = _newer(Attempt.from_job(job) if job else None, refused)
-            live = not unseen and repo in live_repos
+            live = repo in live_repos
             repo_days = settings.days(org, repo)
             reason = due_reason(attempt, context, days=repo_days, now=now, live=live, by_hand=by_hand)
             states.append(RepoState(context, job, refused.started_at if refused else None, reason, days=repo_days))

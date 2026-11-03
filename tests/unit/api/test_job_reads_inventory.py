@@ -92,16 +92,16 @@ JOB_ROUTES: dict[str, str] = {
     "/api/v1/watcher/runs": "lists the ticks of the stacks the key covers, narrowed before the limit",
     "/api/v1/maps/{slug}/work": "lists the sends to the repositories the key covers, narrowed before each part's newest",
     "/api/v1/maps/{slug}/parts/{node_id:path}": "shows a part's newest send only to a repository the key covers",
-    "/api/v1/orgs/{owner}/context-audit": "surveys a repository the key does not cover as one with no context audit",
-    "/api/v1/repos/{full_repo:repo}": "names no standard's last audit job of a repository the key does not cover",
+    "/api/v1/orgs/{owner}/context-audit": "surveys only the repositories the key covers, of an owner it covers whole",
+    "/api/v1/repos/{full_repo:repo}": "reads a repository the key does not cover as one nobody registered",
     "/api/v1/repos/{full_repo:repo}/-": "the same handler",
     "/api/v1/repos/{full_repo:repo}/-/": "the same handler",
-    "/api/v1/repos/{full_repo:repo}/-/readiness": "names no setup job or job pull request of a repository it does not cover",
+    "/api/v1/repos/{full_repo:repo}/-/readiness": "reads a repository the key does not cover as one nobody registered",
     "/api/v1/repos/{full_repo:repo}/readiness": "the old path of the checklist",
-    "/api/v1/repos/{full_repo:repo}/-/setup/proposal": "names no drafting job of a repository the key does not cover",
+    "/api/v1/repos/{full_repo:repo}/-/setup/proposal": "has no proposal, nor its job, of a repository it does not cover",
     "/api/v1/repos/{full_repo:repo}/setup/proposal": "the old path of the proposal",
-    "/api/v1/standards/{owner}": "names no last audit job of a repository the key does not cover",
-    "/api/v1/standards/{owner}/{kind}/repos/{repo:path}": "names no last audit job of a repository the key does not cover",
+    "/api/v1/standards/{owner}": "lists only the states of the repositories the key covers",
+    "/api/v1/standards/{owner}/{kind}/repos/{repo:path}": "reads a repository the key does not cover as unregistered",
 }
 
 #: GET routes that name a job of another repository inside something else they read, narrowed with that thing as a
