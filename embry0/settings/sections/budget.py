@@ -118,8 +118,8 @@ class BudgetSettings(SectionModel):
         ge=0,
         le=50,
         description=(
-            "Most context-audit jobs one round of the schedule (every 15 minutes) starts for an organization; "
-            "the due repositories past it wait for the next round. 0 starts none."
+            "Most context-audit jobs one round of the schedule (every context_audit.check_minutes) starts for "
+            "an organization; the due repositories past it wait for the next round. 0 starts none."
         ),
     )
     area_map_job_usd: float = Field(

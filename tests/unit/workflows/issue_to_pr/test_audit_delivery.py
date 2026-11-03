@@ -100,9 +100,10 @@ def test_every_audit_of_any_repository_shares_the_branch_stem() -> None:
     """The open-PR check reads the stem every audit's task derives; a change to
     the task's first words that broke that would let a second PR stack up."""
     from embry0.services.context_audit import RepoContext
+    from embry0.services.instruction_files import DEFAULT_RULES
 
     tasks = [
-        audit_task(RepoContext(repo=r, head_sha="1" * 40, files=("CLAUDE.md",), fingerprint="f"))
+        audit_task(RepoContext(repo=r, head_sha="1" * 40, files=("CLAUDE.md",), fingerprint="f", rules=DEFAULT_RULES))
         for r in ("a/b", "c/d")
     ]
     stems = {job_push_branch(issue_id=None, task=t, job_id="job-0").rsplit("-", 1)[0] for t in tasks}

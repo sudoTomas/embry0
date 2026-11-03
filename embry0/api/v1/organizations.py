@@ -38,7 +38,7 @@ from embry0.api.v1.settings import set_section_keys
 from embry0.audit.helpers import emit_audit
 from embry0.services import org_discovery, org_maintain, org_webhooks
 from embry0.services import organizations as org_service
-from embry0.services.context_audit import InvalidRun, UnknownRepository, UnsupportedForge
+from embry0.services.context_audit import InvalidRun, SettingsUnreadable, UnknownRepository, UnsupportedForge
 from embry0.services.org_discovery import Discovery
 from embry0.services.organizations import FORGES, STATUSES, AccessProbe, Organization
 from embry0.storage.repositories.org_repos import OrgReposRepository
@@ -841,6 +841,8 @@ async def organization_context_audit(owner: str, request: Request, refresh: bool
         survey = await schedule.survey(org, refresh=refresh, reports=True, hidden=hidden)
     except UnsupportedForge as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SettingsUnreadable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return cast("dict[str, Any]", survey.to_dict())
 
 
@@ -895,6 +897,8 @@ async def run_organization_context_audit(owner: str, body: ContextAuditRunBody, 
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except UnknownRepository as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SettingsUnreadable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     await emit_audit(
         getattr(request.app.state, "db", None),
         "organization.context_audit_run",

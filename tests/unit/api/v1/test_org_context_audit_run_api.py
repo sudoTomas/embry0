@@ -275,6 +275,22 @@ async def test_a_run_is_refused_for_what_it_cannot_start(app: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_run_answers_503_and_starts_nothing_while_the_settings_documents_cannot_be_read(app: Any) -> None:
+    """#170: a run lists the files the repository's settings name; without them it starts no audit of a guess."""
+    from embry0.services.budget_policy import BudgetView
+
+    async def unreadable(organizations: Any = ()) -> BudgetView:
+        return BudgetView(None)
+
+    app.state.context_audit._budget = unreadable  # noqa: SLF001 - the reader the loop was built with
+    async with _client(app) as client:
+        resp = await client.post(RUN, json={})
+    assert resp.status_code == 503, f"a run started audits of files nobody can say: {resp.text}"
+    assert "settings documents" in resp.json()["detail"]
+    assert app.state.started == [] and _runs(app) == []
+
+
+@pytest.mark.asyncio
 async def test_a_run_takes_the_tier_and_the_allowlist_of_creating_a_job(keyed_app: Any) -> None:
     async with _client(keyed_app, READ_TOKEN) as client:
         read = await client.post(RUN, json={})

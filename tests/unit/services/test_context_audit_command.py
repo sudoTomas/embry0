@@ -33,8 +33,16 @@ PATHSPEC = "':(glob){}'"
 EXCLUDE = "':(exclude,glob)**/{}/**'"
 
 
-def _task(files: tuple[str, ...] = ("CLAUDE.md", "docs/AGENTS.md")) -> str:
-    return audit_task(RepoContext("acme/widgets", HEAD, files, "fp"))
+def _rules(globs: tuple[str, ...] | None = None) -> Any:
+    """``FileRules`` of ``globs`` (None: the built-in rules), imported when a test asks, so a tree without
+    them still collects this module."""
+    from embry0.services.instruction_files import FileRules
+
+    return FileRules.of(globs, None)
+
+
+def _task(files: tuple[str, ...] = ("CLAUDE.md", "docs/AGENTS.md"), rules: Any = None) -> str:
+    return audit_task(RepoContext("acme/widgets", HEAD, files, "fp", rules=rules if rules is not None else _rules()))
 
 
 def _command(text: str) -> str:
@@ -56,11 +64,10 @@ def test_the_task_carries_the_command_with_every_glob_and_skipped_directory() ->
     assert task.index("Instruction files (2):") < task.index(SECTION), "the files found come before the command"
 
 
-def test_the_task_reads_the_list_when_it_is_built(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A list that changed after the module was imported reaches the next task.
-    changed = (*instruction_files.INSTRUCTION_FILE_GLOBS, "**/CONVENTIONS.md")
-    monkeypatch.setattr(instruction_files, "INSTRUCTION_FILE_GLOBS", changed)
-    assert PATHSPEC.format("**/CONVENTIONS.md") in _task(), "the task's command was fixed before the list changed"
+def test_the_task_reads_the_list_when_it_is_built() -> None:
+    # The list the repository reads when its task is built reaches that task.
+    changed = _rules((*instruction_files.INSTRUCTION_FILE_GLOBS, "**/CONVENTIONS.md"))
+    assert PATHSPEC.format("**/CONVENTIONS.md") in _task(rules=changed), "the task's command is not its rules'"
 
 
 def test_the_command_lists_what_instruction_files_lists(tmp_path: Any) -> None:
@@ -118,9 +125,9 @@ def test_the_command_lists_what_instruction_files_lists(tmp_path: Any) -> None:
         ["sh", "-c", _command(_task())], cwd=tmp_path, capture_output=True, text=True, check=True
     ).stdout.split()
 
-    expected = instruction_files.instruction_files(paths)
+    expected = _rules().select(paths)
     assert len(expected) == 24, "the repository must hold files on both sides of the list"
-    assert sorted(listed) == expected, "the task's command and instruction_files() disagree"
+    assert sorted(listed) == expected, "the task's command and FileRules.select() disagree"
 
 
 def test_the_task_fixes_the_report_shape_the_code_reads() -> None:
@@ -201,7 +208,7 @@ async def test_every_job_the_service_starts_carries_the_command_once(monkeypatch
 
     monkeypatch.setattr(context_audit, "emit_audit", no_audit)
     jobs = _Jobs()
-    ctx = RepoContext("acme/widgets", HEAD, ("CLAUDE.md",), "fp")
+    ctx = RepoContext("acme/widgets", HEAD, ("CLAUDE.md",), "fp", rules=_rules())
     start = {"jobs": jobs, "executor": _Executor(), "templates": _Templates(), "budget_usd": 1.0}
     await start_context_audit_job(ctx, **start)
     # An owner's fix names its one claim; its report keeps the same shape.
@@ -268,15 +275,12 @@ async def _run(state: dict[str, Any], stored: dict[str, Any] | None) -> dict[str
 
 
 @pytest.mark.asyncio
-async def test_an_older_stored_prompt_still_gets_the_current_command_through_the_task(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_an_older_stored_prompt_still_gets_the_current_command_through_the_task() -> None:
     # The list changed since the row was stored; the agent is not reset.
     changed = (*instruction_files.INSTRUCTION_FILE_GLOBS, "**/CONVENTIONS.md")
-    monkeypatch.setattr(instruction_files, "INSTRUCTION_FILE_GLOBS", changed)
     stored = {**BUILTIN_SEED["context-auditor"], "system_prompt": OLDER_PROMPT}
 
-    ran = await _run(_state(_task()), stored)
+    ran = await _run(_state(_task(rules=_rules(changed))), stored)
 
     assert ran["agent_definition"]["system_prompt"] == OLDER_PROMPT, "the stored row runs as stored: no reset"
     prompt = ran["prompt"]

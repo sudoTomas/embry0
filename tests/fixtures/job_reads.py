@@ -303,9 +303,14 @@ def _context_audits(app: FastAPI) -> ContextAuditLoop:
         ask_gate=no_refusal,
         budget=app.state.budget_policy.view,
     )
+    from embry0.services.instruction_files import DEFAULT_RULES
+
     for repo in (COVERED, UNCOVERED):
-        context = RepoContext(repo=repo, head_sha="abc123", files=("AGENTS.md",), fingerprint=f"fp-{repo}")
-        loop._last_read[repo] = _Reading(NOW, context, None)  # noqa: SLF001 - a reading taken before the test
+        context = RepoContext(
+            repo=repo, head_sha="abc123", files=("AGENTS.md",), fingerprint=f"fp-{repo}", rules=DEFAULT_RULES
+        )
+        # Taken with the rules the repository reads with nothing written, so a survey without refresh serves it.
+        loop._last_read[repo] = _Reading(NOW, context, None, DEFAULT_RULES)  # noqa: SLF001 - a reading taken before the test
     return loop
 
 

@@ -26,6 +26,8 @@ from langgraph.config import get_stream_writer
 from embry0.execution import events
 from embry0.orchestration.nodes.agent import agent_attempt, load_agent_definition_or_none, run_agent_node
 from embry0.services.context_audit_command import with_command
+from embry0.services.job_settings import job_section
+from embry0.settings.sections.context_audit import CONTEXT_AUDIT, file_rules
 from embry0.workflows.issue_to_pr.log_tool import grant_log_tool
 from embry0.workflows.issue_to_pr.route_plan import (
     _step_target,
@@ -76,11 +78,14 @@ def _task(state: dict[str, Any], agent_type: str) -> str:
     instruction files and fixes the report's shape (#170). The schedule, a
     run by hand and an owner's fix write it when they build the task; a task
     built anywhere else, such as one created with ``POST /jobs``, gets it
-    here, so the agent never depends on its stored prompt for either.
+    here, so the agent never depends on its stored prompt for either. Its
+    files are the ``context_audit`` section's as the job read it for its
+    repository when it started (:mod:`embry0.services.job_settings`), so a
+    repository whose settings name its own files is audited for them.
     """
     task = state.get("task", "")
     if agent_type == "context-auditor":
-        return with_command(str(task or ""))
+        return with_command(str(task or ""), rules=file_rules(job_section(state, CONTEXT_AUDIT)))
     return str(task)
 
 

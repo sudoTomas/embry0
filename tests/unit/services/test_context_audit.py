@@ -53,6 +53,13 @@ HEAD = "1" * 40
 FIX_BY = "embry0:proposals"
 
 
+def built_in_rules() -> Any:
+    """The built-in instruction-file rules, imported when a test asks, so a tree without them still collects."""
+    from embry0.services.instruction_files import DEFAULT_RULES
+
+    return DEFAULT_RULES
+
+
 class Clock:
     def __init__(self, now: datetime) -> None:
         self.now = now
@@ -369,7 +376,7 @@ def test_the_fingerprint_changes_with_any_instruction_file(changed: dict[str, st
 
 
 def ctx(fp: str = FP, head: str = HEAD) -> RepoContext:
-    return RepoContext(repo="acme/web", head_sha=head, files=("CLAUDE.md",), fingerprint=fp)
+    return RepoContext(repo="acme/web", head_sha=head, files=("CLAUDE.md",), fingerprint=fp, rules=built_in_rules())
 
 
 def done(days_ago: float, *, fp: str | None = FP, head: str | None = HEAD) -> Attempt:
@@ -385,51 +392,52 @@ def tried(days_ago: float, *, fp: str | None = FP, head: str | None = HEAD) -> A
 @pytest.mark.parametrize(
     ("newest", "current", "days", "live", "reason"),
     [
-        (None, ctx(), 7, False, FIRST),
-        (done(1), ctx(fp="e" * 64), 7, False, CHANGED),
-        (done(1), ctx(), 7, False, CURRENT),
-        (done(8), ctx(head="2" * 40), 7, False, AGED),
-        (done(8), ctx(), 7, False, CURRENT),  # old, but nothing moved
-        (done(6.9), ctx(head="2" * 40), 7, False, CURRENT),  # moved, but not old enough
-        (done(7), ctx(head="2" * 40), 7, False, AGED),  # exactly the interval
+        (None, {}, 7, False, FIRST),
+        (done(1), {"fp": "e" * 64}, 7, False, CHANGED),
+        (done(1), {}, 7, False, CURRENT),
+        (done(8), {"head": "2" * 40}, 7, False, AGED),
+        (done(8), {}, 7, False, CURRENT),  # old, but nothing moved
+        (done(6.9), {"head": "2" * 40}, 7, False, CURRENT),  # moved, but not old enough
+        (done(7), {"head": "2" * 40}, 7, False, AGED),  # exactly the interval
         # A failed newest job is an attempt: anchored on its start, as rediscovery's refusals are.
-        (tried(1), ctx(), 7, False, CURRENT),
-        (tried(1), ctx(head="2" * 40), 7, False, CURRENT),
-        (tried(7), ctx(head="2" * 40), 7, False, AGED),
-        (tried(1), ctx(fp="e" * 64), 7, False, CHANGED),
+        (tried(1), {}, 7, False, CURRENT),
+        (tried(1), {"head": "2" * 40}, 7, False, CURRENT),
+        (tried(7), {"head": "2" * 40}, 7, False, AGED),
+        (tried(1), {"fp": "e" * 64}, 7, False, CHANGED),
         # A job a person started records no fingerprint: only its age is read.
-        (done(1, fp=None, head=None), ctx(), 7, False, CURRENT),
-        (done(8, fp=None, head=None), ctx(), 7, False, AGED),
+        (done(1, fp=None, head=None), {}, 7, False, CURRENT),
+        (done(8, fp=None, head=None), {}, 7, False, AGED),
         # Never due while one is pending, running, awaiting input or paused, whatever else holds.
-        (None, ctx(), 7, True, LIVE),
-        (done(30), ctx(fp="e" * 64, head="2" * 40), 7, True, LIVE),
+        (None, {}, 7, True, LIVE),
+        (done(30), {"fp": "e" * 64, "head": "2" * 40}, 7, True, LIVE),
         # The setting off says off before anything else.
-        (None, ctx(), None, False, OFF),
-        (done(30), ctx(fp="e" * 64), None, True, OFF),
+        (None, {}, None, False, OFF),
+        (done(30), {"fp": "e" * 64}, None, True, OFF),
     ],
 )
-def test_due_reason(newest: Attempt | None, current: RepoContext, days: int | None, live: bool, reason: str) -> None:
-    assert due_reason(newest, current, days=days, now=T0, live=live) == reason
+# Each case names the reading it is read against by its fingerprint and head (ctx), built when the test runs.
+def test_due_reason(newest: Attempt | None, current: dict[str, str], days: int | None, live: bool, reason: str) -> None:
+    assert due_reason(newest, ctx(**current), days=days, now=T0, live=live) == reason
 
 
 @pytest.mark.parametrize(
     ("newest", "current", "days", "live", "reason"),
     [
         # The setting off is not a reason by hand, and no interval applies then.
-        (None, ctx(), None, False, FIRST),
-        (done(1), ctx(fp="e" * 64), None, False, CHANGED),
-        (done(400), ctx(head="2" * 40), None, False, CURRENT),
-        (tried(400), ctx(head="2" * 40), None, False, CURRENT),
-        (done(30), ctx(fp="e" * 64), None, True, LIVE),
+        (None, {}, None, False, FIRST),
+        (done(1), {"fp": "e" * 64}, None, False, CHANGED),
+        (done(400), {"head": "2" * 40}, None, False, CURRENT),
+        (tried(400), {"head": "2" * 40}, None, False, CURRENT),
+        (done(30), {"fp": "e" * 64}, None, True, LIVE),
         # The setting on, its interval holds by hand as on the schedule.
-        (done(8), ctx(head="2" * 40), 7, False, AGED),
-        (done(1), ctx(), 7, False, CURRENT),
+        (done(8), {"head": "2" * 40}, 7, False, AGED),
+        (done(1), {}, 7, False, CURRENT),
     ],
 )
 def test_due_reason_by_hand(
-    newest: Attempt | None, current: RepoContext, days: int | None, live: bool, reason: str
+    newest: Attempt | None, current: dict[str, str], days: int | None, live: bool, reason: str
 ) -> None:
-    assert due_reason(newest, current, days=days, now=T0, live=live, by_hand=True) == reason
+    assert due_reason(newest, ctx(**current), days=days, now=T0, live=live, by_hand=True) == reason
 
 
 def test_an_attempt_reads_the_job_row_it_came_from() -> None:
@@ -972,7 +980,9 @@ async def test_the_forge_is_read_a_handful_of_repositories_at_a_time_in_registry
         world.forge.put(name, HEAD, {"CLAUDE.md": "a" * 40} if name != "acme/r07" else {"README.md": "a" * 40})
     del world.forge.repos["acme/r11"]  # the forge answers 404 for this one
     survey = await world.loop.survey(org("acme", days=7))
-    assert 1 < world.forge.most_in_flight <= context_audit.READ_CONCURRENCY, world.forge.most_in_flight
+    from embry0.settings.sections.context_audit import CONTEXT_AUDIT
+
+    assert 1 < world.forge.most_in_flight <= CONTEXT_AUDIT.defaults().read_concurrency, world.forge.most_in_flight
     assert [s.context.repo for s in survey.repos] == [n for n in names if n not in ("acme/r07", "acme/r11")]
     assert [repo for repo, _detail in survey.unread] == ["acme/r11"]
 
@@ -1007,7 +1017,9 @@ async def test_a_job_starts_on_the_template_with_a_hard_budget_and_its_reading(m
 
     monkeypatch.setattr(context_audit, "emit_audit", record)
     jobs, executor = FakeJobs(Clock(T0)), FakeExecutor()
-    context = RepoContext(repo="acme/web", head_sha=HEAD, files=("AGENTS.md", "CLAUDE.md"), fingerprint=FP)
+    context = RepoContext(
+        repo="acme/web", head_sha=HEAD, files=("AGENTS.md", "CLAUDE.md"), fingerprint=FP, rules=built_in_rules()
+    )
     job_id = await start_context_audit_job(
         context, jobs=jobs, executor=executor, templates=FakeTemplates(TEMPLATE), budget_usd=1.5
     )
@@ -1058,7 +1070,7 @@ async def test_a_finding_s_fix_job_carries_its_task_and_never_anchors_the_schedu
     # A day later an owner accepts one of its findings: the proposals route's start.
     world.clock.now = T0 + timedelta(days=1)
     await start_context_audit_job(
-        RepoContext("acme/web", HEAD, ("CLAUDE.md",), f"{FIX_BY}:finding:0000000000000001"),
+        RepoContext("acme/web", HEAD, ("CLAUDE.md",), f"{FIX_BY}:finding:0000000000000001", rules=built_in_rules()),
         jobs=world.jobs,
         executor=world.executor,
         templates=world.templates,
@@ -1103,7 +1115,7 @@ async def test_a_running_fix_job_holds_a_due_repository_and_never_becomes_its_an
     world.clock.now = T0 + timedelta(days=8)
     world.forge.put("acme/web", "2" * 40, {"CLAUDE.md": "a" * 40, "src/app.py": "b" * 40})
     await start_context_audit_job(
-        RepoContext("acme/web", "2" * 40, ("CLAUDE.md",), f"{FIX_BY}:finding:0000000000000001"),
+        RepoContext("acme/web", "2" * 40, ("CLAUDE.md",), f"{FIX_BY}:finding:0000000000000001", rules=built_in_rules()),
         jobs=world.jobs,
         executor=world.executor,
         templates=world.templates,
@@ -1293,12 +1305,14 @@ async def test_no_job_row_is_written_without_the_template_or_an_executor() -> No
 def test_the_task_names_the_commit_and_every_file_up_to_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     # The command follows the files (test_context_audit_command.py).
     command = "\n\n## How to run this audit\n"
-    task = audit_task(RepoContext("acme/web", HEAD, ("CLAUDE.md", "docs/AGENTS.md"), FP))
+    task = audit_task(RepoContext("acme/web", HEAD, ("CLAUDE.md", "docs/AGENTS.md"), FP, rules=built_in_rules()))
     assert "acme/web" in task.splitlines()[0]
     assert HEAD in task
     assert "Instruction files (2):\n- CLAUDE.md\n- docs/AGENTS.md" + command in task, "the files, then the command"
     monkeypatch.setattr(context_audit, "TASK_FILE_LIMIT", 2)
-    long = audit_task(RepoContext("acme/web", HEAD, ("a/CLAUDE.md", "b/CLAUDE.md", "c/CLAUDE.md"), FP))
+    long = audit_task(
+        RepoContext("acme/web", HEAD, ("a/CLAUDE.md", "b/CLAUDE.md", "c/CLAUDE.md"), FP, rules=built_in_rules())
+    )
     assert "Instruction files (3):\n- a/CLAUDE.md\n- b/CLAUDE.md\n- and 1 more" + command in long, "past the limit too"
 
 

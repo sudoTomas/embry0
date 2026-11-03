@@ -167,9 +167,9 @@ budget:
   # starts with POST /orgs/{owner}/context-audit/run, in US dollars.
   # context_audit_job_usd: 2.0
 
-  # Most context-audit jobs one round of the schedule (every 15 minutes)
-  # starts for an organization; the due repositories past it wait for the next
-  # round. 0 starts none.
+  # Most context-audit jobs one round of the schedule (every
+  # context_audit.check_minutes) starts for an organization; the due
+  # repositories past it wait for the next round. 0 starts none.
   # context_audit_max_jobs_per_tick: 3
 
   # The hard cap of one job that maps a repository's areas (POST
@@ -192,6 +192,39 @@ budget:
   # How much more a continue lets a job spend when the person names no amount,
   # in US dollars; null is one more cap. At most continue_extra_max_usd.
   # continue_default_extra_usd: null
+
+# Which files the context audit reads in a repository, how often its schedule
+# looks, and how many repositories it reads at once.
+context_audit:
+  # The instruction files the context audit reads in a repository, as globs
+  # over its tracked files: `**/` matches any number of directories, none
+  # included, and `*` any characters within one path segment. A glob holds
+  # only letters, digits, `.`, `_`, `-`, `+`, `@`, `*` and `/`, starts at the
+  # repository's root and never ends with `**`. A glob with no wildcard that
+  # names a directory, such as `.kiro/steering`, selects every tracked file
+  # under it, whatever its kind, as git does: write `.kiro/steering/*.md` for
+  # its Markdown alone. null reads the built-in list (docs/context-audit.md);
+  # a list replaces it whole, so name every file to read. A change that
+  # selects other files makes each repository it touches due once.
+  # files: null
+
+  # Directories never searched for instruction files, each one name matched at
+  # any depth: vendored and generated trees, whose instruction files belong to
+  # another project. null reads the built-in list (`.git`, `.venv`, `build`,
+  # `dist`, `node_modules`, `vendor`, `venv`); a list replaces it whole, and
+  # [] searches every directory.
+  # exclude_dirs: null
+
+  # Minutes between two looks of the schedule at the repositories of every
+  # organization it audits: one commit read per repository, and its tree when
+  # the head moved. A change applies within 15 minutes. The deployment's
+  # alone: it paces the forge calls of every organization's audits together.
+  # check_minutes: 15
+
+  # Repositories of one organization read from the forge at once, by the
+  # schedule, by GET /orgs/{owner}/context-audit and by a run by hand. The
+  # deployment's alone.
+  # read_concurrency: 8
 
 # Where a ticket states a code job's finish line, and how often a coding run
 # goes back to unmet items.
