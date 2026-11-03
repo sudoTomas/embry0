@@ -106,7 +106,9 @@ def test_invocation_from_config_defaults_when_fields_missing() -> None:
     assert inv.agent_type == "agent"
     assert inv.system_prompt == ""
     assert inv.system_context == ""
-    assert inv.tools == []
+    # No tools named: the agent type's defaults, the same list the hook checks.
+    developer_defaults = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
+    assert inv.tools == developer_defaults == inv.safety_policy.allowed_tools, f"missing tools became {inv.tools}"
     assert inv.skills == []
     assert inv.mcp_servers == {}
     assert inv.execution_mode == "sdk"
@@ -296,3 +298,19 @@ def test_invocation_from_config_reads_skill_mounts() -> None:
     inv = _invocation_from_config({"prompt": "ping", "skill_mounts": [spec]})
     assert inv.skill_mounts == (spec,)
     assert _invocation_from_config({"prompt": "ping"}).skill_mounts == ()
+
+
+def test_invocation_from_config_keeps_an_empty_tool_list_empty() -> None:
+    """An empty list is no tools: the hook allows none, never the agent type's defaults."""
+    from embry0.safety.policy import evaluate_policy
+
+    inv = _invocation_from_config({"prompt": "ping", "agent_type": "custom-agent", "tools": []})
+    assert inv.tools == [], f"an empty list became {inv.tools}"
+    assert inv.safety_policy.allowed_tools == [], f"the hook allows {inv.safety_policy.allowed_tools}"
+    verdict = evaluate_policy(inv.safety_policy, "Bash", {"command": "true"})
+    assert not verdict.allowed, "an agent with no tools ran Bash"
+
+
+def test_invocation_from_config_gives_unset_tools_the_type_defaults() -> None:
+    inv = _invocation_from_config({"prompt": "ping", "agent_type": "triage"})
+    assert inv.tools == ["Read", "Glob", "Grep"] == inv.safety_policy.allowed_tools, f"unset tools became {inv.tools}"

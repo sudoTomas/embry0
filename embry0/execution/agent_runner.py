@@ -46,6 +46,17 @@ RESUME_BLOB_SANDBOX_PATH = "/tmp/.embry0-resume-blob"
 # DockerClient `-w` flag — used by canonical_session_path_for to
 # compute the CLI's session-file location inside the sandbox.
 SANDBOX_PROJECT_CWD = "/workspace"
+# The sandbox runner's command line. It runs in /workspace, where the job's
+# repository is checked out, as the agent user, so two places code the job
+# ran can write would otherwise load first:
+# - the working directory, which ``python -m`` puts first on sys.path, ahead
+#   of the image's /app: a checkout holding its own embry0/ package would run
+#   in place of the runner and its tool checks. -P (Python 3.11 and later;
+#   every embry0 image has 3.12) leaves it off;
+# - the agent's user site-packages (~/.local/lib/python3.12/site-packages),
+#   whose .pth files and usercustomize.py Python runs at start-up, and which a
+#   `pip install --user` writes. -s leaves it off.
+RUNNER_COMMAND: tuple[str, ...] = ("python", "-P", "-s", "-m", "embry0.sandbox.runner")
 SANDBOX_HOME = Path("/home/agent")
 
 
@@ -221,7 +232,7 @@ class AgentRunner:
             # PR diff blew past it and the exec died with "[Errno 7] Argument
             # list too long" after the developer had already pushed. It also
             # keeps prompts out of the host's process table.
-            runner = ["python", "-m", "embry0.sandbox.runner"]
+            runner = list(RUNNER_COMMAND)
             output, exit_facts = await self._exec_runner(
                 container, [*runner, "--config-stdin", *extra_args], config_json.encode(), config, on_event
             )

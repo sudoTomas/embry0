@@ -7,7 +7,9 @@ tests/fixtures/skills/effective-skills.json.
 from __future__ import annotations
 
 import difflib
-from collections.abc import Collection, Iterable
+import re
+from collections.abc import Collection, Iterable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -61,6 +63,115 @@ def effective_skills(base: Iterable[str], *deltas: Any) -> list[str]:
             if name not in current:
                 current.append(name)
     return current
+
+
+# The skills triage may add to an agent: the agent row's
+# ``triage_may_add_skills``, which the operator sets. Each is a catalog name,
+# <plugin>:<skill>, shaped as a skill source names its skills
+# (embry0/skills/sync.py, _PLUGIN_NAME_RE and _SKILL_NAME_RE), held once each,
+# and at most TRIAGE_MAY_ADD_MAX of them. Triage still adds one only from a
+# source the agent's list already loads (narrowed_skills).
+TRIAGE_MAY_ADD_FIELD = "triage_may_add_skills"
+TRIAGE_MAY_ADD_MAX = 20
+_CATALOG_SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def checked_triage_may_add(value: Any) -> list[str]:
+    """``value`` as the ``triage_may_add_skills`` column holds it: catalog names, each once, in order.
+
+    Raises ValueError saying what is wrong: not a list, an entry that is not
+    a ``source:skill`` name, or more than ``TRIAGE_MAY_ADD_MAX`` names.
+    """
+    if not isinstance(value, list):
+        raise ValueError(f"{TRIAGE_MAY_ADD_FIELD} must be a list of source:skill names")
+    names: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not _CATALOG_SKILL_NAME_RE.fullmatch(entry):
+            raise ValueError(
+                f"{TRIAGE_MAY_ADD_FIELD}: {entry!r} is not a source:skill name "
+                "(lowercase letters, digits, '_' and '-', a skill also '.', up to 64 each)"
+            )
+        if entry not in names:
+            names.append(entry)
+    if len(names) > TRIAGE_MAY_ADD_MAX:
+        raise ValueError(f"{TRIAGE_MAY_ADD_FIELD} holds {len(names)} names; at most {TRIAGE_MAY_ADD_MAX}")
+    return names
+
+
+def triage_may_add(definition: Mapping[str, Any]) -> list[str]:
+    """The skills an agent row lets triage add; none when the row holds none or a malformed value."""
+    try:
+        return checked_triage_may_add(definition.get(TRIAGE_MAY_ADD_FIELD) or [])
+    except ValueError:
+        return []
+
+
+def triage_skill_choices(definition: Mapping[str, Any]) -> list[str]:
+    """The skills triage may add to this agent that it would be granted: those from a source the row's skills load."""
+    sources = {skill_source(str(s)) for s in definition.get("skills") or []} - {""}
+    return [name for name in triage_may_add(definition) if skill_source(name) in sources]
+
+
+@dataclass(frozen=True)
+class NarrowedSkills:
+    """What a run-time request leaves of an operator's skill list.
+
+    ``hidden`` is no skills at all, the repository's own included. With
+    ``hidden`` false an empty ``skills`` is no filter, as for an operator's
+    empty list. ``not_granted`` names what the request asked for and did not
+    get.
+    """
+
+    skills: list[str]
+    hidden: bool = False
+    not_granted: list[str] = field(default_factory=list)
+
+
+def skill_source(name: str) -> str:
+    """The source a catalog-shaped name comes from (``source:skill``); "" for a repository skill."""
+    return name.split(":", 1)[0] if ":" in name else ""
+
+
+def narrowed_skills(operator: list[str], request: Any, *, may_add: Collection[str] = ()) -> NarrowedSkills:
+    """``operator`` narrowed by a run-time ``request`` (a bare list or a delta): never a skill or a source it lacks.
+
+    ``operator`` is the effective list the definition and the template step
+    give, where empty means no filter: the repository's own skills, and no
+    source's. The request's removes apply; its adds are granted only when
+    ``operator`` already allows the name (an allowlist that names it, or no
+    filter and a repository skill), or the name is in ``may_add`` and its
+    source is one ``operator`` already loads. A request that replaces the list
+    (a bare list, ``"remove": "*"``) and keeps nothing is ``hidden``; so is a
+    malformed one.
+    """
+    try:
+        delta = normalize_delta(request)
+    except ValueError:
+        return NarrowedSkills([], hidden=True)
+    sources = {skill_source(s) for s in operator} - {""}
+
+    def addable(name: str) -> bool:
+        if name in operator:
+            return True
+        if not operator and is_repository_skill(name):
+            return True
+        return name in may_add and skill_source(name) in sources
+
+    replaces = delta["remove"] == "*"
+    if not operator and not replaces:
+        # No filter stays no filter: a repository skill already loads, a source's never does.
+        return NarrowedSkills([], not_granted=[n for n in delta["add"] if not addable(n)])
+    drop = set() if replaces else set(delta["remove"])
+    current = [] if replaces else [s for s in operator if s not in drop]
+    refused: list[str] = []
+    for name in delta["add"]:
+        if name in current:
+            continue
+        if addable(name):
+            current.append(name)
+        else:
+            refused.append(name)
+    return NarrowedSkills(current, hidden=not current, not_granted=refused)
 
 
 def is_repository_skill(name: str) -> bool:

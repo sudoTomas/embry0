@@ -16,6 +16,7 @@ security bug.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import unicodedata
@@ -58,7 +59,9 @@ class SafetyPolicy:
     """Full policy struct consumed by both executors.
 
     allowed_tools is passed to ClaudeAgentOptions.allowed_tools (SDK) or
-    --allowedTools (CLI). allow/deny rules are rendered into a settings.json.
+    --allowedTools (CLI), and evaluate_policy checks tool names against it:
+    None checks no names, and an empty list allows no tool but the CLI's own
+    (_INFRA_ALLOWED_TOOLS). allow/deny rules are rendered into a settings.json.
     content_checks are evaluated via evaluate_policy() at hook time.
     network_egress_allowlist is not enforced by this module — it is produced
     for consumption by sandbox container setup. EMB-29 enforces it for
@@ -67,7 +70,7 @@ class SafetyPolicy:
     allowlist automatically from frontend_url + profile extra_hosts.
     """
 
-    allowed_tools: list[str] = field(default_factory=list)
+    allowed_tools: list[str] | None = None
     allow_rules: list[str] = field(default_factory=list)
     deny_rules: list[str] = field(default_factory=list)
     content_checks: list[ContentRule] = field(default_factory=list)
@@ -99,6 +102,14 @@ def _stringify_input(tool_input: dict[str, Any]) -> str:
 # for zero safety value (they touch no external surface).
 _INFRA_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset({"TodoWrite", "Skill", "SlashCommand"})
 
+# The CLI tools whose input runs as a shell command: Bash, and Monitor (CLI
+# 2.1.316 and later), which runs a command in the background and streams its
+# output. An agent whose operator-given tools (its definition's, or its
+# template step's) name none of them gets no MCP server that runs a command
+# either (embry0.agents.mcp_servers). A CLI release that adds another such
+# tool must add it here.
+SHELL_TOOLS: Final[frozenset[str]] = frozenset({"Bash", "Monitor"})
+
 
 def evaluate_policy(
     policy: SafetyPolicy,
@@ -108,20 +119,22 @@ def evaluate_policy(
     """Evaluate a single tool call against the tool-name allowlist and the
     Ring-3 content checks.
 
-    Name check (EMB-37): when ``policy.allowed_tools`` is non-empty, any
-    tool name outside it (and outside ``_INFRA_ALLOWED_TOOLS``) is denied.
-    This is the enforcement layer that survives runtime tool loading
-    (ToolSearch/deferred tools) — the SDK's ``allowed_tools`` option is an
-    auto-approve list, not an availability gate, so without this check an
-    agent can call tools it discovered at runtime. An empty
-    ``allowed_tools`` skips name enforcement (content checks only).
+    Name check (EMB-37): when ``policy.allowed_tools`` is a list, any tool
+    name outside it (and outside ``_INFRA_ALLOWED_TOOLS``) is denied, so an
+    empty list allows none. This is the enforcement layer that survives
+    runtime tool loading (ToolSearch/deferred tools) — the SDK's
+    ``allowed_tools`` option is an auto-approve list, not an availability
+    gate, so without this check an agent can call tools it discovered at
+    runtime. ``allowed_tools=None`` skips name enforcement (content checks
+    only).
 
     Returns Verdict.allow() if no rule fires. Returns Verdict.deny(reason)
     if any matching rule hits. On any internal exception, returns
     Verdict.deny("safety hook failed: ...") — fail-closed.
     """
     try:
-        if policy.allowed_tools and tool_name not in policy.allowed_tools and tool_name not in _INFRA_ALLOWED_TOOLS:
+        allowed = policy.allowed_tools
+        if allowed is not None and tool_name not in allowed and tool_name not in _INFRA_ALLOWED_TOOLS:
             return Verdict.deny(f"tool {tool_name!r} is not in this agent's allowlist")
         haystack = _normalize(_stringify_input(tool_input))
         for rule in policy.content_checks:
@@ -213,6 +226,52 @@ _AGENT_TOOLS: dict[str, list[str]] = {
     "review": ["Read", "Glob", "Grep", "Bash"],
 }
 
+# What an agent keeps of its own list when a run-time change empties it:
+# triage narrowing it, or a review that runs nothing taking its shell away.
+# Only these tools, and only those the list had. An empty list means no
+# tools; it never means the defaults.
+READ_ONLY_TOOLS: Final[tuple[str, ...]] = ("Read", "Glob", "Grep")
+
+
+def default_tools_for_agent(agent_type: str) -> list[str]:
+    """The tools an agent type runs with when nothing names its tools."""
+    return list(_AGENT_TOOLS.get(agent_type, _AGENT_TOOLS["developer"]))
+
+
+def parse_tool_list(value: Any) -> list[str] | None:
+    """A tool list as stored or sent: None when unset, else a list of names.
+
+    A JSON string (a JSONB value read as text) is parsed. Anything else that
+    is not a list, or a string that is not a JSON list, is an empty list:
+    a malformed list grants nothing.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    if not isinstance(value, list | tuple):
+        return []
+    return [str(tool) for tool in value]
+
+
+def tools_for_run(agent_type: str, tools: list[str] | None) -> list[str]:
+    """The tools a run gets: the type's defaults when ``tools`` is None, else ``tools``, an empty list included."""
+    return default_tools_for_agent(agent_type) if tools is None else list(tools)
+
+
+def read_only_if_emptied(before: list[str], after: list[str]) -> list[str]:
+    """``after``, or the read-only tools ``before`` had when ``after`` took every one.
+
+    The fallback never adds a tool: a list with no read-only tool falls back
+    to none, which is no tools.
+    """
+    if after:
+        return list(after)
+    return [tool for tool in before if tool in READ_ONLY_TOOLS]
+
 
 def default_policy_for_agent(agent_type: str) -> SafetyPolicy:
     """Baseline safety policy for a given agent type.
@@ -230,9 +289,8 @@ def default_policy_for_agent(agent_type: str) -> SafetyPolicy:
     content_checks = [
         ContentRule(pattern=p, tools=["Bash"], reason=f"dangerous bash pattern: {p}") for p in DANGEROUS_BASH_PATTERNS
     ]
-    tools = _AGENT_TOOLS.get(agent_type, _AGENT_TOOLS["developer"])
     return SafetyPolicy(
-        allowed_tools=tools,
+        allowed_tools=default_tools_for_agent(agent_type),
         allow_rules=list(_BASELINE_ALLOW_RULES),
         deny_rules=list(_BASELINE_DENY_RULES),
         content_checks=content_checks,

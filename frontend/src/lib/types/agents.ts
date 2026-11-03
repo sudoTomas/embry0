@@ -55,7 +55,10 @@ export interface AgentDefinition {
   tagline?: string;
   /** Catalog-shaped skills no source lists (`GET /agents/{type}` only). */
   orphan_skills?: string[];
-  /** Write responses only: skills accepted from a source that is not ready. */
+  /** The skills triage may add to this agent for a job, each only from a source its skills
+   * already load (docs/api.md, Agents). Absent on a backend that predates it. */
+  triage_may_add_skills?: string[];
+  /** Write responses only: skills accepted from a source that is not ready, and what a job runs without. */
   warnings?: string[];
   created_at?: string;
   updated_at?: string;
@@ -75,6 +78,7 @@ export interface AgentCreateRequest {
   avatar?: string;
   color?: string;
   tagline?: string;
+  triage_may_add_skills?: string[];
 }
 
 /** PUT semantics (RAV-1058): omitted fields stay untouched; an explicitly-sent
@@ -93,4 +97,6 @@ export interface AgentUpdateRequest {
   avatar?: string;
   color?: string;
   tagline?: string;
+  /** Not nullable on the backend: [] lets triage add none. */
+  triage_may_add_skills?: string[];
 }

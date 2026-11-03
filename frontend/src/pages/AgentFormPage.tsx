@@ -52,6 +52,8 @@ interface FormState {
   auth_mode: "" | "api_key" | "oauth";
   /** JSON text of the mcp_servers object; validated on save. */
   mcpServersText: string;
+  /** The skills triage may add to this agent for a job (`triage_may_add_skills`). */
+  triageMayAddSkills: string[];
 }
 
 /** The page's parts, top to bottom: the character it has become, then what it is configured to be. */
@@ -93,7 +95,36 @@ const EMPTY_FORM: FormState = {
   execution_mode: "",
   auth_mode: "",
   mcpServersText: "",
+  triageMayAddSkills: [],
 };
+
+/** The CLI tools that run a shell command; an agent with none gets no MCP server that runs a command. */
+const SHELL_TOOLS = ["Bash", "Monitor"];
+/** The QA browser backends' MCP servers, which a job drops for an agent with no shell tool. */
+const BROWSER_SERVERS = ["playwright", "vibium"];
+
+/** The MCP servers a job drops for this agent: none with a shell tool, else every one that runs a command
+ * (the log tool's server aside, which embry0 adds itself) and the browser its browser tools need. */
+function serversDroppedWithoutShell(tools: string[], mcpServersText: string): string[] {
+  if (tools.some((t) => SHELL_TOOLS.includes(t))) return [];
+  const names: string[] = [];
+  try {
+    const parsed: unknown = mcpServersText.trim() ? JSON.parse(mcpServersText) : {};
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      for (const [name, server] of Object.entries(parsed as Record<string, unknown>)) {
+        const cfg = (server && typeof server === "object" ? server : {}) as Record<string, unknown>;
+        const remote = (cfg.type === "http" || cfg.type === "sse") && !("command" in cfg);
+        if (!remote) names.push(name);
+      }
+    }
+  } catch {
+    // Not JSON yet: the save refuses it anyway.
+  }
+  for (const b of BROWSER_SERVERS) {
+    if (!names.includes(b) && tools.some((t) => t.startsWith(`mcp__${b}__`))) names.push(b);
+  }
+  return names;
+}
 
 export function AgentFormPage() {
   const { type: typeParam } = useParams<{ type: string }>();
@@ -170,6 +201,7 @@ export function AgentFormPage() {
       execution_mode: existing.execution_mode ?? "",
       auth_mode: existing.auth_mode ?? "",
       mcpServersText: mcp && Object.keys(mcp).length > 0 ? JSON.stringify(mcp, null, 2) : "",
+      triageMayAddSkills: existing.triage_may_add_skills ?? [],
     });
   }, [existing, offeredModels]);
 
@@ -217,6 +249,10 @@ export function AgentFormPage() {
     }));
   };
 
+  // The brief writer's voices (runs_in_jobs false) never run in a job, so they need no tools.
+  const runsInNoJob = isEdit && existing !== undefined && existing.runs_in_jobs === false;
+  const droppedServers = serversDroppedWithoutShell(form.tools, form.mcpServersText);
+
   const handleSave = () => {
     if (!isEdit && !form.type.trim()) {
       openSection("identity");
@@ -225,7 +261,7 @@ export function AgentFormPage() {
     }
     // A definition no job runs keeps naming no model: the brief writer's voices (runs_in_jobs false),
     // whose briefs run on the model background_models names for them.
-    const namesNoModel = isEdit && existing !== undefined && existing.runs_in_jobs === false && !existing.model;
+    const namesNoModel = runsInNoJob && !existing?.model;
     if (!resolvedModel.trim() && !namesNoModel) {
       openSection("model");
       toast.error("Model is required");
@@ -276,6 +312,7 @@ export function AgentFormPage() {
         execution_mode: form.execution_mode || null,
         auth_mode: form.auth_mode || null,
         mcp_servers: mcpServers,
+        triage_may_add_skills: form.triageMayAddSkills,
       };
       updateAgent.mutate(update, {
         onSuccess: onSaved("Agent updated"),
@@ -293,6 +330,7 @@ export function AgentFormPage() {
         ...(form.execution_mode ? { execution_mode: form.execution_mode } : {}),
         ...(form.auth_mode ? { auth_mode: form.auth_mode } : {}),
         ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
+        triage_may_add_skills: form.triageMayAddSkills,
       };
       createAgent.mutate(create, {
         onSuccess: onSaved("Agent created"),
@@ -528,6 +566,20 @@ export function AgentFormPage() {
         <div>
           <Label className="sr-only">Tools</Label>
           <ToolChecklist value={form.tools} onToggle={handleToolToggle} catalog={toolCatalog ?? []} />
+          {form.tools.length === 0 && !runsInNoJob && (
+            <p className="mt-2 text-xs text-warning" role="status" data-testid="no-tools-warning">
+              No tools selected: a job runs this agent with no tools at all. It can read nothing and change
+              nothing, and it finishes with text only.
+            </p>
+          )}
+          {form.tools.length > 0 && !runsInNoJob && droppedServers.length > 0 && (
+            <p className="mt-2 text-xs text-warning" role="status" data-testid="no-shell-servers-warning">
+              No shell tool (Bash or Monitor): a job runs this agent without {droppedServers.join(", ")}, since
+              an MCP server that runs a command needs one.
+              {droppedServers.some((s) => BROWSER_SERVERS.includes(s)) &&
+                " An agent with browser tools and no shell tool runs without its browser."}
+            </p>
+          )}
         </div>
       </ConfigSection>
 
@@ -556,6 +608,26 @@ export function AgentFormPage() {
             </p>
           )}
         </div>
+        {!runsInNoJob && (
+          <div className="mt-4">
+            <Label htmlFor="agent-triage-may-add">Skills triage may add</Label>
+            <div className="mt-1">
+              <SkillPicker
+                id="agent-triage-may-add"
+                value={form.triageMayAddSkills}
+                onChange={(triageMayAddSkills) => setForm((prev) => ({ ...prev, triageMayAddSkills }))}
+                catalog={skillCatalog ?? []}
+                isLoading={skillsLoading}
+                allowRepositorySkills={false}
+              />
+            </div>
+            <p className="text-xs text-white/30 mt-1" data-testid="triage-may-add-help">
+              Triage reads the ticket. For a job it may add one of these skills to this agent, and only from a
+              source this agent&apos;s skill packs already load, so it never loads a new source. With none,
+              triage can only take this agent&apos;s skills away.
+            </p>
+          </div>
+        )}
       </ConfigSection>
 
       <ConfigSection

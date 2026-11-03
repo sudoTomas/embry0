@@ -84,3 +84,8 @@ class AgentInvocation:
     # Local models: set when ``model`` is the job's local-first model, run in
     # place of the resolved one, as ``{"instead_of"}``. Orchestrator-side only.
     local_first: dict[str, Any] | None = None
+    # True when a run-time narrowing left the agent no skill: every skill is
+    # hidden, the repository's own included. False with an empty ``skills``
+    # is no filter. The sandbox reads it as ``skills_hidden`` in its config;
+    # a runner that predates it ignores the key and runs with no filter.
+    skills_hidden: bool = False

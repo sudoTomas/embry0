@@ -82,11 +82,11 @@ def test_runtime_overrides_template():
     assert cfg.model == "gpt-4o-mini"
 
 
-def test_runtime_overrides_tools_and_skills():
-    """pipeline_config overrides both tools and skills independently."""
+def test_runtime_narrows_skills_and_tools():
+    """pipeline_config's skills and tools only narrow the template's lists."""
     template = {
-        "agent_tools": {AGENT_TYPE: ["web_search"]},
-        "agent_skills": {AGENT_TYPE: ["translate"]},
+        "agent_tools": {AGENT_TYPE: ["web_search", "code_exec"]},
+        "agent_skills": {AGENT_TYPE: ["translate", "classify"]},
     }
     pipeline = {
         "agent_tools": {AGENT_TYPE: ["code_exec", "file_io"]},
@@ -100,8 +100,8 @@ def test_runtime_overrides_tools_and_skills():
         pipeline_config=pipeline,
     )
 
-    assert cfg.tools == ["code_exec", "file_io"]
-    assert cfg.skills == ["classify"]
+    assert cfg.tools == ["code_exec"], f"triage's tools must only narrow the template's: {cfg.tools}"
+    assert cfg.skills == ["classify"], f"triage's skills must only narrow the template's: {cfg.skills}"
 
 
 def test_system_prompt_not_overridable():
@@ -180,18 +180,18 @@ def test_jsonb_tools_parsed():
     assert isinstance(cfg.skills, list)
 
 
-def test_template_and_triage_skill_deltas_are_additive() -> None:
+def test_the_template_delta_applies_and_triage_adds_nothing() -> None:
     definition = {"model": "m", "tools": [], "skills": ["s:a", "s:b"], "system_prompt": ""}
     resolved = resolve_agent_config(
         "developer",
         definition,
         template_config={"agent_skills": {"developer": {"add": ["s:c"], "remove": ["s:a"]}}},
-        pipeline_config={"agent_skills": {"developer": {"add": ["s:d"]}}},
+        pipeline_config={"agent_skills": {"developer": {"add": ["s:d"], "remove": ["s:b"]}}},
     )
-    assert resolved.skills == ["s:b", "s:c", "s:d"]
+    assert resolved.skills == ["s:c"], f"the template's delta applies, triage's only removes: {resolved.skills}"
 
 
-def test_legacy_list_skill_override_still_replaces() -> None:
+def test_legacy_list_skill_override_still_replaces_in_a_template() -> None:
     definition = {"model": "m", "tools": [], "skills": ["s:a", "s:b"], "system_prompt": ""}
-    resolved = resolve_agent_config("developer", definition, pipeline_config={"agent_skills": {"developer": ["s:z"]}})
-    assert resolved.skills == ["s:z"]
+    resolved = resolve_agent_config("developer", definition, template_config={"agent_skills": {"developer": ["s:z"]}})
+    assert resolved.skills == ["s:z"], resolved.skills

@@ -207,11 +207,11 @@ def test_evaluate_policy_exempts_harness_internal_tools() -> None:
         assert evaluate_policy(policy, name, {}).allowed is True
 
 
-def test_evaluate_policy_empty_allowlist_skips_name_check() -> None:
-    """No allowlist configured -> name enforcement off (content checks only)."""
-    policy = SafetyPolicy(allowed_tools=[])
+def test_evaluate_policy_unset_allowlist_skips_name_check() -> None:
+    """No allowlist configured (None) -> name enforcement off (content checks only)."""
+    policy = SafetyPolicy(allowed_tools=None)
     v = evaluate_policy(policy, "AnythingGoes", {})
-    assert v.allowed is True
+    assert v.allowed is True, f"an unset allowlist must check no names: {v.reason}"
 
 
 def test_evaluate_policy_content_checks_still_fire_for_allowed_names() -> None:
@@ -222,3 +222,10 @@ def test_evaluate_policy_content_checks_still_fire_for_allowed_names() -> None:
     v = evaluate_policy(policy, "Bash", {"command": "rm -rf /"})
     assert v.allowed is False
     assert "destructive rm" in v.reason
+
+
+def test_evaluate_policy_empty_allowlist_allows_no_tool() -> None:
+    """An empty list is no tools; only the CLI's own (TodoWrite, Skill) stay callable."""
+    policy = SafetyPolicy(allowed_tools=[])
+    assert not evaluate_policy(policy, "Bash", {"command": "true"}).allowed, "an empty allowlist allowed Bash"
+    assert evaluate_policy(policy, "TodoWrite", {}).allowed, "the CLI's own tools stay callable"

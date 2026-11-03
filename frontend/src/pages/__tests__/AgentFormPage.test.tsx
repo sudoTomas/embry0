@@ -434,7 +434,9 @@ describe("identity and skills (spec 3.6)", () => {
     mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, skills: ["commit-standard"] }, isLoading: false });
     const user = userEvent.setup();
     renderEdit("grok-dev");
-    await user.click(screen.getByRole("option", { name: /superpowers:writing-plans/ }));
+    // The skill packs' own picker: the section also holds the one for the skills triage may add.
+    const packs = document.getElementById(screen.getByLabelText("Skill packs").getAttribute("aria-controls") ?? "");
+    await user.click(within(packs!).getByRole("option", { name: /superpowers:writing-plans/ }));
     await user.click(screen.getByRole("button", { name: /save agent/i }));
     expect(mockUpdateMutate).toHaveBeenCalledWith(
       expect.objectContaining({ skills: ["commit-standard", "superpowers:writing-plans"] }),
@@ -504,5 +506,113 @@ describe("AgentFormPage as a character sheet (progression spec 2026-10-24)", () 
     renderNew();
     expect(screen.queryByTestId("agent-section-character")).toBeNull();
     for (const id of ["identity", "model", "tools", "packs", "mcp", "prompt"]) expect(section(id).open, id).toBe(true);
+  });
+});
+
+describe("AgentFormPage warns about an agent with no tools", () => {
+  it("warns that a job runs an agent with no tools with none at all, until a tool is selected", async () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, tools: [] }, isLoading: false });
+    const user = userEvent.setup();
+    renderEdit("grok-dev");
+    expect(screen.getByTestId("no-tools-warning")).toHaveTextContent(/no tools at all.*finishes with text only/);
+    await user.click(screen.getByRole("checkbox", { name: "Read" }));
+    expect(screen.queryByTestId("no-tools-warning"), "a selected tool ends the warning").toBeNull();
+  });
+
+  it("warns on a new agent, which starts with no tools", () => {
+    mockUseAgent.mockReturnValue({ data: undefined, isLoading: false });
+    renderNew();
+    expect(screen.getByTestId("no-tools-warning")).toBeInTheDocument();
+  });
+
+  it("says nothing for an agent with tools, or for a definition no job runs", () => {
+    renderEdit();
+    expect(screen.queryByTestId("no-tools-warning"), "the developer has tools").toBeNull();
+    mockUseAgent.mockReturnValue({
+      data: { ...EXISTING, type: "proposal-brief", tools: [], runs_in_jobs: false },
+      isLoading: false,
+    });
+    renderEdit("proposal-brief");
+    expect(screen.queryByTestId("no-tools-warning"), "a brief writer's voice runs in no job").toBeNull();
+  });
+});
+
+describe("AgentFormPage: the skills triage may add", () => {
+  it("shows what the field does and saves the names picked", async () => {
+    mockUseAgent.mockReturnValue({
+      data: { ...GROK_DEV_ROW, skills: ["superpowers:writing-plans"], triage_may_add_skills: ["superpowers:writing-plans"] },
+      isLoading: false,
+    });
+    const user = userEvent.setup();
+    renderEdit("grok-dev");
+    expect(screen.getByTestId("triage-may-add-help")).toHaveTextContent(/only from a source this agent.s skill packs already load/);
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+    expect(mockUpdateMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ triage_may_add_skills: ["superpowers:writing-plans"] }),
+      expect.anything(),
+    );
+  });
+
+  it("sends an empty list for an agent that lets triage add nothing", async () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW }, isLoading: false });
+    const user = userEvent.setup();
+    renderEdit("grok-dev");
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+    expect(mockUpdateMutate).toHaveBeenCalledWith(expect.objectContaining({ triage_may_add_skills: [] }), expect.anything());
+  });
+
+  it("is left out for a definition no job runs", () => {
+    mockUseAgent.mockReturnValue({
+      data: { ...EXISTING, type: "proposal-brief", tools: [], runs_in_jobs: false },
+      isLoading: false,
+    });
+    renderEdit("proposal-brief");
+    expect(screen.queryByTestId("triage-may-add-help"), "a brief writer's voice runs in no job").toBeNull();
+  });
+});
+
+describe("AgentFormPage warns about an agent with browser tools and no shell", () => {
+  it("says a job runs it without its browser", () => {
+    mockUseAgent.mockReturnValue({
+      data: { ...GROK_DEV_ROW, tools: ["Read", "mcp__playwright__browser_click"], mcp_servers: {} },
+      isLoading: false,
+    });
+    renderEdit("grok-dev");
+    expect(screen.getByTestId("no-shell-servers-warning")).toHaveTextContent(/without playwright.*without its browser/);
+  });
+
+  it("names a command-running server the agent would lose, and says nothing with a shell tool", () => {
+    mockUseAgent.mockReturnValue({
+      data: { ...GROK_DEV_ROW, tools: ["Read"], mcp_servers: { lint: { type: "stdio", command: "lint-mcp" } } },
+      isLoading: false,
+    });
+    renderEdit("grok-dev");
+    expect(screen.getByTestId("no-shell-servers-warning")).toHaveTextContent(/without lint/);
+    expect(screen.getByTestId("no-shell-servers-warning")).not.toHaveTextContent(/browser/);
+  });
+
+  it("says nothing for an agent with Bash", () => {
+    mockUseAgent.mockReturnValue({
+      data: { ...GROK_DEV_ROW, tools: ["Read", "Bash", "mcp__playwright__browser_click"] },
+      isLoading: false,
+    });
+    renderEdit("grok-dev");
+    expect(screen.queryByTestId("no-shell-servers-warning"), "an agent with a shell keeps its servers").toBeNull();
+  });
+});
+
+describe("AgentFormPage: picking a skill triage may add", () => {
+  it("adds a catalog skill to the list triage may add, not to the skill packs", async () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, skills: ["superpowers:writing-plans"] }, isLoading: false });
+    const user = userEvent.setup();
+    renderEdit("grok-dev");
+    const picker = screen.getByLabelText("Skills triage may add");
+    const listbox = document.getElementById(picker.getAttribute("aria-controls") ?? "");
+    await user.click(within(listbox!).getByRole("option", { name: /superpowers:writing-plans/ }));
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+    expect(mockUpdateMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ skills: ["superpowers:writing-plans"], triage_may_add_skills: ["superpowers:writing-plans"] }),
+      expect.anything(),
+    );
   });
 });

@@ -18,7 +18,7 @@ call.
 
 Registered per-invocation as::
 
-    {"context": {"type": "stdio", "command": "python3", "args": ["-m", "embry0.sandbox.context_mcp"]}}
+    {"context": {"type": "stdio", "command": "python3", "args": ["-P", "-s", "-m", "embry0.sandbox.context_mcp"]}}
 """
 
 from __future__ import annotations

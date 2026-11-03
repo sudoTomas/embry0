@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from embry0.agents.identity import DISPLAY_NAME_MAX, TAGLINE_MAX, validate_avatar, validate_color
+from embry0.agents.skills import checked_triage_may_add
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.execution.auth_provider import env_override_refusal
 from embry0.execution.profile_isolation import ISOLATION_FIELDS, field_problem
@@ -430,6 +431,14 @@ class AgentCreateRequest(BaseModel):
     avatar: str = "golem"
     color: str = "slate"
     tagline: str = Field(default="", max_length=TAGLINE_MAX)
+    # The skills triage may add to this agent, each from a source its skills
+    # already load (docs/api.md, Agents). Catalog names, each once.
+    triage_may_add_skills: list[Any] = Field(default_factory=list)
+
+    @field_validator("triage_may_add_skills")
+    @classmethod
+    def _triage_may_add(cls, v: list[Any]) -> list[str]:
+        return checked_triage_may_add(v)
 
     @field_validator("type")
     @classmethod
@@ -469,6 +478,13 @@ class AgentUpdateRequest(BaseModel):
     avatar: str | None = None
     color: str | None = None
     tagline: str | None = Field(default=None, max_length=TAGLINE_MAX)
+    # Not nullable: [] lets triage add none (the route refuses an explicit null).
+    triage_may_add_skills: list[Any] | None = None
+
+    @field_validator("triage_may_add_skills")
+    @classmethod
+    def _triage_may_add(cls, v: list[Any] | None) -> list[str] | None:
+        return None if v is None else checked_triage_may_add(v)
 
     @field_validator("avatar")
     @classmethod

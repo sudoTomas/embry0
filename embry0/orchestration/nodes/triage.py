@@ -26,6 +26,29 @@ _MODEL_GUIDANCE_SLOT = "<<MODEL_GUIDANCE>>"
 # Where the "Done when" section goes: it names the ticket headings of the
 # job's repository (the settings document's done_when.ticket_sections, #182).
 _DONE_WHEN_GUIDE_SLOT = "<<DONE_WHEN_GUIDE>>"
+# Where the developer's skill selection goes: the skills its row lets triage
+# add (agent_definitions.triage_may_add_skills), or nothing when it lets none.
+_SKILL_SELECTION_SLOT = "<<SKILL_SELECTION>>"
+
+# What the prompt says of a skill triage may add. A skill not named here gets
+# a line of its own (_GENERIC_SKILL_GUIDANCE).
+_SKILL_GUIDANCE: dict[str, str] = {
+    "superpowers:brainstorming": """- `superpowers:brainstorming` — use when the issue is OPEN-ENDED or has
+  meaningful design choices: new features, multi-file refactors, anything
+  with a "should we…" or "how should this work" component. The skill walks
+  the developer through clarifying questions → approach options →
+  agreed-on design → spec doc → then writing-plans → then implementation.""",
+    "superpowers:writing-plans": """- `superpowers:writing-plans` — use when the issue is a CLEAR
+  implementation task with no real design decisions: bug fixes with a
+  diagnosed root cause, well-scoped enhancements, asset additions, config
+  edits, dependency bumps, single-file changes you can describe in one
+  sentence. The skill goes straight to writing a step-by-step
+  implementation plan, then to executing it.""",
+}
+_GENERIC_SKILL_GUIDANCE = (
+    "- `{name}` — a skill this deployment lets you add to the developer; attach it when the issue calls for it."
+)
+_DESIGN_PAIR = ("superpowers:brainstorming", "superpowers:writing-plans")
 
 # The triage instructions, minus the model guidance. That section names the
 # deployment's models, so it is built from configuration per job
@@ -93,32 +116,7 @@ per-agent turn caps (defaults: triage 15, developer 40, review 25, qa 40).
 Raise the developer's only for genuinely large multi-file work, e.g.
   {"developer": 60}
 
-Skill selection for the developer (CRITICAL):
-Decide whether the issue needs an upfront DESIGN pass or can jump straight to
-implementation, then attach exactly ONE of these two skills to the developer:
-
-- `superpowers:brainstorming` — use when the issue is OPEN-ENDED or has
-  meaningful design choices: new features, multi-file refactors, anything
-  with a "should we…" or "how should this work" component. The skill walks
-  the developer through clarifying questions → approach options →
-  agreed-on design → spec doc → then writing-plans → then implementation.
-
-- `superpowers:writing-plans` — use when the issue is a CLEAR
-  implementation task with no real design decisions: bug fixes with a
-  diagnosed root cause, well-scoped enhancements, asset additions, config
-  edits, dependency bumps, single-file changes you can describe in one
-  sentence. The skill goes straight to writing a step-by-step
-  implementation plan, then to executing it.
-
-Set the chosen skill as an ADDITION in `pipeline_config.agent_skills` (the
-developer keeps its configured skills; you add one):
-  {"developer": {"add": ["superpowers:brainstorming"]}}     # or
-  {"developer": {"add": ["superpowers:writing-plans"]}}
-
-Defaults if you can't decide: prefer brainstorming. Better to spend a few
-minutes designing than to ship the wrong thing.
-
-Budget guidelines (CRITICAL — wrong budget hard-stops the workflow):
+<<SKILL_SELECTION>>Budget guidelines (CRITICAL — wrong budget hard-stops the workflow):
 - `pipeline_config.budget_usd` is a HARD CAP. The orchestrator routes to
   max_retries the moment cumulative agent spend exceeds it. Set it ABOVE
   realistic per-run cost.
@@ -290,18 +288,60 @@ def build_triage_model_guidance(*, default_model: str, tier_models: Mapping[str,
     )
 
 
+def build_skill_selection(skill_choices: Sequence[str]) -> str:
+    """The "Skill selection for the developer" section for the skills triage may add to it; "" for none.
+
+    ``skill_choices`` are the developer row's ``triage_may_add_skills`` that it
+    would be granted (``embry0.agents.skills.triage_skill_choices``), so
+    triage is never told to add one it would be refused.
+    """
+    if not skill_choices:
+        return ""
+    choices = list(dict.fromkeys(skill_choices))
+    if tuple(choices) == _DESIGN_PAIR:
+        intro = (
+            "Decide whether the issue needs an upfront DESIGN pass or can jump straight to\n"
+            "implementation, then attach exactly ONE of these two skills to the developer:"
+        )
+    else:
+        intro = "Attach exactly ONE of these skills to the developer, the one that fits the issue best:"
+    entries = "\n\n".join(_SKILL_GUIDANCE.get(name) or _GENERIC_SKILL_GUIDANCE.format(name=name) for name in choices)
+    examples = [f'  {{"developer": {{"add": ["{name}"]}}}}' for name in choices]
+    example_lines = "\n".join(f"{line}     # or" if i < len(examples) - 1 else line for i, line in enumerate(examples))
+    section = (
+        "Skill selection for the developer (CRITICAL):\n"
+        f"{intro}\n\n{entries}\n\n"
+        "Set the chosen skill as an ADDITION in `pipeline_config.agent_skills` (the\n"
+        "developer keeps its configured skills; you add one):\n"
+        f"{example_lines}\n\n"
+    )
+    if "superpowers:brainstorming" in choices:
+        section += (
+            "Defaults if you can't decide: prefer brainstorming. Better to spend a few\n"
+            "minutes designing than to ship the wrong thing.\n\n"
+        )
+    return section
+
+
 def build_triage_system_prompt(
-    *, default_model: str, tier_models: Mapping[str, str], ticket_sections: Sequence[str]
+    *,
+    default_model: str,
+    tier_models: Mapping[str, str],
+    ticket_sections: Sequence[str],
+    skill_choices: Sequence[str] = (),
 ) -> str:
     """The triage system prompt for one deployment configuration and one repository's ticket headings.
 
-    ``ticket_sections`` is the job's ``done_when.ticket_sections``. Identical
-    for every job of a repository while the provider settings and that
-    section are unchanged, so the CLI's prompt caching still covers it
-    (EMB-35).
+    ``ticket_sections`` is the job's ``done_when.ticket_sections``.
+    ``skill_choices`` are the skills triage may add to the developer
+    (``build_skill_selection``); none leaves the skill selection out.
+    Identical for every job of a repository while the provider settings,
+    that section and the developer's row are unchanged, so the CLI's prompt
+    caching still covers it (EMB-35).
     """
     guidance = build_triage_model_guidance(default_model=default_model, tier_models=tier_models)
     prompt = _TRIAGE_SYSTEM_PROMPT_TEMPLATE.replace(_MODEL_GUIDANCE_SLOT, guidance)
+    prompt = prompt.replace(_SKILL_SELECTION_SLOT, build_skill_selection(skill_choices))
     return prompt.replace(_DONE_WHEN_GUIDE_SLOT, done_when_guide(ticket_sections))
 
 

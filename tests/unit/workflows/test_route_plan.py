@@ -285,3 +285,14 @@ def test_step_template_config_keeps_a_bare_empty_skills_list() -> None:
     )
     got = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
     assert got == {"agent_skills": {"developer": []}}, f"a bare [] was dropped before the resolver: {got!r}"
+
+
+def test_a_template_step_with_an_empty_tool_list_gives_no_tools() -> None:
+    """An operator's [] is no tools, not "no override" (the editor writes null for that)."""
+    from embry0.agents.resolver import resolve_agent_config
+    from embry0.workflows.issue_to_pr.route_plan import _config_overrides, node_config
+
+    cfg = _config_overrides(node_config({"agent_type": "review", "config": {"tools": []}}), "review")
+    assert cfg == {"agent_tools": {"review": []}}, f"an empty tool list was dropped: {cfg}"
+    definition = {"model": "m", "tools": ["Read", "Bash"], "skills": [], "system_prompt": ""}
+    assert resolve_agent_config("review", definition, template_config=cfg).tools == [], "the step's [] must be no tools"

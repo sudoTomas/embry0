@@ -12,11 +12,12 @@ import structlog
 
 from embry0.agents.fallback import ModelFallback, substitute
 from embry0.agents.invocation import AgentInvocation
+from embry0.agents.mcp_servers import grant_mcp_servers, logged_names
 from embry0.agents.openrouter_catalog import catalog_rates
-from embry0.agents.skills import effective_skills
+from embry0.agents.skills import effective_skills, narrowed_skills, triage_may_add
 from embry0.execution.auth_provider import AuthConfigError
 from embry0.safety.error_codes import ErrorCode
-from embry0.safety.policy import default_policy_for_agent
+from embry0.safety.policy import default_policy_for_agent, parse_tool_list, read_only_if_emptied, tools_for_run
 
 logger = structlog.get_logger(__name__)
 
@@ -44,6 +45,14 @@ class ResolvedAgentConfig:
     tools: list[str]
     skills: list[str]
     system_prompt: str
+    # True: no skill at all, the repository's own included. False with empty
+    # ``skills`` is no filter (an operator's empty list).
+    skills_hidden: bool = False
+    # The tools the operator gave the agent (the definition's, or the
+    # template step's), before triage narrowed them: which MCP servers it
+    # keeps is decided from these (embry0.agents.mcp_servers). None: the
+    # same as ``tools``.
+    operator_tools: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +95,52 @@ def _ensure_list(value: Any) -> list[str]:
     return list(value) if value else []
 
 
+def _image_mcp_servers() -> tuple[dict[str, Any], ...]:
+    """The servers embry0 adds for a run. Orchestrator code (it reads the
+    workflows), so it is imported here: this module is also baked into the
+    sandbox image."""
+    from embry0.services.image_mcp_servers import image_mcp_servers
+
+    return image_mcp_servers()
+
+
+def _requested(pipeline_config: Mapping[str, Any], key: str, agent_type: str) -> Any:
+    """What ``pipeline_config[key]`` names for ``agent_type``, or None."""
+    per_agent = pipeline_config.get(key)
+    if not isinstance(per_agent, Mapping):
+        return None
+    return per_agent.get(agent_type)
+
+
+def _narrowed_by_triage(agent_type: str, allowed: list[str], requested: Any) -> list[str]:
+    """``allowed`` narrowed to the tools triage asked for: never a tool ``allowed`` lacks.
+
+    Triage is a model reading the ticket, so its ``agent_tools`` cannot widen
+    what the operator's list grants. Names outside that list are logged
+    (``triage_tools_not_granted``). A request that keeps none of the list,
+    or is not a list, leaves the read-only tools the list had, which may be
+    none (``agent_tools_emptied``).
+    """
+    if not isinstance(requested, list):
+        # Triage's agent_tools is a list per agent: anything else asks for nothing.
+        logger.warning("triage_tools_malformed", agent_type=agent_type, kind=type(requested).__name__)
+        requested = []
+    asked = {str(tool) for tool in requested}
+    narrowed = [tool for tool in allowed if tool in asked]
+    not_granted = sorted(asked.difference(allowed))
+    if not_granted:
+        logger.warning(
+            "triage_tools_not_granted",
+            agent_type=agent_type,
+            tools=logged_names(not_granted),
+            reason="triage can narrow an agent's tools, never add one",
+        )
+    kept = read_only_if_emptied(allowed, narrowed)
+    if allowed and not narrowed:
+        logger.warning("agent_tools_emptied", agent_type=agent_type, source="pipeline_config", tools=kept)
+    return kept
+
+
 def resolve_agent_config(
     agent_type: str,
     agent_definition: dict[str, Any],
@@ -97,9 +152,20 @@ def resolve_agent_config(
 ) -> ResolvedAgentConfig:
     """Merge chain: agent_definition <- template overrides <- runtime overrides.
 
-    For tools: later levels replace earlier. For skills: each level is a
-    delta (add/remove) over the previous, a bare list meaning replace
-    (``embry0.agents.skills.effective_skills``).
+    For tools: the template step's list, which the operator wrote, replaces
+    the definition's. Triage's list only narrows that: a tool the operator's
+    list lacks is never added, and is logged (``triage_tools_not_granted``).
+    A list triage empties keeps the read-only tools it had (``READ_ONLY_TOOLS``),
+    which may be none. Unset tools (None) are
+    the agent type's defaults; an empty list the operator wrote stays empty,
+    which is no tools (``embry0.safety.policy.tools_for_run``).
+    For skills: the template step's delta (add/remove, a bare list meaning
+    replace) applies over the definition's list, as an operator wrote it
+    (``embry0.agents.skills.effective_skills``). Triage's only narrows that
+    list: never a skill or a source it lacks, but a skill the row's
+    ``triage_may_add_skills`` names, from a source the list already loads
+    (``narrowed_skills``, ``triage_skills_not_granted``). A request that leaves nothing hides every
+    skill (``skills_hidden``); an operator's empty list is no filter.
     system_prompt comes only from agent_definition.
 
     The model has two more levels (#465). Later wins:
@@ -115,7 +181,7 @@ def resolve_agent_config(
        every agent of the job (run with)
     """
     model = agent_definition.get("model", "")
-    tools = _ensure_list(agent_definition.get("tools", []))
+    tools = parse_tool_list(agent_definition.get("tools"))
     skills = _ensure_list(agent_definition.get("skills", []))
     system_prompt = agent_definition.get("system_prompt", "")
 
@@ -127,7 +193,7 @@ def resolve_agent_config(
         if agent_type in template_config.get("agent_models", {}):
             model = template_config["agent_models"][agent_type]
         if agent_type in template_config.get("agent_tools", {}):
-            tools = template_config["agent_tools"][agent_type]
+            tools = parse_tool_list(template_config["agent_tools"][agent_type])
 
     # Runtime (triage) overrides
     if pipeline_config:
@@ -142,14 +208,25 @@ def resolve_agent_config(
                 )
             else:
                 model = triage_models[agent_type]
-        if agent_type in pipeline_config.get("agent_tools", {}):
-            tools = pipeline_config["agent_tools"][agent_type]
+    operator_tools = tools_for_run(agent_type, tools)
+    if pipeline_config:
+        requested_tools = _requested(pipeline_config, "agent_tools", agent_type)
+        if requested_tools is not None:
+            tools = _narrowed_by_triage(agent_type, operator_tools, requested_tools)
 
-    skills = effective_skills(
-        skills,
-        ((template_config or {}).get("agent_skills") or {}).get(agent_type),
-        ((pipeline_config or {}).get("agent_skills") or {}).get(agent_type),
-    )
+    skills = effective_skills(skills, ((template_config or {}).get("agent_skills") or {}).get(agent_type))
+    skills_hidden = False
+    requested_skills = _requested(pipeline_config or {}, "agent_skills", agent_type)
+    if requested_skills is not None:
+        narrowed = narrowed_skills(skills, requested_skills, may_add=triage_may_add(agent_definition))
+        if narrowed.not_granted:
+            logger.warning(
+                "triage_skills_not_granted",
+                agent_type=agent_type,
+                skills=logged_names(narrowed.not_granted),
+                reason="triage can narrow an agent's skills, never add a skill or a source",
+            )
+        skills, skills_hidden = narrowed.skills, narrowed.hidden
 
     # Explicit job-level models — the most specific instruction there is. "*"
     # is the model a person chose for every agent of the job (run with,
@@ -161,9 +238,11 @@ def resolve_agent_config(
 
     return ResolvedAgentConfig(
         model=model,
-        tools=tools,
+        tools=tools_for_run(agent_type, tools),
         skills=skills,
         system_prompt=system_prompt,
+        skills_hidden=skills_hidden,
+        operator_tools=operator_tools,
     )
 
 
@@ -286,6 +365,12 @@ def resolve_agent_invocation(
     A preference, never a pin: a model the job names itself stays, and the
     caller resolves again without it when the server has no free slot.
 
+    The system prompt and the MCP servers have no run-time level. Triage's
+    ``pipeline_config.system_prompts`` is ignored and logged. The servers
+    are the definition's, less those that run a command when the operator's
+    tools (the definition's or the template step's, before triage narrows
+    them) hold no shell tool (``embry0.agents.mcp_servers.grant_mcp_servers``).
+
     Validation raises AuthConfigError with the appropriate error_code.
     """
     # -- execution_mode resolution
@@ -327,6 +412,18 @@ def resolve_agent_invocation(
         pipeline_config=pipeline_config,
         default_model=str((model_policy or {}).get("default_model") or ""),
         job_agent_models=job_agent_models,
+    )
+    # MCP servers come from the definition only, and one that runs a command
+    # only to an agent the operator gave a shell tool (embry0.agents.mcp_servers).
+    # Decided from the operator's tools, not triage's narrowed list: triage
+    # taking Bash away must not take the agent's browser with it. Triage's
+    # pipeline_config.mcp_servers is a model's reading of the ticket: ignored.
+    mcp_servers = grant_mcp_servers(
+        agent_type,
+        agent_definition.get("mcp_servers"),
+        resolved.operator_tools if resolved.operator_tools is not None else resolved.tools,
+        requested=_requested(pipeline_config, "mcp_servers", agent_type),
+        image_servers=_image_mcp_servers(),
     )
 
     from embry0.agents.providers import (
@@ -452,18 +549,18 @@ def resolve_agent_invocation(
                     "auth_mode=oauth but no CLAUDE_CODE_OAUTH_TOKEN available",
                 )
 
-    # -- system_prompt, skills, mcp_servers: thread through (plumbing gap closure)
+    # -- system_prompt, skills: thread through (plumbing gap closure)
+    # The system prompt is the definition's. Triage's
+    # pipeline_config.system_prompts is a model's reading of the ticket:
+    # ignored, and logged by agent name only.
     system_prompt = agent_definition.get("system_prompt", "") or ""
-    # pipeline (triage output) can override via pipeline_config.system_prompts[agent_type]
-    pipeline_system_prompt = pipeline_config.get("system_prompts", {}).get(agent_type)
-    if pipeline_system_prompt:
-        system_prompt = pipeline_system_prompt
+    if _requested(pipeline_config, "system_prompts", agent_type) is not None:
+        logger.warning(
+            "triage_system_prompt_ignored",
+            agent_type=agent_type,
+            reason="a job's run-time config cannot replace an agent's system prompt",
+        )
     skills = resolved.skills or []
-    mcp_servers = agent_definition.get("mcp_servers", {}) or {}
-    # pipeline override for mcp_servers too
-    pipeline_mcp = pipeline_config.get("mcp_servers", {}).get(agent_type)
-    if pipeline_mcp is not None:
-        mcp_servers = pipeline_mcp
 
     return AgentInvocation(
         agent_type=agent_type,
@@ -473,7 +570,8 @@ def resolve_agent_invocation(
         model=final_model,
         tools=list(resolved.tools),
         skills=list(skills),
-        mcp_servers=dict(mcp_servers),
+        skills_hidden=resolved.skills_hidden,
+        mcp_servers=mcp_servers,
         max_turns=max_turns,
         timeout_seconds=timeout_seconds,
         execution_mode=execution_mode,

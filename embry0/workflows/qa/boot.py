@@ -53,6 +53,13 @@ class BootResult:
 # We use python3 (not curl) because the sandbox image always has python3
 # (it's used by other parts of embry0 like proxy enrollment) but does
 # not necessarily have curl on every profile.
+# The probe runs in the sandbox's working directory, /workspace, where the
+# repository is checked out. ``python3 -c`` would put that directory first on
+# sys.path, so a checkout's own urllib/ could answer for the app; -P leaves it
+# off, and -s leaves out the user site-packages a job's `pip install --user`
+# writes (embry0.execution.agent_runner.RUNNER_COMMAND says the same).
+PROBE_COMMAND: tuple[str, ...] = ("python3", "-P", "-s", "-c")
+
 _PROBE_SCRIPT = """
 import sys, urllib.request, urllib.error
 url = sys.argv[1]
@@ -99,7 +106,7 @@ async def _probe_ready_check(
     refused".
     """
     raw = await docker.run_cmd(
-        docker.build_exec_cmd(container_id, ["python3", "-c", _PROBE_SCRIPT, url]),
+        docker.build_exec_cmd(container_id, list(PROBE_COMMAND) + [_PROBE_SCRIPT, url]),
         timeout=10,
     )
     text = raw if isinstance(raw, str) else (raw or "")

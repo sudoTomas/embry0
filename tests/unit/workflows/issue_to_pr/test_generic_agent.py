@@ -145,7 +145,8 @@ async def test_analysis_on_watcher_job_gets_logs_tool():
     seed_tools = list(BUILTIN_SEED["analysis"]["tools"])
     assert definition["tools"] == [*seed_tools, "mcp__context__logs_query"]
     assert definition["mcp_servers"]["context"]["command"] == "python3"
-    assert definition["mcp_servers"]["context"]["args"] == ["-m", "embry0.sandbox.context_mcp"]
+    args = definition["mcp_servers"]["context"]["args"]
+    assert args == ["-P", "-s", "-m", "embry0.sandbox.context_mcp"], f"the server must start with -P -s: {args}"
 
 
 @pytest.mark.asyncio

@@ -487,3 +487,110 @@ async def test_duplicating_onto_a_taken_name_is_409(app):
         )
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"] == "a template named Research already exists"
+
+
+# ---- a step whose tools leave its agent without an MCP server -------------------------
+
+_DOCS_SERVER = {"docs": {"type": "stdio", "command": "docs-mcp", "args": ["--read-only"]}}
+_SHELL_AGENT = {"tools": ["Read", "Bash", "mcp__docs__search"], "mcp_servers": _DOCS_SERVER}
+
+
+def _rows(**agents: dict) -> MagicMock:
+    repo = MagicMock()
+    repo.list_all = AsyncMock(return_value=[{"type": t, "runs_in_jobs": True, **row} for t, row in agents.items()])
+    return repo
+
+
+def _step_graph(agent_type: str, config: dict | None) -> dict:
+    step = {"node_id": "s", "agent_type": agent_type, **({"config": config} if config is not None else {})}
+    return {
+        **SAMPLE_GRAPH,
+        "nodes": [{"node_id": "t", "agent_type": "triage"}, step],
+        "edges": [{"edge_id": "e1", "source": "t", "target": "s", "edge_type": "flow"}],
+    }
+
+
+async def _save(app, method: str, graph: dict) -> list[str]:
+    body = {"graph_definition": graph, **({"name": "t"} if method == "post" else {})}
+    url = "/api/v1/pipelines/templates" + ("/tmpl-1" if method == "put" else "")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await getattr(client, method)(url, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
+    assert resp.status_code in (200, 201), resp.text
+    return list(resp.json().get("warnings") or [])
+
+
+def _server_warnings(warnings: list[str]) -> list[str]:
+    return [w for w in warnings if "name no shell tool" in w]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["post", "put"])
+@pytest.mark.parametrize("tools", [["Read", "Edit", "mcp__docs__search"], []], ids=["no-shell", "no-tools"])
+async def test_a_step_without_a_shell_says_its_agent_runs_without_the_server(app, method, tools):
+    app.state.agent_defs_repo = _rows(developer=_SHELL_AGENT)
+    warnings = _server_warnings(await _save(app, method, _step_graph("developer", {"tools": tools})))
+    assert len(warnings) == 1, f"a step that leaves its agent without its server gave no warning: {warnings}"
+    assert warnings[0].startswith("node 's': the step's tools name no shell tool (Bash or Monitor)"), warnings[0]
+    assert "runs its developer agent without the MCP server(s) docs" in warnings[0], warnings[0]
+    assert "browser" not in warnings[0], warnings[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_servers", ["seeded", "none"])
+@pytest.mark.parametrize("step", ["all-but-the-shell", "no-browser-tools"])
+async def test_a_qa_step_without_a_shell_says_the_agent_runs_without_its_browser(app, stored_servers, step):
+    """The QA node adds the browser whatever the row stores, so a QA step with no shell always loses it."""
+    from embry0.workflows.qa.agent_seed import QA_AGENT_SEED
+    from embry0.workflows.qa.browser_backends import DEFAULT_BROWSER_BACKEND, backend_for
+
+    qa = {**QA_AGENT_SEED, **({"mcp_servers": {}} if stored_servers == "none" else {})}
+    app.state.agent_defs_repo = _rows(qa=qa)
+    if step == "all-but-the-shell":
+        tools = [t for t in QA_AGENT_SEED["tools"] if t not in ("Bash", "Monitor")]
+    else:
+        tools = ["Read", "Glob", "Write"]
+    warnings = _server_warnings(await _save(app, "post", _step_graph("qa", {"tools": tools})))
+    server = backend_for(DEFAULT_BROWSER_BACKEND).mcp_server_name
+    assert len(warnings) == 1, f"a QA step with no shell gave no warning about its browser: {warnings}"
+    assert f"runs its qa agent without the MCP server(s) {server}" in warnings[0], warnings[0]
+    assert warnings[0].endswith("An agent with browser tools and no shell tool runs without its browser."), warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_a_reviewer_step_is_measured_against_the_review_agent(app):
+    """A template names the review agent "reviewer"; the step runs the review row."""
+    app.state.agent_defs_repo = _rows(review=_SHELL_AGENT)
+    warnings = _server_warnings(await _save(app, "post", _step_graph("reviewer", {"tools": ["Read"]})))
+    assert len(warnings) == 1, f"a reviewer step with no shell gave no warning: {warnings}"
+    assert "runs its review agent without the MCP server(s) docs" in warnings[0], warnings[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent", "config"),
+    [
+        (_SHELL_AGENT, {"tools": ["Read", "Bash"]}),
+        (_SHELL_AGENT, {"tools": ["Read", "Monitor"]}),
+        (_SHELL_AGENT, {"model": "claude-sonnet-5"}),
+        (_SHELL_AGENT, None),
+        (
+            {"tools": ["Read", "Bash"], "mcp_servers": {"docs": {"type": "http", "url": "http://docs.test/mcp"}}},
+            {"tools": ["Read"]},
+        ),
+        ({"tools": ["Read", "Bash"], "mcp_servers": {}}, {"tools": ["Read"]}),
+    ],
+    ids=["bash", "monitor", "no-tools-override", "no-config", "remote-server", "no-servers"],
+)
+async def test_a_step_that_leaves_every_server_says_nothing(app, agent, config):
+    app.state.agent_defs_repo = _rows(developer=agent)
+    warnings = _server_warnings(await _save(app, "post", _step_graph("developer", config)))
+    assert warnings == [], f"a step that leaves its agent every server was warned about: {warnings}"
+
+
+@pytest.mark.asyncio
+async def test_a_step_keeps_the_log_servers_quiet(app):
+    from embry0.workflows.issue_to_pr.log_tool import CONTEXT_MCP_SERVER
+
+    app.state.agent_defs_repo = _rows(developer={"tools": ["Read", "Bash"], "mcp_servers": dict(CONTEXT_MCP_SERVER)})
+    warnings = _server_warnings(await _save(app, "post", _step_graph("developer", {"tools": ["Read"]})))
+    assert warnings == [], f"the log tool's server, which is kept, was warned about: {warnings}"

@@ -290,3 +290,126 @@ async def test_update_agent_enabled_model_passes_gate(app):
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
     assert resp.status_code == 200
+
+
+async def _write(app, method: str, path: str, body: dict, stored: dict) -> dict:
+    repo = app.state.agent_defs_repo
+    repo.create = AsyncMock(return_value=stored)
+    repo.update = AsyncMock(return_value=stored)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.request(method, path, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
+    assert resp.status_code in (200, 201), resp.text
+    return resp.json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/api/v1/agents", {"type": "custom", "description": "d", "model": "claude-sonnet-4-6"}),
+        ("PUT", "/api/v1/agents/custom", {"tools": []}),
+    ],
+    ids=["create", "update"],
+)
+async def test_a_write_that_leaves_no_tools_says_the_agent_runs_with_none(app, method, path, body):
+    stored = {**DEVELOPER_AGENT, "type": "custom", "tools": [], "is_builtin": False, "runs_in_jobs": True}
+    warnings = (await _write(app, method, path, body, stored))["warnings"]
+    assert any("no tools at all" in w and "text only" in w for w in warnings), f"warnings: {warnings}"
+
+
+@pytest.mark.asyncio
+async def test_no_tools_warning_spares_agents_with_tools_and_definitions_no_job_runs(app):
+    with_tools = {**DEVELOPER_AGENT, "runs_in_jobs": True}
+    assert (await _write(app, "PUT", "/api/v1/agents/developer", {"tools": ["Read"]}, with_tools))["warnings"] == []
+    voice = {**DEVELOPER_AGENT, "type": "job-brief", "tools": [], "runs_in_jobs": False}
+    assert (await _write(app, "PUT", "/api/v1/agents/job-brief", {"tools": []}, voice))["warnings"] == []
+
+
+async def _send(app, method: str, path: str, body: dict):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.request(method, path, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path", "base"),
+    [
+        ("POST", "/api/v1/agents", {"type": "custom", "description": "d", "model": "claude-sonnet-4-6"}),
+        ("PUT", "/api/v1/agents/developer", {}),
+    ],
+    ids=["create", "update"],
+)
+@pytest.mark.parametrize(
+    "value",
+    [
+        ["brainstorming"],
+        ["Superpowers:Brainstorming"],
+        "superpowers:brainstorming",
+        {"sp:a": True},
+        [f"sp:s{i}" for i in range(21)],
+    ],
+    ids=["no-source", "uppercase", "a-string", "a-dict", "too-many"],
+)
+async def test_a_malformed_triage_may_add_is_a_422_naming_the_field(app, method, path, base, value):
+    resp = await _send(app, method, path, {**base, "triage_may_add_skills": value})
+    assert resp.status_code == 422, f"a malformed triage_may_add_skills must be a 422, got {resp.status_code}"
+    assert "triage_may_add_skills" in resp.text, f"the 422 must name the field: {resp.text}"
+    app.state.agent_defs_repo.create.assert_not_awaited()
+    app.state.agent_defs_repo.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_triage_may_add_cannot_be_cleared_with_null(app):
+    resp = await _send(app, "PUT", "/api/v1/agents/developer", {"triage_may_add_skills": None})
+    assert resp.status_code == 422 and "triage_may_add_skills" in resp.text, f"null must be a 422: {resp.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_triage_may_add_reaches_the_repository_once_each(app):
+    await _send(app, "PUT", "/api/v1/agents/developer", {"triage_may_add_skills": ["sp:a", "sp:a", "sp:b"]})
+    update = app.state.agent_defs_repo.update.call_args
+    assert update is not None, "PUT /agents dropped triage_may_add_skills: the repository was never asked to update"
+    kwargs = update.kwargs
+    assert kwargs.get("triage_may_add_skills") == ["sp:a", "sp:b"], f"each name once: {kwargs}"
+    await _send(app, "POST", "/api/v1/agents", {"type": "custom", "description": "d", "model": "m"})
+    created = app.state.agent_defs_repo.create.call_args.kwargs
+    assert created.get("triage_may_add_skills") == [], f"a new agent lets triage add none by default: {created}"
+
+
+@pytest.mark.asyncio
+async def test_a_skill_triage_may_add_from_a_source_the_agent_does_not_load_is_warned_about(app):
+    stored = {**DEVELOPER_AGENT, "tools": ["Read"], "skills": ["sp:a"], "triage_may_add_skills": ["sp:b", "other:c"]}
+    warnings = (await _write(app, "PUT", "/api/v1/agents/developer", {"triage_may_add_skills": ["sp:b"]}, stored))[
+        "warnings"
+    ]
+    assert any("other:c" in w and "'other'" in w for w in warnings), f"warnings: {warnings}"
+    assert not any("sp:b" in w for w in warnings), f"a usable name is not warned about: {warnings}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"tools": ["Read", "mcp__playwright__browser_click"], "mcp_servers": {}},
+        {"tools": ["Read"], "mcp_servers": {"playwright": {"type": "stdio", "command": "playwright-mcp"}}},
+    ],
+    ids=["browser-tools", "browser-server"],
+)
+async def test_an_agent_with_browser_tools_and_no_shell_is_told_it_runs_without_its_browser(app, stored):
+    row = {**DEVELOPER_AGENT, "type": "qa-lite", "runs_in_jobs": True, **stored}
+    warnings = (await _write(app, "PUT", "/api/v1/agents/qa-lite", {"tools": row["tools"]}, row))["warnings"]
+    assert any("playwright" in w and "without its browser" in w for w in warnings), f"warnings: {warnings}"
+
+
+@pytest.mark.asyncio
+async def test_no_browser_warning_with_a_shell_tool_or_for_the_log_server_alone(app):
+    from embry0.workflows.issue_to_pr.log_tool import CONTEXT_MCP_SERVER
+
+    with_bash = {**DEVELOPER_AGENT, "tools": ["Read", "Bash", "mcp__playwright__browser_click"], "runs_in_jobs": True}
+    warned = (await _write(app, "PUT", "/api/v1/agents/qa", {"tools": with_bash["tools"]}, with_bash))["warnings"]
+    assert warned == [], f"an agent with a shell tool keeps its browser, so nothing is warned: {warned}"
+    log_only = {**DEVELOPER_AGENT, "tools": ["Read"], "mcp_servers": dict(CONTEXT_MCP_SERVER), "runs_in_jobs": True}
+    warned = (await _write(app, "PUT", "/api/v1/agents/x", {"tools": ["Read"]}, log_only))["warnings"]
+    assert warned == [], f"the log tool's server is kept, so nothing is warned: {warned}"

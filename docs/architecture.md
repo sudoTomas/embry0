@@ -455,8 +455,9 @@ The LLM triage node outputs a pipeline configuration.
 | `pipeline_template` | `str` | Template name or "custom" |
 | `pipeline_config.sandbox_profile` | `str` | Sandbox profile name |
 | `pipeline_config.agent_models` | `dict[str, str]` | Model per agent |
-| `pipeline_config.agent_tools` | `dict[str, list[str]]` | Per-agent tool allowlist overrides |
-| `pipeline_config.agent_skills` | `dict[str, list[str] \| {"add", "remove"}]` | Per-agent Claude Code skills: a delta (`add`, `remove` or `"*"`) over the agent's configured skills, or a bare list that replaces them |
+| `pipeline_config.agent_tools` | `dict[str, list[str]]` | Narrows an agent's tools; never adds one ([api.md](api.md#agents), "Tools at run time") |
+| `pipeline_config.agent_skills` | `dict[str, list[str] \| {"add", "remove"}]` | Narrows an agent's Claude Code skills: removes, and adds only a skill the agent's `triage_may_add_skills` names, from a source its list already loads; a request that leaves nothing hides every skill ([api.md](api.md#agents)) |
+| `pipeline_config.system_prompts`, `pipeline_config.mcp_servers` | `dict[str, …]` | Accepted so a decision that names them parses, and ignored (logged) |
 | `pipeline_config.max_feedback_loops` | `int` | Review → retry cycles (default: 3) |
 | `pipeline_config.reviewer_enabled` | `bool` | Whether review is included (default: true) |
 | `pipeline_config.validator_modes` | `list[str]` | Which validators to run (test, lint, typecheck) |
@@ -1387,6 +1388,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 139 | the hand-out lease (#293): `asks.lease_until`, until when an ask `GET /asks/due` handed out is held for the poll that took it, counted toward its person's limit and handed to no other poll; NULL when never handed out or reported sent since. `handed_out_at` stays the first hand-out, which the expiry of an ask never reported sent counts from (#295) | `asks` |
 | 140 | the API key that created a credential: `credentials.created_by_key_id`, so a credential nothing uses yet is the own of the key whose id it records, never of another key of the same name; NULL for one a session, the master key or the importer created, and for every credential created before it, none back-filled, so no restricted key owns one of those | `credentials.created_by_key_id` |
 | 141 | the repository of a job posted with a git context alone: fills `jobs.repo` from `context->>'repo'` where `repo` is NULL and the context is git, so `GET /jobs?repo=`, the world view and the stats find it (`POST /jobs` stores it now); a row naming a repository and any other context are left alone, `updated_at` is kept, and a second run changes nothing | `jobs.repo` (data) |
+| 142 | the skills triage may add to an agent: `agent_definitions.triage_may_add_skills`, a JSON array of `source:skill` names (NOT NULL, default `[]`); triage adds one only from a source the agent's skills already load. The built-in developer row gets `superpowers:brainstorming` and `superpowers:writing-plans`, the two the triage prompt always offered it, so an upgraded deployment keeps its behaviour; every other row, and a deployment without that row, gets none | `agent_definitions.triage_may_add_skills` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

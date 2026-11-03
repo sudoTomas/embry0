@@ -25,6 +25,9 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
     """Render an AgentInvocation into a ClaudeAgentOptions for the Agent SDK.
 
     - allowed_tools: from invocation.tools.
+    - tools: [] when invocation.tools is empty, so the CLI offers no tool at
+      all; an empty list is no tools, never the defaults. None (the CLI's
+      own set) otherwise.
     - model: from invocation.model.
     - permission_mode: always 'bypassPermissions' (sandbox is the real boundary;
       Ring 2 permissions.deny and Ring 3 hook still run).
@@ -39,9 +42,10 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
     - plugins: the mounted skill sources (invocation.skill_mounts) whose
       plugin name prefixes a skill in invocation.skills; none when it is empty.
     - skills: invocation.skills as the allowlist over the plugins' skills and
-      the repository's own; None (no filter) when the list is empty.
+      the repository's own; None (no filter) when the list is empty; [] (no
+      skill at all, and no plugin) when invocation.skills_hidden.
     - mcp_servers: from invocation.mcp_servers, each marked ``alwaysLoad``
-      (see the comment at the field).
+      (see the comment at the field), and only those: strict_mcp_config.
     - env: not set here — Anthropic auth rides the sandbox container env
       (injected by SandboxManager at create) and the CLI subprocess
       inherits it; provider-routed agents (grok) get a per-agent env
@@ -56,6 +60,9 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         model=invocation.model,
         allowed_tools=list(invocation.tools),
+        # --tools "": without it the CLI offers every tool it has, and in
+        # bypassPermissions an empty allowed_tools passes no flag at all.
+        tools=[] if not invocation.tools else None,
         # EMB-37: ToolSearch loads deferred tools into context at runtime,
         # which is how the QA agent reached browser_run_code_unsafe despite
         # its tools list. Denying the two ToolSearch server-tool names is
@@ -78,12 +85,15 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
         # effective skill list is the allowlist. None, not [], when the list is
         # empty: [] hides every skill, including the repository's own under
         # /workspace/.claude/skills, which setting_sources=["project"] loads.
+        # skills_hidden: a run-time narrowing left no skill, so none loads, the
+        # repository's own included, and no plugin either.
         plugins=[
             {"type": "local", "path": m["container_path"]}
             for m in invocation.skill_mounts
-            if any(skill.startswith(m["plugin_name"] + ":") for skill in invocation.skills)
+            if not invocation.skills_hidden
+            and any(skill.startswith(m["plugin_name"] + ":") for skill in invocation.skills)
         ],
-        skills=list(invocation.skills) if invocation.skills else None,
+        skills=[] if invocation.skills_hidden else (list(invocation.skills) if invocation.skills else None),
         # #501: alwaysLoad keeps every tool of the server in the prompt, never
         # deferred behind tool search. ENABLE_TOOL_SEARCH=false (below) already
         # stops deferral at start-up, and the first turn waits for the servers
@@ -92,6 +102,12 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
         # arrive DEFERRED when ToolSearch is off, which is #240's failure: the
         # agent cannot load them. alwaysLoad servers are exempt (2.1.269).
         mcp_servers={name: _always_loaded(server) for name, server in invocation.mcp_servers.items()},
+        # The CLI also starts the servers of the workspace's .mcp.json and of
+        # every plugin, with no tool call, whatever the agent's tools
+        # (measured on CLI 2.1.316). Those are the repository's and the
+        # workspace's to write, so only the invocation's servers run, as
+        # resolved by embry0.agents.mcp_servers. Skills still load.
+        strict_mcp_config=True,
         # #240: the CLI's MCP tool-search feature DEFERS MCP tool schemas
         # behind a ToolSearch call when an agent's tool count crosses a
         # (server-side, flag-gated) threshold — observed flipping on

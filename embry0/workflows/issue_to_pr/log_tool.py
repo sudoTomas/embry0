@@ -18,11 +18,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+# -P -s: the CLI starts the server in /workspace as the agent user. -P keeps
+# that directory off sys.path, where a checkout holding its own embry0/
+# package would run in place of this module; -s keeps the agent's user
+# site-packages, whose .pth files and usercustomize.py run at start-up, from
+# loading (embry0.execution.agent_runner.RUNNER_COMMAND says the same).
 CONTEXT_MCP_SERVER: dict[str, dict[str, Any]] = {
     "context": {
         "type": "stdio",
         "command": "python3",
-        "args": ["-m", "embry0.sandbox.context_mcp"],
+        "args": ["-P", "-s", "-m", "embry0.sandbox.context_mcp"],
     }
 }
 CONTEXT_LOGS_TOOL = "mcp__context__logs_query"

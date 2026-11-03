@@ -153,6 +153,16 @@ def next_route(state: dict[str, Any]) -> str:
     return "end"
 
 
+# A template step names the review agent "reviewer"; every other step type is
+# the agent type its node runs, a custom one included (spec 3.5).
+_STEP_RUN_TYPES = {"reviewer": "review"}
+
+
+def step_run_type(step_agent_type: str) -> str:
+    """The agent type a template step of ``step_agent_type`` runs as: the agent_definitions row it loads."""
+    return _STEP_RUN_TYPES.get(step_agent_type, step_agent_type)
+
+
 def step_template_config(state: dict[str, Any], run_agent_type: str) -> dict[str, Any] | None:
     """Resolver-shaped overrides from the CURRENT route step's config (RAV-602).
 
@@ -169,16 +179,7 @@ def step_template_config(state: dict[str, Any], run_agent_type: str) -> dict[str
     if not 0 <= cursor < len(plan):
         return None
     step = plan[cursor]
-    step_to_runtime = {
-        "developer": "developer",
-        "reviewer": "review",
-        "review": "review",
-        "qa": "qa",
-        "output": "output",
-    }
-    agent_type = str(step.get("agent_type", ""))
-    # Any other type is its own runtime type: the row named by the template runs (spec 3.5).
-    if step_to_runtime.get(agent_type, agent_type) != run_agent_type:
+    if step_run_type(str(step.get("agent_type", ""))) != run_agent_type:
         return None
     return _config_overrides(step.get("config") or {}, run_agent_type)
 
@@ -228,8 +229,10 @@ def _config_overrides(cfg: dict[str, Any], run_agent_type: str) -> dict[str, Any
     out: dict[str, Any] = {}
     if cfg.get("model"):
         out["agent_models"] = {run_agent_type: cfg["model"]}
-    if cfg.get("tools"):
-        out["agent_tools"] = {run_agent_type: list(cfg["tools"])}
+    # `is not None`: an operator's [] is no tools, not "no override" (the
+    # editor writes null for that).
+    if cfg.get("tools") is not None:
+        out["agent_tools"] = {run_agent_type: list(cfg["tools"]) if isinstance(cfg["tools"], list) else []}
     # `is not None`: a stored bare [] is the legacy "replace with nothing".
     if cfg.get("skills") is not None:
         out["agent_skills"] = {run_agent_type: cfg["skills"]}

@@ -315,3 +315,20 @@ async def test_triage_last_set_qa_decision_wins() -> None:
     assert qa.get("needs_qa") is True
     assert qa.get("qa_required_reason") == "Reconsidered: backend route changed"
     assert qa.get("acceptance_criteria") == ["POST /api/widgets returns 201"]
+
+
+@pytest.mark.asyncio
+async def test_an_operators_empty_triage_tool_list_stays_empty() -> None:
+    """An empty list is no tools; only an unset one gets triage's read-only tools."""
+    from embry0.workflows.issue_to_pr.nodes import triage_node
+
+    stored = {"model": "m", "tools": [], "skills": [], "system_prompt": "", "mcp_servers": {}}
+    run = AsyncMock(return_value=_make_agent_output())
+    with (
+        patch("embry0.orchestration.nodes.agent.load_agent_definition", AsyncMock(return_value=stored)),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", run),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+    ):
+        await triage_node(_make_state(), _make_config())
+    sent = run.call_args.kwargs["agent_definition"]["tools"]
+    assert sent == [], f"an operator's empty triage tool list became {sent}"

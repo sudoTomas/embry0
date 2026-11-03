@@ -790,7 +790,8 @@ async def run_agent_node(
     # same effective configuration.
     agent_definition = agent_definition or {
         "model": model,
-        "tools": tools or [],
+        # None (no tools named) is the agent type's defaults; [] is no tools.
+        "tools": tools,
         "skills": [],
         "system_prompt": "",
         "mcp_servers": {},
@@ -1056,6 +1057,8 @@ async def run_agent_node(
             "node": invocation.node,
             "skill_mounts": list(invocation.skill_mounts),
         }
+        if invocation.skills_hidden:
+            serialized["skills_hidden"] = True
         if invocation.pricing_usd_per_mtok is not None:
             # A model of OpenRouter's live catalog: the sandbox has no copy of it.
             serialized["pricing_usd_per_mtok"] = list(invocation.pricing_usd_per_mtok)

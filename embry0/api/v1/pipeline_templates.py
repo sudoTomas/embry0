@@ -14,7 +14,7 @@ from embry0.api.v1._skill_writes import check_added_skills
 from embry0.services.model_enablement import UnpricedModelError, ensure_models_priced
 from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 from embry0.workflows._validation import validate_graph_definition
-from embry0.workflows.issue_to_pr.route_plan import node_config
+from embry0.workflows.issue_to_pr.route_plan import node_config, step_run_type
 
 logger = structlog.get_logger(__name__)
 
@@ -79,18 +79,65 @@ def _template_name_taken(name: str | None) -> HTTPException:
     return HTTPException(status_code=409, detail=f"a template named {name} already exists")
 
 
-async def _known_agent_types(request: Request) -> set[str] | None:
-    """The agent_definitions types a job can run now (``runs_in_jobs``: the brief writer's voices are no step);
-    None when the app has no repository (tests) or the read fails, so the builtin types decide, as at plan time
-    (plan_route)."""
+async def _agent_rows(request: Request) -> list[dict[str, Any]] | None:
+    """The agent_definitions rows; None when the app has no repository (tests) or the read fails."""
     repo = getattr(request.app.state, "agent_defs_repo", None)
     if repo is None:
         return None
     try:
-        return {str(a["type"]) for a in await repo.list_all() if a.get("runs_in_jobs", True)}
+        return list(await repo.list_all())
     except Exception:
         logger.warning("template_agent_types_unavailable", exc_info=True)
         return None
+
+
+def _job_agent_types(rows: list[dict[str, Any]] | None) -> set[str] | None:
+    """The types a job can run now (``runs_in_jobs``: the brief writer's voices are no step); None without
+    the rows, so the builtin types decide, as at plan time (plan_route)."""
+    if rows is None:
+        return None
+    return {str(a["type"]) for a in rows if a.get("runs_in_jobs", True)}
+
+
+async def _known_agent_types(request: Request) -> set[str] | None:
+    """The agent_definitions types a job can run now; None when they cannot be read (``_job_agent_types``)."""
+    return _job_agent_types(await _agent_rows(request))
+
+
+def _no_shell_step_warnings(rows: list[dict[str, Any]] | None, graph: dict[str, Any] | None) -> list[str]:
+    """A warning for each step whose tools leave its agent without an MCP server, its browser included.
+
+    A step's ``tools`` replace its agent's (``route_plan``), and a server
+    that runs a command reaches only an agent whose tools, as the operator
+    gave them, name a shell tool (``embry0.agents.mcp_servers``). The agent
+    is the row the step runs as (``step_run_type``); a QA step's also runs
+    with the browser the QA node adds, the default backend's here, since a
+    repository picks its own. Without the rows, nothing is said.
+    """
+    from embry0.api.v1._server_warnings import no_shell_server_warning, servers_run_without
+    from embry0.workflows.qa.browser_backends import DEFAULT_BROWSER_BACKEND, backend_for, with_browser_backend
+
+    agents = {str(row.get("type")): row for row in rows or []}
+    warnings: list[str] = []
+    for node in (graph or {}).get("nodes") or []:
+        step_tools = node_config(node).get("tools")
+        if step_tools is None:
+            continue
+        run_type = step_run_type(str(node.get("agent_type") or ""))
+        agent = agents.get(run_type)
+        if agent is None:
+            continue
+        if run_type == "qa":
+            agent = with_browser_backend(agent, backend_for(DEFAULT_BROWSER_BACKEND))
+        tools = list(step_tools) if isinstance(step_tools, list) else []
+        names = servers_run_without(run_type, tools, agent.get("mcp_servers"))
+        if names:
+            warnings.append(
+                no_shell_server_warning(
+                    names, tools=f"node {node.get('node_id')!r}: the step's tools", runs=f"its {run_type} agent"
+                )
+            )
+    return warnings
 
 
 async def _check_template_skills(request: Request, graph: dict[str, Any] | None) -> list[str]:
@@ -124,11 +171,13 @@ async def create_template(
 ) -> dict[str, Any]:
     # RAV-601: templates are runtime control-flow now — only executable
     # graphs (single linear chain of known agent types) may save.
-    problems = validate_graph_definition(req.name, req.graph_definition, await _known_agent_types(request))
+    rows = await _agent_rows(request)
+    problems = validate_graph_definition(req.name, req.graph_definition, _job_agent_types(rows))
     if problems:
         raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(req.graph_definition)
     warnings = await _check_template_skills(request, req.graph_definition)
+    warnings += _no_shell_step_warnings(rows, req.graph_definition)
     try:
         created = await repo.create(
             name=req.name,
@@ -165,10 +214,10 @@ async def update_template(
     # 1. The body on its own: graph validity, deferred tools, priced models, skills delta shape.
     graph = updates.get("graph_definition")
     added: list[str] = []
+    rows: list[dict[str, Any]] | None = None
     if "graph_definition" in updates:
-        problems = validate_graph_definition(
-            str(template_id), updates["graph_definition"], await _known_agent_types(request)
-        )
+        rows = await _agent_rows(request)
+        problems = validate_graph_definition(str(template_id), updates["graph_definition"], _job_agent_types(rows))
         if problems:
             raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(graph)
@@ -181,6 +230,7 @@ async def update_template(
     # 3. Only the names this save adds are checked; names the stored template has keep working.
     already = _stored_added_skills(stored)
     warnings = await check_added_skills(request, [s for s in added if s not in already])
+    warnings += _no_shell_step_warnings(rows, graph)
     try:
         updated = await repo.update(template_id, **updates)
     except asyncpg.UniqueViolationError as exc:
