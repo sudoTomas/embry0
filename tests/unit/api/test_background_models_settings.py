@@ -521,10 +521,24 @@ async def test_the_spend_reads_of_stats_are_bounded_by_the_month_through_an_inde
     assert "date_trunc('month', NOW())" in month_sql, "the background spend read is bounded by the month"
     assert "created_at >= date_trunc('month', NOW())" in jobs_sql, "the jobs read is bounded by the month"
     db = db_with_migrations
-    async with db.transaction() as conn:
-        await conn.execute("SET LOCAL enable_seqscan = off")
-        spend_plan = "\n".join(r[0] for r in await conn.fetch("EXPLAIN " + month_sql))
-        jobs_plan = "\n".join(r[0] for r in await conn.fetch("EXPLAIN " + jobs_sql, ["embry0:scout"]))
+    assert db.pool is not None
+    async with db.pool.acquire() as conn:
+        # The plan of an empty table depends on whatever statistics earlier tests left on it, and both indexes
+        # on jobs.created_at then cost the same. A month of other people's jobs, analysed, is the history the
+        # index exists for. All of it, statistics included, is rolled back.
+        tr = conn.transaction()
+        await tr.start()
+        try:
+            await conn.execute("SET LOCAL enable_seqscan = off")
+            await conn.execute(
+                "INSERT INTO jobs (job_id, repo, task, status, dispatched_by) "
+                "SELECT 'job-' || g, 'acme/widgets', 't', 'completed', 'person' FROM generate_series(1, 2000) g"
+            )
+            await conn.execute("ANALYZE jobs")
+            spend_plan = "\n".join(r[0] for r in await conn.fetch("EXPLAIN " + month_sql))
+            jobs_plan = "\n".join(r[0] for r in await conn.fetch("EXPLAIN " + jobs_sql, ["embry0:scout"]))
+        finally:
+            await tr.rollback()
     assert "idx_background_spend_at" in spend_plan, spend_plan
     assert "idx_jobs_dispatched_by_created_at" in jobs_plan, jobs_plan
 
