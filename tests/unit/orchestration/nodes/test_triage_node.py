@@ -32,8 +32,10 @@ def test_triage_word_default_is_not_stored_as_a_profile():
 
 
 def test_triage_prompt_asks_for_a_skills_addition():
-    from embry0.orchestration.nodes.triage import build_skill_selection
+    import embry0.orchestration.nodes.triage as triage_module
 
+    build_skill_selection = getattr(triage_module, "build_skill_selection", None)
+    assert build_skill_selection is not None, "the triage prompt builds no skill selection from the developer's row"
     section = build_skill_selection(["superpowers:brainstorming", "superpowers:writing-plans"])
     assert '{"developer": {"add": ["superpowers:brainstorming"]}}' in section
     assert '{"developer": ["superpowers:brainstorming"]}' not in section, (

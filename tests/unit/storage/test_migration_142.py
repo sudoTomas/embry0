@@ -25,13 +25,23 @@ def test_the_triage_may_add_migration_is_the_last_entry() -> None:
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 
+async def _assert_the_column_exists(db: DatabasePool) -> None:
+    column = await db.fetchrow(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = 'agent_definitions' AND column_name = 'triage_may_add_skills'"
+    )
+    assert column is not None, "agent_definitions has no triage_may_add_skills column after migrating"
+
+
 async def _may_add(db: DatabasePool) -> dict[str, list[str]]:
+    await _assert_the_column_exists(db)
     rows = await db.fetch("SELECT type, triage_may_add_skills FROM agent_definitions ORDER BY type")
     return {str(r["type"]): list(r["triage_may_add_skills"]) for r in rows}
 
 
 async def _undo(db: DatabasePool) -> None:
     """The database as it stood before the migration."""
+    await _assert_the_column_exists(db)
     await db.execute("ALTER TABLE agent_definitions DROP COLUMN triage_may_add_skills")
     await db.execute("DELETE FROM embry0_migrations WHERE version = $1", VERSION)
 

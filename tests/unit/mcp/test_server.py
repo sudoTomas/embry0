@@ -554,6 +554,10 @@ def test_case_accept_says_a_linear_draft_is_accepted_here():
 
 
 async def test_agent_create_forwards_every_field(fake_client):
+    import inspect
+
+    params = inspect.signature(server.agent_create).parameters
+    assert "triage_may_add_skills" in params, "agent_create takes no triage_may_add_skills"
     await server.agent_create(
         "lantern",
         "lights",

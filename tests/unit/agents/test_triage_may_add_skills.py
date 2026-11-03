@@ -120,9 +120,14 @@ minutes designing than to ship the wrong thing.
 
 
 def _prompt(skill_choices: list[str] | None) -> str:
+    import inspect
+
     from embry0.orchestration.nodes.triage import build_triage_system_prompt
     from embry0.settings.sections.done_when import DONE_WHEN
 
+    if skill_choices is not None:
+        params = inspect.signature(build_triage_system_prompt).parameters
+        assert "skill_choices" in params, "build_triage_system_prompt takes no skill_choices: it cannot follow the row"
     kwargs: dict[str, Any] = {"default_model": "m", "tier_models": {}}
     kwargs["ticket_sections"] = DONE_WHEN.defaults().ticket_sections
     if skill_choices is not None:

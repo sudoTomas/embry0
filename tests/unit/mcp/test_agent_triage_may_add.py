@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
+from typing import Any
+
 import pytest
 
 from embry0.mcp_server import server
@@ -16,7 +19,13 @@ def fake_client(monkeypatch: pytest.MonkeyPatch) -> RecordingClient:
     return client
 
 
+def _assert_takes_the_column(fn: Any) -> None:
+    params = inspect.signature(fn).parameters
+    assert "triage_may_add_skills" in params, f"{fn.__qualname__}() takes no triage_may_add_skills"
+
+
 async def test_agent_update_forwards_what_triage_may_add(fake_client: RecordingClient) -> None:
+    _assert_takes_the_column(server.agent_update)
     await server.agent_update("developer", triage_may_add_skills=["superpowers:brainstorming"], confirm=True)
     name, args, kwargs = fake_client.calls[-1]
     assert (name, args) == ("agent_update", ("developer",))
@@ -30,6 +39,8 @@ async def test_the_client_sends_what_triage_may_add_on_update_and_create() -> No
     }
     handler = capture(routes)
     client = make_client(handler)
+    _assert_takes_the_column(client.agent_update)
+    _assert_takes_the_column(client.agent_create)
     await client.agent_update("developer", triage_may_add_skills=[])
     await client.agent_create("lantern", description="d", model="m", triage_may_add_skills=["sp:a"])
     sent_update = handler.seen[("PUT", "/api/v1/agents/developer")]

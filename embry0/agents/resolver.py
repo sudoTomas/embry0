@@ -48,6 +48,11 @@ class ResolvedAgentConfig:
     # True: no skill at all, the repository's own included. False with empty
     # ``skills`` is no filter (an operator's empty list).
     skills_hidden: bool = False
+    # The tools the operator gave the agent (the definition's, or the
+    # template step's), before triage narrowed them: which MCP servers it
+    # keeps is decided from these (embry0.agents.mcp_servers). None: the
+    # same as ``tools``.
+    operator_tools: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -203,9 +208,11 @@ def resolve_agent_config(
                 )
             else:
                 model = triage_models[agent_type]
+    operator_tools = tools_for_run(agent_type, tools)
+    if pipeline_config:
         requested_tools = _requested(pipeline_config, "agent_tools", agent_type)
         if requested_tools is not None:
-            tools = _narrowed_by_triage(agent_type, tools_for_run(agent_type, tools), requested_tools)
+            tools = _narrowed_by_triage(agent_type, operator_tools, requested_tools)
 
     skills = effective_skills(skills, ((template_config or {}).get("agent_skills") or {}).get(agent_type))
     skills_hidden = False
@@ -235,6 +242,7 @@ def resolve_agent_config(
         skills=skills,
         system_prompt=system_prompt,
         skills_hidden=skills_hidden,
+        operator_tools=operator_tools,
     )
 
 
@@ -359,8 +367,9 @@ def resolve_agent_invocation(
 
     The system prompt and the MCP servers have no run-time level. Triage's
     ``pipeline_config.system_prompts`` is ignored and logged. The servers
-    are the definition's, less those that run a command when the resolved
-    tools hold no shell tool (``embry0.agents.mcp_servers.grant_mcp_servers``).
+    are the definition's, less those that run a command when the operator's
+    tools (the definition's or the template step's, before triage narrows
+    them) hold no shell tool (``embry0.agents.mcp_servers.grant_mcp_servers``).
 
     Validation raises AuthConfigError with the appropriate error_code.
     """
@@ -405,12 +414,14 @@ def resolve_agent_invocation(
         job_agent_models=job_agent_models,
     )
     # MCP servers come from the definition only, and one that runs a command
-    # only to an agent with a shell tool (embry0.agents.mcp_servers). Triage's
+    # only to an agent the operator gave a shell tool (embry0.agents.mcp_servers).
+    # Decided from the operator's tools, not triage's narrowed list: triage
+    # taking Bash away must not take the agent's browser with it. Triage's
     # pipeline_config.mcp_servers is a model's reading of the ticket: ignored.
     mcp_servers = grant_mcp_servers(
         agent_type,
         agent_definition.get("mcp_servers"),
-        resolved.tools,
+        resolved.operator_tools if resolved.operator_tools is not None else resolved.tools,
         requested=_requested(pipeline_config, "mcp_servers", agent_type),
         image_servers=_image_mcp_servers(),
     )

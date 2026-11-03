@@ -11,7 +11,9 @@ its decision names (``pipeline_config.mcp_servers``) are ignored and logged as
 ``mcp_servers_ignored``.
 
 A server the CLI starts as a command runs whatever its command line says in
-the sandbox: it is a way to run commands. An agent whose tools name no shell
+the sandbox: it is a way to run commands. An agent whose operator-given
+tools (the definition's, or the template step's; never triage's narrowed
+list, so ticket text cannot switch an agent's servers off) name no shell
 tool (``SHELL_TOOLS``) gets no such server, wherever it came from: it is
 dropped and logged as ``mcp_servers_dropped``, the QA browser servers
 included. The one exception is the log tool's server, matched on its whole
@@ -83,7 +85,8 @@ def grant_mcp_servers(
     ``pipeline_config.mcp_servers`` entry for this agent. It is never applied,
     and a request is logged (``mcp_servers_ignored``).
 
-    Without a shell tool in ``tools``, every server that runs a command is
+    ``tools`` are the operator's (the definition's, or the template step's),
+    before triage narrows them. Without a shell tool in them, every server that runs a command is
     dropped and logged with the tools that named it (``mcp_servers_dropped``),
     but one equal to an entry of ``image_servers`` (the log tool's).
     A definition whose servers are not a mapping grants none.

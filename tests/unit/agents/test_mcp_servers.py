@@ -1,7 +1,7 @@
 """Which MCP servers an agent runs with (embry0.agents.mcp_servers).
 
 An agent's servers come from its definition only, and a server that runs a
-command only reaches an agent with a shell tool.
+command only reaches an agent the operator gave a shell tool.
 """
 
 from __future__ import annotations
@@ -33,22 +33,28 @@ def _definition(tools: list[str], servers: dict[str, Any] | None = None) -> dict
     }
 
 
+def _resolve_kwargs(
+    definition: dict[str, Any], pipeline_config: dict[str, Any] | None = None, agent_type: str = "developer"
+) -> dict[str, Any]:
+    return {
+        "agent_type": agent_type,
+        "prompt": "do it",
+        "system_context": "",
+        "global_defaults": {"execution_mode": "sdk", "auth_mode": "oauth"},
+        "repo_prefs": None,
+        "job_overrides": None,
+        "agent_definition": definition,
+        "pipeline_config": pipeline_config or {},
+        "max_turns": 10,
+        "timeout_seconds": 60,
+        "credentials": {"api_key": "", "oauth_token": "oat-000000000001"},
+    }
+
+
 def _resolve(
     definition: dict[str, Any], pipeline_config: dict[str, Any] | None = None, agent_type: str = "developer"
 ) -> Any:
-    return resolve_agent_invocation(
-        agent_type=agent_type,
-        prompt="do it",
-        system_context="",
-        global_defaults={"execution_mode": "sdk", "auth_mode": "oauth"},
-        repo_prefs=None,
-        job_overrides=None,
-        agent_definition=definition,
-        pipeline_config=pipeline_config or {},
-        max_turns=10,
-        timeout_seconds=60,
-        credentials={"api_key": "", "oauth_token": "oat-000000000001"},
-    )
+    return resolve_agent_invocation(**_resolve_kwargs(definition, pipeline_config, agent_type))
 
 
 def _triage_config(**pipeline_config: Any) -> dict[str, Any]:
@@ -174,10 +180,35 @@ def test_an_operators_server_works_for_an_agent_with_a_shell_tool(shell: str) ->
     assert "mcp__docs__search" in inv.tools
 
 
-def test_a_shell_tool_triage_removes_takes_the_command_server_with_it() -> None:
+def test_triage_taking_the_shell_away_keeps_the_operators_server() -> None:
+    """Which servers an agent keeps follows the operator's tools: ticket text cannot switch them off."""
     config = _triage_config(agent_tools={"developer": ["Read", "mcp__docs__search"]})
     inv = _resolve(_definition(["Read", "Bash", "mcp__docs__search"], OPERATOR_SERVER), config)
-    assert inv.mcp_servers == {}, "the server must follow the tools the agent runs with, not its definition's"
+    assert inv.tools == ["Read", "mcp__docs__search"], f"triage's narrowing still applies to the tools: {inv.tools}"
+    assert inv.mcp_servers == OPERATOR_SERVER, (
+        f"triage's narrowing switched the operator's server off: {inv.mcp_servers}"
+    )
+
+
+def test_a_template_step_without_a_shell_takes_the_command_server_away() -> None:
+    """A template step is the operator's: a step that gives the agent no shell gives it no such server."""
+    template = {"agent_tools": {"developer": ["Read", "mcp__docs__search"]}}
+    definition = _definition(["Read", "Bash", "mcp__docs__search"], OPERATOR_SERVER)
+    inv = resolve_agent_invocation(**{**_resolve_kwargs(definition), "template_config": template})
+    assert inv.mcp_servers == {}, f"a template step with no shell kept a server that runs a command: {inv.mcp_servers}"
+
+
+def test_triage_taking_the_shell_from_the_types_default_tools_keeps_the_server() -> None:
+    """Unset tools are the type's defaults, Bash among them: the operator gave the agent a shell."""
+    from embry0.safety.policy import tools_for_run
+
+    assert "Bash" in tools_for_run("developer", None), "the developer's default tools hold no shell"
+    definition = {**_definition([], OPERATOR_SERVER), "tools": None}
+    inv = _resolve(definition, _triage_config(agent_tools={"developer": ["Read", "Grep"]}))
+    assert inv.tools == ["Read", "Grep"], f"triage's narrowing still applies to the tools: {inv.tools}"
+    assert inv.mcp_servers == OPERATOR_SERVER, (
+        f"triage's narrowing switched off the server of an agent with its type's default tools: {inv.mcp_servers}"
+    )
 
 
 # ---- what embry0 itself grants keeps working -----------------------------------
@@ -208,16 +239,16 @@ def test_the_log_tool_grant_keeps_its_server() -> None:
 
 
 @pytest.mark.parametrize("backend_name", ["playwright", "vibium"])
-def test_an_agent_with_browser_tools_and_no_shell_gets_no_browser_server(backend_name: str) -> None:
+def test_an_operator_agent_with_browser_tools_and_no_shell_gets_no_browser_server(backend_name: str) -> None:
     """A browser server is a Node program that loads code from places the agent can write: no exemption."""
     from embry0.workflows.qa.agent_seed import QA_AGENT_SEED
     from embry0.workflows.qa.browser_backends import backend_for, with_browser_backend
 
     backend = backend_for(backend_name)
-    definition = with_browser_backend(dict(QA_AGENT_SEED), backend)
-    narrowed = _triage_config(agent_tools={"qa": ["Read", "Glob", "Write", *backend.browser_tools()]})
+    no_shell = {**QA_AGENT_SEED, "tools": ["Read", "Glob", "Write", *backend.browser_tools()]}
+    definition = with_browser_backend(no_shell, backend)
     with structlog.testing.capture_logs() as logs:
-        inv = _resolve(definition, narrowed, agent_type="qa")
+        inv = _resolve(definition, agent_type="qa")
     assert "Bash" not in inv.tools, inv.tools
     assert inv.mcp_servers == {}, f"an agent with no shell tool kept its browser server: {inv.mcp_servers}"
     dropped = [e for e in logs if e["event"] == "mcp_servers_dropped"]
@@ -249,3 +280,20 @@ def test_an_agent_without_bash_keeps_the_log_tools_server() -> None:
 def test_a_server_named_like_a_browser_server_needs_a_shell_tool(server: dict[str, Any]) -> None:
     inv = _resolve(_definition(["Read"], {"playwright": server}), agent_type="qa")
     assert inv.mcp_servers == {}, f"a server named like embry0's but not its own reached the agent: {inv.mcp_servers}"
+
+
+@pytest.mark.parametrize("backend_name", ["playwright", "vibium"])
+def test_triage_taking_bash_from_the_seeded_qa_agent_keeps_its_browser(backend_name: str) -> None:
+    """Triage narrowing the seeded QA agent to everything but Bash still runs it with its browser."""
+    from embry0.agents.config_builder import build_sdk_options
+    from embry0.workflows.qa.agent_seed import QA_AGENT_SEED
+    from embry0.workflows.qa.browser_backends import backend_for, with_browser_backend
+
+    backend = backend_for(backend_name)
+    definition = with_browser_backend(dict(QA_AGENT_SEED), backend)
+    all_but_bash = [t for t in definition["tools"] if t != "Bash"]
+    inv = _resolve(definition, _triage_config(agent_tools={"qa": all_but_bash}), agent_type="qa")
+    assert inv.tools == all_but_bash, f"triage's narrowing still applies to the tools: {inv.tools}"
+    assert inv.mcp_servers == backend.mcp_servers(), f"triage switched the QA agent's browser off: {inv.mcp_servers}"
+    sent = build_sdk_options(inv).mcp_servers
+    assert isinstance(sent, dict) and backend.mcp_server_name in sent, f"--mcp-config lost the browser: {sent}"

@@ -369,10 +369,13 @@ async def test_triage_may_add_cannot_be_cleared_with_null(app):
 @pytest.mark.asyncio
 async def test_triage_may_add_reaches_the_repository_once_each(app):
     await _send(app, "PUT", "/api/v1/agents/developer", {"triage_may_add_skills": ["sp:a", "sp:a", "sp:b"]})
-    kwargs = app.state.agent_defs_repo.update.call_args.kwargs
-    assert kwargs["triage_may_add_skills"] == ["sp:a", "sp:b"], kwargs
+    update = app.state.agent_defs_repo.update.call_args
+    assert update is not None, "PUT /agents dropped triage_may_add_skills: the repository was never asked to update"
+    kwargs = update.kwargs
+    assert kwargs.get("triage_may_add_skills") == ["sp:a", "sp:b"], f"each name once: {kwargs}"
     await _send(app, "POST", "/api/v1/agents", {"type": "custom", "description": "d", "model": "m"})
-    assert app.state.agent_defs_repo.create.call_args.kwargs["triage_may_add_skills"] == [], "none by default"
+    created = app.state.agent_defs_repo.create.call_args.kwargs
+    assert created.get("triage_may_add_skills") == [], f"a new agent lets triage add none by default: {created}"
 
 
 @pytest.mark.asyncio
