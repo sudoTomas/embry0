@@ -10,7 +10,7 @@ import pytest
 from aiohttp import web
 
 from embry0.execution.proxy.enrollment import EnrollRejected
-from embry0.execution.proxy.git_scope import GitGrant, GitScope, git_verdict, normalize_upstream
+from embry0.execution.proxy.git_scope import GIT_GRANT_BY_ID, GitGrant, GitScope, git_verdict, normalize_upstream
 
 UPSTREAM = "https://github.com"
 READ = GitGrant(upstream=UPSTREAM, repos=frozenset({"acme/widgets"}), push=False)
@@ -167,9 +167,9 @@ def test_an_enroll_body_becomes_a_grant_and_is_echoed():
         "git_push": True,
         "git_push_branches": [],
     }
-    assert app["git_grant_by_id"]["s1"] == grant
+    assert app[GIT_GRANT_BY_ID]["s1"] == grant
     scope.forget(app, "s1")
-    assert app["git_grant_by_id"] == {}
+    assert app[GIT_GRANT_BY_ID] == {}
 
 
 def test_push_defaults_to_false():
@@ -182,7 +182,7 @@ def test_a_body_without_allowed_repos_is_unscoped():
     app, scope = _scope()
     assert scope.parse(app, {"git_upstream": UPSTREAM, "git_push": True}) is None
     assert scope.apply(app, "s1", None) == {}
-    assert "s1" not in app["git_grant_by_id"]
+    assert "s1" not in app[GIT_GRANT_BY_ID]
 
 
 @pytest.mark.parametrize(

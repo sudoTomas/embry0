@@ -25,11 +25,13 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from embry0.execution.proxy.context_proxy import create_context_proxy_app
-from embry0.execution.proxy.enrollment import EnrollmentRegistry, RegistryFullError, register_admin_routes
+from embry0.execution.proxy import app_keys
+from embry0.execution.proxy.context_proxy import QUERY_COUNT_BY_ID, SCOPE_BY_ID, create_context_proxy_app
+from embry0.execution.proxy.enrollment import ENROLLMENT, EnrollmentRegistry, RegistryFullError, register_admin_routes
+from embry0.execution.proxy.forge_scope import REPO_SCOPE_BY_ID
 from embry0.execution.proxy.github_proxy import create_github_proxy_app
 from embry0.execution.proxy.gitlab_proxy import create_gitlab_proxy_app
-from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
+from embry0.execution.proxy.xai_proxy import XAI_CREDENTIAL_BY_SANDBOX, create_xai_proxy_app
 
 ADMIN = "admin-secret-for-lifecycle-tests"
 QUOTA = 3
@@ -49,8 +51,8 @@ class Clock:
 
 async def _mock_upstream(app: web.Application) -> None:
     """Stands in for the upstream. Runs after the proxy's own startup hook; its cleanup hook closes this client."""
-    await app["http_client"].aclose()
-    app["http_client"] = httpx.AsyncClient(
+    await app[app_keys.HTTP_CLIENT].aclose()
+    app[app_keys.HTTP_CLIENT] = httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"lines": []}))
     )
 
@@ -66,10 +68,10 @@ def _recording_registry(
     ended: list[tuple[str, bool]] = []
 
     def on_unenroll(app: web.Application, sandbox_id: str) -> None:
-        ended.append((sandbox_id, sandbox_id in app["enrollment"]))
+        ended.append((sandbox_id, sandbox_id in app[ENROLLMENT]))
 
     register_admin_routes(app, proxy_name="lifecycle_test", admin_token=ADMIN, on_unenroll=on_unenroll)
-    registry: EnrollmentRegistry = app["enrollment"]
+    registry: EnrollmentRegistry = app[ENROLLMENT]
     if clock is not None:
         registry._now = clock
     if max_entries is not None:
@@ -180,11 +182,8 @@ class _Context:
 
     def state_of(self, sandbox_id: str) -> dict[str, object]:
         """Whatever the proxy still holds for this sandbox, by table."""
-        return {
-            table: self.app[table][sandbox_id]
-            for table in ("scope_by_id", "query_count_by_id")
-            if sandbox_id in self.app[table]
-        }
+        tables: tuple[web.AppKey[Any], ...] = (SCOPE_BY_ID, QUERY_COUNT_BY_ID)
+        return {repr(table): self.app[table][sandbox_id] for table in tables if sandbox_id in self.app[table]}
 
 
 @pytest.fixture
@@ -194,7 +193,7 @@ async def context() -> AsyncIterator[_Context]:
     )
     app.on_startup.append(_mock_upstream)
     clock = Clock()
-    app["enrollment"]._now = clock
+    app[ENROLLMENT]._now = clock
     async with TestClient(TestServer(app)) as client:
         yield _Context(client=client, app=app, clock=clock)
 
@@ -221,7 +220,7 @@ async def test_enrollments_purged_as_expired_take_their_scope_and_quota(context:
 async def test_revoking_in_the_registry_takes_the_scope_and_quota(context: _Context) -> None:
     await context.enroll("s1", _bearer(1), ["acme-backend"])
     assert await context.query(_bearer(1)) == 200
-    context.app["enrollment"].unenroll("s1")
+    context.app[ENROLLMENT].unenroll("s1")
     assert context.state_of("s1") == {}, f"a revoked enrollment left state behind: {context.state_of('s1')}"
 
 
@@ -265,7 +264,7 @@ async def test_a_bearer_re_enrolled_under_a_new_id_keeps_nothing_of_the_old_one(
 class _ProxyCase:
     build: Callable[[], web.Application]
     enroll_fields: dict[str, Any]
-    tables: tuple[str, ...]
+    tables: tuple[web.AppKey[Any], ...]
     use: str | None = None  # a request that adds per-sandbox state of its own
 
 
@@ -277,25 +276,25 @@ _CASES = {
     "context": _ProxyCase(
         build=_context_app,
         enroll_fields={"allowed_containers": ["acme-backend"]},
-        tables=("scope_by_id", "query_count_by_id"),
+        tables=(SCOPE_BY_ID, QUERY_COUNT_BY_ID),
         use="/api/v1/logs/query?container=acme-backend",
     ),
     "github": _ProxyCase(
         build=lambda: create_github_proxy_app("ghp_LIFECYCLE_TEST_ONLY", ADMIN),
         enroll_fields={"allowed_repos": ["acme/widgets"]},
-        tables=("repo_scope_by_id",),
+        tables=(REPO_SCOPE_BY_ID,),
     ),
     "gitlab": _ProxyCase(
         build=lambda: create_gitlab_proxy_app(
             "glpat-LIFECYCLE_TEST_ONLY", ADMIN, api_base="https://gitlab.example.com/api/v4"
         ),
         enroll_fields={"allowed_repos": ["group/proj"]},
-        tables=("repo_scope_by_id",),
+        tables=(REPO_SCOPE_BY_ID,),
     ),
     "xai": _ProxyCase(
         build=lambda: create_xai_proxy_app(ADMIN),
         enroll_fields={"xai_credential_id": "credential-1"},
-        tables=("xai_credential_by_sandbox",),
+        tables=(XAI_CREDENTIAL_BY_SANDBOX,),
     ),
 }
 
@@ -307,8 +306,8 @@ async def test_per_sandbox_state_never_outgrows_the_registry(proxy: str) -> None
     app.on_startup.append(_mock_upstream)
     clock = Clock()
     cap = 2
-    app["enrollment"]._now = clock
-    app["enrollment"]._max_entries = cap
+    app[ENROLLMENT]._now = clock
+    app[ENROLLMENT]._max_entries = cap
     ids = [f"s{n}" for n in range(6)] + ["live"]
     async with TestClient(TestServer(app)) as client:
         for sandbox_id in ids:
@@ -322,7 +321,7 @@ async def test_per_sandbox_state_never_outgrows_the_registry(proxy: str) -> None
                 assert used.status == 200, f"{proxy}: using {sandbox_id} answered {used.status}"
             if sandbox_id != "live":
                 clock.t += 11  # expires; nobody revokes it
-        registry = app["enrollment"]
+        registry = app[ENROLLMENT]
         enrolled = {sid for sid in ids if sid in registry}
         assert enrolled == {"live"}, f"{proxy}: registry holds {sorted(enrolled)}"
         for table in case.tables:

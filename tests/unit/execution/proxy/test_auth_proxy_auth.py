@@ -6,6 +6,7 @@ import httpx
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from embry0.execution.proxy import app_keys
 from embry0.execution.proxy.auth_proxy import create_auth_proxy_app
 
 ADMIN = "test-admin-secret-not-real"
@@ -130,7 +131,7 @@ async def test_enrolled_bearer_succeeds(client):
         captured.append({"method": method, "url": url, "headers": dict(headers)})
         return CapturingStreamCtx()
 
-    with patch.object(client.app["http_client"], "stream", side_effect=fake_stream):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "stream", side_effect=fake_stream):
         resp = await client.post(
             "/v1/messages",
             json={"model": "claude-3-5-haiku-20241022"},
@@ -166,7 +167,7 @@ async def test_multi_tenant_both_work(client):
 
     fake_client, _ = make_fake_stream()
 
-    with patch.object(client.app["http_client"], "stream", fake_client.stream):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "stream", fake_client.stream):
         for tok in (TOK_S1, TOK_S2):
             resp = await client.post(
                 "/v1/messages",
@@ -205,7 +206,7 @@ async def test_re_enroll_replaces_old_token(client):
 
     fake_client, _ = make_fake_stream()
 
-    with patch.object(client.app["http_client"], "stream", fake_client.stream):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "stream", fake_client.stream):
         # Token A should work
         resp = await client.post(
             "/v1/messages",
@@ -232,7 +233,7 @@ async def test_re_enroll_replaces_old_token(client):
 
     fake_client2, _ = make_fake_stream()
 
-    with patch.object(client.app["http_client"], "stream", fake_client2.stream):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "stream", fake_client2.stream):
         # Token B must work
         resp = await client.post(
             "/v1/messages",
@@ -297,7 +298,7 @@ async def test_proxy_connect_error_returns_502(client):
     assert enroll.status == 200
 
     with patch.object(
-        client.app["http_client"],
+        client.app[app_keys.HTTP_CLIENT],
         "stream",
         side_effect=httpx.ConnectError("refused"),
     ):
@@ -319,7 +320,7 @@ async def test_proxy_timeout_returns_504(client):
     assert enroll.status == 200
 
     with patch.object(
-        client.app["http_client"],
+        client.app[app_keys.HTTP_CLIENT],
         "stream",
         side_effect=httpx.TimeoutException("timeout"),
     ):
@@ -353,7 +354,7 @@ async def test_proxy_strips_incoming_x_api_key(client):
         captured.append({"headers": dict(headers)})
         return CapturingStreamCtx()
 
-    with patch.object(client.app["http_client"], "stream", side_effect=fake_stream):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "stream", side_effect=fake_stream):
         resp = await client.post(
             "/v1/messages",
             json={"model": "claude-3-5-haiku-20241022"},
@@ -400,7 +401,7 @@ async def test_proxy_handles_mid_stream_read_error(client, capsys):
             return None
 
     with patch.object(
-        client.app["http_client"],
+        client.app[app_keys.HTTP_CLIENT],
         "stream",
         return_value=ErrorStreamCtx(),
     ):
@@ -439,7 +440,7 @@ async def test_proxy_forwards_upstream_404_streaming(client):
         headers={"content-type": "application/json"},
     )
 
-    with patch.object(client.app["http_client"], "stream", fake_client.stream):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "stream", fake_client.stream):
         resp = await client.post(
             "/v1/messages",
             json={"model": "claude-3-5-haiku-20241022"},

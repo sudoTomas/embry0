@@ -38,6 +38,8 @@ import structlog
 from aiohttp import web
 
 __all__ = [
+    "ADMIN_GUARD",
+    "ENROLLMENT",
     "AdminGuard",
     "EnrollExtension",
     "EnrollRejected",
@@ -251,9 +253,14 @@ class EnrollExtension(Protocol):
         """Store ``parsed`` for the now-enrolled sandbox; return response fields."""
 
 
+#: Where every proxy keeps its enrollments and its admin gate (``register_admin_routes``).
+ENROLLMENT = web.AppKey("enrollment", EnrollmentRegistry)
+ADMIN_GUARD = web.AppKey("admin_guard", AdminGuard)
+
+
 def guard_admin(request: web.Request, proxy_name: str) -> web.Response | None:
     """Shared admin gate for aiohttp handlers; None means authorized."""
-    guard: AdminGuard = request.app["admin_guard"]
+    guard = request.app[ADMIN_GUARD]
     verdict = guard.check(request.headers.get("X-Admin-Token", ""))
     if verdict == "ok":
         return None
@@ -278,8 +285,8 @@ def register_admin_routes(
 ) -> None:
     """Attach the shared /admin/enroll + /admin/enroll/{sandbox_id} handlers.
 
-    Stores an :class:`EnrollmentRegistry` at ``app["enrollment"]`` and an
-    :class:`AdminGuard` at ``app["admin_guard"]``. ``accepts_payload_token``
+    Stores an :class:`EnrollmentRegistry` at ``app[ENROLLMENT]`` and an
+    :class:`AdminGuard` at ``app[ADMIN_GUARD]``. ``accepts_payload_token``
     lets the enroll body carry a per-sandbox ``github_token`` (git/github
     proxies). ``on_unenroll`` clears the proxy's per-sandbox state: the
     registry runs it whenever an enrollment ends, whether revoked here,
@@ -291,10 +298,10 @@ def register_admin_routes(
     predecessor's state ``on_unenroll`` has already cleared, and returns fields
     to add to the response.
     """
-    app["enrollment"] = EnrollmentRegistry(
+    app[ENROLLMENT] = EnrollmentRegistry(
         on_unenroll=None if on_unenroll is None else functools.partial(on_unenroll, app)
     )
-    app["admin_guard"] = AdminGuard(admin_token)
+    app[ADMIN_GUARD] = AdminGuard(admin_token)
 
     async def _enroll_handler(request: web.Request) -> web.Response:
         denied = guard_admin(request, proxy_name)
@@ -328,7 +335,7 @@ def register_admin_routes(
             except EnrollRejected as exc:
                 logger.warning(f"{proxy_name}_enrollment_rejected", sandbox_id=sandbox_id, reason=str(exc))
                 return web.json_response({"error": "bad_request", "detail": str(exc)}, status=400)
-        registry: EnrollmentRegistry = request.app["enrollment"]
+        registry = request.app[ENROLLMENT]
         try:
             registry.enroll(
                 sandbox_id,
@@ -354,7 +361,7 @@ def register_admin_routes(
         sandbox_id = request.match_info["sandbox_id"]
         if not _SANDBOX_ID_RE.fullmatch(sandbox_id):
             return web.json_response({"error": "bad_request"}, status=400)
-        registry: EnrollmentRegistry = request.app["enrollment"]
+        registry = request.app[ENROLLMENT]
         registry.unenroll(sandbox_id)  # runs on_unenroll when there was an enrollment
         logger.info(f"{proxy_name}_sandbox_unenrolled", sandbox_id=sandbox_id)
         return web.json_response({"status": "unenrolled"})
@@ -373,7 +380,7 @@ def check_bearer(request: web.Request, proxy_name: str) -> str | None:
     if not presented:
         logger.warning(f"{proxy_name}_unauthorized", path=request.path)
         return None
-    registry: EnrollmentRegistry = request.app["enrollment"]
+    registry = request.app[ENROLLMENT]
     sandbox_id = registry.lookup(presented)
     if sandbox_id is None:
         logger.warning(f"{proxy_name}_unauthorized", path=request.path)
@@ -383,11 +390,11 @@ def check_bearer(request: web.Request, proxy_name: str) -> str | None:
 
 def git_identity(request: web.Request, sandbox_id: str) -> tuple[str, str] | None:
     """``(host, username)`` enrolled for this sandbox, or None."""
-    registry: EnrollmentRegistry = request.app["enrollment"]
+    registry = request.app[ENROLLMENT]
     return registry.git_identity_for(sandbox_id)
 
 
 def payload_token(request: web.Request, sandbox_id: str, fallback: str) -> str:
     """Per-sandbox payload credential with global fallback."""
-    registry: EnrollmentRegistry = request.app["enrollment"]
+    registry = request.app[ENROLLMENT]
     return registry.payload_token_for(sandbox_id) or fallback

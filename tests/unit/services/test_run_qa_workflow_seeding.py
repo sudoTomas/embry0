@@ -19,6 +19,8 @@ def _make_executor():
         database_url="postgresql://test/test",
     )
     e._jobs.update = AsyncMock()
+    # A row, not a mock: a mock row's .get() is a coroutine nothing awaits.
+    e._jobs.get = AsyncMock(return_value={"trace_id": None})
     # job_finished has its own tests; the real one would read a mock row here.
     e._announce_finished = AsyncMock()
     return e

@@ -17,6 +17,8 @@ import aiohttp
 import structlog
 from aiohttp import web
 
+from embry0.execution.proxy.app_keys import HTTP_SESSION, UPSTREAM_URL
+
 logger = structlog.get_logger(__name__)
 
 
@@ -47,15 +49,15 @@ def create_minio_proxy_app(upstream_url: str) -> web.Application:
     upstream_url = upstream_url.rstrip("/")
 
     app = web.Application(client_max_size=0)  # 0 = no limit; MinIO handles its own caps
-    app["upstream_url"] = upstream_url
+    app[UPSTREAM_URL] = upstream_url
 
     async def _on_startup(app: web.Application) -> None:
         # Build the session inside startup so it binds to the running loop
         # used by web.run_app, not whatever thread/loop created the app.
-        app["http"] = aiohttp.ClientSession(auto_decompress=False)
+        app[HTTP_SESSION] = aiohttp.ClientSession(auto_decompress=False)
 
     async def _on_cleanup(app: web.Application) -> None:
-        await app["http"].close()
+        await app[HTTP_SESSION].close()
 
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
@@ -70,8 +72,8 @@ async def _health_handler(request: web.Request) -> web.Response:
 
 
 async def _proxy_handler(request: web.Request) -> web.StreamResponse:
-    upstream_url: str = request.app["upstream_url"]
-    http: aiohttp.ClientSession = request.app["http"]
+    upstream_url: str = request.app[UPSTREAM_URL]
+    http: aiohttp.ClientSession = request.app[HTTP_SESSION]
 
     # rel_url preserves the path AND the original query string (signed by S3).
     target = f"{upstream_url}{request.rel_url}"

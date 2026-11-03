@@ -25,7 +25,7 @@ from tests.unit.services.test_merge_approvals import (
 )
 from tests.unit.services.test_merge_recommendation import REVIEW_JSON
 
-pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
+pytestmark = pytest.mark.requires_postgres
 
 RUNNING = {"total_count": 1, "check_runs": [{"name": "build", "status": "in_progress", "conclusion": None}]}
 RED = {"total_count": 1, "check_runs": [{"name": "build", "status": "completed", "conclusion": "failure"}]}

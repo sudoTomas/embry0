@@ -43,6 +43,34 @@ def _workers(config: pytest.Config) -> int | None:
     return sum(int(spec.split("*", 1)[0]) if "*" in spec else 1 for spec in specs)
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--fail-on-warnings",
+        action="store_true",
+        help="fail a run whose tests passed but warned (CI runs the unit suite with it: it has no warnings, #336)",
+    )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Under ``--fail-on-warnings``, a run whose tests all passed fails when any of them warned.
+
+    The suite once carried 2,150 warnings, and a new one that mattered could not be seen among them;
+    with none, a new one fails the run and is named in its warnings summary. In a distributed run the
+    controller decides, from the warnings every worker reported to it.
+    """
+    config = session.config
+    if not config.getoption("--fail-on-warnings", default=False) or getattr(config, "workerinput", None) is not None:
+        return
+    reporter = config.pluginmanager.get_plugin("terminalreporter")
+    warned = len(reporter.stats.get("warnings", [])) if reporter is not None else 0
+    if warned and session.exitstatus == pytest.ExitCode.OK:
+        reporter.write_line(
+            f"--fail-on-warnings: the tests warned {warned} time(s); see the warnings summary", red=True
+        )
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Give each pytest-xdist worker a database of its own (``pytest -n``).
 

@@ -59,8 +59,8 @@ async def test_reenroll_without_token_resets_to_global(rig):
     assert await rig.credential_sent(t2) == basic("x-access-token", GLOBAL)
 
 
-async def test_no_credential_at_all_forwards_anonymously(rig):
+async def test_no_credential_at_all_forwards_anonymously():
     """A deployment with no credential for this forge still clones public repositories."""
-    rig.client.app["github_token"] = ""
-    await _enroll(rig, "s1", TOK)
-    assert await rig.credential_sent(TOK) == ""
+    async with ProxyRig(create_git_proxy_app(github_token="", admin_token=ADMIN), RecordingUpstream()) as rig:
+        await _enroll(rig, "s1", TOK)
+        assert await rig.credential_sent(TOK) == ""

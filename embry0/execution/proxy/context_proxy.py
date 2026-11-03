@@ -44,8 +44,9 @@ import httpx
 import structlog
 from aiohttp import web
 
+from embry0.execution.proxy.app_keys import HTTP_CLIENT, UPSTREAM_URL
 from embry0.execution.proxy.container_allowlist import ContainerAllowlist
-from embry0.execution.proxy.enrollment import EnrollRejected, check_bearer, register_admin_routes
+from embry0.execution.proxy.enrollment import ENROLLMENT, EnrollRejected, check_bearer, register_admin_routes
 from embry0.safety.redaction import redact_bounded, redact_log_text, secret_env_values
 
 logger = structlog.get_logger(__name__)
@@ -73,6 +74,17 @@ _SCOPE_FIELD = "allowed_containers"
 MAX_REDACTED_LINE_CHARS = 2000
 
 
+# This proxy's own state keys; those several proxies share are in ``app_keys``.
+ORCHESTRATOR_API_KEY = web.AppKey("orchestrator_api_key", str)
+#: The allowlist's entries as configured, and the allowlist that resolves a name against them.
+CONTAINER_ALLOWLIST: web.AppKey[list[str]] = web.AppKey("container_allowlist")
+ALLOWLIST = web.AppKey("allowlist", ContainerAllowlist)
+QUERY_QUOTA = web.AppKey("query_quota", int)
+#: Per enrolled sandbox: the queries it has made, and the containers it may query.
+QUERY_COUNT_BY_ID: web.AppKey[dict[str, int]] = web.AppKey("query_count_by_id")
+SCOPE_BY_ID: web.AppKey[dict[str, list[str]]] = web.AppKey("scope_by_id")
+
+
 class _ContainerScope:
     """Enroll-body ``allowed_containers`` → a per-sandbox subset of the allowlist."""
 
@@ -82,7 +94,7 @@ class _ContainerScope:
         requested = body[_SCOPE_FIELD]
         if not isinstance(requested, list) or not all(isinstance(c, str) for c in requested):
             raise EnrollRejected(f"{_SCOPE_FIELD} must be a list of container names")
-        allowlist: ContainerAllowlist = app["allowlist"]
+        allowlist: ContainerAllowlist = app[ALLOWLIST]
         # A pattern narrows to the concrete names asked for; it is never granted as itself.
         scope = sorted({name for c in requested if (name := allowlist.resolve(c)) is not None})
         if not scope:
@@ -90,7 +102,7 @@ class _ContainerScope:
         return scope
 
     def apply(self, app: web.Application, sandbox_id: str, parsed: list[str] | None) -> dict[str, Any]:
-        scopes: dict[str, list[str]] = app["scope_by_id"]
+        scopes: dict[str, list[str]] = app[SCOPE_BY_ID]
         if parsed is None:
             scopes.pop(sandbox_id, None)
             return {}
@@ -161,19 +173,19 @@ def create_context_proxy_app(
         raise ValueError("query_quota must be >= 1")
 
     app = web.Application()
-    app["upstream_url"] = upstream_url.rstrip("/")
-    app["orchestrator_api_key"] = orchestrator_api_key
-    app["container_allowlist"] = allowlist.entries
-    app["allowlist"] = allowlist
-    app["query_quota"] = query_quota
+    app[UPSTREAM_URL] = upstream_url.rstrip("/")
+    app[ORCHESTRATOR_API_KEY] = orchestrator_api_key
+    app[CONTAINER_ALLOWLIST] = allowlist.entries
+    app[ALLOWLIST] = allowlist
+    app[QUERY_QUOTA] = query_quota
     # Quota counters and scopes are in-memory alongside the shared enrollment
     # registry; all of it resets on proxy restart. The registry runs
     # _forget_sandbox whenever an enrollment ends (revoked, expired, or
     # replaced by a re-enrollment), so a fresh sandbox with a recycled id never
     # inherits a spent budget or an old scope, and neither map outgrows the
     # registry's cap.
-    app["query_count_by_id"] = {}
-    app["scope_by_id"] = {}
+    app[QUERY_COUNT_BY_ID] = {}
+    app[SCOPE_BY_ID] = {}
     register_admin_routes(
         app,
         proxy_name="context_proxy",
@@ -190,19 +202,19 @@ def create_context_proxy_app(
 
 
 def _forget_sandbox(app: web.Application, sandbox_id: str) -> None:
-    app["query_count_by_id"].pop(sandbox_id, None)
-    app["scope_by_id"].pop(sandbox_id, None)
+    app[QUERY_COUNT_BY_ID].pop(sandbox_id, None)
+    app[SCOPE_BY_ID].pop(sandbox_id, None)
 
 
 async def _on_startup(app: web.Application) -> None:
     # Loki's own timeout upstream is 30s; stay above it so the orchestrator's
     # error detail (502 with the Loki message) reaches the agent instead of a
     # generic proxy timeout.
-    app["http_client"] = httpx.AsyncClient(timeout=35.0)
+    app[HTTP_CLIENT] = httpx.AsyncClient(timeout=35.0)
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    client = app.get("http_client")
+    client = app.get(HTTP_CLIENT)
     if client:
         await client.aclose()
 
@@ -212,8 +224,8 @@ async def _health_handler(request: web.Request) -> web.Response:
         {
             "status": "ok",
             "proxy": "context",
-            "enrolled": len(request.app["enrollment"]),
-            "allowlist_size": len(request.app["container_allowlist"]),
+            "enrolled": len(request.app[ENROLLMENT]),
+            "allowlist_size": len(request.app[CONTAINER_ALLOWLIST]),
         }
     )
 
@@ -236,10 +248,10 @@ async def _query_handler(request: web.Request) -> web.Response:
         )
 
     container = (request.query.get("container") or "").strip()
-    scope: list[str] | None = request.app["scope_by_id"].get(sandbox_id)
-    queryable: list[str] = scope if scope is not None else request.app["container_allowlist"]
+    scope: list[str] | None = request.app[SCOPE_BY_ID].get(sandbox_id)
+    queryable: list[str] = scope if scope is not None else request.app[CONTAINER_ALLOWLIST]
     # The global allowlist always decides; a scope can only narrow it further.
-    canonical = request.app["allowlist"].resolve(container)
+    canonical = request.app[ALLOWLIST].resolve(container)
     if canonical is not None and scope is not None:
         canonical = {name.lower(): name for name in scope}.get(canonical.lower())
     if not canonical:
@@ -251,8 +263,8 @@ async def _query_handler(request: web.Request) -> web.Response:
             status=400,
         )
 
-    quota = request.app["query_quota"]
-    counts = request.app["query_count_by_id"]
+    quota = request.app[QUERY_QUOTA]
+    counts = request.app[QUERY_COUNT_BY_ID]
     used = counts.get(sandbox_id, 0)
     if used >= quota:
         logger.warning("context_proxy_quota_exhausted", sandbox_id=sandbox_id, quota=quota)
@@ -273,12 +285,12 @@ async def _query_handler(request: web.Request) -> web.Response:
 
     # Fresh headers — nothing from the sandbox request is forwarded.
     headers: dict[str, str] = {}
-    api_key = request.app["orchestrator_api_key"]
+    api_key = request.app[ORCHESTRATOR_API_KEY]
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    client: httpx.AsyncClient = request.app["http_client"]
-    upstream = f"{request.app['upstream_url']}{_UPSTREAM_PATH}"
+    client: httpx.AsyncClient = request.app[HTTP_CLIENT]
+    upstream = f"{request.app[UPSTREAM_URL]}{_UPSTREAM_PATH}"
     logger.info(
         "context_proxy_query",
         sandbox_id=sandbox_id,

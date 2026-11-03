@@ -21,6 +21,7 @@ import httpx
 import structlog
 from aiohttp import web
 
+from embry0.execution.proxy.app_keys import CA_PEM, HTTP_CLIENT
 from embry0.execution.proxy.enrollment import check_bearer, payload_token, register_admin_routes
 from embry0.execution.proxy.forge_scope import (
     RepoScope,
@@ -50,6 +51,11 @@ _FORWARDED_REQUEST_HEADERS = (
 )
 
 
+# This proxy's own state keys; those several proxies share are in ``app_keys``.
+GITLAB_TOKEN = web.AppKey("gitlab_token", str)
+API_BASE = web.AppKey("api_base", str)
+
+
 def create_gitlab_proxy_app(
     gitlab_token: str,
     admin_token: str,
@@ -69,9 +75,9 @@ def create_gitlab_proxy_app(
             a self-managed instance behind an internal CA.
     """
     app = web.Application()
-    app["gitlab_token"] = gitlab_token
-    app["api_base"] = api_base.rstrip("/")
-    app["ca_pem"] = ca_pem
+    app[GITLAB_TOKEN] = gitlab_token
+    app[API_BASE] = api_base.rstrip("/")
+    app[CA_PEM] = ca_pem
     scope = RepoScope(app, proxy_name="gitlab_proxy", normalize=normalize_gitlab_project)
     register_admin_routes(
         app,
@@ -89,16 +95,16 @@ def create_gitlab_proxy_app(
 
 
 async def _on_startup(app: web.Application) -> None:
-    ca_pem = app.get("ca_pem", "")
+    ca_pem = app.get(CA_PEM, "")
     if ca_pem:
-        app["http_client"] = httpx.AsyncClient(timeout=30.0, verify=build_ssl_context(ca_pem))
+        app[HTTP_CLIENT] = httpx.AsyncClient(timeout=30.0, verify=build_ssl_context(ca_pem))
         logger.info("gitlab_proxy_private_ca_trusted")
     else:
-        app["http_client"] = httpx.AsyncClient(timeout=30.0)
+        app[HTTP_CLIENT] = httpx.AsyncClient(timeout=30.0)
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    client = app.get("http_client")
+    client = app.get(HTTP_CLIENT)
     if client:
         await client.aclose()
 
@@ -123,9 +129,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     if not verdict.allowed:
         return policy_denied(request, "gitlab_proxy", sandbox_id, verdict)
 
-    token = payload_token(request, sandbox_id, request.app["gitlab_token"])
+    token = payload_token(request, sandbox_id, request.app[GITLAB_TOKEN])
     # The checked, re-encoded path, never the raw one (see github_proxy).
-    upstream_url = f"{request.app['api_base']}{verdict.upstream_path}"
+    upstream_url = f"{request.app[API_BASE]}{verdict.upstream_path}"
     raw_query = request.rel_url.raw_query_string
     if raw_query:
         upstream_url += f"?{raw_query}"
@@ -135,7 +141,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     headers["Accept"] = "application/json"
 
     body = await request.read()
-    client: httpx.AsyncClient = request.app["http_client"]
+    client: httpx.AsyncClient = request.app[HTTP_CLIENT]
 
     logger.info("gitlab_credentials_used", sandbox_id=sandbox_id, method=request.method, path=verdict.upstream_path)
 

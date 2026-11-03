@@ -5,7 +5,10 @@ settings for Docker-in-Docker communication.
 """
 
 import asyncio
+import contextlib
 import json
+import os
+import signal
 from typing import Any, cast
 
 import structlog
@@ -81,6 +84,27 @@ def _scrub_cmd_for_log(cmd: list[str]) -> list[str]:
         scrubbed.append(token)
         i += 1
     return scrubbed
+
+
+async def kill_process_group(proc: asyncio.subprocess.Process, *, wait_seconds: float = 5) -> bool:
+    """Kill ``proc`` and every process of its group, then reap it; True when it was reaped in time.
+
+    ``proc`` must have been started with ``start_new_session=True``, so its group
+    holds nothing else. Killing only ``proc`` is not enough: a child it started
+    (the compose plugin ``docker compose`` runs, say) keeps the stdout pipe open,
+    and ``wait()`` waits for the pipes to close too, so the killed process is left
+    to the garbage collector, transport and all.
+    """
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=wait_seconds)
+    except TimeoutError:
+        return False
+    return True
 
 
 class ExecStdinTimeoutError(RuntimeError):
@@ -517,11 +541,13 @@ class DockerClient:
                 stdin=stdin_file,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,  # its own group: a timeout kills all of it (#334)
             )
             try:
                 _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except TimeoutError:
-                proc.kill()
+                if not await kill_process_group(proc):
+                    logger.error("docker_exec_with_stdin_kill_stuck", container=container, pid=proc.pid)
                 raise RuntimeError(f"Docker exec-with-stdin timed out after {timeout}s")
         if proc.returncode != 0:
             err = stderr.decode(errors="replace").strip()

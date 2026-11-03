@@ -26,6 +26,7 @@ import httpx
 import structlog
 from aiohttp import web
 
+from embry0.execution.proxy.app_keys import HTTP_CLIENT
 from embry0.execution.proxy.enrollment import EnrollRejected, check_bearer, guard_admin, register_admin_routes
 from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES, read_body
 from embry0.safety.xai_denials import XaiDenial, classify_xai_denial
@@ -71,6 +72,18 @@ def _normalize_tool_schemas(body: bytes) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
+# This proxy's own state keys; those several proxies share are in ``app_keys``. Each is a mutable
+# container, set before startup and changed in place after it.
+#: The access token for enrollments that name no credential, under ``access_token``.
+TOKEN_HOLDER: web.AppKey[dict[str, str]] = web.AppKey("token_holder")
+#: Per credential id: its access token and when it expires.
+TOKENS: web.AppKey[dict[str, dict[str, Any]]] = web.AppKey("tokens")
+#: Per enrolled sandbox: the credential id it was enrolled with.
+XAI_CREDENTIAL_BY_SANDBOX: web.AppKey[dict[str, str]] = web.AppKey("xai_credential_by_sandbox")
+#: Per credential id: the upstream 401s and 429s since the last ``/admin/health`` read.
+UPSTREAM_COUNTS: web.AppKey[dict[str, dict[str, int]]] = web.AppKey("upstream_counts")
+
+
 class _XaiCredentialEnroll:
     """Remember which credential a sandbox enrolled, when the body names one.
 
@@ -88,14 +101,14 @@ class _XaiCredentialEnroll:
 
     def apply(self, app: web.Application, sandbox_id: str, parsed: str | None) -> dict[str, Any]:
         if parsed:
-            app["xai_credential_by_sandbox"][sandbox_id] = parsed
+            app[XAI_CREDENTIAL_BY_SANDBOX][sandbox_id] = parsed
         else:
-            app["xai_credential_by_sandbox"].pop(sandbox_id, None)
+            app[XAI_CREDENTIAL_BY_SANDBOX].pop(sandbox_id, None)
         return {}
 
 
 def _forget_xai_credential(app: web.Application, sandbox_id: str) -> None:
-    app["xai_credential_by_sandbox"].pop(sandbox_id, None)
+    app[XAI_CREDENTIAL_BY_SANDBOX].pop(sandbox_id, None)
 
 
 def create_xai_proxy_app(admin_token: str, *, max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES) -> web.Application:
@@ -115,12 +128,12 @@ def create_xai_proxy_app(admin_token: str, *, max_request_bytes: int = DEFAULT_M
     # Current SuperGrok access token, pushed by the orchestrator. Held in a mutable dict
     # (not a bare app-mapping key) so it can be updated after startup without aiohttp's
     # "changing state of a started application" deprecation. Empty until provisioned.
-    app["token_holder"] = {"access_token": ""}
+    app[TOKEN_HOLDER] = {"access_token": ""}
     # Per-credential access tokens. A sandbox enrolled with xai_credential_id
     # reads its slot; the global holder stays for enrollments that name none.
-    app["tokens"] = {}
-    app["xai_credential_by_sandbox"] = {}
-    app["upstream_counts"] = {}
+    app[TOKENS] = {}
+    app[XAI_CREDENTIAL_BY_SANDBOX] = {}
+    app[UPSTREAM_COUNTS] = {}
     register_admin_routes(
         app,
         proxy_name="xai_proxy",
@@ -138,17 +151,17 @@ def create_xai_proxy_app(admin_token: str, *, max_request_bytes: int = DEFAULT_M
 
 
 async def _on_startup(app: web.Application) -> None:
-    app["http_client"] = httpx.AsyncClient(timeout=120.0)
+    app[HTTP_CLIENT] = httpx.AsyncClient(timeout=120.0)
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    client = app.get("http_client")
+    client = app.get(HTTP_CLIENT)
     if client:
         await client.aclose()
 
 
 async def _health_handler(request: web.Request) -> web.Response:
-    provisioned = bool(request.app["token_holder"]["access_token"])
+    provisioned = bool(request.app[TOKEN_HOLDER]["access_token"])
     return web.json_response({"status": "ok", "proxy": "xai", "provisioned": provisioned})
 
 
@@ -164,7 +177,7 @@ async def _answer_403(request: web.Request, upstream_resp: Any, credential_id: s
     denial = classify_xai_denial(body.decode("utf-8", errors="replace"))
     logger.warning("xai_proxy_upstream_403", credential_id=credential_id, denial=denial.value if denial else None)
     if credential_id and denial is XaiDenial.STALE_TOKEN:
-        bucket = request.app["upstream_counts"].setdefault(credential_id, {"401": 0, "429": 0})
+        bucket = request.app[UPSTREAM_COUNTS].setdefault(credential_id, {"401": 0, "429": 0})
         bucket["stale"] = bucket.get("stale", 0) + 1
     headers = {
         hdr: upstream_resp.headers[hdr] for hdr in ("content-type", "request-id") if hdr in upstream_resp.headers
@@ -179,8 +192,8 @@ async def _admin_health_handler(request: web.Request) -> web.Response:
         return denied
     # Copy then clear. Replacing the app key after startup is the deprecation
     # the token holder avoids by mutating a dict in place.
-    counts = {key: dict(bucket) for key, bucket in request.app["upstream_counts"].items()}
-    request.app["upstream_counts"].clear()
+    counts = {key: dict(bucket) for key, bucket in request.app[UPSTREAM_COUNTS].items()}
+    request.app[UPSTREAM_COUNTS].clear()
     return web.json_response({"credentials": counts})
 
 
@@ -206,13 +219,13 @@ async def _set_token_handler(request: web.Request) -> web.Response:
     if credential_id:
         if not isinstance(credential_id, str):
             return web.json_response({"error": "bad_request"}, status=400)
-        request.app["tokens"][credential_id] = {
+        request.app[TOKENS][credential_id] = {
             "access_token": access_token,
             "expires_at": body.get("expires_at"),
         }
         logger.info("xai_proxy_credential_token_set", credential_id=credential_id)
     else:
-        request.app["token_holder"]["access_token"] = access_token
+        request.app[TOKEN_HOLDER]["access_token"] = access_token
         logger.info("xai_proxy_token_set")
     return web.json_response({"status": "ok"})
 
@@ -223,16 +236,16 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     if sandbox_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    credential_id = request.app["xai_credential_by_sandbox"].get(sandbox_id)
+    credential_id = request.app[XAI_CREDENTIAL_BY_SANDBOX].get(sandbox_id)
     if credential_id:
-        slot = request.app["tokens"].get(credential_id) or {}
+        slot = request.app[TOKENS].get(credential_id) or {}
         access_token = slot.get("access_token") or ""
         if not access_token:
             logger.warning("xai_proxy_credential_token_missing", sandbox_id=sandbox_id, credential_id=credential_id)
             return web.json_response({"error": "credential_token_missing"}, status=503)
     else:
         credential_id = None
-        access_token = request.app["token_holder"]["access_token"]
+        access_token = request.app[TOKEN_HOLDER]["access_token"]
         if not access_token:
             logger.warning("xai_proxy_not_provisioned", sandbox_id=sandbox_id)
             return web.json_response({"error": "xai proxy not yet provisioned"}, status=503)
@@ -271,7 +284,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             # Length changed — let httpx recompute from the new content.
             headers.pop("Content-Length", None)
             headers.pop("content-length", None)
-    client: httpx.AsyncClient = request.app["http_client"]
+    client: httpx.AsyncClient = request.app[HTTP_CLIENT]
 
     logger.info("xai_credentials_used", sandbox_id=sandbox_id)
 
@@ -283,7 +296,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             content=body,
         ) as upstream_resp:
             if credential_id and upstream_resp.status_code in (401, 429):
-                bucket = request.app["upstream_counts"].setdefault(credential_id, {"401": 0, "429": 0})
+                bucket = request.app[UPSTREAM_COUNTS].setdefault(credential_id, {"401": 0, "429": 0})
                 bucket[str(upstream_resp.status_code)] += 1
             if upstream_resp.status_code == 403:
                 return await _answer_403(request, upstream_resp, credential_id)

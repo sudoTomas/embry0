@@ -13,12 +13,17 @@ import httpx
 import structlog
 from aiohttp import web
 
+from embry0.execution.proxy.app_keys import HTTP_CLIENT
 from embry0.execution.proxy.enrollment import check_bearer, register_admin_routes
 from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES, read_body
 
 logger = structlog.get_logger(__name__)
 
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
+
+
+#: The Anthropic API key this proxy injects (shared keys: ``app_keys``).
+API_KEY = web.AppKey("api_key", str)
 
 
 def create_auth_proxy_app(
@@ -34,7 +39,7 @@ def create_auth_proxy_app(
     if max_request_bytes <= 0:
         raise ValueError("MAX_REQUEST_BYTES must be positive")
     app = web.Application(client_max_size=max_request_bytes)
-    app["api_key"] = api_key
+    app[API_KEY] = api_key
     register_admin_routes(app, proxy_name="auth_proxy", admin_token=admin_token)
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
@@ -44,11 +49,11 @@ def create_auth_proxy_app(
 
 
 async def _on_startup(app: web.Application) -> None:
-    app["http_client"] = httpx.AsyncClient(timeout=120.0)
+    app[HTTP_CLIENT] = httpx.AsyncClient(timeout=120.0)
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    client = app.get("http_client")
+    client = app.get(HTTP_CLIENT)
     if client:
         await client.aclose()
 
@@ -63,7 +68,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     if sandbox_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    api_key = request.app["api_key"]
+    api_key = request.app[API_KEY]
     path = "/" + request.match_info.get("path", "")
     upstream_url = f"{ANTHROPIC_API_BASE}/v1{path}"
 
@@ -81,7 +86,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     body = await read_body(request, "auth-proxy")
     if isinstance(body, web.Response):
         return body
-    client: httpx.AsyncClient = request.app["http_client"]
+    client: httpx.AsyncClient = request.app[HTTP_CLIENT]
 
     logger.info("auth_credentials_used", sandbox_id=sandbox_id)
 
