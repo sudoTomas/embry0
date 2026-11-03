@@ -187,6 +187,20 @@ async def test_an_answer_may_not_name_an_embry0_actor(app: FastAPI, name: str) -
     assert app.state.proposals_repo.recorded == [], "nothing is recorded under an embry0 actor's name"
 
 
+@pytest.mark.parametrize("proposal", ["ci:1", "ticket:1", "review:1"])
+async def test_a_start_the_gate_refuses_creates_nothing_and_records_no_answer(app: FastAPI, proposal: str) -> None:
+    app.state.issue_executor.dispatch_refusal = AsyncMock(
+        return_value=SimpleNamespace(public_message="dispatch refused: dispatch rate limit reached")
+    )
+    async with await _client(app) as client:
+        response = await client.post(f"/api/v1/proposals/{proposal}/accept", json={"by": "octo"}, headers=HEADERS)
+    assert response.status_code == 429 and "rate limit" in response.text
+    app.state.issue_executor.dispatch_refusal.assert_awaited_once_with(actor="octo")
+    app.state.issues_repo.create.assert_not_awaited()
+    app.state.jobs_repo.create.assert_not_awaited()
+    assert app.state.proposals_repo.recorded == [], "the lead stays open to answer again"
+
+
 async def test_a_yes_to_a_github_ticket_brings_it_in_and_runs_it(app: FastAPI) -> None:
     async with await _client(app) as client:
         response = await client.post("/api/v1/proposals/ticket:1/accept", json={"by": "octo"}, headers=HEADERS)
