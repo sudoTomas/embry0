@@ -30,6 +30,13 @@ router = APIRouter()
 
 #: The tiers that can sign in to the dashboard and so answer what they are sent.
 _SIGNED_IN = ("operator", "admin")
+
+
+def _can_be_sent(tier: str, github_login: str | None) -> bool:
+    """Someone who signs in, or who is named by a GitHub login: a chat assistant can ask them, signed in or not."""
+    return tier in _SIGNED_IN or bool(github_login)
+
+
 _LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 
 
@@ -58,8 +65,8 @@ async def people_by_email(request: Request) -> dict[str, dict[str, Any]]:
 
 @router.get("/people")
 async def list_people(request: Request) -> dict[str, Any]:
-    """The people a decision can be sent to: everyone who signs in to the dashboard."""
-    people = [p for p in (await people_by_email(request)).values() if p["tier"] in _SIGNED_IN]
+    """The people a decision can be sent to: everyone who signs in to the dashboard or is named by a GitHub login."""
+    people = [p for p in (await people_by_email(request)).values() if _can_be_sent(p["tier"], p["github_login"])]
     return {"people": people, "count": len(people)}
 
 
@@ -131,8 +138,8 @@ async def hand_off(request: Request, decision_id: str, *, to: str, note: str, ac
     decision = await read_decision(request, decision_id, action="hand off a decision")
     users = _repo(request, "users_repo")
     person = await users.get_by_email(to.strip())
-    if person is None or person.disabled or person.tier not in _SIGNED_IN:
-        raise HTTPException(status_code=422, detail="send it to someone who signs in to embry0")
+    if person is None or person.disabled or not _can_be_sent(person.tier, person.github_login):
+        raise HTTPException(status_code=422, detail="send it to someone who signs in to embry0 or has a GitHub login")
     if person.email.lower() == actor.lower():
         raise HTTPException(status_code=422, detail="it is yours already: answer it")
     row = await _repo(request, "handoffs_repo").send(

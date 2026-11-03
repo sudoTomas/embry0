@@ -84,7 +84,9 @@ NO_ACTOR_ROUTES: dict[str, tuple[str, ...]] = {
         "/api/v1/auth/me",
     ),
     "admin-only, or only the caller's own keys to anyone else": ("/api/v1/users", "/api/v1/apikeys"),
-    "the directory of people a decision can be sent to: who signs in, not who did what": ("/api/v1/people",),
+    "the directory of people a decision can be sent to: who signs in or has a login, not who did what": (
+        "/api/v1/people",
+    ),
     "configuration, catalogues and health, with no actor": (
         "/api/v1/health/ready",
         "/api/v1/agents",
@@ -273,8 +275,11 @@ ACTOR_COLUMNS: dict[str, tuple[str, str | tuple[str, ...]]] = {
     "knowledge_maps.owner": (_VISIBLE, _OWNER),
     "knowledge_map_marks.map_owner": (_VISIBLE, _OWNER),
     "knowledge_map_sends.map_owner": (_VISIBLE, _OWNER),
-    "users.email": (_UNSERVED, "the admin-only users router; GET /people lists who signs in, not who did what"),
-    "users.github_login": (_UNSERVED, "the admin-only users router; GET /people lists who signs in, not who did what"),
+    "users.email": (_UNSERVED, "the admin-only users router; GET /people lists who can be sent one, not who did what"),
+    "users.github_login": (
+        _UNSERVED,
+        "the admin-only users router; GET /people lists who can be sent one, not who did what",
+    ),
     "api_keys.created_by": (_UNSERVED, "GET /apikeys shows a caller who is not an admin only its own keys"),
     "credentials.created_by": (_UNSERVED, "no route returns it: CredentialOut leaves it out"),
     "credentials.created_by_key_id": (
