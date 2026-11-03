@@ -282,6 +282,67 @@ def test_a_server_named_like_a_browser_server_needs_a_shell_tool(server: dict[st
     assert inv.mcp_servers == {}, f"a server named like embry0's but not its own reached the agent: {inv.mcp_servers}"
 
 
+def _log_server_but(**changes: Any) -> dict[str, Any]:
+    """The log tool's server as embry0 builds it, with ``changes`` (None removes a key)."""
+    from embry0.workflows.issue_to_pr.log_tool import CONTEXT_MCP_SERVER
+
+    server = {**CONTEXT_MCP_SERVER["context"], **changes}
+    return {key: value for key, value in server.items() if value is not None}
+
+
+def test_the_log_servers_look_alikes_start_from_the_kept_config() -> None:
+    """With no change, the look-alikes below are the log tool's server, which an agent with no shell keeps."""
+    inv = _resolve(_definition(["Read"], {"context": _log_server_but()}), agent_type="analysis")
+    assert inv.mcp_servers == {"context": _log_server_but()}, (
+        f"the log tool's own server was dropped: {inv.mcp_servers}"
+    )
+
+
+_MODULE = "embry0.sandbox.context_mcp"
+
+
+@pytest.mark.parametrize(
+    "server",
+    [
+        _log_server_but(args=["-m", _MODULE]),
+        _log_server_but(args=["-P", "-m", _MODULE]),
+        _log_server_but(args=["-s", "-m", _MODULE]),
+        _log_server_but(command="python"),
+        _log_server_but(command="sh"),
+        _log_server_but(command="/workspace/python3"),
+        _log_server_but(args=["-s", "-P", "-m", _MODULE]),
+        _log_server_but(args=["-P", "-s", "-m", _MODULE, "--extra"]),
+        _log_server_but(args=["-P", "-s", "-X", "dev", "-m", _MODULE]),
+        _log_server_but(env={"PYTHONPATH": "/workspace"}),
+        _log_server_but(env={}),
+        _log_server_but(cwd="/workspace"),
+        _log_server_but(type=None),
+    ],
+    ids=[
+        "without-P-s",
+        "P-only",
+        "s-only",
+        "other-python",
+        "other-command",
+        "workspace-command",
+        "reordered-args",
+        "extra-arg-after",
+        "extra-arg-before",
+        "extra-env",
+        "empty-env",
+        "cwd",
+        "no-type",
+    ],
+)
+def test_a_server_named_like_the_log_server_needs_a_shell_tool(server: dict[str, Any]) -> None:
+    """Only the log tool's whole config is kept: its name, or the end of its command line, is not enough."""
+    with structlog.testing.capture_logs() as logs:
+        inv = _resolve(_definition(["Read", "mcp__context__logs_query"], {"context": server}), agent_type="analysis")
+    assert inv.mcp_servers == {}, f"a server named like the log tool's but not its own reached the agent: {server}"
+    dropped = [e for e in logs if e["event"] == "mcp_servers_dropped"]
+    assert dropped and dropped[0]["servers"] == ["context"], f"the drop was not logged: {dropped}"
+
+
 @pytest.mark.parametrize("backend_name", ["playwright", "vibium"])
 def test_triage_taking_bash_from_the_seeded_qa_agent_keeps_its_browser(backend_name: str) -> None:
     """Triage narrowing the seeded QA agent to everything but Bash still runs it with its browser."""
