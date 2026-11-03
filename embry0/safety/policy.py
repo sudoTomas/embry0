@@ -104,9 +104,10 @@ _INFRA_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset({"TodoWrite", "Skill", "
 
 # The CLI tools whose input runs as a shell command: Bash, and Monitor (CLI
 # 2.1.316 and later), which runs a command in the background and streams its
-# output. An agent whose tools name none of them has no shell, so it gets no
-# MCP server that runs a command either (embry0.agents.mcp_servers). A CLI
-# release that adds another such tool must add it here.
+# output. An agent whose operator-given tools (its definition's, or its
+# template step's) name none of them gets no MCP server that runs a command
+# either (embry0.agents.mcp_servers). A CLI release that adds another such
+# tool must add it here.
 SHELL_TOOLS: Final[frozenset[str]] = frozenset({"Bash", "Monitor"})
 
 

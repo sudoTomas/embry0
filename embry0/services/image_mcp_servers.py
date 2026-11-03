@@ -12,8 +12,9 @@ site-packages, which it can.
 The QA browser backends' servers are not listed. They are Node programs that
 load modules, and launch browsers, from places the agent can write, so a
 program the job wrote could run in them. An agent with no shell tool runs
-without its browser (``mcp_servers_dropped``, and a warning when the agent is
-saved). Orchestrator code: it reads the workflows.
+without its browser (``mcp_servers_dropped``, and a warning when the agent, or
+a template whose step leaves it without a shell tool, is saved). Orchestrator
+code: it reads the workflows.
 """
 
 from __future__ import annotations

@@ -13,7 +13,7 @@ its decision names (``pipeline_config.mcp_servers``) are ignored and logged as
 A server the CLI starts as a command runs whatever its command line says in
 the sandbox: it is a way to run commands. An agent whose operator-given
 tools (the definition's, or the template step's; never triage's narrowed
-list, so ticket text cannot switch an agent's servers off) name no shell
+list, so triage's narrowing cannot switch an agent's servers off) name no shell
 tool (``SHELL_TOOLS``) gets no such server, wherever it came from: it is
 dropped and logged as ``mcp_servers_dropped``, the QA browser servers
 included. The one exception is the log tool's server, matched on its whole
@@ -66,6 +66,21 @@ def server_tool_names(tools: Iterable[str], servers: Iterable[str]) -> list[str]
     return [tool for tool in tools if tool.startswith(prefixes)]
 
 
+def servers_without_shell(
+    servers: Mapping[str, Any], tools: Collection[str], image_servers: Collection[Mapping[str, Any]] = ()
+) -> list[str]:
+    """The names of ``servers`` an agent with ``tools`` runs without.
+
+    None when ``tools`` hold a shell tool. Otherwise every server that runs a
+    command, but one equal to an entry of ``image_servers`` (the log tool's),
+    compared on its whole config: type, command line and every other key.
+    The run (``grant_mcp_servers``) and the save-time warnings use this one rule.
+    """
+    if has_shell_tool(tools):
+        return []
+    return [name for name, server in servers.items() if runs_command(server) and server not in image_servers]
+
+
 def logged_names(names: Iterable[Any]) -> list[str]:
     """Server names as a log line keeps them: sorted, each and the list bounded."""
     return sorted(str(name)[:_LOGGED_NAME_CHARS] for name in names)[:_LOGGED_NAMES]
@@ -111,9 +126,7 @@ def grant_mcp_servers(
         )
         return {}
     servers = dict(definition_servers)
-    if has_shell_tool(tools):
-        return servers
-    dropped = [name for name, server in servers.items() if runs_command(server) and server not in image_servers]
+    dropped = servers_without_shell(servers, tools, image_servers)
     if dropped:
         logger.warning(
             "mcp_servers_dropped",

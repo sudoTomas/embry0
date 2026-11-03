@@ -118,34 +118,16 @@ def _no_shell_server_warnings(agent: dict[str, Any]) -> list[str]:
 
     Such a server is dropped at run time (``embry0.agents.mcp_servers``),
     the QA browser servers included: an agent with browser tools and no shell
-    tool runs without its browser. The log tool's server is kept.
+    tool runs without its browser. The log tool's server is kept. A template
+    step's tools replace the agent's, and saving the template warns the same
+    way (``embry0.api.v1.pipeline_templates``).
     """
-    from embry0.agents.mcp_servers import has_shell_tool, runs_command
-    from embry0.safety.policy import parse_tool_list, tools_for_run
-    from embry0.services.image_mcp_servers import image_mcp_servers
-    from embry0.workflows.qa.browser_backends import backend_for, backend_names
+    from embry0.api.v1._server_warnings import no_shell_server_warning, servers_run_without
 
     if agent.get("runs_in_jobs") is False:
         return []
-    tools = tools_for_run(str(agent.get("type") or ""), parse_tool_list(agent.get("tools")))
-    if has_shell_tool(tools):
-        return []
-    stored = agent.get("mcp_servers")
-    servers: dict[str, Any] = stored if isinstance(stored, dict) else {}
-    kept = image_mcp_servers()
-    dropped = [name for name, server in servers.items() if runs_command(server) and server not in kept]
-    browsers = [backend_for(n).mcp_server_name for n in backend_names()]
-    browser_tools = [b for b in browsers if any(t.startswith(f"mcp__{b}__") for t in tools)]
-    names = list(dict.fromkeys([*dropped, *browser_tools]))
-    if not names:
-        return []
-    text = (
-        f"tools name no shell tool (Bash or Monitor), so a job runs this agent without the MCP server(s) "
-        f"{', '.join(names)}: a server that runs a command needs a shell tool."
-    )
-    if any(name in browsers for name in names):
-        text += " An agent with browser tools and no shell tool runs without its browser."
-    return [text]
+    names = servers_run_without(str(agent.get("type") or ""), agent.get("tools"), agent.get("mcp_servers"))
+    return [no_shell_server_warning(names)] if names else []
 
 
 def _triage_may_add_warnings(agent: dict[str, Any]) -> list[str]:
