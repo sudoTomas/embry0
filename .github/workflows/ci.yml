@@ -401,6 +401,12 @@ jobs:
           load: true
           cache-from: type=gha,scope=frontend
 
+      - name: Orchestrator image runs docker compose
+        # The QA routes run `docker compose` from the orchestrator against a QA
+        # workspace's project in DinD; the plugin is a package of its own,
+        # which --no-install-recommends once left out (#342).
+        run: docker run --rm --network none embry0-orchestrator:ci docker compose version
+
       - name: Hadolint — orchestrator
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:

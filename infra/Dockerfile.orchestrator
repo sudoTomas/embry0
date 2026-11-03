@@ -13,7 +13,12 @@ ARG OS_PACKAGES_REFRESHED=2026-10-28
 RUN echo "OS packages as of ${OS_PACKAGES_REFRESHED}" \
     && apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
-# System dependencies
+# System dependencies. The Docker CLI drives DinD; the QA routes also run
+# `docker compose` against a QA workspace's project (compose_services,
+# compose_log_stream). The compose plugin is only a recommended package of
+# docker-ce-cli, so --no-install-recommends left it out (#342): it is named
+# here, at the release the QA image downloads (Dockerfile.sandbox.qa), so the
+# two read a workspace's project with one compose.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates gnupg libpq-dev openssh-client \
     && install -m 0755 -d /etc/apt/keyrings \
@@ -21,7 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod a+r /etc/apt/keyrings/docker.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
        https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
-    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        docker-ce-cli docker-compose-plugin=5.6.1-1~debian.12~bookworm \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies, at exactly the versions uv.lock pins (#286): the ones
