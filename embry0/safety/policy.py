@@ -23,11 +23,12 @@ import json
 import os
 import pwd
 import re
-import unicodedata
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Final
 
-from embry0.safety.bash_paths import BashSyntaxError, bash_paths
+from embry0.safety.bash_paths import BashPaths, BashSyntaxError, bash_paths
+from embry0.safety.command_checks import DANGEROUS_COMMANDS, SECRET_FILES, reads_any, runs_any
 from embry0.safety.path_patterns import PathRef, could_match
 from embry0.safety.skill_commands import SKILL_TOOLS, SkillError, SkillSnapshot, skill_call, skill_commands
 
@@ -44,6 +45,20 @@ class ContentRule:
     pattern: str
     tools: list[str]
     reason: str
+
+
+@dataclass(frozen=True)
+class CommandCheck:
+    """A Ring-3 rule on what a shell command does, read from its parse (embry0.safety.command_checks).
+
+    - runs: command names refused wherever the command runs one, at any depth
+      (``docker-*`` matches a prefix);
+    - reads: file names refused wherever the command reads a file by that name.
+    """
+
+    runs: tuple[str, ...] = ()
+    reads: tuple[str, ...] = ()
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -83,14 +98,14 @@ class SafetyPolicy:
     deny_rules: list[str] = field(default_factory=list)
     content_checks: list[ContentRule] = field(default_factory=list)
     network_egress_allowlist: list[str] = field(default_factory=list)
+    command_checks: list[CommandCheck] = field(default_factory=list)
 
 
 def _normalize(text: str) -> str:
-    """NFKC-normalize and collapse whitespace to defeat obfuscation."""
-    text = unicodedata.normalize("NFKC", text)
-    text = re.sub(r"/(?:usr/)?(?:local/)?(?:s?bin)/", "", text)
-    text = re.sub(r"\s+", " ", text)
-    return text
+    """NFKC-normalize and collapse whitespace to defeat obfuscation, as patterns.normalize_command does."""
+    from embry0.safety.patterns import normalize_command
+
+    return normalize_command(text)
 
 
 def _stringify_input(tool_input: dict[str, Any]) -> str:
@@ -123,7 +138,7 @@ SHELL_TOOLS: Final[frozenset[str]] = frozenset({"Bash", "Monitor"})
 
 # The longest input a content rule or the Ring-2 shell check reads. A content
 # rule's regex can take time quadratic in its input (a pattern like
-# ``cat\s+.*\.env`` on a long run of "cat "), so an input past this, to a tool
+# ``cat\s+.*credentials`` on a long run of "cat "), so an input past this, to a tool
 # a content rule checks, is refused rather than read; so is a longer shell
 # command for the Ring-2 check. 64 KiB is far past any command an agent types.
 MAX_CHECKED_INPUT: Final[int] = 64 * 1024
@@ -147,6 +162,9 @@ def evaluate_policy(
     policy: SafetyPolicy,
     tool_name: str,
     tool_input: dict[str, Any],
+    *,
+    cwd: str = "/workspace",
+    home: str | None = None,
 ) -> Verdict:
     """Evaluate a single tool call against the tool-name allowlist and the
     Ring-3 content checks.
@@ -162,7 +180,11 @@ def evaluate_policy(
 
     Content checks: a rule applies to the tools it names, and a rule that
     names a shell tool applies to every tool in ``SHELL_TOOLS``, so the Bash
-    patterns also check Monitor's command.
+    patterns also check Monitor's command. Command checks apply to every
+    shell tool: the command is parsed (embry0.safety.bash_paths, run in ``cwd``
+    by a user whose home is ``home``), and a command it runs or a file it reads
+    that a check names refuses it, and so does a command that cannot be
+    parsed.
 
     Returns Verdict.allow() if no rule fires. Returns Verdict.deny(reason)
     if any matching rule hits. On any internal exception, returns
@@ -173,7 +195,8 @@ def evaluate_policy(
         if allowed is not None and tool_name not in allowed and tool_name not in _INFRA_ALLOWED_TOOLS:
             return Verdict.deny(f"tool {tool_name!r} is not in this agent's allowlist")
         rules = [rule for rule in policy.content_checks if _rule_applies(rule, tool_name)]
-        if not rules:
+        checks = policy.command_checks if tool_name in SHELL_TOOLS else []
+        if not rules and not checks:
             return Verdict.allow()
         raw = _stringify_input(tool_input)
         haystack = _normalize(raw) if len(raw) <= MAX_CHECKED_INPUT else raw
@@ -182,9 +205,35 @@ def evaluate_policy(
         for rule in rules:
             if re.search(rule.pattern, haystack, re.IGNORECASE):
                 return Verdict.deny(f"Blocked by safety policy: {rule.reason}")
+        command = tool_input.get("command")
+        if checks and isinstance(command, str) and command:
+            return _command_checks(checks, tool_name, command, cwd=cwd, home=home or os.path.expanduser("~"))
         return Verdict.allow()
     except Exception as exc:
         return Verdict.deny(f"safety hook failed: {exc!r}")
+
+
+@lru_cache(maxsize=64)
+def _parsed(command: str, cwd: str, home: str) -> BashPaths | BashSyntaxError:
+    """The command's parse, shared by the Ring-3 command checks and the Ring-2 check, or why it has none."""
+    try:
+        return bash_paths(command, cwd=cwd, home=home)
+    except BashSyntaxError as exc:
+        return exc
+
+
+def _command_checks(checks: list[CommandCheck], tool_name: str, command: str, *, cwd: str, home: str) -> Verdict:
+    found = _parsed(command, cwd, home)
+    if isinstance(found, BashSyntaxError):
+        return Verdict.deny(f"Blocked by safety policy: the {tool_name} command cannot be checked: {found}")
+    for check in checks:
+        ran = runs_any(found.commands, check.runs)
+        if ran is not None:
+            return Verdict.deny(f"Blocked by safety policy: the command runs {ran!r}: {check.reason}")
+        read = reads_any(found.reads, check.reads)
+        if read is not None:
+            return Verdict.deny(f"Blocked by safety policy: the command reads {read.path!r}: {check.reason}")
+    return Verdict.allow()
 
 
 # ---- Default policies and rendering ----
@@ -311,6 +360,8 @@ def default_policy_for_agent(agent_type: str) -> SafetyPolicy:
     Encodes today's production behavior:
     - Ring 2 deny: host-sensitive paths (credentials, /etc, /root, etc.).
     - Ring 3 content checks: every pattern in DANGEROUS_BASH_PATTERNS.
+    - Ring 3 command checks: a Docker client run, a file named .env read
+      (embry0.safety.command_checks).
 
     There are no allow rules: the SDK executor runs the CLI in
     bypassPermissions mode, where everything a deny rule does not refuse is
@@ -325,11 +376,16 @@ def default_policy_for_agent(agent_type: str) -> SafetyPolicy:
     content_checks = [
         ContentRule(pattern=p, tools=["Bash"], reason=f"dangerous bash pattern: {p}") for p in DANGEROUS_BASH_PATTERNS
     ]
+    command_checks = [
+        CommandCheck(runs=DANGEROUS_COMMANDS, reason="a container client or daemon, which can reach the host"),
+        CommandCheck(reads=SECRET_FILES, reason="a file of secrets"),
+    ]
     return SafetyPolicy(
         allowed_tools=default_tools_for_agent(agent_type),
         deny_rules=list(_BASELINE_DENY_RULES),
         content_checks=content_checks,
         network_egress_allowlist=[],
+        command_checks=command_checks,
     )
 
 
@@ -471,7 +527,9 @@ def _candidate_paths(
             return []
         if len(command) > MAX_CHECKED_INPUT:
             raise _TooLong(len(command))
-        found = bash_paths(command, cwd=cwd, home=home)
+        found = _parsed(command, cwd, home)
+        if isinstance(found, BashSyntaxError):
+            raise BashSyntaxError(*found.args)
         return [(p, "Read") for p in found.reads] + [(p, "Write") for p in found.writes]
     paths: list[tuple[PathRef, str]] = []
     for key in _PATH_KEYS.get(tool_name, ()):
@@ -573,7 +631,7 @@ def gate_tool_call(
     (``cwd`` when not given): a rule anchored at the project root is under it.
     First denial wins; all are fail-closed.
     """
-    verdict = evaluate_policy(policy, tool_name, tool_input)
+    verdict = evaluate_policy(policy, tool_name, tool_input, cwd=cwd, home=home)
     if not verdict.allowed:
         return verdict
     verdict = evaluate_ring2_paths(policy, tool_name, tool_input, cwd=cwd, home=home, project_root=project_root)

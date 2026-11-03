@@ -30,13 +30,12 @@ DANGEROUS_BASH_PATTERNS: list[str] = [
     r"\bexport\s+-p\b",
     r"^\s*set\s*$",  # bare `set` (dumps shell vars); `set -e`, `set -x` are fine
     r"\bcat\s+/proc/",
-    r"\bcat\s+.*\.env\b",
     r"\bcat\s+.*credentials",
     r"\bcat\s+.*/\.aws/",
     r"\bcat\s+.*/\.ssh/",
     r"\bcat\s+.*/\.gnupg/",
-    # Container/host escape vectors
-    r"\bdocker\b",
+    # Container/host escape vectors (docker, and reading .env, are checked on the command's parse:
+    # embry0.safety.command_checks)
     r"\bpodman\b",
     r"\bssh\s",
     r"\bscp\s",
@@ -61,10 +60,16 @@ DANGEROUS_BASH_PATTERNS: list[str] = [
 ]
 
 
+# /usr/bin/, /usr/local/sbin/ and the like at the start of a word, not inside a path (/snap/bin/docker).
+_BIN_PREFIX = re.compile(r"(?<![^\s;&|(){}`'\"=])/(?:usr/)?(?:local/)?s?bin/")
+
+
 def normalize_command(cmd: str) -> str:
-    """Normalize a command string for safe pattern matching."""
+    """Normalize a command string for safe pattern matching: NFKC, a backslash-newline joined, the
+    /usr/bin/-style prefix of a word dropped, and whitespace collapsed."""
     cmd = unicodedata.normalize("NFKC", cmd)
-    cmd = re.sub(r"/(?:usr/)?(?:local/)?(?:s?bin)/", "", cmd)
+    cmd = cmd.replace("\\\n", "")
+    cmd = _BIN_PREFIX.sub("", cmd)
     cmd = re.sub(r"\s+", " ", cmd)
     return cmd
 
@@ -72,7 +77,10 @@ def normalize_command(cmd: str) -> str:
 def is_dangerous_command(cmd: str) -> str | None:
     """Check if a command matches any dangerous pattern.
 
-    Returns the matched pattern string if dangerous, None if safe.
+    Returns the matched pattern string if dangerous, None if safe. The rules
+    on what a command runs and reads (a Docker client, a file named .env) read
+    the command's parse, not its text: the policy applies them
+    (embry0.safety.command_checks), and this module stays free of the parser.
     """
     normalized = normalize_command(cmd)
     for pattern in DANGEROUS_BASH_PATTERNS:

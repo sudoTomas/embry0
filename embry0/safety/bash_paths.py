@@ -199,6 +199,7 @@ class BashPaths:
 
     reads: tuple[PathRef, ...] = ()
     writes: tuple[PathRef, ...] = ()
+    commands: tuple[str, ...] = ()  # every command word it runs, at any depth (a name, or a path to one)
 
 
 @dataclass(frozen=True)
@@ -239,7 +240,11 @@ def _read(script: Script, *, cwd: str, home: str, work: Work) -> BashPaths:
         found_values = {name: _widened(name, vals) if name in widened else vals for name, vals in found_values.items()}
         found_folded = folded | scanner.vars.folding
         if found == mode and found_values == values and found_folded == folded:
-            return BashPaths(reads=tuple(scanner.reads), writes=tuple(scanner.writes))
+            return BashPaths(
+                reads=tuple(scanner.reads),
+                writes=tuple(scanner.writes),
+                commands=tuple(dict.fromkeys(scanner.commands)),
+            )
         if round_ == _MAX_ROUNDS:
             # A value this round read was still to change, so a path the command names may not be known yet.
             raise BashSyntaxError("the command passes values through more steps than embry0 follows")
@@ -310,6 +315,7 @@ class _Scanner:
         self.reads: list[PathRef] = []
         self.writes: list[PathRef] = []
         self.fed: list[str] = []  # what the compound command being read is fed (a here-string, a here-document)
+        self.commands: list[str] = []
         self._recorded: set[tuple[PathRef, bool]] = set()
         self.functions: dict[str, Command] = {}
         self.aliases: dict[str, str] = {}
@@ -595,12 +601,15 @@ class _Scanner:
                 fail |= out.fail
             return _Outcome(_cap(ok), _cap(fail))
         if head.kinds and head.kinds[0] in (RUN, EXT):
-            # A command only known at run time: it may be any function defined so far, or a shell that
-            # runs what it is fed.
+            # A command only known at run time: it may be any function defined so far, a shell that
+            # runs what it is fed, or any word of the substitution that makes it ($(which docker)).
+            for sub in head.subs:
+                self.commands.extend(_script_words(sub))
             self.operands(args, cwds)
             for text in stdin:
                 self.speculative(text, cwds, always=True)
             return self.unknown_code(cwds)
+        self.commands.append(head.text)
         name = os.path.basename(head.text)
         self.vars.assign("_", self.values_of(args[-1] if args else head))  # $_: the last word of the last command
         if "/" in head.text:
@@ -656,6 +665,11 @@ class _Scanner:
             for word in args:
                 if "[" in word.text:
                     self.vars.fold(word.text.partition("[")[0])  # an element removed: the list's order is lost
+        if name == "hash":
+            # hash -p PATH NAME: NAME runs PATH.
+            texts = [w.text for w in args]
+            if "-p" in texts and texts.index("-p") + 1 < len(texts):
+                self.commands.append(texts[texts.index("-p") + 1])
         if name == "read":
             self.read(args, stdin)
         if name in ("mapfile", "readarray"):
@@ -779,6 +793,10 @@ class _Scanner:
         head = text.split("=", 1)[0]
         name = re.sub(r"\[.*", "", head).rstrip("+")
         value = _assigned_tildes(_suffix(word, text.index("=") + 1))
+        if name == "BASH_CMDS":
+            # An element of BASH_CMDS is the program a name runs.
+            for _, element in [(head, value)] if "[" in head else _indexed(word.array):
+                self.commands.extend(text for text in self.texts([element], code=False))
         if name == "BASH_ALIASES":
             # An element of BASH_ALIASES is an alias.
             for key, element in [(head[len(name) + 1 : -1], value)] if "[" in head else _indexed(word.array):
@@ -1323,7 +1341,17 @@ class _Scanner:
                 # options may follow it (flock FILE -c CMD, script FILE -c CMD)
                 k, run_cwds = self.runner_options(spec, args, k + 1, run_cwds)
         if not spec.command_operands:
-            self.operands(args[k:], cwds)
+            # Options may follow an operand (su - root -c CMD): read every one.
+            rest: list[Word] = []
+            while k < len(args):
+                if args[k].text.startswith("-") and args[k].text != "-":
+                    after, run_cwds = self.runner_options(spec, args, k, run_cwds, stdin=stdin)
+                    if after > k:
+                        k = after
+                        continue
+                rest.append(args[k])
+                k += 1
+            self.operands(rest, cwds)
             return
         operands = args[k + spec.skip_operands :]
         if not operands:
@@ -1699,6 +1727,17 @@ class _Unchecked(str):
 
 
 _UNCHECKED: Final[str] = _Unchecked("")
+
+
+def _script_words(script: Script) -> list[str]:
+    """The words of a script's simple commands, at its top level."""
+    words: list[str] = []
+    for chain, _ in script.items:
+        for pipeline in [chain.first, *(p for _, p in chain.rest)]:
+            for command in pipeline.commands:
+                if isinstance(command, Simple):
+                    words.extend(w.text for w in command.words)
+    return words
 
 
 def _first_head(script: Script) -> str | None:

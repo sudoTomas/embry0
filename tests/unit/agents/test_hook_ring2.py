@@ -35,14 +35,15 @@ def _sandbox_paths(monkeypatch: pytest.MonkeyPatch) -> None:
 def _policy(agent_type: str = "developer", *, ring3: bool = False) -> SafetyPolicy:
     """The agent type's policy with every file tool and Bash allowed, so the name check never answers.
 
-    Without ``ring3`` the Ring-3 content checks are left out too, so a refusal
-    can only come from a deny rule.
+    Without ``ring3`` the Ring-3 content and command checks are left out too,
+    so a refusal can only come from a deny rule.
     """
     pol = default_policy_for_agent(agent_type)
     return SafetyPolicy(
         allowed_tools=["Read", "Write", "Edit", "Glob", "Grep", "Bash", "NotebookEdit"],
         deny_rules=pol.deny_rules,
         content_checks=pol.content_checks if ring3 else [],
+        command_checks=pol.command_checks if ring3 else [],
     )
 
 
@@ -258,6 +259,7 @@ async def test_the_hook_checks_monitor_as_it_checks_bash(command: str, refused: 
         allowed_tools=[*policy.allowed_tools, "Monitor"],
         deny_rules=policy.deny_rules,
         content_checks=policy.content_checks,
+        command_checks=policy.command_checks,
     )
     bash, _ = await _decision(policy, "Bash", {"command": command, "description": "x"})
     monitor, reason = await _decision(policy, "Monitor", {"command": command, "description": "x"})
