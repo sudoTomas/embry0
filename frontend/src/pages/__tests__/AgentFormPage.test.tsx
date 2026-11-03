@@ -571,6 +571,36 @@ describe("AgentFormPage: the skills triage may add", () => {
   });
 });
 
+describe("AgentFormPage warns about an agent with browser tools and no shell", () => {
+  it("says a job runs it without its browser", () => {
+    mockUseAgent.mockReturnValue({
+      data: { ...GROK_DEV_ROW, tools: ["Read", "mcp__playwright__browser_click"], mcp_servers: {} },
+      isLoading: false,
+    });
+    renderEdit("grok-dev");
+    expect(screen.getByTestId("no-shell-servers-warning")).toHaveTextContent(/without playwright.*without its browser/);
+  });
+
+  it("names a command-running server the agent would lose, and says nothing with a shell tool", () => {
+    mockUseAgent.mockReturnValue({
+      data: { ...GROK_DEV_ROW, tools: ["Read"], mcp_servers: { lint: { type: "stdio", command: "lint-mcp" } } },
+      isLoading: false,
+    });
+    renderEdit("grok-dev");
+    expect(screen.getByTestId("no-shell-servers-warning")).toHaveTextContent(/without lint/);
+    expect(screen.getByTestId("no-shell-servers-warning")).not.toHaveTextContent(/browser/);
+  });
+
+  it("says nothing for an agent with Bash", () => {
+    mockUseAgent.mockReturnValue({
+      data: { ...GROK_DEV_ROW, tools: ["Read", "Bash", "mcp__playwright__browser_click"] },
+      isLoading: false,
+    });
+    renderEdit("grok-dev");
+    expect(screen.queryByTestId("no-shell-servers-warning"), "an agent with a shell keeps its servers").toBeNull();
+  });
+});
+
 describe("AgentFormPage: picking a skill triage may add", () => {
   it("adds a catalog skill to the list triage may add, not to the skill packs", async () => {
     mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, skills: ["superpowers:writing-plans"] }, isLoading: false });

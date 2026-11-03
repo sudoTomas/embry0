@@ -113,6 +113,41 @@ def _no_tools_warnings(agent: dict[str, Any]) -> list[str]:
     return [NO_TOOLS_WARNING]
 
 
+def _no_shell_server_warnings(agent: dict[str, Any]) -> list[str]:
+    """The warning an agent that jobs run gets when its MCP servers that run a command need a shell tool it lacks.
+
+    Such a server is dropped at run time (``embry0.agents.mcp_servers``),
+    the QA browser servers included: an agent with browser tools and no shell
+    tool runs without its browser. The log tool's server is kept.
+    """
+    from embry0.agents.mcp_servers import has_shell_tool, runs_command
+    from embry0.safety.policy import parse_tool_list, tools_for_run
+    from embry0.services.image_mcp_servers import image_mcp_servers
+    from embry0.workflows.qa.browser_backends import backend_for, backend_names
+
+    if agent.get("runs_in_jobs") is False:
+        return []
+    tools = tools_for_run(str(agent.get("type") or ""), parse_tool_list(agent.get("tools")))
+    if has_shell_tool(tools):
+        return []
+    stored = agent.get("mcp_servers")
+    servers: dict[str, Any] = stored if isinstance(stored, dict) else {}
+    kept = image_mcp_servers()
+    dropped = [name for name, server in servers.items() if runs_command(server) and server not in kept]
+    browsers = [backend_for(n).mcp_server_name for n in backend_names()]
+    browser_tools = [b for b in browsers if any(t.startswith(f"mcp__{b}__") for t in tools)]
+    names = list(dict.fromkeys([*dropped, *browser_tools]))
+    if not names:
+        return []
+    text = (
+        f"tools name no shell tool (Bash or Monitor), so a job runs this agent without the MCP server(s) "
+        f"{', '.join(names)}: a server that runs a command needs a shell tool."
+    )
+    if any(name in browsers for name in names):
+        text += " An agent with browser tools and no shell tool runs without its browser."
+    return [text]
+
+
 def _triage_may_add_warnings(agent: dict[str, Any]) -> list[str]:
     """A warning for each skill triage may add that it never will: its source is none the agent's skills load."""
     stored = triage_may_add(agent)
@@ -126,7 +161,7 @@ def _triage_may_add_warnings(agent: dict[str, Any]) -> list[str]:
 
 def _agent_warnings(agent: dict[str, Any]) -> list[str]:
     """What a write tells the operator about the row it stored: what a job will run without, and why."""
-    return [*_no_tools_warnings(agent), *_triage_may_add_warnings(agent)]
+    return [*_no_tools_warnings(agent), *_no_shell_server_warnings(agent), *_triage_may_add_warnings(agent)]
 
 
 @router.post("/agents", status_code=201, dependencies=[require_admin])

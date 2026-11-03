@@ -13,10 +13,11 @@ its decision names (``pipeline_config.mcp_servers``) are ignored and logged as
 A server the CLI starts as a command runs whatever its command line says in
 the sandbox: it is a way to run commands. An agent whose tools name no shell
 tool (``SHELL_TOOLS``) gets no such server, wherever it came from: it is
-dropped and logged as ``mcp_servers_dropped``. The exception is a server
-embry0 itself adds for the run, matched on its whole config, command line
-included (``embry0.services.image_mcp_servers``): its program is the image's. The agent's tool list is left
-as it is: the ``mcp__<server>__*`` names in it no longer reach anything.
+dropped and logged as ``mcp_servers_dropped``, the QA browser servers
+included. The one exception is the log tool's server, matched on its whole
+config, command line included (``embry0.services.image_mcp_servers`` says why
+it alone is kept). The agent's tool list is left as it is: the
+``mcp__<server>__*`` names in it no longer reach anything.
 """
 
 from __future__ import annotations
@@ -84,8 +85,7 @@ def grant_mcp_servers(
 
     Without a shell tool in ``tools``, every server that runs a command is
     dropped and logged with the tools that named it (``mcp_servers_dropped``),
-    but one equal to an entry of ``image_servers``, which embry0 adds for a
-    run and whose program ships in the image.
+    but one equal to an entry of ``image_servers`` (the log tool's).
     A definition whose servers are not a mapping grants none.
     """
     if requested is not None:

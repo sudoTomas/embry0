@@ -204,20 +204,25 @@ def test_the_log_tool_grant_keeps_its_server() -> None:
     assert CONTEXT_LOGS_TOOL in inv.tools, inv.tools
 
 
-# ---- embry0's own servers, whose programs ship in the image ----------------------
+# ---- the one server kept for an agent with no shell tool: the log tool's -----------
 
 
 @pytest.mark.parametrize("backend_name", ["playwright", "vibium"])
-def test_a_qa_agent_without_bash_keeps_its_browser_server(backend_name: str) -> None:
+def test_an_agent_with_browser_tools_and_no_shell_gets_no_browser_server(backend_name: str) -> None:
+    """A browser server is a Node program that loads code from places the agent can write: no exemption."""
     from embry0.workflows.qa.agent_seed import QA_AGENT_SEED
     from embry0.workflows.qa.browser_backends import backend_for, with_browser_backend
 
     backend = backend_for(backend_name)
     definition = with_browser_backend(dict(QA_AGENT_SEED), backend)
-    narrowed = _triage_config(agent_tools={"qa": ["Read", *backend.browser_tools()]})
-    inv = _resolve(definition, narrowed, agent_type="qa")
+    narrowed = _triage_config(agent_tools={"qa": ["Read", "Glob", "Write", *backend.browser_tools()]})
+    with structlog.testing.capture_logs() as logs:
+        inv = _resolve(definition, narrowed, agent_type="qa")
     assert "Bash" not in inv.tools, inv.tools
-    assert inv.mcp_servers == backend.mcp_servers(), f"QA narrowed to Read and its browser lost {inv.mcp_servers}"
+    assert inv.mcp_servers == {}, f"an agent with no shell tool kept its browser server: {inv.mcp_servers}"
+    dropped = [e for e in logs if e["event"] == "mcp_servers_dropped"]
+    assert dropped and dropped[0]["log_level"] == "warning", f"the drop must be a warning: {dropped}"
+    assert dropped[0]["agent_type"] == "qa" and dropped[0]["servers"] == [backend.mcp_server_name], dropped[0]
 
 
 def test_an_agent_without_bash_keeps_the_log_tools_server() -> None:
@@ -241,6 +246,6 @@ def test_an_agent_without_bash_keeps_the_log_tools_server() -> None:
     ],
     ids=["other-command", "other-args", "extra-key"],
 )
-def test_a_server_that_is_not_exactly_embry0s_still_needs_a_shell_tool(server: dict[str, Any]) -> None:
+def test_a_server_named_like_a_browser_server_needs_a_shell_tool(server: dict[str, Any]) -> None:
     inv = _resolve(_definition(["Read"], {"playwright": server}), agent_type="qa")
     assert inv.mcp_servers == {}, f"a server named like embry0's but not its own reached the agent: {inv.mcp_servers}"

@@ -383,3 +383,30 @@ async def test_a_skill_triage_may_add_from_a_source_the_agent_does_not_load_is_w
     ]
     assert any("other:c" in w and "'other'" in w for w in warnings), f"warnings: {warnings}"
     assert not any("sp:b" in w for w in warnings), f"a usable name is not warned about: {warnings}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"tools": ["Read", "mcp__playwright__browser_click"], "mcp_servers": {}},
+        {"tools": ["Read"], "mcp_servers": {"playwright": {"type": "stdio", "command": "playwright-mcp"}}},
+    ],
+    ids=["browser-tools", "browser-server"],
+)
+async def test_an_agent_with_browser_tools_and_no_shell_is_told_it_runs_without_its_browser(app, stored):
+    row = {**DEVELOPER_AGENT, "type": "qa-lite", "runs_in_jobs": True, **stored}
+    warnings = (await _write(app, "PUT", "/api/v1/agents/qa-lite", {"tools": row["tools"]}, row))["warnings"]
+    assert any("playwright" in w and "without its browser" in w for w in warnings), f"warnings: {warnings}"
+
+
+@pytest.mark.asyncio
+async def test_no_browser_warning_with_a_shell_tool_or_for_the_log_server_alone(app):
+    from embry0.workflows.issue_to_pr.log_tool import CONTEXT_MCP_SERVER
+
+    with_bash = {**DEVELOPER_AGENT, "tools": ["Read", "Bash", "mcp__playwright__browser_click"], "runs_in_jobs": True}
+    warned = (await _write(app, "PUT", "/api/v1/agents/qa", {"tools": with_bash["tools"]}, with_bash))["warnings"]
+    assert warned == [], f"an agent with a shell tool keeps its browser, so nothing is warned: {warned}"
+    log_only = {**DEVELOPER_AGENT, "tools": ["Read"], "mcp_servers": dict(CONTEXT_MCP_SERVER), "runs_in_jobs": True}
+    warned = (await _write(app, "PUT", "/api/v1/agents/x", {"tools": ["Read"]}, log_only))["warnings"]
+    assert warned == [], f"the log tool's server is kept, so nothing is warned: {warned}"

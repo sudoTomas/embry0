@@ -98,6 +98,34 @@ const EMPTY_FORM: FormState = {
   triageMayAddSkills: [],
 };
 
+/** The CLI tools that run a shell command; an agent with none gets no MCP server that runs a command. */
+const SHELL_TOOLS = ["Bash", "Monitor"];
+/** The QA browser backends' MCP servers, which a job drops for an agent with no shell tool. */
+const BROWSER_SERVERS = ["playwright", "vibium"];
+
+/** The MCP servers a job drops for this agent: none with a shell tool, else every one that runs a command
+ * (the log tool's server aside, which embry0 adds itself) and the browser its browser tools need. */
+function serversDroppedWithoutShell(tools: string[], mcpServersText: string): string[] {
+  if (tools.some((t) => SHELL_TOOLS.includes(t))) return [];
+  const names: string[] = [];
+  try {
+    const parsed: unknown = mcpServersText.trim() ? JSON.parse(mcpServersText) : {};
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      for (const [name, server] of Object.entries(parsed as Record<string, unknown>)) {
+        const cfg = (server && typeof server === "object" ? server : {}) as Record<string, unknown>;
+        const remote = (cfg.type === "http" || cfg.type === "sse") && !("command" in cfg);
+        if (!remote) names.push(name);
+      }
+    }
+  } catch {
+    // Not JSON yet: the save refuses it anyway.
+  }
+  for (const b of BROWSER_SERVERS) {
+    if (!names.includes(b) && tools.some((t) => t.startsWith(`mcp__${b}__`))) names.push(b);
+  }
+  return names;
+}
+
 export function AgentFormPage() {
   const { type: typeParam } = useParams<{ type: string }>();
   const navigate = useNavigate();
@@ -223,6 +251,7 @@ export function AgentFormPage() {
 
   // The brief writer's voices (runs_in_jobs false) never run in a job, so they need no tools.
   const runsInNoJob = isEdit && existing !== undefined && existing.runs_in_jobs === false;
+  const droppedServers = serversDroppedWithoutShell(form.tools, form.mcpServersText);
 
   const handleSave = () => {
     if (!isEdit && !form.type.trim()) {
@@ -541,6 +570,14 @@ export function AgentFormPage() {
             <p className="mt-2 text-xs text-warning" role="status" data-testid="no-tools-warning">
               No tools selected: a job runs this agent with no tools at all. It can read nothing and change
               nothing, and it finishes with text only.
+            </p>
+          )}
+          {form.tools.length > 0 && !runsInNoJob && droppedServers.length > 0 && (
+            <p className="mt-2 text-xs text-warning" role="status" data-testid="no-shell-servers-warning">
+              No shell tool (Bash or Monitor): a job runs this agent without {droppedServers.join(", ")}, since
+              an MCP server that runs a command needs one.
+              {droppedServers.some((s) => BROWSER_SERVERS.includes(s)) &&
+                " An agent with browser tools and no shell tool runs without its browser."}
             </p>
           )}
         </div>
