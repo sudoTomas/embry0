@@ -41,9 +41,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    # npm self-upgrade — nodesource bundles an npm whose vendored tar carries
-    # CRITICAL CVE-2026-59873 (fixed in tar >= 7.5.19).
-    && npm install -g npm@latest
+    # npm, pinned (#317), not the Node distribution's (its vendored tar
+    # carries CRITICAL CVE-2026-59873, fixed in tar >= 7.5.19) nor npm@latest,
+    # which moves under any rebuild. Bump it deliberately, in
+    # Dockerfile.sandbox.qa too: CI's Trivy library gate scans what it vendors,
+    # and infra/trivy/sandbox.trivyignore.yaml says what it accepts. 12.2.1
+    # vendors undici 6.29.0, whose three HIGHs are fixed in 6.29.1; no npm
+    # release vendors that yet, so they are accepted there until one does.
+    && npm install -g npm@12.2.1
 
 # Python packages for the sandbox runner and the code baked with it, at the
 # versions uv.lock pins (#288): the ones CI tests. pyproject's `sandbox`

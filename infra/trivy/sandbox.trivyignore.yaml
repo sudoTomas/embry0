@@ -1,0 +1,280 @@
+# Findings accepted in the sandbox images' libraries (#317).
+#
+# CI's "Trivy — sandbox libraries" and "Trivy — QA sandbox libraries" steps
+# fail on a fixable HIGH or CRITICAL in a library of the sandbox images
+# (Dockerfile.sandbox, all three stages, and Dockerfile.sandbox.qa): npm and
+# the packages it vendors, the global Node packages of the QA image, the
+# Python packages, and the Go binaries the QA image downloads. Fix one with a
+# bump. When that cannot happen yet, accept it here, one entry per finding,
+# narrowed by `paths` to the package it was found in:
+#
+#   vulnerabilities:
+#     - id: CVE-0000-00000
+#       paths:
+#         - usr/lib/node_modules/example/package.json
+#       statement: why it is accepted and what removes it
+#       expired_at: 2026-12-31
+#
+# `statement`, `expired_at` and `paths` are required, and checked by
+# tests/unit/infra/test_sandbox_image_scan.py: `expired_at` at most 90 days
+# ahead, and each path specific, as Trivy reports it (relative, under usr/,
+# opt/ or root/; no `**`, no component that is only a wildcard). Trivy stops
+# honouring an entry on its `expired_at` date, so the step fails again then
+# and the acceptance is decided anew.
+vulnerabilities:
+  # npm's vendored undici 6.29.0 (all sandbox images). Fixed in undici
+  # 6.29.1, which no npm release vendors yet: 12.2.1 and 11.21.1, the newest
+  # of their lines, both carry 6.29.0. npm 10.9.9 vendors no undici but ten
+  # other HIGHs. Removed by pinning an npm that vendors undici >= 6.29.1.
+  - id: CVE-2026-109383
+    paths:
+      - usr/lib/node_modules/npm/node_modules/undici/package.json
+    statement: npm 12.2.1 vendors undici 6.29.0 and no npm release vendors the fixed 6.29.1 yet; bump npm when one does
+    expired_at: 2026-12-15
+  - id: CVE-2026-109869
+    paths:
+      - usr/lib/node_modules/npm/node_modules/undici/package.json
+    statement: npm 12.2.1 vendors undici 6.29.0 and no npm release vendors the fixed 6.29.1 yet; bump npm when one does
+    expired_at: 2026-12-15
+  - id: CVE-2026-87018
+    paths:
+      - usr/lib/node_modules/npm/node_modules/undici/package.json
+    statement: npm 12.2.1 vendors undici 6.29.0 and no npm release vendors the fixed 6.29.1 yet; bump npm when one does
+    expired_at: 2026-12-15
+  # docker compose v5.6.1 (QA image) links golang.org/x/net 0.58.0; its Go
+  # is fixed (1.26.10). v5.7.0 links 0.60.0, but it reworks how `up` creates
+  # and starts containers, which the QA stacks run through, and was one day old
+  # when this was written. Removed by moving to v5.7.0 or later deliberately.
+  - id: CVE-2026-78669
+    paths:
+      - usr/local/lib/docker/cli-plugins/docker-compose
+    statement: compose v5.6.1 links golang.org/x/net 0.58.0; v5.7.0 has the fix but changes how up starts containers; move to it deliberately
+    expired_at: 2026-12-15
+  # Poetry 1.8.4 and what it holds back (dev-python, dev-jvm-python). Poetry's
+  # own fix is in 2.3.3; 1.8.4 requires dulwich <0.22 and virtualenv <21, and
+  # virtualenv 20 requires filelock <4, all below their fixed releases. Poetry
+  # runs a target repository's own checks in the sandbox. Removed by moving the
+  # dev stages to Poetry 2 (#331). Each path is version-free: pip picks the
+  # newest release inside Poetry's ranges at build time.
+  - id: CVE-2026-42305
+    paths:
+      - usr/local/lib/python3.12/site-packages/dulwich-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires dulwich <0.22, below the fixed release; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: GHSA-8mcx-5rqc-vhmf
+    paths:
+      - usr/local/lib/python3.12/site-packages/dulwich-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires dulwich <0.22, below the fixed release; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-112940
+    paths:
+      - usr/local/lib/python3.12/site-packages/filelock-*.dist-info/METADATA
+    statement: virtualenv 20, which Poetry 1.8.4 requires, requires filelock <4, below the fixed release; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-34591
+    paths:
+      - usr/local/lib/python3.12/site-packages/poetry-*.dist-info/METADATA
+    statement: Poetry 1.8.4 is pinned for target repositories' checks; its fix is in Poetry 2.3.3 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-102925
+    paths:
+      - usr/local/lib/python3.12/site-packages/virtualenv-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires virtualenv <21, below the fixed releases; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-102930
+    paths:
+      - usr/local/lib/python3.12/site-packages/virtualenv-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires virtualenv <21, below the fixed releases; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-102937
+    paths:
+      - usr/local/lib/python3.12/site-packages/virtualenv-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires virtualenv <21, below the fixed releases; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-113718
+    paths:
+      - usr/local/lib/python3.12/site-packages/virtualenv-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires virtualenv <21, below the fixed releases; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-113722
+    paths:
+      - usr/local/lib/python3.12/site-packages/virtualenv-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires virtualenv <21, below the fixed releases; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-113723
+    paths:
+      - usr/local/lib/python3.12/site-packages/virtualenv-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires virtualenv <21, below the fixed releases; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-113725
+    paths:
+      - usr/local/lib/python3.12/site-packages/virtualenv-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires virtualenv <21, below the fixed releases; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-113726
+    paths:
+      - usr/local/lib/python3.12/site-packages/virtualenv-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires virtualenv <21, below the fixed releases; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-113732
+    paths:
+      - usr/local/lib/python3.12/site-packages/virtualenv-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires virtualenv <21, below the fixed releases; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  - id: CVE-2026-113776
+    paths:
+      - usr/local/lib/python3.12/site-packages/virtualenv-*.dist-info/METADATA
+    statement: Poetry 1.8.4 requires virtualenv <21, below the fixed releases; removed with the move to Poetry 2 (#331)
+    expired_at: 2027-02-01
+  # The vibium binary (QA image): Go standard library 1.26.1. vibium 26.8.21
+  # is the newest release and the floor the QA browser-backend contract is
+  # validated against (Dockerfile.sandbox.qa); no release built with a fixed Go
+  # exists yet. It drives the image's own Chrome, in a sandbox with no internet
+  # egress at job time. Removed by bumping vibium to a release built with
+  # Go >= 1.26.10. npm installs one of two binaries by architecture; both are
+  # built with Go 1.26.1 and carry the same 24 findings, so each entry names
+  # both (the docker, compose and Python paths do not depend on it).
+  - id: CVE-2026-111943
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-27145
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-32280
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-32281
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-32283
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-33810
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-33811
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-33814
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-33818
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-39820
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-39821
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-39822
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-39836
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-42499
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-42504
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-46600
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-56853
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-56858
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-56859
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-56860
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-56862
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-78667
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-78669
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
+  - id: CVE-2026-97031
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
+    expired_at: 2027-02-01
