@@ -51,6 +51,16 @@ asks:
   # expires.
   # max_open_per_person: 3
 
+  # Also ask about what a chat is otherwise spared: a low-readiness ticket, a
+  # weed, a crack below break. They wait behind everything else their person
+  # is asked.
+  # include_held: false
+
+  # The name of a group to ask about a decision nobody owns; the chat
+  # assistant knows how to reach it. Anyone embry0 knows may answer those.
+  # Empty: they are asked of nobody and stay on the decisions page.
+  # unowned_group: ''
+
   # Minutes an ask handed out by `GET /asks/due` stays with the poll that took
   # it: it counts toward its person's limit and goes to no other poll until it
   # is reported sent or this lapses. Then it is handed out again, before any

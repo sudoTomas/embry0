@@ -9,12 +9,16 @@
   person who pressed it. The answer goes through the paths the dashboard
   uses; a second press returns the first answer.
 - ``GET /asks``: the latest asks, for the dashboard.
+- ``GET /asks/of``: everything waiting on one person or group, so a chat can
+  say how many there are and talk them through.
+- ``GET /asks/decision/{code}``: one decision by its code, as much as there is to say about it.
 
 A ``propose`` key does all of these: no model sits between a press and its answer.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -25,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers, restricted_key_name
 from embry0.api.schemas.person_name import PersonName
-from embry0.services.asks import AskPolicy, release
+from embry0.services.asks import AskPolicy, asked_order, release
 from embry0.settings.sections.asks import ASKS, AsksSettings
 from embry0.settings.store import Scoped, SettingsStore
 
@@ -73,11 +77,18 @@ def dashboard_link(request: Request, decision: dict[str, Any]) -> str:
 
 
 async def _person(request: Request, who: str) -> dict[str, Any]:
+    """Whom an ask is for. ``key`` is its ``recipient`` as stored, which ``GET /asks/of`` reads them by."""
     users = getattr(request.app.state, "users_repo", None)
+    key = who.lower()
+    if who.startswith("group:"):
+        name = who.removeprefix("group:")
+        return {"key": key, "group": name, "github_login": None, "email": None, "name": name}
     if who.startswith("github:"):
-        return {"github_login": who.removeprefix("github:"), "email": None, "name": who.removeprefix("github:")}
+        login = who.removeprefix("github:")
+        return {"key": key, "github_login": login, "email": None, "name": login}
     found = await users.get_by_email(who) if users is not None else None
     return {
+        "key": key,
         "email": who,
         "name": (found.name if found is not None else "") or who,
         "github_login": found.github_login if found is not None else None,
@@ -146,18 +157,21 @@ async def asks_due(
     decisions = await open_decisions(request.app)
     policy = AskPolicy(section, decisions)
     by_id = {str(d["id"]): d for d in decisions}
-    order = {str(d["id"]): i for i, d in enumerate(decisions)}
+    order = asked_order(decisions)
 
     def shown(ask: Mapping[str, Any]) -> bool:
         return listed_to(request, by_id[str(ask["decision_id"])])
 
     page: list[tuple[Mapping[str, Any], bool]] = []
+    waiting: Counter[str] = Counter()
 
     def pick(rows: list[dict[str, Any]]) -> list[tuple[str, bool]]:
         # An ask whose decision is not open any more was answered or moved on: the ask loop withdraws it.
         # The rest count toward their person's limit, the ones in repositories the caller's key does not
         # cover too; only what the caller may read is handed out.
         live = [a for a in rows if str(a["decision_id"]) in by_id]
+        waiting.clear()
+        waiting.update(str(a["recipient"]).lower() for a in live if shown(a))
         page[:] = release(live, order, now, policy, shown)[:limit]
         return [(str(ask["id"]), reminder) for ask, reminder in page]
 
@@ -170,14 +184,19 @@ async def asks_due(
         page[:] = [(ask, reminder) for ask, reminder in page if str(ask["id"]) in leased]
     # The decisions were read without their reports; the page's cards carry theirs, as GET /decisions shows them.
     cards = {str(d["id"]): d for d in await with_reports(request, [by_id[str(a["decision_id"])] for a, _ in page])}
+    known = await asks.ever_sent() if page else set()
     out: list[dict[str, Any]] = []
     for ask, reminder in page:
         decision = cards[str(ask["decision_id"])]
+        key = str(ask["recipient"]).lower()
         out.append(
             {
                 "id": ask["id"],
                 "code": await asks.code(str(ask["decision_id"])),
                 "recipient": await _person(request, str(ask["recipient"])),
+                "waiting": waiting[key],
+                "at_once": policy.settings(str(ask["decision_id"])).max_open_per_person,
+                "first": key not in known,
                 "reminder": reminder,
                 "decision": decision,
                 "actions": chat_actions(decision),
@@ -243,7 +262,8 @@ class AnswerBody(BaseModel):
 
 
 async def _may_decide(request: Request, decision: dict[str, Any], person: str) -> bool:
-    """The hand-off's person while one is open; else an owner (by GitHub login) or an admin."""
+    """The hand-off's person while one is open; else an owner (by GitHub login) or an admin. A decision nobody owns
+    that goes to a group (``asks.unowned_group``) is anyone's embry0 knows."""
     users = getattr(request.app.state, "users_repo", None)
     me = await users.get_by_email(person) if users is not None else None
     held = (decision.get("assigned_to") or {}).get("email")
@@ -252,6 +272,8 @@ async def _may_decide(request: Request, decision: dict[str, Any], person: str) -
     if me is None:
         return False
     owners = {str(o).lstrip("@").lower() for o in decision.get("owners") or []}
+    if not owners and (await ask_policy(request)).deployment().unowned_group:
+        return True
     return me.tier == "admin" or (bool(me.github_login) and me.github_login.lower() in owners)
 
 
@@ -326,6 +348,8 @@ async def answer_ask(body: AnswerBody, request: Request) -> dict[str, Any]:
     result = await _do(request, decision, body)
     closed = await asks.answered(decision_id, answer=body.action, by=body.person.lower(), now=datetime.now(UTC))
     shown = [{"id": a["id"], "recipient": a["recipient"], "message_ref": a.get("message_ref")} for a in closed]
+    left = Counter(str(a["recipient"]).lower() for a in await asks.live())
+    waiting = {who: left[who] for who in {str(a["recipient"]).lower() for a in closed}}
     notifier = getattr(request.app.state, "webhook_notifier", None)
     if notifier is not None:
         notifier.emit_soon(
@@ -339,7 +363,85 @@ async def answer_ask(body: AnswerBody, request: Request) -> dict[str, Any]:
             },
         )
     logger.info("ask_answered", decision_id=decision_id, action=body.action, by=body.person)
-    return {"already": False, "answer": body.action, "by": body.person, "result": result, "asks": shown}
+    return {
+        "already": False,
+        "answer": body.action,
+        "by": body.person,
+        "result": result,
+        "asks": shown,
+        "waiting": waiting,
+    }
+
+
+@router.get("/asks/of")
+async def asks_of(
+    request: Request,
+    person: str = Query(min_length=3, max_length=320, description="An ask's recipient: an email, or group:<name>"),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    """Everything waiting on one person or group, what they were sent first, then worst first: what a chat reads to
+    say how many there are and talk them through. ``waiting`` and ``repos`` count them all, ``asks`` lists ``limit``.
+    Through a key with a repository allowlist, only those about decisions in the repositories it covers."""
+    from embry0.api.v1.decisions import listed_to
+
+    asks = _repo(request, "asks_repo")
+    who = person.strip().lower()
+    decisions = await open_decisions(request.app)
+    by_id = {str(d["id"]): d for d in decisions}
+    order = asked_order(decisions)
+    mine = [
+        a
+        for a in await asks.live()
+        if str(a["recipient"]).lower() == who
+        and str(a["decision_id"]) in by_id
+        and listed_to(request, by_id[str(a["decision_id"])])
+    ]
+    mine.sort(key=lambda a: (a.get("state") == "queued", order[str(a["decision_id"])]))
+    repos = Counter(str(by_id[str(a["decision_id"])].get("repo") or "") for a in mine)
+    out: list[dict[str, Any]] = []
+    for ask in mine[:limit]:
+        d = by_id[str(ask["decision_id"])]
+        out.append(
+            {
+                "code": await asks.code(str(ask["decision_id"])),
+                "sent": ask.get("state") != "queued",
+                "held": bool(d.get("held")),
+                "repo": d.get("repo"),
+                "area": d.get("area"),
+                "kind": d.get("kind_label"),
+                "verdict": (d.get("verdict") or {}).get("label"),
+                "title": d.get("title"),
+                "why": d.get("why"),
+                "yes_starts": d.get("yes_starts"),
+                "actions": chat_actions(d),
+            }
+        )
+    return {
+        "person": who,
+        "waiting": len(mine),
+        "repos": [{"repo": repo, "count": n} for repo, n in repos.most_common()],
+        "asks": out,
+    }
+
+
+@router.get("/asks/decision/{code}")
+async def decision_by_code(code: str, request: Request) -> dict[str, Any]:
+    """One decision by its code, all there is to say about it, and what a chat may answer: a code no decision has,
+    or one in a repository the caller's key does not cover, answers 404."""
+    from embry0.api.v1.decisions import get_decision
+
+    none = HTTPException(status_code=404, detail="no decision has that code")
+    decision_id = await _repo(request, "asks_repo").decision_of(code.strip().upper())
+    if decision_id is None:
+        raise none
+    if restricted_key_name(request) is not None:
+        repo = (await decision_repos(request, [decision_id])).get(decision_id)
+        await hide_unless_covered(request, repo, none, action="read a decision by its code")
+    try:
+        decision = await get_decision(decision_id, request)
+    except HTTPException:
+        raise HTTPException(status_code=409, detail="that quest was answered or moved on elsewhere") from None
+    return {"code": code.strip().upper(), "decision": decision, "actions": chat_actions(decision)}
 
 
 @router.get("/asks")

@@ -48,6 +48,9 @@ class Asks:
             (r["decision_id"], r["recipient"]): None for r in self.rows if r["state"] == "expired" and r.get("sent_at")
         }
 
+    async def ever_sent(self) -> set[str]:
+        return set()
+
     async def code(self, decision_id: str) -> str:
         return "ABCD"
 

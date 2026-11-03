@@ -129,6 +129,11 @@ class AsksRepository:
         rows = await self._db.fetch(_LIVE_SQL, list(LIVE))
         return [dict(r) for r in rows]
 
+    async def ever_sent(self) -> set[str]:
+        """Everyone (lower-cased) who was ever sent an ask: anyone else hears from the assistant for the first time."""
+        rows = await self._db.fetch("SELECT DISTINCT LOWER(recipient) AS who FROM asks WHERE sent_at IS NOT NULL")
+        return {str(r["who"]) for r in rows}
+
     async def lease_out(
         self,
         decide: Callable[[list[dict[str, Any]]], Sequence[tuple[str, bool]]],
