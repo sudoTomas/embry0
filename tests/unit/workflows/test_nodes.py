@@ -39,6 +39,6 @@ def test_clone_command_depth_is_50() -> None:
 
     clone_cmd = build_clone_shell("owner/repo")
     assert clone_cmd.count("--depth=50") == 2  # clone AND the main:main fetch
-    assert "git clone --depth=50 https://github.com/owner/repo.git /workspace" in clone_cmd
-    assert "fetch origin main:main" in clone_cmd
+    assert "embry0_git clone --depth=50 https://github.com/owner/repo.git /workspace" in clone_cmd
+    assert "fetch --no-recurse-submodules origin main:main" in clone_cmd
     assert "--depth=1" not in clone_cmd

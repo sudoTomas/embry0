@@ -1106,9 +1106,11 @@ class ProxyManager:
 
         This is the in-DinD enrollment transport. The proxy container has
         Python 3.12 + stdlib but no curl/wget; urllib.request is sufficient
-        for the small JSON POST/DELETE payloads. We pass the admin token via
-        environment variable on the exec call (so it never appears in argv
-        for any host-side ``ps``).
+        for the small JSON POST/DELETE payloads. The admin token and the body
+        (which carries the sandbox bearer and the forge token) go in on the
+        exec's stdin as one JSON object, so neither is ever on the ``docker
+        exec`` argv — the docker client's own argv in the orchestrator, which a
+        host-side ``ps`` would show.
 
         Raises RuntimeError on any non-2xx response (or non-2xx + non-404 if
         ``accept_404`` is True). Returns the 2xx response's JSON object, or
@@ -1118,17 +1120,17 @@ class ProxyManager:
 
         payload = json.dumps(body or {})
         # The proxy image (python:3.12-slim) has Python + stdlib but no curl.
-        # We pass the admin token + body via -e on the exec so they stay out
-        # of argv and any host-side `ps`. The script must be a multi-line
-        # block; semicolons can't separate `try`/`except`, so we use '\n'.
+        # The admin token and body are read from stdin, never argv. The script
+        # must be a multi-line block; semicolons can't separate `try`/`except`,
+        # so we use '\n'.
         script = "\n".join(
             [
-                "import os, sys, urllib.request, urllib.error",
-                "tok = os.environ['ADMIN_TOK']",
-                "body = os.environ.get('ADMIN_BODY', '').encode()",
+                "import sys, json, urllib.request, urllib.error",
+                "cfg = json.loads(sys.stdin.read())",
+                "body = cfg['body'].encode()",
                 f"req = urllib.request.Request('http://localhost:{port}{path}',",
                 "    data=body if body else None,",
-                "    headers={'X-Admin-Token': tok, 'Content-Type': 'application/json'},",
+                "    headers={'X-Admin-Token': cfg['tok'], 'Content-Type': 'application/json'},",
                 f"    method='{method}')",
                 "try:",
                 "    resp = urllib.request.urlopen(req, timeout=10)",
@@ -1142,13 +1144,10 @@ class ProxyManager:
                 "    sys.exit(2)",
             ]
         )
-        cmd = self._docker.build_exec_cmd(
-            container,
-            ["python3", "-c", script],
-            env={"ADMIN_TOK": self._proxy_admin_token, "ADMIN_BODY": payload},
-        )
+        cmd = self._docker.build_exec_cmd(container, ["python3", "-c", script], interactive=True)
+        stdin = json.dumps({"tok": self._proxy_admin_token, "body": payload}).encode()
         try:
-            output = await self._docker.run_cmd(cmd, timeout=15)
+            output = await self._docker.run_cmd(cmd, timeout=15, stdin_data=stdin)
         except RuntimeError as exc:
             raise RuntimeError(f"docker exec {container} for {method} {path} failed: {exc}") from exc
 

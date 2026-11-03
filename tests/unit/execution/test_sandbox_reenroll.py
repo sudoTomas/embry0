@@ -37,14 +37,34 @@ def _resolved() -> ResolvedCredential:
     )
 
 
-def _docker(running: str | Exception = "true") -> tuple[MagicMock, list[list[str]]]:
-    calls: list[list[str]] = []
+class Calls(list):
+    """Every docker command the manager ran, and what each one got on stdin."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stdin: list[bytes | None] = []
+
+    def writes(self, marker: str) -> list[bytes | None]:
+        """What each exec whose command line names ``marker`` got on stdin."""
+        return [
+            data for cmd, data in zip(self, self.stdin, strict=True) if cmd[0] == "exec" and marker in " ".join(cmd)
+        ]
+
+
+def _docker(running: str | Exception = "true") -> tuple[MagicMock, Calls]:
+    calls = Calls()
     docker = MagicMock()
-    docker.build_exec_cmd = lambda container, cmd: ["exec", container, *cmd]
+    docker.build_exec_cmd = lambda container, cmd, **kw: [
+        "exec",
+        *(["-u", kw["user"]] if kw.get("user") else []),
+        container,
+        *cmd,
+    ]
     docker.build_inspect_running_cmd = lambda container: ["inspect-running", container]
 
-    async def run_cmd(cmd, timeout=60, **_kw):
+    async def run_cmd(cmd, timeout=60, stdin_data=None, **_kw):
         calls.append(list(cmd))
+        calls.stdin.append(stdin_data)
         if cmd and cmd[0] == "inspect-running":
             if isinstance(running, Exception):
                 raise running
@@ -85,9 +105,11 @@ async def test_reenroll_issues_a_fresh_bearer_to_every_proxy_and_into_the_sandbo
     assert kwargs["github_token"] == "tok-reg", "the forge payload must be the job's account, as at create"
     assert kwargs["forge"] == "github"
     assert kwargs["xai_credential_id"] == "cred-xai", "the proxy must serve the account the resume resolved"
-    execs = [" ".join(c) for c in calls if c and c[0] == "exec"]
-    assert any(NEW_TOKEN in c and "xai_proxy_token" in c for c in execs), f"xAI token file not rewritten: {execs}"
-    assert any(NEW_TOKEN in c and "extraHeader" in c for c in execs), f"git's proxy bearer not rewritten: {execs}"
+    assert calls.writes("xai_proxy_token") == [NEW_TOKEN.encode()], "xAI token file not rewritten"
+    assert calls.writes("extraHeader") == [f"{NEW_TOKEN}\n".encode()], "the agent's git proxy bearer not rewritten"
+    (embry0s,) = [data for cmd, data in zip(calls, calls.stdin, strict=True) if cmd[:3] == ["exec", "-u", "root"]]
+    assert embry0s is not None and NEW_TOKEN in embry0s.decode(), "embry0's own git config not rewritten"
+    assert not any(NEW_TOKEN in word for cmd in calls for word in cmd), "a bearer reached a docker exec command line"
     pm.enroll_context.assert_not_awaited()
 
 
@@ -115,7 +137,7 @@ async def test_reenroll_makes_the_git_proxy_the_remote_and_keeps_the_push_right(
     assert kwargs["git_push"] is True and kwargs["git_upstream"] == "https://github.com", kwargs
     git = [" ".join(c) for c in calls if c and c[0] == "exec" and "insteadOf" in " ".join(c)]
     assert git, f"git's proxy config was not rewritten: {calls}"
-    assert "'url.http://git-proxy:9101/git/acme/widgets.git.insteadOf' 'https://github.com/acme/widgets.git'" in git[0]
+    assert "url.http://git-proxy:9101/git/acme/widgets.git.insteadOf https://github.com/acme/widgets.git" in git[0]
     assert "--unset-all credential.helper" in git[0] and "/git-credentials" not in git[0]
 
 
@@ -135,7 +157,7 @@ async def test_reenroll_is_read_only_unless_asked_and_uses_the_gitlab_origin():
     kwargs = pm.enroll_sandbox.await_args.kwargs
     assert kwargs["git_push"] is False and kwargs["git_upstream"] == "https://git.example.com", kwargs
     git = [" ".join(c) for c in calls if c and c[0] == "exec" and "insteadOf" in " ".join(c)]
-    assert "'https://git.example.com/group/proj.git'" in git[0]
+    assert " https://git.example.com/group/proj.git" in git[0]
 
 
 async def test_reenroll_scopes_the_forge_api_proxies_to_the_job_repo():
@@ -184,8 +206,7 @@ async def test_reenroll_restores_the_context_proxy_scope(scope, expected_kwargs)
     )
 
     pm.enroll_context.assert_awaited_once_with("cid-1", NEW_TOKEN, **expected_kwargs)
-    execs = [" ".join(c) for c in calls if c and c[0] == "exec"]
-    assert any(NEW_TOKEN in c and "context_proxy_token" in c for c in execs), f"context token not rewritten: {execs}"
+    assert calls.writes("context_proxy_token") == [NEW_TOKEN.encode()], "context token not rewritten"
 
 
 async def test_a_failed_enrollment_is_retryable():
@@ -216,3 +237,38 @@ async def test_destroy_unregisters_the_bearer_reenroll_registered():
     assert NEW_TOKEN in known_secret_values(), "precondition: reenroll registered the fresh bearer"
     await mgr.destroy("cid-1")
     assert NEW_TOKEN not in known_secret_values(), "destroy unregisters the reenrolled bearer"
+
+
+async def test_reenroll_rewrites_embry0s_git_config_with_the_identity_resolved_again():
+    """A sandbox created before embry0's own git config existed gets it at resume, identity included."""
+    import inspect
+
+    assert "prefs_repo" in inspect.signature(SandboxManager.reenroll).parameters, (
+        "reenroll must take prefs_repo to resolve embry0's identity again"
+    )
+    docker, calls = _docker()
+    pm = _proxy()
+    mgr = _manager(docker, pm)
+
+    class _Prefs:
+        async def get(self, repo):
+            return {"git_author_name": "Widgets Bot"}
+
+    await mgr.reenroll(
+        "cid-1",
+        job_id="job-1",
+        repo="acme/widgets",
+        forge="github",
+        xai_credential_id=None,
+        context_scope=None,
+        prefs_repo=_Prefs(),
+    )
+
+    (text,) = [data.decode() for cmd, data in zip(calls, calls.stdin, strict=True) if cmd[:3] == ["exec", "-u", "root"]]
+    assert '\tname = "Widgets Bot"' in text, "the repository's preference must win, as at init"
+    assert '\temail = "alice@example.com"' in text, "the bound credential's author fills the rest"
+    assert f"Authorization: Bearer {NEW_TOKEN}" in text
+    # The agent identity write is `git config --file "$HOME/.gitconfig" user.name …`; the prelude's
+    # own `embry0_git_pin_from_config user.name` (which pins embry0's identity) must not be mistaken for it.
+    agent = [" ".join(c) for c in calls if c[0] == "exec" and '--file "$HOME/.gitconfig" user.name' in " ".join(c)]
+    assert agent == [], "a re-enroll leaves the agent's own identity alone"

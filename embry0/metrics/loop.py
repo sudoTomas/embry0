@@ -35,6 +35,7 @@ from typing import Any, cast
 import structlog
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 
+from embry0.execution.sandbox_git import GitStep
 from embry0.metrics.labels import BoundedLabel, ErrorLabels, enum_label, model_family, provider_label
 
 logger = structlog.get_logger(__name__)
@@ -315,6 +316,17 @@ class LoopMetrics:
             ["result"],
             registry=r,
         )
+        # Seeded 0 for every step, so a rate() alert sees the series before the first refusal.
+        self._sandbox_git_refusals = Counter(
+            "embry0_sandbox_git_refusals_total",
+            "embry0 git steps refused in a sandbox (docs/sandbox-git.md), by step: the repository's own git "
+            "config carried a key that can run a program, .git was not a plain directory, or embry0's "
+            "root-owned git config was missing.",
+            ["step"],
+            registry=r,
+        )
+        for git_step in GitStep:
+            self._sandbox_git_refusals.labels(step=git_step.value)
 
         # ---- settings imports --------------------------------------------
         # #165: seeded 0 at construction, so the series exists on the first
@@ -533,6 +545,11 @@ class LoopMetrics:
     @_never_raises
     def volume_reaper_sweep(self, result: str) -> None:
         self._reaper_sweeps.labels(result=result).inc()
+
+    @_never_raises
+    def sandbox_git_refused(self, step: str) -> None:
+        """embry0 refused one of its own git steps in a sandbox (``embry0.execution.sandbox_git``)."""
+        self._sandbox_git_refusals.labels(step=enum_label(GitStep, step)).inc()
 
 
 def _value(gauge: Gauge) -> float:

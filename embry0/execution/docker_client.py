@@ -81,9 +81,22 @@ def _scrub_cmd_for_log(cmd: list[str]) -> list[str]:
             scrubbed.extend([token, "***REDACTED***"])
             i += 2
             continue
-        scrubbed.append(token)
+        scrubbed.append(_elide(token))
         i += 1
     return scrubbed
+
+
+# A long shell script (embry0's git prelude is several KB) is logged by its
+# start and its end, where the step's own commands are.
+_LOG_TOKEN_HEAD = 160
+_LOG_TOKEN_TAIL = 1200
+
+
+def _elide(token: str) -> str:
+    if len(token) <= _LOG_TOKEN_HEAD + _LOG_TOKEN_TAIL + 64:
+        return token
+    cut = len(token) - _LOG_TOKEN_HEAD - _LOG_TOKEN_TAIL
+    return f"{token[:_LOG_TOKEN_HEAD]}…[{cut} chars]…{token[-_LOG_TOKEN_TAIL:]}"
 
 
 async def kill_process_group(proc: asyncio.subprocess.Process, *, wait_seconds: float = 5) -> bool:
@@ -411,6 +424,7 @@ class DockerClient:
         *,
         log_context: dict[str, Any] | None = None,
         expected_failure: bool = False,
+        stdin_data: bytes | None = None,
     ) -> str:
         """Execute a Docker command and return stdout.
 
@@ -426,16 +440,21 @@ class DockerClient:
         ``expected_failure`` logs a non-zero exit at debug instead of error, for
         probes whose "no" is an answer rather than a fault (``image inspect`` of
         an image the daemon has not pulled yet, #655). It still raises.
+
+        ``stdin_data`` is written to the command's stdin (a ``docker exec -i``):
+        the way to hand a sandbox a secret without putting it on a command line.
         """
         scrubbed = _scrub_cmd_for_log(cmd)
         logger.debug("docker_cmd", cmd=scrubbed)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            communicate = proc.communicate() if stdin_data is None else proc.communicate(input=stdin_data)
+            stdout, stderr = await asyncio.wait_for(communicate, timeout=timeout)
         except TimeoutError:
             # The subprocess would otherwise keep running and hold a Docker slot.
             # Kill → wait briefly for exit → re-raise so callers can fail cleanly.

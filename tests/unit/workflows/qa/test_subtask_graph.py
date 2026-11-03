@@ -105,17 +105,17 @@ class _FakeDocker:
     def _build_base_cmd(self) -> list[str]:
         return ["docker"]
 
-    def build_exec_cmd(self, container_id: str, cmd: list[str]) -> list[str]:
+    def build_exec_cmd(self, container_id: str, cmd: list[str], **_kw) -> list[str]:
         return ["docker", "exec", container_id, *cmd]
 
-    async def run_cmd(self, cmd: list[str], timeout: int | None = None) -> str:
+    async def run_cmd(self, cmd: list[str], timeout: int | None = None, **_kw) -> str:
         self.calls.append(cmd)
         joined = " ".join(cmd)
         if "rev-parse HEAD" in joined:
             return "abc123def456\n"
         if "/workspace/.qa/result.json" in joined:
             return self._result_json or ""
-        if "git clone" in joined or "git config" in joined:
+        if "embry0_git clone" in joined or "git config" in joined:
             return ""
         if "network" in joined:
             return ""

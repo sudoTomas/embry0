@@ -122,7 +122,7 @@ async def test_init_node_makes_the_git_proxy_the_remote_and_grants_push():
     sandbox_mgr.destroy = AsyncMock()
 
     docker = MagicMock()
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
     docker.run_cmd = AsyncMock(return_value="")
 
     proxy_mgr = MagicMock()
@@ -159,8 +159,9 @@ async def test_init_node_makes_the_git_proxy_the_remote_and_grants_push():
     setup = [" ".join(str(p) for p in c.args[0]) for c in docker.run_cmd.await_args_list if "insteadOf" in str(c.args)]
     assert setup, f"No git proxy setup exec call found. All calls: {docker.run_cmd.await_args_list}"
     cmd_str = setup[0]
-    assert "'url.http://git-proxy:9101/git/org/repo.git.insteadOf' 'https://github.com/org/repo.git'" in cmd_str
-    assert "'http.http://git-proxy:9101/git/.extraHeader'" in cmd_str
+    assert "url.http://git-proxy:9101/git/org/repo.git.insteadOf https://github.com/org/repo.git" in cmd_str
+    assert "http.http://git-proxy:9101/git/.extraHeader" in cmd_str
+    assert "a" * 43 not in cmd_str, "the bearer goes on stdin, never on the command line"
     assert "/git-credentials" not in cmd_str, f"the sandbox must not ask for the forge token: {cmd_str}"
     assert "$GITHUB_TOKEN" not in cmd_str, f"Setup must NOT reference $GITHUB_TOKEN, got: {cmd_str}"
 
@@ -272,12 +273,12 @@ async def test_init_node_clone_failure_raises_runtime_error():
     sandbox_mgr.destroy = AsyncMock()
 
     docker = MagicMock()
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
 
-    # First call (credential setup) succeeds, second (clone) raises
+    # The git setup succeeds, the clone raises
     async def _run_cmd_side(*args, **kwargs):
         cmd_str = " ".join(str(p) for p in args[0])
-        if "git clone" in cmd_str:
+        if "embry0_git clone" in cmd_str:
             raise RuntimeError("exit 128: fatal: not a repo")
         return ""
 

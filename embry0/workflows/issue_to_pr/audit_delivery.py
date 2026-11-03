@@ -23,12 +23,12 @@ longer applies each leaves the findings in the report and opens nothing.
 from __future__ import annotations
 
 import re
-import shlex
 from typing import Any
 
 import structlog
 from langchain_core.runnables import RunnableConfig
 
+from embry0.execution import sandbox_git
 from embry0.orchestration.branch_names import job_push_branch, shared_branch_name
 from embry0.services.context_audit import report_counts
 
@@ -139,22 +139,37 @@ async def deliver_audit_patch(state: dict[str, Any], config: RunnableConfig, rep
     # so this only undoes what an agent should not have left); the untracked
     # deliverables directory stays. A zero-context hunk, which the auditor
     # emits for a one-line change, needs --unidiff-zero.
+    g = sandbox_git.git
     script = " && ".join(
         [
             "set -e",
-            f"cd {WORKSPACE}",
-            "git reset -q --hard HEAD",
-            f"git checkout -q -B {shlex.quote(branch)}",
-            f"(git apply --index {PATCH_PATH} 2>/dev/null || git apply --index --unidiff-zero {PATCH_PATH})",
-            f"git commit -q -m {shlex.quote(message)}",
-            f"git push -q origin {shlex.quote('HEAD:refs/heads/' + branch)}",
+            g("reset", "-q", "--hard", "HEAD"),
+            g("checkout", "-q", "-B", branch),
+            f"({g('apply', '--index', PATCH_PATH)} 2>/dev/null || {g('apply', '--index', '--unidiff-zero', PATCH_PATH)})",
+            g("commit", "-q", "-m", message),
+            g("push", "-q", "origin", "HEAD:refs/heads/" + branch),
         ]
     )
     try:
         await docker.copy_bytes_into(container, patch.encode(), PATCH_PATH)
-        await docker.run_cmd(docker.build_exec_cmd(container, ["bash", "-c", script]), timeout=180)
+        await sandbox_git.run(
+            docker,
+            container,
+            sandbox_git.script(script, repo=WORKSPACE),
+            step=sandbox_git.GitStep.AUDIT_DELIVERY,
+            timeout=180,
+            job_id=job_id,
+        )
     except Exception as exc:  # noqa: BLE001 - the findings stay in the report
-        logger.warning("context_audit_pr_not_pushed", job_id=job_id, branch=branch, error=str(exc)[:300])
+        # A refusal's message names the keys and how to clear them; it is cut at 1000, not 300.
+        refused = sandbox_git.refusal_of(exc)
+        logger.warning(
+            "context_audit_pr_not_pushed",
+            job_id=job_id,
+            branch=branch,
+            error=str(exc)[: 1000 if refused else 300],
+            refused=refused is not None,
+        )
         return {}
     logger.info("context_audit_pr_pushed", job_id=job_id, branch=branch, stale=stale)
     return {

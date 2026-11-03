@@ -304,6 +304,33 @@ async def test_run_cmd_success():
         assert result == "container-id"
 
 
+def test_a_long_script_is_logged_by_its_start_and_its_end():
+    """embry0's git prelude rides every sandbox git exec; a failure log keeps the step, not 5 KB of prelude."""
+    from embry0.execution.docker_client import _scrub_cmd_for_log
+
+    script = "PRELUDE-START " + "x" * 6000 + " the step's own commands"
+    logged = _scrub_cmd_for_log(["docker", "exec", "c1", "bash", "-c", script, "embry0-git", "status"])
+    assert logged[:5] == ["docker", "exec", "c1", "bash", "-c"] and logged[6:] == ["embry0-git", "status"]
+    assert logged[5].startswith("PRELUDE-START") and logged[5].endswith("the step's own commands")
+    assert len(logged[5]) < 1500, f"a {len(script)}-char script was logged whole"
+    assert _scrub_cmd_for_log(["docker", "ps"]) == ["docker", "ps"]
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_writes_stdin_data_to_the_command(tmp_path):
+    """A secret goes to a docker exec on stdin, never on its command line (sandbox_git.configure)."""
+    import inspect
+
+    assert "stdin_data" in inspect.signature(DockerClient.run_cmd).parameters, (
+        "run_cmd must accept stdin_data so a secret can be passed off-argv"
+    )
+    out = tmp_path / "got"
+    client = DockerClient()
+    result = await client.run_cmd(["sh", "-c", f"cat > {out}; echo done"], stdin_data=b"bearer-0001\n")
+    assert result == "done"
+    assert out.read_bytes() == b"bearer-0001\n", "stdin_data did not reach the command's stdin"
+
+
 @pytest.mark.asyncio
 async def test_run_cmd_failure():
     """run_cmd raises on non-zero exit."""

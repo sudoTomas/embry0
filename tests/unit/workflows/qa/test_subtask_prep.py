@@ -10,12 +10,14 @@ from embry0.workflows.qa._subtask_prep import prep_qa_sandbox_clone
 class _FakeDocker:
     def __init__(self):
         self.execs: list[list[str]] = []
+        self.stdin: list[bytes | None] = []
 
-    def build_exec_cmd(self, container_id, cmd):
-        return ["docker", "exec", container_id, *cmd]
+    def build_exec_cmd(self, container_id, cmd, **kwargs):
+        return ["docker", "exec", *(["-u", kwargs["user"]] if kwargs.get("user") else []), container_id, *cmd]
 
-    async def run_cmd(self, cmd, timeout=None):
+    async def run_cmd(self, cmd, timeout=None, stdin_data=None):
         self.execs.append(list(cmd))
+        self.stdin.append(stdin_data)
         return "abc123headsha\n"
 
 
@@ -51,7 +53,8 @@ async def test_writes_xai_token_when_proxy_up():
     token_execs = _token_execs(docker)
     assert len(token_execs) == 1
     script = token_execs[0][-1]
-    assert "tok-secret" in script
+    assert "tok-secret" not in script, "the bearer goes on stdin, never on the command line"
+    assert docker.stdin[docker.execs.index(token_execs[0])] == b"tok-secret"
     assert 'chmod 600 "$HOME/.embry0/xai_proxy_token"' in script
 
 
@@ -83,9 +86,17 @@ class _FakePrefsRepo:
 
 
 def _identity_script(docker):
-    scripts = [c[-1] for c in docker.execs if "git config --global user.email" in c[-1]]
+    """The agent's ~/.gitconfig script (the identity its own commits use)."""
+    scripts = [c[-1] for c in docker.execs if '--file "$HOME/.gitconfig" user.email' in c[-1]]
     assert len(scripts) == 1
     return scripts[0]
+
+
+def _embry0_config(docker):
+    """What embry0's own, root-owned git config was written with."""
+    (data,) = [d for c, d in zip(docker.execs, docker.stdin, strict=True) if c[:4] == ["docker", "exec", "-u", "root"]]
+    assert data is not None
+    return data.decode()
 
 
 async def test_default_identity_is_branding_not_fabricated_local():
@@ -98,6 +109,7 @@ async def test_default_identity_is_branding_not_fabricated_local():
     assert "embry0.local" not in script
     assert GIT_AUTHOR_EMAIL in script
     assert GIT_AUTHOR_NAME in script
+    assert GIT_AUTHOR_EMAIL in _embry0_config(docker) and "embry0.local" not in _embry0_config(docker)
 
 
 async def test_per_repo_identity_override_applies():
@@ -112,6 +124,7 @@ async def test_per_repo_identity_override_applies():
     script = _identity_script(docker)
     assert "bot@example.com" in script
     assert "'Acme Bot'" in script
+    assert '\tname = "Acme Bot"' in _embry0_config(docker)
 
 
 async def test_the_qa_sandbox_reaches_its_repo_through_the_git_proxy():
@@ -119,8 +132,9 @@ async def test_the_qa_sandbox_reaches_its_repo_through_the_git_proxy():
     docker = _FakeDocker()
     await _prep(docker, _FakeProxyMgr(git_proxy_url="http://git-proxy:9101"), sandbox_token=_VALID_TOKEN)
     script = _identity_script(docker)
-    assert "'url.http://git-proxy:9101/git/owner/repo.git.insteadOf' 'https://github.com/owner/repo.git'" in script
-    assert f"'Authorization: Bearer {_VALID_TOKEN}'" in script
+    assert "url.http://git-proxy:9101/git/owner/repo.git.insteadOf https://github.com/owner/repo.git" in script
+    assert _VALID_TOKEN not in script, "the bearer goes on stdin, never on the command line"
+    assert f"Authorization: Bearer {_VALID_TOKEN}" in _embry0_config(docker)
     assert "/git-credentials" not in script
 
 
@@ -137,7 +151,7 @@ def _reuse_docker():
 
     docker = Mock()
     docker._build_base_cmd = lambda: ["docker"]
-    docker.build_exec_cmd = Mock(side_effect=lambda cid, cmd: ["exec", cid, *cmd])
+    docker.build_exec_cmd = Mock(side_effect=lambda cid, cmd, **_kw: ["exec", cid, *cmd])
     docker.run_cmd = AsyncMock(return_value="abc123\n")
     return docker
 
@@ -157,16 +171,16 @@ async def test_standard_path_reuses_existing_git_workspace() -> None:
         qa_net="",
     )
     shells = [" ".join(c.args[0]) for c in docker.run_cmd.await_args_list]
-    clone_shell = next(s for s in shells if "git clone" in s)
-    # Guard: reuse a baked checkout via fetch+checkout...
-    assert "[ -d /workspace/.git ]" in clone_shell
-    assert "fetch origin +refs/heads/embry0-smoke/eng-1400-qa" in clone_shell
+    clone_shell = next(s for s in shells if "embry0_git clone" in s)
+    # Guard: reuse a baked checkout via fetch+checkout, after checking it: another sandbox made it...
+    assert "if [ -e /workspace/.git ] || [ -L /workspace/.git ]; then\n  embry0_git_repo /workspace\n" in clone_shell
+    assert "fetch --no-recurse-submodules origin +refs/heads/embry0-smoke/eng-1400-qa" in clone_shell
     # ...forcing the checkout (-f) so the bake-time `npm install` that dirties
     # package-lock.json can't abort the branch switch with "local changes would
     # be overwritten"; node_modules is gitignored and survives the force.
     assert "checkout -f -B embry0-smoke/eng-1400-qa" in clone_shell
     # ...with the plain clone kept as the empty-workspace fallback.
-    assert "git clone --depth=50 --branch embry0-smoke/eng-1400-qa" in clone_shell
+    assert "embry0_git clone --depth=50 --branch embry0-smoke/eng-1400-qa" in clone_shell
     assert ".qa/logs" in clone_shell
 
 
@@ -186,7 +200,7 @@ async def test_cached_volume_path_still_skips_clone_entirely() -> None:
         cached_volume="vol-1",
     )
     shells = [" ".join(c.args[0]) for c in docker.run_cmd.await_args_list]
-    assert not any("git clone" in s for s in shells)
+    assert not any("embry0_git clone" in s for s in shells)
     assert any("mkdir -p .qa/logs .qa/pids" in s for s in shells)
 
 
@@ -197,7 +211,7 @@ _NESTED = "acme/group/backend"
 
 
 def _clone_shell(docker):
-    return next(c[-1] for c in docker.execs if "git clone" in c[-1])
+    return next(c[-1] for c in docker.execs if "embry0_git clone" in c[-1])
 
 
 async def test_clone_defaults_to_github():

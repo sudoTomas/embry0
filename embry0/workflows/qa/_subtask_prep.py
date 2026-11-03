@@ -20,12 +20,12 @@ from __future__ import annotations
 
 import base64
 import json
-import shlex
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from embry0.execution import sandbox_git
 from embry0.workspace_init.git import clone_origin
 
 if TYPE_CHECKING:
@@ -102,34 +102,25 @@ async def prep_qa_sandbox_clone(
             raise RuntimeError("a DinD-mode QA sandbox needs the runtime to join its network")
         await runtime.connect_network(qa_net, container_id, timeout=10)
 
-    # 2. Git: the git-proxy is the remote for this repo (#521)
-    git_proxy_url = getattr(proxy_mgr, "git_proxy_url", "") if proxy_mgr else ""
-    if git_proxy_url:
-        from embry0.sandbox.git_identity import build_git_identity_cmd, resolve_git_identity
-        from embry0.sandbox.github.git_ops import build_sandbox_git_proxy_config_cmd
+    # 2. Git: embry0's own git config, and the git-proxy as the remote for this
+    # repo (#521; read only: QA never pushes).
+    from embry0.sandbox.git_identity import resolve_git_identity
+    from embry0.sandbox.github.git_ops import proxy_route
 
-        identity = await resolve_git_identity(prefs_repo, repo, credential=forge_credential)
-        git_cmd = build_sandbox_git_proxy_config_cmd(
-            git_proxy_url,
-            sandbox_token,
-            origin=clone_origin(forge, gitlab_url),
-            repo=repo,
-        )
-        setup_cmd = [
-            "bash",
-            "-c",
-            f"{git_cmd} && {build_git_identity_cmd(identity)}",
-        ]
-        await docker.run_cmd(
-            docker.build_exec_cmd(container_id, setup_cmd),
-            timeout=10,
-        )
+    git_proxy_url = getattr(proxy_mgr, "git_proxy_url", "") if proxy_mgr else ""
+    route = None
+    if git_proxy_url:
+        route = proxy_route(git_proxy_url, origin=clone_origin(forge, gitlab_url), repo=repo)
     else:
         logger.warning(
             "qa_git_proxy_unavailable",
             job_id=job_id,
             msg="No git proxy URL — clone may fail for private repos",
         )
+    identity = await resolve_git_identity(prefs_repo, repo, credential=forge_credential)
+    await sandbox_git.configure(
+        docker, container_id, route=route, sandbox_token=sandbox_token, identity=identity, job_id=job_id
+    )
 
     # 2b. xAI proxy bearer (EMB-45 Phase C): when the xai-proxy is up, deliver the
     # per-sandbox bearer to the 0600 file the DirectXaiExecutor reads — same
@@ -140,8 +131,9 @@ async def prep_qa_sandbox_clone(
         from embry0.sandbox.xai_token import build_xai_token_write_cmd
 
         await docker.run_cmd(
-            docker.build_exec_cmd(container_id, build_xai_token_write_cmd(sandbox_token)),
+            docker.build_exec_cmd(container_id, build_xai_token_write_cmd(), interactive=True),
             timeout=10,
+            stdin_data=sandbox_token.encode(),
         )
 
     if cached_volume:
@@ -166,43 +158,50 @@ async def prep_qa_sandbox_clone(
         # fresh named volume mounted there), so a blind clone dies with
         # "destination path '/workspace' already exists". Reusing the baked
         # checkout is the point: fetch + checkout the requested branch on top
-        # and the baked node_modules stays in place.
-        b = shlex.quote(branch)
-        clone_cmd = [
-            "bash",
-            "-c",
-            (
-                "set -e; "
-                "if [ -d /workspace/.git ]; then "
-                # -f (force): the baked workspace's bake-time `npm install` leaves
-                # package-lock.json (a tracked file) dirty, so a plain checkout
-                # aborts with "local changes would be overwritten" on any branch
-                # switch. Forcing discards those bake-time tracked-file mutations
-                # (the branch tree is the source of truth); node_modules is
-                # gitignored and is preserved, so the baked deps stay in place.
-                f"{{ git -C /workspace fetch origin +refs/heads/{b}:refs/remotes/origin/{b} --depth=50 "
-                f"&& git -C /workspace checkout -f -B {b} refs/remotes/origin/{b}; }} "
-                f"|| {{ git -C /workspace fetch origin {b} --depth=50 "
-                "&& git -C /workspace checkout -f --detach FETCH_HEAD; }; "
-                "else "
-                f"git clone --depth=50 --branch {b} "
-                f"{clone_origin(forge, gitlab_url)}/{shlex.quote(repo)}.git /workspace; "
-                "fi && cd /workspace && mkdir -p .qa/logs .qa/pids"
-            ),
-        ]
+        # and the baked node_modules stays in place. That checkout was made
+        # by another sandbox, so embry0 checks it before running git in it.
+        #
+        # -f (force): the baked workspace's bake-time `npm install` leaves
+        # package-lock.json (a tracked file) dirty, so a plain checkout
+        # aborts with "local changes would be overwritten" on any branch
+        # switch. Forcing discards those bake-time tracked-file mutations
+        # (the branch tree is the source of truth); node_modules is
+        # gitignored and is preserved, so the baked deps stay in place.
+        g = sandbox_git.git
+        reuse = (
+            f"{{ {g('fetch', 'origin', f'+refs/heads/{branch}:refs/remotes/origin/{branch}', '--depth=50')}"
+            f" && {g('checkout', '-f', '-B', branch, f'refs/remotes/origin/{branch}')}; }}"
+            f" || {{ {g('fetch', 'origin', branch, '--depth=50')} && {g('checkout', '-f', '--detach', 'FETCH_HEAD')}; }}"
+        )
+        clone = g(
+            "clone", "--depth=50", "--branch", branch, f"{clone_origin(forge, gitlab_url)}/{repo}.git", "/workspace"
+        )
+        clone_cmd = sandbox_git.script(
+            "set -e\n"
+            "if [ -e /workspace/.git ] || [ -L /workspace/.git ]; then\n"
+            f"  {sandbox_git.check_repo()}\n"
+            f"  {reuse}\n"
+            "else\n"
+            f"  {clone}\n"
+            "fi && cd /workspace && mkdir -p .qa/logs .qa/pids\n",
+            repo=None,
+        )
         # 300s (was 120s): matches the issue-path init clone budget — a large
         # repo via the git-proxy can exceed two minutes (a large monorepo
         # timed out at exactly 120s on job-06f63d7ba031, 2026-07-23), and the
         # issue path was bumped for the identical failure.
-        await docker.run_cmd(docker.build_exec_cmd(container_id, clone_cmd), timeout=300)
+        await sandbox_git.run(
+            docker, container_id, clone_cmd, step=sandbox_git.GitStep.QA_CHECKOUT, timeout=300, job_id=job_id
+        )
 
     # 4. Capture head sha (works for both paths — volume has a real git repo)
-    head_sha_raw = await docker.run_cmd(
-        docker.build_exec_cmd(
-            container_id,
-            ["bash", "-c", "cd /workspace && git rev-parse HEAD"],
-        ),
+    head_sha_raw = await sandbox_git.run(
+        docker,
+        container_id,
+        sandbox_git.command("rev-parse", "HEAD"),
+        step=sandbox_git.GitStep.QA_CHECKOUT,
         timeout=10,
+        job_id=job_id,
     )
     head_sha = head_sha_raw.strip().splitlines()[-1] if head_sha_raw else ""
 

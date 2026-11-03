@@ -144,10 +144,13 @@ async def test_resolved_base_branch_reaches_the_clone_shell():
     shell_lines = [
         call.args[-1][-1]
         for call in docker.build_exec_cmd.call_args_list
-        if call.args and isinstance(call.args[-1], list) and call.args[-1] and "git clone" in str(call.args[-1][-1])
+        if call.args
+        and isinstance(call.args[-1], list)
+        and call.args[-1]
+        and "embry0_git clone" in str(call.args[-1][-1])
     ]
     assert shell_lines, "expected a clone command"
-    assert "fetch origin dev:dev" in shell_lines[0]
+    assert "fetch --no-recurse-submodules origin dev:dev" in shell_lines[0]
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.fixtures.sandbox_git_local import readable
+
 
 def _make_state(**over):
     base = {
@@ -29,7 +31,7 @@ async def test_developer_routes_to_review_when_branch_pushed():
     # The branch is free when the developer starts (#478 probes it once) and on
     # origin after its push. Realistic ls-remote output: "<sha>\trefs/heads/<branch>".
     docker.run_cmd = AsyncMock(side_effect=["", "abc123def\trefs/heads/embry0/iss-abc12345-test-task"])
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
 
     fake_result = {
         "agent_outputs": [
@@ -71,7 +73,7 @@ async def test_developer_routes_to_max_retries_when_branch_not_pushed():
 
     docker = MagicMock()
     docker.run_cmd = AsyncMock(return_value="")  # empty stdout = no such branch
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
 
     fake_result = {
         "agent_outputs": [
@@ -141,7 +143,7 @@ async def test_developer_skips_verification_when_docker_call_raises():
 
     docker = MagicMock()
     docker.run_cmd = AsyncMock(side_effect=RuntimeError("network glitch"))
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
 
     fake_result = {
         "agent_outputs": [
@@ -178,7 +180,7 @@ async def test_developer_rescue_pushes_branch_the_agent_left_local():
 
     async def fake_run_cmd(cmd, timeout=None):  # noqa: ARG001
         calls.append(cmd)
-        joined = " ".join(cmd)
+        joined = readable(cmd)
         if "rev-list" in joined:
             return "3\n"  # three local commits waiting
         if "push" in joined:
@@ -187,14 +189,14 @@ async def test_developer_rescue_pushes_branch_the_agent_left_local():
             # absent on the first probe, present after the rescue push
             return (
                 ""
-                if not any("push" in " ".join(c) for c in calls)
+                if not any("push" in readable(c) for c in calls)
                 else ("abc123\trefs/heads/embry0/iss-abc12345-test-task")
             )
         return ""
 
     docker = MagicMock()
     docker.run_cmd = AsyncMock(side_effect=fake_run_cmd)
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
 
     fake_result = {
         "agent_outputs": [
@@ -221,7 +223,7 @@ async def test_developer_rescue_pushes_branch_the_agent_left_local():
         )
 
     assert cmd.goto == "review"
-    assert any("push" in " ".join(c) for c in calls), "orchestrator never attempted the push"
+    assert any("push" in readable(c) for c in calls), "orchestrator never attempted the push"
 
 
 @pytest.mark.asyncio
@@ -238,13 +240,13 @@ async def test_developer_does_not_rescue_when_there_is_nothing_to_push():
 
     async def fake_run_cmd(cmd, timeout=None):  # noqa: ARG001
         calls.append(cmd)
-        if "rev-list" in " ".join(cmd):
+        if "rev-list" in readable(cmd):
             return "0\n"  # nothing to push
         return ""
 
     docker = MagicMock()
     docker.run_cmd = AsyncMock(side_effect=fake_run_cmd)
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
 
     fake_result = {
         "agent_outputs": [
@@ -271,7 +273,7 @@ async def test_developer_does_not_rescue_when_there_is_nothing_to_push():
 
     assert cmd.goto == "max_retries"
     assert cmd.update["error_code"] == ErrorCode.DEV_BRANCH_NOT_PUSHED.value
-    assert not any("push" in " ".join(c) for c in calls), "rescue ran with nothing to push"
+    assert not any("push" in readable(c) for c in calls), "rescue ran with nothing to push"
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +313,7 @@ def _dirty_tree_docker() -> tuple[MagicMock, list[list[str]]]:
 
     async def fake_run_cmd(cmd, timeout=None):  # noqa: ARG001
         calls.append(cmd)
-        joined = " ".join(cmd)
+        joined = readable(cmd)
         if "status" in joined and "--porcelain" in joined:
             # Three edits and a new file, none of them committed.
             return " M src/a.py\n M src/b.py\n M src/c.py\n?? src/new.py\n"
@@ -330,7 +332,7 @@ def _dirty_tree_docker() -> tuple[MagicMock, list[list[str]]]:
 
     docker = MagicMock()
     docker.run_cmd = AsyncMock(side_effect=fake_run_cmd)
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
     return docker, calls
 
 
@@ -351,7 +353,7 @@ async def test_turn_cap_death_commits_and_pushes_the_uncommitted_work():
             {"configurable": {"agent_runner": object(), "credentials": {}, "docker": docker}},
         )
 
-    joined = [" ".join(c) for c in calls]
+    joined = [readable(c) for c in calls]
     assert any("add -A" in j for j in joined), "never staged the uncommitted work"
     assert any(" commit " in f" {j} " for j in joined), "never committed the uncommitted work"
     assert any("push" in j for j in joined), "committed but never pushed — work still lost"
@@ -394,7 +396,7 @@ async def test_commit_rescue_is_gated_on_a_stopped_run():
             {"configurable": {"agent_runner": object(), "credentials": {}, "docker": docker}},
         )
 
-    joined = [" ".join(c) for c in calls]
+    joined = [readable(c) for c in calls]
     assert not any(" commit " in f" {j} " for j in joined), "committed on a clean ending"
     assert cmd.goto == "max_retries"
     assert cmd.update["error_code"] == ErrorCode.DEV_BRANCH_NOT_PUSHED.value
@@ -414,7 +416,7 @@ async def test_turn_cap_with_committed_work_still_just_pushes_and_advances():
 
     async def fake_run_cmd(cmd, timeout=None):  # noqa: ARG001
         calls.append(cmd)
-        joined = " ".join(cmd)
+        joined = readable(cmd)
         if "status" in joined and "--porcelain" in joined:
             return ""  # the agent committed everything
         if "rev-list" in joined:
@@ -428,7 +430,7 @@ async def test_turn_cap_with_committed_work_still_just_pushes_and_advances():
 
     docker = MagicMock()
     docker.run_cmd = AsyncMock(side_effect=fake_run_cmd)
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
 
     with (
         patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=_turn_cap_result())),
@@ -439,7 +441,7 @@ async def test_turn_cap_with_committed_work_still_just_pushes_and_advances():
             {"configurable": {"agent_runner": object(), "credentials": {}, "docker": docker}},
         )
 
-    joined = [" ".join(c) for c in calls]
+    joined = [readable(c) for c in calls]
     assert not any(" commit " in f" {j} " for j in joined), "committed when nothing was uncommitted"
     assert cmd.goto == "review"
     assert cmd.update.get("current_stage") != "dev_run_unfinished"
@@ -511,7 +513,7 @@ class _NoOriginHeadDocker:
         return ["docker", "exec", container_id, *cmd]
 
     async def run_cmd(self, cmd, timeout=None):  # noqa: ARG002
-        joined = " ".join(cmd)
+        joined = readable(cmd)
         self.calls.append(joined)
         if "origin/HEAD" in joined:
             self.unknown_revision_attempts.append(joined)

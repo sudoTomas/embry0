@@ -46,18 +46,12 @@ class _Daemon:
         docker.build_network_cmd = MagicMock(side_effect=lambda op, net, name: ["docker", "network", op, net, name])
         docker.build_inspect_running_cmd = MagicMock(side_effect=lambda name: ["docker", "inspect-running", name])
         docker.build_exec_cmd = MagicMock(
-            side_effect=lambda container, command, env=None: [
-                "docker",
-                "exec",
-                container,
-                json.dumps(env or {}),
-                *command,
-            ]
+            side_effect=lambda container, command, **kwargs: ["docker", "exec", container, *command]
         )
         docker.run_cmd = AsyncMock(side_effect=self._run)
         return docker
 
-    async def _run(self, cmd: list[str], timeout: int = 60, **_kw: Any) -> str:
+    async def _run(self, cmd: list[str], timeout: int = 60, stdin_data: bytes | None = None, **_kw: Any) -> str:
         if self.unreachable:
             raise RuntimeError(
                 "Docker command failed: Cannot connect to the Docker daemon. Is the docker daemon running?"
@@ -77,10 +71,10 @@ class _Daemon:
                 raise RuntimeError(f"Docker command failed: Error: No such object: {cmd[2]}")
             return "true\n" if self.proxies[cmd[2]].running else "false\n"
         if verb == "exec":
-            return self._exec(cmd[2], json.loads(cmd[3]), cmd[-1])
+            return self._exec(cmd[2], stdin_data, cmd[-1])
         raise AssertionError(f"unexpected docker command {cmd}")
 
-    def _exec(self, name: str, env: dict[str, str], script: str) -> str:
+    def _exec(self, name: str, stdin_data: bytes | None, script: str) -> str:
         proxy = self.proxies.get(name)
         if proxy is None:
             raise RuntimeError(f"Docker command failed: Error response from daemon: No such container: {name}")
@@ -90,7 +84,9 @@ class _Daemon:
             )
         method = re.search(r"method='(\w+)'", script).group(1)
         path = re.search(r"http://localhost:\d+(/[^']*)'", script).group(1)
-        body = json.loads(env.get("ADMIN_BODY") or "{}")
+        # The admin token and body arrive on stdin now (#353 review), as one JSON object.
+        cfg = json.loads((stdin_data or b"{}").decode())
+        body = json.loads(cfg.get("body") or "{}")
         if method == "POST" and path == "/admin/enroll":
             proxy.enrollments[body["sandbox_id"]] = body
             return json.dumps({"allowed_containers": body.get("allowed_containers")}) + "\nHTTP_CODE=200"

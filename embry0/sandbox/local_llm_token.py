@@ -10,7 +10,6 @@ manager writes it at create and again at every re-enrollment.
 from __future__ import annotations
 
 import os
-import shlex
 from pathlib import Path
 
 # Home-relative so writer (root docker exec) and reader (agent user) agree.
@@ -24,13 +23,16 @@ LOCAL_LLM_PROXY_FLAG = "EMBRY0_LLM_CUSTOM_VIA_PROXY"
 LOCAL_LLM_CONTEXT_ENV = "EMBRY0_LLM_CUSTOM_CONTEXT_TOKENS"
 
 
-def build_local_llm_token_write_cmd(sandbox_token: str) -> list[str]:
-    """Argv for a ``docker exec`` that writes the bearer to a 0600 home file."""
+def build_local_llm_token_write_cmd() -> list[str]:
+    """Argv for a ``docker exec -i`` that writes the bearer it reads on stdin to a 0600 home file.
+
+    The bearer is never on the command line: run it with ``stdin_data``.
+    """
     return [
         "bash",
         "-c",
         'mkdir -p "$HOME/.embry0" && '
-        f'printf %s {shlex.quote(sandbox_token)} > "$HOME/{LOCAL_LLM_PROXY_TOKEN_REL}" && '
+        f'cat > "$HOME/{LOCAL_LLM_PROXY_TOKEN_REL}" && '
         f'chmod 600 "$HOME/{LOCAL_LLM_PROXY_TOKEN_REL}"',
     ]
 

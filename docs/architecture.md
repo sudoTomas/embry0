@@ -1464,6 +1464,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_ABANDONED` | A person chose "abandon" at the max-retries pause. |
 | `ERR_AGENT_RUNNER_UNAVAILABLE` | A node ran without an agent runner — orchestrator wiring bug. |
 | `ERR_MODEL_DISABLED` | The job asked for a model the operator has disabled. |
+| `ERR_SANDBOX_GIT_REFUSED` | embry0 did not run one of its own git steps in the sandbox: the repository's own `.git/config` carries a key that can run a program or that embry0 does not know, `.git` is not a plain directory, or embry0's root-owned git configuration is missing. The message names the keys and how to clear them; see [sandbox-git.md](sandbox-git.md). |
 | `ERR_SANDBOX_IMAGE_BUILD` / `ERR_WORKSPACE_PROVIDER` / `ERR_PROXY_ENROLLMENT` / `ERR_MCP_SERVER_FAILED` | The named piece of sandbox infrastructure failed. |
 | `ERR_QA_FAILED` / `ERR_QA_INFRA` / `ERR_QA_INCONCLUSIVE` | Standalone QA job outcome: an app failed its criteria / could not be judged (boot, seed, sandbox) / ended with neither a pass nor a hard failure. Precedence when several apply: infra, failed, inconclusive. |
 | `ERR_QA_CONFIG_INVALID` | The stored qa.yaml or the job's overrides were rejected before fan-out. |

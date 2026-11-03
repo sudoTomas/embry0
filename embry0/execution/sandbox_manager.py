@@ -898,6 +898,7 @@ class SandboxManager:
         context_scope: bool | list[str] | None,
         git_push: bool = False,
         git_push_branches: Sequence[str] = (),
+        prefs_repo: Any | None = None,
     ) -> None:
         """Give a paused job's existing sandbox its proxy access back, under a fresh bearer (#476).
 
@@ -911,14 +912,19 @@ class SandboxManager:
         sandbox created before #521), and the context-proxy token when the job
         had log access (``context_scope`` is True for a watcher job, the
         granted container list otherwise). The token is minted here and
-        written in; nothing stores it.
+        written in; nothing stores it. embry0's own root-owned git config is
+        written again whole, with the identity resolved again (``prefs_repo``
+        and the bound credential, as at init): a sandbox created before that
+        file existed gets it here.
 
         Raises SandboxInitError(SANDBOX_GONE) when the container is gone or
         stopped (#475), and SandboxReenrollError when it exists but could not
         be enrolled.
         """
+        from embry0.execution import sandbox_git
         from embry0.sandbox.context_token import build_context_token_write_cmd
-        from embry0.sandbox.github.git_ops import build_sandbox_git_proxy_config_cmd
+        from embry0.sandbox.git_identity import resolve_git_identity
+        from embry0.sandbox.github.git_ops import proxy_route
         from embry0.sandbox.xai_token import build_xai_token_write_cmd
 
         try:
@@ -935,7 +941,9 @@ class SandboxManager:
             )
 
         try:
-            forge_token, git_host, git_username, _ = await self._resolve_forge_credential(repo, forge, job_id)
+            forge_token, git_host, git_username, resolved_cred = await self._resolve_forge_credential(
+                repo, forge, job_id
+            )
         except CredentialUnavailableError as exc:
             raise SandboxInitError(str(exc), error_code=ErrorCode.CREDENTIAL_UNAVAILABLE) from exc
 
@@ -974,14 +982,26 @@ class SandboxManager:
                 await self._write_local_llm_token(container, sandbox_token)
             if getattr(proxy, "xai_proxy_url", ""):
                 await self._docker.run_cmd(
-                    self._docker.build_exec_cmd(container, build_xai_token_write_cmd(sandbox_token)), timeout=10
+                    self._docker.build_exec_cmd(container, build_xai_token_write_cmd(), interactive=True),
+                    timeout=10,
+                    stdin_data=sandbox_token.encode(),
                 )
             git_proxy_url = getattr(proxy, "git_proxy_url", "")
-            if git_proxy_url and repo:
-                git_cmd = build_sandbox_git_proxy_config_cmd(
-                    git_proxy_url, sandbox_token, origin=self._git_upstream(forge), repo=repo
-                )
-                await self._docker.run_cmd(self._docker.build_exec_cmd(container, ["bash", "-c", git_cmd]), timeout=10)
+            route = (
+                proxy_route(git_proxy_url, origin=self._git_upstream(forge), repo=repo)
+                if git_proxy_url and repo
+                else None
+            )
+            identity = await resolve_git_identity(prefs_repo, repo or "", credential=resolved_cred)
+            await sandbox_git.configure(
+                self._docker,
+                container,
+                route=route,
+                sandbox_token=sandbox_token,
+                identity=identity,
+                agent_identity=False,
+                job_id=job_id,
+            )
         except (RuntimeError, TimeoutError) as exc:
             raise SandboxReenrollError(
                 f"sandbox {container} could not be re-enrolled with the proxies: {exc}",
@@ -996,7 +1016,9 @@ class SandboxManager:
                 else:
                     await proxy.enroll_context(container, sandbox_token, containers=list(context_scope))
                 await self._docker.run_cmd(
-                    self._docker.build_exec_cmd(container, build_context_token_write_cmd(sandbox_token)), timeout=10
+                    self._docker.build_exec_cmd(container, build_context_token_write_cmd(), interactive=True),
+                    timeout=10,
+                    stdin_data=sandbox_token.encode(),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("sandbox_reenroll_context_failed", job_id=job_id, container=container, error=str(exc))
@@ -1020,7 +1042,9 @@ class SandboxManager:
         from embry0.sandbox.local_llm_token import build_local_llm_token_write_cmd
 
         await self._docker.run_cmd(
-            self._docker.build_exec_cmd(container, build_local_llm_token_write_cmd(sandbox_token)), timeout=10
+            self._docker.build_exec_cmd(container, build_local_llm_token_write_cmd(), interactive=True),
+            timeout=10,
+            stdin_data=sandbox_token.encode(),
         )
 
     async def _reached_local_llm(self, container: str) -> bool:

@@ -17,6 +17,7 @@ from embry0.workflows.issue_to_pr.audit_delivery import (
     report_findings,
     report_patch,
 )
+from tests.fixtures.sandbox_git_local import readable
 
 PATCH = (
     "--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -12,3 +12,3 @@\n ```bash\n-old line\n+new line\n ```\n"
@@ -121,10 +122,13 @@ async def test_the_patch_is_committed_on_the_jobs_own_branch_and_pushed() -> Non
     branch = job_push_branch(issue_id=None, task=state["task"], job_id=state["job_id"], context=state["context"])
     assert out["branch_name"] == branch, "the one branch the sandbox's git-proxy enrolment lets it push"
     assert docker.copied == [("C1", PATCH.encode(), PATCH_PATH)]
-    script = docker.commands[0][-1]
+    script = readable(docker.commands[0])
+    assert "embry0_git_repo /workspace" in docker.commands[0][-1], (
+        "the workspace is checked before embry0 runs git in it"
+    )
     assert f"git checkout -q -B {branch}" in script
     assert f"git apply --index {PATCH_PATH}" in script and "--unidiff-zero" in script
-    assert f"git push -q origin HEAD:refs/heads/{branch}" in script
+    assert f"git push --no-recurse-submodules -q origin HEAD:refs/heads/{branch}" in script
     assert out["pr_title"] == "docs: correct 2 outdated claims in agent instruction files"
     assert "found 2 outdated claims" in out["developer_summary"]
     assert "| misleads | CLAUDE.md:12 |" in out["developer_summary"]

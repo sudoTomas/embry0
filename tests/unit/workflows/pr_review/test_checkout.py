@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from embry0.execution import sandbox_git
 from embry0.workflows.pr_review.checkout import (
     FETCH_FAILED_EXIT,
     HEAD_GONE_EXIT,
@@ -19,6 +20,7 @@ from embry0.workflows.pr_review.checkout import (
     parse_changed_paths,
     parse_checkout_output,
 )
+from tests.fixtures.sandbox_git_local import local_config, localize
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None or shutil.which("bash") is None, reason="needs git and bash")
 
@@ -64,9 +66,18 @@ def repo(tmp_path: Path) -> SimpleNamespace:
     )
 
 
+def _in_sandbox(script: str, ws: Path) -> subprocess.CompletedProcess[str]:
+    """``script`` as init_pr_review runs it: behind embry0's git prelude, which checks the workspace first."""
+    # The test's origin is a local bare repository, which embry0's git reaches over file:// here only.
+    argv = sandbox_git.script(f"export GIT_ALLOW_PROTOCOL=file\n{script}", repo=str(ws))
+    return subprocess.run(
+        localize(argv, local_config(ws.parent)), capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+
+
 def _run(repo: SimpleNamespace, **kwargs: Any) -> subprocess.CompletedProcess[str]:
     script = build_checkout_script(workspace=str(repo.ws), out_dir=str(repo.out), base_ref="main", **kwargs)
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    return _in_sandbox(script, repo.ws)
 
 
 @needs_git
@@ -160,7 +171,7 @@ def test_a_shallow_clone_is_deepened_until_base_and_head_meet(repo: SimpleNamesp
         head_sha=repo.head,
         depth=1,
     )
-    done = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    done = _in_sandbox(script, ws)
 
     assert done.returncode == 0, done.stderr
     result = parse_checkout_output(done.stdout)
@@ -208,7 +219,7 @@ def test_a_review_that_runs_nothing_removes_the_heads_agent_configuration(
         head_sha=head,
         runs_nothing=runs_nothing,
     )
-    done = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    done = _in_sandbox(script, repo.ws)
 
     assert done.returncode == 0, done.stderr
     present = [name for name in _AGENT_FILES if (repo.ws / name).exists()]

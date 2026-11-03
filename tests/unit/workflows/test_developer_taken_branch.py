@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from embry0.orchestration.branch_names import job_branch_name
+from tests.fixtures.sandbox_git_local import readable
 
 ISSUE = "iss-81a36c858147"
 TASK = "[ENG-2435] [watcher] Fix vendor display names"
@@ -44,7 +45,7 @@ class _Docker:
             raise RuntimeError("Cannot connect to the Docker daemon")
         if "ls-remote" in cmd:
             return self.heads
-        if cmd[3:5] == ["sh", "-c"]:
+        if "git log -1" in readable(cmd):
             return self.detail
         return ""
 

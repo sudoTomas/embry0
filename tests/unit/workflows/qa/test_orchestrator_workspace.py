@@ -29,7 +29,7 @@ class _StubDocker:
     ) -> list[str]:
         return ["docker", "exec", container, *command]
 
-    async def run_cmd(self, cmd: list[str], timeout: int = 60) -> str:
+    async def run_cmd(self, cmd: list[str], timeout: int = 60, **_kw) -> str:
         self.calls.append(list(cmd))
         # The command shape after `docker exec <container>` starts at index 3.
         suffix = " ".join(cmd[3:])
@@ -44,7 +44,7 @@ async def test_compute_changed_files_runs_git_diff_against_origin_base():
     docker = _StubDocker(
         {
             "git fetch": "",
-            "git diff --name-only": "apps/hub/app/page.tsx\npackages/auth/src/index.ts\n",
+            "diff --no-ext-diff --no-textconv --name-only": "apps/hub/app/page.tsx\npackages/auth/src/index.ts\n",
         }
     )
 
@@ -57,12 +57,12 @@ async def test_compute_changed_files_runs_git_diff_against_origin_base():
     assert files == ["apps/hub/app/page.tsx", "packages/auth/src/index.ts"]
     # Confirm git fetch was issued for the right base ref
     assert any("git fetch" in " ".join(c) and "main" in " ".join(c) for c in docker.calls)
-    assert any("git diff --name-only" in " ".join(c) for c in docker.calls)
+    assert any("diff --no-ext-diff --no-textconv --name-only" in " ".join(c) for c in docker.calls)
 
 
 @pytest.mark.asyncio
 async def test_compute_changed_files_handles_blank_diff():
-    docker = _StubDocker({"git diff --name-only": "\n"})
+    docker = _StubDocker({"diff --no-ext-diff --no-textconv --name-only": "\n"})
     files = await compute_changed_files_via_diff(
         docker=docker,
         container_id="bootstrap-1",
@@ -75,7 +75,7 @@ async def test_compute_changed_files_handles_blank_diff():
 async def test_compute_changed_files_strips_whitespace_and_filters_empty():
     docker = _StubDocker(
         {
-            "git diff --name-only": "  apps/hub/x.tsx  \n\n   \npackages/auth/y.ts\n",
+            "diff --no-ext-diff --no-textconv --name-only": "  apps/hub/x.tsx  \n\n   \npackages/auth/y.ts\n",
         }
     )
     files = await compute_changed_files_via_diff(
@@ -94,7 +94,7 @@ async def test_compute_changed_files_returns_empty_on_fetch_failure(caplog):
     docker = AsyncMock()
     docker.build_exec_cmd = lambda c, cmd, **kw: ["docker", "exec", c, *cmd]
 
-    async def _run(cmd, timeout=60):
+    async def _run(cmd, timeout=60, **_kw):
         if "git fetch" in " ".join(cmd):
             raise RuntimeError("Could not fetch origin/main")
         return ""
@@ -161,7 +161,7 @@ async def test_stage_workspace_handles_missing_lockfile_gracefully(tmp_path: Pat
     """Lockfile read failure → staging continues without lockfile (warning logged)."""
 
     class _PartialDocker(_StubDocker):
-        async def run_cmd(self, cmd, timeout=60):
+        async def run_cmd(self, cmd, timeout=60, **_kw):
             self.calls.append(list(cmd))
             suffix = " ".join(cmd[3:])
             if "package-lock.json" in suffix:

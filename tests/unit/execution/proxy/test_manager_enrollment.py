@@ -23,7 +23,7 @@ def _make_docker_mock(http_code: int = 200):
     """
     docker = MagicMock()
     docker.build_exec_cmd = MagicMock(
-        side_effect=lambda container, command, env=None: ["docker", "exec", container, *command]
+        side_effect=lambda container, command, **kwargs: ["docker", "exec", container, *command]
     )
     docker.run_cmd = AsyncMock(return_value=f'{{"allowed_repos": [], "git_push": false}}\nHTTP_CODE={http_code}')
     return docker
@@ -58,18 +58,27 @@ async def test_enroll_runs_docker_exec_against_each_proxy(manager):
 
 
 @pytest.mark.asyncio
-async def test_enroll_passes_admin_token_via_env(manager):
-    """The token must travel via -e ADMIN_TOK on the exec, not in argv."""
-    await manager.enroll_sandbox("s1")
+async def test_enroll_keeps_the_admin_token_and_the_bearer_off_argv(manager):
+    """The admin token and the body (bearer + forge token) go in on stdin, never on the exec argv."""
+    token = await manager.enroll_sandbox("s1")
 
-    # Inspect the env passed to build_exec_cmd for each call.
-    env_calls = [call.kwargs.get("env") or {} for call in manager._docker.build_exec_cmd.call_args_list]
-    assert env_calls, "build_exec_cmd was not called"
-    for env in env_calls:
-        assert env.get("ADMIN_TOK") == "admin-secret"
-        # Body is JSON for POST enroll.
-        assert env.get("ADMIN_BODY"), "ADMIN_BODY missing"
-        assert "sandbox_id" in env["ADMIN_BODY"]
+    # build_exec_cmd is called with no env, and interactive stdin.
+    for call in manager._docker.build_exec_cmd.call_args_list:
+        assert call.kwargs.get("env") in (None, {}), "a secret must not ride -e on the exec"
+        assert call.kwargs.get("interactive") is True, "the admin request reads its secrets from stdin"
+
+    # Every rendered argv, and run_cmd's own argv, is free of both secrets.
+    for call in manager._docker.run_cmd.await_args_list:
+        argv = call.args[0]
+        joined = " ".join(map(str, argv))
+        assert "admin-secret" not in joined, "the admin token reached a docker exec command line"
+        assert token not in joined, "the sandbox bearer reached a docker exec command line"
+
+    # The admin token and the bearer are in the stdin blob instead.
+    stdins = [call.kwargs.get("stdin_data") for call in manager._docker.run_cmd.await_args_list]
+    assert stdins and all(s is not None for s in stdins), "no stdin was sent"
+    first = stdins[0].decode()
+    assert "admin-secret" in first and "sandbox_id" in first
 
 
 @pytest.mark.asyncio
@@ -274,19 +283,16 @@ async def test_admin_request_script_returns_the_json_body(aiohttp_server):
     app.router.add_post("/admin/enroll", enroll)
     server = await aiohttp_server(app)
 
-    seen: dict = {}
-
-    def build_exec_cmd(container, argv, env=None):
-        seen["env"] = env
+    def build_exec_cmd(container, argv, **kwargs):
+        assert kwargs.get("interactive") is True, "the admin request must read its secrets from stdin"
         return [sys.executable, *argv[1:]]
 
-    async def run_cmd(cmd, timeout=None):
-        import os
-
+    async def run_cmd(cmd, timeout=None, stdin_data=None):
+        assert stdin_data is not None, "the admin token and body must arrive on stdin"
         proc = await asyncio.create_subprocess_exec(
-            *cmd, env={**os.environ, **seen["env"]}, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        out, err = await proc.communicate()
+        out, err = await proc.communicate(stdin_data)
         assert proc.returncode == 0, err.decode()
         return out.decode()
 

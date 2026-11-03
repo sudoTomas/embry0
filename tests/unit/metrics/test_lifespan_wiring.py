@@ -19,6 +19,7 @@ import pytest
 
 from embry0.api.app import create_app, lifespan
 from embry0.config import Embry0Config
+from embry0.execution import sandbox_git
 from embry0.metrics.snapshot import LoopSnapshot
 from embry0.orchestration import channels
 from embry0.storage.database import DatabasePool
@@ -105,10 +106,12 @@ async def booted(db_with_migrations: DatabasePool, stub_container_runtime: dict[
         context_proxy_enabled=False,
     )
     channels.set_fold_observer(None)
+    sandbox_git.set_refusal_observer(None)
     app = create_app(config)
     async with lifespan(app):
         yield app
     channels.set_fold_observer(None)
+    sandbox_git.set_refusal_observer(None)
 
 
 async def test_the_lifespan_hands_the_facade_to_every_producer(booted: Any) -> None:
@@ -124,6 +127,7 @@ async def test_the_lifespan_hands_the_facade_to_every_producer(booted: Any) -> N
     assert booted.state.linear_reconciler._metrics is metrics
     assert booted.state.agent_runner._on_stale_image == metrics.sandbox_runner_stale_image
     assert channels._fold_observer is not None
+    assert sandbox_git._refusal_observer == metrics.sandbox_git_refused, "refused sandbox git steps are counted"
     reaper = booted.state.container_reaper
     assert reaper.on_job_finished == booted.state.issue_executor._announce_finished, (
         "the paused-job reaper announces job_finished through the executor (plan B Task 3)"

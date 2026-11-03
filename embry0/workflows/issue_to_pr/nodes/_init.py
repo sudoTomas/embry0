@@ -296,8 +296,9 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
             from embry0.sandbox.xai_token import build_xai_token_write_cmd
 
             await docker.run_cmd(
-                docker.build_exec_cmd(container_id, build_xai_token_write_cmd(sandbox_token)),
+                docker.build_exec_cmd(container_id, build_xai_token_write_cmd(), interactive=True),
                 timeout=10,
+                stdin_data=sandbox_token.encode(),
             )
 
         # RAV-1140: enroll with the context-proxy (per-job opt-in — deliberately
@@ -322,8 +323,9 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                     # image built before scoping grants everything).
                     granted_scope = await proxy_mgr.enroll_context(container_id, sandbox_token, containers=scope)
                 await docker.run_cmd(
-                    docker.build_exec_cmd(container_id, build_context_token_write_cmd(sandbox_token)),
+                    docker.build_exec_cmd(container_id, build_context_token_write_cmd(), interactive=True),
                     timeout=10,
+                    stdin_data=sandbox_token.encode(),
                 )
                 log_tool_ready = True
                 logger.info("context_proxy_provisioned", job_id=job_id, containers=granted_scope)

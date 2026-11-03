@@ -118,6 +118,8 @@ async def test_a_resume_reenrolls_the_sandbox_before_the_graph_runs(resume_value
         # #559: for the branch its developer chose.
         "git_push": True,
         "git_push_branches": ["embry0/iss-1-fix-widgets"],
+        # embry0's own git config is rewritten with the identity as at init.
+        "prefs_repo": None,
     }, kwargs
 
 

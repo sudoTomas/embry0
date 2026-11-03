@@ -100,7 +100,7 @@ def test_init_node_drops_reserved_user_env_keys(monkeypatch):
     sandbox_mgr.create = AsyncMock(return_value=("container-x", "a" * 43))
     sandbox_mgr.destroy = AsyncMock()
     docker = MagicMock()
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
     docker.run_cmd = AsyncMock(return_value="")
     proxy_mgr = MagicMock()
     proxy_mgr.git_proxy_url = "http://git-proxy:9101"
@@ -157,7 +157,7 @@ def test_init_node_drops_reserved_user_env_keys_case_insensitively(monkeypatch):
     sandbox_mgr.create = AsyncMock(return_value=("container-x", "a" * 43))
     sandbox_mgr.destroy = AsyncMock()
     docker = MagicMock()
-    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
     docker.run_cmd = AsyncMock(return_value="")
     proxy_mgr = MagicMock()
     proxy_mgr.git_proxy_url = "http://git-proxy:9101"
