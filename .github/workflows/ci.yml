@@ -219,6 +219,32 @@ jobs:
             echo "embry0-trust-ca smoke OK"
           ' < /tmp/embry0-ci-ca.pem
 
+      - name: Trivy — QA sandbox
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: embry0-sandbox-qa:latest
+          format: table
+          # Fixable CRITICALs anywhere in the image, OS packages included, as
+          # for every other image (#317: the QA image was not scanned at all).
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL
+
+      - name: Trivy — QA sandbox libraries
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: embry0-sandbox-qa:latest
+          format: table
+          # The orchestrator's library gate, on the QA image (#317): a fixable
+          # HIGH or CRITICAL in its Node packages, Python packages or Go
+          # binaries (docker, compose, vibium) fails the build, unless the
+          # sandbox allowlist accepts it with a reason and an expiry date.
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: library
+          severity: HIGH,CRITICAL
+          trivyignores: infra/trivy/sandbox.trivyignore.yaml
+
   alert-rules:
     name: Alert rule tests
     runs-on: ubuntu-latest
@@ -451,6 +477,23 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           severity: CRITICAL
+
+      - name: Trivy — sandbox libraries
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: embry0-sandbox:ci
+          format: table
+          # The orchestrator's library gate, on the sandbox image (#317). The
+          # image here is Dockerfile.sandbox's last stage, dev-jvm-python, so
+          # it carries base's and dev-python's libraries too: npm's, the
+          # sandbox group of uv.lock and Poetry's. A finding that cannot be
+          # fixed yet is accepted in the sandbox allowlist, with a reason and
+          # an expiry date. OS packages stay on the CRITICAL gate above.
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: library
+          severity: HIGH,CRITICAL
+          trivyignores: infra/trivy/sandbox.trivyignore.yaml
 
       - name: Trivy — proxy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

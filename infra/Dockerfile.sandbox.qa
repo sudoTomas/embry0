@@ -38,12 +38,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libasound2 libatspi2.0-0 \
         # JVM apps (macro-lab style):
         temurin-21-jdk \
-    # Docker CLI only — no daemon. Talks to DinD over TCP+TLS.
-    && curl -fsSL https://download.docker.com/linux/static/stable/"$(uname -m)"/docker-29.6.2.tgz \
+    # Docker CLI only — no daemon. Talks to DinD over TCP+TLS. The CLI and
+    # compose are Go binaries: each release carries the Go standard library it
+    # was built with, so a bump is also how a Go fix arrives. docker 29.9.2 and
+    # compose v5.6.1 are built with Go 1.26.10 (#317); what compose still
+    # carries is accepted in infra/trivy/sandbox.trivyignore.yaml.
+    && curl -fsSL https://download.docker.com/linux/static/stable/"$(uname -m)"/docker-29.9.2.tgz \
        | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
     && chmod +x /usr/local/bin/docker \
     && mkdir -p /usr/local/lib/docker/cli-plugins \
-    && curl -fsSL https://github.com/docker/compose/releases/download/v5.3.1/docker-compose-linux-"$(uname -m)" \
+    && curl -fsSL https://github.com/docker/compose/releases/download/v5.6.1/docker-compose-linux-"$(uname -m)" \
        -o /usr/local/lib/docker/cli-plugins/docker-compose \
     && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose \
     && ln -s /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose \
@@ -64,9 +68,8 @@ ENV VIBIUM_CACHE_DIR=/opt/vibium
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    # npm self-upgrade — nodesource bundles an npm whose vendored tar carries
-    # CRITICAL CVE-2026-59873 (fixed in tar >= 7.5.19).
-    && npm install -g npm@latest \
+    # npm, pinned as in Dockerfile.sandbox (#317): see the reasons there.
+    && npm install -g npm@12.2.1 \
     # vibium is pinned EXACTLY (not @latest): it's CalVer with nightlies, its
     # behavior shifts between releases (storage-state shape, pipe transport),
     # and the QA browser-backend contract is validated against this version.
