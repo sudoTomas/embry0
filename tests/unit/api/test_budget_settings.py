@@ -531,12 +531,16 @@ async def test_an_organizations_context_audit_caps_move_into_its_layer_once(
 
     result = await _import_orgs(store, rows)
 
-    assert result.imported == {"acme": {"budget": {"context_audit_job_usd": 7.5, "context_audit_max_jobs_per_tick": 1}}}
+    assert result.imported == {
+        "acme": {"budget": {"context_audit_job_usd": 7.5, "context_audit_max_jobs_per_tick": 1}},
+        # #170 moved the interval too: one copy takes every section's moved settings.
+        "beta": {"context_audit": {"days": 7}},
+    }
     snapshot = await store.snapshot()
     acme, gamma = snapshot.get(_budget(), owner="acme"), snapshot.get(_budget(), owner="gamma")
     assert (acme.context_audit_job_usd, acme.context_audit_max_jobs_per_tick) == (7.5, 1)
     assert (gamma.context_audit_job_usd, gamma.context_audit_max_jobs_per_tick) == (2.0, 3), "gamma reads as before"
-    assert [layer["scope"] for layer in await store.layers()] == ["organization:acme"], (
+    assert [layer["scope"] for layer in await store.layers()] == ["organization:acme", "organization:beta"], (
         "a layer is written only where something moved"
     )
     again = await _import_orgs(store, rows)

@@ -196,6 +196,22 @@ budget:
 # Which files the context audit reads in a repository, how often its schedule
 # looks, and how many repositories it reads at once.
 context_audit:
+  # Days between a repository's scheduled audits: the schedule audits it when
+  # its instruction files change, and again this many days after its newest
+  # audit once its default branch moved. 1 to 365; false or null is off, the
+  # default, so nothing is audited until the deployment, an organization or a
+  # repository sets it. Written with PATCH, null takes the key out of a layer,
+  # which then reads the layer below, and false turns the schedule off in it.
+  # Was the organization's context_audit_days.
+  # days: null
+
+  # An audit that finds outdated claims commits the fixes it checked on a
+  # branch of its own and opens a pull request for a person to review and
+  # merge (ADR 0022), one open at a time per repository; false leaves the
+  # findings in the job's report. Was the organization's
+  # context_audit_open_prs.
+  # open_prs: false
+
   # The instruction files the context audit reads in a repository, as globs
   # over its tracked files: `**/` matches any number of directories, none
   # included, and `*` any characters within one path segment. A glob holds
@@ -225,6 +241,18 @@ context_audit:
   # schedule, by GET /orgs/{owner}/context-audit and by a run by hand. The
   # deployment's alone.
   # read_concurrency: 8
+
+  # The share of a credential's forge rate limit (X-RateLimit-Limit), in
+  # percent, below which the schedule defers for the organizations reading
+  # with it: no paid read and no audit started until the window ends, so the
+  # last calls stay with the jobs that use the same credential. The window is
+  # the reset the forge names, at most an hour; with none it can use, 15
+  # minutes, then one call asks again. A head read with an ETag still goes
+  # out, since a branch that did not move answers 304 for free. A run by hand
+  # and GET /orgs/{owner}/context-audit read no further either, and a run by
+  # hand starts nothing. A forge that sends no limit is never deferred, and 0
+  # never defers. The deployment's alone.
+  # rate_reserve_percent: 20
 
 # Where a ticket states a code job's finish line, and how often a coding run
 # goes back to unmet items.

@@ -826,7 +826,7 @@ async def organization_context_audit(owner: str, request: Request, refresh: bool
     schedule's or an earlier read's, with the jobs as they are now; a
     repository never read, or every one with ``refresh``, is read with the
     organization's credential. Starts nothing, whatever
-    ``context_audit_days`` says.
+    ``context_audit.days`` says.
     """
     org = await _repo(request).get(owner)
     if org is None:

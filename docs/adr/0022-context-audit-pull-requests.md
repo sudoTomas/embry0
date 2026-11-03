@@ -11,3 +11,5 @@ The patch is read from the report, not from a file the prompt names: a builtin a
 One audit pull request is open per repository at a time: while the open-PR list the executor reads before a job names a branch an earlier audit pushed, a later audit only reports. Nothing here fails a job: a report with no patch, an audit that found nothing, or a patch that no longer applies leaves the findings in the report and opens nothing. A person always merges.
 
 Evidence: `embry0/workflows/issue_to_pr/audit_delivery.py`; `finalize_output_node` in `embry0/workflows/issue_to_pr/plan_route.py`; `_open_fallback_pr` in `embry0/services/_executor_outcomes.py`; `context_audit_open_prs` in `embry0/services/organizations.py`.
+
+Amended (2026-11-03, #170): the switch is the settings document's `context_audit.open_prs`, which an organization's layer or a repository's layer may set, read for the repository when its job starts. Each organization's `context_audit_open_prs` was copied into its layer once; `PATCH /orgs` takes the old name until 0.2.0.

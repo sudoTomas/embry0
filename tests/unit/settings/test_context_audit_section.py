@@ -80,10 +80,13 @@ def _refusal(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
 def test_nothing_written_reads_the_built_in_files_every_15_minutes_8_repositories_at_a_time() -> None:
     defaults = _section().defaults()
     assert defaults.model_dump(mode="json") == {
+        "days": None,
+        "open_prs": False,
         "files": None,
         "exclude_dirs": None,
         "check_minutes": 15,
         "read_concurrency": 8,
+        "rate_reserve_percent": 20,
     }, "a deployment that writes nothing must read what the constants held: 900 s, 8 at once, the built-in lists"
     rules = _rules(defaults)
     assert rules == _built_in(), "null must read the built-in rules"
@@ -284,8 +287,10 @@ def test_git_lists_exactly_the_files_the_schedule_selects_for_any_rules_the_sect
 
 def test_the_files_are_a_repository_s_and_the_cadence_the_deployment_s() -> None:
     section = _section()
-    assert section.settable("organization") == {"files", "exclude_dirs"}
-    assert section.settable("repository") == {"files", "exclude_dirs"}, "repositories differ: each may name its own"
+    assert section.settable("organization") == {"days", "open_prs", "files", "exclude_dirs"}
+    assert section.settable("repository") == {"days", "open_prs", "files", "exclude_dirs"}, (
+        "repositories differ: each may name its own"
+    )
     assert {"check_minutes", "read_concurrency"} <= section.settable("deployment")
 
 
@@ -367,3 +372,73 @@ async def test_the_boot_import_leaves_the_section_and_its_ledger_alone(db_with_m
         "the ledger records no context_audit key, so a later release that adds a variable imports it once"
     )
     assert (await store.snapshot()).get(section) == section.defaults()
+
+
+# ---- the schedule, the pull requests and the reserve (#170) ----------------------------------------
+
+
+def _has(*keys: str) -> Section[Any]:
+    section = _section()
+    missing = [key for key in keys if key not in section.model.model_fields]
+    if missing:
+        pytest.fail(f"the context_audit section has no {missing}: they are still the organization row's, or nothing")
+    return section
+
+
+@pytest.mark.parametrize("days", [1, 7, 365, False, None])
+def test_the_schedule_is_a_whole_number_of_days_or_off(days: Any) -> None:
+    assert _has("days").validate({"days": days}).days == days
+
+
+@pytest.mark.parametrize("days", [0, 366, -1, True, 1.5, "7"])
+def test_a_schedule_out_of_range_is_refused_naming_the_key_alone(days: Any) -> None:
+    errors = _refusal_of(_has("days"), {"days": days})
+    assert {tuple(e["loc"]) for e in errors} == {("days",)}, (
+        f"{days!r} must be refused as days, not as a union: {errors}"
+    )
+    if days in (0, 366, True):
+        assert "from 1 to 365" in str(errors[0]["msg"]), errors
+
+
+def test_pull_requests_are_on_or_off() -> None:
+    section = _has("open_prs")
+    assert section.validate({"open_prs": True}).open_prs is True
+    assert section.defaults().open_prs is False, "off by default, as the organization setting was"
+    for value in ("true", 1, None):
+        assert [tuple(e["loc"])[0] for e in _refusal_of(section, {"open_prs": value})] == ["open_prs"]
+
+
+def test_the_rate_reserve_is_a_bounded_share_and_the_deployment_s_alone() -> None:
+    section = _has("rate_reserve_percent")
+    assert section.defaults().rate_reserve_percent == 20, "20% of the limit by default: 1,000 of GitHub's 5,000"
+    assert section.validate({"rate_reserve_percent": 0}).rate_reserve_percent == 0, "0 never defers"
+    assert section.validate({"rate_reserve_percent": 90}).rate_reserve_percent == 90
+    for value in (-1, 91, 1.5, "20"):
+        assert [tuple(e["loc"])[0] for e in _refusal_of(section, {"rate_reserve_percent": value})] == [
+            "rate_reserve_percent"
+        ], value
+    assert "rate_reserve_percent" not in section.settable("organization") | section.settable("repository")
+    assert [tuple(e["loc"])[0] for e in _refusal_of(section, {"rate_reserve": 2000})] == ["rate_reserve"], (
+        "the count this key replaced is not taken"
+    )
+
+
+def test_a_repository_s_false_turns_off_what_its_organization_turned_on() -> None:
+    section = _has("days", "open_prs")
+    snapshot = _snapshot(
+        {
+            "deployment": {"days": 30},
+            "organization:acme": {"days": 7, "open_prs": True},
+            f"repository:{WIDGETS}": {"days": False},
+        }
+    )
+    widgets, gizmos = snapshot.get(section, repo=WIDGETS), snapshot.get(section, repo=GIZMOS)
+    assert (widgets.days, widgets.open_prs) == (False, True), "its own schedule, its organization's pull requests"
+    assert (gizmos.days, gizmos.open_prs) == (7, True)
+    assert snapshot.get(section, repo=GADGETS).days == 30, "another organization reads the deployment's"
+
+
+def _refusal_of(section: Section[Any], raw: Mapping[str, Any]) -> list[dict[str, Any]]:
+    with pytest.raises(SectionRefused) as refused:
+        section.validate(raw)
+    return refused.value.errors

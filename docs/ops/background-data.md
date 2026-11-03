@@ -88,5 +88,5 @@ When a repository leaves the leads' scope, its leads stay as they are: they are 
 
 ## Not part of `background`
 
-- **The context audit** keeps its own opt-in per organization (`context_audit_days`, [context-audit.md](../context-audit.md)); its jobs follow the jobs' retention.
+- **The context audit** keeps its own opt-in, `context_audit.days` per organization or repository ([context-audit.md](../context-audit.md)); its jobs follow the jobs' retention.
 - **The log watcher** reads the stacks an operator configures (`watcher_stacks`); what it keeps is described in [self-watching.md](../self-watching.md).

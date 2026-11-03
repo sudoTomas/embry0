@@ -20,6 +20,17 @@ environment import:
 A key is marked once the organization's value was copied, refused, or found
 already set in the layer (written there since, which wins), so a value taken
 out of the layer later is never copied back. Nothing to copy marks nothing.
+
+A repository registered under the organization that ``REPO_RENAMES`` maps to
+another owner reads that owner's layer, not this one's, while the old
+reader read it with the organization it was registered under. So each such
+repository first gets the organization's values of the keys a repository's
+layer may set in its own layer, by the same rules and marked in that
+layer's ledger, before the organization's own copy: it reads after the copy
+what it read before. Only the registry tells which slug a repository is
+registered under (one registered under its new slug was read with its new
+owner all along), so it is read when the organization has such a rename,
+and its failure fails the organization's copy, to be tried again.
 One organization's failure is logged at error level and stops no other: its
 transaction rolls back, nothing of it is marked, and the next attempt
 (:class:`embry0.services.budget_policy.BudgetPolicy` tries again while it
@@ -40,8 +51,9 @@ import structlog
 from embry0.audit.helpers import emit_audit
 from embry0.settings.bootstrap import BOOTSTRAP_ACTOR
 from embry0.settings.document import DocumentInvalid, check, mapping, with_section
-from embry0.settings.scope import Scope, ScopeError
+from embry0.settings.scope import Scope, ScopeError, organization_of
 from embry0.settings.store import SettingsStore
+from embry0.storage import repo_renames
 
 logger = structlog.get_logger(__name__)
 
@@ -71,6 +83,38 @@ class OrgImportResult:
     refused: tuple[tuple[str, str, str], ...] = ()
     #: The organizations whose copy failed: nothing of theirs is marked, so they are tried again.
     failed: tuple[str, ...] = ()
+    #: Repository (its current slug, the layer's) to section to the keys and values copied into its own layer,
+    #: because ``REPO_RENAMES`` moves it to another owner's layer.
+    renamed: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+
+
+def _moving_owners() -> set[str]:
+    """The owners ``REPO_RENAMES`` moves a repository away from, to another owner."""
+    return {
+        old.split("/", 1)[0].lower()
+        for old, new in repo_renames.REPO_RENAMES.items()
+        if old.split("/", 1)[0].lower() != new.split("/", 1)[0].lower()
+    }
+
+
+def _renamed_away(registered: Iterable[str], owner: str) -> list[Scope]:
+    """The repositories registered under ``owner`` whose current slug ``REPO_RENAMES`` puts under another owner."""
+    out: list[Scope] = []
+    for slug in registered:
+        if slug.split("/", 1)[0].lower() != owner or organization_of(slug) == owner:
+            continue
+        try:
+            out.append(Scope.repository(slug))
+        except ScopeError:
+            continue
+    return out
+
+
+async def _registered(store: SettingsStore) -> list[str]:
+    """Every registered repository, active or not, by the slug it is registered under."""
+    from embry0.storage.repositories.repos import ReposRepository
+
+    return [str(row["repo"]) for row in await ReposRepository(store.db).list_all(include_inactive=True)]
 
 
 async def import_org_settings_once(
@@ -84,8 +128,11 @@ async def import_org_settings_once(
     """Copy each organization's moved settings into its layer, once per key. See the module docstring."""
     day = (today or datetime.now(UTC).date()).isoformat()
     imported: dict[str, dict[str, dict[str, Any]]] = {}
+    renamed: dict[str, dict[str, dict[str, Any]]] = {}
     refused: list[tuple[str, str, str]] = []
     failed: list[str] = []
+    moving = _moving_owners()
+    registered: list[str] | None = None
     for owner, settings in organizations:
         # What the old reader used: anything it read as the deployment's is nothing to copy.
         present = [m for m in moved if m.read(settings) is not None and store.catalog.get(m.section) is not None]
@@ -97,6 +144,34 @@ async def import_org_settings_once(
             logger.warning("settings_org_import_skipped", owner=owner, reason="not a name a layer can have")
             continue
         try:
+            # The organization's repositories renamed to another owner first: their copy failing leaves the
+            # organization's own unmarked, so the whole of it is tried again.
+            for_repos = [m for m in present if m.key in getattr(store.catalog.get(m.section), "repo_keys", frozenset())]
+            if for_repos and scope.name in moving:
+                if registered is None:
+                    registered = await _registered(store)
+                for repo in _renamed_away(registered, scope.name):
+                    repo_copied, repo_refused = await _import_one(store, repo, settings, for_repos, day)
+                    refused.extend((repo.name, path, reason) for path, reason in repo_refused)
+                    if repo_copied:
+                        renamed[repo.name] = repo_copied
+                        logger.info(
+                            "settings_org_imported_into_renamed_repository",
+                            owner=scope.name,
+                            repo=repo.name,
+                            keys=sorted(f"{name}.{key}" for name, values in repo_copied.items() for key in values),
+                        )
+                        await emit_audit(
+                            store.db,
+                            "settings.bootstrapped",
+                            actor=BOOTSTRAP_ACTOR,
+                            details={
+                                "scope": str(repo),
+                                "from": str(scope),
+                                "sections": {name: sorted(values) for name, values in repo_copied.items()},
+                            },
+                            audit_log_path=audit_log_path,
+                        )
             copied, not_copied = await _import_one(store, scope, settings, present, day)
         except Exception:
             # One organization's failure (its transaction rolled back, nothing of it marked) is its own: the
@@ -128,13 +203,14 @@ async def import_org_settings_once(
                 details={"scope": str(scope), "sections": {name: sorted(values) for name, values in copied.items()}},
                 audit_log_path=audit_log_path,
             )
-    return OrgImportResult(imported=imported, refused=tuple(refused), failed=tuple(failed))
+    return OrgImportResult(imported=imported, refused=tuple(refused), failed=tuple(failed), renamed=renamed)
 
 
 async def _import_one(
     store: SettingsStore, scope: Scope, settings: Mapping[str, Any], present: Sequence[Moved], day: str
 ) -> tuple[dict[str, dict[str, Any]], list[tuple[str, str]]]:
-    """One organization's copy, in its own transaction: what was copied, and what was refused and why."""
+    """One layer's copy, an organization's or a renamed repository's, in its own transaction: what was copied, and
+    what was refused and why."""
     copied: dict[str, dict[str, Any]] = {}
     not_copied: list[tuple[str, str]] = []
     async with store.edit(

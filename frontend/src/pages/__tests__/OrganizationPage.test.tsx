@@ -19,6 +19,25 @@ vi.mock("@/api/orgs", async () => {
   };
 });
 vi.mock("@/api/credentials", () => ({ fetchCredentials: () => Promise.resolve([]) }));
+// The context audit's schedule is the settings document's, as the organization reads it (#170).
+const mockAuditDays = vi.fn(() => null as unknown);
+vi.mock("@/api/settings", () => ({
+  fetchEffectiveSettings: () =>
+    Promise.resolve({
+      generation: 1,
+      sections: [
+        {
+          name: "context_audit",
+          summary: "",
+          keys: [{ key: "days", value: mockAuditDays(), source: "organization", set_by: null, set_at: null }],
+        },
+      ],
+      unknown_sections: [],
+      unknown_keys: [],
+    }),
+  fetchSettings: () => Promise.resolve({ generation: 1, allowlist_covers: true }),
+  setSettingsKeys: vi.fn(),
+}));
 const mockStandards = vi.fn();
 vi.mock("@/api/standards", async () => {
   const actual = await vi.importActual<typeof import("@/api/standards")>("@/api/standards");
@@ -91,10 +110,11 @@ describe("OrganizationPage", () => {
   });
 
   it("shows the context audit schedule in the header, beside the rediscovery schedule", async () => {
-    api.org.mockResolvedValue(org({ settings: { rediscover_hours: 24, context_audit_days: 7 } }));
+    api.org.mockResolvedValue(org({ settings: { rediscover_hours: 24 } }));
+    mockAuditDays.mockReturnValue(7);
     renderPage();
     const setting = await screen.findByTestId("org-context-audit-setting");
-    expect((screen.getByTestId("org-context-audit-days") as HTMLInputElement).value).toBe("7");
+    expect(setting).toHaveTextContent("Audits agent instructions every 7 days.");
     const rediscover = screen.getByTestId("org-rediscover-setting");
     expect(rediscover.compareDocumentPosition(setting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(setting.compareDocumentPosition(screen.getByRole("heading", { name: "Latest discovery" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

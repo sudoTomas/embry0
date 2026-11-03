@@ -155,25 +155,6 @@ async def test_patch_sets_and_clears_the_rediscovery_interval(app: Any) -> None:
     assert app.state.organizations_repo.orgs["acme"].settings == {"rediscover_hours": None}
 
 
-@pytest.mark.asyncio
-async def test_patch_sets_and_clears_the_context_audit_interval(app: Any) -> None:
-    """ADR 0020: a whole number of days from 1 to 365 puts the owner on the schedule, null takes it off."""
-    async with _client(app) as client:
-        on = await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_days": 7}})
-        off = await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_days": None}})
-        refused = [
-            await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_days": value}})
-            for value in (0, 366, True, 1.5, "7")
-        ]
-    assert on.status_code == 200, on.text
-    assert on.json()["settings"] == {"context_audit_days": 7}
-    assert off.status_code == 200 and off.json()["settings"] == {"context_audit_days": None}
-    assert [r.status_code for r in refused] == [422] * 5
-    assert "must be from 1 to 365 or null" in refused[0].json()["detail"]
-    assert "must be int or null" in refused[2].json()["detail"]
-    assert app.state.organizations_repo.orgs["acme"].settings == {"context_audit_days": None}
-
-
 class _Layers:
     """The settings store as PATCH /orgs writes a moved setting into an organization's layer."""
 
@@ -183,6 +164,49 @@ class _Layers:
     async def set_keys(self, section: str, keys: dict[str, Any], **kw: Any) -> Any:
         self.writes.append((str(kw["scope"]), section, dict(keys)))
         return SimpleNamespace(revision_id=None)
+
+
+@pytest.mark.asyncio
+async def test_patch_sets_and_clears_the_context_audit_interval(app: Any) -> None:
+    """ADR 0020, in the organization's layer of the context_audit section now (#170): a whole number of days
+    from 1 to 365 puts its repositories on the schedule, null hands the key back to the deployment's, off by
+    default. The old route checks it as it did, for the release it stays."""
+    app.state.settings = layers = _Layers()
+    async with _client(app) as client:
+        on = await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_days": 7}})
+        off = await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_days": None}})
+        refused = [
+            await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_days": value}})
+            for value in (0, 366, True, 1.5, "7")
+        ]
+    assert on.status_code == 200, on.text
+    assert [note["moved_to"] for note in on.json()["deprecated"]] == ["context_audit.days"]
+    assert "context_audit_days" not in on.json()["settings"]
+    assert off.status_code == 200
+    assert layers.writes == [
+        ("organization:acme", "context_audit", {"days": 7}),
+        ("organization:acme", "context_audit", {"days": None}),
+    ], "the old route did not write the interval into the organization's layer"
+    assert [r.status_code for r in refused] == [422] * 5
+    assert "must be from 1 to 365 or null" in refused[0].json()["detail"]
+    assert "must be int or null" in refused[2].json()["detail"]
+    assert app.state.organizations_repo.orgs["acme"].settings == {}, "a moved setting is not stored here any more"
+
+
+@pytest.mark.asyncio
+async def test_patch_writes_the_pull_request_switch_into_the_organization_s_layer(app: Any) -> None:
+    """ADR 0022, in the organization's layer of the context_audit section now (#170)."""
+    app.state.settings = layers = _Layers()
+    async with _client(app) as client:
+        on = await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_open_prs": True}})
+        refused = await client.patch("/api/v1/orgs/acme", json={"settings": {"context_audit_open_prs": None}})
+    assert on.status_code == 200, on.text
+    assert layers.writes == [("organization:acme", "context_audit", {"open_prs": True})], (
+        f"the old route did not write the pull request switch into the organization's layer: {layers.writes}"
+    )
+    assert [note["moved_to"] for note in on.json()["deprecated"]] == ["context_audit.open_prs"]
+    assert refused.status_code == 422 and "must be bool" in refused.json()["detail"], "checked as it was"
+    assert app.state.organizations_repo.orgs["acme"].settings == {}
 
 
 @pytest.mark.asyncio

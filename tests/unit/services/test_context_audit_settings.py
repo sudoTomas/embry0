@@ -28,6 +28,7 @@ import pytest
 from embry0.services import context_audit
 from embry0.services.budget_policy import BudgetView
 from embry0.services.context_audit import TEMPLATE, ContextAuditLoop, RepoContext, fingerprint, start_context_audit_job
+from embry0.services.organizations import MOVED_SETTINGS
 from embry0.settings.sections import CATALOG
 from embry0.settings.store import build_snapshot
 from tests.unit.services.test_context_audit import (
@@ -83,7 +84,8 @@ class Documents:
         snapshot = build_snapshot(CATALOG, rows, token=(self.reads,), log=False)
         if self.on_read is not None:
             self.on_read(self.reads)
-        return BudgetView(snapshot)
+        # As production's policy: an organization's moved settings read from its row until its layer imported them.
+        return BudgetView(snapshot, moved=MOVED_SETTINGS)
 
 
 class Audits:

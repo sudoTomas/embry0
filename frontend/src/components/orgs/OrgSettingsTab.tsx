@@ -13,6 +13,8 @@ import { Skeleton } from "@/components/ui/PageSkeleton";
 import { Switch } from "@/components/ui/Switch";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { statusLabel } from "@/lib/status";
+import { OrgContextAuditCaps } from "./OrgContextAuditCaps";
+import { OrgContextAuditSettings } from "./OrgContextAuditSettings";
 
 function refusal(err: unknown, fallback: string): string {
   const response = (err as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response;
@@ -56,7 +58,6 @@ export function OrgSettingsTab({ org, isAdmin }: { org: Organization; isAdmin: b
   const github = org.forge === "github";
   const webhook = useOrganizationWebhook(org.owner, github);
   const autoRegister = org.settings.auto_register === true;
-  const openPrs = org.settings.context_audit_open_prs === true;
 
   // The field follows the stored row: a save, a probe or another tab's write
   // answers the organization and the name shown is the one it holds.
@@ -82,12 +83,6 @@ export function OrgSettingsTab({ org, isAdmin }: { org: Organization; isAdmin: b
 
   const toggleAutoRegister = (next: boolean) =>
     update.mutate({ settings: { auto_register: next } }, { onError: (err) => toastApiError(err, "The setting was not saved") });
-
-  const toggleOpenPrs = (next: boolean) =>
-    update.mutate(
-      { settings: { context_audit_open_prs: next } },
-      { onError: (err) => toastApiError(err, "The setting was not saved") },
-    );
 
   const changeStatus = (status: OrgStatus) =>
     setStatus.mutate(status, {
@@ -148,20 +143,12 @@ export function OrgSettingsTab({ org, isAdmin }: { org: Organization; isAdmin: b
         </p>
       </Section>
 
-      <Section title="Context audit pull requests">
-        <div className="flex items-center gap-3">
-          <Switch
-            id="org-context-audit-open-prs"
-            checked={openPrs}
-            onCheckedChange={toggleOpenPrs}
-            disabled={!isAdmin || update.isPending}
-            label="Open a pull request from each audit's fixes"
-          />
-          <span className="text-sm text-fg-secondary" aria-hidden="true">Open a pull request from each audit's fixes</span>
-        </div>
-        <p className="text-xs text-fg-muted">
-          A context audit that finds outdated claims commits the fixes it checked on a branch of its own and opens a pull request for a person to review and merge. One at a time per repository: while one is open, later audits only report. Off, the findings stay in the audit's report.
-        </p>
+      <Section title="Context audit" testId="org-context-audit">
+        <OrgContextAuditSettings owner={org.owner} />
+      </Section>
+
+      <Section title="What context audits may spend" testId="org-context-audit-spend">
+        <OrgContextAuditCaps owner={org.owner} />
       </Section>
 
       <Section title="Webhook" testId="org-webhook">

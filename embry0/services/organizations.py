@@ -30,17 +30,13 @@ STATUSES = ("active", "paused", "removed")
 # the delivery is handled, instead of only recording the need.
 # rediscover_hours: run discovery again when the newest run is this many
 # hours old (ADR 0016); null, the default, leaves the owner off the schedule.
-# context_audit_days: audit the files that steer a coding agent in each of the
-# owner's registered repositories on a schedule, when they change and when the
-# newest audit is this many days old and the branch moved since (ADR 0020);
-# null, the default, leaves the owner off the schedule.
-# context_audit_budget_usd and context_audit_max_jobs_per_tick: moved into the
-# settings document (MOVED_SETTINGS below). PATCH /orgs still takes them until
-# MOVED_SETTINGS_REMOVED_IN and writes them into the organization's layer of
-# the `budget` section; nothing reads them here any more.
-# context_audit_open_prs: a context audit that finds outdated claims opens a
-# pull request from the patch it checked, for a person to review and merge
-# (ADR 0022); false, the default, leaves its findings in the job's report.
+# context_audit_days, context_audit_budget_usd, context_audit_max_jobs_per_tick
+# and context_audit_open_prs: moved into the settings document (MOVED_SETTINGS
+# below), the first into the `context_audit` section's days (ADR 0020), the
+# next two into the `budget` section's caps (ADR 0021), the last into
+# `context_audit`'s open_prs (ADR 0022). PATCH /orgs still takes them until
+# MOVED_SETTINGS_REMOVED_IN and writes them into the organization's layer;
+# nothing reads them here any more.
 SETTINGS: dict[str, type] = {
     "auto_register": bool,
     "rediscover_hours": int,
@@ -191,7 +187,7 @@ MOVED_SETTINGS_REMOVED_IN: Final = "0.2.0"
 
 
 def context_audit_open_prs(settings: Mapping[str, Any]) -> bool:
-    """Whether the owner's context audits open a pull request from the patch they checked.
+    """Whether the owner's context audits opened a pull request from the patch they checked, as this row says.
 
     Only a stored ``true`` turns it on: any other value, as a row written
     before ``POST /orgs`` checked its settings may hold, reads as off.
@@ -199,12 +195,20 @@ def context_audit_open_prs(settings: Mapping[str, Any]) -> bool:
     return settings.get("context_audit_open_prs") is True
 
 
-#: The settings the `budget` section took over (#171): an organization's own caps of its context audits.
+def context_audit_open_prs_moved(settings: Mapping[str, Any]) -> bool | None:
+    """``context_audit_open_prs`` as a moved setting reads it: true, or None for the default, off."""
+    return True if context_audit_open_prs(settings) else None
+
+
+#: The settings sections took over: an organization's own caps of its context audits, which the `budget`
+#: section took (#171), and whether and how its repositories are audited, which `context_audit` took (#170).
 MOVED_SETTINGS: Final[tuple[MovedSetting, ...]] = (
     MovedSetting("context_audit_budget_usd", "budget", "context_audit_job_usd", context_audit_budget_usd),
     MovedSetting(
         "context_audit_max_jobs_per_tick", "budget", "context_audit_max_jobs_per_tick", context_audit_max_jobs_per_tick
     ),
+    MovedSetting("context_audit_days", "context_audit", "days", context_audit_days),
+    MovedSetting("context_audit_open_prs", "context_audit", "open_prs", context_audit_open_prs_moved),
 )
 MOVED: Final[dict[str, MovedSetting]] = {moved.legacy: moved for moved in MOVED_SETTINGS}
 

@@ -234,8 +234,9 @@ class Refusal:
 
 
 async def _deployment_budget(organizations: Any = ()) -> BudgetView:
-    """The budget section with nothing written: every cap at its default."""
-    return BudgetView(build_snapshot(CATALOG, [], token=(), log=False))
+    """The budget section with nothing written: every cap at its default. An organization's moved settings are
+    read from its row, as production's policy reads them until its layer imported them."""
+    return BudgetView(build_snapshot(CATALOG, [], token=(), log=False), moved=MOVED_SETTINGS)
 
 
 def org(
@@ -312,7 +313,9 @@ class World:
         self.cap, self.budget = cap, budget
         self.layers = dict(layers or {})
         self.imported = set(imported)
-        moved_paths = [f"{m.section}.{m.key}" for m in MOVED_SETTINGS]
+        # The budget's moved settings (#171) only: the context audit's own (#170) stay on the organization row
+        # here, read as production reads them until a layer imported them, so `days` keeps its meaning.
+        moved_paths = [f"{m.section}.{m.key}" for m in MOVED_SETTINGS if m.section == "budget"]
 
         async def budget_reader(organizations: Any = ()) -> BudgetView:
             deployment = {"context_audit_max_jobs_per_tick": self.cap, "context_audit_job_usd": self.budget}
@@ -898,9 +901,11 @@ async def test_the_survey_says_per_repository_what_the_read_endpoint_shows() -> 
                 "refused_at": None,
                 "due": False,
                 "reason": OFF,
+                "days": None,
             }
         ],
         "unread": [],
+        "deferred": [],
     }
     with pytest.raises(context_audit.UnsupportedForge):
         await world.loop.survey(org("lab", forge="gitlab"))

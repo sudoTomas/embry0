@@ -1,110 +1,85 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const mockPatch = vi.fn();
-vi.mock("@/api/orgs", async () => {
-  const actual = await vi.importActual<typeof import("@/api/orgs")>("@/api/orgs");
-  return { ...actual, patchOrganization: (...a: unknown[]) => mockPatch(...a) };
-});
+const mockFetchEffectiveSettings = vi.fn();
+// The schedule is the settings document's context_audit.days, as the organization reads it (#170).
+vi.mock("@/api/settings", () => ({
+  fetchEffectiveSettings: (layer: unknown) => mockFetchEffectiveSettings(layer),
+  fetchSettings: () => Promise.resolve({ generation: 1, allowlist_covers: true }),
+  setSettingsKeys: vi.fn(),
+}));
+vi.mock("@/stores/authStore", () => ({ useIsAdmin: () => true }));
 
-import type { Organization } from "@/api/orgs";
 import { ContextAuditSetting } from "../ContextAuditSetting";
-import { org } from "./fixtures";
 
-function renderSetting(o: Organization, isAdmin = true) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+function view(days: unknown, source = "organization") {
+  return {
+    generation: 2,
+    sections: [
+      {
+        name: "context_audit",
+        summary: "",
+        keys: [
+          {
+            key: "days",
+            value: days,
+            default: null,
+            source,
+            set_by: null,
+            set_at: null,
+            env: null,
+            env_still_set: false,
+            overridable: ["organization", "repository"],
+            refused: null,
+            description: null,
+          },
+        ],
+      },
+    ],
+    unknown_sections: [],
+    unknown_keys: [],
+  };
+}
+
+function renderSetting() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <ContextAuditSetting org={o} isAdmin={isAdmin} />
+      <MemoryRouter>
+        <ContextAuditSetting owner="acme" />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
-const days = () => screen.getByTestId("org-context-audit-days") as HTMLInputElement;
-
-beforeEach(() => {
-  mockPatch.mockReset().mockImplementation(async (owner: string, settings: Record<string, unknown>) =>
-    org({ owner, settings }),
-  );
-});
+beforeEach(() => mockFetchEffectiveSettings.mockReset());
 
 describe("ContextAuditSetting", () => {
-  it("shows the current interval, with nothing to save until it changes", () => {
-    renderSetting(org({ settings: { context_audit_days: 7 } }));
-    expect(days().value).toBe("7");
-    expect(screen.getByLabelText("Days between context audits, empty for off")).toBe(days());
-    expect(screen.queryByTestId("org-context-audit-save")).toBeNull();
-    expect(screen.getByTestId("org-context-audit-off")).toHaveTextContent("Turn off");
+  it("says how often the organization's repositories are audited, as its layer resolves it", async () => {
+    mockFetchEffectiveSettings.mockResolvedValue(view(7));
+    renderSetting();
+    expect(await screen.findByTestId("org-context-audit-setting")).toHaveTextContent(
+      "Audits agent instructions every 7 days.",
+    );
+    expect(mockFetchEffectiveSettings).toHaveBeenCalledWith({ layer: "organization", owner: "acme" });
+    expect(screen.getByRole("link", { name: "Context audit settings" })).toHaveAttribute("href", "/?tab=settings");
   });
 
-  it("has no checkbox and no gold, like the rediscovery setting beside it", () => {
-    renderSetting(org({ settings: { context_audit_days: 7 } }));
-    const setting = screen.getByTestId("org-context-audit-setting");
-    expect(within(setting).queryByRole("checkbox")).toBeNull();
-    expect(setting.innerHTML).not.toMatch(/accent-|bg-primary/);
-  });
-
-  it("saves a new interval with PATCH settings.context_audit_days", async () => {
-    renderSetting(org({ settings: { context_audit_days: 7 } }));
-    fireEvent.change(days(), { target: { value: "30" } });
-    expect(screen.getByTestId("org-context-audit-current")).toHaveTextContent("now every 7 days");
-    fireEvent.click(screen.getByTestId("org-context-audit-save"));
-    await waitFor(() => expect(mockPatch).toHaveBeenCalledWith("acme", { context_audit_days: 30 }));
-    await waitFor(() => expect(screen.queryByTestId("org-context-audit-save")).toBeNull());
-  });
-
-  it("turns the schedule off with null: Turn off empties the field, and Save sends it", async () => {
-    renderSetting(org({ settings: { context_audit_days: 7 } }));
-    fireEvent.click(screen.getByTestId("org-context-audit-off"));
-    expect(days().value).toBe("");
-    expect(screen.getByText("(off)")).toBeInTheDocument();
-    expect(mockPatch).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId("org-context-audit-save"));
-    await waitFor(() => expect(mockPatch).toHaveBeenCalledWith("acme", { context_audit_days: null }));
-  });
-
-  it("reads an owner off the schedule as off, and switches it on with a number of days", async () => {
-    renderSetting(org({ settings: { rediscover_hours: 24 } }));
-    expect(days().value).toBe("");
-    expect(screen.getByText("(off)")).toBeInTheDocument();
-    expect(screen.queryByTestId("org-context-audit-off")).toBeNull();
-    fireEvent.change(days(), { target: { value: "1" } });
-    expect(screen.getByTestId("org-context-audit-current")).toHaveTextContent("now off");
-    fireEvent.click(screen.getByTestId("org-context-audit-save"));
-    await waitFor(() => expect(mockPatch).toHaveBeenCalledWith("acme", { context_audit_days: 1 }));
-  });
-
-  it("refuses an interval outside 1 to 365 before sending it", () => {
-    renderSetting(org({ settings: { context_audit_days: 7 } }));
-    for (const bad of ["0", "366", "2.5", "1e2", "-3", "weekly"]) {
-      fireEvent.change(days(), { target: { value: bad } });
-      expect(screen.getByTestId("org-context-audit-invalid")).toBeInTheDocument();
-      expect(screen.getByTestId("org-context-audit-save")).toBeDisabled();
+  it("says the audit is off when the schedule is false, null or out of range", async () => {
+    for (const days of [false, null, 0]) {
+      mockFetchEffectiveSettings.mockResolvedValue(view(days, "default"));
+      const rendered = renderSetting();
+      expect(await screen.findByTestId("org-context-audit-setting")).toHaveTextContent("The context audit is off.");
+      rendered.unmount();
     }
-    expect(mockPatch).not.toHaveBeenCalled();
   });
 
-  it("shows the server's refusal", async () => {
-    mockPatch.mockRejectedValue({ response: { status: 403, data: { detail: "admin tier required" } } });
-    renderSetting(org({ settings: { context_audit_days: 7 } }));
-    fireEvent.change(days(), { target: { value: "14" } });
-    fireEvent.click(screen.getByTestId("org-context-audit-save"));
-    expect(await screen.findByTestId("org-context-audit-error")).toHaveTextContent("requires admin scope");
-  });
-
-  it("cancels an edit back to the stored value", () => {
-    renderSetting(org({ settings: { context_audit_days: 7 } }));
-    fireEvent.change(days(), { target: { value: "48" } });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(days().value).toBe("7");
-  });
-
-  it("reads the interval as words without admin scope", () => {
-    renderSetting(org({ settings: { context_audit_days: 1 } }), false);
-    expect(screen.getByTestId("org-context-audit-setting")).toHaveTextContent("Audits agent instructions every 1 day.");
-    expect(screen.queryByTestId("org-context-audit-days")).toBeNull();
-    renderSetting(org({ settings: {} }), false);
-    expect(screen.getAllByTestId("org-context-audit-setting")[1]).toHaveTextContent("The context audit is off.");
+  it("shows nothing for a server without the section", async () => {
+    mockFetchEffectiveSettings.mockResolvedValue({ generation: 1, sections: [], unknown_sections: [], unknown_keys: [] });
+    const { container } = renderSetting();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container).toBeEmptyDOMElement();
   });
 });

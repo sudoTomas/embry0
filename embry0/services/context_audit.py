@@ -3,15 +3,30 @@
 A coding agent takes the files that steer it (``CLAUDE.md``, ``AGENTS.md``,
 a skill, a rules directory: :mod:`embry0.services.instruction_files`) as
 instructions, so a line in one that went stale reaches the agent as a fact.
-An organization whose ``settings.context_audit_days`` is set has those files
-audited without anyone starting a job: one loop in the orchestrator wakes
-every ``context_audit.check_minutes`` of the settings document, reads the
-default branch of each active registered repository under each such owner
-with the organization's credential, and starts a :data:`TEMPLATE` job for
-each repository that is due (:func:`due_reason`), at most the owner's cap
-per wake, each job with the owner's hard budget: the settings document's
-``budget`` section, its ``context_audit_max_jobs_per_tick`` and
-``context_audit_job_usd`` as the owner's layer resolves them.
+A repository whose ``context_audit.days`` resolves to a number of days (the
+settings document's, its organization's layer and its own, #170; until then
+the organization's ``context_audit_days``) has those files audited without
+anyone starting a job: one loop in the orchestrator wakes every
+``context_audit.check_minutes``, reads the default branch of each such active
+registered repository with its organization's credential, and starts a
+:data:`TEMPLATE` job for each one that is due (:func:`due_reason`), at most
+the owner's cap per wake, each job with the owner's hard budget: the
+settings document's ``budget`` section, its
+``context_audit_max_jobs_per_tick`` and ``context_audit_job_usd`` as the
+owner's layer resolves them. Whether a job opens a pull request from its
+patch is the repository's ``context_audit.open_prs``.
+
+The forge is read sparingly. A head read sends the ETag of the last one, so
+a branch that did not move answers 304, which GitHub does not count against
+the credential's limit, and nothing more is read for that repository. Each
+answer's rate headers are kept per credential: once the calls left fall
+below ``context_audit.rate_reserve_percent`` of its ``X-RateLimit-Limit``,
+the organizations reading with it are deferred, no paid read and no start,
+until the window ends, so the jobs that use the same credential keep the
+last calls. The window is the reset the forge named, when that lies ahead
+by this host's clock (an hour at most); otherwise fifteen minutes, after
+which one call asks the forge again (:class:`_Rate`). A forge that sends no
+limit is never deferred.
 
 Which files a repository's audit reads is the ``context_audit`` section's
 ``files`` and ``exclude_dirs`` as the repository resolves them (its
@@ -57,8 +72,8 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, Protocol
 
 import structlog
 
@@ -67,17 +82,18 @@ from embry0.orchestration import dispatch_actors
 from embry0.services.context_audit_command import with_command
 from embry0.services.instruction_files import FileRules
 from embry0.services.loop_schedule import seconds_until_next_run
-from embry0.services.organizations import (
-    Organization,
-    context_audit_days,
-    context_audit_open_prs,
-)
+from embry0.services.organizations import Organization
 from embry0.services.run_with import apply_run_with
-from embry0.settings.sections.context_audit import CHECK_MINUTES_MIN, CONTEXT_AUDIT, ContextAuditSettings, file_rules
+from embry0.settings.sections.context_audit import (
+    CHECK_MINUTES_MIN,
+    CONTEXT_AUDIT,
+    ContextAuditSettings,
+    audit_days,
+    file_rules,
+)
 from embry0.storage.schemas import FINISHED_WELL_STATUSES
 
 if TYPE_CHECKING:
-    from embry0.settings.layers import PerRepository
     from embry0.settings.sections.budget import BudgetSettings
 
 logger = structlog.get_logger(__name__)
@@ -139,6 +155,10 @@ UNREAD = "unread"
 NO_FILES = "no_instruction_files"
 #: Started with ``force`` while the due rule said current.
 FORCED = "forced"
+#: Not read, or read for free and not started: its organization's credential is down to
+#: ``context_audit.rate_reserve_percent`` of its limit.
+DEFERRED = "deferred"
+_RESERVE_DETAIL = "its organization's credential is down to context_audit.rate_reserve_percent of its rate limit"
 
 
 @dataclass(frozen=True)
@@ -334,6 +354,31 @@ def _json(resp: Any) -> Any:
         return None
 
 
+def _header(response: Any, name: str) -> str | None:
+    """A response header by its lowercase ``name``, from httpx's headers or a plain mapping; None without it."""
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+    value = headers.get(name)
+    if value is None and isinstance(headers, Mapping):
+        value = next((v for k, v in headers.items() if str(k).lower() == name), None)
+    return None if value is None else str(value)
+
+
+@dataclass(frozen=True)
+class Head:
+    """The head of a default branch as one read found it, and the ETag the forge answered it with."""
+
+    sha: str
+    tree: str
+    etag: str | None = None
+
+
+#: What a head read answers when the forge said 304: the branch is where the read whose ETag it sent found it.
+NotModified = Literal["not_modified"]
+NOT_MODIFIED: NotModified = "not_modified"
+
+
 async def read_head(client: _Forge, repo: str) -> tuple[str, str] | None:
     """The head commit sha and tree sha of the default branch; None for an empty repository.
 
@@ -341,7 +386,18 @@ async def read_head(client: _Forge, repo: str) -> tuple[str, str] | None:
     its first entry is that branch's head. No ``repo`` is passed to the
     client, so it acts with the token it was built with, the organization's.
     """
-    resp = await client.get(f"/repos/{repo}/commits", params={"per_page": 1})
+    head = await _read_head(client, repo)
+    return None if head is None or head == NOT_MODIFIED else (head.sha, head.tree)
+
+
+async def _read_head(client: _Forge, repo: str, *, etag: str | None = None) -> Head | NotModified | None:
+    """:func:`read_head`, sending ``etag`` as ``If-None-Match``: :data:`NOT_MODIFIED` when the forge answers 304."""
+    kwargs: dict[str, Any] = {"params": {"per_page": 1}}
+    if etag:
+        kwargs["extra_headers"] = {"If-None-Match": etag}
+    resp = await client.get(f"/repos/{repo}/commits", **kwargs)
+    if resp.status_code == 304 and etag:
+        return NOT_MODIFIED
     if resp.status_code == 409:  # GitHub's answer for a repository with no commit
         return None
     body = _json(resp) if resp.status_code == 200 else None
@@ -354,7 +410,138 @@ async def read_head(client: _Forge, repo: str) -> tuple[str, str] | None:
     tree = ((commit.get("commit") or {}).get("tree") or {}).get("sha")
     if not (isinstance(sha, str) and sha and isinstance(tree, str) and tree):
         raise ForgeReadError("the newest commit carries no sha or tree")
-    return sha, tree
+    return Head(sha, tree, _header(resp, "etag"))
+
+
+# ---- the forge's rate limit ----
+
+
+class ReserveReached(RuntimeError):
+    """A credential's calls left are below ``context_audit.rate_reserve_percent`` of its limit: the call is not made."""
+
+
+#: How long a credential found low waits before one call asks the forge again, when the forge named no usable
+#: reset: none, not a number, or one already past by this host's clock (the two clocks disagree).
+LOW_WAIT: Final = timedelta(minutes=15)
+#: The longest a credential found low waits for the reset the forge names: GitHub's window is an hour.
+MAX_LOW_WAIT: Final = timedelta(hours=1)
+
+
+@dataclass
+class _Rate:
+    """What the forge last said of one credential's rate limit, and when this host heard it."""
+
+    remaining: int | None = None
+    limit: int | None = None
+    #: The reset the last answer named; None when it named none, or not as a number.
+    reset: datetime | None = None
+    #: When that answer came, by this host's clock.
+    seen: datetime | None = None
+    #: The end of the low window last warned about: no other warning until it is over.
+    noted: datetime | None = None
+    #: The end of the window whose probe was logged: one line per window.
+    probed: datetime | None = None
+    #: Set while a probe is out: every other call waits for its answer, then looks at the state again.
+    probe: asyncio.Event | None = field(default=None, repr=False, compare=False)
+
+    def below(self, percent: int) -> bool:
+        """Whether the calls left are below ``percent`` of the limit; never when the forge sent no limit."""
+        if self.remaining is None or self.limit is None or percent <= 0:
+            return False
+        return self.remaining * 100 < self.limit * percent
+
+    def until(self) -> datetime | None:
+        """When the low window the last answer opened ends: the reset it named, when that lies after the answer
+        by this host's clock, at most :data:`MAX_LOW_WAIT` on; else :data:`LOW_WAIT` after the answer."""
+        if self.seen is None:
+            return None
+        if self.reset is not None and self.reset > self.seen:
+            return min(self.reset, self.seen + MAX_LOW_WAIT)
+        return self.seen + LOW_WAIT
+
+    def low(self, percent: int, now: datetime) -> bool:
+        """Whether the calls left are below the share and the window that said so is still open."""
+        until = self.until()
+        return self.below(percent) and until is not None and now < until
+
+    def stale(self, percent: int, now: datetime) -> bool:
+        """Below the share, but its window is over: one call, the probe, may ask the forge again."""
+        return self.below(percent) and not self.low(percent, now)
+
+    def update(self, response: Any, now: datetime) -> None:
+        """Keep an answer's rate headers; an answer that sends no ``X-RateLimit-Remaining`` changes nothing."""
+        remaining = _header(response, "x-ratelimit-remaining")
+        if remaining is None or not remaining.isdigit():
+            return
+        limit, reset = _header(response, "x-ratelimit-limit"), _header(response, "x-ratelimit-reset")
+        self.remaining = int(remaining)
+        self.limit = int(limit) if limit is not None and limit.isdigit() else None
+        self.reset = datetime.fromtimestamp(int(reset), UTC) if reset is not None and reset.isdigit() else None
+        self.seen = now
+
+
+def _conditional(kwargs: Mapping[str, Any]) -> bool:
+    """Whether a call sends an ETag: a head read GitHub answers 304, at no cost, when the branch did not move."""
+    return bool((kwargs.get("extra_headers") or {}).get("If-None-Match"))
+
+
+class _Reserved:
+    """A forge client that keeps each answer's rate headers in ``rate`` and spends no call the share keeps.
+
+    While the credential is low, a head read with an ETag still goes out:
+    GitHub answers it 304 at no cost when the branch did not move, and the
+    answer's headers keep the state current for nothing. The first such read
+    the forge answers otherwise, a branch that moved, closes the client for
+    the rest of the survey, so a low credential pays at most one call per
+    survey. Every other call raises :class:`ReserveReached`. Once the low
+    window is over with the calls left still below the share, one call, the
+    probe, asks the forge again; every other call waits for its answer and
+    then goes out, or not, by what that answer said.
+    """
+
+    def __init__(
+        self, client: _Forge, rate: _Rate, percent: int, clock: Callable[[], datetime], owner: str = ""
+    ) -> None:
+        self._client, self._rate, self._percent, self._clock, self._owner = client, rate, percent, clock, owner
+        self._paid_while_low = False
+
+    async def _call(self, path: str, kwargs: Mapping[str, Any]) -> Any:
+        response = await self._client.get(path, **kwargs)
+        self._rate.update(response, self._clock())
+        return response
+
+    async def get(self, path: str, **kwargs: Any) -> Any:
+        rate = self._rate
+        while True:
+            now = self._clock()
+            if rate.low(self._percent, now):
+                if self._paid_while_low or not _conditional(kwargs):
+                    raise ReserveReached(path)
+                response = await self._call(path, kwargs)
+                if response.status_code != 304:
+                    self._paid_while_low = True
+                return response
+            if not rate.stale(self._percent, now):
+                return await self._call(path, kwargs)
+            if rate.probe is not None:
+                await rate.probe.wait()
+                continue
+            window = rate.until()
+            if rate.probed != window:
+                rate.probed = window
+                logger.info(
+                    "context_audit_rate_reserve_probe",
+                    owner=self._owner,
+                    remaining=rate.remaining,
+                    limit=rate.limit,
+                    hint="the low window is over: one call asks the forge for the calls left",
+                )
+            rate.probe = probe = asyncio.Event()
+            try:
+                return await self._call(path, kwargs)
+            finally:
+                rate.probe = None
+                probe.set()
 
 
 async def read_blobs(client: _Forge, repo: str, tree_sha: str) -> dict[str, str]:
@@ -393,6 +580,8 @@ class RepoState:
     #: The counts the newest job's report starts with (:func:`report_counts`),
     #: when it finished its work and they were asked for.
     report: tuple[int | None, int | None] | None = None
+    #: Days between its scheduled audits, as it resolves ``context_audit.days``; None while its schedule is off.
+    days: int | None = None
 
     @property
     def due(self) -> bool:
@@ -424,6 +613,7 @@ class RepoState:
             "refused_at": _iso(self.refused_at),
             "due": self.due,
             "reason": self.reason,
+            "days": self.days,
         }
 
 
@@ -438,6 +628,9 @@ class Survey:
     unread: tuple[tuple[str, str], ...] = ()
     #: When the oldest forge reading in it was taken; None with no repository.
     read_at: datetime | None = None
+    #: Repositories not read because the organization's credential is down to its rate reserve. Each one's last
+    #: reading, when it has one taken with the rules it reads now, is still among ``repos``.
+    deferred: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -447,6 +640,7 @@ class Survey:
             "template": TEMPLATE,
             "repos": [state.to_dict() for state in self.repos],
             "unread": [{"repo": repo, "detail": detail} for repo, detail in self.unread],
+            "deferred": list(self.deferred),
         }
 
 
@@ -553,6 +747,8 @@ class _BudgetView(Protocol):
 
     def organization(self, owner: str, settings: Mapping[str, Any] | None = None) -> BudgetSettings: ...
 
+    def moved_values(self, section: str, owner: str, settings: Mapping[str, Any]) -> dict[str, Any]: ...
+
 
 #: The ``budget`` section at one moment, read for these organizations
 #: (:meth:`embry0.services.budget_policy.BudgetPolicy.view`): each one's caps,
@@ -574,25 +770,69 @@ class SettingsUnreadable(RuntimeError):
 class TickSettings:
     """What one wake, one survey or one run by hand reads, all from one snapshot of the settings documents."""
 
-    #: The ``budget`` section's caps, as each organization reads them.
+    #: The ``budget`` section's caps, as each organization reads them, and the settings an organization whose
+    #: layer has not imported them yet still reads from its own row (``BudgetView.moved_values``).
     budget: _BudgetView
-    #: The ``context_audit`` section, read per repository.
-    section: PerRepository[ContextAuditSettings]
+    #: The snapshot both are read from, which the ``context_audit`` section is read from too.
+    snapshot: Any
 
-    def rules(self, repo: str) -> FileRules:
+    def resolved(self, org: Organization, repo: str | None = None) -> ContextAuditSettings:
+        """The ``context_audit`` section as ``repo`` reads it (its organization's layer and its own over the
+        deployment's), or as ``org`` does without one.
+
+        Until the organization's layer has imported ``days`` and ``open_prs``
+        from its row (a first start whose copy failed), it reads them from the
+        row as the release before did, where its layer does not set them; a
+        repository's own layer still wins.
+        """
+        found = (
+            self.snapshot.resolve(CONTEXT_AUDIT, repo=repo)
+            if repo
+            else self.snapshot.resolve(CONTEXT_AUDIT, owner=org.owner)
+        )
+        model: ContextAuditSettings = found.model
+        legacy = self.budget.moved_values(CONTEXT_AUDIT.name, org.owner, org.settings)
+        if not legacy:
+            return model
+        repository = {
+            key for scope, values in found.applied.items() if scope.startswith("repository:") for key in values
+        }
+        updates = {key: value for key, value in legacy.items() if key not in repository}
+        return model.model_copy(update=updates) if updates else model
+
+    def rules(self, org: Organization, repo: str) -> FileRules:
         """The files ``repo`` reads: ``files`` and ``exclude_dirs`` as its organization's layer and its own resolve
         them over the deployment's."""
-        return file_rules(self.section.repo(repo))
+        return file_rules(self.resolved(org, repo))
+
+    def days(self, org: Organization, repo: str | None = None) -> int | None:
+        """Days between ``repo``'s scheduled audits, or ``org``'s without one; None while the schedule is off."""
+        return audit_days(self.resolved(org, repo))
+
+    def open_prs(self, org: Organization, repo: str) -> bool:
+        """Whether an audit of ``repo`` opens a pull request from the patch it checked."""
+        return self.resolved(org, repo).open_prs
+
+    @property
+    def deployment(self) -> ContextAuditSettings:
+        """The deployment's values: the keys only it may set."""
+        model: ContextAuditSettings = self.snapshot.get(CONTEXT_AUDIT)
+        return model
 
     @property
     def interval_seconds(self) -> int:
         """Seconds between two wakes: the deployment's ``check_minutes``."""
-        return self.section.deployment().check_minutes * 60
+        return self.deployment.check_minutes * 60
 
     @property
     def read_concurrency(self) -> int:
         """Repositories of one organization read from the forge at once: the deployment's ``read_concurrency``."""
-        return self.section.deployment().read_concurrency
+        return self.deployment.read_concurrency
+
+    @property
+    def rate_reserve_percent(self) -> int:
+        """The share of a credential's rate limit below which the schedule defers: ``rate_reserve_percent``."""
+        return self.deployment.rate_reserve_percent
 
 
 def _detail(exc: Exception) -> str:
@@ -604,6 +844,19 @@ def _detail(exc: Exception) -> str:
 def _caps(policy: BudgetSettings) -> tuple[int, float]:
     """The most context-audit jobs one tick starts for an organization, and each one's hard cap in USD."""
     return policy.context_audit_max_jobs_per_tick, policy.context_audit_job_usd
+
+
+def _owned(org: Organization, rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The registered repositories of ``rows`` under ``org``, on its forge."""
+    return [
+        str(row["repo"])
+        for row in rows
+        if str(row["repo"]).split("/", 1)[0].lower() == org.owner and row.get("forge") == org.forge
+    ]
+
+
+def _unsupported(org: Organization) -> str:
+    return f"the context audit reads GitHub repositories in this release, not {org.forge}"
 
 
 class ContextAuditLoop:
@@ -644,6 +897,11 @@ class ContextAuditLoop:
         # the same tree, so it is not read again while the rules that
         # selected its files are the same.
         self._contexts: dict[str, RepoContext] = {}
+        # Each repository's last head and its ETag, sent with the next head
+        # read: a 304 says the branch has not moved, and costs no rate limit.
+        self._heads: dict[str, Head] = {}
+        # What the forge last said of each credential's rate limit.
+        self._rates: dict[str, _Rate] = {}
         # Each repository's last reading and when it was taken, for a survey
         # that asks for no fresh one.
         self._last_read: dict[str, _Reading] = {}
@@ -666,13 +924,19 @@ class ContextAuditLoop:
         snapshot = view.snapshot
         if snapshot is None:
             raise SettingsUnreadable("no snapshot of the settings documents could be read")
-        return TickSettings(budget=view, section=snapshot.scoped(CONTEXT_AUDIT))
+        return TickSettings(budget=view, snapshot=snapshot)
 
     async def _read(self, client: _Forge, repo: str, rules: FileRules) -> RepoContext | None:
-        head = await read_head(client, repo)
-        if head is None:
+        known = self._heads.get(repo)
+        found = await _read_head(client, repo, etag=known.etag if known is not None else None)
+        if found is None:
+            self._heads.pop(repo, None)
             return None
-        head_sha, tree_sha = head
+        # A 304 is the head the ETag was sent for, so no call is made unless the rules changed since its tree was read.
+        head = known if found == NOT_MODIFIED else found
+        assert isinstance(head, Head)
+        self._heads[repo] = head
+        head_sha, tree_sha = head.sha, head.tree
         cached = self._contexts.get(repo)
         if cached is not None and cached.head_sha == head_sha and cached.rules == rules:
             return cached
@@ -691,12 +955,8 @@ class ContextAuditLoop:
     async def _registered(self, org: Organization) -> list[str]:
         """The active registered repositories under ``org``, on its forge."""
         if org.forge != "github":
-            raise UnsupportedForge(f"the context audit reads GitHub repositories in this release, not {org.forge}")
-        return [
-            str(row["repo"])
-            for row in await self._registry.list_all()
-            if str(row["repo"]).split("/", 1)[0].lower() == org.owner and row.get("forge") == org.forge
-        ]
+            raise UnsupportedForge(_unsupported(org))
+        return _owned(org, await self._registry.list_all())
 
     async def _audits(self, repos: Collection[str]) -> tuple[dict[str, dict[str, Any]], set[str]]:
         """Each repository's newest context audit, and the repositories with a context-audit job live.
@@ -786,36 +1046,60 @@ class ContextAuditLoop:
         refresh: bool = True,
         hidden: Callable[[str], bool] | None = None,
     ) -> Survey:
-        """:meth:`survey` over ``repos``, each due by :func:`due_reason` with ``by_hand``, read with ``settings``."""
-        days = context_audit_days(org.settings)
+        """:meth:`survey` over ``repos``, each due by :func:`due_reason` with ``by_hand``, read with ``settings``.
+
+        Each repository is due by its own ``days`` and read with its own rules.
+        While the organization's credential is down to the rate reserve, a
+        repository not read yet in this survey is not read: it is
+        ``deferred``, and its last reading is used if it was taken with the
+        rules it reads now.
+        """
+        days = settings.days(org)
         if not repos:
             return Survey(org.owner, days, ())
         newest, live_repos = await self._audits(repos)
-        rules = {repo: settings.rules(repo) for repo in repos}
+        rules = {repo: settings.rules(org, repo) for repo in repos}
         stale = [
             repo
             for repo in repos
             if refresh or repo not in self._last_read or self._last_read[repo].rules != rules[repo]
         ]
+        deferred: list[str] = []
         if stale:
-            client = await self._client_for(org)
-            slots = asyncio.Semaphore(settings.read_concurrency)
+            rate = self._rate(org)
+            percent = settings.rate_reserve_percent
+            known = [repo for repo in stale if (head := self._heads.get(repo)) is not None and head.etag]
+            if rate.low(percent, now) and not known:
+                # Not one call, the credential resolved or not: none of these can answer 304 for free.
+                deferred = list(stale)
+            else:
+                client = _Reserved(await self._client_for(org), rate, percent, self._clock, org.owner)
+                slots = asyncio.Semaphore(settings.read_concurrency)
 
-            async def read(repo: str) -> _Reading:
-                async with slots:
-                    try:
-                        return _Reading(now, await self._read(client, repo, rules[repo]), None, rules[repo])
-                    except Exception as exc:  # noqa: BLE001 - one repository's failure is its own entry
-                        detail = str(exc) if isinstance(exc, ForgeReadError) else type(exc).__name__
-                        return _Reading(now, None, detail, rules[repo])
+                async def read(repo: str) -> _Reading | None:
+                    async with slots:
+                        try:
+                            return _Reading(now, await self._read(client, repo, rules[repo]), None, rules[repo])
+                        except ReserveReached:
+                            return None
+                        except Exception as exc:  # noqa: BLE001 - one repository's failure is its own entry
+                            detail = str(exc) if isinstance(exc, ForgeReadError) else type(exc).__name__
+                            return _Reading(now, None, detail, rules[repo])
 
-            for repo, fresh in zip(stale, await asyncio.gather(*(read(repo) for repo in stale)), strict=True):
-                self._last_read[repo] = fresh
+                for repo, fresh in zip(stale, await asyncio.gather(*(read(repo) for repo in stale)), strict=True):
+                    if fresh is None:
+                        deferred.append(repo)
+                    else:
+                        self._last_read[repo] = fresh
+            if deferred or rate.low(percent, now):
+                self._note_reserve(org, rate, percent, now)
         states: list[RepoState] = []
         unread: list[tuple[str, str]] = []
         read_at: list[datetime] = []
         for repo in repos:
-            reading = self._last_read[repo]
+            reading = self._last_read.get(repo)
+            if reading is None or reading.rules != rules[repo]:
+                continue  # deferred before it was ever read with these rules
             read_at.append(reading.at)
             if reading.unread is not None:
                 unread.append((repo, reading.unread))
@@ -828,9 +1112,49 @@ class ContextAuditLoop:
             refused = self._refused.get(repo)
             attempt = _newer(Attempt.from_job(job) if job else None, refused)
             live = not unseen and repo in live_repos
-            reason = due_reason(attempt, context, days=days, now=now, live=live, by_hand=by_hand)
-            states.append(RepoState(context, job, refused.started_at if refused else None, reason))
-        return Survey(org.owner, days, tuple(states), tuple(unread), min(read_at))
+            repo_days = settings.days(org, repo)
+            reason = due_reason(attempt, context, days=repo_days, now=now, live=live, by_hand=by_hand)
+            states.append(RepoState(context, job, refused.started_at if refused else None, reason, days=repo_days))
+        return Survey(
+            org.owner,
+            days,
+            tuple(states),
+            tuple(unread),
+            min(read_at) if read_at else None,
+            deferred=tuple(deferred),
+        )
+
+    def _rate(self, org: Organization) -> _Rate:
+        """What the forge last said of the rate limit of the credential ``org`` reads with.
+
+        An organization with a credential of its own shares it with every one
+        bound to the same; one reading with the deployment's token keeps its
+        own, which its first answer fills in.
+        """
+        key = f"credential:{org.credential_id}" if org.credential_id else f"owner:{org.owner}"
+        return self._rates.setdefault(key, _Rate())
+
+    def _note_reserve(self, org: Organization, rate: _Rate, percent: int, now: datetime) -> None:
+        """Log that ``org`` is deferred for its credential's rate reserve, once per window.
+
+        Once until the window warned about is over, not once per window end:
+        a free 304 while low is a fresh answer, and one that names no reset
+        moves the window's end along with it.
+        """
+        if rate.noted is not None and now < rate.noted:
+            return
+        window = rate.until()
+        rate.noted = window
+        logger.warning(
+            "context_audit_rate_reserve_reached",
+            owner=org.owner,
+            remaining=rate.remaining,
+            limit=rate.limit,
+            reserve_percent=percent,
+            resets_at=_iso(rate.reset),
+            until=_iso(window),
+            hint="no paid read and no start for the organizations reading with this credential until the window ends",
+        )
 
     def _note(self, owner: str, *, level: str = "warning", **fields: Any) -> None:
         """Log why an owner is skipped once, and again only when the reason changes."""
@@ -852,11 +1176,15 @@ class ContextAuditLoop:
         """Start a job for every due repository, at most each owner's cap, and return the repositories started.
 
         Every setting it reads comes from one snapshot, read once at its top
-        (:meth:`settings`). Only active owners with ``context_audit_days`` set
-        are read. Each owner's cap is its ``context_audit_max_jobs_per_tick``:
+        (:meth:`settings`). Only the active registered repositories of active
+        owners whose ``context_audit.days`` resolves to a number of days are
+        read. Each owner's cap is its ``context_audit_max_jobs_per_tick``:
         its due repositories past it wait for the next tick, and an owner
-        whose cap is 0 is not read. Each job gets the
-        owner's ``context_audit_job_usd``. An owner that cannot be read
+        whose cap is 0 is not read. Each job gets the owner's
+        ``context_audit_job_usd``, and opens a pull request when its
+        repository's ``open_prs`` says so. An owner whose credential is down
+        to ``rate_reserve_percent`` of its limit starts nothing: it is read
+        again once the low window ends. An owner that cannot be read
         (a forge whose trees are not read this way, a credential that cannot
         be resolved) and a repository that cannot be read are skipped, each
         with one log line until the reason changes. The budget gate is asked
@@ -872,15 +1200,23 @@ class ContextAuditLoop:
         organizations = await self._organizations.list_all()
         settings = await self.settings(organizations)
         self._interval = settings.interval_seconds
+        # The registered repositories, read once for every owner, when an owner first needs them.
+        registered: list[dict[str, Any]] | None = None
         for org in organizations:
-            days = context_audit_days(org.settings)
-            if org.status != "active" or days is None:
+            if org.status != "active":
                 continue
             cap, budget = _caps(settings.budget.organization(org.owner, org.settings))
             if cap < 1:
                 continue
             try:
-                survey = await self.survey(org, now=now, settings=settings)
+                if registered is None:
+                    registered = await self._registry.list_all()
+                scheduled = [repo for repo in _owned(org, registered) if settings.days(org, repo) is not None]
+                if not scheduled:
+                    continue
+                if org.forge != "github":
+                    raise UnsupportedForge(_unsupported(org))
+                survey = await self._survey(org, scheduled, now=now, settings=settings)
             except UnsupportedForge as exc:
                 self._note(org.owner, level="info", detail=str(exc))
                 continue
@@ -889,7 +1225,9 @@ class ContextAuditLoop:
                 continue
             self._noted.pop(org.owner, None)
             self._note_unread(org.owner, survey.unread)
-            open_pr = context_audit_open_prs(org.settings)
+            if survey.deferred or self._rate(org).low(settings.rate_reserve_percent, now):
+                # Deferred, not refused: nothing counts as an attempt, and the next tick past the reset reads it.
+                continue
             count = 0
             for state in survey.repos:
                 repo = state.context.repo
@@ -898,6 +1236,7 @@ class ContextAuditLoop:
                 if count >= cap:
                     logger.info("context_audit_tick_full", owner=org.owner, cap=cap, next_repo=repo)
                     break
+                open_pr = settings.open_prs(org, repo)
                 try:
                     job_id = await self._start(state.context, budget_usd=budget, open_pr=open_pr, now=now)
                 except GateRefused as exc:
@@ -912,7 +1251,7 @@ class ContextAuditLoop:
                         reason=state.reason,
                         error=type(exc).__name__,
                         detail=_detail(exc),
-                        retry_in_days=days,
+                        retry_in_days=state.days,
                     )
                     continue
                 if job_id is None:
@@ -1005,14 +1344,20 @@ class ContextAuditLoop:
         survey = await self._survey(org, repos, now=now, settings=settings, by_hand=True)
         per_tick, budget = _caps(settings.budget.organization(org.owner, org.settings))
         cap = 1 if repo is not None else limit if limit is not None else per_tick
-        open_pr = context_audit_open_prs(org.settings)
+        # Read for free while low (a 304), but started on as the tick would not: its job spends the same credential.
+        low = self._rate(org).low(settings.rate_reserve_percent, now)
         started: list[Started] = []
         skipped: list[Skipped] = []
         gated: GateRefused | None = None
         for state in survey.repos:
             name, reason = state.context.repo, state.reason
+            if name in survey.deferred:
+                continue  # its last reading is not started on: listed below with the deferred ones
             if reason == LIVE or (reason == CURRENT and not force):
                 skipped.append(Skipped(name, reason))
+                continue
+            if low:
+                skipped.append(Skipped(name, DEFERRED, _RESERVE_DETAIL))
                 continue
             if len(started) >= cap:
                 skipped.append(Skipped(name, LIMIT))
@@ -1022,7 +1367,11 @@ class ContextAuditLoop:
                 continue
             try:
                 job_id = await self._start(
-                    state.context, budget_usd=budget, open_pr=open_pr, now=now, run_with=run_with
+                    state.context,
+                    budget_usd=budget,
+                    open_pr=settings.open_prs(org, name),
+                    now=now,
+                    run_with=run_with,
                 )
             except GateRefused as exc:
                 gated = exc
@@ -1061,7 +1410,8 @@ class ContextAuditLoop:
                 by_hand=True,
             )
         skipped.extend(Skipped(name, UNREAD, detail) for name, detail in survey.unread)
-        if repo is not None and not survey.repos and not survey.unread:
+        skipped.extend(Skipped(name, DEFERRED, _RESERVE_DETAIL) for name in survey.deferred)
+        if repo is not None and not survey.repos and not survey.unread and not survey.deferred:
             skipped.append(Skipped(repos[0], NO_FILES))
         return RunResult(
             owner=org.owner,

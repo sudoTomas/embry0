@@ -108,6 +108,8 @@ def test_each_moved_organization_setting_lands_on_a_key_an_organization_may_set(
     assert {m.legacy: m.path for m in moved_settings} == {
         "context_audit_budget_usd": "budget.context_audit_job_usd",
         "context_audit_max_jobs_per_tick": "budget.context_audit_max_jobs_per_tick",
+        "context_audit_days": "context_audit.days",
+        "context_audit_open_prs": "context_audit.open_prs",
     }
 
 
