@@ -48,6 +48,7 @@ from embry0.execution.proxy.enrollment import EnrollRejected
 
 __all__ = [
     "MAX_SCOPE_REPOS",
+    "REPO_SCOPE_BY_ID",
     "SCOPE_FIELD",
     "RepoScope",
     "Verdict",
@@ -336,24 +337,28 @@ def parse_allowed_repos(body: dict[str, Any], normalize: Callable[[str], str | N
     return frozenset(scope)
 
 
+#: Each enrolled sandbox's repositories, by sandbox id (:class:`RepoScope`).
+REPO_SCOPE_BY_ID: web.AppKey[dict[str, frozenset[str]]] = web.AppKey("repo_scope_by_id")
+
+
 class RepoScope:
     """Enroll-body ``allowed_repos`` → the repositories one sandbox may reach.
 
     Implements :class:`~embry0.execution.proxy.enrollment.EnrollExtension`.
-    The scope lives at ``app["repo_scope_by_id"]``; a sandbox with no entry is
+    The scope lives at ``app[REPO_SCOPE_BY_ID]``; a sandbox with no entry is
     unscoped and refused everything.
     """
 
     def __init__(self, app: web.Application, *, proxy_name: str, normalize: Callable[[str], str | None]) -> None:
         self._proxy_name = proxy_name
         self._normalize = normalize
-        app["repo_scope_by_id"] = {}
+        app[REPO_SCOPE_BY_ID] = {}
 
     def parse(self, app: web.Application, body: dict[str, Any]) -> frozenset[str] | None:
         return parse_allowed_repos(body, self._normalize)
 
     def apply(self, app: web.Application, sandbox_id: str, parsed: frozenset[str] | None) -> dict[str, Any]:
-        scopes: dict[str, frozenset[str]] = app["repo_scope_by_id"]
+        scopes = app[REPO_SCOPE_BY_ID]
         if parsed is None:
             scopes.pop(sandbox_id, None)
             logger.warning(
@@ -367,7 +372,7 @@ class RepoScope:
 
     def forget(self, app: web.Application, sandbox_id: str) -> None:
         """``on_unenroll`` hook: the registry runs it whenever an enrollment ends (#536)."""
-        app["repo_scope_by_id"].pop(sandbox_id, None)
+        app[REPO_SCOPE_BY_ID].pop(sandbox_id, None)
 
 
 def request_verdict(
@@ -376,7 +381,7 @@ def request_verdict(
     evaluate: Callable[[str, str, frozenset[str] | None], Verdict],
 ) -> Verdict:
     """Apply ``evaluate`` to this request with the sandbox's enrolled scope."""
-    scope = request.app["repo_scope_by_id"].get(sandbox_id)
+    scope = request.app[REPO_SCOPE_BY_ID].get(sandbox_id)
     return evaluate(request.method, request.rel_url.raw_path, scope)
 
 

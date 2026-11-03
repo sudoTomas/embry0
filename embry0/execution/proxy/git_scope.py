@@ -44,6 +44,7 @@ from embry0.execution.proxy.forge_scope import SCOPE_FIELD, normalize_gitlab_pro
 from embry0.git_refs import valid_ref
 
 __all__ = [
+    "GIT_GRANT_BY_ID",
     "GIT_ROUTE_PREFIX",
     "JOB_FIELD",
     "PUSH_BRANCHES_FIELD",
@@ -218,18 +219,22 @@ def git_verdict(method: str, raw_path: str, raw_query: str, grant: GitGrant | No
     return GitVerdict(allowed=True, repo=repo, service=service, upstream_url=upstream_url)
 
 
+#: Each enrolled sandbox's :class:`GitGrant`, by sandbox id (:class:`GitScope`).
+GIT_GRANT_BY_ID: web.AppKey[dict[str, GitGrant]] = web.AppKey("git_grant_by_id")
+
+
 class GitScope:
     """Enroll-body ``allowed_repos`` / ``git_upstream`` / ``git_push`` → one :class:`GitGrant`.
 
     Implements :class:`~embry0.execution.proxy.enrollment.EnrollExtension`.
-    Grants live at ``app["git_grant_by_id"]`` and end with their enrollment
+    Grants live at ``app[GIT_GRANT_BY_ID]`` and end with their enrollment
     (:meth:`forget`); a sandbox with none is refused every git request. The response echoes the stored grant, which is how the
     orchestrator tells this proxy from an image that predates forwarding.
     """
 
     def __init__(self, app: web.Application, *, proxy_name: str) -> None:
         self._proxy_name = proxy_name
-        app["git_grant_by_id"] = {}
+        app[GIT_GRANT_BY_ID] = {}
 
     def parse(self, app: web.Application, body: dict[str, Any]) -> GitGrant | None:
         repos = parse_allowed_repos(body, normalize_git_repo)
@@ -255,7 +260,7 @@ class GitScope:
         return GitGrant(upstream=upstream, repos=repos, push=push, push_branches=branches, job_id=job_id or "")
 
     def apply(self, app: web.Application, sandbox_id: str, parsed: GitGrant | None) -> dict[str, Any]:
-        grants: dict[str, GitGrant] = app["git_grant_by_id"]
+        grants = app[GIT_GRANT_BY_ID]
         if parsed is None:
             grants.pop(sandbox_id, None)
             logger.warning(
@@ -298,7 +303,7 @@ class GitScope:
                 branches = parse_push_branches(body.get(PUSH_BRANCHES_FIELD))
             except EnrollRejected as exc:
                 return web.json_response({"error": "bad_request", "detail": str(exc)}, status=400)
-            grants: dict[str, GitGrant] = request.app["git_grant_by_id"]
+            grants = request.app[GIT_GRANT_BY_ID]
             grant = grants.get(sandbox_id)
             if grant is None:
                 return web.json_response({"error": "not_enrolled"}, status=404)
@@ -322,7 +327,7 @@ class GitScope:
         Revoked, expired or replaced, a grant never outlives its enrollment, so
         the map is bounded by the registry's cap.
         """
-        app["git_grant_by_id"].pop(sandbox_id, None)
+        app[GIT_GRANT_BY_ID].pop(sandbox_id, None)
 
 
 def _echo(grant: GitGrant) -> dict[str, Any]:

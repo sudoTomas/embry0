@@ -15,6 +15,7 @@ import httpx
 import structlog
 from aiohttp import web
 
+from embry0.execution.proxy.app_keys import GITHUB_TOKEN, HTTP_CLIENT
 from embry0.execution.proxy.enrollment import check_bearer, payload_token, register_admin_routes
 from embry0.execution.proxy.forge_scope import (
     RepoScope,
@@ -48,7 +49,7 @@ def create_github_proxy_app(github_token: str, admin_token: str) -> web.Applicat
         admin_token: Shared secret with orchestrator for /admin/enroll endpoints.
     """
     app = web.Application()
-    app["github_token"] = github_token
+    app[GITHUB_TOKEN] = github_token
     scope = RepoScope(app, proxy_name="github_proxy", normalize=normalize_github_repo)
     register_admin_routes(
         app,
@@ -66,11 +67,11 @@ def create_github_proxy_app(github_token: str, admin_token: str) -> web.Applicat
 
 
 async def _on_startup(app: web.Application) -> None:
-    app["http_client"] = httpx.AsyncClient(timeout=30.0)
+    app[HTTP_CLIENT] = httpx.AsyncClient(timeout=30.0)
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    client = app.get("http_client")
+    client = app.get(HTTP_CLIENT)
     if client:
         await client.aclose()
 
@@ -89,7 +90,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     if not verdict.allowed:
         return policy_denied(request, "github_proxy", sandbox_id, verdict)
 
-    token = payload_token(request, sandbox_id, request.app["github_token"])
+    token = payload_token(request, sandbox_id, request.app[GITHUB_TOKEN])
     # The checked, re-encoded path, never the raw one: httpx would collapse
     # dot segments in a raw path after the check.
     upstream_url = f"{GITHUB_API_BASE}{verdict.upstream_path}"
@@ -103,7 +104,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     headers["X-GitHub-Api-Version"] = "2022-11-28"
 
     body = await request.read()
-    client: httpx.AsyncClient = request.app["http_client"]
+    client: httpx.AsyncClient = request.app[HTTP_CLIENT]
 
     logger.info("github_credentials_used", sandbox_id=sandbox_id, method=request.method, path=verdict.upstream_path)
 

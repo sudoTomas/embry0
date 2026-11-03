@@ -4,6 +4,7 @@ import ssl
 
 import pytest
 
+from embry0.execution.proxy import app_keys
 from embry0.execution.proxy.gitlab_proxy import (
     DEFAULT_GITLAB_API_BASE,
     _auth_headers,
@@ -158,14 +159,14 @@ async def test_query_string_is_preserved(aiohttp_client, query):
 async def test_without_a_ca_the_client_uses_default_verification(aiohttp_client):
     app = create_gitlab_proxy_app("glpat-x", ADMIN)
     await aiohttp_client(app)
-    assert app["ca_pem"] == ""
+    assert app[app_keys.CA_PEM] == ""
 
 
 async def test_ca_pem_reaches_the_upstream_client(aiohttp_client):
     """The proxy is the second of the three clients that must trust the CA."""
     app = create_gitlab_proxy_app("glpat-x", ADMIN, ca_pem=CA_PEM)
     await aiohttp_client(app)
-    context = app["http_client"]._transport._pool._ssl_context
+    context = app[app_keys.HTTP_CLIENT]._transport._pool._ssl_context
     assert isinstance(context, ssl.SSLContext)
     system = len(ssl.create_default_context().get_ca_certs())
     assert len(context.get_ca_certs()) == system + 1

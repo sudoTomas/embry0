@@ -9,7 +9,7 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import MIGRATIONS
 from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
 
-pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
+pytestmark = pytest.mark.requires_postgres
 
 VERSION = 83
 

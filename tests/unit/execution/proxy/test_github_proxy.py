@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp.test_utils import TestClient
 
+from embry0.execution.proxy import app_keys
 from embry0.execution.proxy.github_proxy import create_github_proxy_app
 
 ADMIN = "test-admin-secret-not-real"
@@ -41,7 +42,7 @@ async def test_proxy_injects_token(gh_client: TestClient):
     mock_resp.content = b'{"number": 1}'
     mock_resp.headers = {"content-type": "application/json"}
 
-    with patch.object(gh_client.app["http_client"], "request", return_value=mock_resp):
+    with patch.object(gh_client.app[app_keys.HTTP_CLIENT], "request", return_value=mock_resp):
         resp = await gh_client.get(
             "/repos/owner/repo/issues/1",
             headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},

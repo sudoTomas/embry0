@@ -15,7 +15,7 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.healing_cases import CAP_STAGES, HealingCasesRepository
 from embry0.storage.repositories.watcher_runs import WatcherRunsRepository
 
-pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
+pytestmark = pytest.mark.requires_postgres
 
 REPO = "acme/widgets"
 

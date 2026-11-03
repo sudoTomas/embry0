@@ -8,7 +8,9 @@ import httpx
 import pytest
 from aiohttp.test_utils import TestClient
 
-from embry0.execution.proxy.context_proxy import create_context_proxy_app
+from embry0.execution.proxy.context_proxy import QUERY_COUNT_BY_ID, create_context_proxy_app
+
+from .upstream_stub import route_upstream
 
 _ADMIN = "test-admin-secret-not-real"
 _SANDBOX_TOKEN = "sandbox-bearer-token-at-least-32-chars-long"
@@ -59,7 +61,7 @@ async def ctx(aiohttp_client):
     app = _make_app()
     client = await aiohttp_client(app)
     fake = _FakeUpstreamClient()
-    app["http_client"] = fake
+    route_upstream(app, fake)
     return client, fake
 
 
@@ -249,7 +251,7 @@ async def test_empty_api_key_sends_no_auth_header(aiohttp_client):
     app = _make_app(orchestrator_api_key="")
     client = await aiohttp_client(app)
     fake = _FakeUpstreamClient()
-    app["http_client"] = fake
+    route_upstream(app, fake)
     await _enroll(client)
     await client.get("/api/v1/logs/query?container=acme-backend", headers=_bearer())
     assert "Authorization" not in fake.calls[0]["headers"]
@@ -493,7 +495,7 @@ async def pctx(aiohttp_client):
     app = _make_app(container_allowlist=list(_PATTERNED))
     client = await aiohttp_client(app)
     fake = _FakeUpstreamClient()
-    app["http_client"] = fake
+    route_upstream(app, fake)
     return client, fake
 
 
@@ -517,7 +519,7 @@ async def test_a_pattern_never_lets_regex_syntax_reach_the_selector(pctx, name):
     data = await resp.json()
     assert data["allowed_containers"] == _PATTERNED
     assert fake.calls == []
-    assert client.server.app["query_count_by_id"].get("s1", 0) == 0
+    assert client.server.app[QUERY_COUNT_BY_ID].get("s1", 0) == 0
 
 
 async def test_exact_entries_next_to_a_pattern_are_unchanged(pctx):

@@ -169,9 +169,10 @@ async def _none() -> list[dict[str, Any]]:
 
 async def feed(request: Request) -> list[Proposal]:
     """Every proposal still asked, newest first, with its owners."""
-    proposals, owners = await asyncio.gather(
-        open_proposals(request.app.state), _state(request, "proposals_repo").owners()
-    )
+    # The repository first: a 503 raised while the gather's arguments are built
+    # would leave open_proposals' coroutine created and never awaited.
+    proposals_repo = _state(request, "proposals_repo")
+    proposals, owners = await asyncio.gather(open_proposals(request.app.state), proposals_repo.owners())
     repos = {p.repo.lower() for p in proposals}
     unowned = repos - set(owners)
     codeowners, areas = await asyncio.gather(_codeowners(request, unowned), _areas(request, repos))

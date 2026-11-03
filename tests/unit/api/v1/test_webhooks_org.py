@@ -94,7 +94,9 @@ class Unavailable:
     """A repository whose every call fails, as when the database went away."""
 
     def __getattr__(self, name: str) -> Any:
-        async def fail(*args: Any, **kwargs: Any) -> Any:
+        # Raises when called, so an awaited method and an ``async with`` lock both fail here,
+        # and no coroutine is left unawaited when a caller never gets to await it.
+        def fail(*args: Any, **kwargs: Any) -> Any:
             raise RuntimeError(f"{name}: database unavailable")
 
         return fail

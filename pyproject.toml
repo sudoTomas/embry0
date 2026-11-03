@@ -127,6 +127,11 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# The loop an async fixture runs in, unless it names one. Set, so pytest-asyncio
+# does not warn at every start that the default is changing; "function" is that
+# coming default and what every function-scoped fixture already gets. The one
+# session-scoped async fixture names its own (tests/integration/conftest.py).
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = [
     "sandbox_smoke: real-sandbox end-to-end tests. Run with `pytest -m sandbox_smoke`.",

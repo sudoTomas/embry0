@@ -26,6 +26,7 @@ from aiohttp import web
 from aiohttp.abc import AbstractResolver, ResolveResult
 from aiohttp.test_utils import TestClient, TestServer
 
+from embry0.execution.proxy import app_keys
 from tests.fixtures.recording_upstream import RecordingUpstream, Seen, is_test_request
 
 ADMIN = "admin-secret-for-git-proxy-tests"
@@ -219,9 +220,9 @@ def route_every_host_to_localhost(app: web.Application) -> None:
     """Append a startup hook that swaps the proxy's upstream session for one using :class:`_LocalResolver`."""
 
     async def _swap(app: web.Application) -> None:
-        old: aiohttp.ClientSession = app["http_session"]
+        old: aiohttp.ClientSession = app[app_keys.HTTP_SESSION]
         await old.close()
-        app["http_session"] = aiohttp.ClientSession(
+        app[app_keys.HTTP_SESSION] = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(resolver=_LocalResolver()),
             cookie_jar=aiohttp.DummyCookieJar(),
             auto_decompress=False,
@@ -250,8 +251,8 @@ class ProxyRig:
         self.app = app
         self.upstream = upstream
         self.upstream_host = upstream_host
-        if app["github_token"]:
-            upstream.credentials.add(app["github_token"])
+        if app[app_keys.GITHUB_TOKEN]:
+            upstream.credentials.add(app[app_keys.GITHUB_TOKEN])
         if upstream_host != "127.0.0.1":
             route_every_host_to_localhost(app)
         self._upstream_server = TestServer(upstream.app(), host="127.0.0.1")

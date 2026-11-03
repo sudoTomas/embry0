@@ -1,6 +1,7 @@
 """``DockerRuntime``, ``build_runtime`` and how the SandboxManager holds a runtime (#268)."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,6 +10,7 @@ from embry0.config import Embry0Config
 from embry0.execution.docker_client import DockerClient
 from embry0.execution.runtime import AgentRuntime, DockerRuntime, build_runtime
 from embry0.execution.sandbox_manager import SandboxManager
+from tests.fixtures.hung_process import hung_script, run_until_it_raises
 
 
 def test_docker_runtime_satisfies_the_protocol() -> None:
@@ -205,6 +207,17 @@ async def test_compose_services_raises_when_the_project_cannot_be_queried() -> N
 async def test_compose_services_kills_a_hung_query() -> None:
     with pytest.raises(TimeoutError):
         await DockerRuntime(_shell_client("sleep 5")).compose_services("qa_JOB1", timeout=0.2)  # type: ignore[arg-type]
+
+
+def test_a_hung_query_is_killed_with_its_children_before_its_timeout_is_raised(tmp_path: Path) -> None:
+    """`docker compose` runs the compose plugin as a child, which holds stdout: killing `docker` alone left the
+    query to the garbage collector, and once its event loop had closed its transport raised from ``__del__``."""
+    pidfile = tmp_path / "grandchild.pid"
+    runtime = DockerRuntime(_shell_client(hung_script(pidfile)))  # type: ignore[arg-type]
+    left = run_until_it_raises(lambda: runtime.compose_services("qa_JOB1", timeout=0.5), TimeoutError, pidfile)
+    assert left.seconds < 3, f"the timed-out query raised only after {left.seconds:.1f}s, not promptly"
+    assert not left.grandchild_alive, "the query's child outlived its timeout"
+    assert left.unraisable == [], f"the killed query was left to the garbage collector: {left.unraisable}"
 
 
 @pytest.mark.asyncio

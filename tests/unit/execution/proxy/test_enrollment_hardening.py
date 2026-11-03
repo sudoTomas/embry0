@@ -9,6 +9,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from embry0.execution.proxy.enrollment import (
+    ENROLLMENT,
     AdminGuard,
     EnrollmentRegistry,
     RegistryFullError,
@@ -131,7 +132,7 @@ async def client():
 
 async def test_enroll_accepts_ttl_and_expiry_cuts_credentials(client):
     clock = Clock()
-    client.app["enrollment"]._now = clock  # inject the clock post-construction
+    client.app[ENROLLMENT]._now = clock  # inject the clock post-construction
     resp = await client.post(
         "/admin/enroll",
         json={"sandbox_id": "s1", "sandbox_token": TOK, "ttl_seconds": 60},
@@ -182,7 +183,7 @@ async def test_admin_backoff_over_http(client):
 
 
 async def test_registry_full_maps_to_429(client):
-    client.app["enrollment"]._max_entries = 1
+    client.app[ENROLLMENT]._max_entries = 1
     first = await client.post(
         "/admin/enroll",
         json={"sandbox_id": "s1", "sandbox_token": TOK},
@@ -205,4 +206,4 @@ async def test_a_sandbox_id_ending_in_a_newline_is_refused(client):
     unenroll = await client.delete("/admin/enroll/sbx-1%0A", headers={"X-Admin-Token": ADMIN})
     assert enroll.status == 400, f"enrolling a sandbox id ending in a newline must be refused: {enroll.status}"
     assert unenroll.status == 400, f"unenrolling a sandbox id ending in a newline must be refused: {unenroll.status}"
-    assert len(client.server.app["enrollment"]) == 0, "nothing may be enrolled under a sandbox id ending in a newline"
+    assert len(client.server.app[ENROLLMENT]) == 0, "nothing may be enrolled under a sandbox id ending in a newline"

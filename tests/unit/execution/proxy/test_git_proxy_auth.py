@@ -5,6 +5,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from embry0.execution.proxy.git_proxy import create_git_proxy_app
+from embry0.execution.proxy.git_scope import GIT_GRANT_BY_ID
 
 from .git_forge import ADMIN as RIG_ADMIN
 from .git_forge import ProxyRig, RecordingUpstream, basic
@@ -180,7 +181,7 @@ async def test_re_enroll_replaces_old_token(rig):
 
     await _unenroll(rig, "s1")
     assert (await rig.fetch_refs(TOK_B)).status == 403
-    assert rig.client.app["git_grant_by_id"] == {}, "the grant must end with its enrollment"
+    assert rig.client.app[GIT_GRANT_BY_ID] == {}, "the grant must end with its enrollment"
 
 
 # --- I-2: token length floor ---

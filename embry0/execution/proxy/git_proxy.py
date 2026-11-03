@@ -32,8 +32,10 @@ import aiohttp
 import structlog
 from aiohttp import web
 
+from embry0.execution.proxy.app_keys import CA_PEM, GITHUB_TOKEN, HTTP_SESSION
 from embry0.execution.proxy.enrollment import check_bearer, git_identity, payload_token, register_admin_routes
 from embry0.execution.proxy.git_scope import (
+    GIT_GRANT_BY_ID,
     GIT_ROUTE_PREFIX,
     RECEIVE_PACK,
     GitGrant,
@@ -101,8 +103,8 @@ def create_git_proxy_app(github_token: str, admin_token: str, *, ca_pem: str = "
             self-managed forge behind an internal CA (spec 1A §3.2).
     """
     app = web.Application()
-    app["github_token"] = github_token
-    app["ca_pem"] = ca_pem
+    app[GITHUB_TOKEN] = github_token
+    app[CA_PEM] = ca_pem
     scope = GitScope(app, proxy_name="git_proxy")
     register_admin_routes(
         app,
@@ -122,12 +124,12 @@ def create_git_proxy_app(github_token: str, admin_token: str, *, ca_pem: str = "
 
 
 async def _on_startup(app: web.Application) -> None:
-    ca_pem = app.get("ca_pem", "")
+    ca_pem = app.get(CA_PEM, "")
     connector = aiohttp.TCPConnector(ssl=build_ssl_context(ca_pem)) if ca_pem else aiohttp.TCPConnector()
     # One session serves every sandbox, so it must not keep cookies: a forge's
     # session cookie set for one sandbox would ride along on another's request.
     # auto_decompress=False passes a compressed body through as it came.
-    app["http_session"] = aiohttp.ClientSession(
+    app[HTTP_SESSION] = aiohttp.ClientSession(
         connector=connector,
         cookie_jar=aiohttp.DummyCookieJar(),
         auto_decompress=False,
@@ -138,7 +140,7 @@ async def _on_startup(app: web.Application) -> None:
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    session = app.get("http_session")
+    session = app.get(HTTP_SESSION)
     if session is not None:
         await session.close()
 
@@ -173,7 +175,7 @@ def _upstream_headers(request: web.Request, sandbox_id: str, verdict: GitVerdict
     headers = {k: v for k, v in request.headers.items() if k.lower() in _FORWARDED_REQUEST_HEADERS}
     # aiohttp would otherwise ask for encodings git never offered.
     headers.setdefault("Accept-Encoding", "identity")
-    token = payload_token(request, sandbox_id, request.app["github_token"])
+    token = payload_token(request, sandbox_id, request.app[GITHUB_TOKEN])
     if not token:
         return headers
     host, username = git_identity(request, sandbox_id) or (DEFAULT_GIT_HOST, DEFAULT_GIT_USERNAME)
@@ -199,7 +201,7 @@ async def _git_handler(request: web.Request) -> web.StreamResponse:
         # which hides this message behind "could not read Username".
         return _refusal(403, "this sandbox's proxy bearer is not enrolled (expired or revoked)")
 
-    grant: GitGrant | None = request.app["git_grant_by_id"].get(sandbox_id)
+    grant: GitGrant | None = request.app[GIT_GRANT_BY_ID].get(sandbox_id)
     verdict = git_verdict(request.method, request.rel_url.raw_path, request.rel_url.raw_query_string, grant)
     if not verdict.allowed:
         logger.warning(
@@ -219,7 +221,7 @@ async def _git_handler(request: web.Request) -> web.StreamResponse:
         body = _replay(commands_or_refusal.raw, request)
 
     headers = _upstream_headers(request, sandbox_id, verdict)
-    session: aiohttp.ClientSession = request.app["http_session"]
+    session: aiohttp.ClientSession = request.app[HTTP_SESSION]
     response: web.StreamResponse | None = None
     try:
         async with session.request(

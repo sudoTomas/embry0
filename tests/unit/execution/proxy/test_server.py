@@ -5,7 +5,9 @@ import base64
 import pytest
 from aiohttp import web
 
-from embry0.execution.proxy import server
+from embry0.execution.proxy import app_keys, server
+from embry0.execution.proxy.context_proxy import CONTAINER_ALLOWLIST, QUERY_QUOTA
+from embry0.execution.proxy.gitlab_proxy import GITLAB_TOKEN
 
 CA_PEM = """-----BEGIN CERTIFICATE-----
 MIIDFTCCAf2gAwIBAgIUKGxb659gemN1Fu46hjP/cM50qQcwDQYJKoZIhvcNAQEL
@@ -86,8 +88,8 @@ def test_build_app_context_returns_context_app(monkeypatch):
     assert isinstance(app, web.Application)
     routes = [str(r.resource) for r in app.router.routes()]
     assert any("/api/v1/logs/query" in r for r in routes)
-    assert app["container_allowlist"] == ["acme-backend", "acme-frontend"]
-    assert app["query_quota"] == 30
+    assert app[CONTAINER_ALLOWLIST] == ["acme-backend", "acme-frontend"]
+    assert app[QUERY_QUOTA] == 30
 
 
 def test_build_app_context_missing_allowlist_raises(monkeypatch):
@@ -203,12 +205,12 @@ def test_build_app_git_tolerates_missing_github_token(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.setenv("PROXY_ADMIN_TOKEN", "adm")
     app = server.build_app_from_env()
-    assert app["github_token"] == ""
+    assert app[app_keys.GITHUB_TOKEN] == ""
 
 
 @pytest.mark.parametrize(
     ("proxy_type", "env_key", "app_key"),
-    [("github", "GITHUB_TOKEN", "github_token"), ("gitlab", "GITLAB_TOKEN", "gitlab_token")],
+    [("github", "GITHUB_TOKEN", app_keys.GITHUB_TOKEN), ("gitlab", "GITLAB_TOKEN", GITLAB_TOKEN)],
 )
 def test_build_app_forge_api_proxy_tolerates_empty_token(monkeypatch, proxy_type, env_key, app_key):
     """#424: a registry-only deployment launches github-/gitlab-proxy with an
@@ -249,7 +251,7 @@ def test_build_app_gitlab_wires_the_ca(monkeypatch):
     monkeypatch.setenv("PROXY_ADMIN_TOKEN", "test-admin-tok")
     monkeypatch.setenv("GITLAB_CA_PEM", base64.b64encode(CA_PEM.encode()).decode())
     app = server.build_app_from_env()
-    assert app["ca_pem"] == CA_PEM
+    assert app[app_keys.CA_PEM] == CA_PEM
 
 
 def test_gitlab_ca_pem_rejects_a_truncated_pem(monkeypatch):

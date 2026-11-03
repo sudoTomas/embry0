@@ -383,3 +383,22 @@ async def test_each_proposal_carries_its_brief_while_it_matches(app: FastAPI) ->
     async with await _client(app) as client:
         stale = (await client.get("/api/v1/proposals/case:hc-1")).json()
     assert stale["brief"] is None, "a brief written from an older version is not shown"
+
+
+async def test_the_feed_without_its_repository_answers_503_and_leaves_no_coroutine_unawaited() -> None:
+    """The feed built ``open_proposals``' coroutine before it looked the repository up; the 503 then left that
+    coroutine never awaited, a RuntimeWarning each time."""
+    import gc
+    import warnings
+
+    from fastapi import HTTPException
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(proposals_repo=None)))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(HTTPException) as refused:
+            await proposals_api.feed(request)  # type: ignore[arg-type]
+        gc.collect()
+    assert refused.value.status_code == 503
+    unawaited = [str(w.message) for w in caught if "never awaited" in str(w.message)]
+    assert not unawaited, f"the 503 left a coroutine behind: {unawaited}"

@@ -124,6 +124,8 @@ async def test_qa_unexpected_interrupt_still_releases_sandbox_and_volumes():
         database_url="postgresql://test/test",
     )
     ex._jobs.update = AsyncMock()
+    # A row, not a mock: a mock row's .get() is a coroutine nothing awaits.
+    ex._jobs.get = AsyncMock(return_value={"trace_id": None})
     ex._announce_finished = AsyncMock()
     ex._sandbox = MagicMock()
     ex._sandbox.destroy = AsyncMock()

@@ -14,6 +14,8 @@ async def test_init_node_passes_repo_to_create(monkeypatch):
     sandbox_mgr.create = AsyncMock(return_value=("sandbox-xyz", "tok-abc"))
     sandbox_mgr.last_forge_credential = MagicMock(return_value=None)  # sync on SandboxManager
     docker = AsyncMock()
+    # Synchronous on DockerClient: an AsyncMock's would return a coroutine nothing awaits.
+    docker.build_exec_cmd = MagicMock(return_value=["true"])
     proxy_mgr = MagicMock(git_proxy_url="")  # empty => skip clone/cred branch
 
     state = {

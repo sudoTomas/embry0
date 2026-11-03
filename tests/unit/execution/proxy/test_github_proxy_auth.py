@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from embry0.execution.proxy import app_keys
 from embry0.execution.proxy.github_proxy import create_github_proxy_app
 
 ADMIN = "test-admin-secret-not-real"
@@ -84,7 +85,7 @@ async def test_enrolled_bearer_succeeds(client):
         captured.append({"method": method, "url": url, "headers": dict(headers)})
         return mock_resp
 
-    with patch.object(client.app["http_client"], "request", side_effect=fake_request):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "request", side_effect=fake_request):
         resp = await client.get(
             "/repos/owner/repo/issues/1",
             headers={"Authorization": f"Bearer {TOK_S1}"},
@@ -114,7 +115,7 @@ async def test_multi_tenant_both_work(client):
     mock_resp.content = b"{}"
     mock_resp.headers = {"content-type": "application/json"}
 
-    with patch.object(client.app["http_client"], "request", return_value=mock_resp):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "request", return_value=mock_resp):
         for tok in (TOK_S1, TOK_S2):
             resp = await client.get(
                 "/repos/owner/repo",
@@ -154,7 +155,7 @@ async def test_re_enroll_replaces_old_token(client):
     mock_resp.content = b"{}"
     mock_resp.headers = {"content-type": "application/json"}
 
-    with patch.object(client.app["http_client"], "request", return_value=mock_resp):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "request", return_value=mock_resp):
         # Token A should work
         resp = await client.get("/repos/owner/repo", headers={"Authorization": f"Bearer {TOK_A}"})
         assert resp.status == 200
@@ -171,7 +172,7 @@ async def test_re_enroll_replaces_old_token(client):
     resp = await client.get("/repos/owner/repo", headers={"Authorization": f"Bearer {TOK_A}"})
     assert resp.status == 401
 
-    with patch.object(client.app["http_client"], "request", return_value=mock_resp):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "request", return_value=mock_resp):
         # Token B must work
         resp = await client.get("/repos/owner/repo", headers={"Authorization": f"Bearer {TOK_B}"})
         assert resp.status == 200
@@ -229,7 +230,7 @@ async def test_proxy_connect_error_returns_502(client):
 
     import httpx
 
-    with patch.object(client.app["http_client"], "request", side_effect=httpx.ConnectError("refused")):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "request", side_effect=httpx.ConnectError("refused")):
         resp = await client.get("/repos/owner/repo", headers={"Authorization": f"Bearer {TOK_S1}"})
     assert resp.status == 502
 
@@ -245,7 +246,7 @@ async def test_proxy_timeout_returns_504(client):
 
     import httpx
 
-    with patch.object(client.app["http_client"], "request", side_effect=httpx.TimeoutException("timeout")):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "request", side_effect=httpx.TimeoutException("timeout")):
         resp = await client.get("/repos/owner/repo", headers={"Authorization": f"Bearer {TOK_S1}"})
     assert resp.status == 504
 
@@ -265,7 +266,7 @@ async def test_proxy_forwards_upstream_404(client):
     fake_404.content = b'{"message":"Not Found"}'
     fake_404.headers = {"content-type": "application/json"}
 
-    with patch.object(client.app["http_client"], "request", return_value=fake_404):
+    with patch.object(client.app[app_keys.HTTP_CLIENT], "request", return_value=fake_404):
         resp = await client.get("/repos/owner/repo/issues/999", headers={"Authorization": f"Bearer {TOK_S1}"})
     assert resp.status == 404
     body = await resp.json()

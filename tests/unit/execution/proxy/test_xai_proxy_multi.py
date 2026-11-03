@@ -7,6 +7,8 @@ from aiohttp.test_utils import TestClient
 
 from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
 
+from .upstream_stub import route_upstream
+
 _ADMIN = "test-admin-secret-not-real"
 _TOKEN_A = "sandbox-bearer-a-at-least-32-characters"
 _TOKEN_B = "sandbox-bearer-b-at-least-32-characters"
@@ -42,7 +44,7 @@ def _capture(app) -> dict:
         async def aclose(self):
             return None
 
-    app["http_client"] = _FakeClient()
+    route_upstream(app, _FakeClient())
     return captured
 
 
@@ -172,7 +174,7 @@ def _capture_403(app, body: bytes) -> None:
         async def aclose(self):
             return None
 
-    app["http_client"] = _Client()
+    route_upstream(app, _Client())
 
 
 @pytest.mark.parametrize(

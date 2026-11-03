@@ -10,6 +10,7 @@ from typing import Any
 
 import asyncpg
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from embry0.api.app import _init_app_state, create_app
@@ -28,7 +29,7 @@ def database_url() -> str:
     )
 
 
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def setup_database(database_url: str) -> AsyncIterator[str]:
     """Create and migrate the test database."""
     try:

@@ -7,6 +7,8 @@ from aiohttp.test_utils import TestClient
 
 from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
 
+from .upstream_stub import route_upstream
+
 _ADMIN = "test-admin-secret-not-real"
 _SANDBOX_TOKEN = "sandbox-bearer-token-at-least-32-chars-long"
 
@@ -192,7 +194,7 @@ async def test_forward_injects_conv_id_from_sandbox_identity(xai_client: TestCli
         async def aclose(self):  # app cleanup calls this on teardown
             return None
 
-    xai_client.app["http_client"] = _FakeClient()
+    route_upstream(xai_client.app, _FakeClient())
 
     resp = await xai_client.post(
         "/v1/messages",

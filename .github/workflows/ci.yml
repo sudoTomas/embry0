@@ -85,8 +85,10 @@ jobs:
       # of its own, created next to TEST_DATABASE_URL's (tests/conftest.py).
       # The four share one Postgres: on a slow runner the heaviest tests took
       # 30 s, against 12-29 s serially, so a test may take 60 s, not 30.
+      # --fail-on-warnings (tests/conftest.py): the suite has no warnings, so a
+      # new one fails the run and is named in its warnings summary (#336).
       - name: Run unit tests
-        run: uv run --no-sync pytest tests/unit/ -n 4 -v --tb=short --timeout=60
+        run: uv run --no-sync pytest tests/unit/ -n 4 -v --tb=short --timeout=60 --fail-on-warnings
 
   build-images:
     name: Docker image builds

@@ -19,6 +19,8 @@ from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES
 from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
 from embry0.safety.error_codes import ErrorCode, classify_agent_error
 
+from .upstream_stub import route_upstream
+
 _ADMIN = "test-admin-secret-not-real"
 _SANDBOX_TOKEN = "sandbox-bearer-token-at-least-32-chars-long"
 
@@ -61,7 +63,7 @@ async def _ready_xai(aiohttp_client, max_request_bytes: int) -> tuple[TestClient
     await client.post("/admin/enroll", json={"sandbox_id": "s1", "sandbox_token": _SANDBOX_TOKEN}, headers=admin)
     await client.post("/admin/token", json={"access_token": "at-1"}, headers=admin)
     fake = _FakeClient()
-    client.app["http_client"] = fake
+    route_upstream(client.app, fake)
     return client, fake
 
 
@@ -73,7 +75,7 @@ async def _ready_auth(aiohttp_client, max_request_bytes: int) -> tuple[TestClien
         headers={"X-Admin-Token": _ADMIN},
     )
     fake = _FakeClient()
-    client.app["http_client"] = fake
+    route_upstream(client.app, fake)
     return client, fake
 
 

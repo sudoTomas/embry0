@@ -26,6 +26,7 @@ import httpx
 import structlog
 from aiohttp import web
 
+from embry0.execution.proxy.app_keys import HTTP_CLIENT
 from embry0.execution.proxy.enrollment import check_bearer, register_admin_routes
 
 logger = structlog.get_logger(__name__)
@@ -43,6 +44,12 @@ _FORWARDED_RESPONSE_HEADERS = ("content-type",)
 _ROUTES: dict[str, str] = {"chat/completions": "POST", "models": "GET"}
 
 
+# This proxy's own state keys; those several proxies share are in ``app_keys``.
+UPSTREAM_ROOT = web.AppKey("upstream_root", str)
+UPSTREAM_API_KEY = web.AppKey("upstream_api_key", str)
+MAX_REQUEST_BYTES = web.AppKey("max_request_bytes", int)
+
+
 def create_local_llm_proxy_app(
     upstream_url: str,
     admin_token: str,
@@ -58,9 +65,9 @@ def create_local_llm_proxy_app(
     # One byte over the cap still reads, so the handler can answer 413 itself
     # instead of aiohttp's bare error.
     app = web.Application(client_max_size=max_request_bytes + 1)
-    app["upstream_root"] = upstream_url.rstrip("/")
-    app["upstream_api_key"] = upstream_api_key
-    app["max_request_bytes"] = max_request_bytes
+    app[UPSTREAM_ROOT] = upstream_url.rstrip("/")
+    app[UPSTREAM_API_KEY] = upstream_api_key
+    app[MAX_REQUEST_BYTES] = max_request_bytes
     register_admin_routes(app, proxy_name=PROXY_NAME, admin_token=admin_token)
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
@@ -70,11 +77,11 @@ def create_local_llm_proxy_app(
 
 
 async def _on_startup(app: web.Application) -> None:
-    app["http_client"] = httpx.AsyncClient(timeout=_TIMEOUT)
+    app[HTTP_CLIENT] = httpx.AsyncClient(timeout=_TIMEOUT)
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    client = app.get("http_client")
+    client = app.get(HTTP_CLIENT)
     if client:
         await client.aclose()
 
@@ -85,7 +92,7 @@ async def _health_handler(request: web.Request) -> web.Response:
 
 def _upstream_headers(request: web.Request) -> dict[str, str]:
     headers = {name: request.headers[name] for name in _FORWARDED_REQUEST_HEADERS if name in request.headers}
-    key = request.app["upstream_api_key"]
+    key = request.app[UPSTREAM_API_KEY]
     if key:
         headers["Authorization"] = f"Bearer {key}"
     return headers
@@ -104,7 +111,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
 
     body = b""
     if method == "POST":
-        limit: int = request.app["max_request_bytes"]
+        limit: int = request.app[MAX_REQUEST_BYTES]
         if request.content_length is not None and request.content_length > limit:
             return _too_large(sandbox_id, request.content_length, limit)
         try:
@@ -114,8 +121,8 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
         if len(body) > limit:
             return _too_large(sandbox_id, len(body), limit)
 
-    client: httpx.AsyncClient = request.app["http_client"]
-    url = f"{request.app['upstream_root']}/{path}"
+    client: httpx.AsyncClient = request.app[HTTP_CLIENT]
+    url = f"{request.app[UPSTREAM_ROOT]}/{path}"
     logger.info("local_llm_proxy_forward", sandbox_id=sandbox_id, path=path, bytes=len(body))
     try:
         async with client.stream(method, url, headers=_upstream_headers(request), content=body or None) as upstream:

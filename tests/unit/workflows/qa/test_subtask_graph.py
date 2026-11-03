@@ -191,7 +191,7 @@ def _build_config(*, docker, result_json: str | None = None):
         def register(self, token, *, job_id, attempt_n):
             self.registered.append(token)
 
-        async def unregister(self, token):
+        def unregister(self, token):  # synchronous, as SandboxTokenRegistry.unregister is
             if token in self.registered:
                 self.registered.remove(token)
 

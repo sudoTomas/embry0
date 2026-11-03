@@ -3,6 +3,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from embry0.execution.proxy.github_proxy import create_github_proxy_app
 
+from .upstream_stub import route_upstream
+
 ADMIN = "admin-secret-xxxxxxxxxxxxxxxxxxxx"
 GLOBAL = "ghp_GLOBAL"
 TOK = "tok-" + "a" * 32
@@ -31,7 +33,7 @@ async def client_and_fake():
     app = create_github_proxy_app(github_token=GLOBAL, admin_token=ADMIN)
     fake = _FakeClient()
     async with TestClient(TestServer(app)) as c:
-        app["http_client"] = fake  # override the real httpx client set on startup
+        route_upstream(app, fake)
         yield c, fake
 
 

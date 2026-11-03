@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -593,3 +594,23 @@ async def test_an_image_the_daemon_lacks_is_an_answer_not_an_error():
 
     errors = [entry for entry in logs if entry["log_level"] == "error"]
     assert not errors, f"an absent image must not log at error: {errors}"
+
+
+def test_a_timed_out_exec_with_stdin_is_killed_with_its_children_before_it_raises(tmp_path: Path) -> None:
+    """#334: the timed-out exec was killed but never reaped, so it and its children were left to the garbage
+    collector, and once the event loop had closed its transport raised from ``__del__``."""
+    from tests.fixtures.hung_process import hung_script, run_until_it_raises
+
+    pidfile = tmp_path / "grandchild.pid"
+    payload = tmp_path / "payload.tar"
+    payload.write_bytes(b"x")
+    client = DockerClient()
+    client.build_exec_cmd = lambda *_args, **_kwargs: ["sh", "-c", hung_script(pidfile)]  # type: ignore[method-assign]
+    left = run_until_it_raises(
+        lambda: client.exec_with_stdin("sandbox-1", ["tar", "-x"], str(payload), timeout=0.5),  # type: ignore[arg-type]
+        RuntimeError,
+        pidfile,
+    )
+    assert left.seconds < 3, f"the timed-out exec raised only after {left.seconds:.1f}s, not promptly"
+    assert not left.grandchild_alive, "the exec's child outlived its timeout"
+    assert left.unraisable == [], f"the killed exec was left to the garbage collector: {left.unraisable}"

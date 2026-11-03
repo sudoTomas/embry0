@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 
 import structlog
 
-from embry0.execution.docker_client import DockerClient
+from embry0.execution.docker_client import DockerClient, kill_process_group
 from embry0.execution.runtime import egress as _egress
 from embry0.execution.runtime import isolation as _isolation
 from embry0.execution.runtime.protocol import ContainerSummary, DiskUsage, ImageSummary, VolumeSummary
@@ -412,11 +412,15 @@ class DockerRuntime:
             *self._cmd("compose", "-p", project, "ps", "--services"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            # Its own group: `docker compose` runs the compose plugin as a child,
+            # which a timeout must kill too (kill_process_group).
+            start_new_session=True,
         )
         try:
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
-            proc.kill()
+            if not await kill_process_group(proc):
+                logger.error("compose_services_kill_stuck", project=project, pid=proc.pid)
             raise
         if proc.returncode != 0:
             raise RuntimeError(f"docker compose ps for {project} exited {proc.returncode}")

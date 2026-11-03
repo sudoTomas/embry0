@@ -21,6 +21,9 @@ import pytest
 import structlog
 from aiohttp.test_utils import TestClient, TestServer
 
+from embry0.execution.proxy import app_keys
+from embry0.execution.proxy.enrollment import ENROLLMENT
+from embry0.execution.proxy.forge_scope import REPO_SCOPE_BY_ID
 from embry0.execution.proxy.github_proxy import create_github_proxy_app
 from embry0.execution.proxy.gitlab_proxy import create_gitlab_proxy_app
 
@@ -50,8 +53,8 @@ async def _serve(app) -> AsyncIterator[tuple[TestClient, _Upstream]]:
 
     async def _mock_forge(app) -> None:
         # Runs after the proxy's own startup hook; its cleanup hook closes this client.
-        await app["http_client"].aclose()
-        app["http_client"] = httpx.AsyncClient(transport=httpx.MockTransport(upstream.handle))
+        await app[app_keys.HTTP_CLIENT].aclose()
+        app[app_keys.HTTP_CLIENT] = httpx.AsyncClient(transport=httpx.MockTransport(upstream.handle))
 
     app.on_startup.append(_mock_forge)
     async with TestClient(TestServer(app)) as client:
@@ -255,9 +258,9 @@ async def test_github_scope_of_an_expired_enrollment_is_dropped(github):
     """An ended enrollment takes its scope with it; the map must not outgrow the registry (#536)."""
     client, _ = github
     await _enroll(client, ["acme/widgets"], sandbox_id="old")
-    client.app["enrollment"].unenroll("old")  # what purge_expired() does
+    client.app[ENROLLMENT].unenroll("old")  # what purge_expired() does
     await _enroll(client, ["acme/widgets"], sandbox_id="new", bearer="another-bearer-" + "n" * 32)
-    scopes = client.app.get("repo_scope_by_id")
+    scopes = client.app.get(REPO_SCOPE_BY_ID)
     assert scopes is not None, "the proxy keeps no per-sandbox repo scope"
     assert set(scopes) == {"new"}, f"scope of an expired enrollment kept: {sorted(scopes)}"
 
