@@ -7,7 +7,8 @@ tests/fixtures/skills/effective-skills.json.
 from __future__ import annotations
 
 import difflib
-from collections.abc import Collection, Iterable
+import re
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -64,13 +65,51 @@ def effective_skills(base: Iterable[str], *deltas: Any) -> list[str]:
     return current
 
 
-# The skills the triage prompt offers the developer, one of which it attaches
-# to every code job (embry0.orchestration.nodes.triage, "Skill selection").
-# Triage may add one of these to the developer's list when that list already
-# loads their source; any other skill it can only take away.
-TRIAGE_SKILL_CHOICES: dict[str, frozenset[str]] = {
-    "developer": frozenset({"superpowers:brainstorming", "superpowers:writing-plans"}),
-}
+# The skills triage may add to an agent: the agent row's
+# ``triage_may_add_skills``, which the operator sets. Each is a catalog name,
+# <plugin>:<skill>, shaped as a skill source names its skills
+# (embry0/skills/sync.py, _PLUGIN_NAME_RE and _SKILL_NAME_RE), held once each,
+# and at most TRIAGE_MAY_ADD_MAX of them. Triage still adds one only from a
+# source the agent's list already loads (narrowed_skills).
+TRIAGE_MAY_ADD_FIELD = "triage_may_add_skills"
+TRIAGE_MAY_ADD_MAX = 20
+_CATALOG_SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def checked_triage_may_add(value: Any) -> list[str]:
+    """``value`` as the ``triage_may_add_skills`` column holds it: catalog names, each once, in order.
+
+    Raises ValueError saying what is wrong: not a list, an entry that is not
+    a ``source:skill`` name, or more than ``TRIAGE_MAY_ADD_MAX`` names.
+    """
+    if not isinstance(value, list):
+        raise ValueError(f"{TRIAGE_MAY_ADD_FIELD} must be a list of source:skill names")
+    names: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not _CATALOG_SKILL_NAME_RE.fullmatch(entry):
+            raise ValueError(
+                f"{TRIAGE_MAY_ADD_FIELD}: {entry!r} is not a source:skill name "
+                "(lowercase letters, digits, '_' and '-', a skill also '.', up to 64 each)"
+            )
+        if entry not in names:
+            names.append(entry)
+    if len(names) > TRIAGE_MAY_ADD_MAX:
+        raise ValueError(f"{TRIAGE_MAY_ADD_FIELD} holds {len(names)} names; at most {TRIAGE_MAY_ADD_MAX}")
+    return names
+
+
+def triage_may_add(definition: Mapping[str, Any]) -> list[str]:
+    """The skills an agent row lets triage add; none when the row holds none or a malformed value."""
+    try:
+        return checked_triage_may_add(definition.get(TRIAGE_MAY_ADD_FIELD) or [])
+    except ValueError:
+        return []
+
+
+def triage_skill_choices(definition: Mapping[str, Any]) -> list[str]:
+    """The skills triage may add to this agent that it would be granted: those from a source the row's skills load."""
+    sources = {skill_source(str(s)) for s in definition.get("skills") or []} - {""}
+    return [name for name in triage_may_add(definition) if skill_source(name) in sources]
 
 
 @dataclass(frozen=True)

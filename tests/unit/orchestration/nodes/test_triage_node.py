@@ -32,10 +32,11 @@ def test_triage_word_default_is_not_stored_as_a_profile():
 
 
 def test_triage_prompt_asks_for_a_skills_addition():
-    from embry0.orchestration.nodes.triage import _TRIAGE_SYSTEM_PROMPT_TEMPLATE
+    from embry0.orchestration.nodes.triage import build_skill_selection
 
-    assert '{"developer": {"add": ["superpowers:brainstorming"]}}' in _TRIAGE_SYSTEM_PROMPT_TEMPLATE
-    assert '{"developer": ["superpowers:brainstorming"]}' not in _TRIAGE_SYSTEM_PROMPT_TEMPLATE, (
+    section = build_skill_selection(["superpowers:brainstorming", "superpowers:writing-plans"])
+    assert '{"developer": {"add": ["superpowers:brainstorming"]}}' in section
+    assert '{"developer": ["superpowers:brainstorming"]}' not in section, (
         "the replace form would drop the developer's configured skills"
     )
 
@@ -53,7 +54,12 @@ def test_a_skills_delta_from_triage_parses_and_adds_to_the_definition():
     )
     decision = parse_triage_response(raw)
     # Triage adds the skill it chose from the source the developer's list already loads.
-    definition = {"model": "m", "tools": [], "skills": ["local:house-style", "superpowers:executing-plans"]}
+    definition = {
+        "model": "m",
+        "tools": [],
+        "skills": ["local:house-style", "superpowers:executing-plans"],
+        "triage_may_add_skills": ["superpowers:brainstorming"],
+    }
     resolved = resolve_agent_config("developer", definition, pipeline_config=dict(decision["pipeline_config"]))
     assert resolved.skills == ["local:house-style", "superpowers:executing-plans", "superpowers:brainstorming"]
 

@@ -6,6 +6,7 @@ from typing import Any
 import structlog
 
 from embry0.agents.identity import BUILTIN_IDENTITY, DEFAULT_AVATAR, DEFAULT_COLOR
+from embry0.agents.skills import TRIAGE_MAY_ADD_FIELD, checked_triage_may_add
 from embry0.services.job_briefs import VOICE as _JOB_BRIEF_VOICE
 from embry0.services.proposal_briefs import VOICE as _PROPOSAL_BRIEF_VOICE
 from embry0.services.slop import SLOPMASTER_SYSTEM_PROMPT as _SLOPMASTER_SYSTEM_PROMPT
@@ -66,6 +67,9 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "execution_mode": None,
         "auth_mode": None,
         "mcp_servers": {},
+        # The skills triage may add for a job (migration 142): the two the
+        # triage prompt offers, from the superpowers source the list loads.
+        "triage_may_add_skills": ["superpowers:brainstorming", "superpowers:writing-plans"],
     },
     # Slop dungeon (spec 2026-10-25): a code job triage judged slop runs the
     # slop-cleanup template, whose slopmaster step runs on the developer node
@@ -381,9 +385,11 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
 # copies, so this touches the copies only (their own seeds carry it too).
 for _agent_type, _ident in BUILTIN_IDENTITY.items():
     BUILTIN_SEED[_agent_type].update(_ident)
-# Every builtin runs in jobs unless its entry says otherwise (migration 138's default).
+# Every builtin runs in jobs unless its entry says otherwise (migration 138's
+# default), and triage may add none of its skills unless it says so (142's).
 for _seed in BUILTIN_SEED.values():
     _seed.setdefault("runs_in_jobs", True)
+    _seed.setdefault("triage_may_add_skills", [])
 
 _ALLOWED_UPDATE_FIELDS = {
     "description",
@@ -398,6 +404,7 @@ _ALLOWED_UPDATE_FIELDS = {
     "avatar",
     "color",
     "tagline",
+    "triage_may_add_skills",
 }
 
 
@@ -435,14 +442,20 @@ class AgentDefinitionsRepository:
         color: str = DEFAULT_COLOR,
         tagline: str = "",
         runs_in_jobs: bool = True,
+        triage_may_add_skills: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Insert a new custom agent definition; ``runs_in_jobs`` is the seeder's to set (the API never passes it)."""
+        """Insert a new custom agent definition; ``runs_in_jobs`` is the seeder's to set (the API never passes it).
+
+        ``triage_may_add_skills`` is checked (``checked_triage_may_add``): a
+        malformed value raises ValueError naming the field.
+        """
+        may_add = checked_triage_may_add(triage_may_add_skills or [])
         row = await self._db.fetchrow(
             """
             INSERT INTO agent_definitions
                 (type, description, model, tools, skills, system_prompt, is_builtin, execution_mode, auth_mode,
-                 mcp_servers, display_name, avatar, color, tagline, runs_in_jobs)
-            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $13, $14)
+                 mcp_servers, display_name, avatar, color, tagline, runs_in_jobs, triage_may_add_skills)
+            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING *
             """,
             agent_type,
@@ -459,6 +472,7 @@ class AgentDefinitionsRepository:
             color,
             tagline,
             runs_in_jobs,
+            may_add,
         )
         logger.info("agent_definition_created", agent_type=agent_type)
         assert row is not None, "INSERT ... RETURNING must return a row"
@@ -469,6 +483,8 @@ class AgentDefinitionsRepository:
         unknown = set(fields) - _ALLOWED_UPDATE_FIELDS
         if unknown:
             raise ValueError(f"Unknown fields for update: {unknown}")
+        if TRIAGE_MAY_ADD_FIELD in fields:
+            fields = {**fields, TRIAGE_MAY_ADD_FIELD: checked_triage_may_add(fields[TRIAGE_MAY_ADD_FIELD])}
 
         if not fields:
             row = await self.get(agent_type)
@@ -525,6 +541,7 @@ class AgentDefinitionsRepository:
                 color = $11,
                 tagline = $12,
                 runs_in_jobs = $14,
+                triage_may_add_skills = $15,
                 updated_at = NOW()
             WHERE type = $13 AND is_builtin
             RETURNING *
@@ -543,6 +560,7 @@ class AgentDefinitionsRepository:
             seed["tagline"],
             agent_type,
             seed.get("runs_in_jobs", True),
+            checked_triage_may_add(seed.get("triage_may_add_skills", [])),
         )
         if row is None:
             if await self.get(agent_type) is not None:

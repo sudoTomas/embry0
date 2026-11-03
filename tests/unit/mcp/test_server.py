@@ -568,6 +568,7 @@ async def test_agent_create_forwards_every_field(fake_client):
         avatar="bard",
         color="sky",
         tagline="Sings.",
+        triage_may_add_skills=["sp:a"],
         confirm=True,
     )
     assert fake_client.calls == [
@@ -575,6 +576,7 @@ async def test_agent_create_forwards_every_field(fake_client):
             "agent_create",
             ("lantern",),
             {
+                "triage_may_add_skills": ["sp:a"],
                 "description": "lights",
                 "model": "claude-sonnet-5",
                 "tools": ["Read"],

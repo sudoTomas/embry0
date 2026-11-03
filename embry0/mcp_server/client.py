@@ -372,9 +372,11 @@ class Embry0Client:
         avatar: str | None = None,
         color: str | None = None,
         tagline: str | None = None,
+        triage_may_add_skills: list[str] | None = None,
     ) -> dict[str, Any]:
         body = _drop_none(
             {
+                "triage_may_add_skills": triage_may_add_skills,
                 "description": description,
                 "model": model,
                 "tools": tools,
@@ -407,10 +409,12 @@ class Embry0Client:
         avatar: str = "golem",
         color: str = "slate",
         tagline: str = "",
+        triage_may_add_skills: list[str] | None = None,
     ) -> dict[str, Any]:
         body = _drop_none(
             {
                 "type": agent_type,
+                "triage_may_add_skills": triage_may_add_skills,
                 "description": description,
                 "model": model,
                 "tools": tools,

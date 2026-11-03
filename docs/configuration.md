@@ -571,6 +571,10 @@ Later levels win:
 
 NULL at any level falls through to the previous level.
 
+### What triage may change about an agent
+
+Triage reads the ticket, so its `pipeline_config` can only narrow an agent: its tools and skills, never adding one, and never its system prompt or MCP servers. The one thing it may add is a skill the agent's row lists in `triage_may_add_skills`, and only from a source the agent's skills already load. Set it on the Agents page (*Skill packs*, "Skills triage may add"), with `PUT /api/v1/agents/{type}` or the MCP `agent_update` tool; [api.md](api.md#agents) has the rules.
+
 ### Credentials
 
 - `auth_mode=oauth` requires `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (generate one with `claude setup-token`). Missing token → `ERR_MISSING_OAUTH_TOKEN`.

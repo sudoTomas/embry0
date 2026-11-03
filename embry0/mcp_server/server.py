@@ -432,11 +432,14 @@ async def agent_update(
     avatar: str | None = None,
     color: str | None = None,
     tagline: str | None = None,
+    triage_may_add_skills: list[str] | None = None,
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Update an agent definition (only provided fields change). execution_mode: sdk|cli;
     auth_mode: api_key|oauth; avatar and color are roster and palette ids. skills: only names the agent
     does not have yet are checked, and a bare name (no colon) is the target repository's own skill.
+    triage_may_add_skills: the source:skill names triage may add to the agent for a job, each only from a
+    source the agent's skills already load; [] lets it add none.
     Requires confirm=true (changes live pipeline behavior)."""
     if not confirm:
         return _confirmation_refusal("agent_update", f"update agent definition {agent_type!r}")
@@ -454,6 +457,7 @@ async def agent_update(
         avatar=avatar,
         color=color,
         tagline=tagline,
+        triage_may_add_skills=triage_may_add_skills,
     )
 
 
@@ -472,10 +476,12 @@ async def agent_create(
     avatar: str = "golem",
     color: str = "slate",
     tagline: str = "",
+    triage_may_add_skills: list[str] | None = None,
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Create a custom agent definition. avatar is one of the roster ids and color one of the palette ids
-    (see GET /agents for the builtins' values). Requires confirm=true (adds a runnable agent)."""
+    (see GET /agents for the builtins' values). triage_may_add_skills: the source:skill names triage may add
+    for a job, each only from a source the agent's skills load. Requires confirm=true (adds a runnable agent)."""
     if not confirm:
         return _confirmation_refusal("agent_create", f"create agent definition {agent_type!r}")
     return await _get_client().agent_create(
@@ -492,6 +498,7 @@ async def agent_create(
         avatar=avatar,
         color=color,
         tagline=tagline,
+        triage_may_add_skills=triage_may_add_skills,
     )
 
 

@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from embry0.agents.skills import is_repository_skill
+from embry0.agents.skills import is_repository_skill, skill_source, triage_may_add, triage_skill_choices
 from embry0.api.deps import get_agent_defs_repo, require_admin
 from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.schemas import AgentCreateRequest, AgentUpdateRequest
@@ -113,6 +113,22 @@ def _no_tools_warnings(agent: dict[str, Any]) -> list[str]:
     return [NO_TOOLS_WARNING]
 
 
+def _triage_may_add_warnings(agent: dict[str, Any]) -> list[str]:
+    """A warning for each skill triage may add that it never will: its source is none the agent's skills load."""
+    stored = triage_may_add(agent)
+    usable = set(triage_skill_choices(agent))
+    return [
+        f"triage_may_add_skills: triage can never add {name}: none of this agent's skills come from {skill_source(name)!r}"
+        for name in stored
+        if name not in usable
+    ]
+
+
+def _agent_warnings(agent: dict[str, Any]) -> list[str]:
+    """What a write tells the operator about the row it stored: what a job will run without, and why."""
+    return [*_no_tools_warnings(agent), *_triage_may_add_warnings(agent)]
+
+
 @router.post("/agents", status_code=201, dependencies=[require_admin])
 async def create_agent(
     req: AgentCreateRequest,
@@ -136,12 +152,13 @@ async def create_agent(
             avatar=req.avatar,
             color=req.color,
             tagline=req.tagline,
+            triage_may_add_skills=req.triage_may_add_skills,
         )
     except Exception as exc:
         if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():
             raise HTTPException(status_code=409, detail=f"Agent type '{req.type}' already exists") from exc
         raise
-    return {**created, "warnings": [*warnings, *_no_tools_warnings(created)]}
+    return {**created, "warnings": [*warnings, *_agent_warnings(created)]}
 
 
 def _voice_problem(voice: str) -> str | None:
@@ -164,7 +181,7 @@ async def update_agent(
     # `v is not None` filter made clearing impossible over the API).
     updates = req.model_dump(exclude_unset=True)
     # The identity columns are NOT NULL: unlike execution_mode, null has no meaning there.
-    for key in ("display_name", "avatar", "color", "tagline"):
+    for key in ("display_name", "avatar", "color", "tagline", "triage_may_add_skills"):
         if key in updates and updates[key] is None:
             raise HTTPException(status_code=422, detail=f"{key} cannot be null")
     await _reject_if_disabled(request, updates.get("model"))
@@ -188,9 +205,9 @@ async def update_agent(
         agent = await repo.get(agent_type)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent type not found")
-        return {**agent, "warnings": [*warnings, *_no_tools_warnings(agent)]}
+        return {**agent, "warnings": [*warnings, *_agent_warnings(agent)]}
     updated = await repo.update(agent_type, **updates)
-    return {**updated, "warnings": [*warnings, *_no_tools_warnings(updated)]}
+    return {**updated, "warnings": [*warnings, *_agent_warnings(updated)]}
 
 
 @router.delete("/agents/{agent_type}", dependencies=[require_admin])

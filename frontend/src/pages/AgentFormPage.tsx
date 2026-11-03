@@ -52,6 +52,8 @@ interface FormState {
   auth_mode: "" | "api_key" | "oauth";
   /** JSON text of the mcp_servers object; validated on save. */
   mcpServersText: string;
+  /** The skills triage may add to this agent for a job (`triage_may_add_skills`). */
+  triageMayAddSkills: string[];
 }
 
 /** The page's parts, top to bottom: the character it has become, then what it is configured to be. */
@@ -93,6 +95,7 @@ const EMPTY_FORM: FormState = {
   execution_mode: "",
   auth_mode: "",
   mcpServersText: "",
+  triageMayAddSkills: [],
 };
 
 export function AgentFormPage() {
@@ -170,6 +173,7 @@ export function AgentFormPage() {
       execution_mode: existing.execution_mode ?? "",
       auth_mode: existing.auth_mode ?? "",
       mcpServersText: mcp && Object.keys(mcp).length > 0 ? JSON.stringify(mcp, null, 2) : "",
+      triageMayAddSkills: existing.triage_may_add_skills ?? [],
     });
   }, [existing, offeredModels]);
 
@@ -279,6 +283,7 @@ export function AgentFormPage() {
         execution_mode: form.execution_mode || null,
         auth_mode: form.auth_mode || null,
         mcp_servers: mcpServers,
+        triage_may_add_skills: form.triageMayAddSkills,
       };
       updateAgent.mutate(update, {
         onSuccess: onSaved("Agent updated"),
@@ -296,6 +301,7 @@ export function AgentFormPage() {
         ...(form.execution_mode ? { execution_mode: form.execution_mode } : {}),
         ...(form.auth_mode ? { auth_mode: form.auth_mode } : {}),
         ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
+        triage_may_add_skills: form.triageMayAddSkills,
       };
       createAgent.mutate(create, {
         onSuccess: onSaved("Agent created"),
@@ -565,6 +571,26 @@ export function AgentFormPage() {
             </p>
           )}
         </div>
+        {!runsInNoJob && (
+          <div className="mt-4">
+            <Label htmlFor="agent-triage-may-add">Skills triage may add</Label>
+            <div className="mt-1">
+              <SkillPicker
+                id="agent-triage-may-add"
+                value={form.triageMayAddSkills}
+                onChange={(triageMayAddSkills) => setForm((prev) => ({ ...prev, triageMayAddSkills }))}
+                catalog={skillCatalog ?? []}
+                isLoading={skillsLoading}
+                allowRepositorySkills={false}
+              />
+            </div>
+            <p className="text-xs text-white/30 mt-1" data-testid="triage-may-add-help">
+              Triage reads the ticket. For a job it may add one of these skills to this agent, and only from a
+              source this agent&apos;s skill packs already load, so it never loads a new source. With none,
+              triage can only take this agent&apos;s skills away.
+            </p>
+          </div>
+        )}
       </ConfigSection>
 
       <ConfigSection

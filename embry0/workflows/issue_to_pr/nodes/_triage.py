@@ -231,7 +231,12 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # invocation.system_prompt → sandbox runner → config_builder.
     # RAV-602: model/tools/skills come from the DB agent_definitions row when
     # available (operator-editable); this dict is the code fallback.
-    from embry0.orchestration.nodes.agent import load_agent_definition, load_triage_model_settings
+    from embry0.agents.skills import triage_skill_choices
+    from embry0.orchestration.nodes.agent import (
+        load_agent_definition,
+        load_agent_definition_or_none,
+        load_triage_model_settings,
+    )
 
     # #465: the prompt's model guidance comes from the provider settings — the
     # configured tier models, or "do not choose models" when the deployment
@@ -243,10 +248,14 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     from embry0.services.job_settings import job_section
     from embry0.settings.sections.done_when import DONE_WHEN
 
+    # The skill selection offers the skills the developer's row lets triage
+    # add, from a source its skills load; none, or no row, leaves it out.
+    developer_row = await load_agent_definition_or_none(config, "developer")
     triage_system_prompt = build_triage_system_prompt(
         default_model=default_model,
         tier_models=tier_models,
         ticket_sections=job_section(state, DONE_WHEN).ticket_sections,
+        skill_choices=triage_skill_choices(developer_row or {}),
     )
 
     triage_fallback: dict[str, Any] = {

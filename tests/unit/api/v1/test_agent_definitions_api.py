@@ -324,3 +324,62 @@ async def test_no_tools_warning_spares_agents_with_tools_and_definitions_no_job_
     assert (await _write(app, "PUT", "/api/v1/agents/developer", {"tools": ["Read"]}, with_tools))["warnings"] == []
     voice = {**DEVELOPER_AGENT, "type": "job-brief", "tools": [], "runs_in_jobs": False}
     assert (await _write(app, "PUT", "/api/v1/agents/job-brief", {"tools": []}, voice))["warnings"] == []
+
+
+async def _send(app, method: str, path: str, body: dict):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.request(method, path, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path", "base"),
+    [
+        ("POST", "/api/v1/agents", {"type": "custom", "description": "d", "model": "claude-sonnet-4-6"}),
+        ("PUT", "/api/v1/agents/developer", {}),
+    ],
+    ids=["create", "update"],
+)
+@pytest.mark.parametrize(
+    "value",
+    [
+        ["brainstorming"],
+        ["Superpowers:Brainstorming"],
+        "superpowers:brainstorming",
+        {"sp:a": True},
+        [f"sp:s{i}" for i in range(21)],
+    ],
+    ids=["no-source", "uppercase", "a-string", "a-dict", "too-many"],
+)
+async def test_a_malformed_triage_may_add_is_a_422_naming_the_field(app, method, path, base, value):
+    resp = await _send(app, method, path, {**base, "triage_may_add_skills": value})
+    assert resp.status_code == 422, f"a malformed triage_may_add_skills must be a 422, got {resp.status_code}"
+    assert "triage_may_add_skills" in resp.text, f"the 422 must name the field: {resp.text}"
+    app.state.agent_defs_repo.create.assert_not_awaited()
+    app.state.agent_defs_repo.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_triage_may_add_cannot_be_cleared_with_null(app):
+    resp = await _send(app, "PUT", "/api/v1/agents/developer", {"triage_may_add_skills": None})
+    assert resp.status_code == 422 and "triage_may_add_skills" in resp.text, f"null must be a 422: {resp.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_triage_may_add_reaches_the_repository_once_each(app):
+    await _send(app, "PUT", "/api/v1/agents/developer", {"triage_may_add_skills": ["sp:a", "sp:a", "sp:b"]})
+    kwargs = app.state.agent_defs_repo.update.call_args.kwargs
+    assert kwargs["triage_may_add_skills"] == ["sp:a", "sp:b"], kwargs
+    await _send(app, "POST", "/api/v1/agents", {"type": "custom", "description": "d", "model": "m"})
+    assert app.state.agent_defs_repo.create.call_args.kwargs["triage_may_add_skills"] == [], "none by default"
+
+
+@pytest.mark.asyncio
+async def test_a_skill_triage_may_add_from_a_source_the_agent_does_not_load_is_warned_about(app):
+    stored = {**DEVELOPER_AGENT, "tools": ["Read"], "skills": ["sp:a"], "triage_may_add_skills": ["sp:b", "other:c"]}
+    warnings = (await _write(app, "PUT", "/api/v1/agents/developer", {"triage_may_add_skills": ["sp:b"]}, stored))[
+        "warnings"
+    ]
+    assert any("other:c" in w and "'other'" in w for w in warnings), f"warnings: {warnings}"
+    assert not any("sp:b" in w for w in warnings), f"a usable name is not warned about: {warnings}"

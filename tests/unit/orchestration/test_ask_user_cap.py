@@ -15,6 +15,7 @@ def _developer_row_loading_superpowers():
             "tools": ["Read", "Bash"],
             "skills": ["superpowers:executing-plans"],
             "system_prompt": "",
+            "triage_may_add_skills": ["superpowers:brainstorming", "superpowers:writing-plans"],
         }
     )
     return patch("embry0.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=defs)

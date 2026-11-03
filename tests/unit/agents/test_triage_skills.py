@@ -4,9 +4,10 @@ The operator's list is the definition's, with the template step's delta over
 it; empty means no filter (the repository's own skills, no source's). Triage
 may take skills away, never add a skill or a source: a source's plugin, and its
 SessionStart hook, load only for a skill the operator listed. The one
-exception is the skill choice the triage prompt offers the developer, from a
-source the developer's list already loads. A request that leaves nothing hides
-every skill.
+exception is a skill the agent row lets triage add (``triage_may_add_skills``),
+from a source the agent's list already loads: see
+tests/unit/agents/test_triage_may_add_skills.py. A request that leaves nothing
+hides every skill.
 """
 
 from __future__ import annotations
@@ -79,37 +80,6 @@ def test_a_refused_skill_is_logged() -> None:
         _skills("review", OPERATOR, {"add": ["other:b"]})
     refused = [e for e in logs if e["event"] == "triage_skills_not_granted"]
     assert refused and refused[0]["skills"] == ["other:b"], f"a refused skill must be logged: {logs}"
-
-
-# ---- the developer's skill choice, which the triage prompt offers ----------------
-
-
-def test_triage_still_adds_its_skill_choice_to_the_developer() -> None:
-    skills, _ = _skills("developer", ["superpowers:test-driven-development"], {"add": ["superpowers:brainstorming"]})
-    assert skills == ["superpowers:test-driven-development", "superpowers:brainstorming"], skills
-
-
-def test_the_skill_choice_never_brings_a_source_the_developer_does_not_load() -> None:
-    skills, _ = _skills("developer", ["local:house-style"], {"add": ["superpowers:brainstorming"]})
-    assert skills == ["local:house-style"], f"triage's choice loaded a new source: {skills}"
-
-
-def test_the_skill_choice_is_the_developers_only() -> None:
-    skills, _ = _skills("review", ["superpowers:test-driven-development"], {"add": ["superpowers:brainstorming"]})
-    assert skills == ["superpowers:test-driven-development"], f"another agent took the developer's choice: {skills}"
-
-
-def test_the_triage_prompt_offers_exactly_the_choices_it_may_add() -> None:
-    import embry0.agents.skills as skills_module
-    from embry0.orchestration.nodes.triage import build_triage_system_prompt
-    from embry0.settings.sections.done_when import DONE_WHEN
-
-    sections = DONE_WHEN.defaults().ticket_sections
-    prompt = build_triage_system_prompt(default_model="m", tier_models={}, ticket_sections=sections)
-    choices = getattr(skills_module, "TRIAGE_SKILL_CHOICES", {}).get("developer", frozenset())
-    assert choices == {"superpowers:brainstorming", "superpowers:writing-plans"}, f"the developer's choices: {choices}"
-    for name in choices:
-        assert f"`{name}`" in prompt, f"the prompt no longer offers {name}"
 
 
 # ---- what reaches the sandbox and the CLI --------------------------------------------

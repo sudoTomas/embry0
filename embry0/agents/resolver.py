@@ -14,7 +14,7 @@ from embry0.agents.fallback import ModelFallback, substitute
 from embry0.agents.invocation import AgentInvocation
 from embry0.agents.mcp_servers import grant_mcp_servers, logged_names
 from embry0.agents.openrouter_catalog import catalog_rates
-from embry0.agents.skills import TRIAGE_SKILL_CHOICES, effective_skills, narrowed_skills
+from embry0.agents.skills import effective_skills, narrowed_skills, triage_may_add
 from embry0.execution.auth_provider import AuthConfigError
 from embry0.safety.error_codes import ErrorCode
 from embry0.safety.policy import default_policy_for_agent, parse_tool_list, read_only_if_emptied, tools_for_run
@@ -157,9 +157,9 @@ def resolve_agent_config(
     For skills: the template step's delta (add/remove, a bare list meaning
     replace) applies over the definition's list, as an operator wrote it
     (``embry0.agents.skills.effective_skills``). Triage's only narrows that
-    list: never a skill or a source it lacks, but the one skill choice the
-    triage prompt offers the developer (``narrowed_skills``,
-    ``triage_skills_not_granted``). A request that leaves nothing hides every
+    list: never a skill or a source it lacks, but a skill the row's
+    ``triage_may_add_skills`` names, from a source the list already loads
+    (``narrowed_skills``, ``triage_skills_not_granted``). A request that leaves nothing hides every
     skill (``skills_hidden``); an operator's empty list is no filter.
     system_prompt comes only from agent_definition.
 
@@ -211,7 +211,7 @@ def resolve_agent_config(
     skills_hidden = False
     requested_skills = _requested(pipeline_config or {}, "agent_skills", agent_type)
     if requested_skills is not None:
-        narrowed = narrowed_skills(skills, requested_skills, may_add=TRIAGE_SKILL_CHOICES.get(agent_type, frozenset()))
+        narrowed = narrowed_skills(skills, requested_skills, may_add=triage_may_add(agent_definition))
         if narrowed.not_granted:
             logger.warning(
                 "triage_skills_not_granted",

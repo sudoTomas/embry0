@@ -3978,6 +3978,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE jobs ENABLE TRIGGER trg_jobs_updated_at;
         """,
     ),
+    (
+        142,
+        "agent_definitions.triage_may_add_skills: the skills triage may add to an agent",
+        # Triage reads the ticket, so its pipeline_config.agent_skills only
+        # narrows an agent's skills; it may add only a skill this column names,
+        # and only from a source the agent's own list already loads. The
+        # operator sets it per agent. The built-in developer gets the two skills
+        # the triage prompt has always offered it, so existing deployments keep
+        # today's behaviour; every other row, and a deployment whose developer
+        # row is gone, gets none.
+        """
+        ALTER TABLE agent_definitions
+            ADD COLUMN IF NOT EXISTS triage_may_add_skills JSONB NOT NULL DEFAULT '[]'::jsonb
+            CHECK (jsonb_typeof(triage_may_add_skills) = 'array');
+        UPDATE agent_definitions
+           SET triage_may_add_skills = '["superpowers:brainstorming", "superpowers:writing-plans"]'::jsonb
+         WHERE type = 'developer' AND is_builtin;
+        COMMENT ON COLUMN agent_definitions.triage_may_add_skills IS
+            'The skills triage may add to this agent (source:skill names), each only from a source the agent''s skills already load.';
+        """,
+    ),
 ]
 
 
