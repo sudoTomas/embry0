@@ -136,6 +136,22 @@ class AsksSettings(SectionModel):
             "worst first, is released as one is answered or expires."
         ),
     )
+    include_held: bool = Field(
+        default=False,
+        description=(
+            "Also ask about what a chat is otherwise spared: a low-readiness ticket, a weed, a crack below break. "
+            "They wait behind everything else their person is asked."
+        ),
+    )
+    unowned_group: str = Field(
+        default="",
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_.-]*$",
+        description=(
+            "The name of a group to ask about a decision nobody owns; the chat assistant knows how to reach it. "
+            "Anyone embry0 knows may answer those. Empty: they are asked of nobody and stay on the decisions page."
+        ),
+    )
     lease_minutes: float = Field(
         default=15.0,
         gt=0,

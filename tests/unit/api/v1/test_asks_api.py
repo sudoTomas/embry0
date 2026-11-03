@@ -40,6 +40,9 @@ class FakeAsks:
     async def code(self, decision_id: str) -> str:
         return self.codes[decision_id]
 
+    async def ever_sent(self) -> set[str]:
+        return {str(r["recipient"]).lower() for r in self.rows if r.get("sent_at")}
+
     async def lease_out(self, decide: Any, *, now: datetime, until: datetime) -> dict[str, datetime | None]:
         """As the table leases them (#293): what ``decide`` picks from the live asks, each still what was picked
         and with no lease running, a queued one stamped the first time it is handed out (#295)."""
@@ -252,6 +255,7 @@ async def test_the_feed_gives_each_due_ask_its_card_code_person_and_chat_actions
     due = (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]
     assert [a["id"] for a in due] == ["a1", "a2"], "the answered one is left out, the later one waits"
     assert due[0]["code"] == "ABCD" and due[0]["recipient"] == {
+        "key": "ada@example.com",
         "email": "ada@example.com",
         "name": "Ada",
         "github_login": "ada",
@@ -354,6 +358,101 @@ async def test_only_an_owner_the_hand_off_s_person_or_an_admin_may_answer(app: A
             app, "POST", "/api/v1/asks/answer", json={"code": "QQQQ", "action": "start", "person": "x@example.com"}
         )
     ).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_feed_says_how_many_wait_how_many_come_at_once_and_who_is_hearing_for_the_first_time(
+    app: Any,
+) -> None:
+    app.state.settings = FakeSettings({"asks": {"enabled": True, "max_open_per_person": 1, **ALWAYS}})
+    app.state.asks_repo.rows = [
+        ask("a1", "offer:crack:1", "ada@example.com"),
+        ask("a2", "done:job-1", "ada@example.com"),
+        ask("a3", "offer:crack:1", "cy@example.com", state="sent", sent_at=NOW),
+        ask("a4", "done:job-1", "cy@example.com"),
+    ]
+    assert (await call(app, "GET", "/api/v1/asks/due")).json()["asks"] != []
+    app.state.settings = FakeSettings({"asks": {"enabled": True, "max_open_per_person": 2, **ALWAYS}})
+    for r in app.state.asks_repo.rows:
+        r["lease_until"] = None
+    due = {a["id"]: a for a in (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]}
+    assert due["a2"]["waiting"] == 2 and due["a2"]["at_once"] == 2, (
+        "the count takes in those that wait behind the limit"
+    )
+    assert due["a2"]["first"] is True, "ada was never sent one"
+    assert due["a4"]["first"] is False, "cy was"
+
+
+@pytest.mark.asyncio
+async def test_what_a_chat_is_spared_waits_behind_the_rest(app: Any) -> None:
+    app.state.settings = FakeSettings(
+        {"asks": {"enabled": True, "include_held": True, "max_open_per_person": 1, **ALWAYS}}
+    )
+    app.state.open_decisions["offer:crack:1"]["held"] = True
+    app.state.asks_repo.rows = [
+        ask("a1", "offer:crack:1", "ada@example.com"),
+        ask("a2", "done:job-1", "ada@example.com"),
+    ]
+    due = (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]
+    assert [a["id"] for a in due] == ["a2"], "a held decision comes after what is not held, whatever its rank"
+
+
+@pytest.mark.asyncio
+async def test_a_group_is_asked_by_name_and_anyone_embry0_knows_may_answer_for_it(app: Any) -> None:
+    app.state.settings = FakeSettings({"asks": {"enabled": True, "unowned_group": "triage", **ALWAYS}})
+    app.state.open_decisions["offer:crack:1"]["owners"] = []
+    app.state.asks_repo.rows = [ask("a1", "offer:crack:1", "group:triage"), ask("a2", "done:job-1", "group:triage")]
+    due = (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]
+    assert due[0]["recipient"] == {
+        "key": "group:triage",
+        "group": "triage",
+        "github_login": None,
+        "email": None,
+        "name": "triage",
+    }
+    assert due[0]["waiting"] == 2
+
+    body = {"code": "ABCD", "action": "start"}
+    assert (
+        await call(app, "POST", "/api/v1/asks/answer", json={**body, "person": "stranger@example.com"})
+    ).status_code == 403, "someone embry0 does not know is refused all the same"
+    answered = await call(app, "POST", "/api/v1/asks/answer", json={**body, "person": "cy@example.com"})
+    assert answered.status_code == 200
+    assert answered.json()["waiting"] == {"group:triage": 1}, "a chat can say how many are left"
+
+
+@pytest.mark.asyncio
+async def test_a_decision_nobody_owns_is_nobody_s_to_answer_without_a_group(app: Any) -> None:
+    app.state.open_decisions["offer:crack:1"]["owners"] = []
+    response = await call(
+        app, "POST", "/api/v1/asks/answer", json={"code": "ABCD", "action": "start", "person": "cy@example.com"}
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_everything_waiting_on_a_person_lists_what_they_were_sent_first_and_counts_them_all(app: Any) -> None:
+    app.state.asks_repo.rows = [
+        ask("a1", "offer:crack:1", "ada@example.com"),
+        ask("a2", "done:job-1", "ada@example.com", state="sent", sent_at=NOW),
+        ask("a3", "offer:crack:1", "cy@example.com"),
+        ask("a4", "offer:gone:9", "ada@example.com"),
+    ]
+    app.state.asks_repo.codes["offer:gone:9"] = "GONE"
+    mine = (await call(app, "GET", "/api/v1/asks/of?person=ADA@example.com&limit=1")).json()
+    assert mine["person"] == "ada@example.com"
+    assert mine["waiting"] == 2, "not cy's, and not one whose decision closed"
+    assert mine["repos"] == [{"repo": "acme/web", "count": 2}]
+    assert [a["code"] for a in mine["asks"]] == ["WXYZ"], "limit cuts the list, not the count"
+    assert mine["asks"][0]["sent"] is True and mine["asks"][0]["title"] == "A job"
+
+
+@pytest.mark.asyncio
+async def test_one_decision_reads_by_its_code(app: Any) -> None:
+    found = (await call(app, "GET", "/api/v1/asks/decision/abcd")).json()
+    assert found["code"] == "ABCD" and found["decision"]["title"] == "A crack"
+    assert found["actions"] == ["start", "decline", "later", "send_to"]
+    assert (await call(app, "GET", "/api/v1/asks/decision/QQQQ")).status_code == 404
 
 
 @pytest.mark.asyncio

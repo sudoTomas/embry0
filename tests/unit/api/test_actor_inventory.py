@@ -57,6 +57,8 @@ COLLABORATION_ROUTES: dict[str, tuple[str, ...]] = {
         "/api/v1/decisions/{decision_id:path}",
         "/api/v1/asks",
         "/api/v1/asks/due",
+        "/api/v1/asks/of",
+        "/api/v1/asks/decision/{code}",
     ),
     "whose verdict a map part carries and who sent it: marking a map is a shared review": (
         "/api/v1/maps",

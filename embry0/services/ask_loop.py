@@ -7,8 +7,10 @@ Otherwise it reads the open decisions, expires the asks sent, or handed out and
 never reported sent, ``expire_days`` ago,
 withdraws the ones whose decision was answered, moved on or was handed to
 someone else, and queues one for each person a decision now waits on, due at
-the next working hour. An ask whose decision is no longer open is withdrawn,
-never expired. Each ask is held to its decision's organization's values
+the next working hour. Whether that takes in what a chat is otherwise spared,
+and who is asked about a decision nobody owns, are the deployment's
+(``include_held``, ``unowned_group``). An ask whose decision is no longer open
+is withdrawn, never expired. Each ask is held to its decision's organization's values
 (spec 2026-10-29): an organization's layer may set the hours, weekdays, time
 zone, reminder and expiry its asks follow; an ask about a decision with no
 repository follows the deployment's.
@@ -92,7 +94,10 @@ class AskLoop:
         gone = set(old)
         live = [a for a in live if str(a["id"]) not in gone]
         done_with = still_kept_from(await self.asks.expired_pairs(), now, policy)
-        changes = plan(decisions, live, await self.people())
+        base = section.deployment()
+        changes = plan(
+            decisions, live, await self.people(), include_held=base.include_held, unowned_group=base.unowned_group
+        )
         if changes.withdraw:
             await self.asks.close(changes.withdraw, state="withdrawn", now=now)
         # One call for every new ask, so a tick makes no round trip per decision (#273).

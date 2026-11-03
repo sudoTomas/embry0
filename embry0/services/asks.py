@@ -160,16 +160,24 @@ def code_for(decision_id: str, taken: Collection[str]) -> str:
     raise ValueError("no free code")
 
 
-def recipients(decision: Mapping[str, Any], email_of: Mapping[str, str]) -> list[str]:
+def recipients(
+    decision: Mapping[str, Any],
+    email_of: Mapping[str, str],
+    *,
+    include_held: bool = False,
+    unowned_group: str = "",
+) -> list[str]:
     """Who is asked about ``decision``: its hand-off's person, else its owners (as emails where known).
 
     An owner with no person in embry0 is ``github:<login>``: the deployment may
-    know how to reach them, or skip them.
+    know how to reach them, or skip them. A decision nobody owns goes to
+    ``group:<name>`` when the deployment names a group. One held back from a
+    chat is asked of nobody unless ``include_held``.
     """
     held_by = (decision.get("assigned_to") or {}).get("email")
     if held_by:
         return [str(held_by).lower()]
-    if decision.get("held"):
+    if decision.get("held") and not include_held:
         return []
     out: list[str] = []
     for owner in decision.get("owners") or []:
@@ -177,6 +185,8 @@ def recipients(decision: Mapping[str, Any], email_of: Mapping[str, str]) -> list
         who = email_of.get(login) or f"github:{login}"
         if who not in out:
             out.append(who)
+    if not out and unowned_group:
+        out.append(f"group:{unowned_group.lower()}")
     return out
 
 
@@ -189,11 +199,22 @@ class Plan:
 
 
 def plan(
-    decisions: Iterable[Mapping[str, Any]], live: Sequence[Mapping[str, Any]], email_of: Mapping[str, str]
+    decisions: Iterable[Mapping[str, Any]],
+    live: Sequence[Mapping[str, Any]],
+    email_of: Mapping[str, str],
+    *,
+    include_held: bool = False,
+    unowned_group: str = "",
 ) -> Plan:
     """What changes: the new (decision, person) pairs to ask, and the live asks no longer wanted."""
     # In the decisions' own order (worst first), so the asks queue that way.
-    wanted = list(dict.fromkeys((str(d["id"]), r) for d in decisions for r in recipients(d, email_of)))
+    wanted = list(
+        dict.fromkeys(
+            (str(d["id"]), r)
+            for d in decisions
+            for r in recipients(d, email_of, include_held=include_held, unowned_group=unowned_group)
+        )
+    )
     have = {(str(a["decision_id"]), str(a["recipient"]).lower()): str(a["id"]) for a in live}
     # Sets built once: a tick reads every open decision (#273), so a comparison per pair must stay linear.
     still = set(wanted)
@@ -201,6 +222,12 @@ def plan(
         ask=[pair for pair in wanted if pair not in have],
         withdraw=sorted(ask_id for pair, ask_id in have.items() if pair not in still),
     )
+
+
+def asked_order(decisions: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+    """Each decision's place in a person's queue: worst first, what a chat is otherwise spared behind the rest."""
+    in_turn = sorted(decisions, key=lambda d: bool(d.get("held")))
+    return {str(d["id"]): i for i, d in enumerate(in_turn)}
 
 
 def release(

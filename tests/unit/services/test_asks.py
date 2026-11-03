@@ -49,6 +49,26 @@ def test_owners_are_asked_by_email_where_known_and_by_login_otherwise_and_held_o
     assert recipients({**d, "held": True}, {}) == []
 
 
+def test_held_ones_are_asked_when_the_deployment_says_so() -> None:
+    d = {"id": "d", "owners": ["ada"], "held": True}
+    assert recipients(d, {"ada": "ada@example.com"}, include_held=True) == ["ada@example.com"]
+
+
+def test_a_decision_nobody_owns_goes_to_the_deployment_s_group_and_otherwise_to_nobody() -> None:
+    d = {"id": "d", "owners": []}
+    assert recipients(d, {}) == []
+    assert recipients(d, {}, unowned_group="Triage") == ["group:triage"]
+    assert recipients({"id": "d", "owners": ["ada"]}, {}, unowned_group="triage") == ["github:ada"]
+    assert recipients({**d, "held": True}, {}, unowned_group="triage") == [], "held stays held unless asked for"
+    assert recipients({**d, "held": True}, {}, include_held=True, unowned_group="triage") == ["group:triage"]
+
+
+def test_a_group_s_live_ask_stays_when_the_plan_runs_again() -> None:
+    live = [{"id": "a1", "decision_id": "d", "recipient": "group:triage"}]
+    p = plan([{"id": "d", "owners": []}], live, {}, unowned_group="Triage")
+    assert p.ask == [] and p.withdraw == []
+
+
 def test_the_plan_asks_whoever_is_new_and_withdraws_what_is_no_longer_wanted() -> None:
     decisions = [{"id": "d1", "owners": ["ada"]}, {"id": "d2", "owners": ["bo"]}]
     live = [

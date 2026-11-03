@@ -104,3 +104,13 @@ One `DecisionCard`: the verdict and where it is on the first line, the title, a 
 2. Decision cards in the dashboard, and the words.
 3. Hand-offs, `users.github_login`, server-resolved deciders.
 4. Asks, and the deployment's card sender and button handler.
+
+## Later: everything reaches someone (2026-11-03)
+
+Asks began with each owner's most important decisions, one person at a time. Everything open should reach someone, and a person should know how much there is and be able to talk about it:
+
+- **The count.** Every ask in the feed says how many wait on its person (`waiting`), how many come at once (`at_once`), and whether they have never heard from the assistant (`first`), so the first message can introduce itself. An answer says how many are left.
+- **A conversation.** `GET /asks/of` lists everything waiting on a person and `GET /asks/decision/{code}` reads one, so an assistant can answer "what's on my list?" and "what does this one mean?". Its answers still go through `POST /asks/answer`, as the person it verified; the assistant, never embry0, turns what they said into that call.
+- **What a chat was spared.** `asks.include_held` asks about held decisions too, behind the rest of a person's queue.
+- **What nobody owns.** `asks.unowned_group` names a group for a decision with no owner. Anyone embry0 knows may answer those. Someone who knows whose it is sends it to them.
+
