@@ -227,7 +227,7 @@ async def test_run_agent_node_delegates_to_agent_runner_with_full_invocation(mon
         tools=["Read"],
         agent_definition={
             "model": "claude-sonnet-4-6",
-            "tools": ["Read"],
+            "tools": ["Read", "Bash"],
             "skills": ["code-review"],
             "system_prompt": "You are a reviewer.",
             "mcp_servers": {"mcp1": {"command": "npx"}},

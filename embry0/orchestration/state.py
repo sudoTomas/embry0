@@ -62,6 +62,8 @@ class PipelineConfig(TypedDict, total=False):
     reviewer_enabled: bool
     validator_modes: list[str]
     agent_models: dict[str, str]
+    # Narrows the operator's tools for an agent, never adds one
+    # (embry0.agents.resolver._narrowed_by_triage).
     agent_tools: dict[str, list[str]]
     # A bare list replaces the agent's skills; {"add": [...], "remove": [...] | "*"}
     # is a delta over them (embry0.agents.skills.effective_skills).
@@ -70,7 +72,10 @@ class PipelineConfig(TypedDict, total=False):
     # Phase 1 additions — per-agent-type overrides produced by triage.
     execution_modes: dict[str, str]
     auth_modes: dict[str, str]
+    # Never applied: an agent's system prompt is its definition's.
     system_prompts: dict[str, str]
+    # Never applied: an agent's MCP servers come from its definition only
+    # (embry0.agents.mcp_servers). Kept so a decision that names it parses.
     mcp_servers: dict[str, dict[str, Any]]
     # EMB-35: per-agent turn budgets, e.g. {"developer": 60}. Missing agents
     # fall back to DEFAULT_AGENT_MAX_TURNS in orchestration/nodes/agent.py.
@@ -177,7 +182,10 @@ class PipelineConfigModel(BaseModel):
     budget_usd: float = Field(default=10.0, ge=0.0)
     execution_modes: dict[str, str] = Field(default_factory=dict)
     auth_modes: dict[str, str] = Field(default_factory=dict)
+    # Accepted so a decision that names it still parses, and never applied.
     system_prompts: dict[str, str] = Field(default_factory=dict)
+    # Accepted so a decision that names it still parses (extra="forbid"), and
+    # never applied: the resolver ignores and logs it (embry0.agents.mcp_servers).
     mcp_servers: dict[str, Any] = Field(default_factory=dict)
     # EMB-35: per-agent turn budgets (extra="forbid" would reject the key
     # if triage emitted it without this declaration).

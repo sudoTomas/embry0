@@ -223,7 +223,7 @@ def test_mcp_servers_resolved() -> None:
         **_base_args(
             agent_definition={
                 "model": "claude-sonnet-4-6",
-                "tools": ["Read"],
+                "tools": ["Read", "Bash"],
                 "skills": [],
                 "system_prompt": "",
                 "mcp_servers": {"my-mcp": {"command": "npx", "args": ["mymcp"]}},
@@ -252,8 +252,8 @@ def test_system_prompt_resolved_from_agent_definition() -> None:
     assert inv.system_prompt == "You are a reviewer"
 
 
-def test_pipeline_system_prompt_beats_agent_definition() -> None:
-    """pipeline_config.system_prompts[agent_type] overrides agent_definition.system_prompt."""
+def test_a_pipeline_system_prompt_is_ignored() -> None:
+    """pipeline_config.system_prompts[agent_type] never replaces agent_definition.system_prompt."""
     inv = resolve_agent_invocation(
         **_base_args(
             agent_definition={
@@ -268,7 +268,7 @@ def test_pipeline_system_prompt_beats_agent_definition() -> None:
             pipeline_config={"system_prompts": {"developer": "from pipeline"}},
         )
     )
-    assert inv.system_prompt == "from pipeline"
+    assert inv.system_prompt == "from agent definition", f"triage replaced the system prompt: {inv.system_prompt!r}"
 
 
 def test_grok_agent_gets_twice_the_turns_and_time() -> None:

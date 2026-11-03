@@ -1171,17 +1171,20 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         updates["developer_summary"] = developer_summary
 
     if pending_questions:
-        from embry0.agents.skills import effective_skills
+        from embry0.agents.resolver import resolve_agent_config
         from embry0.orchestration.nodes.agent import _enforce_ask_user_cap
 
         # Brainstorming sessions can legitimately need many turns of design
         # back-and-forth. Bump the cap when the developer's effective skills
-        # carry brainstorming (the row, then the template node's delta, then
-        # triage's, as the resolver applies them); everything else stays at the
-        # default of 5.
-        template_skills = ((developer_template_config or {}).get("agent_skills") or {}).get(coding_agent)
-        triage_skills = ((state.get("pipeline_config", {}) or {}).get("agent_skills") or {}).get(coding_agent)
-        skills_for_dev = effective_skills(developer_definition.get("skills") or [], template_skills, triage_skills)
+        # carry brainstorming, resolved as the run resolved them (the row, the
+        # template node's delta, then triage's narrowing); everything else
+        # stays at the default of 5.
+        skills_for_dev = resolve_agent_config(
+            coding_agent,
+            dict(developer_definition),
+            developer_template_config,
+            state.get("pipeline_config") or {},
+        ).skills
         ask_cap = BRAINSTORMING_ASK_USER_CAP if "superpowers:brainstorming" in skills_for_dev else DEFAULT_ASK_USER_CAP
 
         exhausted, cap_updates = _enforce_ask_user_cap(

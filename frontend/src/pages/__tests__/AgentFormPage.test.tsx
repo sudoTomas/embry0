@@ -506,3 +506,31 @@ describe("AgentFormPage as a character sheet (progression spec 2026-10-24)", () 
     for (const id of ["identity", "model", "tools", "packs", "mcp", "prompt"]) expect(section(id).open, id).toBe(true);
   });
 });
+
+describe("AgentFormPage warns about an agent with no tools", () => {
+  it("warns that a job runs an agent with no tools with none at all, until a tool is selected", async () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, tools: [] }, isLoading: false });
+    const user = userEvent.setup();
+    renderEdit("grok-dev");
+    expect(screen.getByTestId("no-tools-warning")).toHaveTextContent(/no tools at all.*finishes with text only/);
+    await user.click(screen.getByRole("checkbox", { name: "Read" }));
+    expect(screen.queryByTestId("no-tools-warning"), "a selected tool ends the warning").toBeNull();
+  });
+
+  it("warns on a new agent, which starts with no tools", () => {
+    mockUseAgent.mockReturnValue({ data: undefined, isLoading: false });
+    renderNew();
+    expect(screen.getByTestId("no-tools-warning")).toBeInTheDocument();
+  });
+
+  it("says nothing for an agent with tools, or for a definition no job runs", () => {
+    renderEdit();
+    expect(screen.queryByTestId("no-tools-warning"), "the developer has tools").toBeNull();
+    mockUseAgent.mockReturnValue({
+      data: { ...EXISTING, type: "proposal-brief", tools: [], runs_in_jobs: false },
+      isLoading: false,
+    });
+    renderEdit("proposal-brief");
+    expect(screen.queryByTestId("no-tools-warning"), "a brief writer's voice runs in no job").toBeNull();
+  });
+});

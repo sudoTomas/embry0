@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import difflib
 from collections.abc import Collection, Iterable
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -61,6 +62,77 @@ def effective_skills(base: Iterable[str], *deltas: Any) -> list[str]:
             if name not in current:
                 current.append(name)
     return current
+
+
+# The skills the triage prompt offers the developer, one of which it attaches
+# to every code job (embry0.orchestration.nodes.triage, "Skill selection").
+# Triage may add one of these to the developer's list when that list already
+# loads their source; any other skill it can only take away.
+TRIAGE_SKILL_CHOICES: dict[str, frozenset[str]] = {
+    "developer": frozenset({"superpowers:brainstorming", "superpowers:writing-plans"}),
+}
+
+
+@dataclass(frozen=True)
+class NarrowedSkills:
+    """What a run-time request leaves of an operator's skill list.
+
+    ``hidden`` is no skills at all, the repository's own included. With
+    ``hidden`` false an empty ``skills`` is no filter, as for an operator's
+    empty list. ``not_granted`` names what the request asked for and did not
+    get.
+    """
+
+    skills: list[str]
+    hidden: bool = False
+    not_granted: list[str] = field(default_factory=list)
+
+
+def skill_source(name: str) -> str:
+    """The source a catalog-shaped name comes from (``source:skill``); "" for a repository skill."""
+    return name.split(":", 1)[0] if ":" in name else ""
+
+
+def narrowed_skills(operator: list[str], request: Any, *, may_add: Collection[str] = ()) -> NarrowedSkills:
+    """``operator`` narrowed by a run-time ``request`` (a bare list or a delta): never a skill or a source it lacks.
+
+    ``operator`` is the effective list the definition and the template step
+    give, where empty means no filter: the repository's own skills, and no
+    source's. The request's removes apply; its adds are granted only when
+    ``operator`` already allows the name (an allowlist that names it, or no
+    filter and a repository skill), or the name is in ``may_add`` and its
+    source is one ``operator`` already loads. A request that replaces the list
+    (a bare list, ``"remove": "*"``) and keeps nothing is ``hidden``; so is a
+    malformed one.
+    """
+    try:
+        delta = normalize_delta(request)
+    except ValueError:
+        return NarrowedSkills([], hidden=True)
+    sources = {skill_source(s) for s in operator} - {""}
+
+    def addable(name: str) -> bool:
+        if name in operator:
+            return True
+        if not operator and is_repository_skill(name):
+            return True
+        return name in may_add and skill_source(name) in sources
+
+    replaces = delta["remove"] == "*"
+    if not operator and not replaces:
+        # No filter stays no filter: a repository skill already loads, a source's never does.
+        return NarrowedSkills([], not_granted=[n for n in delta["add"] if not addable(n)])
+    drop = set() if replaces else set(delta["remove"])
+    current = [] if replaces else [s for s in operator if s not in drop]
+    refused: list[str] = []
+    for name in delta["add"]:
+        if name in current:
+            continue
+        if addable(name):
+            current.append(name)
+        else:
+            refused.append(name)
+    return NarrowedSkills(current, hidden=not current, not_granted=refused)
 
 
 def is_repository_skill(name: str) -> bool:

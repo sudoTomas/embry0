@@ -263,7 +263,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # TriageDecisionModel parses, so a DB-edited prompt could silently break
     # the parser. Always use the prompt built in code.
     triage_agent_definition["system_prompt"] = triage_system_prompt
-    if not triage_agent_definition.get("tools"):
+    # `is None`: an operator's [] is no tools, kept as written.
+    if triage_agent_definition.get("tools") is None:
         triage_agent_definition["tools"] = ["Read", "Glob", "Grep"]
     # An explicit TRIAGE_MODEL/DEFAULT_MODEL env still wins over the DB row
     # (the env flip is the documented no-deploy model-tier experiment path).

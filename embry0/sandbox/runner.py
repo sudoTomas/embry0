@@ -20,7 +20,7 @@ from langchain_core.runnables import RunnableConfig
 
 from embry0.agents.executor_factory import select_executor
 from embry0.agents.invocation import AgentInvocation
-from embry0.safety.policy import default_policy_for_agent
+from embry0.safety.policy import default_policy_for_agent, parse_tool_list, tools_for_run
 from embry0.safety.redaction import redact_event, redact_secrets, secret_env_values
 
 logger = structlog.get_logger(__name__)
@@ -56,19 +56,17 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
     # tools. evaluate_policy default-denies tool names outside
     # policy.allowed_tools, and the per-agent-type default map has no entry
     # for MCP-heavy agents like "qa" — without this sync every
-    # mcp__playwright__* call would be denied. Empty/missing cfg tools keeps
-    # the agent-type default (and thus its name enforcement) unchanged.
-    policy = default_policy_for_agent(agent_type)
-    cfg_tools = cfg.get("tools") or []
-    if cfg_tools:
-        policy = dataclasses.replace(policy, allowed_tools=list(cfg_tools))
+    # mcp__playwright__* call would be denied. Missing cfg tools are the agent
+    # type's defaults; an empty list is no tools, never the defaults.
+    tools = tools_for_run(agent_type, parse_tool_list(cfg.get("tools")))
+    policy = dataclasses.replace(default_policy_for_agent(agent_type), allowed_tools=tools)
     return AgentInvocation(
         agent_type=agent_type,
         prompt=cfg["prompt"],
         system_prompt=cfg.get("system_prompt", ""),
         system_context=cfg.get("system_context", ""),
         model=cfg.get("model", "claude-sonnet-5"),
-        tools=cfg.get("tools", []),
+        tools=tools,
         skills=cfg.get("skills", []),
         mcp_servers=cfg.get("mcp_servers", {}),
         max_turns=cfg.get("max_turns", 40),
@@ -81,6 +79,7 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
         run_id=str(cfg.get("run_id") or ""),
         node=str(cfg.get("node") or ""),
         skill_mounts=tuple(cfg.get("skill_mounts") or ()),
+        skills_hidden=cfg.get("skills_hidden") is True,
         pricing_usd_per_mtok=_rates_from_config(cfg.get("pricing_usd_per_mtok")),
     )
 

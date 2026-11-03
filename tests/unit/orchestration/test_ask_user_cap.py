@@ -1,9 +1,23 @@
 """Test that the ask-user cap is bumped to 15 when the brainstorming skill is loaded."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langgraph.types import Command
+
+
+def _developer_row_loading_superpowers():
+    """A developer row that loads the superpowers source: triage may add its skill choice from it."""
+    defs = MagicMock()
+    defs.get = AsyncMock(
+        return_value={
+            "model": "claude-sonnet-5",
+            "tools": ["Read", "Bash"],
+            "skills": ["superpowers:executing-plans"],
+            "system_prompt": "",
+        }
+    )
+    return patch("embry0.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=defs)
 
 
 @pytest.mark.asyncio
@@ -46,8 +60,11 @@ async def test_developer_with_brainstorming_skill_uses_cap_15():
     with (
         patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
         patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        _developer_row_loading_superpowers(),
     ):
-        result = await developer_node(state, {"configurable": {"agent_runner": object(), "credentials": {}}})
+        result = await developer_node(
+            state, {"configurable": {"agent_runner": object(), "credentials": {}, "db": MagicMock()}}
+        )
 
     # Should NOT be exhausted at round 15 — brainstorming cap is 15
     # (without the bump it would have exhausted at round 5)
@@ -146,9 +163,10 @@ async def _run_developer_with_one_question(state: dict, config: dict):
 async def test_a_triage_skills_delta_adding_brainstorming_raises_the_cap():
     """Triage now emits {"add": [...]}; the cap reads the effective list, not the raw override."""
     state = _brainstorm_cap_state({"agent_skills": {"developer": {"add": ["superpowers:brainstorming"]}}})
-    result = await _run_developer_with_one_question(
-        state, {"configurable": {"agent_runner": object(), "credentials": {}}}
-    )
+    with _developer_row_loading_superpowers():
+        result = await _run_developer_with_one_question(
+            state, {"configurable": {"agent_runner": object(), "credentials": {}, "db": MagicMock()}}
+        )
     update = result.update or {}
     assert not update.get("agent_questions_exhausted"), "a brainstorming delta must lift the cap to 15"
     assert update.get("agent_question_rounds") == 15

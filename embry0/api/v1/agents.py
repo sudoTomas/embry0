@@ -100,6 +100,19 @@ async def get_agent(
     return annotated
 
 
+NO_TOOLS_WARNING = (
+    "tools is empty: a job runs this agent with no tools at all, so it can read nothing and change nothing, "
+    "and it finishes with text only. Name its tools to give it any."
+)
+
+
+def _no_tools_warnings(agent: dict[str, Any]) -> list[str]:
+    """The warning an agent that jobs run gets when its tool list is empty: that is no tools, never the defaults."""
+    if agent.get("runs_in_jobs") is False or agent.get("tools") != []:
+        return []
+    return [NO_TOOLS_WARNING]
+
+
 @router.post("/agents", status_code=201, dependencies=[require_admin])
 async def create_agent(
     req: AgentCreateRequest,
@@ -128,7 +141,7 @@ async def create_agent(
         if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():
             raise HTTPException(status_code=409, detail=f"Agent type '{req.type}' already exists") from exc
         raise
-    return {**created, "warnings": warnings}
+    return {**created, "warnings": [*warnings, *_no_tools_warnings(created)]}
 
 
 def _voice_problem(voice: str) -> str | None:
@@ -175,8 +188,9 @@ async def update_agent(
         agent = await repo.get(agent_type)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent type not found")
-        return {**agent, "warnings": warnings}
-    return {**await repo.update(agent_type, **updates), "warnings": warnings}
+        return {**agent, "warnings": [*warnings, *_no_tools_warnings(agent)]}
+    updated = await repo.update(agent_type, **updates)
+    return {**updated, "warnings": [*warnings, *_no_tools_warnings(updated)]}
 
 
 @router.delete("/agents/{agent_type}", dependencies=[require_admin])

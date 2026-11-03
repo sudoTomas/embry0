@@ -52,9 +52,10 @@ def test_a_skills_delta_from_triage_parses_and_adds_to_the_definition():
         }
     )
     decision = parse_triage_response(raw)
-    definition = {"model": "m", "tools": [], "skills": ["local:house-style"], "system_prompt": ""}
+    # Triage adds the skill it chose from the source the developer's list already loads.
+    definition = {"model": "m", "tools": [], "skills": ["local:house-style", "superpowers:executing-plans"]}
     resolved = resolve_agent_config("developer", definition, pipeline_config=dict(decision["pipeline_config"]))
-    assert resolved.skills == ["local:house-style", "superpowers:brainstorming"]
+    assert resolved.skills == ["local:house-style", "superpowers:executing-plans", "superpowers:brainstorming"]
 
 
 def test_a_legacy_skills_list_from_triage_still_parses():

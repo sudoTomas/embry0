@@ -455,8 +455,9 @@ The LLM triage node outputs a pipeline configuration.
 | `pipeline_template` | `str` | Template name or "custom" |
 | `pipeline_config.sandbox_profile` | `str` | Sandbox profile name |
 | `pipeline_config.agent_models` | `dict[str, str]` | Model per agent |
-| `pipeline_config.agent_tools` | `dict[str, list[str]]` | Per-agent tool allowlist overrides |
-| `pipeline_config.agent_skills` | `dict[str, list[str] \| {"add", "remove"}]` | Per-agent Claude Code skills: a delta (`add`, `remove` or `"*"`) over the agent's configured skills, or a bare list that replaces them |
+| `pipeline_config.agent_tools` | `dict[str, list[str]]` | Narrows an agent's tools; never adds one ([api.md](api.md#agents), "Tools at run time") |
+| `pipeline_config.agent_skills` | `dict[str, list[str] \| {"add", "remove"}]` | Narrows an agent's Claude Code skills: removes, and adds only the developer's skill choice from a source its list already loads; a request that leaves nothing hides every skill ([api.md](api.md#agents)) |
+| `pipeline_config.system_prompts`, `pipeline_config.mcp_servers` | `dict[str, …]` | Accepted so a decision that names them parses, and ignored (logged) |
 | `pipeline_config.max_feedback_loops` | `int` | Review → retry cycles (default: 3) |
 | `pipeline_config.reviewer_enabled` | `bool` | Whether review is included (default: true) |
 | `pipeline_config.validator_modes` | `list[str]` | Which validators to run (test, lint, typecheck) |

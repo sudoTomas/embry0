@@ -217,6 +217,9 @@ export function AgentFormPage() {
     }));
   };
 
+  // The brief writer's voices (runs_in_jobs false) never run in a job, so they need no tools.
+  const runsInNoJob = isEdit && existing !== undefined && existing.runs_in_jobs === false;
+
   const handleSave = () => {
     if (!isEdit && !form.type.trim()) {
       openSection("identity");
@@ -225,7 +228,7 @@ export function AgentFormPage() {
     }
     // A definition no job runs keeps naming no model: the brief writer's voices (runs_in_jobs false),
     // whose briefs run on the model background_models names for them.
-    const namesNoModel = isEdit && existing !== undefined && existing.runs_in_jobs === false && !existing.model;
+    const namesNoModel = runsInNoJob && !existing?.model;
     if (!resolvedModel.trim() && !namesNoModel) {
       openSection("model");
       toast.error("Model is required");
@@ -528,6 +531,12 @@ export function AgentFormPage() {
         <div>
           <Label className="sr-only">Tools</Label>
           <ToolChecklist value={form.tools} onToggle={handleToolToggle} catalog={toolCatalog ?? []} />
+          {form.tools.length === 0 && !runsInNoJob && (
+            <p className="mt-2 text-xs text-warning" role="status" data-testid="no-tools-warning">
+              No tools selected: a job runs this agent with no tools at all. It can read nothing and change
+              nothing, and it finishes with text only.
+            </p>
+          )}
         </div>
       </ConfigSection>
 

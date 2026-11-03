@@ -654,6 +654,141 @@ async def test_a_tools_override_still_applies_where_bash_is_allowed() -> None:
     assert config["configurable"]["agent_runner"].calls[0]["config"]["tools"] == ["Read", "Bash"]
 
 
+# ---- a review that runs nothing gets no shell of any kind ----------------------
+
+_COMMAND_SERVER = {"lint": {"type": "stdio", "command": "lint-mcp"}}
+_REMOTE_SERVER = {"docs": {"type": "http", "url": "http://docs.test/mcp"}}
+
+
+async def _shipped(state: dict[str, Any], definition: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The config the reviewer's sandbox is sent, with ``definition`` as the stored pr-reviewer row."""
+    from embry0.workflows.pr_review.agent_seed import PR_REVIEWER_AGENT_SEED
+
+    config = _config()
+    stored = {**PR_REVIEWER_AGENT_SEED, **(definition or {})}
+    with patch("embry0.orchestration.nodes.agent.load_agent_definition", AsyncMock(return_value=stored)):
+        await review_node(state, config)
+    [call] = config["configurable"]["agent_runner"].calls
+    return dict(call["config"])
+
+
+@pytest.mark.parametrize(("from_fork", "depth"), [(True, "full"), (False, "read_only")])
+async def test_a_tools_override_cannot_give_any_shell_tool_back(from_fork: bool, depth: str) -> None:
+    state = {
+        **_ready(from_fork=from_fork, depth=depth),
+        "pipeline_config": {"agent_tools": {"pr-reviewer": ["Read", "Bash", "Monitor"]}},
+    }
+    tools = (await _shipped(state))["tools"]
+    assert not {"Bash", "Monitor"} & set(tools), f"from_fork={from_fork} depth={depth}: the override kept {tools}"
+    assert tools == ["Read"], f"the override's other tools must still apply: {tools}"
+
+
+async def test_a_definition_cannot_give_a_read_only_review_any_shell_tool() -> None:
+    shipped = await _shipped(_ready(depth="read_only"), {"tools": ["Read", "Grep", "Bash", "Monitor"]})
+    assert shipped["tools"] == ["Read", "Grep"], f"a read-only review kept {shipped['tools']}"
+
+
+async def test_a_read_only_review_gets_no_server_that_runs_a_command() -> None:
+    shipped = await _shipped(
+        _ready(from_fork=True),
+        {
+            "tools": ["Read", "Bash", "mcp__lint__check", "mcp__docs__search"],
+            "mcp_servers": {**_COMMAND_SERVER, **_REMOTE_SERVER},
+        },
+    )
+    assert shipped["mcp_servers"] == _REMOTE_SERVER, f"a read-only review was given {shipped['mcp_servers']}"
+    assert shipped["tools"] == ["Read", "mcp__lint__check", "mcp__docs__search"], shipped["tools"]
+
+
+async def test_a_full_review_keeps_the_operators_command_server() -> None:
+    shipped = await _shipped(
+        _ready(), {"tools": ["Read", "Bash", "mcp__lint__check"], "mcp_servers": dict(_COMMAND_SERVER)}
+    )
+    assert shipped["mcp_servers"] == _COMMAND_SERVER, f"a full review was given {shipped['mcp_servers']}"
+    assert "mcp__lint__check" in shipped["tools"], shipped["tools"]
+
+
+async def test_a_run_time_server_never_reaches_a_read_only_review() -> None:
+    state = {**_ready(depth="read_only"), "pipeline_config": {"mcp_servers": {"pr-reviewer": _COMMAND_SERVER}}}
+    servers = (await _shipped(state))["mcp_servers"]
+    assert servers == {}, f"a server named at run time reached a read-only review: {servers}"
+
+
+async def test_a_read_only_review_runs_with_no_run_time_server_in_its_state() -> None:
+    """The strip does not lean on the resolver ignoring ``pipeline_config.mcp_servers``."""
+    from embry0.workflows.pr_review.nodes import _prepare_review
+
+    requested = {"pr-reviewer": _COMMAND_SERVER, "other": _COMMAND_SERVER}
+    state = {**_ready(depth="read_only"), "pipeline_config": {"mcp_servers": requested}}
+    *_, run_state = await _prepare_review(state, state["pr_review"], _config(), None, "job-1")
+    servers = run_state["pipeline_config"]["mcp_servers"]
+    assert servers == {"other": _COMMAND_SERVER}, f"the reviewer's state still names {servers}"
+
+
+async def test_a_read_only_review_runs_with_no_shell_tool_in_its_state() -> None:
+    """The strip does not lean on the resolver narrowing ``pipeline_config.agent_tools``."""
+    from embry0.workflows.pr_review.nodes import _prepare_review
+
+    asked = {"pr-reviewer": ["Read", "Bash", "Monitor"], "other": ["Bash"]}
+    state = {**_ready(from_fork=True), "pipeline_config": {"agent_tools": asked}}
+    *_, run_state = await _prepare_review(state, state["pr_review"], _config(), None, "job-1")
+    tools = run_state["pipeline_config"]["agent_tools"]
+    assert tools == {"pr-reviewer": ["Read"], "other": ["Bash"]}, f"the reviewer's state still names {tools}"
+
+
+# Unset tools are the agent type's defaults, Bash among them; a list the strip
+# empties keeps the read-only tools it had, if any, and an empty list stays empty.
+
+
+async def test_a_read_only_definition_of_shell_tools_only_leaves_no_tools() -> None:
+    tools = (await _shipped(_ready(depth="read_only"), {"tools": ["Bash", "Monitor"]}))["tools"]
+    assert tools == [], f"a definition of shell tools only left the review {tools}"
+
+
+async def test_a_read_only_definition_keeps_its_tools_that_are_not_shell_tools() -> None:
+    tools = (await _shipped(_ready(depth="read_only"), {"tools": ["Grep", "Bash", "WebFetch"]}))["tools"]
+    assert tools == ["Grep", "WebFetch"], f"the strip gave the review {tools}"
+
+
+async def test_a_read_only_review_strips_the_type_defaults_when_no_tools_are_named() -> None:
+    tools = (await _shipped(_ready(depth="read_only"), {"tools": None}))["tools"]
+    assert tools == ["Read", "Write", "Edit", "Glob", "Grep"], (
+        f"a definition that named no tools left the review {tools}"
+    )
+
+
+async def test_a_read_only_review_keeps_an_empty_tool_list_empty() -> None:
+    tools = (await _shipped(_ready(from_fork=True), {"tools": []}))["tools"]
+    assert tools == [], f"a reviewer with no tools was given {tools}"
+
+
+async def test_a_read_only_override_of_shell_tools_only_keeps_the_read_only_tools() -> None:
+    state = {**_ready(from_fork=True), "pipeline_config": {"agent_tools": {"pr-reviewer": ["Bash"]}}}
+    tools = (await _shipped(state))["tools"]
+    assert tools == ["Read", "Glob", "Grep"], f"an override of shell tools only left the review {tools}"
+
+
+async def test_what_a_read_only_review_drops_is_logged() -> None:
+    import structlog
+
+    state = {
+        **_ready(depth="read_only"),
+        "pipeline_config": {
+            "agent_tools": {"pr-reviewer": ["Read", "Monitor"]},
+            "mcp_servers": {"pr-reviewer": {"helper": {"command": "helper-mcp"}}},
+        },
+    }
+    with structlog.testing.capture_logs() as logs:
+        await _shipped(state, {"tools": ["Read", "Bash", "mcp__lint__check"], "mcp_servers": dict(_COMMAND_SERVER)})
+    dropped = [e for e in logs if e["event"] == "pr_review_read_only_dropped"]
+    assert {e["source"] for e in dropped} == {"definition", "pipeline_config"}, f"logged drops: {dropped}"
+    by_source = {e["source"]: e for e in dropped}
+    assert by_source["definition"]["tools"] == ["Bash"], by_source["definition"]
+    assert by_source["definition"]["servers"] == ["lint"], by_source["definition"]
+    assert by_source["pipeline_config"]["tools"] == ["Monitor"], by_source["pipeline_config"]
+    assert by_source["pipeline_config"]["servers"] == ["helper"], by_source["pipeline_config"]
+
+
 # ---- the event contract (#56) ------------------------------------------------
 
 

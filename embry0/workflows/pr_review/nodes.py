@@ -273,24 +273,81 @@ async def _persist_session(sessions: Any, job_id: str, resume: Any, last: Any, c
         logger.warning("pr_review_session_persist_failed", job_id=job_id, exc_info=True)
 
 
-def _without_bash_override(state: dict[str, Any]) -> dict[str, Any]:
-    """``state`` with Bash taken out of any ``agent_tools`` override for the reviewer.
+def _read_only_definition(definition: dict[str, Any]) -> dict[str, Any]:
+    """The reviewer's definition for a review that runs nothing.
 
-    ``resolve_agent_invocation`` lets ``pipeline_config.agent_tools`` replace
-    the definition's tools, so removing Bash from the definition alone would
-    let an override bring it back.
+    Every shell tool (``SHELL_TOOLS``) is taken out, and every MCP server
+    that runs a command; the ``mcp__<server>__*`` names of such a server stay
+    and reach nothing. Unset tools are the agent type's defaults, stripped
+    the same way. A list of shell tools only is left empty, which is no
+    tools (the read-only tools are not shell tools, so it had none to keep).
+    What is taken out is logged (``pr_review_read_only_dropped``).
     """
+    from embry0.agents.mcp_servers import logged_names, runs_command
+    from embry0.safety.policy import SHELL_TOOLS, parse_tool_list, tools_for_run
+
+    tools = tools_for_run(AGENT_TYPE, parse_tool_list(definition.get("tools")))
+    raw_servers = definition.get("mcp_servers") or {}
+    servers = dict(raw_servers) if isinstance(raw_servers, dict) else {}
+    dropped_servers = [name for name, server in servers.items() if runs_command(server)]
+    if not isinstance(raw_servers, dict):
+        dropped_servers.append("<unreadable>")
+    dropped_tools = [t for t in tools if t in SHELL_TOOLS]
+    kept_tools = [t for t in tools if t not in dropped_tools]
+    if dropped_tools or dropped_servers:
+        logger.info(
+            "pr_review_read_only_dropped",
+            agent_type=AGENT_TYPE,
+            tools=dropped_tools,
+            servers=logged_names(dropped_servers),
+            kept_tools=kept_tools,
+            source="definition",
+        )
+    kept_servers = {name: server for name, server in servers.items() if name not in dropped_servers}
+    return {**definition, "tools": kept_tools, "mcp_servers": kept_servers}
+
+
+def _without_shell_override(state: dict[str, Any]) -> dict[str, Any]:
+    """``state`` with the shell taken out of any run-time override for the reviewer.
+
+    ``resolve_agent_invocation`` only narrows the definition's tools by
+    ``pipeline_config.agent_tools``, and ignores ``pipeline_config.mcp_servers``.
+    The strip takes every shell tool and the reviewer's servers out of the
+    override as well, so a review that runs nothing does not depend on the
+    resolver for them. What is taken out is logged
+    (``pr_review_read_only_dropped``).
+    """
+    from embry0.agents.mcp_servers import logged_names
+    from embry0.safety.policy import SHELL_TOOLS
+
     pipeline_config = state.get("pipeline_config")
     if not isinstance(pipeline_config, dict):
         return state
-    overrides = pipeline_config.get("agent_tools")
-    if not isinstance(overrides, dict) or AGENT_TYPE not in overrides:
-        return state
-    tools = overrides[AGENT_TYPE]
-    kept = {k: v for k, v in overrides.items() if k != AGENT_TYPE}
-    if isinstance(tools, list):
-        kept[AGENT_TYPE] = [t for t in tools if t != "Bash"]
-    return {**state, "pipeline_config": {**pipeline_config, "agent_tools": kept}}
+    config = dict(pipeline_config)
+    dropped_tools: list[str] = []
+    dropped_servers: list[str] = []
+    overrides = config.get("agent_tools")
+    if isinstance(overrides, dict) and AGENT_TYPE in overrides:
+        tools = overrides[AGENT_TYPE]
+        kept = {k: v for k, v in overrides.items() if k != AGENT_TYPE}
+        if isinstance(tools, list):
+            dropped_tools = [str(t) for t in tools if t in SHELL_TOOLS]
+            kept[AGENT_TYPE] = [t for t in tools if t not in SHELL_TOOLS]
+        config["agent_tools"] = kept
+    servers = config.get("mcp_servers")
+    if isinstance(servers, dict) and AGENT_TYPE in servers:
+        requested = servers[AGENT_TYPE]
+        dropped_servers = logged_names(requested if isinstance(requested, dict) else ["<unreadable>"])
+        config["mcp_servers"] = {k: v for k, v in servers.items() if k != AGENT_TYPE}
+    if dropped_tools or dropped_servers:
+        logger.info(
+            "pr_review_read_only_dropped",
+            agent_type=AGENT_TYPE,
+            tools=dropped_tools,
+            servers=dropped_servers,
+            source="pipeline_config",
+        )
+    return {**state, "pipeline_config": config}
 
 
 async def _prepare_review(
@@ -312,7 +369,7 @@ async def _prepare_review(
     runs_nothing = _runs_nothing(rv)
     definition = await load_agent_definition(config, AGENT_TYPE, dict(PR_REVIEWER_AGENT_SEED))
     if runs_nothing:
-        definition = {**definition, "tools": [t for t in definition.get("tools") or [] if t != "Bash"]}
+        definition = _read_only_definition(definition)
     changed = tuple(str(f) for f in rv.get("changed_files") or [])
     dev_checks = rv.get("dev_checks") or []
     ctx = PromptContext(
@@ -346,7 +403,7 @@ async def _prepare_review(
         )
         prompt = build_full_prompt(ctx, previous_findings=findings)
 
-    return definition, prompt, resume, _without_bash_override(state) if runs_nothing else state
+    return definition, prompt, resume, _without_shell_override(state) if runs_nothing else state
 
 
 async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:

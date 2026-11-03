@@ -290,3 +290,37 @@ async def test_update_agent_enabled_model_passes_gate(app):
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
     assert resp.status_code == 200
+
+
+async def _write(app, method: str, path: str, body: dict, stored: dict) -> dict:
+    repo = app.state.agent_defs_repo
+    repo.create = AsyncMock(return_value=stored)
+    repo.update = AsyncMock(return_value=stored)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.request(method, path, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
+    assert resp.status_code in (200, 201), resp.text
+    return resp.json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/api/v1/agents", {"type": "custom", "description": "d", "model": "claude-sonnet-4-6"}),
+        ("PUT", "/api/v1/agents/custom", {"tools": []}),
+    ],
+    ids=["create", "update"],
+)
+async def test_a_write_that_leaves_no_tools_says_the_agent_runs_with_none(app, method, path, body):
+    stored = {**DEVELOPER_AGENT, "type": "custom", "tools": [], "is_builtin": False, "runs_in_jobs": True}
+    warnings = (await _write(app, method, path, body, stored))["warnings"]
+    assert any("no tools at all" in w and "text only" in w for w in warnings), f"warnings: {warnings}"
+
+
+@pytest.mark.asyncio
+async def test_no_tools_warning_spares_agents_with_tools_and_definitions_no_job_runs(app):
+    with_tools = {**DEVELOPER_AGENT, "runs_in_jobs": True}
+    assert (await _write(app, "PUT", "/api/v1/agents/developer", {"tools": ["Read"]}, with_tools))["warnings"] == []
+    voice = {**DEVELOPER_AGENT, "type": "job-brief", "tools": [], "runs_in_jobs": False}
+    assert (await _write(app, "PUT", "/api/v1/agents/job-brief", {"tools": []}, voice))["warnings"] == []

@@ -147,3 +147,20 @@ def test_build_sdk_options_empty_skills_means_no_filter() -> None:
     opts = build_sdk_options(_inv(skills=[]))
     assert opts.skills is None
     assert opts.plugins == []
+
+
+def test_build_sdk_options_starts_only_the_invocations_mcp_servers() -> None:
+    """The CLI otherwise also starts the servers of the workspace's .mcp.json and of every plugin."""
+    opts = build_sdk_options(_inv())
+    assert opts.strict_mcp_config is True, "the CLI must start the invocation's MCP servers and no others"
+
+
+def test_build_sdk_options_offers_no_tool_for_an_empty_list() -> None:
+    """Without --tools "" the CLI offers every tool it has; an empty list is no tools."""
+    opts = build_sdk_options(_inv(tools=[]))
+    assert opts.tools == [], f"an agent with no tools would be offered the CLI's set: tools={opts.tools!r}"
+
+
+def test_build_sdk_options_leaves_the_cli_set_for_a_named_list() -> None:
+    tools = build_sdk_options(_inv()).tools
+    assert tools is None, f"an agent with tools must keep the CLI's own set, not tools={tools!r}"
