@@ -77,6 +77,18 @@ async def test_a_decision_gets_the_code_making_them_one_by_one_would_give(
     assert await repo.decision_of("gywhw") == FIRST, "and names its decision"
 
 
+async def test_what_moved_since_is_what_was_answered_or_first_queued_since(repo: AsksRepository) -> None:
+    before = datetime.now(UTC)
+    fresh, answered = "offer:issue:fresh", "offer:issue:answered"
+    await repo.queue([(fresh, "ada@example.com", DUE), (answered, "ada@example.com", DUE)])
+    await repo.answered(answered, answer="decline", by="ada@example.com", now=datetime.now(UTC))
+    moved = {m["decision_id"]: m for m in await repo.moved_since(before)}
+    assert set(moved) >= {fresh, answered}
+    assert moved[answered]["state"] == "answered" and moved[answered]["answered_by"] == "ada@example.com"
+    assert moved[fresh]["state"] == "queued" and moved[fresh]["answered_at"] is None
+    assert await repo.moved_since(datetime.now(UTC)) == [], "nothing moved since now"
+
+
 async def test_a_code_another_decision_holds_is_never_given_again(
     repo: AsksRepository, db_with_migrations: DatabasePool
 ) -> None:

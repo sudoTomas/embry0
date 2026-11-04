@@ -23,6 +23,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -31,7 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers, restricted_key_name
 from embry0.api.schemas.person_name import PersonName
 from embry0.api.session import TIER_ADMIN, TIER_OPERATOR
-from embry0.services.asks import AskPolicy, asked_order, release
+from embry0.services.asks import AskPolicy, ask_settings, asked_order, release, working
 from embry0.settings.sections.asks import ASKS, AsksSettings
 from embry0.settings.store import Scoped, SettingsStore
 
@@ -216,7 +217,14 @@ async def asks_due(
                 "dashboard_url": await _dashboard_link_for(request, str(ask["recipient"]), decision),
             }
         )
-    return {"asks": out, "count": len(out), "enabled": True}
+    hours = ask_settings(section.deployment())
+    return {
+        "asks": out,
+        "count": len(out),
+        "enabled": True,
+        "day": now.astimezone(ZoneInfo(hours.timezone)).date().isoformat(),
+        "working": working(now, hours),
+    }
 
 
 class SentBody(BaseModel):
@@ -383,6 +391,61 @@ async def answer_ask(body: AnswerBody, request: Request) -> dict[str, Any]:
         "result": result,
         "asks": shown,
         "waiting": waiting,
+    }
+
+
+@router.get("/asks/recap")
+async def asks_recap(
+    request: Request,
+    since: datetime = Query(description="When the last recap went out"),
+) -> dict[str, Any]:
+    """Each person's and group's numbers for the morning, for a chat to send once a day: how many wait on them
+    (``waiting``), the decisions they answered since ``since`` (``worked``; a group's, whoever there answered) and the
+    asks that reached them since (``new``). Someone with nothing to say is left out. ``GET /asks/due`` says which day
+    it is and whether it is working hours. Through a key with a repository allowlist, only decisions in the
+    repositories it covers."""
+    from embry0.api.v1.decisions import listed_to
+
+    asks = _repo(request, "asks_repo")
+    since = since if since.tzinfo else since.replace(tzinfo=UTC)
+    by_id = {str(d["id"]): d for d in await open_decisions(request.app)}
+    moved = await asks.moved_since(since)
+    if restricted_key_name(request) is not None:
+        repos = await asks.decision_repos(str(m["decision_id"]) for m in moved if str(m["decision_id"]) not in by_id)
+        moved = [
+            m
+            for m in moved
+            if (
+                listed_to(request, by_id[d])
+                if (d := str(m["decision_id"])) in by_id
+                else key_covers(request, repos.get(d))
+            )
+        ]
+    waiting = Counter(
+        str(a["recipient"]).lower()
+        for a in await asks.live()
+        if str(a["decision_id"]) in by_id and listed_to(request, by_id[str(a["decision_id"])])
+    )
+    worked: dict[str, set[str]] = {}
+    new: Counter[str] = Counter()
+    for m in moved:
+        who = str(m["recipient"]).lower()
+        if m["state"] == "answered" and m.get("answered_at") and m["answered_at"] >= since:
+            by = who if who.startswith("group:") else str(m.get("answered_by") or who).lower()
+            worked.setdefault(by, set()).add(str(m["decision_id"]))
+        if m["created_at"] >= since and m["state"] != "withdrawn":
+            new[who] += 1
+    everyone = sorted(w for w in {*waiting, *worked, *new} if not w.startswith("github:"))
+    return {
+        "recaps": [
+            {
+                "recipient": await _person(request, who),
+                "waiting": waiting[who],
+                "worked": len(worked.get(who, ())),
+                "new": new[who],
+            }
+            for who in everyone
+        ]
     }
 
 
