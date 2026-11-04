@@ -472,6 +472,167 @@ async def test_a_start_the_gate_refuses_says_why_and_the_ask_stays_open(
     assert app.state.asks_repo.rows[0]["state"] == "sent", "it can be answered again"
 
 
+class FakeJobs:
+    def __init__(self) -> None:
+        self.rows = {
+            "job-q": {
+                "job_id": "job-q",
+                "status": "awaiting_input",
+                "repo": "acme/web",
+                "title": "Q",
+                "dispatched_by": "ada@example.com",
+            },
+            "job-p": {
+                "job_id": "job-p",
+                "status": "paused",
+                "repo": "acme/web",
+                "title": "P",
+                "dispatched_by": "ADA@example.com",
+            },
+            "job-s": {
+                "job_id": "job-s",
+                "status": "paused",
+                "repo": "acme/web",
+                "title": "S",
+                "dispatched_by": "embry0:master-key",
+            },
+        }
+
+    async def get(self, job_id: str) -> dict[str, Any] | None:
+        return self.rows.get(job_id)
+
+    async def started_and_waiting(self, person: str) -> list[dict[str, Any]]:
+        return [r for r in self.rows.values() if r["dispatched_by"].lower() == person.lower()]
+
+
+class FakeInputs:
+    def __init__(self) -> None:
+        self.rows = {
+            "inp-1": {
+                "id": "inp-1",
+                "job_id": "job-q",
+                "issue_id": None,
+                "status": "pending",
+                "importance": "blocking",
+                "question": "Which?",
+            },
+            "inp-2": {
+                "id": "inp-2",
+                "job_id": "job-q",
+                "issue_id": None,
+                "status": "pending",
+                "importance": "auto_answerable",
+                "question": "Minor",
+            },
+            "inp-3": {
+                "id": "inp-3",
+                "job_id": "job-q",
+                "issue_id": "iss-1",
+                "status": "pending",
+                "importance": "blocking",
+                "question": "Tracked",
+            },
+        }
+
+    async def get(self, input_id: str) -> dict[str, Any] | None:
+        return self.rows.get(input_id)
+
+    async def list_by_job(self, job_id: str) -> list[dict[str, Any]]:
+        return [r for r in self.rows.values() if r["job_id"] == job_id and r["issue_id"] is None]
+
+
+@pytest.fixture
+def steered(app: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+    from embry0.api.v1 import issues as issues_api
+    from embry0.api.v1 import jobs as jobs_api
+
+    app.state.jobs_repo = FakeJobs()
+    app.state.inputs_repo = FakeInputs()
+    app.state.issues_repo = SimpleNamespace()
+    app.state.issue_executor = SimpleNamespace()
+    app.state.calls = []
+
+    async def job_answer(job_id: str, input_id: str, req: Any, request: Any, jobs: Any, actor: str) -> dict[str, Any]:
+        app.state.calls.append(("job", job_id, input_id, req.answer, actor))
+        return {"id": input_id, "status": "answered"}
+
+    async def issue_answer(
+        issue_id: str, input_id: str, req: Any, request: Any, issues: Any, inputs: Any, executor: Any, actor: str
+    ) -> Any:
+        app.state.calls.append(("issue", issue_id, input_id, req.answer, actor))
+        return SimpleNamespace(model_dump=lambda mode: {"id": input_id, "status": "answered"})
+
+    async def resume(job_id: str, req: Any, request: Any, jobs: Any, actor: str) -> dict[str, Any]:
+        app.state.calls.append(("resume", job_id, req.choice, req.guidance, actor))
+        return {"job_id": job_id, "status": "resuming", "choice": req.choice}
+
+    monkeypatch.setattr(jobs_api, "answer_job_input_as", job_answer)
+    monkeypatch.setattr(issues_api, "answer_issue_input_as", issue_answer)
+    monkeypatch.setattr(jobs_api, "resume_job_as", resume)
+    return app
+
+
+@pytest.mark.asyncio
+async def test_a_person_s_list_has_the_questions_and_pauses_of_the_jobs_they_started(steered: Any) -> None:
+    mine = (await call(steered, "GET", "/api/v1/asks/of?person=ada@example.com")).json()
+    assert mine["questions"] == [
+        {"job_id": "job-q", "repo": "acme/web", "title": "Q", "input_id": "inp-1", "question": "Which?"}
+    ]
+    assert mine["paused"] == [{"job_id": "job-p", "repo": "acme/web", "title": "P"}]
+    group = (await call(steered, "GET", "/api/v1/asks/of?person=group:triage")).json()
+    assert group["questions"] == [] and group["paused"] == []
+
+
+@pytest.mark.asyncio
+async def test_whoever_started_a_job_answers_its_question_as_themselves(steered: Any) -> None:
+    url = "/api/v1/asks/jobs/job-q/answer"
+    done = await call(steered, "POST", url, json={"person": "ada@example.com", "input_id": "inp-1", "answer": "This"})
+    assert done.status_code == 200, done.text
+    tracked = await call(
+        steered, "POST", url, json={"person": "ada@example.com", "input_id": "inp-3", "answer": "That"}
+    )
+    assert tracked.status_code == 200, tracked.text
+    assert steered.state.calls == [
+        ("job", "job-q", "inp-1", "This", "ada@example.com"),
+        ("issue", "iss-1", "inp-3", "That", "ada@example.com"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_only_whoever_started_a_job_or_an_admin_may_steer_it(steered: Any) -> None:
+    answer = {"input_id": "inp-1", "answer": "x"}
+    url = "/api/v1/asks/jobs/job-q/answer"
+    assert (await call(steered, "POST", url, json={**answer, "person": "cy@example.com"})).status_code == 403
+    assert (await call(steered, "POST", url, json={**answer, "person": "stranger@example.com"})).status_code == 403
+    assert steered.state.calls == []
+    assert (await call(steered, "POST", url, json={**answer, "person": "root@example.com"})).status_code == 200
+    gone = await call(
+        steered, "POST", "/api/v1/asks/jobs/job-none/answer", json={**answer, "person": "ada@example.com"}
+    )
+    assert gone.status_code == 404
+    other = {"input_id": "inp-9", "answer": "x", "person": "ada@example.com"}
+    assert (await call(steered, "POST", url, json=other)).status_code == 404, "that job has no such question"
+    started_by_a_key = await call(
+        steered, "POST", "/api/v1/asks/jobs/job-s/resume", json={"person": "ada@example.com", "choice": "abandon"}
+    )
+    assert started_by_a_key.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_a_chat_keeps_a_paused_job_going_or_stops_it_and_takes_nothing_as_it_is(steered: Any) -> None:
+    url = "/api/v1/asks/jobs/job-p/resume"
+    going = await call(
+        steered,
+        "POST",
+        url,
+        json={"person": "ada@example.com", "choice": "continue_retrying", "guidance": "Skip the docs"},
+    )
+    assert going.status_code == 200, going.text
+    assert steered.state.calls == [("resume", "job-p", "continue_retrying", "Skip the docs", "ada@example.com")]
+    kept = await call(steered, "POST", url, json={"person": "ada@example.com", "choice": "merge_as_is"})
+    assert kept.status_code == 422, "that stays on the dashboard"
+
+
 @pytest.mark.asyncio
 async def test_a_press_may_not_name_an_embry0_actor(app: Any) -> None:
     """The person is who the answer is recorded as and who starts the work; an embry0 actor's name is not a person's."""

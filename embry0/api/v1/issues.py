@@ -513,6 +513,20 @@ async def answer_issue_input(
     inputs: IssueInputsRepository = Depends(get_inputs_repo),
     executor: IssueExecutor = Depends(get_issue_executor),
 ) -> InputResponse:
+    return await answer_issue_input_as(issue_id, input_id, req, request, issues, inputs, executor, _actor(request))
+
+
+async def answer_issue_input_as(
+    issue_id: str,
+    input_id: str,
+    req: AnswerInputRequest,
+    request: Request,
+    issues: IssuesRepository,
+    inputs: IssueInputsRepository,
+    executor: IssueExecutor,
+    actor: str,
+) -> InputResponse:
+    """The answer as ``actor``: whoever authenticated, or the person a chat assistant verified."""
     existing = await issues.get(issue_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Issue not found")
@@ -535,7 +549,7 @@ async def answer_issue_input(
     await record_answer(
         inp=inp,
         answer=req.answer,
-        answered_by=_actor(request),
+        answered_by=actor,
         channel="api",
         inputs_repo=inputs,
         issues_repo=issues,
@@ -545,7 +559,7 @@ async def answer_issue_input(
 
     pending_blocking = await inputs.count_pending_blocking(issue_id)
     if pending_blocking == 0:
-        await _resume_pipeline(issue_id, issues, inputs, executor, dispatched_by=_actor(request))
+        await _resume_pipeline(issue_id, issues, inputs, executor, dispatched_by=actor)
 
     updated = await inputs.get(input_id)
     assert updated is not None, "Answered input must exist"

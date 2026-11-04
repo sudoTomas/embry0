@@ -209,8 +209,10 @@ Exit codes: **0** the database matches GitHub · **1** (`check` only) it does no
 ## Outbound notifications
 
 embry0 can POST its own events to a receiver you run: `job.completed`,
-`job.failed` and the other final statuses as `job.<status>`, `watcher.proposed`
-and `agent.question`. Set the receiver's URL and a shared secret in the
+`job.failed` and the other final statuses as `job.<status>`, `watcher.proposed`,
+`agent.question` and `job.paused`. `agent.question` and `job.paused` carry
+`started_by`, the email of the person who started the job, or null when a key or
+a trigger did, so a receiver can tell them. Set the receiver's URL and a shared secret in the
 dashboard's integration settings, or with `WEBHOOK_NOTIFY_URL` and
 `WEBHOOK_NOTIFY_SECRET` (the environment is the fallback until a value is
 saved there). Delivery is best effort: each attempt is logged, and a failed
