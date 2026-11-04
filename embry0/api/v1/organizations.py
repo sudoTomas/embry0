@@ -949,7 +949,26 @@ async def install_organization_webhook(owner: str, request: Request) -> dict[str
     )
     if result.outcome == "failed":
         raise HTTPException(status_code=502, detail=result.detail)
-    return {"owner": org.owner, "target_url": target, **result.to_dict()}
+    # The needs list reads the newest discovery run, which still says no repository has a hook.
+    rediscovery = (
+        await rediscover(request, org, event="org_webhook_rediscovery_not_started")
+        if result.outcome == "done"
+        else None
+    )
+    return {"owner": org.owner, "target_url": target, **result.to_dict(), "rediscovery": rediscovery}
+
+
+async def rediscover(request: Request, org: Organization, *, event: str) -> str | None:
+    """Start a discovery run for ``org`` after a change to it (an action, the organization webhook installed); None
+    when one is already running or it cannot start, logged as ``event``, which never hides the change it follows."""
+    try:
+        if await _facts_repo(request).running_run(org.owner) is not None:
+            return None
+        run = await start_discovery(request, org)
+    except HTTPException as exc:
+        logger.warning(event, owner=org.owner, detail=str(exc.detail))
+        return None
+    return str(run["id"])
 
 
 @router.get("/orgs/{owner}/repos")

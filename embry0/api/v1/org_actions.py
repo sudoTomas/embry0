@@ -34,13 +34,12 @@ from embry0.api.repo_allowlist import (
 )
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1 import jobs as jobs_api
-from embry0.api.v1.organizations import _facts_repo, _repo, _token_for, start_discovery
+from embry0.api.v1.organizations import _facts_repo, _repo, _token_for, rediscover
 from embry0.api.v1.run_with import checked_run_with
 from embry0.api.v1.watcher_stacks import save_stack
 from embry0.audit.helpers import emit_audit
-from embry0.services import org_actions
+from embry0.services import org_actions, org_discovery
 from embry0.services.org_actions import ActionContext
-from embry0.services.organizations import Organization
 from embry0.services.watcher_stacks import WatcherStack
 
 logger = structlog.get_logger(__name__)
@@ -120,19 +119,6 @@ async def _refusal(request: Request, action: str, repo: str, *, dry_run: bool) -
     return None
 
 
-async def _rediscover(request: Request, org: Organization) -> str | None:
-    """Start a discovery run for ``org``; None when one is already running or it cannot start."""
-    if await _facts_repo(request).running_run(org.owner) is not None:
-        return None
-    try:
-        run = await start_discovery(request, org)
-    except HTTPException as exc:
-        # The actions already ran; a credential problem here must not hide their results.
-        logger.warning("org_action_rediscovery_not_started", owner=org.owner, detail=str(exc.detail))
-        return None
-    return str(run["id"])
-
-
 @router.post("/orgs/{owner}/actions", dependencies=[require_admin])
 async def run_organization_action(owner: str, body: ActionBody, request: Request) -> dict[str, Any]:
     """Run one action over repositories the owner's discovery saw.
@@ -165,12 +151,23 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
     forge_time = request_time = None
     # The owner's token is fetched only when a hook could actually be made:
     # an action that is skipped for every repository needs no credential.
+    org_hook = None
     if body.action == "hook" and org.forge == "github" and hooks_allowed and webhook_url and webhook_secret:
         from embry0.services.organizations import ForgeTime
 
         # The request's time, under the dashboard's timeout, and the clock each repository's share runs on.
         request_time, forge_time = ForgeTime(), ForgeTime()
         forge_client = await _forge_client(request, org.owner, org.forge, org.credential_id, forge_time)
+        # Read once for the whole run, in at most a repository's share of the request's time: the organization's
+        # own webhook delivers for every repository (ADR 0012). Not read in time, it is unknown, and each
+        # repository's own hooks decide.
+        origin = org_discovery.public_origin(str(getattr(config, "webhook_public_url", "") or ""))
+        org_hook = await org_discovery.organization_hook_state(
+            forge_client,
+            org.owner,
+            (origin,) if origin else (),
+            forge_time=ForgeTime(min(org_actions.HOOK_REPO_SECONDS, request_time.left())),
+        )
     stacks_repo = getattr(st, "watcher_stacks_repo", None)
     ctx = ActionContext(
         owner=org.owner,
@@ -185,6 +182,7 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
         hooks_allowed=hooks_allowed,
         webhook_url=webhook_url,
         webhook_secret=webhook_secret,
+        org_hook=org_hook,
         force=body.force,
         refusal=partial(_refusal, request, f"run the {body.action} action", dry_run=body.dry_run),
         forge_time=forge_time,
@@ -221,7 +219,7 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
             audit_log_path=getattr(config, "audit_log_path", None),
         )
         if any(r.outcome == "done" for r in results):
-            rediscovery = await _rediscover(request, org)
+            rediscovery = await rediscover(request, org, event="org_action_rediscovery_not_started")
     return {
         "owner": org.owner,
         "action": body.action,

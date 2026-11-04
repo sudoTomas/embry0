@@ -23,6 +23,8 @@ from embry0.services.organizations import Organization
 from embry0.services.watcher_stacks import WatcherStack
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 
+#: The real discovery start, before any fixture replaces it.
+_REAL_START_DISCOVERY = organizations_api.start_discovery
 HOOK_URL = "https://hooks.example.com/api/v1/webhook"
 
 ADMIN_TOKEN = "emb_" + "a" * 43
@@ -172,9 +174,15 @@ class FakeResp:
 class FakeForge:
     def __init__(self) -> None:
         self.hooks: list[dict[str, Any]] = []
+        self.org_hooks: list[dict[str, Any]] = []
+        self.org_hooks_error: Exception | None = None
         self.posts: list[Any] = []
 
     async def get(self, path: str, **kwargs: Any) -> FakeResp:
+        if path.startswith("/orgs/"):
+            if self.org_hooks_error is not None:
+                raise self.org_hooks_error
+            return FakeResp(200, self.org_hooks)
         return FakeResp(200, self.hooks)
 
     async def post(self, path: str, *, json: Any = None, **kwargs: Any) -> FakeResp:
@@ -261,7 +269,8 @@ def make_app(monkeypatch: pytest.MonkeyPatch, **config: Any) -> Any:
         rediscoveries.append(run["id"])
         return run
 
-    monkeypatch.setattr(org_actions_api, "start_discovery", fake_start_discovery)
+    # Every rediscovery starts through organizations.rediscover, the actions' and the webhook install's alike.
+    monkeypatch.setattr(organizations_api, "start_discovery", fake_start_discovery)
     app.state.rediscoveries = rediscoveries
     return app
 
@@ -362,6 +371,36 @@ async def test_a_hook_on_the_dashboard_origins_is_not_this_deployments(monkeypat
         resp = await client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": ["acme/widgets"]})
     assert resp.json()["results"][0]["outcome"] == "done", resp.text
     assert [post["config"]["url"] for post in app.state.fake_forge.posts] == [HOOK_URL]
+
+
+@pytest.mark.asyncio
+async def test_hook_reads_the_organization_webhook_and_adds_no_repository_hook(app: Any) -> None:
+    """The route reads the organization's hooks once and hands the answer to the action."""
+    app.state.fake_forge.org_hooks = [
+        {"id": 9, "active": True, "events": ["issues", "issue_comment", "pull_request"], "config": {"url": HOOK_URL}}
+    ]
+    async with _client(app) as client:
+        resp = await client.post(
+            "/api/v1/orgs/acme/actions", json={"action": "hook", "repos": ["acme/widgets", "acme/gadgets"]}
+        )
+    results = resp.json()["results"]
+    assert [r["outcome"] for r in results] == ["already", "already"], resp.text
+    assert "organization webhook" in results[0]["detail"]
+    assert app.state.fake_forge.posts == [], "no repository hook next to the organization's"
+    assert app.state.forge_clients_built == ["acme"]
+
+
+@pytest.mark.asyncio
+async def test_an_error_reading_the_organization_webhook_leaves_each_repository_to_decide(app: Any) -> None:
+    """The organization read is an extra: when it fails, the action runs as it did without it, never a 500."""
+    import httpx
+
+    app.state.fake_forge.org_hooks_error = httpx.ConnectError("the forge went away")
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": ["acme/widgets"]})
+    assert resp.status_code == 200, resp.text
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done"]
+    assert len(app.state.fake_forge.posts) == 1
 
 
 @pytest.mark.asyncio
@@ -566,7 +605,8 @@ async def test_a_change_starts_a_rediscovery_unless_one_is_running(app: Any) -> 
 
 @pytest.mark.asyncio
 async def test_the_rediscovery_is_the_discover_endpoints_own_run(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(org_actions_api, "start_discovery", organizations_api.start_discovery)
+    # The real start_discovery: the fixture's fake is undone for this test.
+    monkeypatch.setattr(organizations_api, "start_discovery", _REAL_START_DISCOVERY)
     walked: list[str] = []
 
     async def fake_discover(client: Any, owner: str, **kw: Any) -> org_discovery.Discovery:
@@ -642,8 +682,12 @@ async def test_the_hook_action_answers_within_the_requests_time(app: Any, monkey
     monkeypatch.setattr(actions, "HOOK_MIN_SECONDS", 0.15)
     monkeypatch.setattr(org_webhooks, "RELIST_SECONDS", 0.01)
 
+    answer = app.state.fake_forge.get
+
     async def never(path: str, **kwargs: Any) -> Any:
-        await asyncio.Event().wait()
+        if path.startswith("/repos/"):  # each repository's hooks; the organization's answer
+            await asyncio.Event().wait()
+        return await answer(path, **kwargs)
 
     app.state.fake_forge.get = never
     repos = ["acme/widgets", "acme/gadgets", "acme/one", "acme/two"]
@@ -760,3 +804,34 @@ async def test_a_slow_repository_that_answers_again_is_reached(app: Any, monkeyp
         calls = [await _hook_request(client, repos) for _call in range(2)]
     assert _made(calls) == {"acme/h3"}, f"the third answers again but is never tried: {calls}"
     assert "acme/h3" not in app.state.org_hook_slow["acme"], app.state.org_hook_slow
+
+
+@pytest.mark.asyncio
+async def test_an_organization_hook_listing_that_never_answers_takes_only_a_repositorys_share(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#363 on #584's budget: the organization's own hooks are read once per request, in at most a repository's share
+    of its time. One GitHub never answers is unknown, and the repositories are still tried, each by its own hooks."""
+    import asyncio
+
+    from embry0.services import org_actions as actions
+    from embry0.services import org_webhooks
+    from embry0.services import organizations as org_service
+
+    monkeypatch.setattr(org_service, "PROBE_SECONDS", 2.0)
+    monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", 0.2)
+    monkeypatch.setattr(actions, "HOOK_MIN_SECONDS", 0.15)
+    monkeypatch.setattr(org_webhooks, "RELIST_SECONDS", 0.01)
+    answer = app.state.fake_forge.get
+
+    async def org_hooks_hang(path: str, **kwargs: Any) -> Any:
+        if path.startswith("/orgs/"):
+            await asyncio.Event().wait()
+        return await answer(path, **kwargs)
+
+    app.state.fake_forge.get = org_hooks_hang
+    async with _client(app) as client:
+        resp = await asyncio.wait_for(
+            client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": ["acme/widgets"]}), timeout=10
+        )
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done"], resp.text
