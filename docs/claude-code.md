@@ -1,14 +1,36 @@
 # Set up embry0 from Claude Code
 
-A Claude Code session can take a running deployment from no configuration to working jobs through embry0's MCP server: model access, a forge credential, an organization and every repository under it, webhooks, testing and spend limits. This page connects the session and lists what it does. To stand up the host and the stack first, follow the [quick start](../README.md#quick-start) or [provisioning](ops/provisioning.md).
+A Claude Code session can take a running deployment from no configuration to working jobs through embry0's MCP server: model access, a forge credential, an organization and every repository under it, webhooks, testing and spend limits. The embry0 plugin does it all from the chat window, standing up the deployment too if there is none yet. This page shows the plugin first, then the manual connection, and lists what the session does.
 
-## What you need
+## The plugin
+
+The plugin needs Claude Code 2.1.285 or newer (`claude --version`; `claude update` updates it). In Claude Code:
+
+```text
+/plugin install embry0 --marketplace https://github.com/sudoTomas/embry0
+```
+
+The same in two steps: `/plugin marketplace add https://github.com/sudoTomas/embry0`, then `/plugin install embry0@embry0`. The plugin lives in [plugins/embry0](../plugins/embry0/README.md); this repository is its marketplace. If you added `embry0` by hand as below, run `claude mcp remove embry0` first. At the same URL, Claude Code skips the plugin's server and keeps the one added by hand; at another URL, both load and every tool shows twice.
+
+When the plugin is enabled, its dialog asks for the deployment's URL (default `http://localhost:8200`; https for any other origin) and an API key. The dialog masks the key, and Claude Code keeps it out of the settings files (in the macOS keychain, elsewhere in `~/.claude/.credentials.json`, mode 600), so it never passes through the chat. With no deployment yet, leave the key empty.
+
+| Skill | What it does |
+|---|---|
+| `/embry0:install` | Stands up a deployment on the session's machine: the [quick start](../README.md#quick-start), with the secrets written into `.env` and never shown. Then it mints an admin key and fills in the plugin's options. |
+| `/embry0:connect` | Checks the plugin's MCP server answers, and says what to fix when it does not. |
+| `/embry0:setup` | The setup steps below, the same procedure the MCP prompt `setup` serves. |
+
+The plugin's tools are named `mcp__plugin_embry0_embry0__<tool>`, and its MCP prompt is `/mcp__plugin_embry0_embry0__setup`. To change the URL or the key later: `/plugin configure embry0@embry0`, then check with `/mcp` that the server reconnected (restart Claude Code if it did not, and always after `claude plugin configure` in a terminal). For a new host, see [provisioning](ops/provisioning.md).
+
+## Connect without the plugin
+
+### What you need
 
 - A running deployment you can reach. The MCP endpoint is `/mcp` on the dashboard's origin.
 - An API key with the admin tier. Make one on the dashboard under Settings, then API keys, with the scope `admin`. The tab shows the `claude mcp add` command for the new key.
 - Claude Code.
 
-## Connect the session
+### Connect the session
 
 Run this in your own terminal, not inside a Claude Code chat: a key typed in the chat is kept in its transcript.
 
@@ -77,4 +99,4 @@ A session opened in the deploy checkout on the host can make these changes with 
 
 ## In an embry0 checkout
 
-A Claude Code session opened in a checkout of this repository has the skill `setup-embry0` (`.claude/skills/setup-embry0`). It checks whether the stack runs and the MCP server is connected, and then follows the same procedure.
+A Claude Code session opened in a checkout of this repository has the skill `setup-embry0` (`.claude/skills/setup-embry0`). It checks whether the stack runs and the MCP server is connected, through the plugin's tools or a server added by hand, and then follows the same procedure. With the plugin, it sends a missing connection to `/embry0:connect` and a missing stack to `/embry0:install`.

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "embry0",
+  "owner": {
+    "name": "embry0 maintainers"
+  },
+  "metadata": {
+    "description": "The embry0 plugin for Claude Code: stand up embry0, connect to it over MCP and set it up from the chat window."
+  },
+  "plugins": [
+    {
+      "name": "embry0",
+      "source": "./plugins/embry0",
+      "description": "Stand up embry0, connect Claude Code to it over MCP, and set it up from the chat window.",
+      "version": "0.1.0",
+      "category": "development",
+      "homepage": "https://github.com/sudoTomas/embry0/blob/main/docs/claude-code.md"
+    }
+  ]
+}
