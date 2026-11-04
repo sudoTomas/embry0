@@ -253,6 +253,7 @@ def test_a_parameter_expansion_says_what_it_is_of(
 ) -> None:
     """``${!x}`` names another variable, ``$@`` and ``${a[@]}`` a list, ``${x/a/b}`` a replacement."""
     m = _module()
+    assert hasattr(m, "Expansion"), "shell_syntax.Expansion must say what a parameter expansion is of"
     found = m.parse("cat " + source, HOME).items[0][0].first.commands[0].words[1].chars[0]
     assert isinstance(found, m.Expansion), f"{source}: no expansion kept, found {found!r}"
     got = (

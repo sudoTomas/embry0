@@ -767,10 +767,169 @@ def test_commands_that_run_commands_are_bounded(command: str, reason: str) -> No
     """A runner nested past MAX_NESTING, or more run text than is parsed again, is refused, not
     followed for minutes or until the interpreter's recursion limit."""
     m = _module()
-    with pytest.raises(m.BashSyntaxError, match=reason):
-        m.bash_paths(command, cwd=CWD, home=HOME)
+    try:
+        with pytest.raises(m.BashSyntaxError, match=reason):
+            m.bash_paths(command, cwd=CWD, home=HOME)
+    except RecursionError:
+        raise AssertionError(
+            f"{command[:24]!r}…: followed until the interpreter's recursion limit instead of refused ({reason})"
+        ) from None
 
 
 def test_commands_that_run_commands_a_few_deep_are_read() -> None:
     reads, _ = _paths("sudo env nice timeout 5 nohup bash -c 'eval \"cat /etc/passwd\"'")
     assert "/etc/passwd" in reads, sorted(reads)
+
+
+# ---- compound commands and their redirections ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("command", "reads", "writes"),
+    [
+        ("( cd x && make ) 2>&1 | tail", {"/workspace/x"}, set()),
+        ("{ make; make test; } 2>/dev/null", {"/workspace/test"}, {"/dev/null"}),
+        ("for f in a b; do make $f; done 2>&1", {"/workspace/a", "/workspace/b"}, set()),
+        ("if make; then make test; fi 2>/dev/null", {"/workspace/test"}, {"/dev/null"}),
+        ("( make ) 9>>lock", set(), {"/workspace/lock"}),
+        ("case $x in a) make;; esac 2>/dev/null", set(), {"/dev/null"}),
+        ("while false; do :; done 2>&1 >out.log", set(), {"/workspace/out.log"}),
+        ("f() { make; } 2>/dev/null", set(), {"/dev/null"}),
+        ("[[ -f x ]] 2>/dev/null", set(), {"/dev/null"}),
+        ("(( n++ )) 2>/dev/null", set(), {"/dev/null"}),
+        ("( : ) 3</etc/passwd", {"/etc/passwd"}, set()),
+        ("{ :; } 4<>/etc/shadow", {"/etc/shadow"}, {"/etc/shadow"}),
+        ("until :; do :; done 2>|/usr/x", set(), {"/usr/x"}),
+        ("case x in x) :;; esac &>/usr/x", set(), {"/usr/x"}),
+        ("if :; then :; fi &>>/usr/y", set(), {"/usr/y"}),
+        ("{ :; } {fd}>/usr/z", set(), {"/usr/z"}),
+        ("( : ) 2>&1 3>&2 4<&- 5<x", {"/workspace/x"}, set()),
+        ("cat 3<>x", {"/workspace/x"}, {"/workspace/x"}),
+    ],
+)
+def test_a_compound_command_takes_a_numbered_redirection(command: str, reads: set[str], writes: set[str]) -> None:
+    """After ``)``, ``}``, ``done``, ``fi`` or ``esac`` a number or ``{name}`` written against a
+    redirection is the descriptor it redirects, as after a simple command; ``<>`` reads and writes."""
+    _check(command, reads, writes)
+
+
+@pytest.mark.parametrize("command", ["( true ) 2 >x", "( true ) 2", "{ :; } 2>"])
+def test_a_word_after_a_compound_command_is_still_refused(command: str) -> None:
+    _refused(command, "bash does not run it: only redirections may follow a compound command")
+
+
+# ---- values that do not settle --------------------------------------------------------------------
+
+
+def _copies(n: int, *, reverse: bool) -> str:
+    """``n`` variables, each a copy of the one before, the first /etc: in order, or written last first."""
+    copies = [f"v{i + 1}=$v{i}" for i in range(n)]
+    return "; ".join([*(reversed(copies) if reverse else copies), "v0=/etc"] if reverse else ["v0=/etc", *copies]) + (
+        f"; cat $v{n}/passwd"
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        _copies(7, reverse=True),
+        _copies(10, reverse=True),
+        _copies(8, reverse=False),
+        "f() { v9=$v8; }; for i in 1 2; do v8=$v7; v7=$v6; v6=$v5; v5=$v4; v4=$v3; v3=$v2; v2=$v1; done; "
+        'v1=/etc; f; cat "$v9/passwd"',
+    ],
+)
+def test_values_that_do_not_settle_are_refused(command: str) -> None:
+    """Values pass one step further each time the command is read again; one still changing when the
+    last reading ends may name a path not seen yet, so the command is refused."""
+    message = _refused(command, "a value it names was still changing when the last reading ended")
+    assert "more steps" in message, message
+
+
+@pytest.mark.parametrize("n", [1, 2, 3, 4])
+def test_values_a_few_copies_deep_are_followed(n: int) -> None:
+    _reads_contain(_copies(n, reverse=True), "/etc/passwd")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "PATH=/opt/tool/bin:$PATH make; PATH=/opt/tool/bin:$PATH make test",
+        'x=a; while :; do x=$x/b; done; cat "$x"',
+        "tot=0; nof=; for f in $(grep -rl x .); do tot=$((tot+1)); if grep -q y $f; then :; "
+        'else nof="$nof $(basename $f .py)"; fi; done; echo "$tot $nof"',
+        'for p in / /a "/?b=1" /c /d /e /f /g /h /i /j /k /l /m /n /o /q /r /s /t /u /v; do curl "http://h$p"; done',
+    ],
+)
+def test_a_value_that_grows_settles(command: str) -> None:
+    """A value read again each round (PATH=/x:$PATH), one growing in a loop, and a loop over many
+    items become one wider value that stays wide, so the reading settles."""
+    _paths(command)
+
+
+# ---- shells that read their script from standard input -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash - <<< 'cat /etc/passwd'",
+        "sh - <<< 'cat /etc/passwd'",
+        "bash -- - <<< 'cat /etc/passwd'",
+        "bash -x - <<< 'cat /etc/passwd'",
+        "sh -e - <<EOF" + NL + "cat /etc/passwd" + NL + "EOF",
+        "bash --rcfile /dev/stdin -i ./build.sh <<< 'cat /etc/passwd'",
+        "bash --init-file /proc/self/fd/0 -ic true <<< 'cat /etc/passwd'",
+        "source -- /dev/stdin <<< 'cat /etc/passwd'",
+        ". -- /dev/stdin <<< 'cat /etc/passwd'",
+        "eval -- 'cd /etc; cat passwd'",
+    ],
+)
+def test_a_shell_reads_its_script_where_bash_does(command: str) -> None:
+    """``-`` ends a shell's options as ``--`` does, and with nothing after it the script is standard
+    input; an rc file given as standard input runs it; ``source``, ``.`` and ``eval`` skip ``--``."""
+    _reads_contain(command, "/etc/passwd")
+
+
+def test_a_shell_given_a_script_after_a_dash_runs_that_script() -> None:
+    """After ``-`` the first operand is the script, as after ``--``: standard input is not read."""
+    reads, _ = _paths("bash - ./build.sh <<< 'cat /etc/passwd'")
+    assert "/workspace/build.sh" in reads and "/etc/passwd" not in reads, f"bash runs ./build.sh: {sorted(reads)}"
+
+
+# ---- prompts ---------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "PS4='$(x=/etc/passwd; cat \"$x\")'; set -x; :",
+        'x=\'$(y=/etc/passwd; cat "$y")\'; : "${x@P}"',
+        "PS4='\\044(cat /etc/passwd)'; set -x; :",
+        "PS4='\\444(cat /etc/passwd)'; set -x; :",
+        "PS4='$\\050cat /etc/passwd)'; set -x; :",
+        "x='\\044(cat /etc/passwd)'; : \"${x@P}\"",
+        "PS4='\"$(cat /etc/passwd)'; set -x; :",
+    ],
+)
+def test_a_prompt_runs_what_bash_expands_in_it(command: str) -> None:
+    """bash replaces a prompt's escapes (an octal one can make a ``$``), then expands it as inside
+    double quotes but with ``"`` a character: the quotes in a command substitution stay quotes."""
+    _reads_contain(command, "/etc/passwd")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "PS4='\\\\$(cat /etc/passwd)'; set -x; :",
+        "PS4='\\$(cat /etc/passwd)'; set -x; :",
+        "PS4='`cat \\\"/etc/passwd\\\"`'; set -x; :",
+    ],
+)
+def test_a_prompt_runs_nothing_bash_leaves_as_text(command: str) -> None:
+    """``\\\\`` is one backslash, which quotes the ``$`` after it; ``\\$`` is a ``$`` no expansion
+    reads; in a prompt a backquoted command keeps its ``\\"``, so this ``cat`` is given a name in quotes."""
+    reads, _ = _paths(command)
+    assert not any(r.startswith("/etc") for r in reads), (
+        f"{command!r}: bash reads nothing in /etc here; got {sorted(reads)}"
+    )

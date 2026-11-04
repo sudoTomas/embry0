@@ -147,6 +147,7 @@ from embry0.safety.shell_syntax import (
     Subshell,
     Word,
     parse,
+    parse_prompt,
 )
 from embry0.safety.shell_transforms import printf
 from embry0.safety.shell_variables import (
@@ -158,6 +159,7 @@ from embry0.safety.shell_variables import (
     UNKNOWN,
     Value,
     Variables,
+    generalized,
 )
 from embry0.safety.shell_work import Exhausted, Work
 
@@ -229,23 +231,37 @@ def _read(script: Script, *, cwd: str, home: str, work: Work) -> BashPaths:
     values: dict[str, frozenset[Value]] = {}
     folded: frozenset[str] = frozenset()
     parsed: dict[str, Script] = {}  # run text read in one round is read alike in the next
+    widened: frozenset[str] = frozenset()  # variables still growing a round before the last
     for round_ in range(_MAX_ROUNDS + 1):
         scanner = _Scanner(home, mode, values, folded, work, parsed)
         scanner.run(script, cwd)
         found, found_values = scanner.found_mode(), scanner.vars.collected()
+        found_values = {name: _widened(name, vals) if name in widened else vals for name, vals in found_values.items()}
         found_folded = folded | scanner.vars.folding
-        if (found == mode and found_values == values and found_folded == folded) or round_ == _MAX_ROUNDS:
+        if found == mode and found_values == values and found_folded == folded:
             return BashPaths(reads=tuple(scanner.reads), writes=tuple(scanner.writes))
+        if round_ == _MAX_ROUNDS:
+            # A value this round read was still to change, so a path the command names may not be known yet.
+            raise BashSyntaxError("the command passes values through more steps than embry0 follows")
         # A setting or a value seen anywhere applies to the whole command: read it again with it.
         if round_ == _MAX_ROUNDS - 1:
-            # Values still growing (X=$X/a in a loop) can be anything.
-            growing = {name for name, vals in found_values.items() if vals != values.get(name)}
+            # Values still growing (X=$X/a in a loop, PATH=/x:$PATH read again each round) are each
+            # read as one wider value from now on, so the last round can settle.
+            widened = frozenset(name for name, vals in found_values.items() if vals != values.get(name))
             found_values = {
-                name: (vals | {ANYWHERE}) if name in growing else vals for name, vals in found_values.items()
+                name: _widened(name, vals) if name in widened else vals for name, vals in found_values.items()
             }
-            found_folded |= growing
+            found_folded |= widened
         mode, values, folded = found, found_values, found_folded
     raise AssertionError("unreachable")
+
+
+def _widened(name: str, values: frozenset[Value]) -> frozenset[Value]:
+    """A growing variable's values as one that stands for them all and any longer one: their common
+    start, then anything. A list, or what the store keeps beside a variable, can then be anywhere."""
+    if "\x00" in name or name.endswith("[@]"):
+        return values | {ANYWHERE}
+    return frozenset({generalized(set(values))})
 
 
 # ---- scanning ------------------------------------------------------------------
@@ -436,6 +452,8 @@ class _Scanner:
             text = target.text
             if op in ("<&", ">&") and (text.rstrip("-").isdigit() or text == "-"):
                 continue
+            if op == "<>":
+                self.path(target, cwds, write=False)  # opened for reading and writing
             self.path(target, cwds, write=op != "<")
 
     def word_subs(self, word: Word, cwds: Cwds) -> None:
@@ -451,8 +469,14 @@ class _Scanner:
                     self.prompt("".join(_TEXT_OF.get(k, c) for c, k in value), cwds)
 
     def prompt(self, text: str, cwds: Cwds) -> None:
-        """Text bash expands as a prompt (``PS4``, ``${X@P}``): as a double-quoted word."""
-        self.script(self.reparse(': "' + re.sub(r'(["\\])', r"\\\1", text) + '"'), cwds)
+        """Text bash expands as a prompt (``PS4``, ``${X@P}``), read as shell_syntax.parse_prompt reads it.
+        Each distinct text is read once and counted as ``parsed`` work, as ``reparse`` counts a command."""
+        key = "\x00prompt\x00" + text  # a command holds no NUL, so no command text is this key
+        script = self.parsed.get(key)
+        if script is None:
+            self.work.spend("parsed", len(text))
+            script = self.parsed[key] = parse_prompt(text, self.home)
+        self.script(script, cwds)
 
     def if_(self, node: If, cwds: Cwds) -> _Outcome:
         ok: set[str | None] = set()
@@ -977,6 +1001,8 @@ class _Scanner:
 
     def source(self, args: list[Word], cwds: Cwds, *, stdin: list[str]) -> _Outcome:
         """``source FILE`` / ``. FILE``: the file is read; what it holds runs in this shell."""
+        if args and args[0].text == "--":
+            args = args[1:]  # the end of its options, as for every builtin
         if not args:
             return _same(cwds)
         out = self.sourced(args[0], cwds, stdin=stdin)
@@ -994,6 +1020,14 @@ class _Scanner:
             out = _same(cwds)
             for text in stdin:
                 out = self.script(self.stdin_script(text), cwds)
+            return out
+        if "-" in texts:
+            # A file named -: bash and dash open it, and a shell given - before its options end reads
+            # standard input instead (shell). Both are read, standard input's text as script.
+            out = _same(cwds)
+            for text in stdin:
+                out = self.script(self.stdin_script(text), cwds)
+            self.path(word, cwds, write=False)
             return out
         if any(_FD.fullmatch(t) for t in texts):
             raise BashSyntaxError("the shell would run what a file descriptor holds, which cannot be checked")
@@ -1075,6 +1109,8 @@ class _Scanner:
             self.expanding.discard(name)
 
     def eval_(self, args: list[Word], cwds: Cwds) -> _Outcome:
+        if args and args[0].text == "--":
+            args = args[1:]  # the end of eval's options: not part of the text it runs
         ok: set[str | None] = set()
         fail: set[str | None] = set()
         for text in self.texts(args):
@@ -1229,12 +1265,15 @@ class _Scanner:
         stdin_flag = False
         while k < len(args):
             text = args[k].text
-            if text == "--":
+            if text in ("--", "-"):
+                # - is the same as --: the options end, and with no operand after them the shell
+                # reads its script from standard input (bash -, sh -, bash -x -).
                 k += 1
                 break
             if text in ("--rcfile", "--init-file"):
                 if k + 1 < len(args):
-                    self.path(args[k + 1], cwds, write=False)
+                    # An interactive shell runs this file first: standard input's text, when it names that.
+                    self.sourced(args[k + 1], cwds, stdin=stdin)
                 k += 2
                 continue
             if text.startswith("--"):

@@ -218,13 +218,15 @@ class Variables:
         """The values known for the next round: the known ones and the assigned ones, capped.
 
         The names of those folded into one wider value are left in ``folding``,
-        and so is the list of a name also given a value whole.
+        and so is the list of a name also given a value whole. A variable folded
+        into one wider value stays folded: what it is given later widens that value.
         """
         out: dict[str, frozenset[Value]] = {}
         for name in set(self.known) | set(self.assigned):
             values = set(self.known.get(name, ())) | self.assigned.get(name, set())
-            if len(values) > MAX_VALUES:
-                out[name] = frozenset({_generalized(values)})
+            sticky = name in self.folded and "\x00" not in name and not name.endswith("[@]")
+            if len(values) > MAX_VALUES or (sticky and len(values) > 1):
+                out[name] = frozenset({generalized(values)})
                 self.folding.add(name)
             else:
                 out[name] = frozenset(values)
@@ -593,7 +595,7 @@ def _widened(old: Value, new: Value) -> Value:
         return old
     if old[:1] == UNKNOWN:
         return old + UNKNOWN
-    return _generalized({old + new})
+    return generalized({old + new})
 
 
 def _elements(value: Value) -> list[Value]:
@@ -614,7 +616,12 @@ def _listed(texts: list[str]) -> Value:
     return tuple((c, LIT) for c in SEP.join(texts))
 
 
-def _generalized(values: set[Value]) -> Value:
+def _same_text(a: tuple[str, int], b: tuple[str, int]) -> bool:
+    """Whether two characters of a value read alike: the same character, quoted or not, but for a glob's."""
+    return a == b or (a[0] == b[0] and a[0] not in "*?[" and {a[1], b[1]} <= {LIT, ACT})
+
+
+def generalized(values: set[Value]) -> Value:
     """One value that stands for all of ``values``: their common start, then text only known at run time.
 
     Sound only when no value climbs with ``..`` or holds a directory or run-time
@@ -641,7 +648,7 @@ def _generalized(values: set[Value]) -> Value:
         return ANYWHERE
     common = 0
     shortest = min(starts, key=len)
-    while common < len(shortest) and all(v[common] == shortest[common] for v in starts):
+    while common < len(shortest) and all(_same_text(v[common], shortest[common]) for v in starts):
         common += 1
     start = shortest[:common]
     return (start if absolute else (((".", LIT), ("/", LIT)) + start)) + UNKNOWN

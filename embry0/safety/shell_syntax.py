@@ -265,6 +265,70 @@ def parse(src: str, home: str) -> Script:
     return script
 
 
+# The prompt escapes whose text no expansion reads: bash quotes what they give (a user, a host, a
+# directory, a date) or gives a control character. One space stands for each.
+_PROMPT_TEXT_ESCAPES: Final[str] = "aedtT@AswWuhHjlvV#!nr[]"
+
+
+def _decoded_prompt(text: str) -> str:
+    """``text`` after bash replaces its prompt escapes (decode_prompt_string in bash's parse.y)."""
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c != "\\" or i + 1 >= len(text):
+            out.append(c)
+            i += 1
+            continue
+        e = text[i + 1]
+        if e in "01234567":
+            # bash reads the next three characters as an octal number, or fewer at the end of the text;
+            # with anything else among them it is a backslash, and the digits stay text.
+            digits = text[i + 1 : i + 4]
+            if all(d in "01234567" for d in digits):
+                code = int(digits, 8) % 256  # a char: \444 is $ as \044 is
+                if code:
+                    out.append(chr(code))
+                i += 1 + len(digits)
+            else:
+                out.append("\\")
+                i += 1
+            continue
+        if e == "\\":
+            out.append("\\")
+        elif e == "$":
+            out.append("\\$")  # $ for a user that is not root, written so no expansion reads it
+        elif e == "D" and text.startswith("{", i + 2) and text.find("}", i + 3) != -1:
+            out.append(" ")  # \D{format}: a date
+            i = text.find("}", i + 3) + 1
+            continue
+        elif e in _PROMPT_TEXT_ESCAPES:
+            out.append(" ")
+        else:
+            out.append("\\" + e)
+        i += 2
+    return "".join(out)
+
+
+def parse_prompt(text: str, home: str) -> Script:
+    """``text`` as bash expands a prompt (``PS0``-``PS4``, ``${X@P}``): the command ``: <prompt>``.
+
+    bash first replaces the prompt's backslash escapes: ``\\NNN`` is the character with that octal
+    code, so it can make a ``$``; ``\\\\`` is one backslash; the others give text no expansion reads.
+    It then expands the result as the inside of a double-quoted string, except that a ``"`` in it is
+    a character, and a backquoted command in it is read as outside quotes.
+    """
+    decoded = _decoded_prompt(text)
+    if "\x00" in decoded:
+        raise BashSyntaxError("the prompt holds a NUL character")
+    lexer = _Lexer(decoded, 0, home, 1)
+    word = Word(start=0, quoted=True)
+    word.end = lexer.double(word, 0, prompt=True)
+    word.raw = decoded
+    colon = Word(chars=[":"], kinds=[ACT], end=1, raw=":")
+    return Script(items=[(AndOr(first=Pipeline(commands=[Simple(words=[colon, word])])), False)])
+
+
 # ---- reading words ------------------------------------------------------------------------
 
 _OPERATORS: Final[tuple[str, ...]] = (
@@ -801,12 +865,16 @@ class _Lexer:
         self.i = inner.i
         word.mark(RUN)
 
-    def double(self, word: Word, i: int) -> int:
-        """Read a double-quoted string's contents from ``i``; the index after its closing quote."""
+    def double(self, word: Word, i: int, *, prompt: bool = False) -> int:
+        """Read a double-quoted string's contents from ``i``; the index after its closing quote.
+
+        ``prompt``: the text is a prompt bash expands (``parse_prompt``). It runs to the end of the
+        text, a ``"`` in it is a character, and a backquoted command in it is read as outside quotes.
+        """
         s = self.s
         while i < len(s):
             c = s[i]
-            if c == '"':
+            if c == '"' and not prompt:
                 return i + 1
             if c == "\\" and i + 1 < len(s) and s[i + 1] in '$`"\\\n':
                 if s[i + 1] != "\n":
@@ -817,12 +885,14 @@ class _Lexer:
                 i = self.dollar(word, i, kind=LIT)
                 continue
             if c == "`":
-                inner, i = _backtick(s, i, in_double=True)
+                inner, i = _backtick(s, i, in_double=not prompt)
                 word.subs.append(_Parser(inner, 0, self.home, depth=self.depth + 1).whole())
                 word.mark(RUN)
                 continue
             word.add(c, LIT)
             i += 1
+        if prompt:
+            return i
         raise BashSyntaxError("unterminated double quote")
 
     def dollar(self, word: Word, i: int, *, kind: int) -> int:
@@ -1226,8 +1296,21 @@ class _Parser:
                     return node
                 node.words.append(value)
 
+    def _fd_before_redirect(self) -> bool:
+        """Whether the next token is a file descriptor's number or {name} written against a redirection, as in 2>&1."""
+        kind, value, _ = self.peek()
+        if kind != "word" or not isinstance(value, Word):
+            return False
+        if not (value.raw.isdigit() or _FD_NAME.fullmatch(value.raw)):
+            return False
+        after_kind, after, pos = self.peek(1)
+        return pos == value.end and (after_kind == "heredoc" or (after_kind == "op" and after in _REDIRECTS))
+
     def _redirects(self, node: Redirected) -> None:
         while True:
+            if self._fd_before_redirect():
+                self.next()  # the redirection's file descriptor, as after a compound command: ( … ) 2>&1
+                continue
             kind, value, _ = self.peek()
             if kind == "heredoc":
                 self.next()
