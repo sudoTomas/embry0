@@ -452,8 +452,11 @@ async def _their_waiting_jobs(request: Request, who: str) -> dict[str, list[dict
 
 
 async def _their_job(request: Request, job_id: str, person: str, *, action: str) -> dict[str, Any]:
-    """The job, when ``person`` may steer it: whoever started it, or an admin. One the caller's key does not cover
+    """The job, when ``person`` may steer it: whoever started it, or an admin. A job no person started, whose question
+    goes to the group chat (``asks.unowned_group``), is anyone's embry0 knows. One the caller's key does not cover
     answers as one that does not exist."""
+    from embry0.services._executor_outcomes import person_who_started
+
     none = HTTPException(status_code=404, detail="no job has that id")
     job = await _repo(request, "jobs_repo").get(job_id)
     if job is None:
@@ -462,7 +465,12 @@ async def _their_job(request: Request, job_id: str, person: str, *, action: str)
         await hide_unless_covered(request, job.get("repo"), none, action=action)
     users = getattr(request.app.state, "users_repo", None)
     me = await users.get_by_email(person) if users is not None else None
-    if me is None or (me.tier != "admin" and str(job.get("dispatched_by") or "").lower() != person.lower()):
+    started_by = person_who_started(job)
+    if me is None or not (
+        me.tier == "admin"
+        or (started_by or "").lower() == person.lower()
+        or (started_by is None and (await ask_policy(request)).deployment().unowned_group)
+    ):
         raise HTTPException(status_code=403, detail="it is not theirs to steer: whoever started the job, or an admin")
     return dict(job)
 
@@ -534,6 +542,27 @@ async def resume_their_job(job_id: str, body: JobResumeBody, request: Request) -
         _repo(request, "jobs_repo"),
         body.person,
     )
+
+
+class JobStopBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The email of the person answering (the assistant checked who they are).
+    person: PersonName = Field(min_length=3, max_length=320)
+
+
+@router.post("/asks/jobs/{job_id}/stop")
+async def stop_their_job(job_id: str, body: JobStopBody, request: Request) -> dict[str, Any]:
+    """A job stopped in a chat for whoever started it, through the paths the dashboard uses: a paused one is abandoned,
+    with its work kept on the branch, and one still going or waiting on an answer is cancelled."""
+    from embry0.api.schemas.jobs import JobResumeRequest
+    from embry0.api.v1.jobs import cancel_job_as, resume_job_as
+
+    job = await _their_job(request, job_id, body.person, action="stop a job")
+    jobs = _repo(request, "jobs_repo")
+    if job.get("status") == "paused":
+        return await resume_job_as(job_id, JobResumeRequest(choice="abandon"), request, jobs, body.person)
+    return await cancel_job_as(job_id, request, jobs, body.person)
 
 
 @router.get("/asks/decision/{code}")

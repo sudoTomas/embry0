@@ -731,6 +731,11 @@ async def edit_done_when(
 
 @router.post("/jobs/{job_id}/cancel")
 async def cancel_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict[str, Any]:
+    return await cancel_job_as(job_id, request, jobs, request_actor(request))
+
+
+async def cancel_job_as(job_id: str, request: Request, jobs: JobsRepository, actor: str) -> dict[str, Any]:
+    """The cancel as ``actor``: whoever authenticated, or the person a chat assistant verified."""
     job = await jobs.get(job_id)
     if not job:
         raise _job_not_found()
@@ -739,7 +744,6 @@ async def cancel_job(job_id: str, request: Request, jobs: JobsRepository = Depen
         raise HTTPException(status_code=409, detail=f"Cannot cancel job in {job['status']} state")
 
     executor = request.app.state.issue_executor
-    actor = request_actor(request)
     await executor.cancel_job(job_id, actor=actor)
 
     return {"job_id": job_id, "status": "cancelled"}

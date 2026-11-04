@@ -39,6 +39,18 @@ async def _run(ex, result):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dispatched_by", "started_by"),
+    [("ada@example.com", "ada@example.com"), ("embry0:master-key", None), (None, None)],
+)
+async def test_payload_says_which_person_started_the_job(dispatched_by, started_by):
+    """So a receiver can tell them when it ends, as it does for the job's question or pause."""
+    ex = _executor(job_row={"repo": "acme/app", "task": "Do it", "dispatched_by": dispatched_by})
+    _event, data = await _run(ex, {"agent_outputs": [{"agent_type": "review", "is_error": False}]})
+    assert data["started_by"] == started_by
+
+
+@pytest.mark.asyncio
 async def test_payload_carries_the_title_from_the_job_row():
     """`result` is a merge of node updates and rarely holds `task` (RAV-1282)."""
     ex = _executor(
