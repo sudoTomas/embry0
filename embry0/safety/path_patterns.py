@@ -13,7 +13,8 @@ pattern over absolute paths, made of parts:
 - :class:`AnyName`: an extglob pattern (``@(…)``, ``!(…)``, …), read as any
   name in its segment, a hidden one included;
 - :class:`Wild`: text only known at run time (a variable, a substitution's
-  output), any text at all, ``/`` included.
+  output), any text at all, ``/`` included; also a glob segment a glob option
+  the command may have set lets match anything.
 
 A path below a directory that is not known is ``Wild`` + ``/`` + the path.
 
@@ -85,7 +86,14 @@ class AnyName:
 
 @dataclass(frozen=True)
 class Wild:
-    """Text only known at run time: any text, ``/`` included."""
+    """Text only known at run time: any text, ``/`` included.
+
+    ``glob``: the segment is a glob that a glob option the command may have set
+    (``shopt``, ``GLOBIGNORE``) lets match anything, and these are its parts as
+    the default options read it (embry0.safety.command_checks reads them).
+    """
+
+    glob: tuple[Part, ...] | None = None
 
 
 Part = Lit | Star | One | AnyName | Wild

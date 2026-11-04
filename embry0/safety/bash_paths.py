@@ -1693,30 +1693,37 @@ class _Scanner:
     def segment_parts(self, segment: list[tuple[str, int]]) -> list[Part]:
         """The parts one path segment's characters make: literals, glob parts, run-time values."""
         if self.mode.wide_globs and any(k == EXT or (k == ACT and c in _GLOB_CHARS) for c, k in segment):
-            return [Wild()]  # a glob option may have changed: the segment can match anything
-        parts: list[Part] = []
-        i = 0
-        while i < len(segment):
-            c, k = segment[i]
-            first = i == 0
-            if k in (RUN, CWD, OLD):
-                parts.append(Wild())
-            elif k == EXT:
-                parts.append(AnyName())
-            elif k == ACT and c == "*":
-                while i + 1 < len(segment) and segment[i + 1] == ("*", ACT):
-                    i += 1
-                parts.append(Star(guard=first))
-            elif k == ACT and c == "?":
-                parts.append(One(NOT_SLASH, guard=first))
-            elif k == ACT and c == "[" and (bracket := _bracket(segment, i)) is not None:
-                chars, i = bracket
-                parts.append(One(chars, guard=first))
-                continue
-            else:
-                parts.append(Lit(c))
-            i += 1
-        return parts
+            # A glob option may have changed: the segment can match anything. What it is with the
+            # default options is kept, for the Ring-3 checks (embry0.safety.command_checks).
+            return [Wild(glob=tuple(_glob_parts(segment)))]
+        return _glob_parts(segment)
+
+
+def _glob_parts(segment: list[tuple[str, int]]) -> list[Part]:
+    """One path segment's parts as bash's pathname expansion reads it with its default options."""
+    parts: list[Part] = []
+    i = 0
+    while i < len(segment):
+        c, k = segment[i]
+        first = i == 0
+        if k in (RUN, CWD, OLD):
+            parts.append(Wild())
+        elif k == EXT:
+            parts.append(AnyName())
+        elif k == ACT and c == "*":
+            while i + 1 < len(segment) and segment[i + 1] == ("*", ACT):
+                i += 1
+            parts.append(Star(guard=first))
+        elif k == ACT and c == "?":
+            parts.append(One(NOT_SLASH, guard=first))
+        elif k == ACT and c == "[" and (bracket := _bracket(segment, i)) is not None:
+            chars, i = bracket
+            parts.append(One(chars, guard=first))
+            continue
+        else:
+            parts.append(Lit(c))
+        i += 1
+    return parts
 
 
 # ---- helpers -----------------------------------------------------------------------

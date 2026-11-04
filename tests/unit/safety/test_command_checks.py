@@ -142,6 +142,34 @@ _RUNS_DOCKER = [
     "mapfile -C 'docker ps' -c 1 a <<< x",
 ]
 
+# A docker-* program the image installs: by its bare name (PATH finds it) or under a system directory.
+_RUNS_INSTALLED_DOCKER = [
+    "docker-compose up",
+    "env docker-credential-pass get",
+    "/usr/bin/docker-compose up",
+    "/usr/libexec/docker/cli-plugins/docker-buildx build .",
+    "/opt/tools/docker-foo",
+    "/snap/bin/docker-compose up",
+    "//usr/bin/docker-compose up",
+    "/bin/../usr/bin/docker-compose up",
+    "DOCKER-COMPOSE up",
+    # docker and dockerd themselves, wherever they are.
+    "./docker ps",
+    "./bin/dockerd",
+    "/workspace/docker ps",
+]
+
+# The repository's own scripts named docker-*: run by a relative path or from the workspace.
+_RUNS_REPOSITORY_SCRIPT = [
+    "./docker-entrypoint.sh",
+    "./scripts/docker-build.sh",
+    "./bin/docker-test",
+    "scripts/docker-build.sh",
+    "/workspace/scripts/docker-build.sh",
+    "/usr/../workspace/docker-x",
+    "bash ./docker-entrypoint.sh",
+]
+
 _NAMES_DOCKER = [
     "cat docker-compose.yml",
     "ls docker/",
@@ -207,6 +235,18 @@ _READS_ENV = [
     "cat ${X:-.env}",
     "cat .e\\" + NL + "nv",
     "read -r f <<< .env; cat $f",
+    # A glob that could match .env under some glob options: dotglob and GLOBIGNORE let a glob match a
+    # leading ., nocaseglob ignores case, and a setting can outlast the command that made it.
+    "cat ?env",
+    "cat *env",
+    "cat *",
+    "shopt -s dotglob; cat *env",
+    "GLOBIGNORE=x; cat *env",
+    "shopt -s nocaseglob; cat .EN[V]",
+    "cat .EN?",
+    "cat .En?",
+    "cat .[eE]N?",
+    "bash - <<< 'cat .env'",
 ]
 
 _NAMES_ENV = [
@@ -221,8 +261,10 @@ _NAMES_ENV = [
     "find . -name '*.pyc' -delete",
     "find . -type f -name '*.orig' -exec rm {} +",
     "ls -la",
-    "cat ?env",
-    "cat *env",
+    "cat *.py",
+    "shopt -s dotglob; cat *.py",
+    "cat .env.*",
+    "cat dir/$(ls)",
     "; ".join(f'for f in src/m{i}.py; do wc -l "$f"; done' for i in range(40)),
 ]
 
@@ -237,6 +279,18 @@ def test_a_command_that_runs_docker_is_refused(command: str) -> None:
 def test_a_command_that_only_names_docker_is_allowed(command: str) -> None:
     v = _ring3(command)
     assert v.allowed, f"{command!r} only names docker; Ring 3 refused it: {v.reason}"
+
+
+@pytest.mark.parametrize("command", _RUNS_INSTALLED_DOCKER)
+def test_a_docker_program_the_image_installs_is_refused(command: str) -> None:
+    v = _ring3(command)
+    assert not v.allowed and "container client" in v.reason, f"{command!r} runs a Docker client; Ring 3: {v}"
+
+
+@pytest.mark.parametrize("command", _RUNS_REPOSITORY_SCRIPT)
+def test_a_repository_script_named_docker_something_is_allowed(command: str) -> None:
+    v = _ring3(command)
+    assert v.allowed, f"{command!r} runs the repository's own script; Ring 3 refused it: {v.reason}"
 
 
 @pytest.mark.parametrize("command", _READS_ENV)
@@ -338,3 +392,8 @@ def test_the_checks_stay_linear_on_hostile_input(unit: str) -> None:
     assert large <= 4 * small + 1000, f"{unit!r}: 1000 repetitions cost {small} units and 4000 cost {large}: not linear"
     verdict = _ring3((unit * (60 * 1024 // len(unit)))[: 60 * 1024])
     assert verdict.allowed or verdict.reason, f"{unit!r} at 60 KiB: {verdict}"
+
+
+def test_a_glob_a_glob_option_widened_is_shown_as_written() -> None:
+    v = _ring3("shopt -s dotglob; cat *env")
+    assert not v.allowed and "'/workspace/*env'" in v.reason, f"the refusal must name the glob as written: {v.reason}"

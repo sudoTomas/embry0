@@ -28,7 +28,7 @@ from functools import lru_cache
 from typing import Any, Final
 
 from embry0.safety.bash_paths import BashPaths, BashSyntaxError, bash_paths
-from embry0.safety.command_checks import DANGEROUS_COMMANDS, SECRET_FILES, reads_any, runs_any
+from embry0.safety.command_checks import DANGEROUS_COMMANDS, SECRET_FILES, reads_any, runs_any, shown
 from embry0.safety.path_patterns import PathRef, could_match
 from embry0.safety.skill_commands import SKILL_TOOLS, SkillError, SkillSnapshot, skill_call, skill_commands
 
@@ -232,7 +232,7 @@ def _command_checks(checks: list[CommandCheck], tool_name: str, command: str, *,
             return Verdict.deny(f"Blocked by safety policy: the command runs {ran!r}: {check.reason}")
         read = reads_any(found.reads, check.reads)
         if read is not None:
-            return Verdict.deny(f"Blocked by safety policy: the command reads {read.path!r}: {check.reason}")
+            return Verdict.deny(f"Blocked by safety policy: the command reads {shown(read)!r}: {check.reason}")
     return Verdict.allow()
 
 
