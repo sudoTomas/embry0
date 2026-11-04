@@ -18,10 +18,12 @@ from embry0.services.org_discovery import (
     hook_points_here,
     hook_state,
     manifest_facts,
+    organization_hook_state,
     scan_repository,
     summarize,
     ui_evidence,
 )
+from embry0.services.org_needs import derive_needs
 
 
 class _Resp:
@@ -313,6 +315,144 @@ async def test_hooks_without_a_webhook_url_are_unknown_not_absent() -> None:
     bare = await scan_repository(f, "acme", SITE, hook_origins=())
     assert bare.facts["hook_present"] is False, "no hooks at all is absent whatever the setting"
     assert bare.facts["hook_count"] == 0 and bare.facts["hook_hosts"] == []
+
+
+# ---- the organization's own webhook (ADR 0012) ----
+
+ORG_HOOK = {
+    "type": "Organization",
+    "id": 900,
+    "name": "web",
+    "active": True,
+    "events": ["issues", "issue_comment", "pull_request", "workflow_run"],
+    "config": {"content_type": "json", "insecure_ssl": "0", "url": "https://embry0.example.com/api/v1/webhook"},
+}
+
+
+async def _known(repo: str) -> dict[str, Any]:
+    return {"registered": True, "active": True, "qa_config": True, "watcher_stack": False, "tracker_mapped": False}
+
+
+@pytest.mark.asyncio
+async def test_an_organization_hook_here_delivers_for_every_repository() -> None:
+    """Neither repository has a hook of its own that points here, but the organization's does, and GitHub
+    sends it every event of every repository under the owner: no repository needs a hook of its own."""
+    f = forge_with_sites()
+    f.routes["/orgs/acme/hooks"] = _Resp(200, [ORG_HOOK])
+    found = await discover(
+        f,
+        "acme",
+        owner_kind="organization",
+        hook_origins=("https://embry0.example.com",),
+        embry0_state=_known,
+    )
+    for repo in found.repos:
+        assert repo.facts["hook_present"] is True, (
+            f"{repo.repo}: the organization webhook delivers for it, yet hook_present is {repo.facts['hook_present']!r}"
+        )
+        assert repo.facts["org_hook"] == "delivers"
+        assert repo.facts["hook_count"] == 2, "the repository's own hooks are still counted as they are"
+    assert summarize(found.repos)["hooked"] == 2
+    rows = [{"repo": r.repo, "archived": r.archived, "facts": r.facts} for r in found.repos]
+    kinds = [need.kind for need in derive_needs("acme", rows)]
+    assert "no_webhook" not in kinds, f"the needs list still asks for a hook per repository: {kinds}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("hook", "state"),
+    [
+        ({**ORG_HOOK, "config": {"url": "https://ci.example.org/github"}}, "absent"),
+        ({**ORG_HOOK, "config": {"url": "https://embry0.example.com.evil.io/api/v1/webhook"}}, "absent"),
+        ({**ORG_HOOK, "config": {"url": "https://embry0.example.community/api/v1/webhook"}}, "absent"),
+        ({**ORG_HOOK, "config": {"url": "https://embry0.example.com:8443/api/v1/webhook"}}, "absent"),
+        ({**ORG_HOOK, "config": {"url": "https://embry0.example.com/api/v1/webhook/gitlab"}}, "absent"),
+        ({**ORG_HOOK, "active": False}, "inert"),
+        ({**ORG_HOOK, "events": ["push"]}, "inert"),
+        ({**ORG_HOOK, "events": ["issues", "pull_request"]}, "inert"),
+    ],
+    ids=[
+        "another-origin",
+        "look-alike-host",
+        "longer-host",
+        "another-port",
+        "gitlab-path",
+        "switched-off",
+        "push-only",
+        "no-issue-comments",
+    ],
+)
+async def test_an_organization_hook_that_does_not_deliver_here_does_not_count(hook: dict[str, Any], state: str) -> None:
+    """Only the exact webhook target counts, and only an active hook sending the events intake reads."""
+    f = forge_with_sites()
+    f.routes["/orgs/acme/hooks"] = _Resp(200, [hook])
+    found = await discover(
+        f, "acme", owner_kind="organization", hook_origins=("https://embry0.example.com",), embry0_state=_known
+    )
+    for repo in found.repos:
+        assert repo.facts["org_hook"] == state, (
+            f"{repo.repo}: {hook['config']['url']} read as {repo.facts['org_hook']!r}"
+        )
+        assert repo.facts["hook_present"] is False, f"{repo.repo}: only its own hooks decide, and none points here"
+    rows = [{"repo": r.repo, "archived": r.archived, "facts": r.facts} for r in found.repos]
+    assert "no_webhook" in [need.kind for need in derive_needs("acme", rows)]
+
+
+@pytest.mark.asyncio
+async def test_an_organization_hook_sending_every_event_delivers() -> None:
+    f = forge_with_sites()
+    f.routes["/orgs/acme/hooks"] = _Resp(200, [{**ORG_HOOK, "events": ["*"]}])
+    found = await discover(
+        f, "acme", owner_kind="organization", hook_origins=("https://embry0.example.com",), embry0_state=_known
+    )
+    assert [r.facts["org_hook"] for r in found.repos] == ["delivers", "delivers"]
+
+
+@pytest.mark.asyncio
+async def test_the_organization_hooks_are_read_only_when_they_can_answer() -> None:
+    """A user has no organization hooks, and without a webhook URL nothing can be compared: neither reads
+    them. Hooks the credential cannot list are unknown, so each repository's own hooks decide as before."""
+    user = forge_with_sites()
+    await discover(user, "acme", owner_kind="user", hook_origins=("https://embry0.example.com",), embry0_state=_known)
+    assert "/orgs/acme/hooks" not in user.asked
+    bare = forge_with_sites()
+    found = await discover(bare, "acme", owner_kind="organization", hook_origins=(), embry0_state=_known)
+    assert "/orgs/acme/hooks" not in bare.asked
+    assert [r.facts["org_hook"] for r in found.repos] == [None, None]
+    hidden = forge_with_sites()  # /orgs/acme/hooks answers 404, as GitHub does without hook administration
+    found = await discover(
+        hidden, "acme", owner_kind="organization", hook_origins=("https://hooks.example.net",), embry0_state=_known
+    )
+    assert "/orgs/acme/hooks" in hidden.asked
+    assert [(r.facts["org_hook"], r.facts["hook_present"]) for r in found.repos] == [(None, True), (None, True)]
+
+
+class _Unreachable(FakeForge):
+    async def get(self, path: str, **kwargs: Any) -> _Resp:
+        if path == "/orgs/acme/hooks":
+            raise ConnectionError("the forge went away")
+        return await super().get(path, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_an_error_reading_the_organization_hooks_is_unknown_and_the_run_goes_on() -> None:
+    sites = forge_with_sites()
+    f = _Unreachable(sites.routes, sites.listing)
+    found = await discover(
+        f, "acme", owner_kind="organization", hook_origins=("https://hooks.example.net",), embry0_state=_known
+    )
+    assert [(r.facts["org_hook"], r.facts["hook_present"]) for r in found.repos] == [(None, True), (None, True)]
+
+
+@pytest.mark.asyncio
+async def test_organization_hook_state_reads_the_forge_answer() -> None:
+    f = FakeForge({"/orgs/acme/hooks": _Resp(200, [ORG_HOOK])}, [])
+    assert await organization_hook_state(f, "acme", ("https://embry0.example.com",)) == "delivers"
+    assert await organization_hook_state(f, "acme", ("https://embry0.example.com/",)) == "delivers"
+    assert await organization_hook_state(f, "acme", ("https://hooks.example.net",)) == "absent"
+    assert await organization_hook_state(f, "acme", ()) is None
+    f.routes["/orgs/acme/hooks"] = _Resp(404)
+    assert await organization_hook_state(f, "acme", ("https://embry0.example.com",)) is None
 
 
 def test_hook_state_and_hosts() -> None:

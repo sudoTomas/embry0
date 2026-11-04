@@ -289,6 +289,35 @@ async def test_hook_already_comes_from_the_live_listing_on_the_webhook_origin() 
 
 
 @pytest.mark.asyncio
+async def test_hook_is_already_when_the_organization_webhook_delivers_here() -> None:
+    """A repository hook next to the organization's would make GitHub send each event two times (ADR 0012)."""
+    ctx = context(org_hook="delivers")
+    results = await run_action(ctx, "hook", ["acme/widgets", "acme/gadgets"])
+    assert outcomes(results) == [("acme/widgets", "already"), ("acme/gadgets", "already")]
+    assert all("organization webhook" in r.detail for r in results)
+    assert ctx.forge_client.posts == []  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_hook_points_at_the_organization_webhook_when_it_is_switched_off() -> None:
+    """Adding repository hooks would deliver each event twice the day the organization hook is switched on."""
+    ctx = context(org_hook="inert")
+    results = await run_action(ctx, "hook", ["acme/widgets"])
+    assert outcomes(results) == [("acme/widgets", "skipped")]
+    assert "switched off" in results[0].detail and "on GitHub" in results[0].detail
+    assert ctx.forge_client.posts == []  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["absent", None])
+async def test_hook_adds_a_repository_hook_when_no_organization_hook_delivers(state: str | None) -> None:
+    ctx = context(org_hook=state)
+    results = await run_action(ctx, "hook", ["acme/widgets"])
+    assert outcomes(results) == [("acme/widgets", "done")]
+    assert len(ctx.forge_client.posts) == 1  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_hook_present_in_the_facts_alone_is_not_already() -> None:
     """Discovery's flag may have been set by another origin; only the live listing counts."""
     ctx = context()

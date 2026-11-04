@@ -170,9 +170,15 @@ class FakeResp:
 class FakeForge:
     def __init__(self) -> None:
         self.hooks: list[dict[str, Any]] = []
+        self.org_hooks: list[dict[str, Any]] = []
+        self.org_hooks_error: Exception | None = None
         self.posts: list[Any] = []
 
     async def get(self, path: str, **kwargs: Any) -> FakeResp:
+        if path.startswith("/orgs/"):
+            if self.org_hooks_error is not None:
+                raise self.org_hooks_error
+            return FakeResp(200, self.org_hooks)
         return FakeResp(200, self.hooks)
 
     async def post(self, path: str, *, json: Any = None, **kwargs: Any) -> FakeResp:
@@ -358,6 +364,36 @@ async def test_a_hook_on_the_dashboard_origins_is_not_this_deployments(monkeypat
         resp = await client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": ["acme/widgets"]})
     assert resp.json()["results"][0]["outcome"] == "done", resp.text
     assert [post["config"]["url"] for post in app.state.fake_forge.posts] == [HOOK_URL]
+
+
+@pytest.mark.asyncio
+async def test_hook_reads_the_organization_webhook_and_adds_no_repository_hook(app: Any) -> None:
+    """The route reads the organization's hooks once and hands the answer to the action."""
+    app.state.fake_forge.org_hooks = [
+        {"id": 9, "active": True, "events": ["issues", "issue_comment", "pull_request"], "config": {"url": HOOK_URL}}
+    ]
+    async with _client(app) as client:
+        resp = await client.post(
+            "/api/v1/orgs/acme/actions", json={"action": "hook", "repos": ["acme/widgets", "acme/gadgets"]}
+        )
+    results = resp.json()["results"]
+    assert [r["outcome"] for r in results] == ["already", "already"], resp.text
+    assert "organization webhook" in results[0]["detail"]
+    assert app.state.fake_forge.posts == [], "no repository hook next to the organization's"
+    assert app.state.forge_clients_built == ["acme"]
+
+
+@pytest.mark.asyncio
+async def test_an_error_reading_the_organization_webhook_leaves_each_repository_to_decide(app: Any) -> None:
+    """The organization read is an extra: when it fails, the action runs as it did without it, never a 500."""
+    import httpx
+
+    app.state.fake_forge.org_hooks_error = httpx.ConnectError("the forge went away")
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": ["acme/widgets"]})
+    assert resp.status_code == 200, resp.text
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done"]
+    assert len(app.state.fake_forge.posts) == 1
 
 
 @pytest.mark.asyncio
