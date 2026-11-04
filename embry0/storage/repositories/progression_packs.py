@@ -124,7 +124,8 @@ class ProgressionPacksRepository:
         """Whether Postgres knows the timezone ``name``; the facts query reads the pack's calendar through it.
 
         Python's ``zoneinfo`` and Postgres's tz database can disagree (Python
-        knows ``localtime``, Postgres does not). On ``conn`` the check runs in
+        reads ``localtime`` where tzdata ships that file, Postgres never knows
+        it). On ``conn`` the check runs in
         a savepoint, so an unknown name does not abort the caller's transaction.
         """
 
