@@ -624,6 +624,9 @@ async def test_orchestrator_node_validation_errors_block_fan_out(monkeypatch):
     assert qa["outcome"]["overall_status"] == "infra_error"
     assert len(qa["outcome"]["validation_errors"]) == 2
     assert qa["final_status"] == "failed"
+    # Triage reads the summary, so it has to say what was wrong, not only that something was.
+    assert "'hub' declared in qa.yaml" in qa["outcome"]["failure_summary"]
+    assert qa["error_message"] == qa["outcome"]["failure_summary"]
 
 
 @pytest.mark.asyncio
@@ -2562,10 +2565,74 @@ async def test_init_orchestrator_clones_the_repo_forge(monkeypatch):
             }
         },
     )
-    assert out["qa"].get("outcome", {}).get("overall_status") != "infra_error"
+    assert (out["qa"].get("outcome") or {}).get("overall_status") != "infra_error"
     assert created["forge"] == "gitlab"
     assert cloned["forge"] == "gitlab"
     assert cloned["gitlab_url"] == "https://gitlab.example.com"
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_checks_again_instead_of_repeating_the_last_round(monkeypatch):
+    """The first round's infra_error stayed in the QA block, so the orchestrator passed it through
+    on every rerun and a corrected setup could never be tried."""
+    from types import SimpleNamespace
+
+    from embry0.orchestration.state import merge_qa_block
+    from embry0.workflows.qa._subtask_prep import ClonedSandbox
+    from embry0.workspace_providers import AffectedSet
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
+
+    sb, profiles, docker = _rav1251_harness()
+
+    async def fake_clone(**_kw):
+        return ClonedSandbox(head_sha="abc123")
+
+    monkeypatch.setattr("embry0.workflows.qa._subtask_prep.prep_qa_sandbox_clone", fake_clone)
+    last_round = {
+        "outcome": {
+            "overall_status": "infra_error",
+            "apps_to_qa": [],
+            "failure_summary": "qa.yaml validation errors blocked QA fan-out",
+            "validation_errors": ["error: old"],
+            "validation_warnings": [],
+        },
+        "validation_errors": ["error: old"],
+        "validation_warnings": ["warning: old"],
+        "error_message": "qa.yaml validation errors blocked QA fan-out",
+        "changed_files": [],
+    }
+    state = {"job_id": "run-again", "repo": "org/repo", "branch_name": "dev", "qa": last_round}
+    out = await init_orchestrator_node(
+        state,
+        {
+            "configurable": {
+                "docker": docker,
+                "sandbox_manager": sb,
+                "profiles_repo": profiles,
+                "proxy_manager": None,
+                "qa_configs_repo": _FakeQAConfigs({"org/repo": _QA_YAML_V2}),
+                "repos_repo": _ForgeRepos("github"),
+                "embry0_config": SimpleNamespace(gitlab_url=""),
+            }
+        },
+    )
+    block = merge_qa_block(last_round, out["qa"])
+    assert block["outcome"] is None
+    assert block["validation_errors"] is None and block["validation_warnings"] is None
+    assert block["error_message"] is None
+
+    # And the next node really does check again, rather than passing the old verdict through.
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: FakeWorkspaceProvider(
+            apps=[],
+            packages=[],
+            affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+            validate_warnings=["error: this round's own problem"],
+        ),
+    )
+    checked = await qa_orchestrator_node({**state, "qa": block}, {"configurable": {"qa_app_results_repo": AsyncMock()}})
+    assert checked["qa"]["validation_errors"] == ["error: this round's own problem"]
 
 
 @pytest.mark.asyncio

@@ -378,6 +378,12 @@ async def _init_orchestrator_node_impl(
         return {"qa": qa}
 
     qa = dict(state.get("qa") or {})
+    # A rerun checks again: the last round's verdict must not stand in for this one's,
+    # and only an explicit None clears a key of the QA block (merge_qa_block).
+    qa["outcome"] = None
+    qa["validation_errors"] = None
+    qa["validation_warnings"] = None
+    qa["error_message"] = None
     qa["qa_yaml_v2_raw"] = yaml_text
     qa["qa_yaml_v2_parsed"] = cfg.model_dump()
     qa["head_sha"] = cloned.head_sha
@@ -673,14 +679,14 @@ async def _qa_orchestrator_node_impl(
         outcome = OrchestratorOutcome(
             overall_status="infra_error",
             apps_to_qa=[],
-            failure_summary="qa.yaml validation errors blocked QA fan-out",
+            failure_summary=f"qa.yaml validation errors blocked QA fan-out: {'; '.join(errors)}",
             validation_errors=errors,
             validation_warnings=warnings,
         )
         qa_state["outcome"] = _outcome_to_dict(outcome)
         qa_state["validation_errors"] = errors
         qa_state["validation_warnings"] = warnings
-        qa_state["error_message"] = f"{outcome.failure_summary}: {'; '.join(errors)}"
+        qa_state["error_message"] = outcome.failure_summary
         qa_state["final_status"] = "failed"
         return {"qa": qa_state}
 
