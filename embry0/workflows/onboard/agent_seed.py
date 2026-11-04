@@ -38,7 +38,9 @@ you only read it and write your draft to /workspace/.onboard/qa.yaml.
      turbo_config_path — only set them when they differ from the defaults
      "apps/*", "packages/*", "turbo.json").
    - A single-app repo or a fixed set of app dirs with no workspace
-     manifest → type "static-apps" with config.apps listing each app dir.
+     manifest → type "static-apps" with config.apps naming each app exactly as
+     the apps: section does, not by its dir (web: {path: apps/web} when it is
+     not at the repo root).
    - A monorepo whose workspace lives in a subdirectory → add config.root.
 2. **Apps.** For each runnable frontend/service the QA pipeline should
    exercise: its dev/start command (package.json scripts, README, Makefile,
