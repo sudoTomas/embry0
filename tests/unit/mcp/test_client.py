@@ -843,3 +843,98 @@ async def test_job_logs_pages_to_the_tail():
     assert result == {"events": [{"n": 1}, {"n": 2}, {"n": 3}]}, f"did not page to the tail: {result}"
     cursors = [r.url.params.get("since_seq") for r in handler.seen]
     assert cursors == ["0", "20"]
+
+
+# ---- setting a deployment up from a chat session ----
+
+
+async def test_setup_calls_reach_their_routes():
+    handler = capture(
+        {
+            ("GET", "/api/v1/config/models"): {"providers": []},
+            ("POST", "/api/v1/orgs/probe"): {"read": True},
+            ("POST", "/api/v1/orgs/acme/discover"): {"id": "odr-1", "status": "running"},
+            ("GET", "/api/v1/orgs/acme/runs"): {"owner": "acme", "runs": []},
+            ("GET", "/api/v1/credentials/bindings"): {"bindings": []},
+            ("PUT", "/api/v1/credentials/bindings"): {"bindings": []},
+            ("GET", "/api/v1/credentials/resolve"): {"id": "cred-000000000002"},
+            ("POST", "/api/v1/repos/acme/widgets/-/setup/skip-testing"): {"revision_id": 7},
+        }
+    )
+    client = make_client(handler)
+    await client.provider_status()
+    await client.org_probe("acme")
+    await client.org_probe("acme", forge="gitlab", credential_id="cred-000000000001")
+    await client.org_discover("acme")
+    await client.org_runs("acme", limit=3)
+    await client.credential_bindings_get("owner", "github:acme")
+    await client.credential_bindings_set(
+        "owner",
+        "github:acme",
+        [{"credential_id": "cred-000000000001", "role": "forge", "label": "ignored"}],
+    )
+    await client.credential_resolve("acme/widgets", "llm", "anthropic")
+    await client.credential_resolve("acme/widgets")
+    assert await client.repo_skip_testing("acme/widgets") == {"revision_id": 7}
+    probes = [json.loads(r.content) for r in handler.seen if r.url.path == "/api/v1/orgs/probe"]
+    assert probes == [
+        {"owner": "acme", "forge": "github"},
+        {"owner": "acme", "forge": "gitlab", "credential_id": "cred-000000000001"},
+    ]
+    runs = next(r for r in handler.seen if r.url.path == "/api/v1/orgs/acme/runs")
+    assert runs.url.params["limit"] == "3"
+    got = next(r for r in handler.seen if (r.method, r.url.path) == ("GET", "/api/v1/credentials/bindings"))
+    assert dict(got.url.params) == {"scope_kind": "owner", "scope_value": "github:acme"}
+    assert handler.seen[("PUT", "/api/v1/credentials/bindings")] == {
+        "scope_kind": "owner",
+        "scope_value": "github:acme",
+        "bindings": [{"credential_id": "cred-000000000001", "role": "forge"}],
+    }
+    resolves = [dict(r.url.params) for r in handler.seen if r.url.path == "/api/v1/credentials/resolve"]
+    assert resolves == [
+        {"repo": "acme/widgets", "role": "llm", "provider": "anthropic"},
+        {"repo": "acme/widgets", "role": "forge"},
+    ]
+
+    assert _unrouted(handler.seen) == [], "a setup call reaches no route of the API"
+
+
+async def test_a_binding_read_back_is_sent_as_read_and_left_to_the_api_to_check():
+    """A model may send "false" or null; the client neither casts nor drops a field the API takes."""
+    handler = capture({("PUT", "/api/v1/credentials/bindings"): {"bindings": []}})
+    client = make_client(handler)
+    read = {
+        "id": 3,
+        "credential_id": "cred-000000000002",
+        "role": "tailnet",
+        "pinned": "false",
+        "priority": None,
+        "label": "net",
+        "status": "ok",
+        "scope_kind": "global",
+    }
+    await client.credential_bindings_set("global", "", [read])
+    assert handler.seen[("PUT", "/api/v1/credentials/bindings")]["bindings"] == [
+        {"credential_id": "cred-000000000002", "role": "tailnet", "pinned": "false", "priority": None}
+    ]
+
+
+def _unrouted(requests):
+    """Each request that no route of the real app takes, as (method, path)."""
+    from starlette.routing import Match
+
+    from embry0.api.app import create_app
+    from embry0.config import Embry0Config
+
+    app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True))
+    missing = []
+    for request in requests:
+        scope = {"type": "http", "method": request.method, "path": request.url.path, "root_path": ""}
+        if not any(route.matches(scope)[0] is Match.FULL for route in app.router.routes):
+            missing.append((request.method, request.url.path))
+    return missing
+
+
+def test_the_route_check_can_fail():
+    request = httpx.Request("POST", BASE + "/api/v1/orgs/acme/no-such-thing")
+    assert _unrouted([request]) == [("POST", "/api/v1/orgs/acme/no-such-thing")]

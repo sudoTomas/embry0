@@ -8,7 +8,7 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``agent_reset``, ``env_set``, ``env_delete``, ``merge_decide``, ``case_accept``,
 ``case_close``, ``repo_register``, ``org_register``, ``org_update``,
 ``org_webhook_install``, ``org_act``, ``context_audit_run``, ``qa_config_set``,
-``credential_bind``, ``host_import_tailnet``,
+``credential_bind``, ``credential_bindings_set``, ``repo_skip_testing``, ``host_import_tailnet``,
 ``skill_source_add``, ``skill_source_update``, ``skill_source_sync``,
 ``skill_source_remove``, ``inline_skill_put``, ``inline_skill_remove``,
 ``agent_skill_add``, ``agent_skill_remove``, ``standard_set``,
@@ -31,6 +31,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from embry0.mcp_server.client import Embry0APIError, Embry0Client
+from embry0.mcp_server.setup_prompt import SETUP_PROMPT
 
 mcp = MCPServer(
     "embry0",
@@ -56,6 +57,10 @@ mcp = MCPServer(
         "and the settings document: the deployment's operator policy, one YAML document with a section per "
         "feature (read it, the values in effect and its schema; set it, or change a few keys of one section, "
         "with a dry run first; list its changes and undo the newest). "
+        "To set up a deployment (model access, a forge credential, an organization and its repositories, "
+        "webhooks, testing), the prompt setup gives the procedure step by step; provider_status, org_probe, "
+        "org_discover, org_runs, credential_bindings_get, credential_bindings_set and repo_skip_testing are "
+        "steps of it. No tool takes a secret: a person adds credentials on the dashboard or the API. "
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '
@@ -199,6 +204,17 @@ def _compact_jobs(envelope: dict[str, Any]) -> dict[str, Any]:
 async def health() -> dict[str, Any]:
     """Check embry0 orchestrator health (API reachability + database status)."""
     return await _get_client().health()
+
+
+@_tool
+async def provider_status() -> dict[str, Any]:
+    """Model access: the heavy, medium and light tier models, and per provider whether
+    an account exists for it (available), where it comes from (credential_source:
+    oauth, api_key or oauth+api_key from the environment, oauth_proxy, registry for a
+    credential row, or null), its last probe and its models with prices. A registry row
+    counts as available whether or not it is bound: a job gets it only through a binding,
+    so check credential_bindings_get or credential_resolve too. Never returns a secret."""
+    return await _get_client().provider_status()
 
 
 @_tool
@@ -1423,6 +1439,33 @@ async def org_act(
 
 
 @_tool
+async def org_probe(owner: str, forge: str = "github", credential_id: str = "") -> dict[str, Any]:
+    """Ask the forge what a credential can do under ``owner`` before registering it:
+    the token's identity, whether it can list the repositories and manage webhooks,
+    and how many repositories it sees. ``credential_id`` names a forge_token in the
+    registry; empty uses the environment token for that owner. Stores nothing.
+    Needs an admin key. Never returns a secret."""
+    return await _get_client().org_probe(owner, forge=forge, credential_id=credential_id)
+
+
+@_tool
+async def org_discover(owner: str) -> dict[str, Any]:
+    """Start a discovery run over every repository of a registered owner: one fact row
+    per repository (registered, webhook, QA config, boot hint, UI, environment keys),
+    from which org_needs derives what is missing. Returns the run at once; follow it
+    with org_runs. One run per owner at a time. Changes no repository and writes
+    nothing to the forge. Needs an admin key."""
+    return await _get_client().org_discover(owner)
+
+
+@_tool
+async def org_runs(owner: str, limit: int = 5) -> dict[str, Any]:
+    """An owner's discovery runs, newest first: status (running, then done or error),
+    repos_seen of repos_total while one runs, its summary counts and, for error, why."""
+    return await _get_client().org_runs(owner, limit=limit)
+
+
+@_tool
 async def repo_list(include_inactive: bool = False) -> list[dict[str, Any]]:
     """List registered target repos (the embry0 repo registry) with a
     has_qa_config flag per repo. include_inactive=true also shows deactivated repos."""
@@ -1475,6 +1518,18 @@ async def qa_config_set(repo: str, yaml_text: str, confirm: bool = False) -> dic
 
 
 @_tool
+async def repo_skip_testing(repo: str, confirm: bool = False) -> dict[str, Any]:
+    """Store a test setup with testing off (qa_required: never) for a registered repo
+    ("group/name", or a GitLab subgroup path like "group/subgroup/project"), so its
+    jobs skip the test step instead of failing at it. Costs nothing: no agent and no
+    forge call. Refused (409) when the repo already has a test setup. Requires
+    confirm=true (writes the stored setup)."""
+    if not confirm:
+        return _confirmation_refusal("repo_skip_testing", f"store a setup with testing off for {repo!r}")
+    return await _get_client().repo_skip_testing(repo)
+
+
+@_tool
 async def credential_list() -> list[dict[str, Any]]:
     """Registered forge accounts (id, label, provider, host, masked preview, status, binding count).
     Never returns a secret."""
@@ -1482,13 +1537,14 @@ async def credential_list() -> list[dict[str, Any]]:
 
 
 @_tool
-async def credential_resolve(repo: str, role: str = "forge") -> dict[str, Any]:
-    """Dry run: which account a job on this repo would use for `role`, with the precedence
-    trace (repo > owner > host > global > env). Never returns a secret.
+async def credential_resolve(repo: str, role: str = "forge", provider: str = "") -> dict[str, Any]:
+    """Dry run: which account a job on this repo would use for `role` ("forge" or "llm"),
+    with the precedence trace (repo > owner > host > global > env). Role "llm" needs the
+    model `provider`, such as "anthropic". Never returns a secret.
 
     repo is "group/name", or a GitLab subgroup path like "group/subgroup/project".
     """
-    return await _get_client().credential_resolve(repo, role)
+    return await _get_client().credential_resolve(repo, role, provider)
 
 
 @_tool
@@ -1504,6 +1560,49 @@ async def credential_bind(
     if not confirm:
         return _confirmation_refusal("credential_bind", f"bind {credential_id!r} to {repo!r} for role {role!r}")
     return await _get_client().credential_bind(repo, credential_id, role, pinned)
+
+
+@_tool
+async def credential_bindings_get(scope_kind: str, scope_value: str = "") -> dict[str, Any]:
+    """The bindings of one owner, host or global scope (scope_kind "owner", "host" or
+    "global"): which credential each role uses there. scope_value is "<forge>:<owner>"
+    for an owner (such as "github:acme"), the forge host for a host, and empty for
+    global. A repo's own bindings are on repo_get and credential_resolve.
+    Never returns a secret."""
+    return await _get_client().credential_bindings_get(scope_kind, scope_value)
+
+
+@_tool
+async def credential_bindings_set(
+    scope_kind: str, scope_value: str, bindings: list[dict[str, Any]], confirm: bool = False
+) -> dict[str, Any]:
+    """Replace every binding of one owner, host or global scope. Each binding is
+    {"credential_id", "role", "pinned" (default false), "priority" (default 0)}; role is
+    "forge" or "llm", or "deploy" on a host and "tailnet" on the global scope. The list
+    replaces the scope's bindings whole: read them first with credential_bindings_get
+    and send back every binding you read, whatever its role, with the new one added.
+    An owner's forge binding makes every repo under it push and open PRs as that
+    account; a global llm binding adds the account to the pool every job draws from.
+    The API checks each field. Requires confirm=true and an admin key.
+    Never returns a secret."""
+    if not confirm:
+        return _confirmation_refusal(
+            "credential_bindings_set",
+            f"replace the {scope_kind} bindings of {scope_value or 'the global scope'!r} with {len(bindings)} binding(s)",
+        )
+    return await _get_client().credential_bindings_set(scope_kind, scope_value, bindings)
+
+
+@mcp.prompt(
+    name="setup",
+    title="Set up this deployment",
+    description=(
+        "Step by step: model access, a forge credential, an organization and its repositories, "
+        "webhooks, testing and spend limits, then a check of each."
+    ),
+)
+def setup() -> str:
+    return SETUP_PROMPT
 
 
 def main() -> None:

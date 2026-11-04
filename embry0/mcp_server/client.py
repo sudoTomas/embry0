@@ -125,6 +125,10 @@ def _repo_url(repo: str, sub_resource: str = "") -> str:
     return f"/api/v1/repos/{_repo_path(repo)}/-/{sub_resource}"
 
 
+#: The fields ``PUT /credentials/bindings`` takes per binding (``BindingInput``, extra keys refused).
+_BINDING_FIELDS = ("credential_id", "role", "pinned", "priority")
+
+
 class Embry0Client:
     """Async client over the embry0 REST API (``/api/v1``)."""
 
@@ -920,6 +924,24 @@ class Embry0Client:
     async def org_webhook_install(self, owner: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/webhook"))
 
+    async def org_probe(self, owner: str, forge: str = "github", credential_id: str = "") -> dict[str, Any]:
+        body: dict[str, Any] = {"owner": owner, "forge": forge}
+        if credential_id:
+            body["credential_id"] = credential_id
+        return _as_dict(await self._request("POST", "/api/v1/orgs/probe", body=body))
+
+    async def org_discover(self, owner: str) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/discover"))
+
+    async def org_runs(self, owner: str, limit: int = 5) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/orgs/{owner}/runs", params={"limit": limit}))
+
+    async def provider_status(self) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", "/api/v1/config/models"))
+
+    async def repo_skip_testing(self, repo: str) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", _repo_url(repo, "setup/skip-testing")))
+
     async def org_act(
         self, owner: str, action: str, repos: list[str], *, dry_run: bool = False, force: bool = False
     ) -> dict[str, Any]:
@@ -968,8 +990,28 @@ class Embry0Client:
     async def credential_list(self) -> list[dict[str, Any]]:
         return _as_list(await self._request("GET", "/api/v1/credentials"))
 
-    async def credential_resolve(self, repo: str, role: str = "forge") -> dict[str, Any]:
-        return _as_dict(await self._request("GET", "/api/v1/credentials/resolve", params={"repo": repo, "role": role}))
+    async def credential_resolve(self, repo: str, role: str = "forge", provider: str = "") -> dict[str, Any]:
+        params = {"repo": repo, "role": role}
+        if provider:
+            params["provider"] = provider
+        return _as_dict(await self._request("GET", "/api/v1/credentials/resolve", params=params))
+
+    async def credential_bindings_get(self, scope_kind: str, scope_value: str = "") -> dict[str, Any]:
+        params = {"scope_kind": scope_kind, "scope_value": scope_value}
+        return _as_dict(await self._request("GET", "/api/v1/credentials/bindings", params=params))
+
+    async def credential_bindings_set(
+        self, scope_kind: str, scope_value: str, bindings: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Replace every binding of one owner, host or global scope. Each binding keeps the
+        fields the API takes, as given, so a binding read from credential_bindings_get
+        (which also carries id, label and status) can be sent back; the API validates them."""
+        body = {
+            "scope_kind": scope_kind,
+            "scope_value": scope_value,
+            "bindings": [{key: b[key] for key in _BINDING_FIELDS if key in b} for b in bindings],
+        }
+        return _as_dict(await self._request("PUT", "/api/v1/credentials/bindings", body=body))
 
     async def repo_credentials_get(self, repo: str) -> dict[str, Any]:
         return _as_dict(await self._request("GET", _repo_url(repo, "credentials")))
