@@ -24,6 +24,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 GUIDE = ROOT / "docs" / "claude-code.md"
 REPO_SKILL = ROOT / ".claude" / "skills" / "setup-embry0" / "SKILL.md"
+PLUGIN = ROOT / "plugins" / "embry0"
 
 
 def _bash_blocks(text: str) -> list[str]:
@@ -54,6 +55,9 @@ _ADD_JSON = (
 _KEY_LINES = {
     "read -rs EMBRY0_API_KEY",
     "unset EMBRY0_API_KEY",
+    # The plugin's connect recipe: the key from read into the plugin's sensitive option through stdin.
+    "printf '%s' \"$EMBRY0_API_KEY\" | jq -Rs --arg url \"https://embry0.example.com\" '{url: $url, api_key: .}' | "
+    "claude plugin configure embry0@embry0 --values-stdin",
     "mkdir -p ~/.config/embry0",
     "chmod 700 ~/.config/embry0",
     '[ -n "$EMBRY0_API_KEY" ] && rm -f ~/.config/embry0/api-key && '
@@ -106,18 +110,20 @@ def _key_reaches_an_argument(line: str) -> str | None:
 
 
 def _documented_lines() -> list[str]:
-    texts = [GUIDE.read_text(), REPO_SKILL.read_text()]
+    plugin = [*(p.read_text() for p in (PLUGIN / "skills").glob("*/SKILL.md")), (PLUGIN / "README.md").read_text()]
+    texts = [*plugin, GUIDE.read_text(), REPO_SKILL.read_text()]
     return [line for text in texts for code in _code(text) for line in _logical_lines(code)]
 
 
 def test_no_documented_command_puts_the_key_on_a_command_line() -> None:
-    """The whole guide and the checkout's setup skill, inline code as well as blocks (#376)."""
+    """Every plugin skill, the plugin README, the whole guide and the checkout's setup skill, inline code as well as
+    blocks (#376)."""
     lines = _documented_lines()
     for line in lines:
         reason = _key_reaches_an_argument(line)
         assert reason is None, reason
-    # The key file's line reads it twice: once to see it was read, once to write it.
-    assert sum(len(re.findall(r"\$\{?EMBRY0_API_KEY\b", line)) for line in lines) >= 2, (
+    # The key file's line reads it twice (once to see it was read, once to write it), the plugin's connect once.
+    assert sum(len(re.findall(r"\$\{?EMBRY0_API_KEY\b", line)) for line in lines) >= 3, (
         "a recipe no longer reads the key"
     )
 
@@ -360,3 +366,10 @@ def test_the_credential_upload_sends_the_key_and_the_secret_through_files(
         "label": "acme-bot",
         "secret": secret,
     }
+
+
+def test_the_guide_tells_a_plugin_user_to_write_the_key_file_before_the_upload() -> None:
+    """The credential upload reads the key file the manual connection writes; a plugin user has none until told."""
+    upload = GUIDE.read_text().split("## Secrets stay out of the chat", 1)[-1]
+    assert "/api/v1/credentials" in upload and "~/.config/embry0/api-key" in _guide_recipe("/api/v1/credentials")
+    assert re.search(r"With the plugin, write that file first", upload), "the upload's note for a plugin user is gone"

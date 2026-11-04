@@ -1,0 +1,28 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "embry0",
+  "version": "0.1.0",
+  "description": "Stand up embry0, connect Claude Code to it over MCP, and set it up from the chat window.",
+  "author": {
+    "name": "embry0 maintainers"
+  },
+  "homepage": "https://github.com/sudoTomas/embry0/blob/main/docs/claude-code.md",
+  "repository": "https://github.com/sudoTomas/embry0",
+  "privacyPolicyUrl": "https://github.com/sudoTomas/embry0/blob/main/plugins/embry0/README.md#privacy",
+  "license": "MIT",
+  "keywords": ["embry0", "mcp", "issue-to-pr", "qa", "automation"],
+  "userConfig": {
+    "url": {
+      "type": "string",
+      "title": "embry0 URL",
+      "description": "The dashboard origin of the deployment, without a trailing slash: http://localhost:8200 on the machine that runs it, or its public origin over https (the key travels in a header). The MCP endpoint is /mcp on it.",
+      "default": "http://localhost:8200"
+    },
+    "api_key": {
+      "type": "string",
+      "title": "embry0 API key",
+      "description": "An API key from the dashboard (Settings, then API keys). Scope admin to set the deployment up; read or operate to use it. Leave it empty to stand up a new deployment first with /embry0:install, which fills it in.",
+      "sensitive": true
+    }
+  }
+}
