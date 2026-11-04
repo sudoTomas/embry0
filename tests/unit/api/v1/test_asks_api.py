@@ -37,6 +37,13 @@ class FakeAsks:
     async def live(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.rows if r["state"] in ("queued", "sent", "reminded")]
 
+    async def moved_since(self, since: datetime) -> list[dict[str, Any]]:
+        return [
+            dict(r)
+            for r in self.rows
+            if r["created_at"] >= since or (r["state"] == "answered" and r["answered_at"] >= since)
+        ]
+
     async def code(self, decision_id: str) -> str:
         return self.codes[decision_id]
 
@@ -398,6 +405,52 @@ async def test_what_a_chat_is_spared_waits_behind_the_rest(app: Any) -> None:
     ]
     due = (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]
     assert [a["id"] for a in due] == ["a2"], "a held decision comes after what is not held, whatever its rank"
+
+
+@pytest.mark.asyncio
+async def test_the_recap_counts_what_waits_what_was_worked_and_what_came_in(app: Any) -> None:
+    app.state.settings = FakeSettings({"asks": {"enabled": True, "unowned_group": "triage", **ALWAYS}})
+    since = NOW - timedelta(days=1)
+    earlier = NOW - timedelta(days=3)
+    done = {"state": "answered", "created_at": earlier, "answered_at": NOW - timedelta(hours=1)}
+    app.state.asks_repo.rows = [
+        ask("a1", "offer:crack:1", "ada@example.com", created_at=earlier),
+        ask("a2", "done:job-1", "ada@example.com"),
+        ask("a3", "offer:crack:1", "group:triage", created_at=earlier),
+        ask("a4", "gone:1", "ADA@example.com", answered_by="ada@example.com", **done),
+        ask("a5", "gone:1", "cy@example.com", answered_by="ada@example.com", **done),
+        ask("a6", "gone:2", "group:triage", answered_by="cy@example.com", **done),
+        ask(
+            "a7",
+            "gone:3",
+            "ada@example.com",
+            answered_by="ada@example.com",
+            state="answered",
+            created_at=earlier,
+            answered_at=earlier,
+        ),
+        ask("a8", "gone:4", "ada@example.com", state="withdrawn"),
+        ask("a9", "offer:crack:1", "github:bo"),
+    ]
+    got = await call(app, "GET", "/api/v1/asks/recap", params={"since": since.isoformat()})
+    assert got.status_code == 200, got.text
+    numbers = {r["recipient"]["key"]: (r["waiting"], r["worked"], r["new"]) for r in got.json()["recaps"]}
+    assert numbers == {
+        "ada@example.com": (2, 1, 1),
+        "group:triage": (1, 1, 0),
+    }, "one decision answered is one worked however many held it, and someone it could not reach is left out"
+
+
+@pytest.mark.asyncio
+async def test_the_feed_says_which_day_it_is_and_whether_it_is_working_hours(app: Any) -> None:
+    app.state.settings = FakeSettings({"asks": {"enabled": True, **ALWAYS, "timezone": "UTC"}})
+    due = (await call(app, "GET", "/api/v1/asks/due")).json()
+    assert due["working"] is True and due["day"] == datetime.now(UTC).date().isoformat()
+    app.state.settings = FakeSettings(
+        {"asks": {"enabled": True, "hours": "00-24", "weekdays": "mon", "timezone": "UTC"}}
+    )
+    never_today = (await call(app, "GET", "/api/v1/asks/due")).json()["working"]
+    assert never_today is (datetime.now(UTC).weekday() == 0)
 
 
 @pytest.mark.asyncio

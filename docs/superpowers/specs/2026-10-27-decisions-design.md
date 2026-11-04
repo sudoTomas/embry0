@@ -122,3 +122,7 @@ Someone who starts a job from a card may not read the chat where job notices go,
 \n
 
 When such a job finishes, the person hears that too: the `job.<status>` events name `started_by` as well. A chat can stop a job for its starter whatever state it is in (`POST /asks/jobs/{id}/stop`). A job no person started stays with the group chat, so anyone embry0 knows may answer or stop it when `asks.unowned_group` is set, the same rule as a decision nobody owns.
+
+## Later: how many, once a day (2026-11-04)
+
+A running total on every card told people how far behind they were each time they were asked for one thing, and some took it as a reason to give up on the list. The total moves to a recap a chat sends once a working day, before the first cards: how many wait, what they answered and what came in since the last one (`GET /asks/recap`). embry0 still says when it is working hours; the chat remembers which day it last sent one.

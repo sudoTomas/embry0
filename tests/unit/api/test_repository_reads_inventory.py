@@ -218,6 +218,7 @@ QUERIES: dict[str, tuple[str, ...]] = {
 #: GET routes that answer nothing but 422 here for want of something other than a query naming a repository, and why.
 NOT_A_REPOSITORY_QUERY: dict[str, str] = {
     "/api/v1/asks/of": "its query names a person; what it lists is narrowed to what the key covers, as the feed is",
+    "/api/v1/asks/recap": "its query names a time; what it counts is narrowed to what the key covers, as the feed is",
     "/api/v1/orgs/{owner}/webhook": (
         "asks the forge with the organization's credential, which no owner here has; the walk still compares its "
         "answer to an owner the key does not cover as a whole with the missing owner's (404)"

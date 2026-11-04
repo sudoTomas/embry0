@@ -129,6 +129,15 @@ class AsksRepository:
         rows = await self._db.fetch(_LIVE_SQL, list(LIVE))
         return [dict(r) for r in rows]
 
+    async def moved_since(self, since: datetime) -> list[dict[str, Any]]:
+        """The asks answered or first queued since ``since``: what a morning's numbers count."""
+        rows = await self._db.fetch(
+            "SELECT decision_id, recipient, state, created_at, answered_at, answered_by FROM asks "
+            "WHERE created_at >= $1 OR (state = 'answered' AND answered_at >= $1)",
+            since,
+        )
+        return [dict(r) for r in rows]
+
     async def ever_sent(self) -> set[str]:
         """Everyone (lower-cased) who was ever sent an ask: anyone else hears from the assistant for the first time."""
         rows = await self._db.fetch("SELECT DISTINCT LOWER(recipient) AS who FROM asks WHERE sent_at IS NOT NULL")
