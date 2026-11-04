@@ -1294,7 +1294,9 @@ def test_the_mcp_server_reaches_embry0_only_through_its_routes() -> None:
         for node in ast.walk(ast.parse(path.read_text()))
         if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("embry0")
     }
-    assert imported <= {"embry0.mcp_server.client", "embry0.mcp_server.server"}, (
+    # The setup prompt is text the server serves, and imports nothing (#364).
+    allowed = {"embry0.mcp_server.client", "embry0.mcp_server.server", "embry0.mcp_server.setup_prompt"}
+    assert imported <= allowed, (
         f"the MCP server imports embry0 beyond its HTTP client: {sorted(imported)}; it would start work past the "
         "routes this walk holds"
     )
@@ -1344,6 +1346,9 @@ MCP_STARTS: dict[str, tuple[Callable[[Any, Mapping[str, str]], Awaitable[Any]], 
         _boot_hint,
     ),
     "areas_map": (lambda s, v: s.areas_map(UNCOVERED, confirm=True), True, _templates),
+    # Reaches a repository route the walk reads as a wildcard, onboarding's among them; it stores a setup with
+    # testing off and starts nothing (#364).
+    "repo_skip_testing": (lambda s, v: s.repo_skip_testing(UNCOVERED, confirm=True), False, None),
 }
 
 
