@@ -105,7 +105,7 @@ def test_every_allowed_mutation_is_a_real_route() -> None:
     assert all(
         re.fullmatch(
             r"/api/v1/proposals/\{proposal_id\}/(accept|decline|snooze)"
-            r"|/api/v1/asks/(\{ask_id\}/sent|answer|jobs/\{job_id\}/(answer|resume))",
+            r"|/api/v1/asks/(\{ask_id\}/sent|answer|jobs/\{job_id\}/(answer|resume|stop))",
             t,
         )
         for _, t in PROPOSE_SCOPE_MUTATIONS

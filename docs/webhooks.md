@@ -210,9 +210,9 @@ Exit codes: **0** the database matches GitHub · **1** (`check` only) it does no
 
 embry0 can POST its own events to a receiver you run: `job.completed`,
 `job.failed` and the other final statuses as `job.<status>`, `watcher.proposed`,
-`agent.question` and `job.paused`. `agent.question` and `job.paused` carry
-`started_by`, the email of the person who started the job, or null when a key or
-a trigger did, so a receiver can tell them. Set the receiver's URL and a shared secret in the
+`agent.question` and `job.paused`. `agent.question`, `job.paused` and the
+`job.<status>` events carry `started_by`, the email of the person who started the
+job, or null when a key or a trigger did, so a receiver can tell them. Set the receiver's URL and a shared secret in the
 dashboard's integration settings, or with `WEBHOOK_NOTIFY_URL` and
 `WEBHOOK_NOTIFY_SECRET` (the environment is the fallback until a value is
 saved there). Delivery is best effort: each attempt is logged, and a failed
@@ -226,7 +226,7 @@ and `X-Webhook-Signature`, the HMAC-SHA256 hex digest of the body alone.
 A `job.<status>` event's `data` holds `job_id`, `issue_id`, `title`, `kind`,
 `repo`, `pr_url`, `summary` (a one-line summary), `result_summary` (the raw
 result, at most 1,000 characters), `deliverable_count`, `total_cost_usd`,
-`error_code` and `error_message`. `title` is the job's brief title once a
+`error_code`, `error_message` and `started_by`. `title` is the job's brief title once a
 model has written its [brief](providers.md#background-models) (`background_models.job_brief`), else the
 first line of the task; the task's own first line is not sent separately. The
 watcher's hourly analysis jobs send nothing; the daily digest counts them.

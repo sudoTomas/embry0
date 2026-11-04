@@ -963,6 +963,7 @@ async def _handle_workflow_result(
                     "total_cost_usd": result.get("total_cost_usd", 0.0),
                     "error_code": error_code,
                     "error_message": error_message,
+                    "started_by": person_who_started(notify_row),
                 },
             )
         # #319 phase 2: a completed job's PR on an enabled repo is asked about

@@ -568,7 +568,13 @@ def steered(app: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(jobs_api, "answer_job_input_as", job_answer)
     monkeypatch.setattr(issues_api, "answer_issue_input_as", issue_answer)
+
+    async def cancel(job_id: str, request: Any, jobs: Any, actor: str) -> dict[str, Any]:
+        app.state.calls.append(("cancel", job_id, actor))
+        return {"job_id": job_id, "status": "cancelled"}
+
     monkeypatch.setattr(jobs_api, "resume_job_as", resume)
+    monkeypatch.setattr(jobs_api, "cancel_job_as", cancel)
     return app
 
 
@@ -616,6 +622,35 @@ async def test_only_whoever_started_a_job_or_an_admin_may_steer_it(steered: Any)
         steered, "POST", "/api/v1/asks/jobs/job-s/resume", json={"person": "ada@example.com", "choice": "abandon"}
     )
     assert started_by_a_key.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_a_chat_stops_a_job_as_the_person_whatever_state_it_is_in(steered: Any) -> None:
+    ada = {"person": "ada@example.com"}
+    waiting = await call(steered, "POST", "/api/v1/asks/jobs/job-q/stop", json=ada)
+    assert waiting.status_code == 200, waiting.text
+    paused = await call(steered, "POST", "/api/v1/asks/jobs/job-p/stop", json=ada)
+    assert paused.status_code == 200, paused.text
+    assert steered.state.calls == [
+        ("cancel", "job-q", "ada@example.com"),
+        ("resume", "job-p", "abandon", "", "ada@example.com"),
+    ]
+    steered.state.calls.clear()
+    url = "/api/v1/asks/jobs/job-q/stop"
+    assert (await call(steered, "POST", url, json={"person": "cy@example.com"})).status_code == 403
+    assert (await call(steered, "POST", "/api/v1/asks/jobs/job-s/stop", json=ada)).status_code == 403
+    assert steered.state.calls == []
+    assert (await call(steered, "POST", url, json={"person": "root@example.com"})).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_job_no_person_started_is_anyones_embry0_knows_when_a_group_answers_for_it(steered: Any) -> None:
+    steered.state.settings = FakeSettings({"asks": {"enabled": True, "unowned_group": "triage", **ALWAYS}})
+    url = "/api/v1/asks/jobs/job-s/stop"
+    assert (await call(steered, "POST", url, json={"person": "cy@example.com"})).status_code == 200
+    assert (await call(steered, "POST", url, json={"person": "stranger@example.com"})).status_code == 403
+    theirs = await call(steered, "POST", "/api/v1/asks/jobs/job-q/stop", json={"person": "cy@example.com"})
+    assert theirs.status_code == 403, "a job a person started stays theirs"
 
 
 @pytest.mark.asyncio

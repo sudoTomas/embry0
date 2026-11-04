@@ -71,6 +71,7 @@ PROPOSE_SCOPE_MUTATIONS = frozenset(
         # A job's question or pause, passed on for the person who started it.
         ("POST", "/api/v1/asks/jobs/{job_id}/answer"),
         ("POST", "/api/v1/asks/jobs/{job_id}/resume"),
+        ("POST", "/api/v1/asks/jobs/{job_id}/stop"),
     }
 )
 

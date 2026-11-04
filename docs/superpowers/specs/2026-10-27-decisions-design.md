@@ -120,3 +120,5 @@ Asks began with each owner's most important decisions, one person at a time. Eve
 
 Someone who starts a job from a card may not read the chat where job notices go, and may not sign in to the dashboard, so a job's question or pause could wait on them without their knowing. `agent.question` and a new `job.paused` event name `started_by`, for a receiver to tell them. `GET /asks/of` lists those jobs, and `POST /asks/jobs/{id}/answer` and `/resume` let an assistant pass on what they say, as the person it verified. Only whoever started the job, or an admin, may.
 \n
+
+When such a job finishes, the person hears that too: the `job.<status>` events name `started_by` as well. A chat can stop a job for its starter whatever state it is in (`POST /asks/jobs/{id}/stop`). A job no person started stays with the group chat, so anyone embry0 knows may answer or stop it when `asks.unowned_group` is set, the same rule as a decision nobody owns.
