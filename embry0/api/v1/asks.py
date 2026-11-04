@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers, restricted_key_name
 from embry0.api.schemas.person_name import PersonName
+from embry0.api.session import TIER_ADMIN, TIER_OPERATOR
 from embry0.services.asks import AskPolicy, asked_order, release
 from embry0.settings.sections.asks import ASKS, AsksSettings
 from embry0.settings.store import Scoped, SettingsStore
@@ -75,6 +76,17 @@ def dashboard_link(request: Request, decision: dict[str, Any]) -> str:
     base = str(getattr(request.app.state.config, "dashboard_public_url", "") or "").rstrip("/")
     stage = "offered" if decision.get("stage") == "offered" else "done"
     return f"{base}/decisions?stage={stage}" if base else ""
+
+
+async def _dashboard_link_for(request: Request, who: str, decision: dict[str, Any]) -> str:
+    """``dashboard_link`` for whoever can use it. The dashboard refuses a person with no role there, so they get none;
+    a group's chat has people who can."""
+    if not who.startswith("group:"):
+        users = getattr(request.app.state, "users_repo", None)
+        found = await users.get_by_email(who) if users is not None else None
+        if found is None or found.tier not in (TIER_OPERATOR, TIER_ADMIN):
+            return ""
+    return dashboard_link(request, decision)
 
 
 async def _person(request: Request, who: str) -> dict[str, Any]:
@@ -201,7 +213,7 @@ async def asks_due(
                 "reminder": reminder,
                 "decision": decision,
                 "actions": chat_actions(decision),
-                "dashboard_url": dashboard_link(request, decision),
+                "dashboard_url": await _dashboard_link_for(request, str(ask["recipient"]), decision),
             }
         )
     return {"asks": out, "count": len(out), "enabled": True}

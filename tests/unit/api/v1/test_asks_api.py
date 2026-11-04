@@ -164,6 +164,9 @@ class FakeUsers:
             "ada@example.com": SimpleNamespace(
                 email="ada@example.com", name="Ada", github_login="ada", tier="operator"
             ),
+            "nora@example.com": SimpleNamespace(
+                email="nora@example.com", name="Nora", github_login="nora", tier="none"
+            ),
             "cy@example.com": SimpleNamespace(email="cy@example.com", name="Cy", github_login="cy", tier="operator"),
             "root@example.com": SimpleNamespace(email="root@example.com", name="Root", github_login=None, tier="admin"),
         }
@@ -395,6 +398,21 @@ async def test_what_a_chat_is_spared_waits_behind_the_rest(app: Any) -> None:
     ]
     due = (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]
     assert [a["id"] for a in due] == ["a2"], "a held decision comes after what is not held, whatever its rank"
+
+
+@pytest.mark.asyncio
+async def test_the_dashboard_link_goes_only_to_those_it_would_let_in(app: Any) -> None:
+    app.state.settings = FakeSettings({"asks": {"enabled": True, "unowned_group": "triage", **ALWAYS}})
+    app.state.asks_repo.rows = [
+        ask("a1", "offer:crack:1", "ada@example.com"),
+        ask("a2", "done:job-1", "nora@example.com"),
+        ask("a3", "offer:crack:1", "group:triage"),
+    ]
+    due = (await call(app, "GET", "/api/v1/asks/due")).json()["asks"]
+    links = {a["recipient"]["key"]: a["dashboard_url"] for a in due}
+    assert links["ada@example.com"] == "https://e0.example/decisions?stage=offered"
+    assert links["nora@example.com"] == "", "no role there: it would only refuse them"
+    assert links["group:triage"] == "https://e0.example/decisions?stage=offered"
 
 
 @pytest.mark.asyncio
