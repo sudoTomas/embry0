@@ -114,3 +114,9 @@ Asks began with each owner's most important decisions, one person at a time. Eve
 - **What a chat was spared.** `asks.include_held` asks about held decisions too, behind the rest of a person's queue.
 - **What nobody owns.** `asks.unowned_group` names a group for a decision with no owner. Anyone embry0 knows may answer those. Someone who knows whose it is sends it to them.
 
+
+
+## Later: a job started from a chat comes back to its person (2026-11-03)
+
+Someone who starts a job from a card may not read the chat where job notices go, and may not sign in to the dashboard, so a job's question or pause could wait on them without their knowing. `agent.question` and a new `job.paused` event name `started_by`, for a receiver to tell them. `GET /asks/of` lists those jobs, and `POST /asks/jobs/{id}/answer` and `/resume` let an assistant pass on what they say, as the person it verified. Only whoever started the job, or an admin, may.
+\n

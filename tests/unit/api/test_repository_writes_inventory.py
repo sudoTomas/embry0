@@ -107,6 +107,8 @@ _QA_SETUP = (Path(__file__).parents[2] / "fixtures" / "qa-yaml-corpus" / "v2" / 
 #: path parameters' values. A route not here is sent none.
 BODIES: dict[str, Any] = {
     "/api/v1/asks/{ask_id}/sent": {"message_ref": "m-1"},
+    "/api/v1/asks/jobs/{job_id}/answer": {"person": "someone@example.com", "input_id": "inp-1", "answer": "Yes"},
+    "/api/v1/asks/jobs/{job_id}/resume": {"person": "someone@example.com", "choice": "abandon"},
     "/api/v1/cases/{case_id}/accept": {},
     "/api/v1/cases/{case_id}/close": {"resolution_path": "abandoned"},
     "/api/v1/config/context/repos/{repo:path}": {"system_context": "Be brief."},

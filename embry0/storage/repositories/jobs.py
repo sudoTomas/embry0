@@ -302,6 +302,21 @@ class JobsRepository:
         )
         return [dict(r) for r in rows]
 
+    async def started_and_waiting(self, person: str) -> list[dict[str, Any]]:
+        """The jobs ``person`` started that wait on someone, paused or asking a question, newest first, at most 50."""
+        rows = await self._db.fetch(
+            """
+            SELECT j.job_id, j.status, j.repo, j.issue_id, COALESCE(i.title, LEFT(j.task, 120)) AS title
+            FROM jobs j
+            LEFT JOIN issues i ON i.id = j.issue_id
+            WHERE LOWER(j.dispatched_by) = LOWER($1) AND j.status IN ('paused', 'awaiting_input')
+            ORDER BY j.updated_at DESC
+            LIMIT 50
+            """,
+            person,
+        )
+        return [dict(r) for r in rows]
+
     async def list_all(
         self,
         status: str | None = None,

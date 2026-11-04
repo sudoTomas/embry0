@@ -12,6 +12,7 @@
 - ``GET /asks/of``: everything waiting on one person or group, so a chat can
   say how many there are and talk them through.
 - ``GET /asks/decision/{code}``: one decision by its code, as much as there is to say about it.
+- ``POST /asks/jobs/{job_id}/answer`` and ``/resume``: a job's question or pause, passed on for whoever started it.
 
 A ``propose`` key does all of these: no model sits between a press and its answer.
 """
@@ -421,7 +422,118 @@ async def asks_of(
         "waiting": len(mine),
         "repos": [{"repo": repo, "count": n} for repo, n in repos.most_common()],
         "asks": out,
+        **await _their_waiting_jobs(request, who),
     }
+
+
+async def _their_waiting_jobs(request: Request, who: str) -> dict[str, list[dict[str, Any]]]:
+    """The jobs ``who`` started that wait on them: each pending blocking question, and each pause. A group starts none."""
+    from embry0.api.v1.decisions import listed_to
+
+    jobs = getattr(request.app.state, "jobs_repo", None)
+    inputs = getattr(request.app.state, "inputs_repo", None)
+    if jobs is None or who.startswith("group:"):
+        return {"questions": [], "paused": []}
+    questions: list[dict[str, Any]] = []
+    paused: list[dict[str, Any]] = []
+    for job in await jobs.started_and_waiting(who):
+        if not listed_to(request, job):
+            continue
+        about = {"job_id": job["job_id"], "repo": job.get("repo"), "title": job.get("title")}
+        if job["status"] == "paused":
+            paused.append(about)
+        elif inputs is not None:
+            questions += [
+                {**about, "input_id": i["id"], "question": i["question"]}
+                for i in await inputs.list_by_job(job["job_id"])
+                if i.get("status") == "pending" and i.get("importance") == "blocking"
+            ]
+    return {"questions": questions, "paused": paused}
+
+
+async def _their_job(request: Request, job_id: str, person: str, *, action: str) -> dict[str, Any]:
+    """The job, when ``person`` may steer it: whoever started it, or an admin. One the caller's key does not cover
+    answers as one that does not exist."""
+    none = HTTPException(status_code=404, detail="no job has that id")
+    job = await _repo(request, "jobs_repo").get(job_id)
+    if job is None:
+        raise none
+    if restricted_key_name(request) is not None:
+        await hide_unless_covered(request, job.get("repo"), none, action=action)
+    users = getattr(request.app.state, "users_repo", None)
+    me = await users.get_by_email(person) if users is not None else None
+    if me is None or (me.tier != "admin" and str(job.get("dispatched_by") or "").lower() != person.lower()):
+        raise HTTPException(status_code=403, detail="it is not theirs to steer: whoever started the job, or an admin")
+    return dict(job)
+
+
+class JobAnswerBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The email of the person answering (the assistant checked who they are).
+    person: PersonName = Field(min_length=3, max_length=320)
+    input_id: str = Field(min_length=1, max_length=64)
+    answer: str = Field(min_length=1, max_length=50000)
+
+
+@router.post("/asks/jobs/{job_id}/answer")
+async def answer_job_question(job_id: str, body: JobAnswerBody, request: Request) -> dict[str, Any]:
+    """A question on a job, answered in a chat for whoever started it, through the paths the dashboard uses."""
+    from embry0.api.schemas.inputs import AnswerInputRequest
+    from embry0.api.v1.issues import answer_issue_input_as
+    from embry0.api.v1.jobs import AnswerJobInputRequest, answer_job_input_as
+
+    await _their_job(request, job_id, body.person, action="answer a question on a job")
+    inputs = _repo(request, "inputs_repo")
+    question = await inputs.get(body.input_id)
+    if question is None or question.get("job_id") != job_id:
+        raise HTTPException(status_code=404, detail="that job has no such question")
+    if question.get("issue_id"):
+        answered = await answer_issue_input_as(
+            str(question["issue_id"]),
+            body.input_id,
+            AnswerInputRequest(answer=body.answer),
+            request,
+            _repo(request, "issues_repo"),
+            inputs,
+            _repo(request, "issue_executor"),
+            body.person,
+        )
+        return answered.model_dump(mode="json")
+    return await answer_job_input_as(
+        job_id,
+        body.input_id,
+        AnswerJobInputRequest(answer=body.answer),
+        request,
+        _repo(request, "jobs_repo"),
+        body.person,
+    )
+
+
+class JobResumeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The email of the person answering (the assistant checked who they are).
+    person: PersonName = Field(min_length=3, max_length=320)
+    #: Keep going, or stop. Taking the work as it is stays on the dashboard.
+    choice: Literal["continue_retrying", "abandon"]
+    guidance: str = Field(default="", max_length=50000)
+
+
+@router.post("/asks/jobs/{job_id}/resume")
+async def resume_their_job(job_id: str, body: JobResumeBody, request: Request) -> dict[str, Any]:
+    """A paused job, kept going or stopped in a chat for whoever started it, through the path the dashboard uses."""
+    from embry0.api.schemas.jobs import JobResumeRequest
+    from embry0.api.v1.jobs import resume_job_as
+
+    await _their_job(request, job_id, body.person, action="resume a job")
+    return await resume_job_as(
+        job_id,
+        JobResumeRequest(choice=body.choice, guidance=body.guidance),
+        request,
+        _repo(request, "jobs_repo"),
+        body.person,
+    )
 
 
 @router.get("/asks/decision/{code}")

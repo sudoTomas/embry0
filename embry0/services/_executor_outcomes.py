@@ -6,6 +6,7 @@ pre-split module.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -22,6 +23,12 @@ from embry0.trackers import forge_number_of, linear_identifier_of
 from embry0.workflows.issue_to_pr.plan_route import build_notification_summary, job_title_from_task
 
 logger = structlog.get_logger(__name__)
+
+
+def person_who_started(job: Mapping[str, Any] | None) -> str | None:
+    """Whom to tell about a job: the person who started it, when a person did. A key or a trigger is nobody to message."""
+    by = str((job or {}).get("dispatched_by") or "")
+    return by if "@" in by else None
 
 
 def _developer_summary(result: dict[str, Any]) -> str:
@@ -1230,6 +1237,7 @@ async def _handle_needs_info(self: IssueExecutor, issue_id: str | None, job_id: 
         if self._webhook_notifier is not None:
             dashboard_base = (getattr(self._config, "dashboard_public_url", "") or "http://localhost:8200").rstrip("/")
             answer_url = f"{dashboard_base}/issues/{issue_id}" if issue_id else f"{dashboard_base}/jobs/{job_id}"
+            started_by = person_who_started(await self._jobs.get(job_id))
             for eq in enriched_questions:
                 if eq["importance"] != "blocking":
                     continue
@@ -1243,6 +1251,7 @@ async def _handle_needs_info(self: IssueExecutor, issue_id: str | None, job_id: 
                         "asking_node": asking_node,
                         "answer_url": answer_url,
                         "linear_identifier": linear_identifier_of(issue),
+                        "started_by": started_by,
                     },
                 )
 

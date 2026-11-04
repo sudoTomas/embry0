@@ -764,6 +764,7 @@ async def test_handle_needs_info_emits_agent_question_webhooks():
     executor._audit_log_path = None
     notifier = MagicMock()
     executor._webhook_notifier = notifier
+    executor._jobs.get = AsyncMock(return_value={"dispatched_by": "ada@example.com"})
 
     with patch("embry0.services.issue_executor.emit_audit", new=AsyncMock()):
         await executor._handle_needs_info(
@@ -789,6 +790,7 @@ async def test_handle_needs_info_emits_agent_question_webhooks():
     assert data["input_id"].startswith("inp-")
     # Issue row gone → identifier is None but the key is always present.
     assert data["linear_identifier"] is None
+    assert data["started_by"] == "ada@example.com"
 
 
 # ---- RAV-1076: Linear decision trail for agent questions --------------------
@@ -917,6 +919,7 @@ async def test_handle_needs_info_webhook_carries_linear_identifier():
     executor = _needs_info_executor(issue_row)
     notifier = MagicMock()
     executor._webhook_notifier = notifier
+    executor._jobs.get = AsyncMock(return_value=None)
 
     with patch("embry0.services.issue_executor.emit_audit", new=AsyncMock()):
         await executor._handle_needs_info(

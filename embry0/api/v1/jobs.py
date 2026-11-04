@@ -553,6 +553,18 @@ async def answer_job_input(
     Issue-backed inputs should keep using the issues endpoint (its resume
     path also updates the issue row), but this one tolerates them.
     """
+    return await answer_job_input_as(job_id, input_id, req, request, jobs, request_actor(request))
+
+
+async def answer_job_input_as(
+    job_id: str,
+    input_id: str,
+    req: AnswerJobInputRequest,
+    request: Request,
+    jobs: JobsRepository,
+    actor: str,
+) -> dict[str, Any]:
+    """The answer as ``actor``: whoever authenticated, or the person a chat assistant verified."""
     # EMB-43.
     job = await jobs.get(job_id)
     if not job:
@@ -578,7 +590,7 @@ async def answer_job_input(
     await record_answer(
         inp=inp,
         answer=req.answer,
-        answered_by=request_actor(request),
+        answered_by=actor,
         channel="api",
         inputs_repo=inputs_repo,
         issues_repo=getattr(request.app.state, "issues_repo", None),
@@ -614,6 +626,13 @@ async def resume_job(
     jobs: JobsRepository = Depends(get_jobs_repo),
 ) -> dict[str, Any]:
     """Resume a paused job with optional guidance."""
+    return await resume_job_as(job_id, req, request, jobs, request_actor(request))
+
+
+async def resume_job_as(
+    job_id: str, req: JobResumeRequest, request: Request, jobs: JobsRepository, actor: str
+) -> dict[str, Any]:
+    """The resume as ``actor``: whoever authenticated, or the person a chat assistant verified."""
     job = await jobs.get(job_id)
     if not job:
         raise _job_not_found()
@@ -627,7 +646,7 @@ async def resume_job(
         # stops waiting on "abandon" and otherwise goes on now ("Try now").
         # One whose account is still spent is parked again by the pre-check.
         if req.choice == "abandon":
-            await executor.cancel_job(job_id, actor=request_actor(request))
+            await executor.cancel_job(job_id, actor=actor)
             return {"job_id": job_id, "status": "cancelled", "choice": "abandon"}
         if executor.draining:
             raise HTTPException(status_code=503, detail="embry0 is shutting down; try again once it is back")
@@ -655,7 +674,7 @@ async def resume_job(
             "guidance": req.guidance,
             **({"extra_budget_usd": req.extra_budget_usd} if req.extra_budget_usd else {}),
             # Who continued it, for the job.budget_raised audit row a raise writes.
-            "actor": request_actor(request),
+            "actor": actor,
         },
         kind="resume_via_api",
     )

@@ -1278,11 +1278,36 @@ async def _handle_interrupt(
             await self._jobs.update(job_id, status="paused")
             await self._issues.update(issue_id, status="open")
             logger.info("job_paused", job_id=job_id, reason=reason)
+            await _announce_paused(self, issue_id, job_id, reason)
             return
         await self._handle_needs_info(issue_id, job_id, interrupt_value)
         return
     await self._jobs.update(job_id, status="awaiting_input")
     await self._issues.update(issue_id, status="awaiting_input")
+
+
+async def _announce_paused(self: IssueExecutor, issue_id: str | None, job_id: str, reason: str) -> None:
+    """The ``job.paused`` event, so a receiver can tell whoever started the job. A notice: it changes nothing."""
+    notifier = getattr(self, "_webhook_notifier", None)
+    if notifier is None:
+        return
+    from embry0.services._executor_outcomes import person_who_started
+
+    job = await self._jobs.get(job_id)
+    issue = await self._issues.get(issue_id) if issue_id else None
+    base = (getattr(self._config, "dashboard_public_url", "") or "http://localhost:8200").rstrip("/")
+    notifier.emit_soon(
+        "job.paused",
+        {
+            "job_id": job_id,
+            "issue_id": issue_id,
+            "repo": (job or {}).get("repo"),
+            "title": (issue or {}).get("title") or str((job or {}).get("task") or "")[:120],
+            "reason": reason,
+            "started_by": person_who_started(job),
+            "url": f"{base}/jobs/{job_id}",
+        },
+    )
 
 
 async def _run_workflow(
