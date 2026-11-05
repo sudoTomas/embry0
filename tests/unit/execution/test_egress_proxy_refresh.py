@@ -53,7 +53,7 @@ def _daemon(tmp_path, addresses: dict[str, str]):
 
     docker.run_cmd = AsyncMock(side_effect=run_cmd)
     docker.inspect_network = AsyncMock(side_effect=inspect_network)
-    docker.build_exec_cmd = lambda container, cmd: ["exec", container, *cmd]
+    docker.build_exec_cmd = lambda container, cmd, **_kw: ["exec", container, *cmd]
     docker.build_inspect_running_cmd = lambda container: ["inspect-running", container]
     return docker, table
 

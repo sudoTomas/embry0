@@ -15,7 +15,7 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
-from embry0.execution import events
+from embry0.execution import events, sandbox_git
 from embry0.safety.error_codes import ErrorCode
 from embry0.services.account_waits import AccountWait, AccountWaitInterrupt
 from embry0.workflows.pipeline_graphs import pr_review_pipeline_graph
@@ -205,8 +205,13 @@ async def init_pr_review_node(state: dict[str, Any], config: RunnableConfig) -> 
             previous_sha=str((previous or {}).get("head_sha") or ""),
             runs_nothing=_runs_nothing(rv),
         )
-        out = await docker.run_cmd(
-            docker.build_exec_cmd(container_id, ["bash", "-c", script]), timeout=CHECKOUT_TIMEOUT_SECONDS
+        out = await sandbox_git.run(
+            docker,
+            container_id,
+            sandbox_git.script(script, repo=sandbox_git.WORKSPACE),
+            step=sandbox_git.GitStep.REVIEW_CHECKOUT,
+            timeout=CHECKOUT_TIMEOUT_SECONDS,
+            job_id=job_id,
         )
         listing = await docker.run_cmd(docker.build_exec_cmd(container_id, ["cat", FILES_NUL]), timeout=30)
     except Exception as exc:  # noqa: BLE001

@@ -86,12 +86,12 @@ def _bootstrap_config(tmp_path, monkeypatch, *, prefs_repo, symref: str, diff_er
     """
     seen: list[str] = []
 
-    async def fake_run(cmd, timeout=60):
+    async def fake_run(cmd, timeout=60, **_kw):
         s = " ".join(cmd)
         seen.append(s)
-        if "git symbolic-ref" in s:
+        if "symbolic-ref" in s:
             return f"{symref}\n"
-        if "git diff --name-only" in s:
+        if "diff --no-ext-diff --no-textconv --name-only" in s:
             if diff_error is not None:
                 raise diff_error
             return "apps/hub/app/page.tsx\n"
@@ -103,7 +103,7 @@ def _bootstrap_config(tmp_path, monkeypatch, *, prefs_repo, symref: str, diff_er
 
     docker = AsyncMock()
     docker.run_cmd = fake_run
-    docker.build_exec_cmd = lambda c, cmd, workdir=None, env=None: ["docker", "exec", c, *cmd]
+    docker.build_exec_cmd = lambda c, cmd, **_kw: ["docker", "exec", c, *cmd]
     docker._build_base_cmd = lambda: ["docker"]
 
     sandbox_mgr = AsyncMock()
@@ -148,9 +148,9 @@ async def test_init_publishes_the_preference_as_the_diff_base(tmp_path, monkeypa
     out = await init_orchestrator_node(state, config)
 
     assert out["base_branch"] == "dev"
-    assert any("git diff --name-only origin/dev" in s for s in seen)
+    assert any("diff --no-ext-diff --no-textconv --name-only origin/dev" in s for s in seen)
     # The preference short-circuits the symref lookup entirely.
-    assert not any("git symbolic-ref" in s for s in seen)
+    assert not any("symbolic-ref" in s for s in seen)
 
 
 @pytest.mark.asyncio
@@ -169,8 +169,8 @@ async def test_init_falls_back_to_the_symref_when_there_is_no_preference(tmp_pat
     out = await init_orchestrator_node(state, config)
 
     assert out["base_branch"] == "master"
-    assert any("git symbolic-ref" in s for s in seen)
-    assert any("git diff --name-only origin/master" in s for s in seen)
+    assert any("symbolic-ref" in s for s in seen)
+    assert any("diff --no-ext-diff --no-textconv --name-only origin/master" in s for s in seen)
 
 
 @pytest.mark.asyncio

@@ -34,7 +34,7 @@ def _docker() -> MagicMock:
     docker.build_run_cmd = MagicMock(return_value=["docker", "run", "..."])
     docker.build_rm_cmd = MagicMock(side_effect=lambda name: ["docker", "rm", "-f", name])
     docker.build_network_cmd = MagicMock(return_value=["docker", "network", "..."])
-    docker.build_exec_cmd = MagicMock(side_effect=lambda container, cmd: ["exec", container, *cmd])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda container, cmd, **_kw: ["exec", container, *cmd])
     docker.build_inspect_running_cmd = MagicMock(return_value=["inspect-running"])
     return docker
 

@@ -10,7 +10,6 @@ in-sandbox executor reads it back via the same relative path.
 from __future__ import annotations
 
 import os
-import shlex
 from pathlib import Path
 
 # Home-relative so writer (root docker exec) and reader (agent user) agree
@@ -35,12 +34,13 @@ def read_xai_proxy_token() -> str:
         return ""
 
 
-def build_xai_token_write_cmd(sandbox_token: str) -> list[str]:
-    """Argv for a ``docker exec`` that writes the bearer to a 0600 home file."""
+def build_xai_token_write_cmd() -> list[str]:
+    """Argv for a ``docker exec -i`` that writes the bearer it reads on stdin to a 0600 home file.
+
+    The bearer is never on the command line: run it with ``stdin_data``.
+    """
     return [
         "bash",
         "-c",
-        'mkdir -p "$HOME/.embry0" && '
-        f'printf %s {shlex.quote(sandbox_token)} > "$HOME/{XAI_PROXY_TOKEN_REL}" && '
-        f'chmod 600 "$HOME/{XAI_PROXY_TOKEN_REL}"',
+        f'mkdir -p "$HOME/.embry0" && cat > "$HOME/{XAI_PROXY_TOKEN_REL}" && chmod 600 "$HOME/{XAI_PROXY_TOKEN_REL}"',
     ]

@@ -32,7 +32,7 @@ def test_unknown_forge_falls_back_to_github():
 
 def test_clone_shell_uses_the_gitlab_origin_and_nested_path():
     shell = build_clone_shell(SUBGROUP, forge="gitlab")
-    assert f"git clone --depth=50 https://gitlab.com/{SUBGROUP}.git /workspace" in shell
+    assert f"embry0_git clone --depth=50 https://gitlab.com/{SUBGROUP}.git /workspace" in shell
 
 
 def test_clone_shell_is_unchanged_for_github():
@@ -52,12 +52,12 @@ def test_ref_checkout_still_appended_for_gitlab():
 
 def test_clone_shell_defaults_to_fetching_main():
     """Regression guard: the historical line must be byte-identical."""
-    assert "git -C /workspace fetch origin main:main --depth=50" in build_clone_shell("owner/repo")
+    assert "embry0_git fetch --no-recurse-submodules origin main:main --depth=50" in build_clone_shell("owner/repo")
 
 
 def test_clone_shell_fetches_the_configured_base_branch():
     shell = build_clone_shell(SUBGROUP, forge="gitlab", base_branch="dev")
-    assert "git -C /workspace fetch origin dev:dev --depth=50" in shell
+    assert "embry0_git fetch --no-recurse-submodules origin dev:dev --depth=50" in shell
     assert "main:main" not in shell
 
 
@@ -65,12 +65,15 @@ def test_base_branch_fetch_stays_brace_scoped_and_best_effort():
     """`a && b || true` rescues the WHOLE chain — a failed clone would exit 0
     over an empty /workspace (2026-07-06 access smoke)."""
     shell = build_clone_shell("owner/repo", base_branch="release/2026.09")
-    assert "&& { git -C /workspace fetch origin release/2026.09:release/2026.09 --depth=50 || true; }" in shell
+    assert (
+        "&& { embry0_git fetch --no-recurse-submodules origin release/2026.09:release/2026.09 --depth=50 || true; }"
+        in shell
+    )
 
 
 @pytest.mark.parametrize("bad", ["feat branch", "a;rm -rf /", "", "--upload-pack=evil", "dev\n"])
 def test_unsafe_base_branch_falls_back_to_main_instead_of_reaching_the_shell(bad):
-    assert "fetch origin main:main" in build_clone_shell("owner/repo", base_branch=bad)
+    assert "fetch --no-recurse-submodules origin main:main" in build_clone_shell("owner/repo", base_branch=bad)
 
 
 def test_rejected_base_branch_is_logged_with_the_offending_value():
@@ -78,7 +81,7 @@ def test_rejected_base_branch_is_logged_with_the_offending_value():
     main with nothing in the logs to explain it."""
     with structlog.testing.capture_logs() as captured:
         shell = build_clone_shell("owner/repo", base_branch="a;rm -rf /")
-    assert "fetch origin main:main" in shell
+    assert "fetch --no-recurse-submodules origin main:main" in shell
     event = next(e for e in captured if e["event"] == "base_branch_rejected")
     assert event["log_level"] == "warning"
     assert event["base_branch"] == "a;rm -rf /"
@@ -92,5 +95,5 @@ def test_valid_base_branch_logs_nothing():
 
 def test_ref_checkout_is_unaffected_by_the_base_branch():
     shell = build_clone_shell(SUBGROUP, "embry0/iss-abc-fix", forge="gitlab", base_branch="dev")
-    assert "fetch origin dev:dev" in shell
+    assert "fetch --no-recurse-submodules origin dev:dev" in shell
     assert "checkout -B embry0/iss-abc-fix" in shell

@@ -11,7 +11,7 @@ from embry0.execution.workspace_diff import compute_changed_files_via_diff, diff
 
 def _docker(run_output: str | Exception = "") -> Mock:
     docker = Mock()
-    docker.build_exec_cmd = Mock(side_effect=lambda cid, cmd: ["exec", cid, *cmd])
+    docker.build_exec_cmd = Mock(side_effect=lambda cid, cmd, **_kw: ["exec", cid, *cmd])
     if isinstance(run_output, Exception):
         docker.run_cmd = AsyncMock(side_effect=run_output)
     else:
@@ -61,12 +61,12 @@ async def test_disallowed_characters_fall_back_to_main() -> None:
 @pytest.mark.asyncio
 async def test_diff_returns_stripped_file_list() -> None:
     docker = Mock()
-    docker.build_exec_cmd = Mock(side_effect=lambda cid, cmd: ["exec", cid, *cmd])
+    docker.build_exec_cmd = Mock(side_effect=lambda cid, cmd, **_kw: ["exec", cid, *cmd])
     docker.run_cmd = AsyncMock(side_effect=["", "a.py\n b/c.ts \n\n"])
     files = await compute_changed_files_via_diff(docker=docker, container_id="c1", base_branch="master")
     assert files == ["a.py", "b/c.ts"]
     # The fetch + diff both target the given base, not a hardcoded main.
-    fetch_shell = docker.run_cmd.await_args_list[0].args[0][-1]
+    fetch_shell = " ".join(docker.run_cmd.await_args_list[0].args[0][-4:])
     diff_shell = docker.run_cmd.await_args_list[1].args[0][-1]
     assert "master" in fetch_shell and "main" not in fetch_shell
     # #398: the merge-base diff (three dots). Two dots is a tree comparison
@@ -84,7 +84,7 @@ async def test_resolver_command_includes_ls_remote_fallback() -> None:
     docker = _docker("master\n")
     assert await resolve_base_branch(docker=docker, container_id="c1") == "master"
     shell = docker.run_cmd.await_args.args[0][-1]
-    assert "git symbolic-ref --short refs/remotes/origin/HEAD" in shell
+    assert "symbolic-ref --short refs/remotes/origin/HEAD" in shell
     assert "git ls-remote --symref origin HEAD" in shell
 
 
@@ -99,10 +99,10 @@ async def test_resolver_takes_first_line_of_multiline_output() -> None:
 def _diff_docker(*, fetch_error: Exception | None = None, diff_error: Exception | None = None) -> Mock:
     """run_cmd raises RuntimeError on a non-zero exit, as DockerClient.run_cmd does."""
     docker = Mock()
-    docker.build_exec_cmd = Mock(side_effect=lambda cid, cmd: ["exec", cid, *cmd])
+    docker.build_exec_cmd = Mock(side_effect=lambda cid, cmd, **_kw: ["exec", cid, *cmd])
 
-    async def _run(cmd, timeout=60):
-        shell = cmd[-1]
+    async def _run(cmd, timeout=60, **_kw):
+        shell = " ".join(cmd)
         if "git fetch" in shell and fetch_error is not None:
             raise fetch_error
         if "git diff" in shell and diff_error is not None:

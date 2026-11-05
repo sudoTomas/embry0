@@ -40,12 +40,15 @@ def _proxied_manager(resolved):
     return mgr, resolver, pm
 
 
-def _token_writes(mgr) -> list[list[str]]:
-    return [
+def _token_writes(mgr) -> list[bytes]:
+    """What each write of the local-llm bearer file got on stdin; the bearer is never on the command line."""
+    writes = [
         call.args[1]
         for call in mgr._docker.build_exec_cmd.call_args_list
         if LOCAL_LLM_PROXY_TOKEN_REL in " ".join(call.args[1])
     ]
+    stdin = [c.kwargs["stdin_data"] for c in mgr._docker.run_cmd.call_args_list if c.kwargs.get("stdin_data")]
+    return stdin[: len(writes)]
 
 
 async def test_create_enrolls_with_the_proxy_and_writes_its_bearer() -> None:
@@ -57,7 +60,9 @@ async def test_create_enrolls_with_the_proxy_and_writes_its_bearer() -> None:
     assert _env(mgr)["EMBRY0_LLM_CUSTOM_BASE_URL"] == f"{_PROXY}/v1"
     assert mgr._runtime.attach_policy.await_args.kwargs["allowed_destinations"] == []
     writes = _token_writes(mgr)
-    assert len(writes) == 1 and token in writes[0][-1], "the bearer goes to the 0600 file the executor reads"
+    assert writes == [token.encode()], "the bearer goes to the 0600 file the executor reads, on stdin"
+    calls = mgr._docker.build_exec_cmd.call_args_list
+    assert not any(token in word for c in calls for word in c.args[1]), "the bearer is never on an exec command line"
 
 
 async def test_a_sandbox_without_the_custom_provider_is_not_enrolled_with_the_proxy() -> None:
@@ -88,7 +93,7 @@ async def test_a_failed_bearer_write_rolls_the_sandbox_back() -> None:
         return await real_run(cmd, *args, **kwargs)
 
     mgr._docker.run_cmd = AsyncMock(side_effect=run)
-    mgr._docker.build_exec_cmd.side_effect = lambda container, argv: ["exec", container, *argv]
+    mgr._docker.build_exec_cmd.side_effect = lambda container, argv, **_kw: ["exec", container, *argv]
     try:
         await mgr.create("job-1", repo="acme/widgets", llm_providers=["custom"])
     except Exception as exc:  # noqa: BLE001

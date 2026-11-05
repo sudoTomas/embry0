@@ -44,6 +44,9 @@ import re
 import shlex
 from dataclasses import dataclass
 
+from embry0.execution import sandbox_git
+from embry0.execution.sandbox_git import Shell
+
 REVIEW_DIR = "/workspace/.git/embry0-review"
 CHANGES_DIFF = f"{REVIEW_DIR}/changes.diff"
 DELTA_DIFF = f"{REVIEW_DIR}/delta.diff"
@@ -89,10 +92,11 @@ def build_checkout_script(
     if not fetch_ref or not base_ref:
         raise ValueError("fetch_ref and base_ref are required")
     q = shlex.quote
-    head_spec = q(f"+{fetch_ref}:refs/embry0-review/head")
+    g = sandbox_git.git
+    head_spec = f"+{fetch_ref}:refs/embry0-review/head"
     base_remote = f"refs/remotes/origin/{base_ref}"
-    base_spec = q(f"+refs/heads/{base_ref}:{base_remote}")
-    commit = q(f"{head_sha}^{{commit}}")
+    base_spec = f"+refs/heads/{base_ref}:{base_remote}"
+    commit = f"{head_sha}^{{commit}}"
     gone = (
         f"embry0-review: commit {head_sha} is no longer on the forge; "
         "the branch was rewritten after the review was asked for"
@@ -101,48 +105,51 @@ def build_checkout_script(
         f"embry0-review: could not fetch {fetch_ref} from the forge, which did not answer "
         "(check the git-proxy and the repository's forge credential)"
     )
+    mb, base, prev = Shell('"$mb"'), Shell('"$base"'), Shell('"$prev"')
     lines = [
         "set -u",
         f"cd {q(workspace)} || exit 4",
         f"out={q(out_dir)}",
         'mkdir -p "$out"',
-        f"git fetch --quiet --depth={depth} origin {head_spec}",
+        g("fetch", "--quiet", f"--depth={depth}", "origin", head_spec),
         "fetched=$?",
-        f"if ! git cat-file -e {commit} 2>/dev/null; then",
-        f"  git fetch --quiet --depth={depth} origin {q(head_sha)} 2>/dev/null || true",
+        f"if ! {g('cat-file', '-e', commit)} 2>/dev/null; then",
+        f"  {g('fetch', '--quiet', f'--depth={depth}', 'origin', head_sha)} 2>/dev/null || true",
         "fi",
-        f"if ! git cat-file -e {commit} 2>/dev/null; then",
+        f"if ! {g('cat-file', '-e', commit)} 2>/dev/null; then",
         # The ref fetch failing is not evidence of a rewrite: the forge may be
         # down, or the credential refused. Only a forge that answers can say
         # the commit is gone.
-        '  if [ "$fetched" -ne 0 ] && ! git ls-remote origin HEAD >/dev/null 2>&1; then',
+        f'  if [ "$fetched" -ne 0 ] && ! {g("ls-remote", "origin", "HEAD")} >/dev/null 2>&1; then',
         f"    echo {q(unreachable)} >&2",
         f"    exit {FETCH_FAILED_EXIT}",
         "  fi",
         f"  echo {q(gone)} >&2",
         f"  exit {HEAD_GONE_EXIT}",
         "fi",
-        f"git -c advice.detachedHead=false checkout --quiet --force --detach {q(head_sha)} || exit 4",
+        f"{g('checkout', '--quiet', '--force', '--detach', head_sha, options={'advice.detachedHead': 'false'})} || exit 4",
         f"base={q(base_remote)}",
         "for _ in 1 2 3 4 5; do",
-        '  git merge-base "$base" HEAD >/dev/null 2>&1 && break',
-        f"  git fetch --quiet --deepen=200 origin {base_spec} {head_spec} 2>/dev/null || break",
+        f"  {g('merge-base', base, 'HEAD')} >/dev/null 2>&1 && break",
+        f"  {g('fetch', '--quiet', '--deepen=200', 'origin', base_spec, head_spec)} 2>/dev/null || break",
         "done",
-        'mb=$(git merge-base "$base" HEAD 2>/dev/null || echo "$base")',
-        'git diff --no-color "$mb" HEAD > "$out/changes.diff" || exit 4',
+        f'mb=$({g("merge-base", base, "HEAD")} 2>/dev/null || echo "$base")',
+        f'{g("diff", "--no-color", mb, "HEAD")} > "$out/changes.diff" || exit 4',
         # files.txt is the agent's, with UTF-8 names unquoted; files.nul is
         # the node's, NUL-separated, so no name comes back C-quoted.
-        'git -c core.quotePath=false diff --name-only "$mb" HEAD > "$out/files.txt" || exit 4',
-        'git diff --name-only -z "$mb" HEAD > "$out/files.nul" || exit 4',
+        f'{g("diff", "--name-only", mb, "HEAD", options={"core.quotePath": "false"})} > "$out/files.txt" || exit 4',
+        f'{g("diff", "--name-only", "-z", mb, "HEAD")} > "$out/files.nul" || exit 4',
         "delta=none",
     ]
     if previous_sha:
+        prev_commit = Shell('"$prev^{commit}"')
         lines += [
             f"prev={q(previous_sha)}",
-            'git cat-file -e "$prev^{commit}" 2>/dev/null || '
-            f'git fetch --quiet --depth={depth} origin "$prev" 2>/dev/null || true',
-            'if git cat-file -e "$prev^{commit}" 2>/dev/null && git merge-base --is-ancestor "$prev" HEAD 2>/dev/null; then',
-            '  git diff --no-color "$prev" HEAD > "$out/delta.diff" && delta=yes',
+            f"{g('cat-file', '-e', prev_commit)} 2>/dev/null || "
+            f"{g('fetch', '--quiet', f'--depth={depth}', 'origin', prev)} 2>/dev/null || true",
+            f"if {g('cat-file', '-e', prev_commit)} 2>/dev/null && "
+            f"{g('merge-base', '--is-ancestor', prev, 'HEAD')} 2>/dev/null; then",
+            f'  {g("diff", "--no-color", prev, "HEAD")} > "$out/delta.diff" && delta=yes',
             "else",
             "  delta=rewritten",
             "fi",
@@ -153,7 +160,8 @@ def build_checkout_script(
         # through a shell. .git is pruned: REVIEW_DIR lives there.
         names = " -o ".join(f"-name {q(name)}" for name in AGENT_CONFIG_NAMES)
         lines.append(f"find . -path ./.git -prune -o \\( {names} \\) -prune -exec rm -rf -- {{}} + || exit 4")
-    lines.append('base_sha=$(git rev-parse --verify --quiet "$mb^{commit}" 2>/dev/null || true)')
+    mb_commit = Shell('"$mb^{commit}"')
+    lines.append(f"base_sha=$({g('rev-parse', '--verify', '--quiet', mb_commit)} 2>/dev/null || true)")
     lines.append(f'echo "{_RESULT_PREFIX} delta=$delta base=$base_sha"')
     return "\n".join(lines) + "\n"
 

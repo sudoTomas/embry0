@@ -14,6 +14,7 @@ from embry0.workflows.issue_to_pr.areas_delivery import (
     deliver_areas_file,
     report_file,
 )
+from tests.fixtures.sandbox_git_local import readable
 
 FILE = """areas:
   - name: Billing
@@ -93,9 +94,12 @@ async def test_the_file_is_committed_on_the_job_s_branch_and_the_pr_described():
     out = await deliver_areas_file(state, _config(docker), REPORT)
     branch = job_push_branch(issue_id=None, task=state["task"], job_id=state["job_id"], context=state["context"])
     assert docker.copied == [("C1", FILE.encode(), FILE_PATH)]
-    script = docker.commands[0][-1]
+    script = readable(docker.commands[0])
+    assert "embry0_git_repo /workspace" in docker.commands[0][-1], (
+        "the workspace is checked before embry0 runs git in it"
+    )
     assert f"git checkout -q -B {branch}" in script and "cp /tmp/embry0-areas.yml .embry0/areas.yml" in script
-    assert "git diff --cached --quiet" in script and f"HEAD:refs/heads/{branch}" in script
+    assert "git diff --no-ext-diff --no-textconv --cached --quiet" in script and f"HEAD:refs/heads/{branch}" in script
     assert out["branch_name"] == branch
     assert out["pr_title"] == "chore(embry0): map this repository's areas"
     assert out["developer_summary"].startswith("Names 2 areas in `.embry0/areas.yml`: Billing, Search.")

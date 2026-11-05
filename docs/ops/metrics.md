@@ -201,11 +201,20 @@ exactly like a stuck reconciler.
 | `embry0_state_channel_folded_concurrent_writes_total` | counter | `key`, `channel` |
 | `embry0_volume_reaper_volumes_total` | counter | `outcome`: `removed`, `would_remove`, `failed`, `kept`; `reason` |
 | `embry0_volume_reaper_sweeps_total` | counter | `result`: `ok`, `list_failed`, `status_fetch_failed` |
+| `embry0_sandbox_git_refusals_total` | counter | `step`: `configure`, `clone`, `qa_checkout`, `branch_probe`, `salvage_commit`, `rescue_push`, `base_branch`, `changed_files`, `diff_lines`, `areas_delivery`, `audit_delivery`, `review_checkout`, `verify_gate`; seeded 0 |
 
 Both of the first two are bug detectors, not throughput: a state-channel fold
 always means a routing bug dispatched two nodes in one superstep, and a stale
 image means a prebaked sandbox image the deploy recipe does not rebuild.
 Any increase is worth a look.
+
+`embry0_sandbox_git_refusals_total` counts the git steps embry0 did not run in
+a sandbox ([sandbox-git.md](../sandbox-git.md)): the repository's own git
+config carried a key embry0 does not run its git with, `.git` was not a plain
+directory, or embry0's root-owned git config was missing. A steady trickle
+from one repository is its own config (the `sandbox_git_refused` log line
+names the keys); a burst across repositories after a deploy points at the
+sandbox setup instead.
 
 ## Off-host backup
 

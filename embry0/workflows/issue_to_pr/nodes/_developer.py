@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shlex
 from typing import Any
 
 import structlog
@@ -16,7 +15,7 @@ from langgraph.types import Command
 # `embry0.workflows.issue_to_pr.nodes.<seam>` reach this module. The self-import is safe: the package __init__ binds the seams
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
-from embry0.execution import events
+from embry0.execution import events, sandbox_git
 from embry0.orchestration.nodes.agent import (
     BRAINSTORMING_ASK_USER_CAP,
     DEFAULT_ASK_USER_CAP,
@@ -425,8 +424,11 @@ async def _branch_on_origin(
     if not docker or not container_id or not branch or branch == "main":
         return None
     try:
-        out = await docker.run_cmd(
-            docker.build_exec_cmd(container_id, ["git", "-C", "/workspace", "ls-remote", "--heads", "origin", branch]),
+        out = await sandbox_git.run(
+            docker,
+            container_id,
+            sandbox_git.command("ls-remote", "--heads", "origin", branch),
+            step=sandbox_git.GitStep.BRANCH_PROBE,
             timeout=15,
         )
     except Exception as exc:
@@ -441,18 +443,14 @@ async def _branch_on_origin(
     if not sha:
         return None
     tip = {"sha": sha[:12]}
-    ref = shlex.quote(f"refs/heads/{branch}")
+    fetch = sandbox_git.git("fetch", "--quiet", "--depth=1", "origin", f"refs/heads/{branch}")
+    log = sandbox_git.git("log", "-1", "--format=%cs%x09%s", "FETCH_HEAD")
     try:
-        detail = await docker.run_cmd(
-            docker.build_exec_cmd(
-                container_id,
-                [
-                    "sh",
-                    "-c",
-                    f"git -C /workspace fetch --quiet --depth=1 origin {ref} "
-                    "&& git -C /workspace log -1 --format=%cs%x09%s FETCH_HEAD",
-                ],
-            ),
+        detail = await sandbox_git.run(
+            docker,
+            container_id,
+            sandbox_git.script(f"{fetch} && {log}"),
+            step=sandbox_git.GitStep.BRANCH_PROBE,
             timeout=30,
         )
         date, _, subject = (detail or "").strip().partition("\t")
@@ -499,19 +497,11 @@ async def _verify_branch_pushed(
     if not docker or not container_id or not branch or branch == "main":
         return True
     try:
-        out = await docker.run_cmd(
-            docker.build_exec_cmd(
-                container_id,
-                [
-                    "git",
-                    "-C",
-                    "/workspace",
-                    "ls-remote",
-                    "--heads",
-                    "origin",
-                    branch,
-                ],
-            ),
+        out = await sandbox_git.run(
+            docker,
+            container_id,
+            sandbox_git.command("ls-remote", "--heads", "origin", branch),
+            step=sandbox_git.GitStep.BRANCH_PROBE,
             timeout=15,
         )
     except Exception as exc:
@@ -563,10 +553,10 @@ async def _commit_unfinished_work(
     """
     if not docker or not container_id or not branch or branch == "main":
         return False
+    step = sandbox_git.GitStep.SALVAGE_COMMIT
     try:
-        dirty = await docker.run_cmd(
-            docker.build_exec_cmd(container_id, ["git", "-C", "/workspace", "status", "--porcelain"]),
-            timeout=15,
+        dirty = await sandbox_git.run(
+            docker, container_id, sandbox_git.command("status", "--porcelain"), step=step, timeout=15, job_id=job_id
         )
         # Nothing uncommitted: either the agent committed (so _rescue_push_branch
         # can push it as it always has) or it truly produced nothing.
@@ -575,23 +565,11 @@ async def _commit_unfinished_work(
         entries = len(dirty.strip().splitlines())
         if not await _on_job_branch(docker=docker, container_id=container_id, branch=branch, job_id=job_id):
             return False
-        await docker.run_cmd(
-            docker.build_exec_cmd(container_id, ["git", "-C", "/workspace", "add", "-A"]),
-            timeout=60,
+        await sandbox_git.run(
+            docker, container_id, sandbox_git.command("add", "-A"), step=step, timeout=60, job_id=job_id
         )
-        await docker.run_cmd(
-            docker.build_exec_cmd(
-                container_id,
-                [
-                    "git",
-                    "-C",
-                    "/workspace",
-                    "commit",
-                    "-m",
-                    message,
-                ],
-            ),
-            timeout=60,
+        await sandbox_git.run(
+            docker, container_id, sandbox_git.command("commit", "-m", message), step=step, timeout=60, job_id=job_id
         )
     except Exception as exc:
         logger.warning("dev_rescue_commit_failed", branch=branch, job_id=job_id, error=str(exc))
@@ -608,36 +586,33 @@ async def _on_job_branch(*, docker: Any, container_id: str, branch: str, job_id:
     still on the base branch, and ``git switch -c`` carries it to a new branch
     of the job's name.
     """
+    step = sandbox_git.GitStep.SALVAGE_COMMIT
     head = (
-        await docker.run_cmd(
-            docker.build_exec_cmd(container_id, ["git", "-C", "/workspace", "rev-parse", "--abbrev-ref", "HEAD"]),
+        await sandbox_git.run(
+            docker,
+            container_id,
+            sandbox_git.command("rev-parse", "--abbrev-ref", "HEAD"),
+            step=step,
             timeout=15,
+            job_id=job_id,
         )
         or ""
     ).strip()
     if not head or head == branch:
         return True
     # A missing branch exits 1, which run_cmd logs as an error (#402): ask so it exits 0.
+    verify = sandbox_git.git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
     exists = (
-        await docker.run_cmd(
-            docker.build_exec_cmd(
-                container_id,
-                [
-                    "bash",
-                    "-c",
-                    f"git -C /workspace rev-parse --verify --quiet refs/heads/{shlex.quote(branch)} || true",
-                ],
-            ),
-            timeout=15,
+        await sandbox_git.run(
+            docker, container_id, sandbox_git.script(f"{verify} || true"), step=step, timeout=15, job_id=job_id
         )
         or ""
     ).strip()
     if exists:
         logger.warning("dev_salvage_other_branch_checked_out", branch=branch, head=head[:200], job_id=job_id)
         return False
-    await docker.run_cmd(
-        docker.build_exec_cmd(container_id, ["git", "-C", "/workspace", "switch", "-c", branch]),
-        timeout=30,
+    await sandbox_git.run(
+        docker, container_id, sandbox_git.command("switch", "-c", branch), step=step, timeout=30, job_id=job_id
     )
     return True
 
@@ -692,24 +667,29 @@ async def _count_unpushed_commits(
     branch and invent a delivery. No remote-tracking refs means the question
     cannot be answered, so say so.
     """
-    qbranch = shlex.quote(branch)
+    g = sandbox_git.git
     script = (
-        "cd /workspace 2>/dev/null || { echo " + _PROBE_FAILED + "; exit 0; }; "
-        f"git rev-parse --verify --quiet refs/heads/{qbranch} >/dev/null 2>&1 "
+        f"{g('rev-parse', '--verify', '--quiet', f'refs/heads/{branch}')} >/dev/null 2>&1 "
         "|| { echo " + _PROBE_NO_BRANCH + "; exit 0; }; "
-        'test -n "$(git for-each-ref --count=1 refs/remotes/origin/ 2>/dev/null)" '
+        f'test -n "$({g("for-each-ref", "--count=1", "refs/remotes/origin/")} 2>/dev/null)" '
         "|| { echo " + _PROBE_NO_REMOTE_REFS + "; exit 0; }; "
-        f"git rev-list --count {qbranch} --not --remotes=origin 2>/dev/null "
+        f"{g('rev-list', '--count', branch, '--not', '--remotes=origin')} 2>/dev/null "
         "|| echo " + _PROBE_FAILED
     )
     try:
-        raw = await docker.run_cmd(
-            docker.build_exec_cmd(container_id, ["bash", "-c", script]),
+        raw = await sandbox_git.run(
+            docker,
+            container_id,
+            sandbox_git.script(script),
+            step=sandbox_git.GitStep.RESCUE_PUSH,
             timeout=15,
         )
     except Exception as exc:
         if diagnostics is not None:
             diagnostics["probe"] = "failed"
+            refused = sandbox_git.refusal_of(exc)
+            if refused is not None:
+                diagnostics["refused"] = str(refused)
         logger.warning("dev_rescue_probe_failed", branch=branch, error=str(exc))
         return None
     first = (raw or "").strip().splitlines()[0].strip() if (raw or "").strip() else ""
@@ -795,11 +775,11 @@ async def _rescue_push_branch(
         logger.info("dev_rescue_push_skipped", branch=branch, note="no local commits to push")
         return False
     try:
-        await docker.run_cmd(
-            docker.build_exec_cmd(
-                container_id,
-                ["git", "-C", "/workspace", "push", "-u", "origin", branch],
-            ),
+        await sandbox_git.run(
+            docker,
+            container_id,
+            sandbox_git.command("push", "-u", "origin", branch),
+            step=sandbox_git.GitStep.RESCUE_PUSH,
             timeout=120,
         )
     except Exception as exc:
@@ -829,6 +809,12 @@ def _branch_missing_explanation(branch: str, diagnostics: dict[str, Any]) -> str
         why = (
             f"Branch {branch!r} exists in the sandbox but carries no commits of its own, "
             f"so there was nothing to push. The developer agent produced no change."
+        )
+    elif probe == "failed" and diagnostics.get("refused"):
+        why = (
+            f"Branch {branch!r} is not on origin, and embry0 did not look for unpushed work in "
+            f"the sandbox: {diagnostics['refused']}. The branch was left untouched rather than "
+            f"pushed blind."
         )
     elif probe == "failed":
         why = (

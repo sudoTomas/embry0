@@ -113,6 +113,7 @@ class ErrorCode(StrEnum):
     )
     MODEL_DISABLED = "ERR_MODEL_DISABLED"  # the job asked for a model the operator has disabled
     SANDBOX_IMAGE_BUILD = "ERR_SANDBOX_IMAGE_BUILD"  # building / resolving a cached sandbox image failed
+    SANDBOX_GIT_REFUSED = "ERR_SANDBOX_GIT_REFUSED"  # embry0 did not run its own git in the sandbox: the repository's own git config carries a key that can run a program (or one embry0 does not know), .git is not a plain directory, or embry0's root-owned git config is missing (docs/sandbox-git.md)
     WORKSPACE_PROVIDER = "ERR_WORKSPACE_PROVIDER"  # the QA workspace provider failed to produce a workspace
     PROXY_ENROLLMENT = "ERR_PROXY_ENROLLMENT"  # a credential proxy refused to enrol the sandbox
     MCP_SERVER_FAILED = "ERR_MCP_SERVER_FAILED"  # an MCP server the agent depends on failed to start or answer
@@ -229,6 +230,7 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.AGENT_RUNNER_UNAVAILABLE: _C.INFRA,
     ErrorCode.MODEL_DISABLED: _C.CONFIG,
     ErrorCode.SANDBOX_IMAGE_BUILD: _C.INFRA,
+    ErrorCode.SANDBOX_GIT_REFUSED: _C.CONFIG,
     ErrorCode.WORKSPACE_PROVIDER: _C.INFRA,
     ErrorCode.PROXY_ENROLLMENT: _C.INFRA,
     ErrorCode.MCP_SERVER_FAILED: _C.INFRA,
@@ -317,6 +319,7 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     # Caught by the QA init node, which fails the run as "no app selected"
     # with an accurate reason (#65); the code here is what that run ends with.
     ("embry0.execution.workspace_diff:WorkspaceDiffUnavailable", ErrorCode.QA_NO_APPS),
+    ("embry0.execution.sandbox_git:SandboxGitRefused", ErrorCode.SANDBOX_GIT_REFUSED),
     ("embry0.workspace_init.base:LocalContextDeniedError", ErrorCode.LOCAL_CONTEXT_DENIED),
     ("embry0.workspace_init.base:HttpFetchError", ErrorCode.HTTP_FETCH_FAILED),
     ("embry0.workspace_init.base:WorkspaceInitError", ErrorCode.SANDBOX_INIT),

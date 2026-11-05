@@ -1,6 +1,7 @@
 """Sandbox git identity resolution (EMB-51).
 
-One resolver for every pipeline path that configures git inside a sandbox.
+One resolver for every pipeline path that configures git inside a sandbox;
+:func:`embry0.execution.sandbox_git.configure` writes what it resolves.
 Precedence per field: repo_preferences override → bound forge account's
 author → branding default (which is itself env-overridable via
 EMBRY0_GIT_AUTHOR_NAME / EMBRY0_GIT_AUTHOR_EMAIL).
@@ -12,7 +13,6 @@ rulesets reject on push. All paths now flow through this module.
 
 from __future__ import annotations
 
-import shlex
 from dataclasses import dataclass
 from typing import Any
 
@@ -78,11 +78,3 @@ async def resolve_git_identity(prefs_repo: Any | None, repo: str, *, credential:
     if (cred_name and not pref_name) or (cred_email and not pref_email):
         logger.info("git_identity_from_credential", repo=repo, label=getattr(credential, "label", None))
     return identity
-
-
-def build_git_identity_cmd(identity: GitIdentity) -> str:
-    """Shell fragment setting the sandbox-global git identity."""
-    return (
-        f"git config --global user.email {shlex.quote(identity.email)} && "
-        f"git config --global user.name {shlex.quote(identity.name)}"
-    )

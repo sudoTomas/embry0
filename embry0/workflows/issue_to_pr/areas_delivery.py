@@ -22,6 +22,7 @@ from typing import Any
 import structlog
 from langchain_core.runnables import RunnableConfig
 
+from embry0.execution import sandbox_git
 from embry0.orchestration.branch_names import job_push_branch
 from embry0.services.areas import AREAS_PATH, parse_areas
 from embry0.workflows.issue_to_pr.audit_delivery import WORKSPACE, open_audit_pr
@@ -99,24 +100,39 @@ async def deliver_areas_file(state: dict[str, Any], config: RunnableConfig, repo
     # The workspace is the job's own clone; tracked files go back to its commit
     # first, so only the file lands. A file the branch already has as written
     # commits nothing and opens nothing.
+    g = sandbox_git.git
     script = " && ".join(
         [
             "set -e",
-            f"cd {WORKSPACE}",
-            "git reset -q --hard HEAD",
-            f"git checkout -q -B {shlex.quote(branch)}",
+            g("reset", "-q", "--hard", "HEAD"),
+            g("checkout", "-q", "-B", branch),
             f"mkdir -p {shlex.quote(AREAS_PATH.rsplit('/', 1)[0])}",
             f"cp {FILE_PATH} {shlex.quote(AREAS_PATH)}",
-            f"git add {shlex.quote(AREAS_PATH)}",
-            f"if git diff --cached --quiet; then echo {UNCHANGED}; else "
-            f"git commit -q -m {shlex.quote(_TITLE)} && git push -q origin {shlex.quote('HEAD:refs/heads/' + branch)}; fi",
+            g("add", AREAS_PATH),
+            f"if {g('diff', '--cached', '--quiet')}; then echo {UNCHANGED}; else "
+            f"{g('commit', '-q', '-m', _TITLE)} && {g('push', '-q', 'origin', 'HEAD:refs/heads/' + branch)}; fi",
         ]
     )
     try:
         await docker.copy_bytes_into(container, text.encode(), FILE_PATH)
-        out = await docker.run_cmd(docker.build_exec_cmd(container, ["bash", "-c", script]), timeout=180)
+        out = await sandbox_git.run(
+            docker,
+            container,
+            sandbox_git.script(script, repo=WORKSPACE),
+            step=sandbox_git.GitStep.AREAS_DELIVERY,
+            timeout=180,
+            job_id=job_id,
+        )
     except Exception as exc:  # noqa: BLE001 - the file stays in the report
-        logger.warning("map_areas_pr_not_pushed", job_id=job_id, branch=branch, error=str(exc)[:300])
+        # A refusal's message names the keys and how to clear them; it is cut at 1000, not 300.
+        refused = sandbox_git.refusal_of(exc)
+        logger.warning(
+            "map_areas_pr_not_pushed",
+            job_id=job_id,
+            branch=branch,
+            error=str(exc)[: 1000 if refused else 300],
+            refused=refused is not None,
+        )
         return {}
     if UNCHANGED in str(out or ""):
         logger.info("map_areas_pr_skipped", job_id=job_id, reason="file unchanged")

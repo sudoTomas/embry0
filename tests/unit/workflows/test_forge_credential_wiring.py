@@ -77,7 +77,7 @@ async def test_prep_clone_configures_the_credential_author():
     from embry0.workflows.qa._subtask_prep import prep_qa_sandbox_clone
 
     docker = _docker()
-    docker.run_cmd = AsyncMock(side_effect=["", "", "abc123\n"])
+    docker.run_cmd = AsyncMock(side_effect=["", "", "", "abc123\n"])
     proxy_mgr = MagicMock(git_proxy_url="http://git-proxy:9101", xai_proxy_url="")
     await prep_qa_sandbox_clone(
         docker=docker,
@@ -91,7 +91,11 @@ async def test_prep_clone_configures_the_credential_author():
         qa_net="",
         forge_credential=_cred(),
     )
-    setup = " ".join(docker.run_cmd.await_args_list[0].args[0])
+    first = docker.run_cmd.await_args_list[0].kwargs
+    assert first.get("stdin_data") is not None, "embry0 must write its own git config on stdin (as root)"
+    embry0s = first["stdin_data"].decode()
+    assert '\temail = "alice@example.com"' in embry0s and '\tname = "Alice"' in embry0s, embry0s
+    setup = " ".join(docker.run_cmd.await_args_list[1].args[0])
     assert "user.email alice@example.com" in setup, setup
     assert "user.name Alice" in setup, setup
 

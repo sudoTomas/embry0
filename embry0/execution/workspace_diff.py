@@ -7,11 +7,11 @@ longer QA-only. The QA module re-exports it for its existing callers.
 
 from __future__ import annotations
 
-import shlex
 from typing import Any
 
 import structlog
 
+from embry0.execution import sandbox_git
 from embry0.git_refs import valid_ref
 
 logger = structlog.get_logger(__name__)
@@ -49,17 +49,16 @@ async def resolve_base_branch(
     """
     if configured:
         return str(configured)
-    cmd = [
-        "bash",
-        "-c",
-        # Local first (free), remote second: ls-remote prints
-        # "ref: refs/heads/<name>\tHEAD" for the symref.
-        "cd /workspace && { git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null"
-        " || git ls-remote --symref origin HEAD 2>/dev/null"
-        " | sed -n 's|^ref: refs/heads/\\(.*\\)\\tHEAD$|\\1|p'; } || true",
-    ]
+    g = sandbox_git.git
+    # Local first (free), remote second: ls-remote prints
+    # "ref: refs/heads/<name>\tHEAD" for the symref.
+    cmd = sandbox_git.script(
+        f"{{ {g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD')} 2>/dev/null"
+        f" || {g('ls-remote', '--symref', 'origin', 'HEAD')} 2>/dev/null"
+        " | sed -n 's|^ref: refs/heads/\\(.*\\)\\tHEAD$|\\1|p'; } || true"
+    )
     try:
-        raw = await docker.run_cmd(docker.build_exec_cmd(container_id, cmd), timeout=30)
+        raw = await sandbox_git.run(docker, container_id, cmd, step=sandbox_git.GitStep.BASE_BRANCH, timeout=30)
     except Exception as exc:  # noqa: BLE001
         logger.warning("base_branch_resolve_failed", error=str(exc))
         return "main"
@@ -99,37 +98,28 @@ async def compute_changed_files_via_diff(
     The base branch must exist remotely. We `git fetch origin <base_branch>
     --depth=50` first (depth covers most short-lived PRs).
     """
+    step = sandbox_git.GitStep.CHANGED_FILES
     # Step 1: fetch base ref (best-effort; failures fall through to empty diff).
-    fetch_cmd = [
-        "bash",
-        "-c",
-        f"cd /workspace && git fetch origin {shlex.quote(base_branch)}:refs/remotes/origin/{shlex.quote(base_branch)} --depth=50",
-    ]
+    fetch_cmd = sandbox_git.command("fetch", "origin", f"{base_branch}:refs/remotes/origin/{base_branch}", "--depth=50")
     try:
-        await docker.run_cmd(
-            docker.build_exec_cmd(container_id, fetch_cmd),
-            timeout=60,
-        )
+        await sandbox_git.run(docker, container_id, fetch_cmd, step=step, timeout=60)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "workspace_diff_fetch_failed",
             base_branch=base_branch,
             error=str(exc),
-            msg="git fetch failed; skipping diff",
+            msg="fetching the base failed; skipping diff",
         )
         if strict:
-            raise WorkspaceDiffUnavailable(f"git fetch origin {base_branch} failed: {exc}") from exc
+            raise WorkspaceDiffUnavailable(f"fetching origin/{base_branch} failed: {exc}") from exc
         return []
 
     # Step 2: actual diff. Strict mode drops `|| true` so a git failure
     # surfaces as run_cmd's non-zero-exit RuntimeError.
-    diff_shell = f"cd /workspace && git diff --name-only origin/{shlex.quote(base_branch)}...HEAD"
-    diff_cmd = ["bash", "-c", diff_shell if strict else f"{diff_shell} || true"]
+    diff_shell = sandbox_git.git("diff", "--name-only", f"origin/{base_branch}...HEAD")
+    diff_cmd = sandbox_git.script(diff_shell if strict else f"{diff_shell} || true")
     try:
-        raw = await docker.run_cmd(
-            docker.build_exec_cmd(container_id, diff_cmd),
-            timeout=30,
-        )
+        raw = await sandbox_git.run(docker, container_id, diff_cmd, step=step, timeout=30)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "workspace_diff_failed",
@@ -137,7 +127,7 @@ async def compute_changed_files_via_diff(
             error=str(exc),
         )
         if strict:
-            raise WorkspaceDiffUnavailable(f"git diff against origin/{base_branch} failed: {exc}") from exc
+            raise WorkspaceDiffUnavailable(f"diffing against origin/{base_branch} failed: {exc}") from exc
         return []
 
     if not raw:
@@ -176,13 +166,15 @@ async def diff_line_counts(*, docker: Any, container_id: str, base_branch: str) 
     """
     if not valid_ref(base_branch):
         return None
-    base = shlex.quote(base_branch)
+    g = sandbox_git.git
     shell = (
-        f"cd /workspace && git fetch origin {base}:refs/remotes/origin/{base} --depth=50 >/dev/null 2>&1; "
-        f"git diff --numstat origin/{base}...HEAD"
+        f"{g('fetch', 'origin', f'{base_branch}:refs/remotes/origin/{base_branch}', '--depth=50')} >/dev/null 2>&1; "
+        f"{g('diff', '--numstat', f'origin/{base_branch}...HEAD')}"
     )
     try:
-        raw = await docker.run_cmd(docker.build_exec_cmd(container_id, ["bash", "-c", shell]), timeout=60)
+        raw = await sandbox_git.run(
+            docker, container_id, sandbox_git.script(shell), step=sandbox_git.GitStep.DIFF_LINES, timeout=60
+        )
     except Exception as exc:  # noqa: BLE001 - the count is a bonus, never a failure
         logger.warning("workspace_diff_numstat_failed", base_branch=base_branch, error=str(exc))
         return None

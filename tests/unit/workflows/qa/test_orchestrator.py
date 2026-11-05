@@ -956,10 +956,10 @@ async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch):
         def _build_base_cmd(self):
             return ["docker"]
 
-        def build_exec_cmd(self, cid, cmd):
+        def build_exec_cmd(self, cid, cmd, **_kw):
             return ["docker", "exec", cid, *cmd]
 
-        async def run_cmd(self, cmd, timeout=None):
+        async def run_cmd(self, cmd, timeout=None, **_kw):
             joined = " ".join(cmd)
             if "rev-parse HEAD" in joined:
                 return "abc123\n"
@@ -1077,11 +1077,11 @@ async def test_init_orchestrator_populates_changed_files_and_repo_root(tmp_path,
     from embry0.workflows.qa.orchestrator import init_orchestrator_node
 
     # Stub docker.run_cmd to dispatch by command shape.
-    async def fake_run(cmd, timeout=60):
+    async def fake_run(cmd, timeout=60, **_kw):
         s = " ".join(cmd)
         if "git fetch" in s:
             return ""
-        if "git diff --name-only" in s:
+        if "diff --no-ext-diff --no-textconv --name-only" in s:
             return "apps/hub/app/page.tsx\npackages/auth/src/index.ts\n"
         if "find /workspace" in s:
             return "/workspace/package.json\n/workspace/apps/hub/package.json\n"
@@ -1099,7 +1099,7 @@ async def test_init_orchestrator_populates_changed_files_and_repo_root(tmp_path,
 
     docker = AsyncMock()
     docker.run_cmd = fake_run
-    docker.build_exec_cmd = lambda c, cmd, workdir=None, env=None: ["docker", "exec", c, *cmd]
+    docker.build_exec_cmd = lambda c, cmd, **_kw: ["docker", "exec", c, *cmd]
     docker._build_base_cmd = lambda: ["docker"]
 
     # Stub sandbox manager.
@@ -2258,10 +2258,10 @@ def _rav1251_harness(cat_result=""):
         def _build_base_cmd(self):
             return ["docker"]
 
-        def build_exec_cmd(self, cid, cmd):
+        def build_exec_cmd(self, cid, cmd, **_kw):
             return ["docker", "exec", cid, *cmd]
 
-        async def run_cmd(self, cmd, timeout=None):
+        async def run_cmd(self, cmd, timeout=None, **_kw):
             self.calls.append(cmd)
             joined = " ".join(cmd)
             if "rev-parse HEAD" in joined:

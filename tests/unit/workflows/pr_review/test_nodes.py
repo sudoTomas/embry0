@@ -63,7 +63,7 @@ class _Docker:
         self.files_out = files_out
         self.cmds: list[list[str]] = []
 
-    def build_exec_cmd(self, cid: str, cmd: list[str]) -> list[str]:
+    def build_exec_cmd(self, cid: str, cmd: list[str], **_kw: Any) -> list[str]:
         return ["docker", "exec", cid, *cmd]
 
     async def run_cmd(self, cmd: list[str], timeout: int = 60, **_kw: Any) -> str:

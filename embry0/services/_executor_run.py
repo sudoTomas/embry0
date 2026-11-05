@@ -1222,6 +1222,8 @@ async def _reenroll_paused_sandbox(
         context_scope=context_scope,
         git_push=git_push,
         git_push_branches=git_push_branches,
+        # embry0's own git config is rewritten with the identity resolved as at init.
+        prefs_repo=getattr(self, "_repo_prefs", None),
     )
 
 

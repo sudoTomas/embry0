@@ -11,13 +11,13 @@ not a docker failure.
 from __future__ import annotations
 
 import re
-import shlex
 import time
 from dataclasses import replace
 from typing import Any, Protocol
 
 import structlog
 
+from embry0.execution import sandbox_git
 from embry0.safety.redaction import known_secret_values
 from embry0.workflows.qa._glob_match import compile_glob, match_any
 from embry0.workflows.verification.config import TestTarget, VerificationConfig
@@ -81,23 +81,27 @@ def select_targets(targets: list[TestTarget], changed_files: list[str]) -> list[
 
 
 def _prepare_script(base_ref: str) -> str:
-    ref = shlex.quote(base_ref)
+    """Fetch the base, resolve both commits and check the base out in a worktree (run in ``HEAD_DIR``)."""
+    g = sandbox_git.git
+    remote = f"origin/{base_ref}"
+    base = sandbox_git.Shell('"$base"')
     return (
-        f"set -e; cd {HEAD_DIR}; "
-        f"git fetch origin {ref}:refs/remotes/origin/{ref} --depth=50 >/dev/null 2>&1 || true; "
-        f"head=$(git rev-parse HEAD); "
+        "set -e; "
+        f"{g('fetch', 'origin', f'{base_ref}:refs/remotes/{remote}', '--depth=50')} >/dev/null 2>&1 || true; "
+        f"head=$({g('rev-parse', 'HEAD')}); "
         # A shallow clone may not reach the fork point; the base tip is then
         # the honest second best (it is what the PR will merge into).
-        f"base=$(git merge-base origin/{ref} HEAD 2>/dev/null || git rev-parse origin/{ref}); "
-        f"git worktree remove --force {BASE_DIR} >/dev/null 2>&1 || true; "
-        f"rm -rf {SCRATCH_DIR}; mkdir -p {SCRATCH_DIR}/logs; git worktree prune; "
-        f'git worktree add --detach {BASE_DIR} "$base" >/dev/null 2>&1; '
+        f"base=$({g('merge-base', remote, 'HEAD')} 2>/dev/null || {g('rev-parse', remote)}); "
+        f"{g('worktree', 'remove', '--force', BASE_DIR)} >/dev/null 2>&1 || true; "
+        f"rm -rf {SCRATCH_DIR}; mkdir -p {SCRATCH_DIR}/logs; {g('worktree', 'prune')}; "
+        f"{g('worktree', 'add', '--detach', BASE_DIR, base)} >/dev/null 2>&1; "
         f'echo "EMBRY0_VERIFY_HEAD=$head"; echo "EMBRY0_VERIFY_BASE=$base"'
     )
 
 
 _CLEANUP_SCRIPT = (
-    f"cd {HEAD_DIR} && git worktree remove --force {BASE_DIR} >/dev/null 2>&1; rm -rf {SCRATCH_DIR}; git worktree prune"
+    f"{sandbox_git.git('worktree', 'remove', '--force', BASE_DIR)} >/dev/null 2>&1; "
+    f"rm -rf {SCRATCH_DIR}; {sandbox_git.git('worktree', 'prune')}"
 )
 
 
@@ -182,10 +186,18 @@ async def run_gate(
         )
 
     try:
-        prepared = await docker.run_cmd(
-            docker.build_exec_cmd(container_id, ["bash", "-c", _prepare_script(base_ref)]), timeout=180
+        prepared = await sandbox_git.run(
+            docker,
+            container_id,
+            sandbox_git.script(_prepare_script(base_ref), repo=HEAD_DIR),
+            step=sandbox_git.GitStep.VERIFY_GATE,
+            timeout=180,
         )
     except Exception as exc:  # noqa: BLE001
+        refused = sandbox_git.refusal_of(exc)
+        if refused is not None:
+            # The note reaches the job's verdict: say which keys, and how to clear them.
+            return GateReport.without_runs("error", note=str(refused))
         logger.warning("verify_prepare_failed", base_ref=base_ref, error=str(exc)[:300])
         return GateReport.without_runs("error", note="the base commit could not be checked out in the sandbox")
     shas = dict(_SHA_RE.findall(prepared or ""))
@@ -222,7 +234,13 @@ async def run_gate(
             verdicts.append(verdict)
     finally:
         try:
-            await docker.run_cmd(docker.build_exec_cmd(container_id, ["bash", "-c", _CLEANUP_SCRIPT]), timeout=60)
+            await sandbox_git.run(
+                docker,
+                container_id,
+                sandbox_git.script(_CLEANUP_SCRIPT, repo=HEAD_DIR),
+                step=sandbox_git.GitStep.VERIFY_GATE,
+                timeout=60,
+            )
         except Exception:  # noqa: BLE001
             logger.warning("verify_cleanup_failed", container_id=container_id)
 

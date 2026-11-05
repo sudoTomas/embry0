@@ -10,12 +10,11 @@ sandbox. The proxy forwards to the base URL enrolled for that sandbox, which
 
 from __future__ import annotations
 
-import shlex
 from typing import Any
 
 import structlog
 
-from embry0.execution import events
+from embry0.execution import events, sandbox_git
 from embry0.git_refs import valid_ref
 from embry0.workspace_init.base import InitContext, WorkspaceInitError
 
@@ -72,7 +71,7 @@ def build_clone_shell(
     of a job quietly diffing against the wrong branch.
     """
     if valid_ref(base_branch or ""):
-        base = shlex.quote(base_branch)
+        base = base_branch
     else:
         base = "main"
         logger.warning(
@@ -80,15 +79,15 @@ def build_clone_shell(
             base_branch=base_branch,
             msg="base_branch is not a usable branch name; fetching main instead",
         )
-    # Each value is quoted, so it reaches git as one word even when a caller
-    # skipped validate(); shlex.quote leaves a valid ref, branch or repo as it is.
-    url = shlex.quote(f"{clone_origin(forge, gitlab_url)}/{repo}.git")
+    # Each value is quoted by sandbox_git.git, so it reaches git as one word
+    # even when a caller skipped validate().
+    url = f"{clone_origin(forge, gitlab_url)}/{repo}.git"
     shell = (
-        f"git clone --depth=50 {url} /workspace"
-        f" && {{ git -C /workspace fetch origin {base}:{base} --depth=50 || true; }}"
+        f"{sandbox_git.git('clone', '--depth=50', url, sandbox_git.WORKSPACE)}"
+        f" && cd {sandbox_git.WORKSPACE}"
+        f" && {{ {sandbox_git.git('fetch', 'origin', f'{base}:{base}', '--depth=50')} || true; }}"
     )
     if ref:
-        r = shlex.quote(ref)
         # JobContext.ref: check out a specific branch/sha after the clone.
         # A --depth clone is single-branch, so other refs must be fetched
         # explicitly — and a bare `fetch origin <branch>` lands only in
@@ -99,13 +98,13 @@ def build_clone_shell(
         # Fallback path (SHAs, tags): fetch the raw ref and detach onto
         # FETCH_HEAD. Each fetch takes the ref after `--`, so git reads it as
         # a ref even if a caller skipped validate().
-        shell += (
-            f" && {{ {{ git -C /workspace fetch --depth=50 origin --"
-            f" +refs/heads/{r}:refs/remotes/origin/{r}"
-            f" && git -C /workspace checkout -B {r} refs/remotes/origin/{r}; }}"
-            f" || {{ git -C /workspace fetch --depth=50 origin -- {r}"
-            f" && git -C /workspace checkout --detach FETCH_HEAD; }}; }}"
+        branch_fetch = sandbox_git.git(
+            "fetch", "--depth=50", "origin", "--", f"+refs/heads/{ref}:refs/remotes/origin/{ref}"
         )
+        branch_checkout = sandbox_git.git("checkout", "-B", ref, f"refs/remotes/origin/{ref}")
+        raw_fetch = sandbox_git.git("fetch", "--depth=50", "origin", "--", ref)
+        detach = sandbox_git.git("checkout", "--detach", "FETCH_HEAD")
+        shell += f" && {{ {{ {branch_fetch} && {branch_checkout}; }} || {{ {raw_fetch} && {detach}; }}; }}"
     return shell
 
 
@@ -128,49 +127,45 @@ class GitWorkspaceInitializer:
         if not docker:
             raise WorkspaceInitError("git initializer requires a docker client")
 
-        if ctx.git_proxy_url:
-            from embry0.sandbox.git_identity import build_git_identity_cmd, resolve_git_identity
-            from embry0.sandbox.github.git_ops import build_sandbox_git_proxy_config_cmd
+        from embry0.sandbox.git_identity import resolve_git_identity
+        from embry0.sandbox.github.git_ops import proxy_route
 
-            identity = await resolve_git_identity(ctx.repo_preferences_repo, repo, credential=ctx.forge_credential)
-            git_cmd = build_sandbox_git_proxy_config_cmd(
-                ctx.git_proxy_url,
-                ctx.sandbox_token,
-                origin=clone_origin(ctx.forge, ctx.gitlab_url),
-                repo=repo,
-            )
-            setup_cmd = [
-                "bash",
-                "-c",
-                f"{git_cmd} && {build_git_identity_cmd(identity)}",
-            ]
-            await docker.run_cmd(
-                docker.build_exec_cmd(ctx.container_id, setup_cmd),
-                timeout=10,
-            )
+        identity = await resolve_git_identity(ctx.repo_preferences_repo, repo, credential=ctx.forge_credential)
+        route = None
+        if ctx.git_proxy_url:
+            route = proxy_route(ctx.git_proxy_url, origin=clone_origin(ctx.forge, ctx.gitlab_url), repo=repo)
         else:
             logger.warning(
                 "git_proxy_unavailable",
                 job_id=ctx.job_id,
                 msg="No git proxy URL — skipping git proxy setup; clone and push to private repos will fail.",
             )
+        try:
+            await sandbox_git.configure(
+                docker,
+                ctx.container_id,
+                route=route,
+                sandbox_token=ctx.sandbox_token,
+                identity=identity,
+                job_id=ctx.job_id,
+            )
+        except RuntimeError as exc:
+            raise WorkspaceInitError(f"git could not be configured in the sandbox for {repo}: {exc}") from exc
 
         # Fail loudly on clone error — if /workspace isn't a git repo, every
         # downstream agent call silently misbehaves. A non-zero exit from
         # `git clone` makes DockerClient.run_cmd raise RuntimeError.
-        clone_cmd = [
-            "bash",
-            "-c",
+        clone_cmd = sandbox_git.script(
             build_clone_shell(repo, ref, forge=ctx.forge, gitlab_url=ctx.gitlab_url, base_branch=ctx.base_branch),
-        ]
+            repo=None,
+        )
         try:
             # 300s (was 120s): large monorepos cloned via the git-proxy at
             # --depth=50 can exceed two minutes when the proxy adds latency
             # or the repo has many large files. Verified against a large repo
             # which timed out at exactly 120s on first attempt.
-            await docker.run_cmd(
-                docker.build_exec_cmd(ctx.container_id, clone_cmd),
-                timeout=300,
+            await sandbox_git.run(
+                docker, ctx.container_id, clone_cmd, step=sandbox_git.GitStep.CLONE, timeout=300, job_id=ctx.job_id
             )
         except RuntimeError as exc:
             logger.error("repo_clone_failed", job_id=ctx.job_id, repo=repo, error=str(exc))

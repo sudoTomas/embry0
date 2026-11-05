@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from tests.fixtures.sandbox_git_local import readable
+
 _BRANCH = "embry0/iss-abc12345-test-task"
 
 
@@ -70,7 +72,7 @@ class _Sandbox:
 
     async def run_cmd(self, cmd: list[str], timeout: float | None = None) -> str:  # noqa: ARG002
         self.calls.append(cmd)
-        joined = " ".join(cmd)
+        joined = readable(cmd)
         if "status" in joined and "--porcelain" in joined:
             return " M src/a.py\n?? src/new.py\n" if self.dirty else ""
         if "rev-list" in joined:
@@ -195,7 +197,7 @@ async def test_the_commit_goes_on_the_job_branch_when_the_agent_never_created_it
     sandbox = _Sandbox(head="main")
     await _run(_stopped("reached max_turns (120)", error_code="ERR_AGENT_MAX_TURNS"), sandbox)
 
-    joined = [" ".join(c) for c in sandbox.calls]
+    joined = [readable(c) for c in sandbox.calls]
     assert any(f"switch -c {_BRANCH}" in j for j in joined), "committed on the base branch"
     assert sandbox.messages and sandbox.on_origin
 

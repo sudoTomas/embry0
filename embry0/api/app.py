@@ -1493,9 +1493,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         on_stale_image=loop_metrics.sandbox_runner_stale_image if loop_metrics is not None else None,
     )
     if loop_metrics is not None:
+        from embry0.execution.sandbox_git import set_refusal_observer
         from embry0.orchestration.channels import set_fold_observer
 
         set_fold_observer(loop_metrics.state_channel_fold)
+        set_refusal_observer(loop_metrics.sandbox_git_refused)
 
     app.state.runtime = runtime
     app.state.docker = docker

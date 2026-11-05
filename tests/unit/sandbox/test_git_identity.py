@@ -7,7 +7,6 @@ from unittest.mock import MagicMock
 from embry0.branding import GIT_AUTHOR_EMAIL, GIT_AUTHOR_NAME
 from embry0.sandbox.git_identity import (
     GitIdentity,
-    build_git_identity_cmd,
     default_git_identity,
     resolve_git_identity,
 )
@@ -65,15 +64,22 @@ async def test_empty_repo_skips_lookup():
     assert identity == default_git_identity()
 
 
-def test_build_cmd_quotes_values():
-    cmd = build_git_identity_cmd(GitIdentity(name="Acme Bot", email="bot@example.com"))
-    assert cmd == ("git config --global user.email bot@example.com && git config --global user.name 'Acme Bot'")
+def test_the_identity_reaches_the_agents_config_quoted():
+    """sandbox_git writes it now; a shell metacharacter in a name stays one word."""
+    import importlib
 
+    import pytest
 
-def test_build_cmd_defends_against_shell_metacharacters():
-    cmd = build_git_identity_cmd(GitIdentity(name="a; rm -rf /", email="x&&y@example.com"))
-    assert "'a; rm -rf /'" in cmd
-    assert "'x&&y@example.com'" in cmd
+    try:
+        sandbox_git = importlib.import_module("embry0.execution.sandbox_git")
+        from embry0.sandbox.github.git_ops import proxy_route
+    except ImportError:  # pragma: no cover - base-tree fail-first
+        pytest.fail("embry0.execution.sandbox_git and git_ops.proxy_route must exist")
+
+    route = proxy_route("http://git-proxy:9101", origin="https://github.com", repo="acme/widgets")
+    body = sandbox_git.agent_config_body(route, GitIdentity(name="a; rm -rf /", email="x&&y@example.com"))
+    assert "user.name 'a; rm -rf /'" in body
+    assert "user.email 'x&&y@example.com'" in body
 
 
 def _cred(name, email):
