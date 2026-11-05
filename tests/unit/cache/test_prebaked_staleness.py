@@ -32,7 +32,7 @@ def _row(repo: str = "org/r1", tag: str = "img:t1", digest: str | None = D1) -> 
         built_at=datetime(2026, 9, 1, tzinfo=UTC),
         built_by="cli",
         is_active=True,
-        metadata={},
+        metadata={"branch": "main"},
         base_image=BASE if digest else None,
         base_image_digest=digest,
     )
@@ -77,7 +77,9 @@ async def _lookup(row: QAImageTagRow | None, current: str | None) -> tuple[str |
     image_repo = AsyncMock()
     image_repo.get_active = AsyncMock(return_value=row)
     resolver = _resolver(current)
-    tag = await PrebakedImageLookup(image_repo=image_repo, digest_resolver=resolver).get_tag_for_repo("org/r1")
+    tag = await PrebakedImageLookup(image_repo=image_repo, digest_resolver=resolver).get_tag_for_repo(
+        "org/r1", default_branch="main"
+    )
     return tag, resolver
 
 
@@ -135,14 +137,16 @@ async def test_a_raising_resolver_keeps_the_image():
     resolver = MagicMock()
     resolver.current = AsyncMock(side_effect=RuntimeError("boom"))
     lookup = PrebakedImageLookup(image_repo=image_repo, digest_resolver=resolver)
-    assert await lookup.get_tag_for_repo("org/r1") == "img:t1"
+    assert await lookup.get_tag_for_repo("org/r1", default_branch="main") == "img:t1"
 
 
 @pytest.mark.asyncio
 async def test_without_a_resolver_the_lookup_behaves_as_before():
     image_repo = AsyncMock()
     image_repo.get_active = AsyncMock(return_value=_row())
-    assert await PrebakedImageLookup(image_repo=image_repo).get_tag_for_repo("org/r1") == "img:t1"
+    assert (
+        await PrebakedImageLookup(image_repo=image_repo).get_tag_for_repo("org/r1", default_branch="main") == "img:t1"
+    )
 
 
 # ── docker-backed resolver ──────────────────────────────────────────────────

@@ -25,6 +25,13 @@ from typing import Any, Literal
 
 import structlog
 
+from embry0.cache.volume_manager import (
+    VOLUME_NAME_PREFIX,
+    SharedVolume,
+    SharedVolumeManager,
+    VolumeOwnershipError,
+    VolumeScope,
+)
 from embry0.storage.repositories.qa_volume_state import QAVolumeStateRepository
 from embry0.workflows.qa._subtask_prep import prep_qa_sandbox_clone
 
@@ -47,6 +54,7 @@ async def warm_shared_volume(
     profiles_repo: Any,
     proxy_mgr: Any,
     state_repo: QAVolumeStateRepository,
+    volume_mgr: SharedVolumeManager,
     install_command: str | None = None,
     prebaked_image_tag: str | None = None,
     forge: str = "github",
@@ -91,6 +99,10 @@ async def warm_shared_volume(
         the clone origin). Defaults keep the pre-#162 GitHub behaviour.
     state_repo:
         ``QAVolumeStateRepository`` for idempotency tracking.
+    volume_mgr:
+        ``SharedVolumeManager``: checks the volume's labels right before the
+        warmer sandbox mounts it, and refuses (``VolumeOwnershipError``) a
+        volume that is missing or not this deployment's for ``scope_key``.
     """
     # --- Idempotency check ---
     existing = await state_repo.get(scope=scope, scope_key=scope_key)
@@ -114,7 +126,16 @@ async def warm_shared_volume(
     # baked workspace, so the clone below starts clean either way).
     if prebaked_image_tag and profile is not None:
         profile = {**profile, "base_image": prebaked_image_tag}
-    warmer_job_id = f"warmer__{scope_key}"
+    # Name the warmer sandbox after the VOLUME, not the raw scope key: the
+    # volume name is a hash of the key, so two scope keys never share a
+    # warmer container.
+    warmer_job_id = f"warmer__{volume_name.removeprefix(VOLUME_NAME_PREFIX)}"
+
+    # The labels are checked right before the mount: a volume that is missing
+    # (the daemon would create it unlabelled) or not ours for this key is
+    # never mounted.
+    if not await volume_mgr.verify(SharedVolume(volume_name, VolumeScope(scope), scope_key)):
+        raise VolumeOwnershipError(f"volume {volume_name} is not this deployment's {scope} volume for the run")
 
     # Mount the shared volume at /workspace (the WHOLE workspace tree, not
     # just node_modules) so that:

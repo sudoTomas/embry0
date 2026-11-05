@@ -14,16 +14,19 @@ the active tag short-circuits to ``skipped``.
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from embry0.api.deps import request_actor
+from embry0.api.deps import ensure_admin, request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.audit.helpers import emit_audit
 from embry0.safety.error_codes import ErrorCode
 from embry0.services.forge_resolver import resolve_forge
 from embry0.storage.repositories.repos import UnregisteredRepoError
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -41,10 +44,51 @@ class QAImageBuildRequest(BaseModel):
         return validate_repo_path(v)
 
 
+async def _forge_default_branch(request: Request, repo: str, forge: str) -> str | None:
+    """The repository's default branch as its forge reports it; None when the forge did not answer.
+
+    The same source a QA run uses to select a pre-built image
+    (``embry0.cache.trusted_run``): the forge, never a job's or a
+    preference's ``base_branch``.
+    """
+    from embry0.services.base_branch import forge_default_branch
+
+    state = request.app.state
+    config = state.config
+    resolver = getattr(state, "credential_resolver", None)
+    if forge == "gitlab":
+        from embry0.execution.gitlab_client import make_gitlab_client
+
+        try:
+            gitlab = make_gitlab_client(config, credential_resolver=resolver)
+        except Exception:  # noqa: BLE001 — no client means no answer: admin tier
+            logger.warning("qa_image_build_forge_client_failed", repo=repo, forge=forge, exc_info=True)
+            return None
+        return await forge_default_branch(repo=repo, forge=forge, gitlab_client=gitlab)
+    from embry0.execution.github_client import GitHubClient
+
+    github = GitHubClient(default_token=getattr(config, "github_token", "") or "", credential_resolver=resolver)
+    return await forge_default_branch(repo=repo, forge=forge, github_client=github)
+
+
 @router.post("/qa/images/build")
 async def build_qa_cache_image(req: QAImageBuildRequest, request: Request) -> dict[str, str]:
     await enforce_repo_allowlist(request, req.repo, action="build a QA cache image")
     state = request.app.state
+    # Spec 3.6: bake on the repo's own forge. An unregistered repo on a
+    # deployment with no DEFAULT_FORGE is refused here rather than baking an
+    # image from whatever github.com happens to serve at that path.
+    try:
+        forge = await resolve_forge(getattr(state, "repos_repo", None), req.repo)
+    except UnregisteredRepoError as exc:
+        raise HTTPException(status_code=422, detail=f"{ErrorCode.REPO_UNREGISTERED}: {exc}") from exc
+    # A prebaked image becomes the repository's QA base, so baking from any
+    # branch but the forge's default branch is admin tier, and so is a bake
+    # when the forge does not answer. A default-branch bake stays at operator
+    # tier (the router's require_auth).
+    default_branch = await _forge_default_branch(request, req.repo, forge)
+    if req.branch != default_branch:
+        await ensure_admin(request)
     deps = {
         "sandbox_mgr": getattr(state, "sandbox_manager", None),
         "runtime": getattr(state, "runtime", None),
@@ -76,14 +120,6 @@ async def build_qa_cache_image(req: QAImageBuildRequest, request: Request) -> di
                 install_command = parse_qa_yaml_v2(stored["yaml_text"]).cache.install_command
         except Exception:  # noqa: BLE001 — a bad stored config must not block a bake
             install_command = None
-
-    # Spec 3.6: bake on the repo's own forge. An unregistered repo on a
-    # deployment with no DEFAULT_FORGE is refused here rather than baking an
-    # image from whatever github.com happens to serve at that path.
-    try:
-        forge = await resolve_forge(getattr(state, "repos_repo", None), req.repo)
-    except UnregisteredRepoError as exc:
-        raise HTTPException(status_code=422, detail=f"{ErrorCode.REPO_UNREGISTERED}: {exc}") from exc
 
     try:
         outcome = await run_build_qa_image(

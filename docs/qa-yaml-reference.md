@@ -375,7 +375,7 @@ shown in the dashboard's affected-set view
 cache:
   prebaked_image: { enabled: true }
   shared_volume:  { enabled: true, scope: per-job }   # per-job | per-repo
-  turbo_remote:   { enabled: true }
+  turbo_remote:   { enabled: false }                  # off by default
   install_command: npm ci --prefer-offline --legacy-peer-deps   # optional
 ```
 
@@ -383,6 +383,66 @@ These keep monorepo QA from paying full cold-install/build costs every run.
 Prebaked-image rebuilds key on the lockfile sha automatically (there is no
 `rebuild_on` knob). `scope: per-org` is not supported — a shared volume
 holds one repo's tree, so cross-repo sharing is rejected at parse time.
+
+**`shared_volume.scope: per-repo` is honoured only for a trusted run**: a QA
+run of the repository's **default branch at its current head**, both as the
+forge reports them (`git ls-remote --symref` through the git-proxy, in the
+run's bootstrap sandbox). A job's `base_branch` override and the repository's
+`base_branch` preference choose the diff base only; they never make a run
+trusted. Every other run (an issue-to-PR job's working branch, QA of any
+other branch, a run of the default branch at another commit, or a run whose
+forge lookup failed) gets a **per-job** volume instead, removed with the job,
+even when the config asks for `per-repo`.
+
+Only those default-branch runs at the current head use a per-repo volume,
+but the QA agent, which has a shell, runs during them: anything it is led to
+write into the tree, such as `node_modules` or `.git/hooks`, can persist into
+later trusted runs until the lockfile changes. The per-repo scope therefore
+suits applications whose QA-visible content (the pages the agent reads, the
+data seeded for it) is trusted.
+
+What a per-repo volume carries from one trusted run to the next:
+
+- **When the lockfile changed** (or there is no record of a warm), the volume
+  is removed and created empty before the warm, so nothing carries over.
+- **While the lockfile matches**, the volume is reused as it is, and the warm
+  is skipped: the tree the last warm checked out (at that warm's commit), its
+  `.git` directory with every object, ref and setting in it, the installed
+  dependencies, and every change any run's install, build or QA sub-tasks
+  made to the tree since (build output such as `dist/` or `.next/`, caches,
+  edited tracked files, untracked and ignored files). The run's sub-tasks
+  test that tree.
+
+A per-job volume lives for its job, so the rounds of one job share it the
+same way.
+
+Volumes are named from a hash of the deployment's instance id and the
+repository (per-repo) or job id (per-job), and labelled with both. Before a
+volume is reused, removed (a re-warm, the job's cleanup) or mounted (the
+warmer, each sub-task), its labels are checked: one that is missing, or not
+this deployment's for that repository or job, is never used, removed or
+mounted; the run uses a per-job volume, or its sub-tasks clone their own
+workspace. Without a resolved instance id (`volume_instance_id_resolved` in
+the orchestrator's startup log) no per-repo volume is used at all.
+
+**`turbo_remote` is off by default.** The Turbo remote-cache token
+(`TURBO_TOKEN`, from the optional `infra/docker-compose.cache.yml` overlay) is
+a single deployment-wide credential injected into every QA sandbox that
+enables this, and every such repository's code can read it and read or write
+the shared cache. Turn it on (`turbo_remote: { enabled: true }`) only on a
+deployment running the self-hosted cache, and only for repositories you are
+comfortable sharing that one token across. A stored config that already sets
+`enabled: true` keeps it; only configs that omit `turbo_remote` take the
+default.
+
+**Baking from a branch other than the default is admin tier.** A prebaked
+image becomes the repository's QA base, so `POST /qa/images/build` for any
+branch other than the default branch the forge reports (its API, at the time
+of the request) needs an admin-tier key, and so does any bake when the forge
+does not answer; a default-branch bake stays at operator tier. A QA run
+selects an image only when it was baked from the default branch the forge
+reported for that run; when the lookup failed, the run uses the profile's own
+image.
 
 `install_command` (RAV-1400) is the per-repo dependency install used by BOTH
 the shared-volume warmer and the prebaked-image builder (`POST

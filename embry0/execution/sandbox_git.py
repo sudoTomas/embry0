@@ -85,6 +85,7 @@ class GitStep(StrEnum):
     SALVAGE_COMMIT = "salvage_commit"
     RESCUE_PUSH = "rescue_push"
     BASE_BRANCH = "base_branch"
+    DEFAULT_BRANCH = "default_branch"
     CHANGED_FILES = "changed_files"
     DIFF_LINES = "diff_lines"
     AREAS_DELIVERY = "areas_delivery"

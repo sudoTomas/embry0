@@ -534,6 +534,15 @@ def test_cache_shared_volume_per_repo_accepted():
     assert cfg.cache.shared_volume.scope == "per-repo"
 
 
+def test_turbo_remote_cache_is_off_unless_a_config_turns_it_on():
+    """Its token is one credential for the whole deployment, readable by every repository that enables it."""
+    assert parse_qa_yaml_v2(MINIMAL_V2).cache.turbo_remote.enabled is False, (
+        "a stored config that does not mention turbo_remote must leave the Turbo remote cache off"
+    )
+    on = parse_qa_yaml_v2(MINIMAL_V2 + "\ncache:\n  turbo_remote: { enabled: true }\n")
+    assert on.cache.turbo_remote.enabled is True, "a config that turns it on keeps it on"
+
+
 # ── RAV-1251: app_local section on the stored document ──────────────────────
 
 

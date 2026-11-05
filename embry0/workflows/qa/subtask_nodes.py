@@ -154,8 +154,26 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
     # Phase-2 C3: shared-volume cache layer.
     # If a pre-warmed volume name is stashed in state, we'll mount it at
     # /workspace when creating the sandbox (so npm ci is already done) and
-    # skip git clone inside prep_qa_sandbox_clone.
+    # skip git clone inside prep_qa_sandbox_clone. Its labels are checked
+    # right before the mount; a volume that is missing (the daemon would
+    # create it unlabelled) or not this deployment's for this run is not
+    # mounted, and this sub-task clones its own workspace instead.
     shared_volume_name: str | None = state.get("shared_volume_name")
+    if shared_volume_name:
+        volume_mgr = configurable.get("qa_shared_volume_manager")
+        mountable = (
+            await volume_mgr.mountable(shared_volume_name, repo=state["repo"], job_id=parent_job_id)
+            if volume_mgr is not None
+            else None
+        )
+        if mountable is None:
+            logger.warning(
+                "subtask_shared_volume_not_mounted",
+                sub_job_id=sub_job_id,
+                volume=shared_volume_name,
+                reason="no volume manager" if volume_mgr is None else "the volume failed its mount check",
+            )
+        shared_volume_name = mountable.name if mountable is not None else None
 
     # Create network for DinD mode
     if is_dind:

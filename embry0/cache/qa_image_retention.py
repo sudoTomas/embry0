@@ -18,14 +18,20 @@ daemon:
   was started from it;
 * each per-repo volume this deployment created (its ``embry0.instance``
   label) last used more than that many days ago, unless a job of its repo is
-  still live or a container mounts it.
+  still live or a container mounts it. A per-repo volume whose name is not
+  the one this release gives its key (``volume_manager.volume_name_for``: a
+  volume from a release that named volumes differently) is never mounted
+  again, so it is removed once it is older than the retention, live jobs or
+  not, unless a container mounts it.
 
 Docker does not record when an image was last used. An image could be
 selected until a newer image of the same repository was recorded, so that is
 when it was last used; an image nothing newer has replaced counts from its
 own build (a failed bake was never used at all). A volume was last used when
 a QA job last asked for it (``qa_volume_state.last_warmed_at``, refreshed by
-every job that mounts it), or when it was created if it has no row.
+every job that mounts it), or when it was created if no row names it: the
+row of a repository records the volume it was written for, and is not read
+for any other volume of that repository.
 
 An image left with no tag and no digest names no repository, so nothing tells
 it is a QA image and the sweep leaves it.
@@ -51,6 +57,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from embry0.cache.image_builder import QA_IMAGE_PREFIX
+from embry0.cache.volume_manager import VolumeScope, volume_name_for
 from embry0.cache.volume_ownership import LABEL_INSTANCE, LABEL_MANAGED, LABEL_SCOPE, LABEL_SCOPE_KEY
 
 if TYPE_CHECKING:
@@ -221,7 +228,11 @@ def decide_volume(
     live_repos: set[str],
     cutoff: datetime,
 ) -> VolumeDecision:
-    """Whether a per-repo volume is past the retention, before the mount check. Pure."""
+    """Whether a per-repo volume is past the retention, before the mount check. Pure.
+
+    ``last_warmed_at`` must come from the state row written for this volume
+    (its ``volume_name``), never another volume's row of the same repository.
+    """
     labels = volume.labels
     if not (
         instance_id
@@ -230,7 +241,14 @@ def decide_volume(
         and labels.get(LABEL_SCOPE) == _PER_REPO
     ):
         return VolumeDecision(False, Reason.NOT_OURS)
-    if labels.get(LABEL_SCOPE_KEY, "").lower() in live_repos:
+    key = labels.get(LABEL_SCOPE_KEY, "")
+    # A per-repo volume under any other name than this release's for its key
+    # is never mounted again (SharedVolumeManager.verify), so a live job of its
+    # repo does not keep it.
+    superseded = labels.get(LABEL_SCOPE) == _PER_REPO and volume.name != volume_name_for(
+        VolumeScope.PER_REPO, key, instance_id=instance_id
+    )
+    if not superseded and key.lower() in live_repos:
         return VolumeDecision(False, Reason.LIVE_JOB)
     since = [t for t in (parse_time(volume.created_at), last_warmed_at) if t is not None]
     if not since:
@@ -417,10 +435,13 @@ class QAImageRetentionSweep:
             if live is None:
                 live = {repo.lower() for repo in await self._jobs_repo.live_job_repos()}
             state = await self._state_repo.get(scope=_PER_REPO, scope_key=volume.labels.get(LABEL_SCOPE_KEY, ""))
+            # The row records the volume it was written for; another volume of
+            # the same repository is aged from its own creation.
+            own_row = state is not None and state.volume_name == volume.name
             decision = decide_volume(
                 volume,
                 instance_id=self._instance_id,
-                last_warmed_at=state.last_warmed_at if state is not None else None,
+                last_warmed_at=state.last_warmed_at if own_row and state is not None else None,
                 live_repos=live,
                 cutoff=cutoff,
             )
