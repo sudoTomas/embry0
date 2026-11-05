@@ -374,7 +374,7 @@ shown in the dashboard's affected-set view
 ```yaml
 cache:
   prebaked_image: { enabled: true }
-  shared_volume:  { enabled: true, scope: per-job }   # per-job | per-repo
+  shared_volume:  { enabled: true, scope: per-job }   # per-job | per-repo; optional keep: [patterns]
   turbo_remote:   { enabled: false }                  # off by default
   install_command: npm ci --prefer-offline --legacy-peer-deps   # optional
 ```
@@ -396,25 +396,59 @@ even when the config asks for `per-repo`.
 
 Only those default-branch runs at the current head use a per-repo volume,
 but the QA agent, which has a shell, runs during them: anything it is led to
-write into the tree, such as `node_modules` or `.git/hooks`, can persist into
-later trusted runs until the lockfile changes. The per-repo scope therefore
-suits applications whose QA-visible content (the pages the agent reads, the
-data seeded for it) is trusted.
+write into `.git` or the kept directories below, such as `node_modules` or
+`.git/hooks`, can persist into later trusted runs until the lockfile
+changes. The per-repo scope therefore suits applications whose QA-visible
+content (the pages the agent reads, the data seeded for it) is trusted.
 
-What a per-repo volume carries from one trusted run to the next:
+Every QA round brings the shared volume to the commit the round tests (the
+head its bootstrap clone read) before any sub-task mounts it: the warmer
+fetches the branch into the volume's checkout, checks it out to that commit
+and removes every untracked and ignored file except the dependency
+directories. It runs the install only when the lockfile changed. What
+carries from one round to the next, while the lockfile matches:
 
-- **When the lockfile changed** (or there is no record of a warm), the volume
-  is removed and created empty before the warm, so nothing carries over.
-- **While the lockfile matches**, the volume is reused as it is, and the warm
-  is skipped: the tree the last warm checked out (at that warm's commit), its
-  `.git` directory with every object, ref and setting in it, the installed
-  dependencies, and every change any run's install, build or QA sub-tasks
-  made to the tree since (build output such as `dist/` or `.next/`, caches,
-  edited tracked files, untracked and ignored files). The run's sub-tasks
-  test that tree.
+- the `.git` directory, with everything an earlier round wrote into it
+  (objects, refs, settings, hooks);
+- the dependency directories, as installed and as any round changed them:
+  every `node_modules` directory, at any depth (a workspace install writes
+  one into each package; a build that copies dependencies into its own output,
+  such as `.next/standalone/node_modules`, keeps that copy from an earlier
+  round, though the rest of the output goes), and, at the top of the tree
+  only, `.pnpm-store/`,
+  `.yarn/`, `.pnp.cjs`, `.pnp.js`, `.pnp.loader.mjs`, `.pnp.data.json`,
+  `.venv/`, `__pypackages__/` and `vendor/`;
+- whatever `cache.shared_volume.keep` adds (below).
 
-A per-job volume lives for its job, so the rounds of one job share it the
-same way.
+Nothing else does: tracked files are reset to the round's commit, and build
+output (`dist/`, `.next/`, `.turbo/`, a built `public/vendor/`), caches and
+every other untracked or ignored file are removed. When the lockfile changed, a per-repo volume is
+also removed and created empty before the warm. A sub-task checks that the
+volume is at the round's commit and fails the round when it is not; a
+sub-task without a shared volume checks its own clone (or a pre-built
+image's checkout) out to that commit, with the same check.
+
+`keep` lists extra patterns (gitignore syntax, up to 32) the clean leaves
+in place, for files the install writes outside the directories above, such
+as a postinstall step's generated code. A round that skips the install does
+not regenerate them, so without a `keep` entry they would be missing:
+
+```yaml
+cache:
+  shared_volume: { enabled: true, keep: [src/generated, .husky/_] }
+```
+
+Each pattern must start with a plain name: its first path segment, after an
+optional leading `/`, may not contain `*`, `?`, `[` or a backslash. A plain
+name matches only itself, so every path a pattern keeps has a component of
+exactly that name, and no pattern can keep every file (`*`, `?*`, `[!.]*`,
+`**/x` and `/*` are all refused). A pattern with no slash, or only a
+trailing one, matches its name at any depth (`generated` keeps every
+`generated` directory); one with a slash before its end is anchored at the
+top of the tree (`src/generated` keeps only that one, and `src/**`
+everything under `src/`). A negated pattern (`!…`), a comment (`#…`) and a `.` or `..`
+segment are refused too. A build-output directory stays only if a pattern
+names it.
 
 Volumes are named from a hash of the deployment's instance id and the
 repository (per-repo) or job id (per-job), and labelled with both. Before a

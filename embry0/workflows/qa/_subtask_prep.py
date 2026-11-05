@@ -40,6 +40,25 @@ class ClonedSandbox:
     """Output of ``git rev-parse HEAD`` after clone, stripped."""
 
 
+def pin_checkout(head_sha: str) -> list[str]:
+    """The exec argv that checks ``/workspace`` out to ``head_sha``, detached, discarding local edits.
+
+    The commit is fetched first when the branch fetch did not bring it (a
+    branch that moved on by more than the fetch depth). Raises ValueError for
+    anything but a full commit id, so no ref name or option reaches git.
+    """
+    from embry0.cache.trusted_run import is_commit_id
+
+    if not is_commit_id(head_sha):
+        raise ValueError(f"not a full commit id: {head_sha!r}")
+    g = sandbox_git.git
+    return sandbox_git.script(
+        "set -e\n"
+        f"{g('cat-file', '-e', head_sha + '^{commit}')} 2>/dev/null || {g('fetch', 'origin', head_sha, '--depth=50')}\n"
+        f"{g('checkout', '-f', '--detach', head_sha)}\n"
+    )
+
+
 async def prep_qa_sandbox_clone(
     *,
     docker: Any,
@@ -57,6 +76,7 @@ async def prep_qa_sandbox_clone(
     forge: str = "github",
     gitlab_url: str = "",
     forge_credential: Any | None = None,
+    head_sha: str = "",
 ) -> ClonedSandbox:
     """Phase 1 of sandbox prep.
 
@@ -86,6 +106,11 @@ async def prep_qa_sandbox_clone(
     ``forge_credential``: the credential bound to this sandbox
     (``sandbox_mgr.last_forge_credential``); its author sits between the
     preference and the branding default (spec 2026-09-29 §3.3).
+
+    ``head_sha``: the commit the run tests. When set (and ``cached_volume``
+    is not), the clone or the reused checkout is pinned to it: fetched when
+    the branch fetch did not bring it, then checked out detached. Without it
+    the checkout stays at the branch tip.
 
     ``forge`` / ``gitlab_url``: where to clone from (#166 / spec 3.6). The
     origin must match the host the git-proxy enrolled for this sandbox or git
@@ -193,6 +218,15 @@ async def prep_qa_sandbox_clone(
         await sandbox_git.run(
             docker, container_id, clone_cmd, step=sandbox_git.GitStep.QA_CHECKOUT, timeout=300, job_id=job_id
         )
+        if head_sha:
+            await sandbox_git.run(
+                docker,
+                container_id,
+                pin_checkout(head_sha),
+                step=sandbox_git.GitStep.QA_CHECKOUT,
+                timeout=120,
+                job_id=job_id,
+            )
 
     # 4. Capture head sha (works for both paths — volume has a real git repo)
     head_sha_raw = await sandbox_git.run(

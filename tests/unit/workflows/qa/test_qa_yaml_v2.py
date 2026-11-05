@@ -1,3 +1,5 @@
+import json
+
 import pytest
 import yaml
 from pydantic import ValidationError
@@ -541,6 +543,95 @@ def test_turbo_remote_cache_is_off_unless_a_config_turns_it_on():
     )
     on = parse_qa_yaml_v2(MINIMAL_V2 + "\ncache:\n  turbo_remote: { enabled: true }\n")
     assert on.cache.turbo_remote.enabled is True, "a config that turns it on keeps it on"
+
+
+def _parse_keep(patterns: list[str]):
+    raw = (
+        MINIMAL_V2 + "\ncache:\n  shared_volume:\n    keep:\n" + "".join(f"      - {json.dumps(p)}\n" for p in patterns)
+    )
+    return parse_qa_yaml_v2(raw)
+
+
+def _keep_is_a_field() -> None:
+    try:
+        _parse_keep(["src/generated"])
+    except ValidationError as exc:
+        raise AssertionError(f"cache.shared_volume.keep is not a qa.yaml field: {exc}") from exc
+
+
+def test_shared_volume_keep_extends_what_the_clean_between_rounds_keeps():
+    _keep_is_a_field()
+    cfg = _parse_keep(["src/generated", " .husky/_ "])
+    assert cfg.cache.shared_volume.keep == ["src/generated", ".husky/_"], (
+        f"keep patterns are stored trimmed, in order: {cfg.cache.shared_volume.keep}"
+    )
+    assert parse_qa_yaml_v2(MINIMAL_V2).cache.shared_volume.keep == [], "no extra pattern unless the config adds one"
+
+
+_PLAIN = "first path segment must be a plain name"
+
+
+@pytest.mark.parametrize(
+    ("pattern", "reason"),
+    [
+        # Each of these keeps every file: a wildcard where the first segment's name goes.
+        ("*", _PLAIN),
+        ("**", _PLAIN),
+        ("?*", _PLAIN),
+        ("*?", _PLAIN),
+        ("[!.]*", _PLAIN),
+        ("[^.]*", _PLAIN),
+        ("?", _PLAIN),
+        ("[a-z]*", _PLAIN),
+        ("*.*", _PLAIN),
+        ("/*", _PLAIN),
+        ("/**", _PLAIN),
+        ("**/*", _PLAIN),
+        ("**/generated", _PLAIN),
+        ("*/dist", _PLAIN),
+        ("\\*", _PLAIN),
+        # A character class or an escape is not a plain name either, even without * or ?.
+        ("[!.]", _PLAIN),
+        ("[abc]/x", _PLAIN),
+        ("\\!generated", _PLAIN),
+        ("/", _PLAIN),
+        ("//src", _PLAIN),
+        # Neither keeps anything the clean would remove.
+        ("!node_modules", "negated"),
+        ("#generated", "comment"),
+        (".", ". or .."),
+        ("src/../dist", ". or .."),
+        ("", "printable"),
+        ("a\tb", "printable"),
+    ],
+)
+def test_a_keep_pattern_that_could_keep_every_file_is_refused(pattern, reason):
+    _keep_is_a_field()
+    with pytest.raises(ValidationError) as exc:
+        _parse_keep([pattern])
+    assert "shared_volume.keep" in str(exc.value) and reason in str(exc.value), (
+        f"{pattern!r}: the refusal must name the field and say why ({reason}): {exc.value}"
+    )
+
+
+@pytest.mark.parametrize(
+    "pattern", ["src/generated", ".husky/_", "generated", "/tools/bin", "node_modules/.cache", "src/**", "apps/*/gen"]
+)
+def test_a_keep_pattern_that_starts_with_a_plain_name_is_accepted(pattern):
+    _keep_is_a_field()
+    assert _parse_keep([pattern]).cache.shared_volume.keep == [pattern], f"{pattern!r} names what it keeps"
+
+
+def test_every_default_keep_entry_follows_the_rule_the_config_s_entries_do():
+    from embry0.cache import volume_warmer
+    from embry0.workflows.qa import qa_yaml_v2
+
+    check = getattr(qa_yaml_v2, "keep_pattern_problem", None)
+    assert check is not None, "qa_yaml_v2 has no keep_pattern_problem: nothing states the keep rule"
+    DEFAULT_KEEP = getattr(volume_warmer, "DEFAULT_KEEP", None)
+    assert DEFAULT_KEEP, "the warmer has no DEFAULT_KEEP: nothing says what the clean between rounds keeps"
+    problems = {p: check(p) for p in DEFAULT_KEEP if check(p)}
+    assert not problems, f"default keep entries that the rule refuses: {problems}"
 
 
 # ── RAV-1251: app_local section on the stored document ──────────────────────

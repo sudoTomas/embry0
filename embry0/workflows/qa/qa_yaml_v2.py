@@ -155,10 +155,58 @@ class CachePrebakedImage(BaseModel):
     enabled: bool = True
 
 
+#: Characters that make a gitignore pattern segment match more than one name.
+_GLOB_CHARS = frozenset("*?[\\")
+
+
+def keep_pattern_problem(pattern: str) -> str | None:
+    """Why ``pattern`` may not be a ``shared_volume.keep`` entry, or None when it may.
+
+    The first path segment (after an optional leading ``/``) must be a plain
+    name: no ``*``, ``?``, ``[`` or backslash. In gitignore matching a literal
+    segment matches only that exact name, so every path such a pattern keeps
+    has a component of exactly that name (at any depth when the pattern has
+    no other slash, at the top of the tree when it has one). No pattern can
+    then keep every file, however its wildcards are written, and this holds
+    without re-implementing git's matcher. A test against sample paths would
+    not: a pattern can avoid the samples' names and still keep everything
+    else (``[!dn.]*`` keeps ``build/``, ``out/`` and every top-level file).
+    """
+    if not pattern or len(pattern) > 200 or any(ord(c) < 0x20 or ord(c) == 0x7F for c in pattern):
+        return "each pattern is 1-200 printable characters"
+    if pattern[0] in "!#":
+        return "a negated pattern or a comment keeps nothing the clean would remove"
+    segments = (pattern[1:] if pattern.startswith("/") else pattern).rstrip("/").split("/")
+    first = segments[0]
+    if not first or any(c in _GLOB_CHARS for c in first):
+        return "its first path segment must be a plain name (no *, ?, [ or backslash)"
+    if any(seg in (".", "..") for seg in segments):
+        return "a . or .. segment names no path"
+    return None
+
+
 class CacheSharedVolume(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
     scope: Literal["per-job", "per-repo"] = "per-job"
+    # Gitignore-style patterns the warmer keeps, beyond the dependency
+    # directories it always keeps (volume_warmer.DEFAULT_KEEP), when it removes
+    # untracked and ignored files between rounds: output a postinstall step
+    # writes elsewhere in the tree, which a round that skips the install would
+    # otherwise lose. Each must start with a plain name (keep_pattern_problem).
+    keep: list[str] = Field(default_factory=list, max_length=32)
+
+    @field_validator("keep")
+    @classmethod
+    def _keep_patterns(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for raw in v:
+            pattern = raw.strip()
+            problem = keep_pattern_problem(pattern)
+            if problem:
+                raise ValueError(f"shared_volume.keep: {pattern!r}: {problem}")
+            out.append(pattern)
+        return out
 
     @field_validator("scope", mode="before")
     @classmethod

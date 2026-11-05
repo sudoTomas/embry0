@@ -280,6 +280,11 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
         }
 
     branch = state.get("branch_name") or "main"
+    # The commit this round tests (qa["head_sha"]). Every workspace is checked
+    # against it below; a workspace this sub-task checks out itself (a clone,
+    # or a pre-built image's baked checkout) is pinned to it first. A shared
+    # volume is pinned by the warmer, so a sub-task never moves its tree.
+    expected_head = str(state.get("expected_head_sha") or "")
 
     # Phase 1: clone + head_sha.
     # When shared_volume_name is set, the volume is already mounted at
@@ -305,6 +310,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
                 if hasattr(sandbox_mgr, "last_forge_credential")
                 else None
             ),
+            head_sha="" if shared_volume_name else expected_head,
         )
     except Exception as exc:  # noqa: BLE001
         try:
@@ -314,6 +320,24 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
         return {
             "status": SubTaskStatus.INFRA_FAILURE,
             "failure_summary": f"sandbox clone failed: {exc}",
+            "completed_at": time.monotonic(),
+        }
+
+    # #371: the workspace must hold the commit the round tests. A shared
+    # volume at another commit (the warmer did not run for this round, or a
+    # concurrent run moved it) fails the round, rather than QA other code.
+    if expected_head and cloned.head_sha != expected_head:
+        try:
+            await sandbox_mgr.destroy(container_id)
+        except Exception:
+            pass
+        where = "shared cache volume" if shared_volume_name else "workspace"
+        return {
+            "status": SubTaskStatus.INFRA_FAILURE,
+            "failure_summary": (
+                f"the {where} is at {cloned.head_sha[:12] or 'no commit'}, expected {expected_head[:12]}: "
+                "this round was not run against the commit it was asked to test"
+            ),
             "completed_at": time.monotonic(),
         }
 

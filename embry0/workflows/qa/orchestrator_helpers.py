@@ -136,6 +136,7 @@ async def fan_out_subtasks(
     image_tag: str | None = None,
     shared_volume_name: str | None = None,
     turbo_remote_enabled: bool = False,
+    expected_head_sha: str | None = None,
     max_concurrent: int,
     config: dict[str, Any],
     budget_spent: Callable[[], Awaitable[bool]] | None = None,
@@ -215,6 +216,7 @@ async def fan_out_subtasks(
                     prebaked_image_tag=image_tag,
                     shared_volume_name=shared_volume_name,
                     turbo_remote_enabled=turbo_remote_enabled,
+                    expected_head_sha=expected_head_sha,
                     config=config,
                 )
             except Exception as exc:  # noqa: BLE001

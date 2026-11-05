@@ -45,6 +45,10 @@ class SubTaskState(TypedDict, total=False):
     # cfg.cache.shared_volume.enabled and the volume has been warmed.  When set,
     # acquire_sandbox_node mounts the volume at /workspace and skips git clone.
     shared_volume_name: str | None
+    # #371: the commit this round tests (qa["head_sha"]). acquire_sandbox_node
+    # pins a workspace it checks out itself to this commit, and fails the
+    # sub-task when the workspace (a shared volume included) holds another.
+    expected_head_sha: str | None
     # Phase-2 E1: turbo_remote enabled flag from cache: turbo_remote: enabled.
     # When True, acquire_sandbox_node injects TURBO_* env vars (sourced from
     # os.environ TURBO_API/TURBO_TEAM/TURBO_TOKEN).  When False, no Turbo vars
@@ -105,6 +109,7 @@ def initial_state_for_app(
     prebaked_image_tag: str | None = None,
     shared_volume_name: str | None = None,
     turbo_remote_enabled: bool = False,
+    expected_head_sha: str | None = None,
 ) -> SubTaskState:
     return {
         "app_name": resolved.app_name,
@@ -117,6 +122,7 @@ def initial_state_for_app(
         "prebaked_image_tag": prebaked_image_tag,
         "shared_volume_name": shared_volume_name,
         "turbo_remote_enabled": turbo_remote_enabled,
+        "expected_head_sha": expected_head_sha,
         "status": None,
         "started_at": time.monotonic(),
         "completed_at": None,

@@ -501,6 +501,10 @@ async def _init_orchestrator_node_impl(
                         proxy_mgr=proxy_mgr,
                         state_repo=volume_state_repo,
                         volume_mgr=volume_mgr,
+                        # The commit this round tests: the warmer checks the
+                        # volume's tree out to it, and each sub-task checks it.
+                        requested_head=str(qa.get("head_sha") or ""),
+                        keep=sv_cfg.keep,
                         install_command=cfg.cache.install_command,
                         prebaked_image_tag=warm_image_tag,
                         forge=forge,
@@ -1200,6 +1204,7 @@ async def _qa_orchestrator_node_impl(
         image_tag=image_tag,
         shared_volume_name=shared_volume_name,
         turbo_remote_enabled=cfg.cache.turbo_remote.enabled,
+        expected_head_sha=str(qa_state.get("head_sha") or ""),
         max_concurrent=cfg.parallelism.max_concurrent_apps,
         config=child_config,
         budget_spent=_job_budget_spent,
