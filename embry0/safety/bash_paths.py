@@ -816,7 +816,9 @@ class _Scanner:
         elif name in ("GLOBIGNORE", "BASHOPTS"):
             self.wide_seen = True
         elif name in STARTUP_FILES:
-            # bash runs the file a BASH_ENV (or ENV) names before the command's script.
+            # bash runs the file a BASH_ENV (or ENV) names before the command's script, and that file
+            # may set glob options.
+            self.wide_seen = True
             self.sourced(value, cwds, stdin=stdin)
 
     def printf_v(self, args: list[Word]) -> None:
@@ -1289,6 +1291,7 @@ class _Scanner:
                 k += 1
                 break
             if text in ("--rcfile", "--init-file"):
+                self.wide_seen = True  # the rc file the shell runs first may set glob options
                 if k + 1 < len(args):
                     # An interactive shell runs this file first: standard input's text, when it names that.
                     self.sourced(args[k + 1], cwds, stdin=stdin)
@@ -1299,6 +1302,8 @@ class _Scanner:
                 continue
             if len(text) > 1 and text[0] in "-+":
                 flags = text[1:]
+                if text[0] == "-" and "i" in flags:
+                    self.wide_seen = True  # an interactive shell runs ~/.bashrc, which may set glob options
                 command_flag = command_flag or (text[0] == "-" and "c" in flags)
                 stdin_flag = stdin_flag or (text[0] == "-" and "s" in flags)
                 takes = "o" in flags or "O" in flags

@@ -252,6 +252,12 @@ _READS_ENV = [
     "shopt -s nocaseglob; cat .EN[V]",
     "shopt -s nocaseglob; cat .en[Vv]",
     "bash - <<< 'cat .env'",
+    # A child shell that runs a startup file first: the file may set glob options.
+    "BASH_ENV=f bash -c 'cat *env'",
+    "ENV=f sh -c 'cat *env'",
+    "bash --rcfile f -i -c 'cat *env'",
+    "bash --init-file f -c 'cat *env'",
+    "bash -i -c 'cat *env'",
 ]
 
 _NAMES_ENV = [
@@ -286,6 +292,7 @@ _NAMES_ENV = [
     "ls ~/*",
     "cat *.env",
     "cat [.]env",
+    "bash -c 'cat *env'",
 ]
 
 
@@ -333,9 +340,11 @@ def test_a_glob_option_in_the_command_widens_a_plain_glob(option: str) -> None:
     assert not v.allowed and "file of secrets" in v.reason, f"{option} may let *env match .env: {v}"
 
 
-def test_a_glob_option_in_one_call_does_not_widen_a_later_commands_glob() -> None:
-    """Glob options do not carry across Bash tool calls (verified on CLI 2.1.316 and 2.1.292), so a
-    later command's plain glob is read with the default options even after an earlier call set one."""
+def test_the_gate_reads_each_command_alone() -> None:
+    """The gate keeps no state between commands: a plain glob is read with the default options unless
+    this command may change them. That glob options do not carry from one Bash tool call to the next
+    rests on the CLI, checked in throwaway sandbox images on 2.1.316 and 2.1.292 and reproduced by the
+    reviewer through the real Bash tool, not on anything this test can see."""
     assert _ring3("cat *env").allowed, "with no option in this command, *env matches no .env"
 
 
