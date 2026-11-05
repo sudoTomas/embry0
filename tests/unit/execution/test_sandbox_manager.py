@@ -1,5 +1,7 @@
 import asyncio
 import base64
+import hashlib
+import json
 import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -169,17 +171,82 @@ def _commands(manager: SandboxManager) -> list[list[str]]:
     return [call.args[0] for call in manager._docker.run_cmd.call_args_list]
 
 
-@pytest.mark.asyncio
-async def test_jvm_profile_mounts_a_shared_maven_cache(manager: SandboxManager):
-    """A cold Maven download ate the agent's whole turn budget. JVM sandboxes
-    share one repository volume, and the agent user has to be able to write it."""
-    manager._docker._build_base_cmd = MagicMock(return_value=["docker", "--host", "tcp://dind:2376"])
-    await manager.create(job_id="job-jvm", profile=_JVM_PROFILE)
-    volumes = manager._docker.build_run_cmd.call_args.kwargs["volumes"] or []
-    assert "embry0-maven-repository:/home/agent/.m2" in volumes, "jvm sandboxes must share a maven cache"
+_INSTANCE = "a1b2c3d4e5f60718"
+_M2 = ":/home/agent/.m2"
 
-    sandbox_run, owner = _commands(manager)[:2]
-    assert sandbox_run == ["docker", "run", "..."], "the sandbox starts first: its run is what pulls the image"
+
+def _maven_name(key: str, instance: str | None = _INSTANCE) -> str:
+    """The naming contract: embry0-maven-vol-<sha256(instance id, NUL, key)>; a per-job key is job:<id>."""
+    return "embry0-maven-vol-" + hashlib.sha256(((instance or "") + "\x00" + key).encode()).hexdigest()
+
+
+def _labels(scope: str, key: str, instance: str | None = _INSTANCE) -> dict[str, str]:
+    from embry0.cache.volume_ownership import volume_labels
+
+    return volume_labels(scope, key, instance_id=instance)
+
+
+def _daemon(manager: SandboxManager, volumes: dict[str, dict[str, str]], *, refuse_create: bool = False) -> dict:
+    """Back ``manager``'s docker with a tiny volume daemon holding ``volumes`` (name -> labels)."""
+
+    async def run(cmd, timeout=60, **_kw):  # noqa: ASYNC109 — mirrors DockerClient.run_cmd
+        if "ps" in cmd:
+            return ""  # no container mounts any of these volumes
+        if "volume" not in cmd or "run" in cmd[: cmd.index("volume")]:
+            return "container-abc123"
+        verb, args = cmd[cmd.index("volume") + 1], cmd[cmd.index("volume") + 2 :]
+        if verb == "ls":
+            names = [a.split("=", 1)[1] for a in args if a.startswith("name=")]
+            wanted = [a.split("=", 1)[1] for a in args if a.startswith("label=")]
+            return "".join(
+                f"{n}\n"
+                for n, lbls in volumes.items()
+                if (not names or any(f in n for f in names))
+                and all(lbls.get(k) == v for k, v in (f.split("=", 1) for f in wanted))
+            )
+        if verb == "inspect":
+            return json.dumps([{"Name": n, "Labels": volumes[n], "CreatedAt": None} for n in args if n in volumes])
+        if verb == "create":
+            if refuse_create:
+                raise RuntimeError("Docker command failed: volume create refused")
+            volumes[args[-1]] = {
+                args[i + 1].split("=", 1)[0]: args[i + 1].split("=", 1)[1] for i, a in enumerate(args) if a == "--label"
+            }
+            return args[-1]
+        if verb == "rm":
+            for n in args:
+                volumes.pop(n, None)
+            return ""
+        return ""
+
+    manager._docker.run_cmd = AsyncMock(side_effect=run)
+    return volumes
+
+
+def _mounted(manager: SandboxManager) -> list[str]:
+    volumes = manager._docker.build_run_cmd.call_args.kwargs["volumes"] or []
+    return [v for v in volumes if v.endswith(_M2)]
+
+
+@pytest.mark.asyncio
+async def test_jvm_profile_mounts_a_per_repo_maven_cache(manager: SandboxManager):
+    """A cold Maven download ate the agent's whole turn budget. A JVM sandbox
+    gets its REPOSITORY's own ~/.m2 volume, labelled and writable by the agent."""
+    manager.instance_id = _INSTANCE
+    manager._docker._build_base_cmd = MagicMock(return_value=["docker", "--host", "tcp://dind:2376"])
+    volumes = _daemon(manager, {})
+    await manager.create(job_id="job-jvm", repo="acme/widgets", profile=_JVM_PROFILE)
+
+    expected = _maven_name("acme/widgets")
+    assert _mounted(manager) == [f"{expected}{_M2}"], (
+        f"a JVM sandbox must mount its repository's own maven cache; mounted {_mounted(manager)}"
+    )
+    assert volumes.get(expected) == _labels("maven", "acme/widgets"), (
+        "the cache is created, before the mount, with every ownership label (scope maven, this repo, this instance)"
+    )
+
+    # The agent is handed ownership in a one-shot container, not the sandbox.
+    owner = next(c for c in _commands(manager) if "--entrypoint" in c and "chown" in c)
     assert owner == [
         "docker",
         "--host",
@@ -193,13 +260,124 @@ async def test_jvm_profile_mounts_a_shared_maven_cache(manager: SandboxManager):
         "--user",
         "root",
         "-v",
-        "embry0-maven-repository:/home/agent/.m2",
+        f"{expected}:/home/agent/.m2",
         "--entrypoint",
         "chown",
         "embry0-sandbox-dev-jvm-python:latest",
         "agent:agent",
         "/home/agent/.m2",
     ]
+
+
+@pytest.mark.asyncio
+async def test_two_repos_get_two_different_maven_caches(manager: SandboxManager):
+    """The cache is per repository: two repos never share one ~/.m2."""
+    manager.instance_id = _INSTANCE
+    _daemon(manager, {})
+    await manager.create(job_id="job-a", repo="acme/widgets-x", profile=_JVM_PROFILE)
+    a = _mounted(manager)
+    await manager.create(job_id="job-b", repo="acme-widgets/x", profile=_JVM_PROFILE)
+    b = _mounted(manager)
+    assert a == [f"{_maven_name('acme/widgets-x')}{_M2}"] and b == [f"{_maven_name('acme-widgets/x')}{_M2}"], (
+        f"two repositories must get two maven caches; got {a} and {b}"
+    )
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        pytest.param(_labels("maven", "someone/else"), id="another-repo"),
+        pytest.param(_labels("maven", "acme/widgets", "another-instance"), id="another-instance"),
+        pytest.param({**_labels("maven", "acme/widgets"), "embry0.job_id": "job-3"}, id="extra-job-label"),
+        pytest.param({}, id="unlabelled"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_maven_cache_with_foreign_labels_is_refused_for_a_per_job_cache(manager: SandboxManager, labels):
+    """A volume at the repo's maven name whose ownership labels are not exactly this repository's
+    cache on this deployment is not reused; the sandbox gets a fresh per-job cache instead."""
+    manager.instance_id = _INSTANCE
+    repo_name = _maven_name("acme/widgets")
+    volumes = _daemon(manager, {repo_name: dict(labels)})
+    await manager.create(job_id="job-x", repo="acme/widgets", profile=_JVM_PROFILE)
+    assert _mounted(manager) == [f"{_maven_name('job:job-x')}{_M2}"], (
+        f"a cache labelled {labels} must not be reused; mounted {_mounted(manager)}"
+    )
+    assert volumes[repo_name] == labels, "the foreign volume is left as it was"
+
+
+@pytest.mark.parametrize("repo", [None, "acme/widgets"])
+@pytest.mark.asyncio
+async def test_a_per_job_maven_cache_is_labelled_as_the_job_s_per_job_volume(manager: SandboxManager, repo):
+    """No repository, or no instance id: a cache of the job's own, labelled so the job's volume
+    cleanup and the reaper remove it with the job (scope per-job, the job's id)."""
+    manager.instance_id = _INSTANCE if repo is None else None
+    instance = manager.instance_id
+    volumes = _daemon(manager, {})
+    await manager.create(job_id="job-7", repo=repo, profile=_JVM_PROFILE)
+    fallback = _maven_name("job:job-7", instance)
+    assert _mounted(manager) == [f"{fallback}{_M2}"], (
+        f"repo={repo}: expected the per-job cache, mounted {_mounted(manager)}"
+    )
+    assert volumes.get(fallback) == _labels("per-job", "job-7", instance), (
+        f"the per-job cache must carry the job's per-job labels, got {volumes.get(fallback)}"
+    )
+    assert not any("maven" == lbls.get("embry0.volume_scope") for lbls in volumes.values()), (
+        "no per-repository cache may exist without a repository and an instance id"
+    )
+
+
+@pytest.mark.asyncio
+async def test_without_an_instance_id_no_repository_cache_is_shared(manager: SandboxManager):
+    import structlog
+
+    manager.instance_id = None
+    _daemon(manager, {})
+    with structlog.testing.capture_logs() as logs:
+        await manager.create(job_id="job-a", repo="acme/widgets", profile=_JVM_PROFILE)
+        a = _mounted(manager)
+        await manager.create(job_id="job-b", repo="acme/widgets", profile=_JVM_PROFILE)
+        b = _mounted(manager)
+    assert a != b, f"with no instance id two jobs of one repository must not share a cache; got {a} and {b}"
+    warned = [e for e in logs if e["event"] == "maven_cache_per_repo_unavailable"]
+    assert len(warned) == 1, f"the missing instance id is logged once, not per sandbox; logged {len(warned)} times"
+
+
+@pytest.mark.parametrize("case", ["foreign-per-job-labels", "create-refused"])
+@pytest.mark.asyncio
+async def test_a_per_job_cache_that_is_not_the_job_s_is_never_mounted(manager: SandboxManager, case):
+    """The fallback is checked like the repository cache: a volume under its name labelled for
+    another job is not mounted, and one that cannot be created is not left for the daemon to
+    create unlabelled at mount time. The sandbox runs with no cache."""
+    manager.instance_id = _INSTANCE
+    fallback = _maven_name("job:job-x")
+    existing = {fallback: _labels("per-job", "job-other")} if case == "foreign-per-job-labels" else {}
+    _daemon(manager, existing, refuse_create=case == "create-refused")
+    await manager.create(job_id="job-x", profile=_JVM_PROFILE)
+    assert _mounted(manager) == [], f"{case}: a cache that is not the job's must not be mounted: {_mounted(manager)}"
+    assert not any("--entrypoint" in c and "chown" in c for c in _commands(manager)), "no cache, nothing to hand over"
+
+
+@pytest.mark.asyncio
+async def test_the_per_job_maven_cache_is_removed_with_its_job(manager: SandboxManager):
+    """The job's volume cleanup (SharedVolumeManager.destroy_for_job) finds the per-job cache by its
+    labels and removes it; another job's, and the repository cache, stay."""
+    from embry0.cache.volume_manager import SharedVolumeManager
+    from embry0.execution.runtime import DockerRuntime
+
+    manager.instance_id = _INSTANCE
+    volumes = _daemon(manager, {})
+    await manager.create(job_id="job-x", profile=_JVM_PROFILE)
+    await manager.create(job_id="job-y", profile=_JVM_PROFILE)
+    await manager.create(job_id="job-z", repo="acme/widgets", profile=_JVM_PROFILE)
+    mine, other, shared = _maven_name("job:job-x"), _maven_name("job:job-y"), _maven_name("acme/widgets")
+    assert {mine, other, shared} <= set(volumes), f"the three caches exist: {sorted(volumes)}"
+
+    cleanup = SharedVolumeManager(runtime=DockerRuntime(manager._docker), state_repo=AsyncMock(), instance_id=_INSTANCE)
+    removed = await cleanup.destroy_for_job("job-x")
+
+    assert mine in removed and mine not in volumes, f"the job's maven cache must go with the job; removed {removed}"
+    assert other in volumes and shared in volumes, "another job's cache and the repository cache stay"
 
 
 @pytest.mark.asyncio
@@ -238,7 +416,7 @@ async def test_python_profile_does_not_mount_the_maven_cache(manager: SandboxMan
         profile={"name": "dev-python", "base_image": "embry0-sandbox-dev-python:latest"},
     )
     volumes = manager._docker.build_run_cmd.call_args.kwargs["volumes"] or []
-    assert "embry0-maven-repository:/home/agent/.m2" not in volumes
+    assert not any(v.endswith(":/home/agent/.m2") for v in volumes), "a non-JVM profile mounts no maven cache"
 
 
 @pytest.mark.asyncio

@@ -1,10 +1,12 @@
-"""QA image retention (ADR 0017): pre-built QA images and per-repo warm volumes, removed once unused.
+"""QA image retention (ADR 0017): pre-built QA images, per-repo warm volumes and per-repo Maven caches.
 
 A pre-built QA image (``embry0/cache/image_builder.py``) is a ``docker commit``
 of a builder sandbox after it cloned the repository and installed its
 dependencies, so it holds a full checkout, ``.git`` included. A per-repo warm
 volume (``cache.shared_volume.scope: per-repo``) holds one too, shared by
-that repo's QA jobs. Nothing else removes either: each bake leaves the
+that repo's QA jobs. A per-repository Maven cache (``embry0-maven-vol-*``,
+``embry0.volume_scope=maven``) holds that repo's downloaded ``~/.m2``
+dependencies. Nothing else removes any of them: each bake leaves the
 previous image behind, and a bake that failed after its commit leaves an image
 no ``qa_image_tags`` row names at all.
 
@@ -22,7 +24,11 @@ daemon:
   the one this release gives its key (``volume_manager.volume_name_for``: a
   volume from a release that named volumes differently) is never mounted
   again, so it is removed once it is older than the retention, live jobs or
-  not, unless a container mounts it.
+  not, unless a container mounts it;
+* each per-repository Maven cache this deployment created that is older than
+  that many days, counted from its creation (it has no warmth row, and Docker
+  records no use), unless a job of its repo is still live or a container
+  mounts it. The repo's next JVM job downloads its dependencies again.
 
 Docker does not record when an image was last used. An image could be
 selected until a newer image of the same repository was recorded, so that is
@@ -70,6 +76,10 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _PER_REPO = "per-repo"
+_MAVEN = "maven"
+#: Scopes whose volumes hold a repository's code or dependencies: the per-repo
+#: warm volume and the per-repository Maven cache.
+_RETAINED_SCOPES = (_PER_REPO, _MAVEN)
 _INSPECT_CHUNK = 50
 _DAY_SECONDS = 86400
 
@@ -228,17 +238,18 @@ def decide_volume(
     live_repos: set[str],
     cutoff: datetime,
 ) -> VolumeDecision:
-    """Whether a per-repo volume is past the retention, before the mount check. Pure.
+    """Whether a per-repo or Maven volume is past the retention, before the mount check. Pure.
 
     ``last_warmed_at`` must come from the state row written for this volume
-    (its ``volume_name``), never another volume's row of the same repository.
+    (its ``volume_name``), never another volume's row of the same repository;
+    a Maven cache has none.
     """
     labels = volume.labels
     if not (
         instance_id
         and labels.get(LABEL_MANAGED) == "true"
         and labels.get(LABEL_INSTANCE) == instance_id
-        and labels.get(LABEL_SCOPE) == _PER_REPO
+        and labels.get(LABEL_SCOPE) in _RETAINED_SCOPES
     ):
         return VolumeDecision(False, Reason.NOT_OURS)
     key = labels.get(LABEL_SCOPE_KEY, "")
@@ -388,9 +399,11 @@ class QAImageRetentionSweep:
             result.errors.append("volumes not read: this deployment's instance id is unresolved")
             return
         try:
-            names = await self._runtime.list_volumes(
-                labels=[f"{LABEL_INSTANCE}={self._instance_id}", f"{LABEL_SCOPE}={_PER_REPO}"], timeout=15
-            )
+            names = []
+            for scope in _RETAINED_SCOPES:
+                names += await self._runtime.list_volumes(
+                    labels=[f"{LABEL_INSTANCE}={self._instance_id}", f"{LABEL_SCOPE}={scope}"], timeout=15
+                )
             volumes: list[VolumeSummary] = []
             for i in range(0, len(names), _INSPECT_CHUNK):
                 volumes += await self._runtime.inspect_volumes(names[i : i + _INSPECT_CHUNK], timeout=30)
@@ -434,9 +447,12 @@ class QAImageRetentionSweep:
         try:
             if live is None:
                 live = {repo.lower() for repo in await self._jobs_repo.live_job_repos()}
-            state = await self._state_repo.get(scope=_PER_REPO, scope_key=volume.labels.get(LABEL_SCOPE_KEY, ""))
-            # The row records the volume it was written for; another volume of
-            # the same repository is aged from its own creation.
+            # Only the per-repo warm volume has a warmth row, and only the row
+            # written for this volume counts; a Maven cache, or another volume of
+            # the same repository, is aged from its own creation.
+            state = None
+            if volume.labels.get(LABEL_SCOPE) == _PER_REPO:
+                state = await self._state_repo.get(scope=_PER_REPO, scope_key=volume.labels.get(LABEL_SCOPE_KEY, ""))
             own_row = state is not None and state.volume_name == volume.name
             decision = decide_volume(
                 volume,
