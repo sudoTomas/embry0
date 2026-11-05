@@ -82,24 +82,35 @@ def _installed(command: str) -> bool:
 
 def reads_any(reads: Iterable[PathRef], names: Iterable[str]) -> PathRef | None:
     """The first path in ``reads`` named one of ``names`` (any case, or a backup of one), or a glob that
-    could match one under any glob options.
+    could match one.
 
-    A path whose name holds text only known at run time (the files under a
-    directory a recursive read reaches, a substitution's output) is not
-    compared: what it names is not in the command.
+    A plain glob is read with bash's default options: ``*``/``?``/``[…]`` do not
+    match a leading ``.`` and case is sensitive, so ``*`` and ``*env`` do not
+    reach ``.env``. A glob that starts with a literal ``.`` is matched against
+    every case of the name, since a repository's own dotfile glob could name
+    it. A glob a ``shopt``, ``GLOBIGNORE`` or the like in the command may widen
+    (a ``Wild`` carrying its pattern) is read without the leading-``.`` rule and
+    case-insensitively, because those options could make it match ``.env``;
+    glob options do not carry from one Bash tool call to the next, so only the
+    command's own options count. A path whose name holds text only known at run
+    time (the files under a directory a recursive read reaches, a substitution's
+    output) is not compared: what it names is not in the command.
     """
     names = [n.lower() for n in names]
     backups = [re.compile(re.escape(n) + r"[~.]*") for n in names]
     spellings = [s for n in names for s in _cases(n)]
     for ref in reads:
-        name = _name(ref)
-        if name is None:
+        found = _name(ref)
+        if found is None:
             continue
+        name, widened = found
         if name.is_exact:
             if any(b.fullmatch(name.path[1:].lower()) for b in backups):
                 return ref
-        elif any(could_match(_loosened(name), "/" + s) for s in spellings):
-            return ref
+        else:
+            glob = _loosened(name) if widened else name
+            if any(could_match(glob, "/" + s) for s in spellings):
+                return ref
     return None
 
 
@@ -123,21 +134,28 @@ def _loosened(ref: PathRef) -> PathRef:
     )
 
 
-def _name(ref: PathRef) -> PathRef | None:
-    """The last ``/``-part of the paths ``ref`` names, as a path under ``/``; None when run-time text is in it."""
+def _name(ref: PathRef) -> tuple[PathRef, bool] | None:
+    """The last ``/``-part of the paths ``ref`` names, and whether a glob option may have widened it.
+
+    The name is returned as a path under ``/``; None when text only known at run
+    time is in it. ``widened`` is True when a segment the command may have
+    widened (a ``Wild`` carrying its default-options pattern) is part of the name.
+    """
     parts = list(ref.parts)
     if parts and isinstance(parts[-1], Lit) and parts[-1].text.endswith("/"):
         text = parts[-1].text.rstrip("/")
         parts[-1:] = [Lit(text)] if text else []
     name: list[Part] = []
+    widened = False
     for part in reversed(parts):
         if isinstance(part, Wild) and part.glob is not None and not any(isinstance(p, Wild) for p in part.glob):
-            name[:0] = part.glob  # a glob a glob option may have widened: as the default options read it
+            name[:0] = part.glob  # a glob a glob option may have widened: its parts under the default options
+            widened = True
             continue
         if isinstance(part, Wild):
             return None
         if isinstance(part, Lit) and "/" in part.text:
             rest = part.text.rpartition("/")[2]
-            return PathRef((Lit("/"), *([Lit(rest)] if rest else []), *name))
+            return PathRef((Lit("/"), *([Lit(rest)] if rest else []), *name)), widened
         name.insert(0, part)
     return None

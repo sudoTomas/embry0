@@ -428,8 +428,9 @@ _WORKSPACE_GLOB_COMMANDS = [
 
 @pytest.mark.parametrize("command", _WORKSPACE_GLOB_COMMANDS)
 def test_a_workspace_glob_that_cannot_reach_a_denied_path_is_allowed(command):
-    """Ring 2 alone: Ring 3 refuses a glob that could match .env under any glob options (test_command_checks)."""
-    v = evaluate_ring2_paths(_dev_policy(), "Bash", {"command": command}, cwd="/workspace", home=HOME)
+    """The full gate: a plain glob is read with bash's default options, so it reaches no denied path
+    and no .env (Ring 3 widens only a glob an option in the same command changes, test_command_checks)."""
+    v = gate_tool_call(_dev_policy(), "Bash", {"command": command}, cwd="/workspace", home=HOME)
     assert v.allowed, f"{command!r} cannot reach a denied path as bash expands it: {v.reason}"
 
 

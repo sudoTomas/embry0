@@ -235,17 +235,22 @@ _READS_ENV = [
     "cat ${X:-.env}",
     "cat .e\\" + NL + "nv",
     "read -r f <<< .env; cat $f",
-    # A glob that could match .env under some glob options: dotglob and GLOBIGNORE let a glob match a
-    # leading ., nocaseglob ignores case, and a setting can outlast the command that made it.
-    "cat ?env",
-    "cat *env",
-    "cat *",
-    "shopt -s dotglob; cat *env",
-    "GLOBIGNORE=x; cat *env",
-    "shopt -s nocaseglob; cat .EN[V]",
+    # A glob that starts with a literal . could name .env under the default options: its later parts
+    # are matched case-insensitively, so a repository's own dotfile glob is caught.
     "cat .EN?",
     "cat .En?",
     "cat .[eE]N?",
+    "cat .en[Vv]",
+    "cat .*",
+    "cat ./.*",
+    "cat dir/.*",
+    "cat src/.*",
+    # A glob a glob option in the same command may widen to match a leading . or ignore case.
+    "shopt -s dotglob; cat *env",
+    "GLOBIGNORE=x; cat *env",
+    "shopt -s dotglob; cat *",
+    "shopt -s nocaseglob; cat .EN[V]",
+    "shopt -s nocaseglob; cat .en[Vv]",
     "bash - <<< 'cat .env'",
 ]
 
@@ -266,6 +271,21 @@ _NAMES_ENV = [
     "cat .env.*",
     "cat dir/$(ls)",
     "; ".join(f'for f in src/m{i}.py; do wc -l "$f"; done' for i in range(40)),
+    # Plain globs under the default options: * and ? and [ab] do not match a leading dot, so none
+    # reaches .env. The false positives the first version of this rule caused.
+    "cat ?env",
+    "cat *env",
+    "cat *",
+    "cat src/*",
+    "ls -la *",
+    "wc -l *",
+    "grep -n foo *",
+    "ls dir/*",
+    "du -sh */",
+    "cp templates/* .claude/commands/",
+    "ls ~/*",
+    "cat *.env",
+    "cat [.]env",
 ]
 
 
@@ -303,6 +323,20 @@ def test_a_command_that_reads_env_is_refused(command: str) -> None:
 def test_a_command_that_reads_no_env_file_is_allowed(command: str) -> None:
     v = _ring3(command)
     assert v.allowed, f"{command!r} reads no file named .env; Ring 3 refused it: {v.reason}"
+
+
+@pytest.mark.parametrize("option", ["shopt -s dotglob", "shopt -s nocaseglob", "GLOBIGNORE=x", "shopt -s extglob"])
+def test_a_glob_option_in_the_command_widens_a_plain_glob(option: str) -> None:
+    """``cat *env`` names no .env under the default options, but a glob option in the same command may."""
+    assert _ring3("cat *env").allowed, "a plain *env matches no .env under the default options"
+    v = _ring3(f"{option}; cat *env")
+    assert not v.allowed and "file of secrets" in v.reason, f"{option} may let *env match .env: {v}"
+
+
+def test_a_glob_option_in_one_call_does_not_widen_a_later_commands_glob() -> None:
+    """Glob options do not carry across Bash tool calls (verified on CLI 2.1.316 and 2.1.292), so a
+    later command's plain glob is read with the default options even after an earlier call set one."""
+    assert _ring3("cat *env").allowed, "with no option in this command, *env matches no .env"
 
 
 @pytest.mark.parametrize(
