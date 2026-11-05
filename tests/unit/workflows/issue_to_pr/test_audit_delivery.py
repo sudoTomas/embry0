@@ -11,13 +11,15 @@ from embry0.orchestration.branch_names import job_push_branch
 from embry0.services.context_audit import audit_task
 from embry0.workflows.issue_to_pr import audit_delivery
 from embry0.workflows.issue_to_pr.audit_delivery import (
-    PATCH_PATH,
     deliver_audit_patch,
     open_audit_pr,
     report_findings,
     report_patch,
 )
 from tests.fixtures.sandbox_git_local import readable
+
+#: What the staging fake returns as the staged (drop) path.
+DROP_PATH = "/run/embry0/drop/deadbeef/context-audit.diff"
 
 PATCH = (
     "--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -12,3 +12,3 @@\n ```bash\n-old line\n+new line\n ```\n"
@@ -34,18 +36,24 @@ REPORT = (
 
 class FakeDocker:
     def __init__(self, fail: str | None = None) -> None:
-        self.copied: list[tuple[str, bytes, str]] = []
+        self.staged: list[tuple[bytes, bool]] = []  # (bytes, as_root)
         self.commands: list[list[str]] = []
         self.fail = fail
 
-    def build_exec_cmd(self, container: str, command: list[str], **_kw: Any) -> list[str]:
-        return ["docker", "exec", container, *command]
+    def build_exec_cmd(self, container: str, command: list[str], **kw: Any) -> list[str]:
+        user = ["-u", kw["user"]] if kw.get("user") else []
+        return ["docker", "exec", *user, container, *command]
 
-    async def copy_bytes_into(self, container: str, data: bytes, dst_path: str) -> None:
-        self.copied.append((container, data, dst_path))
+    async def copy_bytes_into(
+        self, *a, **k
+    ):  # the removed API — present only so a pre-change tree reaches an assertion
+        return None
 
-    async def run_cmd(self, cmd: list[str], timeout: int = 0) -> str:
+    async def run_cmd(self, cmd: list[str], timeout: int = 0, stdin_data: bytes | None = None) -> str:
         self.commands.append(cmd)
+        if "python3" in cmd:  # a sandbox_files staging write
+            self.staged.append((stdin_data or b"", cmd[:4] == ["docker", "exec", "-u", "root"]))
+            return DROP_PATH
         if self.fail:
             raise RuntimeError(self.fail)
         return ""
@@ -121,13 +129,12 @@ async def test_the_patch_is_committed_on_the_jobs_own_branch_and_pushed() -> Non
     out = await deliver_audit_patch(state, _config(docker), REPORT)
     branch = job_push_branch(issue_id=None, task=state["task"], job_id=state["job_id"], context=state["context"])
     assert out["branch_name"] == branch, "the one branch the sandbox's git-proxy enrolment lets it push"
-    assert docker.copied == [("C1", PATCH.encode(), PATCH_PATH)]
-    script = readable(docker.commands[0])
-    assert "embry0_git_repo /workspace" in docker.commands[0][-1], (
-        "the workspace is checked before embry0 runs git in it"
-    )
+    assert docker.staged == [(PATCH.encode(), True)], "the patch is staged as root, not copied to an agent path"
+    git_cmd = next(c for c in docker.commands if "bash" in c and "embry0_git_repo" in c[-1])
+    script = readable(git_cmd)
+    assert "embry0_git_repo /workspace" in git_cmd[-1], "the workspace is checked before embry0 runs git in it"
     assert f"git checkout -q -B {branch}" in script
-    assert f"git apply --index {PATCH_PATH}" in script and "--unidiff-zero" in script
+    assert f"git apply --index {DROP_PATH}" in script and "--unidiff-zero" in script
     assert f"git push --no-recurse-submodules -q origin HEAD:refs/heads/{branch}" in script
     assert out["pr_title"] == "docs: correct 2 outdated claims in agent instruction files"
     assert "found 2 outdated claims" in out["developer_summary"]
@@ -156,7 +163,7 @@ async def test_nothing_is_pushed_without_a_patch_or_while_an_earlier_pr_is_open(
     docker = FakeDocker()
     with patch.object(audit_delivery, "logger") as log:
         assert await deliver_audit_patch(_state(**extra), _config(docker), report) == {}
-    assert docker.commands == [] and docker.copied == []
+    assert docker.commands == [] and docker.staged == []
     logged = [c.kwargs.get("reason") for c in log.info.call_args_list + log.warning.call_args_list]
     assert reason in logged, logged
 
@@ -165,7 +172,9 @@ async def test_nothing_is_pushed_without_a_patch_or_while_an_earlier_pr_is_open(
 async def test_a_patch_that_no_longer_applies_opens_nothing_and_fails_nothing() -> None:
     docker = FakeDocker(fail="error: patch failed: CLAUDE.md:12")
     assert await deliver_audit_patch(_state(), _config(docker), REPORT) == {}
-    assert len(docker.commands) == 1
+    # the patch is staged (python3 write) and the git apply fails; nothing more
+    assert [c for c in docker.commands if "bash" in c], "the git step ran and failed"
+    assert docker.staged == [(PATCH.encode(), True)]
 
 
 # ---- the output step asks for it only when the job does ----

@@ -9,12 +9,14 @@ import pytest
 from embry0.orchestration.branch_names import job_push_branch, shared_branch_name
 from embry0.services.area_map import map_task
 from embry0.workflows.issue_to_pr.areas_delivery import (
-    FILE_PATH,
     UNCHANGED,
     deliver_areas_file,
     report_file,
 )
 from tests.fixtures.sandbox_git_local import readable
+
+#: What the staging fake returns as the staged (drop) path.
+DROP_PATH = "/run/embry0/drop/deadbeef/areas.yml"
 
 FILE = """areas:
   - name: Billing
@@ -46,18 +48,19 @@ REPORT = f"""Areas: 2
 
 class FakeDocker:
     def __init__(self, out: str = "", fail: str | None = None) -> None:
-        self.copied: list[tuple[str, bytes, str]] = []
+        self.staged: list[tuple[bytes, bool]] = []  # (bytes, as_root)
         self.commands: list[list[str]] = []
         self.out, self.fail = out, fail
 
-    def build_exec_cmd(self, container: str, command: list[str], **_kw: Any) -> list[str]:
-        return ["docker", "exec", container, *command]
+    def build_exec_cmd(self, container: str, command: list[str], **kw: Any) -> list[str]:
+        user = ["-u", kw["user"]] if kw.get("user") else []
+        return ["docker", "exec", *user, container, *command]
 
-    async def copy_bytes_into(self, container: str, data: bytes, dst_path: str) -> None:
-        self.copied.append((container, data, dst_path))
-
-    async def run_cmd(self, cmd: list[str], timeout: int = 0) -> str:
+    async def run_cmd(self, cmd: list[str], timeout: int = 0, stdin_data: bytes | None = None) -> str:
         self.commands.append(cmd)
+        if "python3" in cmd:  # a sandbox_files staging write
+            self.staged.append((stdin_data or b"", cmd[:4] == ["docker", "exec", "-u", "root"]))
+            return DROP_PATH
         if self.fail:
             raise RuntimeError(self.fail)
         return self.out
@@ -93,12 +96,11 @@ async def test_the_file_is_committed_on_the_job_s_branch_and_the_pr_described():
     state = _state()
     out = await deliver_areas_file(state, _config(docker), REPORT)
     branch = job_push_branch(issue_id=None, task=state["task"], job_id=state["job_id"], context=state["context"])
-    assert docker.copied == [("C1", FILE.encode(), FILE_PATH)]
-    script = readable(docker.commands[0])
-    assert "embry0_git_repo /workspace" in docker.commands[0][-1], (
-        "the workspace is checked before embry0 runs git in it"
-    )
-    assert f"git checkout -q -B {branch}" in script and "cp /tmp/embry0-areas.yml .embry0/areas.yml" in script
+    assert docker.staged == [(FILE.encode(), True)], "the file is staged as root, not copied to an agent path"
+    git_cmd = next(c for c in docker.commands if "bash" in c and "embry0_git_repo" in c[-1])
+    script = readable(git_cmd)
+    assert "embry0_git_repo /workspace" in git_cmd[-1], "the workspace is checked before embry0 runs git in it"
+    assert f"git checkout -q -B {branch}" in script and f"cp {DROP_PATH} .embry0/areas.yml" in script
     assert "git diff --no-ext-diff --no-textconv --cached --quiet" in script and f"HEAD:refs/heads/{branch}" in script
     assert out["branch_name"] == branch
     assert out["pr_title"] == "chore(embry0): map this repository's areas"

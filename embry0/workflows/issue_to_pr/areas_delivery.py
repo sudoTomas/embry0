@@ -22,7 +22,7 @@ from typing import Any
 import structlog
 from langchain_core.runnables import RunnableConfig
 
-from embry0.execution import sandbox_git
+from embry0.execution import sandbox_files, sandbox_git
 from embry0.orchestration.branch_names import job_push_branch
 from embry0.services.areas import AREAS_PATH, parse_areas
 from embry0.workflows.issue_to_pr.audit_delivery import WORKSPACE, open_audit_pr
@@ -31,8 +31,9 @@ logger = structlog.get_logger(__name__)
 
 #: The pipeline template whose output step this is.
 TEMPLATE = "map-areas"
-#: Where the file is written in the sandbox before it is copied into the workspace.
-FILE_PATH = "/tmp/embry0-areas.yml"
+#: The staged file's bare name; it lands in a root-only drop directory the
+#: agent cannot plant into, and the git step copies it into the workspace.
+FILE_NAME = "areas.yml"
 #: What the push prints when the file on the branch already says the same.
 UNCHANGED = "embry0-areas-unchanged"
 
@@ -100,6 +101,11 @@ async def deliver_areas_file(state: dict[str, Any], config: RunnableConfig, repo
     # The workspace is the job's own clone; tracked files go back to its commit
     # first, so only the file lands. A file the branch already has as written
     # commits nothing and opens nothing.
+    try:
+        drop_path = await sandbox_files.put_bytes_for_reader(docker, container, text.encode(), name=FILE_NAME)
+    except Exception as exc:  # noqa: BLE001 - the file stays in the report
+        logger.warning("map_areas_pr_not_pushed", job_id=job_id, branch=branch, error=str(exc)[:300])
+        return {}
     g = sandbox_git.git
     script = " && ".join(
         [
@@ -107,14 +113,13 @@ async def deliver_areas_file(state: dict[str, Any], config: RunnableConfig, repo
             g("reset", "-q", "--hard", "HEAD"),
             g("checkout", "-q", "-B", branch),
             f"mkdir -p {shlex.quote(AREAS_PATH.rsplit('/', 1)[0])}",
-            f"cp {FILE_PATH} {shlex.quote(AREAS_PATH)}",
+            f"cp {shlex.quote(drop_path)} {shlex.quote(AREAS_PATH)}",
             g("add", AREAS_PATH),
             f"if {g('diff', '--cached', '--quiet')}; then echo {UNCHANGED}; else "
             f"{g('commit', '-q', '-m', _TITLE)} && {g('push', '-q', 'origin', 'HEAD:refs/heads/' + branch)}; fi",
         ]
     )
     try:
-        await docker.copy_bytes_into(container, text.encode(), FILE_PATH)
         out = await sandbox_git.run(
             docker,
             container,
@@ -134,6 +139,8 @@ async def deliver_areas_file(state: dict[str, Any], config: RunnableConfig, repo
             refused=refused is not None,
         )
         return {}
+    finally:
+        await sandbox_files.discard_drop(docker, container, drop_path)
     if UNCHANGED in str(out or ""):
         logger.info("map_areas_pr_skipped", job_id=job_id, reason="file unchanged")
         return {}

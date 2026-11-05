@@ -18,7 +18,11 @@ from typing import Any
 
 import structlog
 
+from embry0.execution import sandbox_files
 from embry0.workflows.qa.browser_backends import DEFAULT_BROWSER_BACKEND, VIBIUM
+
+#: A boot screenshot larger than this is refused rather than read out.
+MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024
 
 logger = structlog.get_logger(__name__)
 
@@ -82,23 +86,23 @@ async def take_diagnostic_screenshot(
 
     Returns None on any failure (network, browser crash, missing file).
     """
-    if browser_backend == VIBIUM.name:
-        cmd = ["bash", "-c", _build_vibium_script(frontend_url, sandbox_path)]
-        exec_kwargs: dict[str, Any] = {"env": dict(VIBIUM.env)}  # --no-sandbox for root-in-DinD
-    else:
-        cmd = ["node", "-e", _build_node_script(frontend_url, sandbox_path)]
-        exec_kwargs = {}
     try:
-        await docker.run_cmd(
-            docker.build_exec_cmd(container_id, cmd, **exec_kwargs),
-            timeout=30,
-        )
+        if browser_backend == VIBIUM.name:
+            cmd = ["bash", "-c", _build_vibium_script(frontend_url, sandbox_path)]
+            # --no-sandbox for root-in-DinD
+            exec_cmd = docker.build_exec_cmd(container_id, cmd, env=dict(VIBIUM.env))
+        else:
+            cmd = ["node", "-e", _build_node_script(frontend_url, sandbox_path)]
+            exec_cmd = docker.build_exec_cmd(container_id, cmd)
+        await docker.run_cmd(exec_cmd, timeout=30)
     except Exception as exc:
         logger.warning("diagnostic_screenshot_run_failed", backend=browser_backend, error=str(exc))
         return None
 
     try:
-        result: bytes | None = await docker.copy_bytes_from(container_id, sandbox_path)
+        result: bytes | None = await sandbox_files.read_regular_file(
+            docker, container_id, sandbox_path, limit=MAX_SCREENSHOT_BYTES
+        )
         return result
     except Exception as exc:
         logger.warning("diagnostic_screenshot_copy_failed", error=str(exc))

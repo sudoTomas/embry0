@@ -572,8 +572,9 @@ class SdkAgentExecutor:
         #   ResultMessage.session_id) and emit the in-sandbox path discovered
         #   by claude_cli_session.find_session_file (typically
         #   ~/.claude/projects/<sanitized-cwd>/<id>.jsonl) as ``session_blob_path``.
-        #   The orchestrator-side AgentRunner ``docker cp``s the bytes out
-        #   before the sandbox is destroyed; see embry0/execution/agent_runner.py.
+        #   The orchestrator-side AgentRunner reads the bytes out (as the
+        #   agent, via sandbox_files) before the sandbox is destroyed; see
+        #   embry0/execution/agent_runner.py.
         captured_messages: list[dict[str, Any]] = []
         captured_session_id: str | None = None
 
@@ -1025,9 +1026,9 @@ class SdkAgentExecutor:
 
         # --- Session-state population (EMB-35: mode-agnostic).
         # The CLI writes a session JSONL regardless of auth mode, so capture
-        # session_id + the canonical in-sandbox path for BOTH modes —
-        # AgentRunner.copy_bytes_from() pulls the bytes out before the
-        # sandbox is destroyed, and the next run resumes via ``--session-id``.
+        # session_id + the canonical in-sandbox path for BOTH modes — the
+        # AgentRunner reads the bytes out (as root, refusing a symlink) before
+        # the sandbox is destroyed, and the next run resumes via ``--session-id``.
         # The captured messages list rides along as the replay-fallback data
         # source (used when the blob is missing or oversized).
         # On error we deliberately omit both — there's no useful state to

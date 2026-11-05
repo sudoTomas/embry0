@@ -3,7 +3,8 @@
 The fetch happens on the ORCHESTRATOR, never inside the sandbox: sandbox
 egress is deliberately proxy-mediated, and punching per-URL holes in the
 restricted network would undo that design. The downloaded body is staged
-into the container via ``docker cp`` alongside a provenance note.
+into ``/workspace`` through ``sandbox_files`` (written as root into a
+root-only drop, then copied in as the agent) alongside a provenance note.
 """
 
 from __future__ import annotations
@@ -19,10 +20,26 @@ from urllib.parse import urlparse
 import httpx
 import structlog
 
-from embry0.execution import events
+from embry0.execution import events, sandbox_files
 from embry0.workspace_init.base import HttpFetchError, InitContext
 
 logger = structlog.get_logger(__name__)
+
+
+async def _stage_into_workspace(ctx: InitContext, data: bytes, filename: str) -> None:
+    """Put ``data`` at ``/workspace/<filename>`` without a root copy following a planted link.
+
+    The bytes are written as root into a root-only drop directory (so no path
+    the clone controls is followed), left root-owned and reader-readable, then
+    copied to the workspace **as the agent** (``cp --remove-destination``, which
+    never follows a link at the destination) — the agent writing its own
+    workspace cannot escalate even if the repository committed a symlink there.
+    """
+    drop_path = await sandbox_files.put_bytes_for_reader(ctx.docker, ctx.container_id, data, name=filename)
+    place = sandbox_files.place_as_reader_script(drop_path, f"/workspace/{filename}")
+    await ctx.docker.run_cmd(ctx.docker.build_exec_cmd(ctx.container_id, ["bash", "-c", place]), timeout=15)
+    await sandbox_files.discard_drop(ctx.docker, ctx.container_id, drop_path)
+
 
 _FILENAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 
@@ -91,16 +108,8 @@ class HttpWorkspaceInitializer:
             tmp.close()
 
             filename = _staged_filename(url)
-            await ctx.docker.run_cmd(
-                ctx.docker.build_exec_cmd(ctx.container_id, ["mkdir", "-p", "/workspace"]),
-                timeout=10,
-            )
-            await ctx.docker.copy_into(ctx.container_id, str(tmp_path), f"/workspace/{filename}")
-            await ctx.docker.copy_bytes_into(
-                ctx.container_id,
-                f"{url}\n".encode(),
-                "/workspace/SOURCE_URL.txt",
-            )
+            await _stage_into_workspace(ctx, tmp_path.read_bytes(), filename)
+            await _stage_into_workspace(ctx, f"{url}\n".encode(), "SOURCE_URL.txt")
         except httpx.HTTPError as exc:
             raise HttpFetchError(f"http context fetch failed for {url}: {exc}") from exc
         finally:

@@ -1,14 +1,15 @@
 """AgentRunner.run with ``resume_session`` (Plan C Task 5).
 
 Verifies that when a prior session is supplied:
-- For ``anthropic_api`` mode the messages are dumped to a host tempfile,
-  ``DockerClient.copy_into`` is invoked exactly once with the expected
-  destination path, and ``--session-blob /tmp/.embry0-resume-blob`` is
-  appended to the runner's docker exec command.
-- For ``claude_max`` mode the session bytes are streamed in via
-  ``copy_bytes_into`` and ``--session-id <id>`` is appended.
-- The legacy path (no resume_session) does not call the copy helpers and
-  does not append any --session-* args.
+- For ``anthropic_api`` mode the messages are staged through
+  ``sandbox_files`` (written as root into a root-only drop, owned by the
+  agent) and ``--session-blob <staged path>`` is appended to the runner's
+  docker exec command.
+- For ``claude_max`` mode the session bytes are staged the same way and then
+  copied, as the agent, to the CLI's canonical session path, and
+  ``--session-id <id>`` is appended.
+- The legacy path (no resume_session) stages nothing and appends no
+  --session-* args.
 """
 
 from __future__ import annotations
@@ -20,7 +21,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from embry0.agents.session import AgentSession
-from embry0.execution.agent_runner import RESUME_BLOB_SANDBOX_PATH, AgentRunner
+from embry0.execution.agent_runner import AgentRunner
+
+#: What the staging fake returns for a drop write.
+DROP = "/run/embry0/drop/deadbeef/blob"
 
 
 class _FakeStdout:
@@ -74,18 +78,29 @@ class _EmptyStdout:
 def _make_runner(stream_payload: dict[str, Any]) -> tuple[AgentRunner, AsyncMock, list[list[str]]]:
     """Build an AgentRunner with mocked DockerClient + capture exec command."""
     docker = AsyncMock()
-    docker.copy_into = AsyncMock()
-    docker.copy_bytes_into = AsyncMock()
-    docker.run_cmd = AsyncMock(return_value="")
 
-    # build_exec_cmd is a synchronous method; return a predictable sentinel
-    # list so that assertions on run_cmd.call_args can inspect the payload.
-    def _build_exec_cmd(
-        container: str, command: list[str], workdir: str | None = None, env: dict | None = None
-    ) -> list[str]:
-        return ["docker", "exec", container, *command]
+    # build_exec_cmd is synchronous; echo user so run_cmd can tell a root
+    # staging write from an agent-level placement.
+    def _build_exec_cmd(container: str, command: list[str], **kw: Any) -> list[str]:
+        user = ["-u", kw["user"]] if kw.get("user") else []
+        return ["docker", "exec", *user, container, *command]
 
     docker.build_exec_cmd = MagicMock(side_effect=_build_exec_cmd)
+
+    staged: list[tuple[bytes, bool]] = []  # (bytes, as_root)
+    placed: list[str] = []
+
+    async def _run_cmd(cmd: list[str], timeout: int = 0, stdin_data: bytes | None = None) -> str:
+        if "python3" in cmd:  # a sandbox_files staging write
+            staged.append((stdin_data or b"", cmd[:4] == ["docker", "exec", "-u", "root"]))
+            return DROP
+        if "bash" in cmd:  # the agent-level placement copy
+            placed.append(cmd[-1])
+        return ""
+
+    docker.run_cmd = AsyncMock(side_effect=_run_cmd)
+    docker.staged = staged
+    docker.placed = placed
 
     captured_commands: list[list[str]] = []
 
@@ -100,7 +115,7 @@ def _make_runner(stream_payload: dict[str, Any]) -> tuple[AgentRunner, AsyncMock
 
 @pytest.mark.asyncio
 async def test_resume_session_anthropic_api_copies_blob_and_passes_arg(tmp_path: Any) -> None:
-    """anthropic_api mode: copy_into once with dumped messages JSON, --session-blob arg."""
+    """anthropic_api mode: messages staged for the agent, --session-blob at the staged path."""
     prior_messages = [{"role": "user", "content": "earlier"}, {"role": "assistant", "content": "ok"}]
     session = AgentSession(
         job_id="J1",
@@ -120,38 +135,21 @@ async def test_resume_session_anthropic_api_copies_blob_and_passes_arg(tmp_path:
         }
     )
 
-    # Capture the host-side tempfile path so we can assert its contents
-    # before the runner unlinks it. copy_into is awaited inside the
-    # try-block; we read the file from the side_effect.
-    seen_calls: list[tuple[str, str, list[dict[str, Any]]]] = []
-
-    async def _capture_copy(container: str, src: str, dst: str) -> None:
-        with open(src) as f:
-            seen_calls.append((container, dst, json.load(f)))
-
-    docker.copy_into.side_effect = _capture_copy
-
     result = await runner.run(
         container="sandbox-J1",
         config={"agent_type": "developer", "timeout_seconds": 10},
         resume_session=session,
     )
 
-    # Exactly one copy_into call, no copy_bytes_into.
-    docker.copy_into.assert_awaited_once()
-    docker.copy_bytes_into.assert_not_awaited()
+    # The messages were staged as root (not copied to an agent path); no placement.
+    assert docker.staged == [(json.dumps(prior_messages).encode(), True)]
+    assert docker.placed == []
 
-    assert len(seen_calls) == 1
-    container, dst, dumped = seen_calls[0]
-    assert container == "sandbox-J1"
-    assert dst == RESUME_BLOB_SANDBOX_PATH == "/tmp/.embry0-resume-blob"
-    assert dumped == prior_messages
-
-    # The runner exec command must include --session-blob <path>
+    # The runner exec command points --session-blob at the staged (drop) path.
     assert len(captured_commands) == 1
     cmd = captured_commands[0]
     assert "--session-blob" in cmd
-    assert cmd[cmd.index("--session-blob") + 1] == "/tmp/.embry0-resume-blob"
+    assert cmd[cmd.index("--session-blob") + 1] == DROP
     assert "--session-id" not in cmd
 
     # Successful round-trip — final_result was parsed and returned.
@@ -161,7 +159,7 @@ async def test_resume_session_anthropic_api_copies_blob_and_passes_arg(tmp_path:
 
 @pytest.mark.asyncio
 async def test_resume_session_claude_max_copies_bytes_and_passes_session_id() -> None:
-    """claude_max mode: copy_bytes_into once at the canonical CLI path, --session-id arg."""
+    """claude_max mode: blob staged, then placed at the canonical CLI path as the agent, --session-id arg."""
     blob = b'{"some": "jsonl"}\n'
     session = AgentSession(
         job_id="J2",
@@ -188,18 +186,13 @@ async def test_resume_session_claude_max_copies_bytes_and_passes_session_id() ->
         resume_session=session,
     )
 
-    docker.copy_into.assert_not_awaited()
-
-    # mkdir -p must have been called (and before copy_bytes_into).
-    mkdir_calls = [c for c in docker.run_cmd.call_args_list if "mkdir" in c.args[0]]
-    assert len(mkdir_calls) == 1
-    assert "/home/agent/.claude/projects/-workspace" in mkdir_calls[0].args[0]
-
-    docker.copy_bytes_into.assert_awaited_once_with(
-        "sandbox-J2",
-        blob,
-        "/home/agent/.claude/projects/-workspace/sess-abc.jsonl",
-    )
+    # The blob was staged as root, then placed at the canonical session path
+    # by an agent-level copy (no root copy to an agent-chosen path).
+    assert docker.staged == [(blob, True)]
+    assert len(docker.placed) == 1
+    place = docker.placed[0]
+    assert DROP in place and "/home/agent/.claude/projects/-workspace/sess-abc.jsonl" in place
+    assert "cp " in place and "mkdir -p" in place
 
     cmd = captured_commands[0]
     assert "--session-id" in cmd
@@ -226,8 +219,7 @@ async def test_no_resume_session_is_legacy_no_op() -> None:
         config={"agent_type": "developer", "timeout_seconds": 10},
     )
 
-    docker.copy_into.assert_not_awaited()
-    docker.copy_bytes_into.assert_not_awaited()
+    assert docker.staged == [] and docker.placed == []
 
     cmd = captured_commands[0]
     assert "--session-blob" not in cmd
@@ -265,10 +257,10 @@ async def test_final_result_carries_through_session_fields() -> None:
 # Plan C closeout: post-run session-blob extraction.
 #
 # When the sandbox runner reports session_id + session_blob_path (claude_max
-# / oauth mode), the AgentRunner must ``docker cp`` the JSONL bytes out of
-# the sandbox BEFORE the caller destroys it, and populate AgentOutput.session_blob
-# (bytes) so the upstream AgentSessionsRepository can persist them and the
-# next turn can re-stream them back into a fresh sandbox via copy_bytes_into.
+# / oauth mode), the AgentRunner must read the JSONL bytes out of the sandbox
+# (as root, refusing a symlink) BEFORE the caller destroys it, and populate
+# AgentOutput.session_blob so the upstream AgentSessionsRepository can persist
+# them and the next turn can stage them back into a fresh sandbox.
 # ---------------------------------------------------------------------------
 
 
@@ -289,17 +281,17 @@ async def test_post_run_extracts_session_blob_when_session_id_present() -> None:
     )
 
     expected_bytes = b'{"role":"assistant","content":"hi"}\n'
-    docker.copy_bytes_from = AsyncMock(return_value=expected_bytes)
+    docker.run_cmd_bytes = AsyncMock(return_value=expected_bytes)
 
     result = await runner.run(
         container="sandbox-extract",
         config={"agent_type": "developer", "timeout_seconds": 10},
     )
 
-    docker.copy_bytes_from.assert_awaited_once_with(
-        "sandbox-extract",
-        "/home/agent/.claude/sessions/sess-pull.jsonl",
-    )
+    docker.run_cmd_bytes.assert_awaited_once()
+    read_cmd = docker.run_cmd_bytes.await_args.args[0]
+    assert read_cmd[:4] == ["docker", "exec", "-u", "agent"], "the session file is read as the agent (it owns it)"
+    assert "/home/agent/.claude/sessions/sess-pull.jsonl" in read_cmd
     assert result.session_id == "sess-pull"
     assert result.session_blob == expected_bytes
 
@@ -320,14 +312,14 @@ async def test_post_run_skips_extract_when_session_id_missing() -> None:
         }
     )
 
-    docker.copy_bytes_from = AsyncMock()
+    docker.run_cmd_bytes = AsyncMock()
 
     result = await runner.run(
         container="sandbox-noextract",
         config={"agent_type": "developer", "timeout_seconds": 10},
     )
 
-    docker.copy_bytes_from.assert_not_awaited()
+    docker.run_cmd_bytes.assert_not_awaited()
     assert result.session_blob is None
     assert result.messages == [{"role": "user", "content": "hi"}]
 
@@ -348,24 +340,24 @@ async def test_post_run_extract_failure_is_best_effort() -> None:
         }
     )
 
-    docker.copy_bytes_from = AsyncMock(side_effect=RuntimeError("no such file"))
+    docker.run_cmd_bytes = AsyncMock(side_effect=RuntimeError("no such file"))
 
     result = await runner.run(
         container="sandbox-fail-extract",
         config={"agent_type": "developer", "timeout_seconds": 10},
     )
 
-    docker.copy_bytes_from.assert_awaited_once()
+    docker.run_cmd_bytes.assert_awaited_once()
     # Run completes, session metadata still threaded through.
     assert result.is_error is False
     assert result.session_id == "sess-gone"
-    # blob is None because copy_bytes_from raised — best-effort.
+    # blob is None because the read raised — best-effort.
     assert result.session_blob is None
 
 
 @pytest.mark.asyncio
 async def test_post_run_skips_extract_when_errored_run_has_no_session_fields() -> None:
-    """Ordinary error: the executor omits session fields, so no docker cp."""
+    """Ordinary error: the executor omits session fields, so nothing is read out."""
     runner, docker, _captured = _make_runner(
         {
             "agent_type": "developer",
@@ -378,14 +370,14 @@ async def test_post_run_skips_extract_when_errored_run_has_no_session_fields() -
         }
     )
 
-    docker.copy_bytes_from = AsyncMock()
+    docker.run_cmd_bytes = AsyncMock()
 
     result = await runner.run(
         container="sandbox-errored",
         config={"agent_type": "developer", "timeout_seconds": 10},
     )
 
-    docker.copy_bytes_from.assert_not_awaited()
+    docker.run_cmd_bytes.assert_not_awaited()
     assert result.is_error is True
     assert result.session_blob is None
 
@@ -410,14 +402,14 @@ async def test_post_run_extracts_when_errored_run_reports_session_fields() -> No
         }
     )
 
-    docker.copy_bytes_from = AsyncMock(return_value=b"jsonl-bytes")
+    docker.run_cmd_bytes = AsyncMock(return_value=b"jsonl-bytes")
 
     result = await runner.run(
         container="sandbox-capped",
         config={"agent_type": "review", "timeout_seconds": 10},
     )
 
-    docker.copy_bytes_from.assert_awaited_once()
+    docker.run_cmd_bytes.assert_awaited_once()
     assert result.is_error is True
     assert result.session_id == "sess-cap"
     assert result.session_blob == b"jsonl-bytes"

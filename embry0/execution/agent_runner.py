@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import tempfile
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -37,10 +35,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-
-# Sandbox-side path where the orchestrator stages the prior message list
-# for the text-replay fallback. Tmpfs-backed and disposed with the sandbox.
-RESUME_BLOB_SANDBOX_PATH = "/tmp/.embry0-resume-blob"
 
 # Sandbox-side cwd for agent processes. Pinned to /workspace via the
 # DockerClient `-w` flag — used by canonical_session_path_for to
@@ -91,8 +85,8 @@ class AgentOutput:
     #   ``session_blob_path`` is the in-sandbox path to the session JSONL
     #   file (for serialization through the runner's stdout final_result),
     #   and ``session_blob`` carries the actual bytes after the orchestrator
-    #   has done a ``docker cp`` to pull them out of the sandbox before it
-    #   is destroyed. ``session_blob`` is what gets persisted to the
+    #   has read them out of the sandbox (as the agent, via sandbox_files)
+    #   before it is destroyed. ``session_blob`` is what gets persisted to the
     #   ``agent_sessions`` table; ``session_blob_path`` is an in-sandbox
     #   pointer that is meaningless once the container is gone.
     messages: list[dict[str, Any]] | None = None
@@ -216,7 +210,7 @@ class AgentRunner:
         """Execute an agent inside the sandbox and return the result.
 
         ``resume_session`` (Plan C Task 5) carries prior conversation state.
-        When non-None it is staged into the sandbox via ``docker cp`` and
+        When non-None it is staged into the sandbox through sandbox_files and
         the runner is told via CLI args (``--session-blob`` / ``--session-id``)
         where to find it. ``None`` is the legacy path — no copy, no extra args.
         """
@@ -454,8 +448,8 @@ class AgentRunner:
                 )
                 # Plan C closeout: claude_max mode persists the CLI's
                 # JSONL session file. The file lives inside the sandbox
-                # at ``session_blob_path``; we must ``docker cp`` the
-                # bytes out BEFORE the caller destroys the sandbox.
+                # at ``session_blob_path``; we read the bytes out (as root,
+                # refusing a symlink) BEFORE the caller destroys the sandbox.
                 # Best-effort — a missing file (race / wrong path) must
                 # not fail the agent run; the persist call upstream
                 # tolerates ``session_blob is None`` and just won't
@@ -465,14 +459,24 @@ class AgentRunner:
                 # worth keeping — it only sets session_blob_path when it
                 # is (turn-cap deaths, for the decide-now recovery).
                 if output.session_id and output.session_blob_path:
+                    # Local import: agent_runner is copied into the sandbox image, which
+                    # does not carry sandbox_files; this is an orchestrator-only path.
+                    from embry0.execution import sandbox_files
+
                     try:
-                        output.session_blob = await self._docker.copy_bytes_from(container, output.session_blob_path)
-                    except Exception:
+                        output.session_blob = await sandbox_files.read_regular_file(
+                            self._docker,
+                            container,
+                            output.session_blob_path,
+                            limit=MAX_RESUME_BLOB_BYTES,
+                        )
+                    except Exception as exc:
                         logger.warning(
                             "agent_runner_session_blob_copy_failed",
                             container=container,
                             session_id=output.session_id,
                             session_blob_path=output.session_blob_path,
+                            reason=getattr(exc, "reason", None),
                             exc_info=True,
                         )
                 return output
@@ -581,16 +585,26 @@ class AgentRunner:
         either auth mode):
 
         1. ``session_id`` + ``session_blob`` (within :data:`MAX_RESUME_BLOB_BYTES`)
-           → stream the JSONL bytes to the CLI's canonical session path and
-           return ``["--session-id", <id>]``; the executor sets
-           ``options.resume`` and the CLI reloads the full conversation.
-        2. ``messages`` → dump to a host tempfile, ``docker cp`` to
-           ``RESUME_BLOB_SANDBOX_PATH``, return ``["--session-blob", <path>]``;
-           the executor prepends a bounded text-transcript replay.
+           → stage the JSONL bytes for the agent and copy them, as the agent,
+           to the CLI's canonical session path; return ``["--session-id", <id>]``,
+           so the executor sets ``options.resume`` and the CLI reloads the
+           full conversation.
+        2. ``messages`` → stage the dumped JSON for the agent and return
+           ``["--session-blob", <staged path>]``; the executor reads it as the
+           agent and prepends a bounded text-transcript replay.
         3. Neither (or ``resume_session is None``) → ``[]``, fresh run.
+
+        The bytes are staged through ``sandbox_files``: written as root into a
+        root-only drop directory the agent cannot plant into, owned by the
+        agent. Case 1 then lands the file at the agent-owned session path with
+        an agent-level copy, which cannot escalate even if the agent linked it.
         """
         if resume_session is None:
             return []
+
+        # Local import: agent_runner is copied into the sandbox image, which does not
+        # carry sandbox_files; staging a resume is orchestrator-only.
+        from embry0.execution import sandbox_files
 
         if resume_session.session_blob and resume_session.session_id:
             if len(resume_session.session_blob) > MAX_RESUME_BLOB_BYTES:
@@ -607,23 +621,20 @@ class AgentRunner:
                     session_id=resume_session.session_id,
                     project_cwd=SANDBOX_PROJECT_CWD,
                 )
-                # docker cp does not auto-mkdir parent — ensure it exists first.
-                mkdir_cmd = self._docker.build_exec_cmd(container, ["mkdir", "-p", str(sandbox_target.parent)])
-                await self._docker.run_cmd(mkdir_cmd, timeout=10)
-                await self._docker.copy_bytes_into(container, resume_session.session_blob, str(sandbox_target))
+                drop_path = await sandbox_files.put_bytes_for_reader(
+                    self._docker, container, resume_session.session_blob, name="session.jsonl"
+                )
+                # Land it at the agent-owned session path as the agent (not root):
+                # following a link the agent planted only reaches where it may write.
+                place = sandbox_files.place_as_reader_script(drop_path, str(sandbox_target))
+                await self._docker.run_cmd(self._docker.build_exec_cmd(container, ["bash", "-c", place]), timeout=10)
+                await sandbox_files.discard_drop(self._docker, container, drop_path)
                 return ["--session-id", resume_session.session_id]
 
         if resume_session.messages:
-            fd, tmp_path = tempfile.mkstemp(prefix="embry0-resume-", suffix=".json")
-            try:
-                with os.fdopen(fd, "w") as f:
-                    json.dump(resume_session.messages, f)
-                await self._docker.copy_into(container, tmp_path, RESUME_BLOB_SANDBOX_PATH)
-            finally:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-            return ["--session-blob", RESUME_BLOB_SANDBOX_PATH]
+            drop_path = await sandbox_files.put_bytes_for_reader(
+                self._docker, container, json.dumps(resume_session.messages).encode(), name="resume-blob.json"
+            )
+            return ["--session-blob", drop_path]
 
         return []

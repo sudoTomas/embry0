@@ -28,14 +28,15 @@ from typing import Any
 import structlog
 from langchain_core.runnables import RunnableConfig
 
-from embry0.execution import sandbox_git
+from embry0.execution import sandbox_files, sandbox_git
 from embry0.orchestration.branch_names import job_push_branch, shared_branch_name
 from embry0.services.context_audit import report_counts
 
 logger = structlog.get_logger(__name__)
 
-#: Where the patch is written in the sandbox before it is applied.
-PATCH_PATH = "/tmp/context-audit.diff"
+#: The staged patch's bare name; it lands in a root-only drop directory the
+#: agent cannot plant into, and the git step applies it from there.
+PATCH_NAME = "context-audit.diff"
 
 #: The workspace the job's repository is cloned into.
 WORKSPACE = "/workspace"
@@ -139,19 +140,23 @@ async def deliver_audit_patch(state: dict[str, Any], config: RunnableConfig, rep
     # so this only undoes what an agent should not have left); the untracked
     # deliverables directory stays. A zero-context hunk, which the auditor
     # emits for a one-line change, needs --unidiff-zero.
+    try:
+        patch_path = await sandbox_files.put_bytes_for_reader(docker, container, patch.encode(), name=PATCH_NAME)
+    except Exception as exc:  # noqa: BLE001 - the findings stay in the report
+        logger.warning("context_audit_pr_not_pushed", job_id=job_id, branch=branch, error=str(exc)[:300])
+        return {}
     g = sandbox_git.git
     script = " && ".join(
         [
             "set -e",
             g("reset", "-q", "--hard", "HEAD"),
             g("checkout", "-q", "-B", branch),
-            f"({g('apply', '--index', PATCH_PATH)} 2>/dev/null || {g('apply', '--index', '--unidiff-zero', PATCH_PATH)})",
+            f"({g('apply', '--index', patch_path)} 2>/dev/null || {g('apply', '--index', '--unidiff-zero', patch_path)})",
             g("commit", "-q", "-m", message),
             g("push", "-q", "origin", "HEAD:refs/heads/" + branch),
         ]
     )
     try:
-        await docker.copy_bytes_into(container, patch.encode(), PATCH_PATH)
         await sandbox_git.run(
             docker,
             container,
@@ -171,6 +176,8 @@ async def deliver_audit_patch(state: dict[str, Any], config: RunnableConfig, rep
             refused=refused is not None,
         )
         return {}
+    finally:
+        await sandbox_files.discard_drop(docker, container, patch_path)
     logger.info("context_audit_pr_pushed", job_id=job_id, branch=branch, stale=stale)
     return {
         "branch_name": branch,

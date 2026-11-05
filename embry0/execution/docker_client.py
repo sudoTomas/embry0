@@ -124,6 +124,16 @@ class ExecStdinTimeoutError(RuntimeError):
     """stream_exec's command never read its stdin payload (a wedged exec)."""
 
 
+class OutputTooLargeError(RuntimeError):
+    """run_cmd_bytes' command wrote more than its byte cap to stdout; the command was killed."""
+
+
+#: How much run_cmd_bytes asks the pipe for at a time.
+_READ_CHUNK = 64 * 1024
+#: How much of a command's stderr run_cmd_bytes keeps (the rest is drained and dropped).
+_STDERR_KEEP = 64 * 1024
+
+
 class DockerClient:
     """Wraps Docker CLI commands for DinD environments."""
 
@@ -490,6 +500,96 @@ class DockerClient:
 
         return stdout.decode().strip()
 
+    async def run_cmd_bytes(self, cmd: list[str], timeout: int = 60, *, max_bytes: int | None = None) -> bytes:
+        """Execute a Docker command and return its stdout as raw bytes, never buffering past ``max_bytes``.
+
+        Like :meth:`run_cmd` but it does not decode or strip — for output that
+        is a file's contents or a NUL-delimited listing
+        (``sandbox_files.read_regular_file``, the deliverables listing). The
+        pipe is read in chunks and never asked for more than ``max_bytes + 1``
+        bytes in total, so whatever a process in the sandbox writes into it,
+        the orchestrator holds at most that much: past the cap the command is
+        killed and :class:`OutputTooLargeError` raised. stderr keeps its first
+        64 KiB. Raises RuntimeError on non-zero exit, TimeoutError on timeout.
+        """
+        scrubbed = _scrub_cmd_for_log(cmd)
+        logger.debug("docker_cmd_bytes", cmd=scrubbed, max_bytes=max_bytes)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_pipe, stderr_pipe = proc.stdout, proc.stderr
+        assert stdout_pipe is not None and stderr_pipe is not None
+
+        async def read_stdout() -> bytes:
+            buf = bytearray()
+            while True:
+                want = _READ_CHUNK if max_bytes is None else min(_READ_CHUNK, max_bytes + 1 - len(buf))
+                chunk = await stdout_pipe.read(want)
+                if not chunk:
+                    return bytes(buf)
+                buf += chunk
+                if max_bytes is not None and len(buf) > max_bytes:
+                    raise OutputTooLargeError(f"command output passed its {max_bytes}-byte cap")
+
+        async def read_stderr() -> bytes:
+            kept = bytearray()
+            while True:
+                chunk = await stderr_pipe.read(_READ_CHUNK)
+                if not chunk:
+                    return bytes(kept)
+                if len(kept) < _STDERR_KEEP:
+                    kept += chunk[: _STDERR_KEEP - len(kept)]
+
+        out_task = asyncio.ensure_future(read_stdout())
+        err_task = asyncio.ensure_future(read_stderr())
+        try:
+            async with asyncio.timeout(timeout):
+                stdout = await out_task
+                stderr = await err_task
+                await proc.wait()
+        except OutputTooLargeError:
+            await self._abandon_proc(proc, (out_task, err_task), scrubbed)
+            logger.warning("docker_cmd_bytes_too_large", cmd=scrubbed, max_bytes=max_bytes)
+            raise
+        except TimeoutError:
+            await self._abandon_proc(proc, (out_task, err_task), scrubbed)
+            logger.warning("docker_cmd_bytes_timeout", cmd=scrubbed, timeout=timeout)
+            raise TimeoutError(f"docker command timed out after {timeout}s") from None
+        except BaseException:
+            await self._abandon_proc(proc, (out_task, err_task), scrubbed)
+            raise
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace").strip() or f"exit code {proc.returncode}"
+            logger.error("docker_cmd_bytes_failed", cmd=scrubbed, stderr=err[:2000], returncode=proc.returncode)
+            raise RuntimeError(f"Docker command failed: {err}")
+        return stdout
+
+    @staticmethod
+    async def _abandon_proc(
+        proc: asyncio.subprocess.Process, tasks: tuple[asyncio.Future[bytes], ...], scrubbed: list[str]
+    ) -> None:
+        """Kill ``proc``, stop its pipe readers, and reap it (run_cmd_bytes' failure path)."""
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except TimeoutError:
+            logger.error("docker_cmd_bytes_kill_stuck", cmd=scrubbed, pid=proc.pid)
+        # The abandoned stdout reader was paused with data still in the pipe, so
+        # the pipe never reaches EOF on its own: close the transport now, while
+        # the loop runs, instead of leaving it to the garbage collector.
+        transport = getattr(proc, "_transport", None)
+        if transport is not None:
+            transport.close()
+
     async def stream_exec(
         self,
         container: str,
@@ -584,67 +684,8 @@ class DockerClient:
         await self.run_cmd(cmd, timeout=120)
         return image_tag
 
-    async def copy_into(self, container: str, src_path: str, dst_path: str) -> None:
-        """Copy a host-side file into ``container`` at ``dst_path``.
-
-        Thin wrapper around ``docker cp <src> <container>:<dst>``. Used by
-        the orchestrator to inject session blobs / config files into a
-        running sandbox before invoking the runner.
-
-        Raises RuntimeError on docker exec failure.
-        """
-        cmd = self._build_base_cmd()
-        cmd.extend(["cp", src_path, f"{container}:{dst_path}"])
-        await self.run_cmd(cmd, timeout=30)
-
-    async def copy_bytes_into(self, container: str, data: bytes, dst_path: str) -> None:
-        """Copy in-memory ``data`` into ``container`` at ``dst_path``.
-
-        Writes the bytes to a host-side temp file, ``docker cp``s it in,
-        then unlinks the temp file. Convenience wrapper for callers that
-        already hold the bytes in memory (e.g. session blobs read out of
-        the AgentSessionsRepository).
-
-        Raises RuntimeError on docker exec failure.
-        """
-        import os
-        import tempfile
-
-        fd, tmp_path = tempfile.mkstemp(prefix="embry0-copy-bytes-")
-        try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(data)
-            await self.copy_into(container, tmp_path, dst_path)
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-
-    async def copy_bytes_from(self, container: str, src_path: str) -> bytes:
-        """Read ``src_path`` from inside ``container`` and return its bytes.
-
-        Mirror of ``copy_bytes_into``: ``docker cp``s the in-container file
-        to a host-side tempfile, reads it, and returns the bytes. Used by
-        the AgentRunner to extract the Claude CLI session JSONL out of the
-        sandbox after a claude_max-mode run, before the sandbox is destroyed.
-
-        Raises RuntimeError on docker exec failure (e.g. file does not
-        exist inside the container).
-        """
-        import os
-        import tempfile
-
-        fd, tmp_path = tempfile.mkstemp(prefix="embry0-copy-bytes-from-")
-        os.close(fd)
-        try:
-            cmd = self._build_base_cmd()
-            cmd.extend(["cp", f"{container}:{src_path}", tmp_path])
-            await self.run_cmd(cmd, timeout=30)
-            with open(tmp_path, "rb") as f:
-                return f.read()
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+    # Moving bytes across the sandbox boundary goes through
+    # embry0.execution.sandbox_files, never ``docker cp``: the daemon copies as
+    # root and follows a symlink at the path, so a copy-in could overwrite a
+    # root file and a copy-out could read one. See that module and its guard
+    # test (tests/unit/execution/test_sandbox_files_guard.py).

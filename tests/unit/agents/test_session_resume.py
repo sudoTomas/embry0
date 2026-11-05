@@ -254,7 +254,28 @@ async def test_executor_session_id_resume_wins_over_messages(tmp_path: Any, monk
 
 def _runner() -> AgentRunner:
     docker = AsyncMock()
-    docker.build_exec_cmd = MagicMock(return_value=["docker", "exec", "c", "true"])
+    staged: list[bool] = []  # one per staging write; the bool is "written as root"
+    placed: list[str] = []
+
+    def _build(cid, cmd, **kw):
+        user = ["-u", kw["user"]] if kw.get("user") else []
+        return ["docker", "exec", *user, cid, *cmd]
+
+    async def _run(cmd, timeout=0, stdin_data=None):
+        if "python3" in cmd:
+            staged.append(cmd[:4] == ["docker", "exec", "-u", "root"])
+            return "/run/embry0/drop/deadbeef/session.jsonl"
+        if "bash" in cmd:
+            assert "-u" not in cmd or "root" not in cmd, "the place step runs as the agent, never as root"
+            placed.append(cmd[-1])
+        if "rm" in cmd:  # discard_drop (root) removes the drop afterwards
+            return ""
+        return ""
+
+    docker.build_exec_cmd = MagicMock(side_effect=_build)
+    docker.run_cmd = AsyncMock(side_effect=_run)
+    docker.staged = staged
+    docker.placed = placed
     return AgentRunner(sandbox_manager=AsyncMock(), docker=docker)
 
 
@@ -277,7 +298,8 @@ async def test_stage_blob_wins_in_any_mode() -> None:
     )
     args = await runner._stage_resume_session("c", sess)
     assert args == ["--session-id", "sess-1"]
-    runner._docker.copy_bytes_into.assert_awaited_once()
+    assert runner._docker.staged == [True], "the blob is staged as root"
+    assert len(runner._docker.placed) == 1 and "sess-1.jsonl" in runner._docker.placed[0]
 
 
 @pytest.mark.asyncio
@@ -285,8 +307,8 @@ async def test_stage_messages_fallback_when_no_blob() -> None:
     runner = _runner()
     sess = _session(mode="claude_max", messages=[{"role": "user", "content": "x"}])
     args = await runner._stage_resume_session("c", sess)
-    assert args[0] == "--session-blob"
-    runner._docker.copy_into.assert_awaited_once()
+    assert args[0] == "--session-blob" and args[1] == "/run/embry0/drop/deadbeef/session.jsonl"
+    assert runner._docker.staged == [True] and runner._docker.placed == []
 
 
 @pytest.mark.asyncio
@@ -299,7 +321,8 @@ async def test_stage_oversized_blob_falls_to_messages() -> None:
     )
     args = await runner._stage_resume_session("c", sess)
     assert args[0] == "--session-blob"
-    runner._docker.copy_bytes_into.assert_not_awaited()
+    # oversized blob is skipped; only the messages fallback is staged (one write, no placement)
+    assert runner._docker.staged == [True] and runner._docker.placed == []
 
 
 @pytest.mark.asyncio
