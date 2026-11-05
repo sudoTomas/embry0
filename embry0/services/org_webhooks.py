@@ -16,12 +16,17 @@ from typing import Any, Protocol
 from urllib.parse import quote, urlsplit
 
 ORG_HOOK_EVENTS = ("issues", "issue_comment", "pull_request", "workflow_run")
+#: The events intake starts work from (the trigger label, answers, pull requests);
+#: a hook that sends fewer delivers too little to stand in for a repository hook.
+INTAKE_EVENTS = ("issues", "issue_comment", "pull_request")
 WEBHOOK_PATH = "/api/v1/webhook"
 
 
-class _Client(Protocol):
+class _Reader(Protocol):
     async def get(self, path: str, **kwargs: Any) -> Any: ...
 
+
+class _Client(_Reader, Protocol):
     async def post(self, path: str, **kwargs: Any) -> Any: ...
 
 
@@ -92,7 +97,7 @@ def _hook(body: Any) -> OrgHook | None:
     return OrgHook(id=hook_id, url=url, events=events, active=bool(body.get("active", True)))
 
 
-async def list_org_hooks(client: _Client, owner: str) -> list[OrgHook] | None:
+async def list_org_hooks(client: _Reader, owner: str) -> list[OrgHook] | None:
     """Every webhook on the organization, or ``None`` when the credential
     cannot see them (GitHub answers 404 to a token without hook administration)."""
     resp = await client.get(f"/orgs/{quote(owner, safe='')}/hooks", params={"per_page": 100})
@@ -102,6 +107,11 @@ async def list_org_hooks(client: _Client, owner: str) -> list[OrgHook] | None:
     if not isinstance(body, list):
         return None
     return [hook for hook in (_hook(item) for item in body) if hook is not None]
+
+
+def sends_intake_events(hook: OrgHook) -> bool:
+    """Whether ``hook`` sends every event intake reads, GitHub's ``*`` included."""
+    return "*" in hook.events or set(INTAKE_EVENTS) <= set(hook.events)
 
 
 def hook_pointing_at(hooks: list[OrgHook], target: str) -> OrgHook | None:

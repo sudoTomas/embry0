@@ -31,7 +31,7 @@ from embry0.api.v1.organizations import _facts_repo, _repo, _token_for, start_di
 from embry0.api.v1.run_with import checked_run_with
 from embry0.api.v1.watcher_stacks import save_stack
 from embry0.audit.helpers import emit_audit
-from embry0.services import org_actions
+from embry0.services import org_actions, org_discovery
 from embry0.services.org_actions import ActionContext
 from embry0.services.organizations import Organization
 from embry0.services.watcher_stacks import WatcherStack
@@ -149,8 +149,12 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
     forge_client = None
     # The owner's token is fetched only when a hook could actually be made:
     # an action that is skipped for every repository needs no credential.
+    org_hook = None
     if body.action == "hook" and org.forge == "github" and hooks_allowed and webhook_url and webhook_secret:
         forge_client = await _forge_client(request, org.owner, org.forge, org.credential_id)
+        # Read once for the whole run: the organization's own webhook delivers for every repository (ADR 0012).
+        origin = org_discovery.public_origin(str(getattr(config, "webhook_public_url", "") or ""))
+        org_hook = await org_discovery.organization_hook_state(forge_client, org.owner, (origin,) if origin else ())
     stacks_repo = getattr(st, "watcher_stacks_repo", None)
     ctx = ActionContext(
         owner=org.owner,
@@ -165,6 +169,7 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
         hooks_allowed=hooks_allowed,
         webhook_url=webhook_url,
         webhook_secret=webhook_secret,
+        org_hook=org_hook,
         force=body.force,
         refusal=partial(_refusal, request, f"run the {body.action} action", dry_run=body.dry_run),
     )

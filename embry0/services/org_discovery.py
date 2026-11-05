@@ -18,12 +18,13 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import quote, urlsplit
 
 import structlog
 
 from embry0.execution.forge_client import Listing
+from embry0.services.org_webhooks import hook_pointing_at, hook_target, list_org_hooks, sends_intake_events
 
 logger = structlog.get_logger(__name__)
 
@@ -187,6 +188,40 @@ def hook_state(hooks: list[Any], origins: tuple[str, ...]) -> bool | None:
     return hook_points_here(hooks, origins)
 
 
+#: What the owner's organization webhook does for this deployment: ``delivers`` (active, at the
+#: webhook target, sending the intake events), ``inert`` (at the target, but switched off or
+#: sending too little) or ``absent`` (none at the target).
+OrgHookState = Literal["delivers", "inert", "absent"]
+
+
+async def organization_hook_state(client: _Client, owner: str, origins: tuple[str, ...]) -> OrgHookState | None:
+    """What the organization's own webhook does for this deployment (ADR 0012).
+
+    GitHub sends an organization webhook every event of every repository
+    under the owner, so one that delivers here stands in for a hook on each
+    of them. It must post to the webhook target itself
+    (``<origin>/api/v1/webhook``, the URL the install creates and the
+    webhook routes compare), be active, and send the events intake reads.
+    None when there is no origin to compare against or the hooks cannot be
+    read, an error reading them included: unknown is not no, and each
+    repository's own hooks then decide alone.
+    """
+    targets = [hook_target(origin) for origin in origins if origin]
+    if not targets:
+        return None
+    try:
+        hooks = await list_org_hooks(client, owner)
+    except Exception as exc:  # noqa: BLE001 - an unreadable answer is unknown, never a failed run or call
+        logger.warning("org_hooks_unreadable", owner=owner, error=type(exc).__name__)
+        return None
+    if hooks is None:
+        return None
+    here = [hook for target in targets if (hook := hook_pointing_at(hooks, target)) is not None]
+    if not here:
+        return "absent"
+    return "delivers" if any(hook.active and sends_intake_events(hook) for hook in here) else "inert"
+
+
 def hook_hosts(hooks: list[Any]) -> list[str]:
     """The hostnames a repository's hooks deliver to, never the full URL
     (a hook URL can carry a token in its query)."""
@@ -219,12 +254,19 @@ def ui_evidence(
 
 
 async def scan_repository(
-    client: _Client, owner: str, record: dict[str, Any], *, hook_origins: tuple[str, ...]
+    client: _Client,
+    owner: str,
+    record: dict[str, Any],
+    *,
+    hook_origins: tuple[str, ...],
+    org_hook: OrgHookState | None = None,
 ) -> RepoFacts:
     """Facts for one repository from its forge record plus a few file reads.
 
     ``hook_origins`` is the deployment's WEBHOOK_PUBLIC_URL, or empty when it
-    is unset; see :func:`hook_state`.
+    is unset; see :func:`hook_state`. ``org_hook`` is the owner's
+    :func:`organization_hook_state`: when it delivers, the repository's events
+    reach this deployment whatever its own hooks are, so its hook is present.
     """
     full = str(record.get("full_name") or f"{owner}/{record.get('name', '')}")
     facts = RepoFacts(
@@ -304,6 +346,9 @@ async def scan_repository(
         detail["hook_count"] = None
         detail["hook_hosts"] = []
         detail["hook_present"] = None
+    detail["org_hook"] = org_hook
+    if org_hook == "delivers":
+        detail["hook_present"] = True
     facts.facts = detail
     return facts
 
@@ -371,9 +416,11 @@ async def discover(
     listing = await list_repositories(client, owner, owner_kind)
     records = listing.items
     total = len(records)
+    # Only an organization carries hooks of its own; a user's repositories have theirs alone.
+    org_hook = await organization_hook_state(client, owner, hook_origins) if owner_kind == "organization" else None
     out: list[RepoFacts] = []
     for index, record in enumerate(records, start=1):
-        facts = await scan_repository(client, owner, record, hook_origins=hook_origins)
+        facts = await scan_repository(client, owner, record, hook_origins=hook_origins, org_hook=org_hook)
         if not facts.archived:
             facts.facts.update(await embry0_state(facts.repo))
         out.append(facts)

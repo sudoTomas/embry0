@@ -281,6 +281,50 @@ async def test_install_creates_the_hook_once_and_then_answers_already(app: Any, 
     assert app.state.tokens == ["env-token", "env-token"]
 
 
+class FakeFacts:
+    def __init__(self, running: dict[str, Any] | None = None) -> None:
+        self.running = running
+
+    async def running_run(self, owner: str) -> dict[str, Any] | None:
+        return self.running
+
+
+@pytest.mark.asyncio
+async def test_a_new_hook_starts_a_rediscovery_so_the_needs_follow(
+    app: Any, forge: FakeForge, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The needs list reads the newest discovery run: without one after the install it keeps asking for a
+    webhook per repository that the organization's now stands in for."""
+    started: list[str] = []
+
+    async def fake_start(request: Any, org: Organization, *, actor: str | None = None) -> dict[str, Any]:
+        started.append(org.owner)
+        return {"id": f"odr-{len(started)}"}
+
+    monkeypatch.setattr(organizations_api, "start_discovery", fake_start)
+    app.state.org_repos_repo = FakeFacts()
+    async with _client(app) as client:
+        first = await client.post("/api/v1/orgs/acme/webhook")
+        second = await client.post("/api/v1/orgs/acme/webhook")
+        app.state.org_repos_repo = FakeFacts(running={"id": "odr-busy"})
+        forge.hooks.clear()
+        busy = await client.post("/api/v1/orgs/acme/webhook")
+    assert first.json()["outcome"] == "done" and first.json()["rediscovery"] == "odr-1"
+    assert second.json()["outcome"] == "already" and second.json()["rediscovery"] is None
+    assert busy.json()["outcome"] == "done" and busy.json()["rediscovery"] is None, "one run per owner at a time"
+    assert started == ["acme"]
+
+
+@pytest.mark.asyncio
+async def test_a_rediscovery_that_cannot_start_does_not_hide_the_install(app: Any, forge: FakeForge) -> None:
+    """No organization storage here: the install is still reported as done."""
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/webhook")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["outcome"] == "done" and resp.json()["rediscovery"] is None
+    assert len(forge.posts) == 1
+
+
 @pytest.mark.asyncio
 async def test_the_response_never_carries_the_secret(app: Any) -> None:
     async with _client(app) as client:
