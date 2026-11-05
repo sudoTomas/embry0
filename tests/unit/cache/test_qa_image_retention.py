@@ -431,7 +431,12 @@ async def test_an_unused_per_repo_volume_goes_and_its_state_row_with_it() -> Non
 
     assert runtime.removed_volumes == [_current("acme/widgets")]
     assert state.deleted == [_current("acme/widgets")]
-    assert runtime.volume_filters == [[f"embry0.instance={INSTANCE}", "embry0.volume_scope=per-repo"]]
+    # The sweep lists both retained scopes: the per-repo warm volumes and the
+    # per-repository Maven caches.
+    assert runtime.volume_filters == [
+        [f"embry0.instance={INSTANCE}", "embry0.volume_scope=per-repo"],
+        [f"embry0.instance={INSTANCE}", "embry0.volume_scope=maven"],
+    ]
     assert result.counts()["volume_bytes"] == 500
 
 
@@ -565,3 +570,72 @@ async def test_unset_means_nothing_is_read_or_removed() -> None:
     assert not sweep.enabled
     assert runtime.removed_refs == [] and runtime.removed_volumes == [] and runtime.volume_filters == []
     assert result.counts()["images"] == 0
+
+
+# --- per-repository Maven caches (embry0.volume_scope=maven) --------------------------
+
+
+def _maven_volume(name: str, repo: str, created: datetime, *, instance: str | None = INSTANCE) -> VolumeSummary:
+    return VolumeSummary(
+        name=name, labels=volume_labels("maven", repo, instance_id=instance), created_at=created.isoformat()
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unused_maven_cache_is_removed() -> None:
+    """A Maven cache has no warmth row, so its age is its creation time."""
+    runtime = FakeRuntime([], volumes=[_maven_volume("embry0-maven-vol-abc", "acme/widgets", _ago(100))])
+
+    result = await _sweep(runtime, []).run_once(now=NOW)
+
+    assert runtime.removed_volumes == ["embry0-maven-vol-abc"], (
+        f"an unused Maven cache older than the retention must be removed; removed {runtime.removed_volumes}"
+    )
+    assert result.counts()["volumes"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_maven_cache_is_aged_from_its_creation_not_from_its_repo_s_qa_warmth() -> None:
+    """A Maven cache has no warmth row: a recent QA warm of its repository's per-repo volume must
+    not keep it, and a cache younger than the retention stays."""
+    runtime = FakeRuntime(
+        [],
+        volumes=[
+            _maven_volume("embry0-maven-vol-old", "acme/widgets", _ago(100)),
+            _maven_volume("embry0-maven-vol-new", "acme/fresh", _ago(5)),
+        ],
+    )
+    state = FakeStateRepo({"acme/widgets": _ago(1), "acme/fresh": _ago(1)})
+
+    result = await _sweep(runtime, [], state=state).run_once(now=NOW)
+
+    assert runtime.removed_volumes == ["embry0-maven-vol-old"], (
+        f"a Maven cache older than the retention goes, whatever its repo's QA warmth; removed {runtime.removed_volumes}"
+    )
+    assert result.kept[Reason.RECENT] == 1, "a Maven cache younger than the retention stays"
+
+
+@pytest.mark.asyncio
+async def test_a_maven_cache_whose_repo_has_a_live_job_is_kept() -> None:
+    runtime = FakeRuntime([], volumes=[_maven_volume("embry0-maven-vol-abc", "acme/widgets", _ago(100))])
+
+    result = await _sweep(runtime, [], jobs=FakeJobs({"acme/widgets"})).run_once(now=NOW)
+
+    assert runtime.removed_volumes == []
+    assert result.kept[Reason.LIVE_JOB] == 1, (
+        "the sweep must see the Maven cache and keep it while its repo has a live job"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_maven_cache_in_use_is_kept() -> None:
+    runtime = FakeRuntime(
+        [],
+        volumes=[_maven_volume("embry0-maven-vol-abc", "acme/widgets", _ago(100))],
+        volume_users={"embry0-maven-vol-abc": 1},
+    )
+
+    result = await _sweep(runtime, []).run_once(now=NOW)
+
+    assert runtime.removed_volumes == []
+    assert result.kept[Reason.IN_USE] == 1, "the sweep must see the Maven cache and keep it while a container mounts it"

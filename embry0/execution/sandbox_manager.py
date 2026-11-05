@@ -7,6 +7,7 @@ No customer code on the host — sandbox clones repo internally.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import re
 import socket
@@ -16,6 +17,14 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
+from embry0.cache.volume_ownership import (
+    LABEL_INSTANCE,
+    LABEL_JOB_ID,
+    LABEL_MANAGED,
+    LABEL_SCOPE,
+    LABEL_SCOPE_KEY,
+    volume_labels,
+)
 from embry0.execution.auth_provider import env_override_refusal
 from embry0.execution.docker_client import DockerClient
 from embry0.execution.image_registry import qualify_image
@@ -39,19 +48,47 @@ logger = structlog.get_logger(__name__)
 # The ID `docker run` prints, which create() keys every enrollment by.
 _FULL_CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
 
-# One Maven local repository for every JVM dev sandbox. The wrapper downloads
-# Maven itself on first use; doing that inside a 15-minute agent run leaves
-# no time to compile. The volume lives in DinD and is created on first mount.
-# chown (not chown -R) so a later sandbox does not walk a populated cache;
-# it runs in a helper container, not in the sandbox (AgentRuntime.chown_volume).
-_MAVEN_CACHE_VOLUME = "embry0-maven-repository"
+# A Maven local repository for the JVM dev sandboxes of one repository. The
+# wrapper downloads Maven itself on first use; doing that inside a 15-minute
+# agent run leaves no time to compile. The volume lives in the sandbox daemon
+# and is created, labelled, before the sandbox mounts it. chown (not chown -R)
+# so a later sandbox does not walk a populated cache; it runs in a helper
+# container, not in the sandbox (AgentRuntime.chown_volume).
 _MAVEN_CACHE_MOUNT = "/home/agent/.m2"
+#: Maven caches are named per repository: a distinct prefix from the QA
+#: volumes, and a hash of the instance id and the repository, so two
+#: repositories never share one ~/.m2.
+_MAVEN_VOLUME_PREFIX = "embry0-maven-vol-"
+_MAVEN_SCOPE = "maven"
+#: The ownership labels, every one of which must match before a cache is mounted.
+_OWNERSHIP_LABELS = (LABEL_MANAGED, LABEL_INSTANCE, LABEL_SCOPE, LABEL_SCOPE_KEY, LABEL_JOB_ID)
 
 
 def _profile_wants_maven_cache(profile: dict[str, Any]) -> bool:
     image = str(profile.get("base_image") or "")
     name = str(profile.get("name") or "")
     return name == "dev-jvm-python" or "dev-jvm-python" in image
+
+
+def maven_volume_name(instance_id: str | None, scope_key: str) -> str:
+    """The Maven cache volume name for ``scope_key`` on this deployment.
+
+    ``<prefix><sha256(instance_id + scope_key)>``: the key (a repository, or
+    ``job:<job id>`` for a per-job cache) never appears verbatim, so two keys
+    never name one volume.
+    """
+    digest = hashlib.sha256(f"{instance_id or ''}\x00{scope_key}".encode()).hexdigest()
+    return f"{_MAVEN_VOLUME_PREFIX}{digest}"
+
+
+def _label_mismatches(have: dict[str, str], want: dict[str, str]) -> list[str]:
+    """The ownership labels on which a volume differs from the cache we would create; empty means ours.
+
+    Every ownership label we would set must be present and equal, and one we
+    would not set must be absent, so a volume for another repository, job,
+    instance or scope is never mounted.
+    """
+    return [key for key in _OWNERSHIP_LABELS if have.get(key) != want.get(key)]
 
 
 class DockerAccessRegistry(Protocol):
@@ -155,8 +192,14 @@ class SandboxManager:
         skill_store: SkillStore | None = None,
         skill_sources_repo: Any | None = None,
         local_llm_context_tokens: int = 0,
+        instance_id: str | None = None,
     ) -> None:
         self._docker = docker
+        # This deployment's identity, stamped on the Maven cache volumes (set
+        # after startup resolves storage.instance_id). None turns the
+        # per-repository caches off: every JVM sandbox gets a per-job cache.
+        self.instance_id = instance_id
+        self._warned_no_instance = False
         # #268: production passes the runtime chosen at startup, whose client
         # is ``docker``. Absent, the manager wraps ``docker`` itself.
         self._runtime: AgentRuntime = runtime if runtime is not None else DockerRuntime(docker)
@@ -458,6 +501,63 @@ class SandboxManager:
             timeout=30,
         )
 
+    async def _resolve_maven_volume(self, repo: str | None, job_id: str) -> str | None:
+        """The Maven cache volume to mount, created and labelled first when missing; None mounts none.
+
+        A repository's JVM sandboxes share its cache, a volume labelled for
+        that repository on this deployment. A sandbox with no repository, a
+        deployment with no instance id (a shared cache must be provably this
+        deployment's), or a repository cache whose labels are not ours gets a
+        per-job cache instead, labelled as the job's per-job volume so the
+        job's volume cleanup and the reaper remove it with the job. A cache
+        that cannot be created, or a per-job one whose labels are not the
+        job's, is not mounted at all: the sandbox runs with no cache.
+        """
+        if repo and self.instance_id:
+            name = maven_volume_name(self.instance_id, repo)
+            if await self._labelled_volume(name, volume_labels(_MAVEN_SCOPE, repo, instance_id=self.instance_id)):
+                return name
+        elif repo and not self._warned_no_instance:
+            self._warned_no_instance = True
+            logger.warning(
+                "maven_cache_per_repo_unavailable",
+                reason="no_instance_id",
+                note="this deployment's instance id is unresolved: each JVM sandbox gets a per-job Maven cache",
+            )
+
+        fallback = maven_volume_name(self.instance_id, f"job:{job_id}")
+        if await self._labelled_volume(fallback, volume_labels("per-job", job_id, instance_id=self.instance_id)):
+            return fallback
+        logger.warning("maven_cache_not_mounted", job_id=job_id, name=fallback)
+        return None
+
+    async def _labelled_volume(self, name: str, want: dict[str, str]) -> bool:
+        """Whether ``name`` may be mounted: it exists with exactly ``want``'s ownership labels, or was just created with them.
+
+        Never lets the daemon create a volume at mount time: a volume is
+        created here, labelled, or it is not mounted.
+        """
+        try:
+            if name in await self._runtime.list_volumes(name=name, timeout=10):
+                summaries = await self._runtime.inspect_volumes([name], timeout=10)
+                labels = next((dict(s.labels) for s in summaries if s.name == name), {})
+                mismatched = _label_mismatches(labels, want)
+                if mismatched:
+                    logger.warning(
+                        "maven_cache_label_mismatch",
+                        name=name,
+                        scope=want.get(LABEL_SCOPE),
+                        mismatched=mismatched,
+                        action="not mounted",
+                    )
+                    return False
+                return True
+            await self._runtime.create_volume(name, labels=want, timeout=10)
+            return True
+        except Exception as exc:  # noqa: BLE001 — no cache rather than a failed sandbox
+            logger.warning("maven_cache_resolve_failed", name=name, error=str(exc)[:300])
+            return False
+
     async def create(
         self,
         job_id: str,
@@ -665,8 +765,11 @@ class SandboxManager:
         # "volume_name:mount_point" string so build_run_cmd emits -v flags.
         # This is standard Docker syntax for named volumes (no leading "/" on
         # the source side, which distinguishes them from bind-mounts).
+        maven_volume: str | None = None
         if _profile_wants_maven_cache(p):
-            extra_volumes.append(f"{_MAVEN_CACHE_VOLUME}:{_MAVEN_CACHE_MOUNT}")
+            maven_volume = await self._resolve_maven_volume(repo, job_id)
+            if maven_volume is not None:
+                extra_volumes.append(f"{maven_volume}:{_MAVEN_CACHE_MOUNT}")
         for vol_name, mount_point in volumes or []:
             extra_volumes.append(f"{vol_name}:{mount_point}")
 
@@ -705,12 +808,12 @@ class SandboxManager:
         # chown the mount point only — a populated cache must not be walked
         # on every sandbox start. Fail closed: a root-owned cache makes the
         # first Maven write fail halfway through the agent run.
-        if _profile_wants_maven_cache(p):
+        if maven_volume is not None:
             try:
                 # In a one-shot container, not the sandbox (#453): the
                 # sandbox drops CAP_CHOWN. The sandbox's own run pulled the image.
                 await self._runtime.chown_volume(
-                    _MAVEN_CACHE_VOLUME,
+                    maven_volume,
                     _MAVEN_CACHE_MOUNT,
                     image=qualify_image(base_image, self._image_registry),
                     owner="agent:agent",

@@ -1696,6 +1696,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("volume_instance_id_unresolved", exc_info=True)
     app.state.volume_instance_id = volume_instance_id
+    # The per-repository Maven cache volumes carry this instance's label too.
+    sandbox_mgr.instance_id = volume_instance_id
 
     volume_reaper: VolumeReaper | None = None
     if config.volume_reaper_enabled:
