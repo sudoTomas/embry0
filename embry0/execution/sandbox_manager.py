@@ -109,7 +109,6 @@ def _sanitize_docker_name_component(s: str) -> str:
 
     Docker requires container/network names to match `[a-zA-Z0-9][a-zA-Z0-9_.-]+`.
     Colons and slashes (legal in embry0 job_ids) are replaced with hyphens.
-    Mirrors VolumeManager._sanitize() in embry0/cache/volume_manager.py.
     """
     return s.replace(":", "-").replace("/", "-")
 

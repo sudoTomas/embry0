@@ -173,7 +173,12 @@ class CacheSharedVolume(BaseModel):
 
 class CacheTurboRemote(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    enabled: bool = True
+    # Off by default: the Turbo remote-cache token (TURBO_TOKEN) is a single
+    # deployment-wide credential injected into every QA sandbox that enables
+    # this, so every such repository's code can read it and read or write the
+    # shared cache. A deployment that runs the self-hosted cache turns it on
+    # per repository with `cache.turbo_remote: { enabled: true }`.
+    enabled: bool = False
 
 
 class CacheConfig(BaseModel):

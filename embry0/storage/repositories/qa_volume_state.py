@@ -28,17 +28,38 @@ class QAVolumeStateRepository:
         scope_key: str,
         volume_name: str,
         last_warmed_sha: str | None,
+        reset_warmth: bool = False,
     ) -> None:
-        sql = """
-        INSERT INTO qa_volume_state (
-            scope, scope_key, volume_name, last_warmed_sha, last_warmed_at
-        )
-        VALUES ($1, $2, $3, $4, NOW())
-        ON CONFLICT (scope, scope_key) DO UPDATE SET
-            volume_name      = EXCLUDED.volume_name,
-            last_warmed_sha  = COALESCE(EXCLUDED.last_warmed_sha, qa_volume_state.last_warmed_sha),
-            last_warmed_at   = NOW()
+        """Record which volume backs ``(scope, scope_key)`` and its warmth.
+
+        ``last_warmed_sha=None`` normally LEAVES any recorded sha in place
+        (COALESCE), so a bare re-record does not lose warmth. ``reset_warmth``
+        overrides that: the sha is written as given (``None`` clears it), which
+        a freshly created — therefore empty — volume needs, so the warmer does
+        not skip against a stale sha and mount an empty tree.
         """
+        if reset_warmth:
+            sql = """
+            INSERT INTO qa_volume_state (
+                scope, scope_key, volume_name, last_warmed_sha, last_warmed_at
+            )
+            VALUES ($1, $2, $3, $4, NOW())
+            ON CONFLICT (scope, scope_key) DO UPDATE SET
+                volume_name      = EXCLUDED.volume_name,
+                last_warmed_sha  = EXCLUDED.last_warmed_sha,
+                last_warmed_at   = NOW()
+            """
+        else:
+            sql = """
+            INSERT INTO qa_volume_state (
+                scope, scope_key, volume_name, last_warmed_sha, last_warmed_at
+            )
+            VALUES ($1, $2, $3, $4, NOW())
+            ON CONFLICT (scope, scope_key) DO UPDATE SET
+                volume_name      = EXCLUDED.volume_name,
+                last_warmed_sha  = COALESCE(EXCLUDED.last_warmed_sha, qa_volume_state.last_warmed_sha),
+                last_warmed_at   = NOW()
+            """
         await self.db.execute(sql, scope, scope_key, volume_name, last_warmed_sha)
 
     async def get(self, *, scope: str, scope_key: str) -> VolumeState | None:

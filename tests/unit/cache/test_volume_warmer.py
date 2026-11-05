@@ -38,6 +38,58 @@ def _stub_deps():
     return docker, sandbox_mgr, profiles_repo, proxy_mgr, state_repo
 
 
+def _volume_mgr(*, verified: bool = True) -> MagicMock:
+    """A volume manager whose mount check answers ``verified``."""
+    mgr = MagicMock()
+    mgr.verify = AsyncMock(return_value=verified)
+    return mgr
+
+
+@pytest.mark.asyncio
+async def test_the_warmer_mounts_a_volume_only_after_its_labels_are_checked(monkeypatch):
+    """A volume that fails the mount check (missing, so the daemon would create it unlabelled,
+    or not this deployment's for the key) is never mounted: no warmer sandbox is created."""
+    import inspect
+
+    from embry0.cache import volume_manager
+    from embry0.workflows.qa._subtask_prep import ClonedSandbox
+
+    docker, sandbox_mgr, profiles_repo, proxy_mgr, state_repo = _stub_deps()
+    error = getattr(volume_manager, "VolumeOwnershipError", None)
+    assert error is not None, "embry0.cache.volume_manager has no VolumeOwnershipError for a refused volume"
+    assert "volume_mgr" in inspect.signature(warm_shared_volume).parameters, (
+        "warm_shared_volume() takes no volume manager to check the volume before it mounts it"
+    )
+    monkeypatch.setattr(
+        "embry0.cache.volume_warmer.prep_qa_sandbox_clone", AsyncMock(return_value=ClonedSandbox(head_sha="abc"))
+    )
+    refusing = _volume_mgr(verified=False)
+    try:
+        await warm_shared_volume(
+            repo="org/r1",
+            branch="main",
+            volume_name="embry0-qa-vol-per-job-x",
+            current_lockfile_sha="aaa",
+            scope="per-job",
+            scope_key="job-1",
+            docker=docker,
+            sandbox_mgr=sandbox_mgr,
+            profiles_repo=profiles_repo,
+            proxy_mgr=proxy_mgr,
+            state_repo=state_repo,
+            volume_mgr=refusing,
+        )
+    except error:
+        pass
+    else:
+        raise AssertionError("a volume that fails its mount check must be refused, not warmed")
+    sandbox_mgr.create.assert_not_awaited()
+    checked = refusing.verify.await_args.args[0]
+    assert (checked.name, str(checked.scope), checked.scope_key) == ("embry0-qa-vol-per-job-x", "per-job", "job-1"), (
+        f"the mount check must be asked about the volume, scope and key being mounted; asked about {checked}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_warm_runs_npm_ci_when_state_has_no_prior_sha(monkeypatch):
     """When state_repo.get returns None, the warmer should:
@@ -67,6 +119,7 @@ async def test_warm_runs_npm_ci_when_state_has_no_prior_sha(monkeypatch):
         profiles_repo=profiles_repo,
         proxy_mgr=proxy_mgr,
         state_repo=state_repo,
+        volume_mgr=_volume_mgr(),
     )
 
     assert result == "warmed"
@@ -136,6 +189,7 @@ async def test_warm_skips_when_volume_already_warmed_for_same_lockfile(monkeypat
         profiles_repo=profiles_repo,
         proxy_mgr=proxy_mgr,
         state_repo=state_repo,
+        volume_mgr=_volume_mgr(),
     )
 
     assert result == "skipped"
@@ -169,6 +223,7 @@ async def test_warm_uses_custom_install_command_and_prebaked_image(monkeypatch):
         profiles_repo=profiles_repo,
         proxy_mgr=proxy_mgr,
         state_repo=state_repo,
+        volume_mgr=_volume_mgr(),
         install_command="npm ci --prefer-offline --legacy-peer-deps",
         prebaked_image_tag="embry0-qa-acme_console:2026-08-12",
     )
@@ -204,6 +259,7 @@ async def test_warm_default_install_without_overrides(monkeypatch):
         profiles_repo=profiles_repo,
         proxy_mgr=proxy_mgr,
         state_repo=state_repo,
+        volume_mgr=_volume_mgr(),
     )
 
     cmds = [" ".join(c.args[0]) for c in docker.run_cmd.call_args_list]
@@ -237,6 +293,7 @@ async def test_warm_binds_repo_into_sandbox_enrollment(monkeypatch):
         profiles_repo=profiles_repo,
         proxy_mgr=proxy_mgr,
         state_repo=state_repo,
+        volume_mgr=_volume_mgr(),
     )
 
     assert sandbox_mgr.create.call_args.kwargs.get("repo") == "acme/console"
@@ -268,6 +325,7 @@ async def test_warmer_clones_the_repo_forge(monkeypatch):
         profiles_repo=profiles_repo,
         proxy_mgr=proxy_mgr,
         state_repo=state_repo,
+        volume_mgr=_volume_mgr(),
         forge="gitlab",
         gitlab_url="https://gitlab.example.com",
     )

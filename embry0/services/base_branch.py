@@ -145,6 +145,21 @@ async def resolve_base_branch_with_source(
     return DEFAULT_BASE_BRANCH, FALLBACK_SOURCE
 
 
+async def forge_default_branch(
+    *,
+    repo: str,
+    forge: str,
+    gitlab_client: Any = None,
+    github_client: Any = None,
+) -> str | None:
+    """The forge project's own default branch, or None when the forge did not answer.
+
+    No override, preference or fallback: the answer for a decision that must
+    rest on the forge alone (``POST /qa/images/build``'s tier gate).
+    """
+    return await _forge_default(repo=repo, forge=forge, gitlab_client=gitlab_client, github_client=github_client)
+
+
 async def _forge_default(
     *,
     repo: str,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -44,6 +45,11 @@ def _row(tag: str, built: datetime, *, active: bool, digest: str = "") -> QAImag
         is_active=active,
         metadata={},
     )
+
+
+def _current(repo: str, instance: str | None = INSTANCE) -> str:
+    """The name this release gives the per-repo volume of ``repo``: sha256(instance id, NUL, repo)."""
+    return "embry0-qa-vol-per-repo-" + hashlib.sha256(((instance or "") + "\x00" + repo).encode()).hexdigest()
 
 
 def _volume(name: str, repo: str, created: datetime, *, instance: str | None = INSTANCE) -> VolumeSummary:
@@ -204,7 +210,7 @@ class FakeStateRepo:
         self.reads += 1
         warmed = self.later if self.later is not None and self.reads > 1 else self.warmed
         at = warmed.get(scope_key)
-        return VolumeState(scope, scope_key, f"vol-{scope_key}", "sha", at) if at else None
+        return VolumeState(scope, scope_key, _current(scope_key), "sha", at) if at else None
 
     async def delete_by_volume_name(self, name: str) -> None:
         self.deleted.append(name)
@@ -418,13 +424,13 @@ async def test_a_non_qa_reference_on_a_qa_image_is_left_on_it() -> None:
 
 @pytest.mark.asyncio
 async def test_an_unused_per_repo_volume_goes_and_its_state_row_with_it() -> None:
-    runtime = FakeRuntime([], volumes=[_volume("embry0-qa-vol-acme-widgets", "acme/widgets", _ago(100))])
+    runtime = FakeRuntime([], volumes=[_volume(_current("acme/widgets"), "acme/widgets", _ago(100))])
     state = FakeStateRepo({"acme/widgets": _ago(45)})
 
     result = await _sweep(runtime, [], state=state).run_once(now=NOW)
 
-    assert runtime.removed_volumes == ["embry0-qa-vol-acme-widgets"]
-    assert state.deleted == ["embry0-qa-vol-acme-widgets"]
+    assert runtime.removed_volumes == [_current("acme/widgets")]
+    assert state.deleted == [_current("acme/widgets")]
     assert runtime.volume_filters == [[f"embry0.instance={INSTANCE}", "embry0.volume_scope=per-repo"]]
     assert result.counts()["volume_bytes"] == 500
 
@@ -434,11 +440,11 @@ async def test_a_volume_is_kept_while_used_recently_mounted_or_its_repo_has_a_li
     runtime = FakeRuntime(
         [],
         volumes=[
-            _volume("vol-warm", "acme/warm", _ago(300)),
-            _volume("vol-mounted", "acme/mounted", _ago(300)),
-            _volume("vol-live", "Acme/Live", _ago(300)),
+            _volume(_current("acme/warm"), "acme/warm", _ago(300)),
+            _volume(_current("acme/mounted"), "acme/mounted", _ago(300)),
+            _volume(_current("Acme/Live"), "Acme/Live", _ago(300)),
         ],
-        volume_users={"vol-mounted": 1},
+        volume_users={_current("acme/mounted"): 1},
     )
     state = FakeStateRepo({"acme/warm": _ago(2)})
 
@@ -453,7 +459,7 @@ async def test_a_volume_is_kept_while_used_recently_mounted_or_its_repo_has_a_li
 async def test_a_volume_a_job_claims_after_the_decision_is_kept(claim: str) -> None:
     """A QA job can start, and ensure() the volume, between the sweep's reads and its rm. Removing it
     then leaves the job an empty, unlabelled volume that neither the reaper nor this sweep knows."""
-    runtime = FakeRuntime([], volumes=[_volume("embry0-qa-vol-acme-widgets", "acme/widgets", _ago(100))])
+    runtime = FakeRuntime([], volumes=[_volume(_current("acme/widgets"), "acme/widgets", _ago(100))])
     if claim == "a job of its repo started":
         jobs, state, reason = FakeJobs(later={"Acme/Widgets"}), FakeStateRepo(), Reason.LIVE_JOB
     else:
@@ -463,6 +469,46 @@ async def test_a_volume_a_job_claims_after_the_decision_is_kept(claim: str) -> N
 
     assert runtime.removed_volumes == [], f"the volume was removed after {claim}"
     assert result.kept[reason] == 1 and result.volumes == []
+
+
+@pytest.mark.asyncio
+async def test_a_volume_under_an_older_name_is_aged_from_its_own_creation() -> None:
+    """A per-repo volume a release that named volumes differently created: its repository's row now
+    records this release's volume, so it must not keep the old one alive."""
+    old = "embry0-qa-vol-acme-widgets"
+    runtime = FakeRuntime([], volumes=[_volume(old, "acme/widgets", _ago(100))])
+    state = FakeStateRepo({"acme/widgets": _ago(1)})  # the current volume was warmed yesterday
+
+    result = await _sweep(runtime, [], state=state).run_once(now=NOW)
+
+    assert runtime.removed_volumes == [old], (
+        "a volume must be aged by its own state row, never by the row another volume of its repo wrote"
+    )
+    assert state.deleted == [old] and result.counts()["volumes"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_volume_under_an_older_name_goes_while_its_repo_has_a_live_job_unless_mounted() -> None:
+    old, mounted = "embry0-qa-vol-acme-widgets", "embry0-qa-vol-acme-mounted"
+    runtime = FakeRuntime(
+        [],
+        volumes=[
+            _volume(old, "acme/widgets", _ago(100)),
+            _volume(mounted, "acme/mounted", _ago(100)),
+            _volume(_current("acme/widgets"), "acme/widgets", _ago(100)),
+        ],
+        volume_users={mounted: 1},
+    )
+
+    result = await _sweep(runtime, [], jobs=FakeJobs({"acme/widgets", "acme/mounted"})).run_once(now=NOW)
+
+    assert runtime.removed_volumes == [old], (
+        "nothing mounts a volume under an older name again, so a live job of its repo must not keep it; "
+        f"removed {runtime.removed_volumes}"
+    )
+    assert (result.kept[Reason.LIVE_JOB], result.kept[Reason.IN_USE]) == (1, 1), (
+        "the current volume of a repo with a live job, and a mounted old one, are kept"
+    )
 
 
 def test_a_volume_another_deployment_labelled_is_not_ours() -> None:

@@ -339,6 +339,12 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     ("embry0.agents.sdk_support:SdkSupportError", ErrorCode.SANDBOX_INIT),
     ("embry0.cache.image_builder:ImageBuildError", ErrorCode.SANDBOX_IMAGE_BUILD),
     ("embry0.cache.lockfile_hash:LockfileNotFoundError", ErrorCode.SANDBOX_IMAGE_BUILD),
+    # A cache volume the run needs cannot be used (its labels are not ours,
+    # it is missing at mount time, or it could not be replaced) and there is
+    # no per-job fallback. Volume warming is non-fatal: the QA init node logs
+    # it and the sub-tasks clone without the shared volume. If it ever reaches
+    # a job row it reads as a QA-infra fault, not ERR_UNKNOWN.
+    ("embry0.cache.volume_manager:VolumeOwnershipError", ErrorCode.QA_INFRA),
     ("embry0.services.model_enablement:DisabledModelError", ErrorCode.MODEL_DISABLED),
     ("embry0.services.github_prs:OpenPRListError", ErrorCode.PR_LISTING_FAILED),
     # #219: a provider model with no price entry would run unmetered.

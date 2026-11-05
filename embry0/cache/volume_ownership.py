@@ -56,7 +56,8 @@ _RELEASED_STATUSES: frozenset[str] = frozenset(
     }
 )
 
-# volume_name_for(PER_JOB, job_id) with job_id = "job-" + uuid4().hex[:12].
+# The per-job name of a volume created before ownership labels existed, when
+# volumes were named after the raw job id ("job-" + uuid4().hex[:12]).
 _LEGACY_PER_JOB_NAME = re.compile(r"embry0-qa-vol-(job-[0-9a-f]{12})")
 
 

@@ -201,7 +201,7 @@ exactly like a stuck reconciler.
 | `embry0_state_channel_folded_concurrent_writes_total` | counter | `key`, `channel` |
 | `embry0_volume_reaper_volumes_total` | counter | `outcome`: `removed`, `would_remove`, `failed`, `kept`; `reason` |
 | `embry0_volume_reaper_sweeps_total` | counter | `result`: `ok`, `list_failed`, `status_fetch_failed` |
-| `embry0_sandbox_git_refusals_total` | counter | `step`: `configure`, `clone`, `qa_checkout`, `branch_probe`, `salvage_commit`, `rescue_push`, `base_branch`, `changed_files`, `diff_lines`, `areas_delivery`, `audit_delivery`, `review_checkout`, `verify_gate`; seeded 0 |
+| `embry0_sandbox_git_refusals_total` | counter | `step`: `configure`, `clone`, `qa_checkout`, `branch_probe`, `salvage_commit`, `rescue_push`, `base_branch`, `default_branch`, `changed_files`, `diff_lines`, `areas_delivery`, `audit_delivery`, `review_checkout`, `verify_gate`; seeded 0 |
 
 Both of the first two are bug detectors, not throughput: a state-channel fold
 always means a routing bug dispatched two nodes in one superstep, and a stale

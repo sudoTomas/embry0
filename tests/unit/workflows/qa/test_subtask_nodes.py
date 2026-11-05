@@ -978,6 +978,41 @@ def _make_acquire_state(*, prebaked_image_tag: str | None = None):
     }
 
 
+_INSTANCE = "a1b2c3d4e5f60718"
+
+
+def _volume_manager(volumes: dict[str, dict[str, str]]):
+    """The real SharedVolumeManager over a fake daemon holding ``volumes`` (name -> labels)."""
+    from embry0.cache.volume_manager import SharedVolumeManager
+
+    async def run_cmd(cmd, timeout=None, **_kw):
+        if cmd[1:3] == ["volume", "ls"]:
+            names = [a.split("=", 1)[1] for a in cmd if a.startswith("name=")]
+            return "".join(f"{n}\n" for n in volumes if not names or any(f in n for f in names))
+        if cmd[1:3] == ["volume", "inspect"]:
+            if any(n not in volumes for n in cmd[3:]):
+                raise RuntimeError("no such volume")
+            return json.dumps([{"Name": n, "Labels": volumes[n], "CreatedAt": None} for n in cmd[3:]])
+        if cmd[1:3] == ["volume", "create"]:
+            raise AssertionError(f"the mount check must never create a volume: {cmd}")
+        return ""
+
+    docker = MagicMock()
+    docker._build_base_cmd = lambda: ["docker"]
+    docker.run_cmd = AsyncMock(side_effect=run_cmd)
+    return SharedVolumeManager(runtime=DockerRuntime(docker), state_repo=AsyncMock(), instance_id=_INSTANCE)
+
+
+def _job_volume(job_id: str = "JOB-42") -> tuple[str, dict[str, str]]:
+    """This deployment's per-job volume of ``job_id``: its name (sha256 of instance id, NUL, key) and labels."""
+    import hashlib
+
+    from embry0.cache.volume_ownership import volume_labels
+
+    digest = hashlib.sha256((_INSTANCE + "\x00" + job_id).encode()).hexdigest()
+    return f"embry0-qa-vol-per-job-{digest}", volume_labels("per-job", job_id, instance_id=_INSTANCE)
+
+
 @pytest.mark.asyncio
 async def test_acquire_sandbox_uses_image_tag_when_provided(monkeypatch):
     """When prebaked_image_tag is set, sandbox_mgr.create receives a profile
@@ -1097,7 +1132,7 @@ async def test_acquire_sandbox_uses_shared_volume_when_provided(monkeypatch):
 
     captured_create_kwargs: dict = {}
     captured_clone_kwargs: dict = {}
-    volume_name = "embry0-qa-vol-job-42"
+    volume_name, labels = _job_volume("JOB-42")
 
     async def fake_create(
         job_id,
@@ -1121,6 +1156,7 @@ async def test_acquire_sandbox_uses_shared_volume_when_provided(monkeypatch):
 
     config = _make_acquire_config()
     config["configurable"]["sandbox_manager"].create = fake_create
+    config["configurable"]["qa_shared_volume_manager"] = _volume_manager({volume_name: labels})
 
     # Build state with shared_volume_name set
     resolved = _resolved_app("hub")
@@ -1225,6 +1261,52 @@ async def test_acquire_sandbox_no_shared_volume_when_name_absent(monkeypatch):
     # No shared volume → no need for the per-sub-task .qa tmpfs overlay either.
     assert captured_create_kwargs.get("tmpfs_mounts") is None
     assert captured_clone_kwargs.get("cached_volume") is None
+    assert out["cache_hits_partial"]["shared_volume"] is False
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["missing", "foreign-labels", "older-name", "no-volume-manager"],
+)
+@pytest.mark.asyncio
+async def test_acquire_sandbox_mounts_no_volume_that_fails_its_mount_check(case):
+    """The labels are checked at every mount: a volume that is missing (the daemon would create it
+    unlabelled), labelled for another key or instance, or named by an older release is not mounted;
+    the sub-task clones its own workspace instead."""
+    from embry0.cache.volume_ownership import volume_labels
+    from embry0.workflows.qa._subtask_prep import ClonedSandbox
+    from embry0.workflows.qa.subtask_nodes import acquire_sandbox_node
+
+    name, labels = _job_volume("JOB-42")
+    volumes: dict[str, dict[str, str]] = {
+        "missing": {},
+        "foreign-labels": {name: volume_labels("per-job", "JOB-7", instance_id=_INSTANCE)},
+        "older-name": {"embry0-qa-vol-JOB-42": labels},
+        "no-volume-manager": {name: labels},
+    }[case]
+    mounted_name = "embry0-qa-vol-JOB-42" if case == "older-name" else name
+
+    created: dict = {}
+
+    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None, **_kw):
+        created["volumes"] = volumes
+        return ("cid-check", "tok-check")
+
+    clone = AsyncMock(return_value=ClonedSandbox(head_sha="h"))
+    config = _make_acquire_config()
+    config["configurable"]["sandbox_manager"].create = fake_create
+    if case != "no-volume-manager":
+        config["configurable"]["qa_shared_volume_manager"] = _volume_manager(volumes)
+    state = {**_make_acquire_state(), "shared_volume_name": mounted_name}
+
+    with (
+        patch("embry0.workflows.qa._subtask_prep.prep_qa_sandbox_clone", clone),
+        patch("embry0.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson", AsyncMock(return_value=None)),
+    ):
+        out = await acquire_sandbox_node(state, config)
+
+    assert created["volumes"] is None, f"{case}: a volume that fails its mount check was mounted: {created['volumes']}"
+    assert clone.await_args.kwargs.get("cached_volume") is None, f"{case}: the sub-task must clone its own workspace"
     assert out["cache_hits_partial"]["shared_volume"] is False
 
 

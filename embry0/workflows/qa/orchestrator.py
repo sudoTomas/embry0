@@ -24,6 +24,7 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
+from embry0.cache.trusted_run import DefaultHead, forge_default_head, trusted_per_repo_volume
 from embry0.execution import events
 from embry0.orchestration.budget import BudgetOverrunError, resolve_job_cap
 from embry0.orchestration.nodes.agent import evaluate_job_cap
@@ -46,6 +47,7 @@ from embry0.workflows.qa.orchestrator_helpers import (
     resolve_apps_to_qa,
     validate_against_qa_config,
 )
+from embry0.workspace_init.git import clone_origin
 from embry0.workspace_providers.npm_workspaces_turbo._filter_parse import (
     parse_affected_filter,
 )
@@ -82,6 +84,35 @@ async def _configured_base_branch(*, state: dict[str, Any], repo: str, prefs_rep
     if override:
         return str(override)
     return await preferred_base_branch(prefs_repo, repo)
+
+
+async def _shared_volume_for_run(
+    *,
+    trusted: bool,
+    lockfile_sha: str,
+    repo: str,
+    job_id: str,
+    volume_mgr: Any,
+    volume_state_repo: Any,
+) -> Any:
+    """The shared volume this QA run warms and mounts (a ``SharedVolume``).
+
+    A trusted run (``embry0.cache.trusted_run.trusted_per_repo_volume``) uses
+    the repository's per-repo volume, recreated empty when its recorded
+    lockfile no longer matches this run's; every other run uses its own
+    per-job volume. The manager may hand back a per-job volume for a trusted
+    run too (the per-repo one is held by a concurrent run, carries labels that
+    are not ours, or the deployment has no instance id), so the caller warms
+    and records the volume returned, never the one asked for.
+    """
+    from embry0.cache.volume_manager import VolumeScope
+
+    if trusted:
+        prior = await volume_state_repo.get(scope=VolumeScope.PER_REPO.value, scope_key=repo)
+        needs_fresh = prior is None or prior.last_warmed_sha != lockfile_sha
+        op = volume_mgr.recreate if needs_fresh else volume_mgr.ensure
+        return await op(scope=VolumeScope.PER_REPO, scope_key=repo, job_id=job_id)
+    return await volume_mgr.ensure(scope=VolumeScope.PER_JOB, scope_key=job_id, job_id=job_id)
 
 
 def _stream_writer() -> Any:
@@ -196,6 +227,7 @@ async def _init_orchestrator_node_impl(
         return {"qa": qa}
 
     container_id: str | None = None
+    default_head: DefaultHead | None = None
     lockfile_text: str = ""
     changed_files: list[str] = []
     changed_files_unavailable = False
@@ -298,6 +330,16 @@ async def _init_orchestrator_node_impl(
             container_id=container_id,
             configured=configured_base,
         )
+        # The repository's default branch and its head as the forge reports
+        # them: the only source for whether this run may populate the
+        # repository's shared cache (embry0.cache.trusted_run). The configured
+        # base above chooses the diff base only.
+        default_head = await forge_default_head(
+            docker,
+            container_id,
+            origin_url=f"{clone_origin(forge, gitlab_url)}/{repo}.git",
+            job_id=bootstrap_job_id,
+        )
         filter_parsed = parse_affected_filter(
             affected_filter_text,
             default_base_branch=default_base_branch,
@@ -387,6 +429,11 @@ async def _init_orchestrator_node_impl(
     qa["qa_yaml_v2_raw"] = yaml_text
     qa["qa_yaml_v2_parsed"] = cfg.model_dump()
     qa["head_sha"] = cloned.head_sha
+    # Only an image baked from this branch is selected as a QA base, here and
+    # in qa_orchestrator_node; None (the forge did not answer) selects none.
+    qa["forge_default_branch"] = default_head.branch if default_head is not None else None
+    # A round mounts only a volume this round prepared: clear the last round's.
+    qa["shared_volume_name"] = None
 
     # Phase-2 C3: shared-volume warming. Scope can only be per-job or
     # per-repo — per-org is rejected at qa.yaml parse time (RAV-1061).
@@ -396,17 +443,36 @@ async def _init_orchestrator_node_impl(
         volume_state_repo = configurable.get("qa_volume_state_repo")
         if volume_mgr is not None and volume_state_repo is not None:
             try:
-                from embry0.cache.volume_manager import VolumeScope
                 from embry0.cache.volume_warmer import warm_shared_volume
-
-                scope = sv_cfg.scope
-                scope_key = job_id if scope == "per-job" else (repo or "")
-                vol_scope = VolumeScope(scope)
-                volume_name = await volume_mgr.ensure(scope=vol_scope, scope_key=scope_key)
 
                 lockfile_sha = hashlib.sha256(lockfile_text.encode()).hexdigest() if lockfile_text else ""
 
                 if lockfile_sha:
+                    # per-repo only for a trusted run: the forge's default
+                    # branch at its current head. Every other run gets a
+                    # per-job volume, even when the stored config asks for
+                    # per-repo.
+                    trusted = trusted_per_repo_volume(
+                        sv_cfg.scope, branch=branch, head_sha=cloned.head_sha, default=default_head
+                    )
+                    if sv_cfg.scope == "per-repo" and not trusted:
+                        logger.info(
+                            "qa_shared_volume_scope_downgraded",
+                            job_id=job_id,
+                            requested="per-repo",
+                            effective="per-job",
+                            reason="not the forge's default branch at its current head",
+                            forge_default_branch=default_head.branch if default_head is not None else None,
+                        )
+                    volume = await _shared_volume_for_run(
+                        trusted=trusted,
+                        lockfile_sha=lockfile_sha,
+                        repo=repo,
+                        job_id=job_id,
+                        volume_mgr=volume_mgr,
+                        volume_state_repo=volume_state_repo,
+                    )
+
                     # RAV-1400: warm on the repo's prebaked image when one
                     # exists — its baked ~/.npm cache turns the install into
                     # mostly link-time. Lookup is fail-open (None → slim).
@@ -415,20 +481,26 @@ async def _init_orchestrator_node_impl(
                         from embry0.cache.prebaked_image import lookup_prebaked_tag
 
                         # #334: None also when the image's base was rebuilt.
-                        warm_image_tag = await lookup_prebaked_tag(configurable, repo or "")
+                        warm_image_tag = await lookup_prebaked_tag(
+                            configurable, repo, default_branch=qa["forge_default_branch"]
+                        )
 
+                    # The volume the manager returned, which may be a per-job
+                    # one in place of the per-repo one asked for: its scope and
+                    # key are what the warmer checks and records.
                     warm_result = await warm_shared_volume(
                         repo=repo,
                         branch=branch,
-                        volume_name=volume_name,
+                        volume_name=volume.name,
                         current_lockfile_sha=lockfile_sha,
-                        scope=scope,
-                        scope_key=scope_key,
+                        scope=volume.scope.value,
+                        scope_key=volume.scope_key,
                         docker=docker,
                         sandbox_mgr=sandbox_mgr,
                         profiles_repo=profiles_repo,
                         proxy_mgr=proxy_mgr,
                         state_repo=volume_state_repo,
+                        volume_mgr=volume_mgr,
                         install_command=cfg.cache.install_command,
                         prebaked_image_tag=warm_image_tag,
                         forge=forge,
@@ -437,11 +509,10 @@ async def _init_orchestrator_node_impl(
                     logger.info(
                         "qa_shared_volume_warm_result",
                         result=warm_result,
-                        volume_name=volume_name,
-                        scope=scope,
-                        scope_key=scope_key,
+                        volume_name=volume.name,
+                        scope=volume.scope.value,
                     )
-                    qa["shared_volume_name"] = volume_name
+                    qa["shared_volume_name"] = volume.name
                 else:
                     logger.warning(
                         "qa_shared_volume_skipped_no_lockfile",
@@ -1065,11 +1136,29 @@ async def _qa_orchestrator_node_impl(
     if cfg.cache.prebaked_image.enabled:
         from embry0.cache.prebaked_image import lookup_prebaked_tag
 
-        image_tag = await lookup_prebaked_tag(configurable, state.get("repo") or "")
+        # Only an image baked from the forge's default branch is used as a QA
+        # base: the branch init_orchestrator_node read from the forge. A state
+        # without one (the forge did not answer) selects none.
+        image_tag = await lookup_prebaked_tag(
+            configurable, state.get("repo") or "", default_branch=qa_state.get("forge_default_branch")
+        )
 
     # 5. Fan out.
-    # Pass shared_volume_name from init_orchestrator_node (C3 wiring).
-    shared_volume_name: str | None = qa_state.get("shared_volume_name")
+    # The volume init_orchestrator_node prepared (C3 wiring), checked again
+    # before the sub-tasks mount it. A name this run cannot use (one a release
+    # that named volumes differently wrote into a checkpoint, or a volume that
+    # is gone or not labelled ours) is not mounted: the sub-tasks clone.
+    shared_volume_name: str | None = None
+    if qa_state.get("shared_volume_name"):
+        volume_mgr = configurable.get("qa_shared_volume_manager")
+        mountable = (
+            await volume_mgr.mountable(
+                qa_state.get("shared_volume_name"), repo=state.get("repo") or "", job_id=str(state["job_id"])
+            )
+            if volume_mgr is not None
+            else None
+        )
+        shared_volume_name = mountable.name if mountable is not None else None
     app_names = [rc.app_name for rc in resolved_configs]
     writer(
         events.progress(

@@ -775,6 +775,7 @@ async def test_orchestrator_passes_image_tag_to_run_subtask_when_repo_configured
         image_tag = "acme/hub:sha-deadbeef"
         base_image = None
         base_image_digest = None
+        metadata = {"branch": "main"}
 
     fake_image_repo.get_active = AsyncMock(return_value=_FakeRow())
 
@@ -799,6 +800,7 @@ async def test_orchestrator_passes_image_tag_to_run_subtask_when_repo_configured
         "qa": {
             "qa_yaml_v2_raw": _QA_YAML_WITH_CACHE,
             "changed_files": ["apps/hub/app/page.tsx"],
+            "forge_default_branch": "main",
         },
     }
     config = {
@@ -813,6 +815,135 @@ async def test_orchestrator_passes_image_tag_to_run_subtask_when_repo_configured
     assert out["qa"]["outcome"]["overall_status"] == "passed"
     assert captured_kwargs.get("prebaked_image_tag") == "acme/hub:sha-deadbeef"
     fake_image_repo.get_active.assert_awaited_once_with("org/monorepo")
+
+
+def _fanout_harness(monkeypatch):
+    """qa_orchestrator_node with one app and a run_subtask spy; returns the kwargs it was given."""
+    from pathlib import Path
+
+    from embry0.workflows.qa.subtask_result_schema import CacheHits, SubTaskResult, SubTaskStatus
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
+
+    provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", lambda name, root, config: provider)
+    captured: dict = {}
+
+    async def spy(resolved, **kw):
+        captured.update(kw)
+        return SubTaskResult(
+            app_name=resolved.app_name, status=SubTaskStatus.PASSED, duration_ms=1, cache_hits=CacheHits()
+        )
+
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", spy)
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_image_selection_uses_the_forge_default_branch_not_the_diff_base(monkeypatch):
+    """The state's base_branch is a job override or preference; only the forge's default selects an image."""
+    captured = _fanout_harness(monkeypatch)
+
+    class _Row:
+        repo = "org/monorepo"
+        image_tag = "acme/hub:feature"
+        base_image = None
+        base_image_digest = None
+        metadata = {"branch": "feature-x"}
+
+    image_repo = AsyncMock()
+    image_repo.get_active = AsyncMock(return_value=_Row())
+    state = {
+        "job_id": "run-img",
+        "repo": "org/monorepo",
+        "branch_name": "feature-x",
+        "base_branch": "feature-x",
+        "qa": {"qa_yaml_v2_raw": _QA_YAML_WITH_CACHE, "changed_files": [], "forge_default_branch": "main"},
+    }
+    config = {"configurable": {"qa_app_results_repo": AsyncMock(), "qa_image_tags_repo": image_repo}}
+
+    await qa_orchestrator_node(state, config)
+
+    assert captured.get("prebaked_image_tag") is None, (
+        "an image baked from the job's base_branch override, not the forge's default branch, must not be selected"
+    )
+
+
+_QA_YAML_WITH_VOLUME = _QA_YAML_WITH_CACHE.replace(
+    "cache:\n  prebaked_image:\n    enabled: true\n", "cache:\n  prebaked_image:\n    enabled: false\n"
+)
+
+
+def _volume_mgr(volumes: dict, seen: list | None = None):
+    import json as _json
+
+    from embry0.cache.volume_manager import SharedVolumeManager
+    from embry0.execution.runtime import DockerRuntime
+
+    async def run_cmd(cmd, timeout=None, **_kw):
+        if seen is not None:
+            seen.append(" ".join(cmd))
+        if cmd[1:3] == ["volume", "ls"]:
+            names = [a.split("=", 1)[1] for a in cmd if a.startswith("name=")]
+            return "".join(f"{n}\n" for n in volumes if not names or any(f in n for f in names))
+        if cmd[1:3] == ["volume", "inspect"]:
+            return _json.dumps([{"Name": n, "Labels": volumes[n], "CreatedAt": None} for n in cmd[3:] if n in volumes])
+        raise AssertionError(f"the fan-out may only read volumes: {cmd}")
+
+    docker = MagicMock()
+    docker._build_base_cmd = lambda: ["docker"]
+    docker.run_cmd = AsyncMock(side_effect=run_cmd)
+    return SharedVolumeManager(runtime=DockerRuntime(docker), state_repo=AsyncMock(), instance_id="inst-1")
+
+
+@pytest.mark.parametrize(
+    ("in_state", "present", "mounted"),
+    [
+        pytest.param("per-repo", True, True, id="this-release-per-repo"),
+        pytest.param("per-repo", False, False, id="gone"),
+        pytest.param("older-name", True, False, id="checkpoint-from-an-older-release"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_the_fan_out_mounts_only_a_volume_that_passes_its_check(monkeypatch, in_state, present, mounted):
+    import hashlib
+
+    from embry0.cache.volume_ownership import volume_labels
+
+    captured = _fanout_harness(monkeypatch)
+    current = "embry0-qa-vol-per-repo-" + hashlib.sha256(b"inst-1\x00org/monorepo").hexdigest()
+    name = current if in_state == "per-repo" else "embry0-qa-vol-org-monorepo"
+    volumes = {name: volume_labels("per-repo", "org/monorepo", instance_id="inst-1")} if present else {}
+    state = {
+        "job_id": "run-vol",
+        "repo": "org/monorepo",
+        "branch_name": "main",
+        "qa": {"qa_yaml_v2_raw": _QA_YAML_WITH_VOLUME, "changed_files": [], "shared_volume_name": name},
+    }
+    seen: list[str] = []
+    config = {
+        "configurable": {"qa_app_results_repo": AsyncMock(), "qa_shared_volume_manager": _volume_mgr(volumes, seen)}
+    }
+
+    await qa_orchestrator_node(state, config)
+
+    if mounted:
+        assert any(c.startswith(f"docker volume inspect {name}") for c in seen), (
+            "the fan-out must read the volume's labels before handing it to the sub-tasks"
+        )
+    want = name if mounted else None
+    assert captured.get("shared_volume_name") == want, (
+        f"{in_state} present={present}: the fan-out handed the sub-tasks {captured.get('shared_volume_name')!r}, "
+        f"expected {want!r}"
+    )
 
 
 # ── E1: cache flag gating ────────────────────────────────────────────────────
