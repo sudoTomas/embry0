@@ -114,6 +114,7 @@ Open the dashboard at **http://localhost:8200** and sign in with your `API_KEY`.
 | [Architecture](docs/architecture.md) | Full system reference — topology, pipelines, sandbox and proxy design, storage, job lifecycle |
 | [Configuration](docs/configuration.md) | Environment variables, secrets at rest, execution/auth modes, CLI reference |
 | [API reference](docs/api.md) | REST endpoints with curl examples, WebSocket event stream |
+| [Setup from Claude Code](docs/claude-code.md) | Connect a Claude Code session to a deployment over MCP; it sets up model access, credentials, an organization, webhooks and testing with you |
 | [Onboarding a repo](docs/onboarding.md) | `embry0 init` (new projects) and `embry0 onboard` (existing repos) — zero-to-pipeline in one command |
 | [Running QA](docs/running-qa.md) | Integrating a target repo, `qa.yaml`, gotchas, triggering and watching runs |
 | [`qa.yaml` v2 reference](docs/qa-yaml-reference.md) | Field-by-field schema reference with monorepo examples |

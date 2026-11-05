@@ -96,6 +96,13 @@ EXPECTED_TOOLS = {
     "proposal_accept",
     "proposal_decline",
     "proposal_snooze",
+    "provider_status",
+    "org_probe",
+    "org_discover",
+    "org_runs",
+    "repo_skip_testing",
+    "credential_bindings_get",
+    "credential_bindings_set",
 }
 
 CONFIRM_GATED = {
@@ -138,6 +145,8 @@ CONFIRM_GATED = {
     "proposal_accept",
     "proposal_decline",
     "proposal_snooze",
+    "repo_skip_testing",
+    "credential_bindings_set",
 }
 
 
@@ -438,7 +447,7 @@ async def test_credential_read_tools_pass_through(fake_client):
     assert await server.credential_resolve("acme/widgets", role="forge") == {"called": "credential_resolve"}
     assert fake_client.calls == [
         ("credential_list", (), {}),
-        ("credential_resolve", ("acme/widgets", "forge"), {}),
+        ("credential_resolve", ("acme/widgets", "forge", ""), {}),
     ]
 
 
@@ -745,3 +754,58 @@ async def test_settings_set_keys_runs_a_dry_run_freely_and_needs_confirm_to_writ
 
 def test_the_instructions_name_the_settings_document():
     assert "settings document" in (server.mcp.instructions or "")
+
+
+# ---- setting a deployment up from a chat session ----
+
+
+async def test_setup_read_tools_pass_through(fake_client):
+    assert await server.provider_status() == {"called": "provider_status"}
+    assert await server.org_probe("acme", credential_id="cred-000000000001") == {"called": "org_probe"}
+    assert await server.org_discover("acme") == {"called": "org_discover"}
+    assert await server.org_runs("acme", limit=2) == {"called": "org_runs"}
+    assert await server.credential_bindings_get("owner", "github:acme") == {"called": "credential_bindings_get"}
+    assert await server.credential_resolve("acme/widgets", role="llm", provider="anthropic") == {
+        "called": "credential_resolve"
+    }
+    assert fake_client.calls == [
+        ("provider_status", (), {}),
+        ("org_probe", ("acme",), {"forge": "github", "credential_id": "cred-000000000001"}),
+        ("org_discover", ("acme",), {}),
+        ("org_runs", ("acme",), {"limit": 2}),
+        ("credential_bindings_get", ("owner", "github:acme"), {}),
+        ("credential_resolve", ("acme/widgets", "llm", "anthropic"), {}),
+    ]
+
+
+async def test_setup_write_tools_refuse_without_confirm_and_name_the_change(fake_client):
+    bindings = [{"credential_id": "cred-000000000001", "role": "forge"}]
+    scoped = await server.credential_bindings_set("owner", "github:acme", bindings)
+    every = await server.credential_bindings_set("global", "", [{"credential_id": "cred-000000000002", "role": "llm"}])
+    skip = await server.repo_skip_testing("acme/widgets")
+    for refusal in (scoped, every, skip):
+        assert refusal["error"] == "confirmation_required"
+    assert "'github:acme'" in scoped["message"] and "1 binding(s)" in scoped["message"]
+    assert "the global scope" in every["message"]
+    assert "'acme/widgets'" in skip["message"]
+    assert fake_client.calls == []
+    assert await server.credential_bindings_set("owner", "github:acme", bindings, confirm=True) == {
+        "called": "credential_bindings_set"
+    }
+    assert await server.repo_skip_testing("acme/widgets", confirm=True) == {"called": "repo_skip_testing"}
+    assert fake_client.calls == [
+        ("credential_bindings_set", ("owner", "github:acme", bindings), {}),
+        ("repo_skip_testing", ("acme/widgets",), {}),
+    ]
+
+
+def test_the_new_credential_tools_say_they_never_return_a_secret():
+    for name in ("credential_bindings_get", "credential_bindings_set", "org_probe", "provider_status"):
+        doc = getattr(server, name).__doc__ or ""
+        assert "never returns a secret" in doc.lower(), name
+
+
+def test_the_instructions_point_at_the_setup_prompt():
+    text = server.mcp.instructions or ""
+    assert "the prompt setup" in text
+    assert "No tool takes a secret" in text
