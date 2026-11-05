@@ -3,13 +3,26 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 import structlog
 
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.jobs import job_repository_sql
 
 logger = structlog.get_logger(__name__)
+
+
+def _covered(repos: str) -> str:
+    """Whether the question ``x`` is of the repositories in the ``text[]`` placeholder ``repos`` (lower-cased slugs;
+    NULL keeps every question): its job works on one of them (:func:`job_repository_sql`) and, when it is asked
+    about an issue, the issue is of one of them. A question belongs to both."""
+    return f"""({repos}::text[] IS NULL OR (
+        EXISTS (SELECT 1 FROM jobs j WHERE j.job_id = x.job_id
+                AND lower({job_repository_sql("j")}) = ANY({repos}::text[]))
+        AND (x.issue_id IS NULL OR EXISTS (SELECT 1 FROM issues i WHERE i.id = x.issue_id
+                                           AND lower(i.repo) = ANY({repos}::text[])))))"""
 
 
 class IssueInputsRepository:
@@ -64,19 +77,23 @@ class IssueInputsRepository:
             return None
         return dict(row)
 
-    async def list_by_issue(self, issue_id: str) -> list[dict[str, Any]]:
-        """Return all inputs for an issue, ordered by created_at ASC."""
+    async def list_by_issue(self, issue_id: str, *, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
+        """Return all inputs for an issue, ordered by created_at ASC. ``repos`` (lower-cased slugs) keeps only the
+        questions of those repositories: asked by a job working on one, about an issue of one."""
         rows = await self._db.fetch(
-            "SELECT * FROM issue_inputs WHERE issue_id = $1 ORDER BY created_at ASC",
+            f"SELECT x.* FROM issue_inputs x WHERE x.issue_id = $1 AND {_covered('$2')} ORDER BY x.created_at ASC",
             issue_id,
+            None if repos is None else list(repos),
         )
         return [dict(r) for r in rows]
 
-    async def list_by_job(self, job_id: str) -> list[dict[str, Any]]:
-        """Return all inputs for a job."""
+    async def list_by_job(self, job_id: str, *, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
+        """Return all inputs for a job. ``repos`` (lower-cased slugs) keeps only the questions of those
+        repositories, as :meth:`list_by_issue` does."""
         rows = await self._db.fetch(
-            "SELECT * FROM issue_inputs WHERE job_id = $1 ORDER BY created_at ASC",
+            f"SELECT x.* FROM issue_inputs x WHERE x.job_id = $1 AND {_covered('$2')} ORDER BY x.created_at ASC",
             job_id,
+            None if repos is None else list(repos),
         )
         return [dict(r) for r in rows]
 

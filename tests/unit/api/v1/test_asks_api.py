@@ -608,7 +608,7 @@ class FakeInputs:
     async def get(self, input_id: str) -> dict[str, Any] | None:
         return self.rows.get(input_id)
 
-    async def list_by_job(self, job_id: str) -> list[dict[str, Any]]:
+    async def list_by_job(self, job_id: str, *, repos: Any = None) -> list[dict[str, Any]]:
         return [r for r in self.rows.values() if r["job_id"] == job_id and r["issue_id"] is None]
 
 

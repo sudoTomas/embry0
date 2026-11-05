@@ -303,10 +303,14 @@ class JobsRepository:
         return [dict(r) for r in rows]
 
     async def started_and_waiting(self, person: str) -> list[dict[str, Any]]:
-        """The jobs ``person`` started that wait on someone, paused or asking a question, newest first, at most 50."""
+        """The jobs ``person`` started that wait on someone, paused or asking a question, newest first, at most 50.
+        ``repo`` is the job's repository (:func:`job_repository_sql`: its repo, else its git context's); ``title`` is
+        the issue's, else the task's start; ``task_title`` is the task's start, for a caller that does not read the
+        issue."""
         rows = await self._db.fetch(
-            """
-            SELECT j.job_id, j.status, j.repo, j.issue_id, COALESCE(i.title, LEFT(j.task, 120)) AS title
+            f"""
+            SELECT j.job_id, j.status, {job_repository_sql("j")} AS repo, j.issue_id,
+                   COALESCE(i.title, LEFT(j.task, 120)) AS title, LEFT(j.task, 120) AS task_title
             FROM jobs j
             LEFT JOIN issues i ON i.id = j.issue_id
             WHERE LOWER(j.dispatched_by) = LOWER($1) AND j.status IN ('paused', 'awaiting_input')

@@ -102,13 +102,19 @@ JOB_ROUTES: dict[str, str] = {
     "/api/v1/repos/{full_repo:repo}/setup/proposal": "the old path of the proposal",
     "/api/v1/standards/{owner}": "lists only the states of the repositories the key covers",
     "/api/v1/standards/{owner}/{kind}/repos/{repo:path}": "reads a repository the key does not cover as unregistered",
+    "/api/v1/issues/{issue_id}": (
+        "reads another repository's issue as a missing one (404), and lists only the jobs of the repositories the key "
+        "covers (the issue reads)"
+    ),
+    "/api/v1/issues/{issue_id}/inputs": (
+        "reads another repository's issue as a missing one (404), and lists only the questions of jobs in the "
+        "repositories the key covers (the issue reads)"
+    ),
 }
 
 #: GET routes that name a job of another repository inside something else they read, narrowed with that thing as a
 #: whole in a stage of their own, and which.
 ELSEWHERE: dict[str, str] = {
-    "/api/v1/issues/{issue_id}": "an issue, with its jobs: the issue reads",
-    "/api/v1/issues/{issue_id}/inputs": "an issue's questions, with their jobs: the issue reads",
     "/api/v1/cases/{case_id}": "a case, with its jobs and pull requests: the case reads",
     "/api/v1/traces": "the agents' runs, by job: the trace reads",
 }

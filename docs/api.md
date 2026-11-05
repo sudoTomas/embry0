@@ -111,7 +111,7 @@ A person's verdict on a finished job's work, and what they do with it. Each answ
 - `PUT /api/v1/jobs/{job_id}/evaluation` (`{"rating": "good"|"needs_work"|"bad", "verdict": "merged", "note"}`, any of them): 409 while the job has not finished, 422 with none of them.
 - `POST /api/v1/jobs/{job_id}/send-back` (`{"notes", "run_with"}`, 202): a pr-followup job on the job's GitHub pull request branch with the notes; 409 without one, or when the pull request is not open.
 - `POST /api/v1/jobs/{job_id}/reject` (`{"note", "close_pr"}`): records the rejection; with `close_pr`, which takes the admin tier, closes the pull request with the note as a comment. The answer adds `closed_pr`.
-- `POST /api/v1/jobs/{job_id}/run-again` (`{"run_with"}`, 202): starts the job again as a new job from its launch record (same repo, task, pipeline and settings; a Run with choice replaces the old one) and records the new job as its follow-up, so it leaves the review inbox. 409 while the job has not finished, or for a job with no launch record.
+- `POST /api/v1/jobs/{job_id}/run-again` (`{"run_with"}`, 202): starts the job again as a new job from its launch record (same repo, task, pipeline and settings; a Run with choice replaces the old one) and records the new job as its follow-up, so it leaves the review inbox, and answers `followup_issue_id` too: the issue the new job is linked to. The new job is linked to the old one's issue, except for a key with a [repository allowlist](#repository-allowlist) that does not read that issue: its new job has no issue and no issue number, and an issue's workflow runs from the job's own task, as an issue-less job's does, without the issue's answered questions that the old run carried. 409 while the job has not finished, or for a job with no launch record.
 - `POST /api/v1/jobs/{job_id}/dismiss`: seen, nothing to do; the job leaves the review inbox with no rating or verdict. 409 while it has not finished.
 
 **Deprecated paths.** Until 0.2.0 these five routes also answer at their old paths under the world: `PUT /api/v1/world/quests/{job_id}/evaluation`, and `POST /api/v1/world/quests/{job_id}/send-back`, `/reject`, `/run-again` and `/dismiss`. They run the same code and are marked `deprecated` in the OpenAPI schema. 0.2.0 removes them, so move a client to `/api/v1/jobs/{job_id}/…` now.
@@ -444,7 +444,7 @@ One message to one person about one decision, tracked from `queued` to `answered
 - `GET /api/v1/asks/due` also answers `day`, today in `asks.timezone`, and `working`, whether it is working hours now.
 - `GET /api/v1/asks/recap?since=`: each person's and group's numbers for a morning recap, `{"recaps": [{"recipient", "waiting", "worked", "new"}]}`: how many wait, the decisions they answered since `since`, and the asks that reached them since. Someone with nothing to say is left out. Through a key with a [repository allowlist](#repository-allowlist), only decisions in the repositories the key covers.
 - `GET /api/v1/asks/of?person=&limit=`: everything waiting on one person or group (`person` is a recipient's `key`), what they were sent first, then worst first: `{"person", "waiting", "repos": [{"repo", "count"}], "asks": [{"code", "sent", "held", "repo", "area", "kind", "verdict", "title", "why", "yes_starts", "actions"}]}`, for a chat to say how many there are and talk them through. `limit` (20, at most 100) cuts `asks`, not the counts. Through a key with a repository allowlist, only those in the repositories it covers.
-- Each person's `GET /asks/of` also has `questions` (`{"job_id", "repo", "title", "input_id", "question"}`) and `paused` (`{"job_id", "repo", "title"}`): the jobs they started that wait on them.
+- Each person's `GET /asks/of` also has `questions` (`{"job_id", "repo", "title", "input_id", "question"}`) and `paused` (`{"job_id", "repo", "title"}`): the jobs they started that wait on them. A job's `repo` is its repository as the dashboard reads it, from its git context when the job names none, and the routes below cover a job by that repository too.
 - `POST /api/v1/asks/jobs/{job_id}/answer` (`{"person", "input_id", "answer"}`): a job's question answered for `person`, through the paths the dashboard uses. Only whoever started the job (`dispatched_by`) or an admin may, and for a job no person started, anyone embry0 knows when `asks.unowned_group` is set; 403 for anyone else, 404 for a job the caller's key does not cover.
 - `POST /api/v1/asks/jobs/{job_id}/resume` (`{"person", "choice", "guidance"}`): a paused job kept going (`continue_retrying`) or stopped (`abandon`), with the same rule. Taking the work as it is stays on the dashboard.
 - `POST /api/v1/asks/jobs/{job_id}/stop` (`{"person"}`): a job stopped for `person`, with the same rule: a paused one is abandoned with its work kept on the branch, and one still going or waiting on an answer is cancelled.
@@ -1037,11 +1037,26 @@ organization:
 
 - `POST /jobs` (every pipeline; a job with no repository, such as an `http`
   or `none` context, is refused too);
-- `POST /issues` (an issue without a repository is refused),
-  `PUT /issues/{id}` (the issue's repository and, when it changes, the new
-  one), `POST /issues/{id}/triage`, `POST /issues/{id}/sync`,
-  `POST /issues/{id}/inputs/{input_id}/answer` and `DELETE /issues/{id}`
-  (the issue and each child issue it cancels);
+- `POST /issues` (an issue without a repository is refused) and
+  `PUT /issues/{id}` moving an issue to another repository (the new one).
+  Acting on another repository's issue answers as acting on an issue that
+  does not exist (below). `DELETE /issues/{id}` on an issue the key covers
+  is refused when it would also cancel a child issue, or an active job, of
+  a repository the key does not cover; the refusal names the issue's own
+  repository and says why, never the other one, which the log line and the
+  audit row name;
+- a write on the key's own item that would start work in a repository the
+  key does not cover, refused the same way, naming only the item's own
+  repository: `POST /cases/{id}/accept` on a finding whose retry runs on an
+  issue that moved to such a repository,
+  `POST /issues/{id}/inputs/{input_id}/answer` when the answer is the last
+  blocking one and would resume the issue's waiting job of such a
+  repository, and `POST /jobs/{id}/send-back` on a job whose pull request
+  is in such a repository. Each tells the key one thing it does not
+  otherwise read: that such work exists. No route starts a job for a key
+  with an allowlist in a repository it does not cover, which a test walks
+  over every route and MCP tool that can start one
+  (`tests/unit/api/test_job_starts_inventory.py`);
 - `POST /orgs/{owner}/context-audit/run` (the `repo` it names; a run that
   names none is refused, since it would start work on any repository under
   the owner);
@@ -1111,8 +1126,10 @@ allowlist: an admin reads it, the refused key does not.
 The list is also a read boundary: a key reads only its repositories' work
 and data. These routes narrow to the key's repositories today, by one rule
 (`key_covers` in `embry0/api/repo_allowlist.py`, applied to what is stored
-about repositories and owners by `embry0/api/repository_reads.py`); the
-issues, cases, traces, stats, audit and container log reads follow:
+about repositories and owners by `embry0/api/repository_reads.py`, to jobs
+by `embry0/api/job_allowlist.py` and to issues by
+`embry0/api/issue_allowlist.py`); the cases, traces, stats, audit and
+container log reads follow:
 
 - `GET /decisions`, `GET /proposals`, `GET /asks/due`, `GET /asks`,
   `GET /leads`, `GET /handoffs`, `GET /world` (its parties, quests, inbox,
@@ -1141,6 +1158,45 @@ issues, cases, traces, stats, audit and container log reads follow:
   QA workspace, attempts, results, screenshots and artifacts), and a QA run,
   `GET /qa/runs/{id}` and every route under it. The MCP job tools read
   through these routes, so they are narrowed too.
+- Issues. An issue belongs to its `repo`. `GET /issues` (with every
+  filter, its pages and its `total`) lists only the issues of repositories
+  the key covers, narrowed in the query before the page is cut. Another
+  repository's issue, an issue with no repository among them, reads exactly
+  as an issue that does not exist, status, headers and body:
+  `GET /issues/{id}`, `/activity` and `/inputs`. An issue the key reads
+  lists only the children and the jobs of repositories the key covers, and
+  every issue's `children_count`, `children_closed_count`, `jobs_count` and
+  `active_agent` count only those. An agent's question is asked by a job
+  about an issue, so it belongs to both: an issue's questions
+  (`GET /issues/{id}/inputs`) and a job's (`GET /jobs/{id}/inputs`) list
+  only those whose job, and whose issue, are of repositories the key covers,
+  and so do the questions `GET /asks/of` lists of the jobs a person started
+  (each such job titled from its task, not from an issue the key does not
+  read); answering any other one, on these routes or in a chat
+  (`POST /asks/jobs/{id}/answer`), answers as a question that does not
+  exist. A job names no issue the key does not read: its `issue_id` is null in
+  `GET /jobs` and `GET /jobs/{id}`; nor does an issue name such a parent:
+  its `parent_issue_id` is null in `GET /issues`, `GET /issues/{id}` and
+  what `PUT /issues/{id}` and `POST /issues/{id}/triage` answer. Work can
+  cross repositories this way when an issue moves after its job ran. A
+  key's own write never changes a parent the key does not read: changing a
+  child's status does not recalculate that parent's, and the change is not
+  refused, since a refusal would tell the parent exists. The pipeline's own
+  recalculation when a job finishes is different: it follows the children,
+  whoever started the job, so a parent's status still moves when its
+  children's jobs finish. A key's
+  action never links new work to an issue it does not read:
+  `POST /jobs/{id}/run-again` starts the new job with no issue
+  ([Reviewing a job](#reviewing-a-job)). An action on an existing job
+  (`POST /jobs/{id}/resume`, `/cancel`) keeps the link the job was made
+  with, and its answer names no issue. Deleting an issue the key reads
+  tells it one thing it does not otherwise read: the delete is refused,
+  naming only the issue's own repository, when it would cancel a child
+  issue or an active job of a repository the key does not cover. The MCP
+  `issue_list`, `issue_get`, `job_get`, `job_list`, `job_inputs` and
+  `job_answer` tools read through these routes, so they are narrowed too.
+  A key with an allowlist cannot create an issue with no repository, so it
+  never reads one.
 - What names a job of another repository. The lists of things that are
   each a job's, `GET /merge-approvals`, `GET /watcher/runs` (with
   `?stack=` another repository, as a stack with no ticks) and a knowledge
@@ -1250,8 +1306,14 @@ issues, cases, traces, stats, audit and container log reads follow:
   `POST /jobs/{id}/resume`, `/cancel` and `/inputs/{input_id}/answer`,
   `PUT /jobs/{id}/done-when`, and the [review](#reviewing-a-job)
   `PUT /jobs/{id}/evaluation`, `POST /jobs/{id}/send-back`, `/run-again`,
-  `/dismiss` and `/reject` (and their old paths under `/world/quests/`). So
-  no answer tells whether the item exists.
+  `/dismiss` and `/reject` (and their old paths under `/world/quests/`),
+  every action on one issue with the issue's 404 (`PUT /issues/{id}`,
+  `DELETE /issues/{id}`, `POST /issues/{id}/triage`, `/sync` and
+  `/inputs/{input_id}/answer`), and answering a question whose job or issue
+  is another repository's, through `POST /issues/{id}/inputs/{input_id}/answer`
+  or `POST /jobs/{id}/inputs/{input_id}/answer`, with the 404 of a question
+  that does not exist (`Input not found`). So no answer tells whether the
+  item exists.
 
 A list or a read is narrowed, not refused, so it logs and audits nothing.
 An action is refused: it logs `api_key_repo_refused` and writes an

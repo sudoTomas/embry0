@@ -36,7 +36,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import ensure_admin, get_healing_cases_repo, request_actor
-from embry0.api.repo_allowlist import answer_as_missing, enforce_repo_allowlist, key_covers, key_covers_organization
+from embry0.api.repo_allowlist import (
+    answer_as_missing,
+    enforce_reach,
+    enforce_repo_allowlist,
+    key_covers,
+    key_covers_organization,
+)
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.cases import CaseDetailResponse, CaseListResponse, CaseSummary
 from embry0.api.schemas.person_name import PersonName
@@ -403,6 +409,13 @@ async def _accept_linear(
     return str(result.get("issue_id") or ""), job_id
 
 
+#: Why accepting a finding is refused when its retry would start work in a repository the key does not cover.
+RETRY_REACHES_BEYOND = (
+    "the finding's retry runs on an issue in a repository the key does not cover, so accepting it would start "
+    "work there"
+)
+
+
 async def _accept_retry(
     request: Request, case: dict[str, Any], actor: str, run_with: RunWith | None = None
 ) -> tuple[str, str]:
@@ -429,6 +442,15 @@ async def _accept_retry(
     issue = await issues_repo.get(issue_id)
     if issue is None:
         raise HTTPException(status_code=409, detail=f"the case's issue {issue_id} no longer exists")
+    # The retry starts its job in the issue's repository. One that moved to a repository the key does not cover is
+    # refused before anything is written, naming the case's repository only (the audit row names the other).
+    await enforce_reach(
+        request,
+        str(case.get("repo") or ""),
+        [issue.get("repo")],
+        action="accept a finding",
+        reason=RETRY_REACHES_BEYOND,
+    )
     status = str(issue.get("status") or "")
     if status == IssueStatus.CLOSED:
         try:

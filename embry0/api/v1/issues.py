@@ -1,4 +1,9 @@
-"""Issues API — create, list, get, update, delete, triage, sync, and activity endpoints."""
+"""Issues API — create, list, get, update, delete, triage, sync, and activity endpoints.
+
+To a key with a repository allowlist, an issue of another repository, or of
+none, reads and is acted on as an issue that does not exist, and the lists
+leave it out (:mod:`embry0.api.issue_allowlist`).
+"""
 
 from typing import Any
 
@@ -14,7 +19,8 @@ from embry0.api.deps import (
     get_jobs_repo,
     request_actor,
 )
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.issue_allowlist import hide_input_unless_covered, parent_hidden, without_hidden_parents
+from embry0.api.repo_allowlist import covered_slugs, enforce_reach, enforce_repo_allowlist, hide_unless_covered
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.inputs import AnswerInputRequest, InputResponse
 from embry0.api.schemas.issues import (
@@ -33,7 +39,7 @@ from embry0.services.issue_executor import IssueExecutor
 from embry0.services.run_with import RunWith
 from embry0.storage.repositories.issue_inputs import IssueInputsRepository
 from embry0.storage.repositories.issues import IssuesRepository
-from embry0.storage.repositories.jobs import JobsRepository
+from embry0.storage.repositories.jobs import JobsRepository, job_repository
 from embry0.storage.repositories.repos import UnregisteredRepoError
 from embry0.trackers import github_number_of
 
@@ -84,6 +90,32 @@ async def _dispatch(
 
 def _actor(request: Request) -> str:
     return request_actor(request)
+
+
+def _issue_not_found() -> HTTPException:
+    """What the routes that read or act on an issue answer for an issue that does not exist, and for one the caller's
+    key does not cover (``embry0.api.issue_allowlist``)."""
+    return HTTPException(status_code=404, detail="Issue not found")
+
+
+def _input_not_found() -> HTTPException:
+    """What answering a question answers for a question that does not exist, and for one the caller's key does not
+    cover (``embry0.api.issue_allowlist``)."""
+    return HTTPException(status_code=404, detail="Input not found")
+
+
+#: Why answering an issue's question is refused when it would resume a job the key does not cover.
+ANSWER_REACHES_BEYOND = (
+    "the answer is the issue's last blocking one, and it would resume the issue's waiting job, which is in a "
+    "repository the key does not cover"
+)
+#: The job statuses deleting an issue cancels.
+_ACTIVE_JOB_STATUSES = ("pending", "running", "awaiting_input", "paused")
+#: Why deleting an issue the key reads is refused when it reaches another repository.
+DELETE_REACHES_BEYOND = (
+    "the issue has a child issue or an active job in a repository the key does not cover, which deleting it "
+    "would cancel"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +193,7 @@ async def create_issue(
 
 @router.get("/issues")
 async def list_issues(
+    request: Request,
     status: str | None = None,
     priority: str | None = None,
     repo: str | None = None,
@@ -185,7 +218,10 @@ async def list_issues(
         order=order,
         limit=limit,
         offset=offset,
+        repos=covered_slugs(request),
     )
+    # An issue names no parent the key does not read.
+    await without_hidden_parents(request, rows)
     return IssueListResponse(
         issues=[IssueResponse(**r) for r in rows],
         total=total,
@@ -202,17 +238,20 @@ async def list_issues(
 @router.get("/issues/{issue_id}")
 async def get_issue(
     issue_id: str,
+    request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
     jobs: JobsRepository = Depends(get_jobs_repo),
 ) -> IssueDetailResponse:
-    issue = await issues.get(issue_id)
+    covered = covered_slugs(request)
+    issue = await issues.get(issue_id, repos=covered)
     if not issue:
-        raise HTTPException(status_code=404, detail="Issue not found")
+        raise _issue_not_found()
+    await without_hidden_parents(request, [issue])
 
-    children_rows = await issues.get_children(issue_id)
+    children_rows = await issues.get_children(issue_id, repos=covered)
     children = [IssueResponse(**c) for c in children_rows]
 
-    issue_jobs, _ = await jobs.list_all(issue_id=issue_id, limit=100, offset=0)
+    issue_jobs, _ = await jobs.list_all(issue_id=issue_id, limit=100, offset=0, repos=covered)
 
     return IssueDetailResponse(**issue, children=children, jobs=issue_jobs)
 
@@ -232,12 +271,13 @@ async def update_issue(
 ) -> IssueResponse:
     existing = await issues.get(issue_id)
     if not existing:
-        raise HTTPException(status_code=404, detail="Issue not found")
+        raise _issue_not_found()
 
     updates = req.model_dump(exclude_none=True)
     # Both ends: a restricted key may neither edit another repository's
-    # issue nor move one of its own issues to a repository it may not use.
-    await enforce_repo_allowlist(request, existing.get("repo"), action="update an issue")
+    # issue, which answers as one that does not exist, nor move one of its
+    # own issues to a repository it may not use.
+    await hide_unless_covered(request, existing.get("repo"), _issue_not_found(), action="update an issue")
     if "repo" in updates:
         await enforce_repo_allowlist(request, updates["repo"], action="move an issue")
     if updates:
@@ -260,7 +300,10 @@ async def update_issue(
             audit_log_path=config.audit_log_path,
             issue_id=issue_id,
         )
-        await issues.update_parent_status(issue_id)
+        # A key's change rolls up into no parent it does not read; skipped rather than refused, which would tell
+        # the parent exists (embry0.api.issue_allowlist).
+        if not await parent_hidden(request, existing):
+            await issues.update_parent_status(issue_id)
 
     await emit_audit(
         db,
@@ -278,8 +321,9 @@ async def update_issue(
             except Exception:
                 logger.warning("github_sync_failed", issue_id=issue_id, exc_info=True)
 
-    updated = await issues.get(issue_id)
+    updated = await issues.get(issue_id, repos=covered_slugs(request))
     assert updated is not None, "Updated issue must exist"
+    await without_hidden_parents(request, [updated])
     return IssueResponse(**updated)
 
 
@@ -297,13 +341,26 @@ async def delete_issue(
 ) -> None:
     existing = await issues.get(issue_id)
     if not existing:
-        raise HTTPException(status_code=404, detail="Issue not found")
+        raise _issue_not_found()
+    await hide_unless_covered(request, existing.get("repo"), _issue_not_found(), action="delete an issue")
 
     children = await issues.get_children(issue_id)
-    # Every issue this cancels, the children included, is checked before any write.
-    for target in [existing, *children]:
-        await enforce_repo_allowlist(request, target.get("repo"), action="delete an issue")
     all_issue_ids = [issue_id] + [c["id"] for c in children]
+    active = [
+        j
+        for iid in all_issue_ids
+        for j in (await jobs.list_all(issue_id=iid, limit=100, offset=0))[0]
+        if j["status"] in _ACTIVE_JOB_STATUSES
+    ]
+    # Everything this cancels, the children and their active jobs included, is checked before any write. The issue
+    # is the key's; a child or a job elsewhere is refused without naming where.
+    await enforce_reach(
+        request,
+        str(existing.get("repo")),
+        [*(c.get("repo") for c in children), *(job_repository(j) for j in active)],
+        action="delete an issue",
+        reason=DELETE_REACHES_BEYOND,
+    )
 
     # #449: stop every active job through the executor, as POST
     # /jobs/{id}/cancel does — it cancels the task, destroys the sandbox and
@@ -312,11 +369,8 @@ async def delete_issue(
     # are marked cancelled after it.
     executor = request.app.state.issue_executor
     actor = _actor(request)
-    for iid in all_issue_ids:
-        issue_jobs, _ = await jobs.list_all(issue_id=iid, limit=100, offset=0)
-        for j in issue_jobs:
-            if j["status"] in ("pending", "running", "awaiting_input", "paused"):
-                await executor.cancel_job(j["job_id"], actor=actor)
+    for j in active:
+        await executor.cancel_job(j["job_id"], actor=actor)
 
     for child in children:
         await issues.update(child["id"], status="cancelled")
@@ -357,9 +411,9 @@ async def triage_issue(
 ) -> IssueDispatchResponse:
     existing = await issues.get(issue_id)
     if not existing:
-        raise HTTPException(status_code=404, detail="Issue not found")
+        raise _issue_not_found()
 
-    await enforce_repo_allowlist(request, existing.get("repo"), action="triage an issue")
+    await hide_unless_covered(request, existing.get("repo"), _issue_not_found(), action="triage an issue")
     run_with = await checked_run_with(request, body.run_with if body else None, existing.get("repo"))
     current_status = existing["status"]
     if current_status in ("triaging", "closed", "cancelled"):
@@ -393,8 +447,9 @@ async def triage_issue(
     if dispatch["job_id"]:
         logger.info("triage_started", issue_id=issue_id, job_id=dispatch["job_id"])
 
-    updated = await issues.get(issue_id)
+    updated = await issues.get(issue_id, repos=covered_slugs(request))
     assert updated is not None, "Triaged issue must exist"
+    await without_hidden_parents(request, [updated])
     return IssueDispatchResponse(**{**updated, **dispatch})
 
 
@@ -412,8 +467,8 @@ async def sync_issue(
 ) -> dict[str, object]:
     existing = await issues.get(issue_id)
     if not existing:
-        raise HTTPException(status_code=404, detail="Issue not found")
-    await enforce_repo_allowlist(request, existing.get("repo"), action="sync an issue")
+        raise _issue_not_found()
+    await hide_unless_covered(request, existing.get("repo"), _issue_not_found(), action="sync an issue")
 
     if sync is None:
         raise HTTPException(status_code=400, detail="GitHub sync is not enabled")
@@ -441,13 +496,14 @@ async def sync_issue(
 @router.get("/issues/{issue_id}/activity")
 async def get_issue_activity(
     issue_id: str,
+    request: Request,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     issues: IssuesRepository = Depends(get_issues_repo),
 ) -> list[dict[str, Any]]:
-    existing = await issues.get(issue_id)
+    existing = await issues.get(issue_id, repos=covered_slugs(request))
     if not existing:
-        raise HTTPException(status_code=404, detail="Issue not found")
+        raise _issue_not_found()
 
     return await issues.get_activity(issue_id, limit=limit, offset=offset)
 
@@ -479,6 +535,30 @@ async def _resume_pipeline(
     await executor.resume_or_execute(issue_id, additional_context, dispatched_by=dispatched_by)
 
 
+async def _refuse_a_resume_elsewhere(
+    request: Request,
+    issue: dict[str, Any],
+    inp: dict[str, Any],
+    inputs: IssueInputsRepository,
+    executor: IssueExecutor,
+    *,
+    action: str,
+) -> None:
+    """Refuse, before anything is written, an answer of a key with an allowlist that would resume a job the key does
+    not cover: the issue's last blocking answer resumes its newest waiting job (``IssueExecutor.waiting_job``), which
+    may be another repository's once the issue moved. The refusal names the issue's repository only."""
+    if covered_slugs(request) is None or issue.get("status") != "awaiting_input":
+        return
+    answered = inp.get("importance") == "blocking" and inp.get("status") == "pending"
+    if await inputs.count_pending_blocking(str(issue["id"])) - int(answered) > 0:
+        return
+    waiting = await executor.waiting_job(str(issue["id"]))
+    if waiting is not None:
+        await enforce_reach(
+            request, str(issue.get("repo")), [job_repository(waiting)], action=action, reason=ANSWER_REACHES_BEYOND
+        )
+
+
 # ---------------------------------------------------------------------------
 # GET /issues/{issue_id}/inputs — list all inputs for an issue
 # ---------------------------------------------------------------------------
@@ -487,14 +567,16 @@ async def _resume_pipeline(
 @router.get("/issues/{issue_id}/inputs")
 async def list_issue_inputs(
     issue_id: str,
+    request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
     inputs: IssueInputsRepository = Depends(get_inputs_repo),
 ) -> list[InputResponse]:
-    existing = await issues.get(issue_id)
+    covered = covered_slugs(request)
+    existing = await issues.get(issue_id, repos=covered)
     if not existing:
-        raise HTTPException(status_code=404, detail="Issue not found")
+        raise _issue_not_found()
 
-    rows = await inputs.list_by_issue(issue_id)
+    rows = await inputs.list_by_issue(issue_id, repos=covered)
     return [InputResponse(**r) for r in rows]
 
 
@@ -529,15 +611,19 @@ async def answer_issue_input_as(
     """The answer as ``actor``: whoever authenticated, or the person a chat assistant verified."""
     existing = await issues.get(issue_id)
     if not existing:
-        raise HTTPException(status_code=404, detail="Issue not found")
+        raise _issue_not_found()
     # An answer resumes the issue's job once no blocking question is left.
-    await enforce_repo_allowlist(request, existing.get("repo"), action="answer a question on an issue")
+    action = "answer a question on an issue"
+    await hide_unless_covered(request, existing.get("repo"), _issue_not_found(), action=action)
 
     inp = await inputs.get(input_id)
     if not inp:
-        raise HTTPException(status_code=404, detail="Input not found")
+        raise _input_not_found()
     if inp["issue_id"] != issue_id:
-        raise HTTPException(status_code=404, detail="Input not found")
+        raise _input_not_found()
+    # A question asked by a job of another repository answers as one that does not exist.
+    await hide_input_unless_covered(request, inp, _input_not_found(), action=action)
+    await _refuse_a_resume_elsewhere(request, existing, inp, inputs, executor, action=action)
     # RAV-1059: auto_answered rows stay answerable — a human answer overrides
     # the orchestrator's auto-answer post-hoc (the state.py contract; the
     # job-scoped endpoint carries the same rule).

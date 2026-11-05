@@ -48,7 +48,9 @@ narrows its query to :func:`covered_slugs` and still keeps only what
 
 Jobs are held to the same rule by :mod:`embry0.api.job_allowlist`: a job
 outside the list reads, streams and is acted on as a job that does not
-exist, and the lists and counts of jobs leave it out in their query. What
+exist, and the lists and counts of jobs leave it out in their query. Issues,
+and the agents' questions asked about them, are held to it by
+:mod:`embry0.api.issue_allowlist` the same way. What
 embry0 stores about a repository and an owner is held to it by
 :mod:`embry0.api.repository_reads`: a repository outside the list reads as
 one nobody registered, and what belongs to an owner as a whole reads only to
@@ -245,6 +247,23 @@ async def enforce_owner_allowlist(request: Request, owner: str | None, *, action
     """
     if not await key_covers_organization(request, owner):
         await _refuse(request, f"{owner}/*" if owner else "(no owner)", action, OWNER_NOT_COVERED)
+
+
+async def enforce_reach(
+    request: Request, shown: str, reached: Iterable[str | None], *, action: str, reason: str
+) -> None:
+    """Refuse with 403 ``action`` on ``shown``, a repository the calling key covers, when it would also reach a
+    repository the key does not cover, one of ``reached`` (None for something of no repository): an issue's
+    deletion that would cancel a child issue or a job elsewhere. The answer names ``shown`` and says why
+    (``reason``), never the repository reached, which the key does not read; the log line and the audit row name
+    that one. No-op for sessions, the master key, AUTH_DEV_MODE and keys without an allowlist."""
+    principal = getattr(request.state, "principal", None)
+    if principal is None or principal.allowed_repos is None:
+        return
+    beyond = [repo for repo in reached if not repo_allowed(principal.allowed_repos, repo)]
+    if beyond:
+        await _record_refusal(request, beyond[0] or "(no repository)", action)
+        raise HTTPException(status_code=403, detail=_detail(principal, shown, action, reason))
 
 
 async def enforce_no_allowlist(request: Request, shown: str, *, action: str, reason: str) -> None:
