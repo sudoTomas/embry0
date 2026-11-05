@@ -103,6 +103,8 @@ pip install -e .          # installs the embry0 CLI
 embry0 start              # builds every image, starts the stack, waits for health
 ```
 
+From Claude Code, the [embry0 plugin](docs/claude-code.md#the-plugin) runs these steps with you: `/plugin install embry0 --marketplace https://github.com/sudoTomas/embry0`, then `/embry0:install`.
+
 Open the dashboard at **http://localhost:8200** and sign in with your `API_KEY`. Then create an issue and click **Send to Triage**. To trigger jobs straight from GitHub, set up [webhooks](docs/webhooks.md); the Cloudflare tunnel for them is an optional compose profile.
 
 `embry0 start` reads this root `.env`, and `infra/.env` only for a `COMPOSE_FILE` overlay such as the [rootless sandbox runtime](docs/ops/provisioning.md#10-a-rootless-sandbox-daemon). Running compose yourself from `infra/` (as `infra/deploy.sh` does) reads `infra/.env` instead: start it from [`infra/.env.example`](infra/.env.example).
@@ -114,7 +116,7 @@ Open the dashboard at **http://localhost:8200** and sign in with your `API_KEY`.
 | [Architecture](docs/architecture.md) | Full system reference — topology, pipelines, sandbox and proxy design, storage, job lifecycle |
 | [Configuration](docs/configuration.md) | Environment variables, secrets at rest, execution/auth modes, CLI reference |
 | [API reference](docs/api.md) | REST endpoints with curl examples, WebSocket event stream |
-| [Setup from Claude Code](docs/claude-code.md) | Connect a Claude Code session to a deployment over MCP; it sets up model access, credentials, an organization, webhooks and testing with you |
+| [Setup from Claude Code](docs/claude-code.md) | The embry0 plugin for Claude Code, or a manual MCP connection: stand up a deployment, then set up model access, credentials, an organization, webhooks and testing with you |
 | [Onboarding a repo](docs/onboarding.md) | `embry0 init` (new projects) and `embry0 onboard` (existing repos) — zero-to-pipeline in one command |
 | [Running QA](docs/running-qa.md) | Integrating a target repo, `qa.yaml`, gotchas, triggering and watching runs |
 | [`qa.yaml` v2 reference](docs/qa-yaml-reference.md) | Field-by-field schema reference with monorepo examples |
