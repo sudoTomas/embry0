@@ -331,6 +331,112 @@ async def test_run_cmd_writes_stdin_data_to_the_command(tmp_path):
     assert out.read_bytes() == b"bearer-0001\n", "stdin_data did not reach the command's stdin"
 
 
+class _Pipe:
+    """A process pipe: hands out ``total`` bytes (``fill``) in whatever sizes are asked for, then EOF."""
+
+    def __init__(self, total: int = 0, data: bytes = b"", fill: bytes = b"x") -> None:
+        self._data = data
+        self._total = total if not data else len(data)
+        self._fill = fill
+        self.handed = 0
+
+    async def read(self, n: int = -1) -> bytes:
+        if self.handed >= self._total:
+            return b""
+        k = self._total - self.handed if n < 0 else min(n, self._total - self.handed)
+        chunk = self._data[self.handed : self.handed + k] if self._data else self._fill * k
+        self.handed += k
+        return chunk
+
+
+class _Proc:
+    def __init__(self, stdout: _Pipe, stderr: _Pipe | None = None, returncode: int = 0) -> None:
+        self.stdout, self.stderr = stdout, stderr or _Pipe()
+        self.returncode: int | None = None
+        self._rc, self.killed, self.pid = returncode, False, 4242
+
+    async def wait(self) -> int:
+        self.returncode = -9 if self.killed else self._rc
+        return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+
+    async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+        # What a whole-output read does (and what run_cmd_bytes must not): drain both pipes.
+        out, err = await self.stdout.read(-1), await self.stderr.read(-1)
+        await self.wait()
+        return out, err
+
+
+def _too_large_error() -> type[Exception]:
+    from embry0.execution import docker_client
+
+    err = getattr(docker_client, "OutputTooLargeError", None)
+    assert err is not None, "run_cmd_bytes must refuse output past its cap (docker_client.OutputTooLargeError)"
+    return err
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_bytes_returns_raw_stdout_without_decoding():
+    """A file read out of a sandbox is binary; run_cmd_bytes must not decode or strip it (sandbox_files)."""
+    assert hasattr(DockerClient, "run_cmd_bytes"), "DockerClient must expose run_cmd_bytes for binary reads"
+    raw = b"\x89PNG\r\n\x1a\n\x00\xff not text  "
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(data=raw))
+        result = await DockerClient().run_cmd_bytes(["docker", "exec", "c", "cat", "/x"])
+    assert result == raw, "bytes returned verbatim, not decoded or stripped"
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_bytes_raises_on_non_zero_exit():
+    assert hasattr(DockerClient, "run_cmd_bytes"), "DockerClient must expose run_cmd_bytes for binary reads"
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(), _Pipe(data=b"embry0-read-refused: not a regular file"), returncode=3)
+        with pytest.raises(RuntimeError, match="not a regular file"):
+            await DockerClient().run_cmd_bytes(["docker", "exec", "c", "false"])
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_bytes_never_buffers_past_its_cap():
+    """A process that keeps writing (8 MiB here) is killed at the cap; the orchestrator never holds more than cap+1 bytes."""
+    OutputTooLargeError = _too_large_error()
+    stdout = _Pipe(total=8 * 1024 * 1024)
+    proc = _Proc(stdout)
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = proc
+        with pytest.raises(OutputTooLargeError):
+            await DockerClient().run_cmd_bytes(["docker", "exec", "c", "cat", "/x"], max_bytes=1024)
+    assert stdout.handed <= 1024 + 1, f"read {stdout.handed} bytes from the pipe; the cap is 1024"
+    assert proc.killed, "the command is killed once it passes the cap"
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_bytes_returns_output_at_exactly_the_cap():
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(total=1024))
+        assert len(await DockerClient().run_cmd_bytes(["docker", "x"], max_bytes=1024)) == 1024
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_bytes_cap_holds_against_a_real_process():
+    """A real pipe: 8 MiB written, a 1 KiB cap, refused promptly."""
+    OutputTooLargeError = _too_large_error()
+    with pytest.raises(OutputTooLargeError):
+        await DockerClient().run_cmd_bytes(
+            [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x' * (8 << 20))"], timeout=20, max_bytes=1024
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_bytes_keeps_only_the_head_of_a_flooded_stderr():
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(), _Pipe(total=4 * 1024 * 1024, fill=b"e"), returncode=1)
+        with pytest.raises(RuntimeError) as caught:
+            await DockerClient().run_cmd_bytes(["docker", "x"])
+    assert len(str(caught.value)) < 70 * 1024, "stderr is kept to its first 64 KiB"
+
+
 @pytest.mark.asyncio
 async def test_run_cmd_failure():
     """run_cmd raises on non-zero exit."""

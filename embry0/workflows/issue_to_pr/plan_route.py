@@ -22,7 +22,7 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
-from embry0.execution import events
+from embry0.execution import events, sandbox_files
 from embry0.services.slop import SLOP_TEMPLATE, is_slop, parse_work_nature
 from embry0.workflows._validation import validate_graph_definition
 from embry0.workflows.issue_to_pr.route_plan import (
@@ -119,6 +119,9 @@ DELIVERABLES_DIR = "/workspace/deliverables"
 DELIVERABLES_BUCKET = "job-deliverables"
 MAX_ARTIFACT_COUNT = 20
 MAX_ARTIFACT_BYTES = 10 * 1024 * 1024  # per file
+MAX_ARTIFACT_TOTAL_BYTES = 50 * 1024 * 1024  # across all of a job's artifacts
+MAX_LISTING_BYTES = 8 * 1024 * 1024  # the NUL-delimited listing of the deliverables directory
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class TemplateInvalidError(RuntimeError):
@@ -505,9 +508,16 @@ async def _collect_artifacts(state: dict[str, Any], config: RunnableConfig) -> l
 
     Best-effort by design: no docker/minio/container (tests, minimal
     deploys, sandbox already gone) or any per-file failure returns/skips
-    with a WARNING — artifact collection must never fail the job. Caps:
-    :data:`MAX_ARTIFACT_COUNT` files, :data:`MAX_ARTIFACT_BYTES` each;
-    files beyond the caps are logged and skipped, not silently dropped.
+    with a WARNING — artifact collection must never fail the job.
+
+    Paths come from the deliverables directory NUL-delimited (a file name may
+    hold a newline), each is normalised and refused unless it stays under the
+    directory, and the bytes are read **as the agent** with a per-file byte
+    cap, so a listing a job arranged cannot make embry0 read a file the job
+    could not read itself. Caps: :data:`MAX_ARTIFACT_COUNT` files,
+    :data:`MAX_ARTIFACT_BYTES` each, :data:`MAX_ARTIFACT_TOTAL_BYTES` total,
+    all enforced by the reader (not by a listed size); files beyond the caps
+    are logged and skipped, not silently dropped.
     """
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     docker = configurable.get("docker")
@@ -520,24 +530,39 @@ async def _collect_artifacts(state: dict[str, Any], config: RunnableConfig) -> l
     list_cmd = [
         "bash",
         "-c",
-        f"test -d {DELIVERABLES_DIR} && find {DELIVERABLES_DIR} -type f -printf '%s\\t%p\\n' || true",
+        f"test -d {DELIVERABLES_DIR} && find {DELIVERABLES_DIR} -type f -print0 || true",
     ]
     try:
-        raw = await docker.run_cmd(docker.build_exec_cmd(container, list_cmd), timeout=30)
+        # Bytes, capped and unstripped: a NUL-delimited name may end in a space,
+        # and nothing a process in the sandbox writes into the pipe is buffered
+        # past the cap.
+        raw = await docker.run_cmd_bytes(
+            docker.build_exec_cmd(container, list_cmd), timeout=30, max_bytes=MAX_LISTING_BYTES
+        )
     except Exception:
         logger.warning("deliverables_list_failed", job_id=job_id, exc_info=True)
         return []
 
-    entries: list[tuple[int, str]] = []
-    for line in (raw or "").splitlines():
-        size_str, _, path = line.partition("\t")
-        if not path:
+    base = DELIVERABLES_DIR.rstrip("/")
+    paths: list[str] = []
+    for entry in raw.split(b"\0"):
+        if not entry:
             continue
         try:
-            entries.append((int(size_str), path))
-        except ValueError:
+            path = entry.decode()
+        except UnicodeDecodeError:
+            logger.warning("deliverable_name_refused", job_id=job_id, reason="not utf-8", path=repr(entry[:200]))
             continue
-    if not entries:
+        normalised = posixpath.normpath(path)
+        if normalised != base and not normalised.startswith(base + "/"):
+            logger.warning("deliverable_outside_dir", job_id=job_id, path=path[:200])
+            continue
+        if _CONTROL_CHARS.search(normalised):
+            # A newline or tab in a name would end up in a storage key and a title.
+            logger.warning("deliverable_name_refused", job_id=job_id, reason="control character", path=repr(path[:200]))
+            continue
+        paths.append(normalised)
+    if not paths:
         return []
 
     try:
@@ -546,27 +571,31 @@ async def _collect_artifacts(state: dict[str, Any], config: RunnableConfig) -> l
         logger.warning("deliverables_bucket_failed", job_id=job_id, exc_info=True)
         return []
 
-    if len(entries) > MAX_ARTIFACT_COUNT:
-        logger.warning(
-            "deliverables_count_capped",
-            job_id=job_id,
-            found=len(entries),
-            kept=MAX_ARTIFACT_COUNT,
-        )
+    if len(paths) > MAX_ARTIFACT_COUNT:
+        logger.warning("deliverables_count_capped", job_id=job_id, found=len(paths), kept=MAX_ARTIFACT_COUNT)
     artifacts: list[dict[str, Any]] = []
-    for size, path in sorted(entries, key=lambda e: e[1])[:MAX_ARTIFACT_COUNT]:
-        rel = posixpath.relpath(path, DELIVERABLES_DIR)
-        if size > MAX_ARTIFACT_BYTES:
-            logger.warning("deliverable_too_large", job_id=job_id, path=rel, size=size)
-            continue
+    total = 0
+    for path in sorted(paths)[:MAX_ARTIFACT_COUNT]:
+        rel = posixpath.relpath(path, base)
         try:
-            data = await docker.copy_bytes_from(container, path)
+            data = await sandbox_files.read_regular_file(docker, container, path, limit=MAX_ARTIFACT_BYTES)
+        except sandbox_files.SandboxReadRefused as exc:
+            logger.warning("deliverable_read_refused", job_id=job_id, path=rel, reason=exc.reason)
+            continue
+        except Exception:
+            logger.warning("deliverable_read_failed", job_id=job_id, path=rel, exc_info=True)
+            continue
+        if total + len(data) > MAX_ARTIFACT_TOTAL_BYTES:
+            logger.warning("deliverables_total_capped", job_id=job_id, path=rel, total=total)
+            break
+        try:
             media_type = mimetypes.guess_type(rel)[0] or "application/octet-stream"
             key = f"{job_id}/{rel}"
             await minio.put_object(DELIVERABLES_BUCKET, key, data, content_type=media_type)
         except Exception:
             logger.warning("deliverable_upload_failed", job_id=job_id, path=rel, exc_info=True)
             continue
+        total += len(data)
         artifacts.append(
             {
                 "type": "artifact",

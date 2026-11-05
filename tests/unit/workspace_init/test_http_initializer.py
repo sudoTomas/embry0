@@ -108,12 +108,35 @@ async def _run_initialize(monkeypatch, response, *, max_bytes=1000, docker=None)
     monkeypatch.setattr(http_mod, "_assert_host_allowed", lambda *a, **k: None)
     monkeypatch.setattr(http_mod.httpx, "AsyncClient", lambda **kw: _FakeClient(response))
 
-    docker = docker or MagicMock(
-        run_cmd=AsyncMock(return_value=""),
-        build_exec_cmd=MagicMock(side_effect=lambda cid, cmd, **kw: [*cmd]),
-        copy_into=AsyncMock(),
-        copy_bytes_into=AsyncMock(),
-    )
+    if docker is None:
+        staged: list[tuple[bytes, bool]] = []
+        placed: list[str] = []
+
+        async def _run(cmd, timeout=0, stdin_data=None):
+            if "python3" in cmd:  # a sandbox_files staging write (as root)
+                staged.append((stdin_data or b"", cmd[:4] == ["docker", "exec", "-u", "root"]))
+                return "/run/embry0/drop/deadbeef/" + cmd[-3]  # name is argv[-3] of the write script
+            if "bash" in cmd:  # the agent-level placement copy
+                placed.append(cmd[-1])
+            return ""
+
+        docker = MagicMock(
+            run_cmd=AsyncMock(side_effect=_run),
+            build_exec_cmd=MagicMock(
+                side_effect=lambda cid, cmd, **kw: [
+                    "docker",
+                    "exec",
+                    *(["-u", kw["user"]] if kw.get("user") else []),
+                    cid,
+                    *cmd,
+                ]
+            ),
+            # the removed API — present only so a pre-change tree reaches an assertion
+            copy_into=AsyncMock(),
+            copy_bytes_into=AsyncMock(),
+        )
+        docker.staged = staged
+        docker.placed = placed
     ctx = InitContext(
         job_id="job-1",
         context={"type": "http", "url": "https://ok.example/data.csv"},
@@ -144,8 +167,11 @@ async def test_streamed_overrun_aborts(monkeypatch):
 async def test_successful_fetch_stages_body_and_provenance(monkeypatch):
     resp = _FakeStreamResponse([b"a,b\n1,2\n"])
     docker = await _run_initialize(monkeypatch, resp, max_bytes=1000)
-    copy_dst = docker.copy_into.await_args.args[2]
-    assert copy_dst == "/workspace/source.csv"
-    prov = docker.copy_bytes_into.await_args.args
-    assert prov[2] == "/workspace/SOURCE_URL.txt"
-    assert b"https://ok.example/data.csv" in prov[1]
+    # Both files are staged as root (never copied to an agent-chosen path),
+    # then placed into /workspace as the agent.
+    assert all(as_root for _data, as_root in docker.staged), "staged as root"
+    staged_bytes = [data for data, _ in docker.staged]
+    assert b"a,b\n1,2\n" in staged_bytes
+    assert any(b"https://ok.example/data.csv" in data for data in staged_bytes)
+    assert any("/workspace/source.csv" in p for p in docker.placed)
+    assert any("/workspace/SOURCE_URL.txt" in p for p in docker.placed)
