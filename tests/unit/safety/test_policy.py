@@ -15,7 +15,6 @@ from embry0.safety.policy import (
 def test_safety_policy_is_frozen() -> None:
     policy = SafetyPolicy(
         allowed_tools=["Read"],
-        allow_rules=[],
         deny_rules=[],
         content_checks=[],
         network_egress_allowlist=[],
@@ -116,11 +115,6 @@ def test_default_policy_includes_workspace_deny_rules() -> None:
     assert any("~/.claude" in r for r in policy.deny_rules)
 
 
-def test_default_policy_includes_workspace_allow_rules() -> None:
-    policy = default_policy_for_agent("developer")
-    assert any("/workspace" in r for r in policy.allow_rules)
-
-
 def test_default_policy_includes_dangerous_bash_content_checks() -> None:
     policy = default_policy_for_agent("developer")
     patterns_in_policy = {r.pattern for r in policy.content_checks}
@@ -139,17 +133,18 @@ def test_default_policy_readonly_agent_omits_write_tools() -> None:
 
 
 def test_render_settings_json_shape() -> None:
+    """Only the deny rules: the CLI drops a project's allow rules in an untrusted workspace,
+    and under bypassPermissions there is nothing for an allow rule or a default mode to do."""
     policy = SafetyPolicy(
         allowed_tools=["Read", "Bash"],
-        allow_rules=["Read(/workspace/**)", "Bash(git:*)"],
         deny_rules=["Read(/etc/**)"],
         content_checks=[],
         network_egress_allowlist=[],
     )
     rendered = render_settings_json(policy)
-    assert rendered["permissions"]["allow"] == ["Read(/workspace/**)", "Bash(git:*)"]
-    assert rendered["permissions"]["deny"] == ["Read(/etc/**)"]
-    assert rendered["permissions"]["defaultMode"] == "default"
+    assert rendered["permissions"] == {"deny": ["Read(/etc/**)"]}, (
+        f"settings.json must carry the deny rules and nothing else, got {rendered['permissions']}"
+    )
     assert "$schema" in rendered
     assert "claude-code-settings" in rendered["$schema"]
 
@@ -157,8 +152,7 @@ def test_render_settings_json_shape() -> None:
 def test_render_settings_json_omits_empty_sections() -> None:
     policy = SafetyPolicy()
     rendered = render_settings_json(policy)
-    assert rendered["permissions"]["allow"] == []
-    assert rendered["permissions"]["deny"] == []
+    assert rendered["permissions"] == {"deny": []}, f"got {rendered['permissions']}"
 
 
 def test_default_policy_unknown_agent_falls_back_to_developer_tools() -> None:

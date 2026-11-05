@@ -9,16 +9,51 @@ Phase 1 only implements build_sdk_options(). build_cli_args() arrives in Phase 2
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, Final
 
 from claude_agent_sdk import ClaudeAgentOptions
 
 from embry0.agents.invocation import AgentInvocation
 
+# EMB-37: the CLI's ToolSearch server tools, which load deferred tools into
+# context at runtime.
+_TOOL_SEARCH_TOOLS: Final[tuple[str, ...]] = ("tool_search_tool_regex", "tool_search_tool_bm25")
+
+# CLI tools no agent is offered, because embry0 does not gate what they do.
+# Monitor (CLI 2.1.316 and later) runs a shell command in the background and
+# streams its output into the session; agents run their commands through
+# Bash, and the hook checks Monitor as a shell tool all the same
+# (embry0.safety.policy.SHELL_TOOLS). Workflow runs a script that drives
+# subagents, and EnterWorktree moves the session into a new git worktree.
+# None is in the tool catalog (embry0.services.tool_catalog). An unknown name
+# is a no-op on an older CLI.
+_WITHHELD_TOOLS: Final[tuple[str, ...]] = ("Monitor", "Workflow", "EnterWorktree")
+
+# One permission rule as --disallowedTools carries it. The SDK joins the list
+# with commas and the CLI splits the value at commas and whitespace, so a rule
+# holding either, or a parenthesis inside its path, would reach the CLI as
+# other rules.
+_CLI_RULE: Final[re.Pattern[str]] = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*(?:\([^\s,()]+\))?")
+
 
 def _always_loaded(server: Any) -> Any:
     """An MCP server config whose tools the CLI never defers."""
     return {**server, "alwaysLoad": True} if isinstance(server, dict) else server
+
+
+def cli_deny_rules(invocation: AgentInvocation) -> list[str]:
+    """The safety policy's deny rules, each checked to reach the CLI as one rule.
+
+    Raises ValueError for a rule the --disallowedTools value would split or
+    merge: a deny rule the CLI does not receive as written would refuse
+    something else, or nothing.
+    """
+    rules = list(invocation.safety_policy.deny_rules)
+    unreadable = [rule for rule in rules if not _CLI_RULE.fullmatch(rule)]
+    if unreadable:
+        raise ValueError(f"deny rules the CLI cannot take on its command line: {unreadable!r}")
+    return rules
 
 
 def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
@@ -29,8 +64,12 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
       all; an empty list is no tools, never the defaults. None (the CLI's
       own set) otherwise.
     - model: from invocation.model.
+    - disallowed_tools: the ToolSearch tools, the withheld tools (Monitor,
+      Workflow, EnterWorktree), and every Ring-2 deny rule. The CLI holds
+      its command-line rules for the whole session, so the rules do not
+      depend on the settings file in the writable workspace.
     - permission_mode: always 'bypassPermissions' (sandbox is the real boundary;
-      Ring 2 permissions.deny and Ring 3 hook still run).
+      the Ring-2 deny rules and the Ring-3 hook still apply).
     - max_turns / cwd: fixed to embry0's sandbox conventions.
     - system_prompt: invocation.system_prompt wrapped as a claude_code
       preset-APPEND (None when empty to let the SDK apply its default). A
@@ -38,7 +77,8 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
       its tool-use guidance; append preserves it, and the combined system
       block participates in the CLI's prompt caching (EMB-35).
     - setting_sources: ["project"] so the SDK loads /workspace/.claude/settings.json
-      for Ring 2 permissions and /workspace/.claude/skills/** for skill files.
+      (the deny rules the executor writes there) and /workspace/.claude/skills/**
+      for skill files.
     - plugins: the mounted skill sources (invocation.skill_mounts) whose
       plugin name prefixes a skill in invocation.skills; none when it is empty.
     - skills: invocation.skills as the allowlist over the plugins' skills and
@@ -69,7 +109,10 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
         # belt-and-suspenders (unknown names are a no-op on older CLIs);
         # the enforcing layer is the Ring-3 tool-name check in
         # embry0.safety.policy.evaluate_policy.
-        disallowed_tools=["tool_search_tool_regex", "tool_search_tool_bm25"],
+        # The Ring-2 deny rules ride the command line as well as settings.json:
+        # the CLI keeps command-line rules for the whole session, whatever
+        # happens to the files in the workspace.
+        disallowed_tools=[*_TOOL_SEARCH_TOOLS, *_WITHHELD_TOOLS, *cli_deny_rules(invocation)],
         permission_mode="bypassPermissions",
         max_turns=invocation.max_turns,
         cwd="/workspace",

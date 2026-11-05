@@ -10,7 +10,7 @@ DEVELOPER_AGENT = {
     "type": "developer",
     "description": "Writes and edits code",
     "model": "claude-opus-4-5",
-    "tools": ["bash", "editor"],
+    "tools": ["Bash", "Edit"],
     "skills": [],
     "system_prompt": "",
     "is_builtin": True,

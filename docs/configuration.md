@@ -585,8 +585,8 @@ The registry is consulted before the env vars; an OAuth token in `.env` is its l
 ### Safety policy (three rings)
 
 1. **Container isolation** — ephemeral Docker sandbox, non-root, tmpfs workspace.
-2. **Declarative permissions** — rendered into `/workspace/.claude/settings.json` per run (`permissions.allow` / `permissions.deny`). Enforced by Claude Code before tool dispatch.
-3. **Programmable hook** — `evaluate_policy()` runs dangerous-Bash-pattern checks as a `PreToolUse` callable. Fail-closed.
+2. **Path rules** — Claude Code permission rules that deny host paths (`/etc`, `/proc`, `/root`, the home directory's credential folders) and writes to system directories and `.claude/settings*.json`. The SDK executor passes them to the CLI as `--disallowedTools`, which holds them for the whole run, and writes them into `/workspace/.claude/settings.json` (`permissions.deny`), replacing any settings file the repository carries. The hook below applies them too.
+3. **Programmable hook** — `gate_tool_call()` runs as a `PreToolUse` callable in the runner's process. It applies the tool-name allowlist and the dangerous-shell-pattern checks (`evaluate_policy()`), then the path rules, to the file tools and to the paths a shell command names (`embry0/safety/bash_paths.py`). A `Skill` call is checked by the commands the skill runs, as the session loaded it before it started and as its file is now (`embry0/safety/skill_commands.py`); a `ConfigChange` hook keeps the CLI from loading a skill or a settings file again during the session. Fail-closed. What each ring catches, and what it does not, is in [SECURITY.md](../SECURITY.md#what-does-not-hold).
 
 Both execution modes consume the same `SafetyPolicy` data structure via different delivery mechanisms.
 

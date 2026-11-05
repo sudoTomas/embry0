@@ -10,6 +10,7 @@ from embry0.agents.skills import TRIAGE_MAY_ADD_FIELD, checked_triage_may_add
 from embry0.services.job_briefs import VOICE as _JOB_BRIEF_VOICE
 from embry0.services.proposal_briefs import VOICE as _PROPOSAL_BRIEF_VOICE
 from embry0.services.slop import SLOPMASTER_SYSTEM_PROMPT as _SLOPMASTER_SYSTEM_PROMPT
+from embry0.services.tool_catalog import check_agent_tools
 from embry0.storage.database import DatabasePool
 from embry0.workflows.issue_to_pr.noncode_agents import (
     ANALYSIS_SYSTEM_PROMPT as _ANALYSIS_SYSTEM_PROMPT,
@@ -447,8 +448,11 @@ class AgentDefinitionsRepository:
         """Insert a new custom agent definition; ``runs_in_jobs`` is the seeder's to set (the API never passes it).
 
         ``triage_may_add_skills`` is checked (``checked_triage_may_add``): a
-        malformed value raises ValueError naming the field.
+        malformed value raises ValueError naming the field. Raises ValueError
+        when ``tools`` names a tool outside the tool catalog
+        (embry0.services.tool_catalog): every seeder writes through here.
         """
+        check_agent_tools(agent_type, tools or [], mcp_servers=mcp_servers)
         may_add = checked_triage_may_add(triage_may_add_skills or [])
         row = await self._db.fetchrow(
             """
@@ -479,12 +483,21 @@ class AgentDefinitionsRepository:
         return dict(row)
 
     async def update(self, agent_type: str, **fields: Any) -> dict[str, Any]:
-        """Update allowed fields on an agent definition."""
+        """Update allowed fields on an agent definition.
+
+        Raises ValueError when the definition would list a tool outside the
+        tool catalog, its stored tools included (embry0.services.tool_catalog).
+        """
         unknown = set(fields) - _ALLOWED_UPDATE_FIELDS
         if unknown:
             raise ValueError(f"Unknown fields for update: {unknown}")
         if TRIAGE_MAY_ADD_FIELD in fields:
             fields = {**fields, TRIAGE_MAY_ADD_FIELD: checked_triage_may_add(fields[TRIAGE_MAY_ADD_FIELD])}
+        if "tools" in fields or "mcp_servers" in fields:
+            stored = {} if {"tools", "mcp_servers"} <= set(fields) else (await self.get(agent_type) or {})
+            tools = fields["tools"] if "tools" in fields else stored.get("tools")
+            servers = fields["mcp_servers"] if "mcp_servers" in fields else stored.get("mcp_servers")
+            check_agent_tools(agent_type, tools or [], mcp_servers=servers or {})
 
         if not fields:
             row = await self.get(agent_type)
@@ -525,6 +538,7 @@ class AgentDefinitionsRepository:
         if agent_type not in BUILTIN_SEED:
             raise ValueError(f"'{agent_type}' is not a built-in agent")
         seed = BUILTIN_SEED[agent_type]
+        check_agent_tools(agent_type, seed["tools"], mcp_servers=seed["mcp_servers"])
         row = await self._db.fetchrow(
             """
             UPDATE agent_definitions

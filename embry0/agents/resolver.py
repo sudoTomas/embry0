@@ -49,7 +49,8 @@ class ResolvedAgentConfig:
     # ``skills`` is no filter (an operator's empty list).
     skills_hidden: bool = False
     # The tools the operator gave the agent (the definition's, or the
-    # template step's), before triage narrowed them: which MCP servers it
+    # template step's), as written: before the tool catalog drops a name
+    # (gated_tools) and before triage narrows them. Which MCP servers it
     # keeps is decided from these (embry0.agents.mcp_servers). None: the
     # same as ``tools``.
     operator_tools: list[str] | None = None
@@ -208,11 +209,20 @@ def resolve_agent_config(
                 )
             else:
                 model = triage_models[agent_type]
+    # The operator's tools decide the MCP servers as written (operator_tools).
+    # The run's tools are those by their catalog names, with any name embry0
+    # does not gate dropped (gated_tools) before triage narrows them: triage
+    # then picks only among tools the run can have.
     operator_tools = tools_for_run(agent_type, tools)
+    servers = agent_definition.get("mcp_servers")
+    gated = gated_tools(agent_type, operator_tools, servers if isinstance(servers, Mapping) else {})
+    tools = gated
     if pipeline_config:
         requested_tools = _requested(pipeline_config, "agent_tools", agent_type)
         if requested_tools is not None:
-            tools = _narrowed_by_triage(agent_type, operator_tools, requested_tools)
+            if isinstance(requested_tools, list):
+                requested_tools = _catalog_names(requested_tools)
+            tools = _narrowed_by_triage(agent_type, gated, requested_tools)
 
     skills = effective_skills(skills, ((template_config or {}).get("agent_skills") or {}).get(agent_type))
     skills_hidden = False
@@ -317,6 +327,34 @@ def _pick(*values: Any) -> Any:
         if v is not None:
             last = v
     return last
+
+
+def _catalog_names(tools: list[Any]) -> list[str]:
+    """``tools`` by the tool catalog's names (Task is Agent); orchestrator code, imported here."""
+    from embry0.services.tool_catalog import canonical_tools
+
+    return canonical_tools(str(tool) for tool in tools)
+
+
+def gated_tools(agent_type: str, tools: list[str], mcp_servers: Mapping[str, Any]) -> list[str]:
+    """The operator's tools an agent can run with: the ones embry0 gates, by their catalog names.
+
+    A definition is checked against the tool catalog when it is written, but a
+    template node can name any tool, and an older row may hold one. A name
+    outside the catalog, and not a tool of one of the agent's MCP servers, is
+    dropped and logged (``agent_tools_dropped``) before triage narrows the
+    list, so the agent never gets a tool embry0 does not gate; the job still
+    runs. Triage only narrows, so a name it asks for outside the list is never
+    granted (``triage_tools_not_granted``).
+    """
+    # The catalog is orchestrator code (it reads the workflows), so it is
+    # imported here: this module is also baked into the sandbox image.
+    from embry0.services.tool_catalog import canonical_tools, unknown_tools
+
+    unknown = unknown_tools(tools, mcp_servers=mcp_servers)
+    if unknown:
+        logger.warning("agent_tools_dropped", agent_type=agent_type, tools=unknown, reason="not in the tool catalog")
+    return canonical_tools([t for t in tools if t not in unknown])
 
 
 def resolve_agent_invocation(
@@ -425,6 +463,9 @@ def resolve_agent_invocation(
         requested=_requested(pipeline_config, "mcp_servers", agent_type),
         image_servers=_image_mcp_servers(),
     )
+    # The tools embry0 gates: resolve_agent_config dropped the operator's names
+    # outside the tool catalog before triage narrowed them (gated_tools).
+    tools = list(resolved.tools)
 
     from embry0.agents.providers import (
         chat_only_message,
@@ -504,10 +545,8 @@ def resolve_agent_invocation(
     # A model its provider serves without tool calling cannot run an agent that
     # needs tools. Refused here, before the sandbox runs it, rather than run with
     # its tools silently dropped.
-    if provider is not None and final_model in provider.chat_only_models and resolved.tools:
-        raise AuthConfigError(
-            ErrorCode.INVALID_CONFIG, chat_only_message(provider, final_model, agent_type, resolved.tools)
-        )
+    if provider is not None and final_model in provider.chat_only_models and tools:
+        raise AuthConfigError(ErrorCode.INVALID_CONFIG, chat_only_message(provider, final_model, agent_type, tools))
 
     # The caller's budget is sized for Claude; a provider whose models need more turns and
     # time for the same work scales it. Done here because this is where the model is final.
@@ -568,7 +607,7 @@ def resolve_agent_invocation(
         system_prompt=system_prompt,
         system_context=system_context,
         model=final_model,
-        tools=list(resolved.tools),
+        tools=tools,
         skills=list(skills),
         skills_hidden=resolved.skills_hidden,
         mcp_servers=mcp_servers,

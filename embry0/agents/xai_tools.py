@@ -215,6 +215,9 @@ def _bash(ti: dict[str, Any], cwd: str, default_timeout: int) -> tuple[str, bool
         proc = subprocess.run(
             command,
             shell=True,  # noqa: S602 — sandboxed; Ring-3 content rules gate the command upstream
+            # bash, as the CLI's Bash tool runs it and as embry0.safety.bash_paths
+            # reads it: the image's /bin/sh is dash, which reads $'…' differently.
+            executable="/bin/bash",
             cwd=cwd,
             capture_output=True,
             text=True,

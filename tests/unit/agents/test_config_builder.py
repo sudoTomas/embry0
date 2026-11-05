@@ -1,8 +1,12 @@
 """build_sdk_options — AgentInvocation → ClaudeAgentOptions translator."""
 
+import dataclasses
+
+import pytest
+
 from embry0.agents.config_builder import build_sdk_options
 from embry0.agents.invocation import AgentInvocation
-from embry0.safety.policy import default_policy_for_agent
+from embry0.safety.policy import SafetyPolicy, default_policy_for_agent
 
 
 def _inv(**overrides) -> AgentInvocation:  # noqa: ANN002, ANN003
@@ -164,3 +168,81 @@ def test_build_sdk_options_offers_no_tool_for_an_empty_list() -> None:
 def test_build_sdk_options_leaves_the_cli_set_for_a_named_list() -> None:
     tools = build_sdk_options(_inv()).tools
     assert tools is None, f"an agent with tools must keep the CLI's own set, not tools={tools!r}"
+
+
+# ---- the Ring-2 deny rules ride the CLI's command line ----------------------
+
+_AGENT_TYPES = ("triage", "developer", "review", "qa")
+
+
+def _cli_rules(value: str) -> list[str]:
+    """Split a --disallowedTools value as the CLI does: at commas and whitespace outside parentheses."""
+    rules: list[str] = []
+    current = ""
+    depth = 0
+    for char in value:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        if depth == 0 and (char == "," or char.isspace()):
+            if current:
+                rules.append(current)
+            current = ""
+            continue
+        current += char
+    if current:
+        rules.append(current)
+    return rules
+
+
+@pytest.mark.parametrize("agent_type", _AGENT_TYPES)
+def test_the_cli_arguments_carry_every_deny_rule(agent_type: str) -> None:
+    """The CLI keeps command-line rules for the whole session; settings.json is a file in the workspace."""
+    policy = default_policy_for_agent(agent_type)
+    opts = build_sdk_options(_inv(agent_type=agent_type, safety_policy=policy))
+    missing = [rule for rule in policy.deny_rules if rule not in opts.disallowed_tools]
+    assert not missing, f"{agent_type}: deny rules missing from the CLI's --disallowedTools: {missing}"
+
+
+def test_the_sdk_command_line_carries_each_deny_rule_as_one_rule() -> None:
+    """What reaches the CLI: the SDK joins disallowed_tools into one argument, which the CLI splits again."""
+    from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+
+    policy = default_policy_for_agent("developer")
+    opts = dataclasses.replace(build_sdk_options(_inv(safety_policy=policy)), cli_path="/nonexistent/claude")
+    cmd = SubprocessCLITransport(prompt="x", options=opts)._build_command()
+    assert "--disallowedTools" in cmd, f"the SDK passed no --disallowedTools: {cmd}"
+    received = _cli_rules(cmd[cmd.index("--disallowedTools") + 1])
+    withheld = ["Monitor", "Workflow", "EnterWorktree"]
+    assert received == ["tool_search_tool_regex", "tool_search_tool_bm25", *withheld, *policy.deny_rules], (
+        f"the CLI would read these rules from the command line: {received}"
+    )
+
+
+@pytest.mark.parametrize(
+    "rule", ["Read(//a,b/**)", "Read(//a b/**)", "Read(//a(b)/**)", "Read //etc/**", "Read(//etc/**)\n", ""]
+)
+def test_a_deny_rule_the_cli_cannot_take_whole_is_refused(rule: str) -> None:
+    """A rule the command line would split or merge would refuse something else, or nothing."""
+    policy = SafetyPolicy(allowed_tools=["Read"], deny_rules=["Read(//etc/**)", rule])
+    try:
+        opts = build_sdk_options(_inv(safety_policy=policy))
+    except ValueError as exc:
+        assert "cannot take on its command line" in str(exc), str(exc)
+    else:
+        raise AssertionError(f"{rule!r} reached the CLI as {_cli_rules(','.join(opts.disallowed_tools or []))}")
+
+
+@pytest.mark.parametrize("agent_type", _AGENT_TYPES)
+def test_no_agent_is_offered_monitor_even_when_it_lists_it(agent_type: str) -> None:
+    """Monitor (CLI 2.1.316) runs a shell command in the background; agents run theirs through Bash."""
+    opts = build_sdk_options(_inv(agent_type=agent_type, tools=["Read", "Bash", "Monitor"]))
+    assert "Monitor" in (opts.disallowed_tools or []), f"{agent_type}: Monitor is offered: {opts.disallowed_tools}"
+
+
+@pytest.mark.parametrize("tool", ["Workflow", "EnterWorktree"])
+def test_no_agent_is_offered_a_tool_embry0_does_not_gate(tool: str) -> None:
+    """Workflow runs a script that drives subagents; EnterWorktree moves the session to a new worktree."""
+    opts = build_sdk_options(_inv(tools=["Read", "Bash", tool]))
+    assert tool in (opts.disallowed_tools or []), f"{tool} is offered: {opts.disallowed_tools}"
