@@ -13,6 +13,9 @@ press back (``POST /asks/answer``). No model turns a reply into an answer.
   working hours, was never sent and does not expire (#295); one the feed
   handed out that was never reported sent expires ``expire_days`` after it
   was handed out, and its person may be asked again ``expire_days`` later.
+- **How many.** A person holds ``max_open_per_person`` unanswered asks at once;
+  the rest wait, worst first. A hand-off does not wait: someone chose this
+  person, and behind the rest of their list it might never be seen.
 - **Codes.** One per decision, from its id, lengthened on a collision and
   never given to another decision, so a late answer cannot land on the wrong
   quest.
@@ -97,7 +100,9 @@ class AskPolicy:
         self._section = section
         #: The deployment's values: what an ask about a decision with no repository is held to.
         self.deployment = ask_settings(section.deployment())
-        self._repos = {str(d["id"]): str(d.get("repo") or "") for d in decisions}
+        known = list(decisions)
+        self._repos = {str(d["id"]): str(d.get("repo") or "") for d in known}
+        self._handed_to = {str(d["id"]): str((d.get("assigned_to") or {}).get("email") or "").lower() for d in known}
         self._by_repo: dict[str, tuple[str, AskSettings]] = {}
 
     def _of(self, decision_id: str) -> tuple[str, AskSettings]:
@@ -117,6 +122,10 @@ class AskPolicy:
         """The organization whose ``max_open_per_person`` an ask about ``decision_id`` counts against;
         empty for a decision with no repository, or one not among the decisions."""
         return self._of(decision_id)[0]
+
+    def handed_to(self, decision_id: str, person: str) -> bool:
+        """Whether an open hand-off gave ``decision_id`` to ``person``."""
+        return bool(person) and self._handed_to.get(decision_id) == person.lower()
 
 
 def next_working_time(now: datetime, s: AskSettings) -> datetime:
@@ -245,6 +254,10 @@ def release(
     ``max_open_per_person`` unanswered asks about its decisions. A person asked
     about two organizations' decisions holds each one's number.
 
+    A hand-off goes past that limit, within working hours, ahead of every other
+    queued ask: someone chose this person, and behind the rest of their list it
+    might never be seen. Once sent it counts toward the limit like any other.
+
     ``shown`` says which asks the caller may be handed, every one when None:
     only those are released. Every unanswered ask in ``live`` counts toward
     its person's limit whether it is shown or not, so a caller that sees only
@@ -264,6 +277,9 @@ def release(
     def rank(a: Mapping[str, Any]) -> tuple[int, datetime]:
         return order.get(str(a["decision_id"]), 1_000_000), a.get("created_at") or now
 
+    def handed_off(a: Mapping[str, Any]) -> bool:
+        return policy.handed_to(str(a["decision_id"]), str(a["recipient"]))
+
     held: dict[tuple[str, str], int] = {}
     for a in live:
         if a.get("state") in ("sent", "reminded") or (a.get("state") == "queued" and leased(a, now)):
@@ -276,15 +292,15 @@ def release(
             out.append((a, True))
     queued = [a for a in handed if a.get("state") == "queued" and a["due_at"] <= now]
     picked: list[Mapping[str, Any]] = []
-    # Each person's places: the asks handed out before and unreported, whose leases lapsed, first.
-    for a in sorted(queued, key=lambda a: (not _handed_out_before(a), *rank(a))):
+    # Each person's places: hand-offs, then the asks handed out before and unreported, whose leases lapsed.
+    for a in sorted(queued, key=lambda a: (not handed_off(a), not _handed_out_before(a), *rank(a))):
         # Outside working hours a queued ask waits, its slot freed or not, for the next working time (#276).
         s = policy.settings(str(a["decision_id"]))
         key = counted(a)
-        if working(now, s) and held.get(key, 0) < s.max_open_per_person:
+        if working(now, s) and (handed_off(a) or held.get(key, 0) < s.max_open_per_person):
             picked.append(a)
             held[key] = held.get(key, 0) + 1
-    out.extend((a, False) for a in sorted(picked, key=lambda a: (_handed_out_before(a), *rank(a))))
+    out.extend((a, False) for a in sorted(picked, key=lambda a: (not handed_off(a), _handed_out_before(a), *rank(a))))
     return out
 
 

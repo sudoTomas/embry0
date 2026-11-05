@@ -133,7 +133,8 @@ class AsksSettings(SectionModel):
         ge=1,
         description=(
             "Unanswered asks one person holds at once about one organization's decisions; the next, "
-            "worst first, is released as one is answered or expires."
+            "worst first, is released as one is answered or expires. A decision handed to someone goes "
+            "to them at once, past this limit."
         ),
     )
     include_held: bool = Field(

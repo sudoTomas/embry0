@@ -239,6 +239,74 @@ def test_an_ask_under_a_renamed_slug_counts_against_its_new_organization(monkeyp
     )
 
 
+def _handed_off_policy() -> AskPolicy:
+    section = asks_read({"enabled": True, "hours": "00-24", "weekdays": "mon-sun", "max_open_per_person": 1})
+    decisions = [
+        {"id": "open", "repo": "acme/widgets"},
+        {"id": "worst", "repo": "acme/widgets"},
+        {"id": "handed", "repo": "acme/widgets", "assigned_to": {"email": "Ada@example.com"}},
+    ]
+    return AskPolicy(section, decisions)
+
+
+def _queued(ask_id: str, decision_id: str, *, who: str = "ada@example.com", state: str = "queued") -> dict[str, Any]:
+    return {
+        "id": ask_id,
+        "decision_id": decision_id,
+        "recipient": who,
+        "state": state,
+        "due_at": TUE_10,
+        "created_at": TUE_10,
+        "sent_at": TUE_10,
+        "reminders": 0,
+    }
+
+
+def test_a_hand_off_goes_to_its_person_past_their_limit() -> None:
+    """Someone chose this person: behind everything they already hold it might never be seen."""
+    policy = _handed_off_policy()
+    live = [_queued("holding", "open", state="sent"), _queued("next", "worst"), _queued("handed", "handed")]
+    released = release(live, {"worst": 0, "handed": 5}, TUE_10, policy)
+    assert [a["id"] for a, _ in released] == ["handed"], "ada is at the limit: only the hand-off goes"
+
+
+def test_a_hand_off_takes_a_person_s_free_place_ahead_of_a_worse_ask() -> None:
+    policy = _handed_off_policy()
+    released = release(
+        [_queued("next", "worst"), _queued("handed", "handed")], {"worst": 0, "handed": 5}, TUE_10, policy
+    )
+    assert [a["id"] for a, _ in released] == ["handed"], "one place, and the hand-off has it"
+
+
+def test_a_sent_hand_off_counts_toward_the_limit_like_any_other() -> None:
+    policy = _handed_off_policy()
+    released = release([_queued("handed", "handed", state="sent"), _queued("next", "worst")], {}, TUE_10, policy)
+    assert released == [], "ada holds the hand-off, the one place: the next ask waits for an answer"
+
+
+def test_a_hand_off_comes_first_on_the_page_so_a_short_page_never_drops_it() -> None:
+    policy = _handed_off_policy()
+    live = [_queued("bo's", "worst", who="bo@example.com"), _queued("handed", "handed")]
+    released = release(live, {"worst": 0, "handed": 5}, TUE_10, policy)
+    assert [a["id"] for a, _ in released] == ["handed", "bo's"]
+
+
+def test_only_the_person_it_was_handed_to_goes_past_the_limit() -> None:
+    policy = _handed_off_policy()
+    live = [
+        _queued("holding", "open", who="bo@example.com", state="sent"),
+        _queued("bo's", "handed", who="bo@example.com"),
+    ]
+    assert release(live, {}, TUE_10, policy) == [], "bo is at the limit and the hand-off went to ada"
+
+
+def test_a_hand_off_waits_for_working_hours() -> None:
+    evening = datetime(2026, 10, 27, 23, 30, tzinfo=UTC)  # 18:30 in Chicago
+    section = asks_read({"enabled": True, "timezone": "America/Chicago", "max_open_per_person": 1})
+    policy = AskPolicy(section, [{"id": "handed", "repo": "acme/widgets", "assigned_to": {"email": "ada@example.com"}}])
+    assert release([_queued("handed", "handed")], {}, evening, policy) == []
+
+
 def test_every_live_ask_counts_toward_the_limit_and_only_the_shown_ones_go_out() -> None:
     """``shown`` is what the caller may be handed (#272): it decides what goes out, never what counts."""
     section = asks_read({"enabled": True, "hours": "00-24", "weekdays": "mon-sun", "max_open_per_person": 1})

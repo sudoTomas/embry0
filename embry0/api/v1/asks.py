@@ -146,7 +146,8 @@ async def asks_due(
     ),
 ) -> dict[str, Any]:
     """The asks to send now: due reminders, then queued ones, worst first, while their person holds
-    fewer than ``asks.max_open_per_person`` unanswered asks about that organization's decisions. Each
+    fewer than ``asks.max_open_per_person`` unanswered asks about that organization's decisions; a
+    hand-off goes first and past that limit. Each
     ask is held to its decision's organization's values: its working hours for a reminder, its
     ``remind_hours`` and its limit. Only asks whose decision the caller's key may read are handed
     out, but every unanswered ask counts toward its person's limit. An empty list while
