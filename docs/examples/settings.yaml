@@ -48,7 +48,8 @@ asks:
 
   # Unanswered asks one person holds at once about one organization's
   # decisions; the next, worst first, is released as one is answered or
-  # expires.
+  # expires. A decision handed to someone goes to them at once, past this
+  # limit.
   # max_open_per_person: 3
 
   # Also ask about what a chat is otherwise spared: a low-readiness ticket, a
