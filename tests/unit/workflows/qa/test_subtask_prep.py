@@ -204,6 +204,72 @@ async def test_cached_volume_path_still_skips_clone_entirely() -> None:
     assert any("mkdir -p .qa/logs .qa/pids" in s for s in shells)
 
 
+# --- #371: the checkout is pinned to the commit the round tests ---------------
+
+_HEAD = "e" * 40
+
+
+def _takes_head_sha() -> None:
+    import inspect
+
+    assert "head_sha" in inspect.signature(prep_qa_sandbox_clone).parameters, (
+        "prep_qa_sandbox_clone() takes no head_sha: nothing pins a sub-task's checkout to the round's commit"
+    )
+
+
+async def _prep_at(docker, **kw):
+    return await prep_qa_sandbox_clone(
+        docker=docker,
+        proxy_mgr=None,
+        container_id="c1",
+        sandbox_token="tok-" + "A" * 40,
+        job_id="job-1",
+        repo="acme/console",
+        branch="feature-x",
+        is_dind=False,
+        qa_net="",
+        **kw,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_clone_is_pinned_to_the_round_s_commit_through_sandbox_git() -> None:
+    _takes_head_sha()
+    docker = _reuse_docker()
+    await _prep_at(docker, head_sha=_HEAD)
+    shells = [c.args[0] for c in docker.run_cmd.await_args_list]
+    clone = next(i for i, c in enumerate(shells) if "embry0_git clone" in c[-1])
+    pin = next((i for i, c in enumerate(shells) if f"embry0_git checkout -f --detach {_HEAD}" in c[-1]), None)
+    assert pin is not None and pin > clone, f"the checkout must be pinned to {_HEAD[:12]} after the clone or fetch"
+    script = shells[pin][-1]
+    assert "\nembry0_git_repo /workspace\n" in script, "the pin runs in the checked workspace, through sandbox_git"
+    assert (
+        f"embry0_git cat-file -e '{_HEAD}^{{commit}}' 2>/dev/null || embry0_git fetch --no-recurse-submodules origin {_HEAD} --depth=50"
+        in script
+    ), "a commit the branch fetch did not bring is fetched by id"
+    rev_parse = next(i for i, c in enumerate(shells) if c[-3:] == ["embry0-git", "rev-parse", "HEAD"])
+    assert rev_parse > pin, "HEAD is read after the pin, so the head check sees the pinned commit"
+
+
+@pytest.mark.asyncio
+async def test_without_a_commit_or_on_a_shared_volume_nothing_is_pinned() -> None:
+    _takes_head_sha()
+    for kw in ({}, {"head_sha": _HEAD, "cached_volume": "vol-1"}):
+        docker = _reuse_docker()
+        await _prep_at(docker, **kw)
+        assert not any(f"checkout -f --detach {_HEAD}" in c.args[0][-1] for c in docker.run_cmd.await_args_list), (
+            f"{kw}: a shared volume is pinned by the warmer, and no commit means no pin"
+        )
+
+
+@pytest.mark.parametrize("head", ["main", "e" * 39, "--upload-pack=x"])
+@pytest.mark.asyncio
+async def test_only_a_full_commit_id_is_pinned(head) -> None:
+    _takes_head_sha()
+    with pytest.raises(ValueError):
+        await _prep_at(_reuse_docker(), head_sha=head)
+
+
 # --- forge-aware clone origin (spec 3.6) ------------------------------------
 
 _SELF_MANAGED = "https://gitlab.example.com"

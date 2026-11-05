@@ -88,6 +88,7 @@ async def run_subtask(
     prebaked_image_tag: str | None = None,
     shared_volume_name: str | None = None,
     turbo_remote_enabled: bool = False,
+    expected_head_sha: str | None = None,
     config: dict[str, Any],
 ) -> SubTaskResult:
     """Helper: run one sub-task and return its SubTaskResult.
@@ -112,6 +113,7 @@ async def run_subtask(
         prebaked_image_tag=prebaked_image_tag,
         shared_volume_name=shared_volume_name,
         turbo_remote_enabled=turbo_remote_enabled,
+        expected_head_sha=expected_head_sha,
     )
     final_state = await graph.ainvoke(initial, config=config)
     # SubTaskState.subtask_result is typed SubTaskResult; graph.ainvoke is

@@ -1751,3 +1751,83 @@ async def test_exploratory_qa_does_not_retry_a_hard_budget_stop():
 
     assert len(calls) == 1, "a hard budget stop must end the sub-task, not retry it"
     assert out["status"] == SubTaskStatus.INFRA_FAILURE
+
+
+# ---------------------------------------------------------------------------
+# #371: a stale shared cache volume must fail the round, never QA the wrong code
+# ---------------------------------------------------------------------------
+
+
+_NEW_HEAD = "a" * 40
+_OLD_HEAD = "b" * 40
+
+
+def _round_state(**extra):
+    return {**_make_acquire_state(), "expected_head_sha": _NEW_HEAD, **extra}
+
+
+async def _acquire(state, config, *, workspace_head: str):
+    """acquire_sandbox_node with the workspace at ``workspace_head``; returns (out, prep kwargs)."""
+    from embry0.workflows.qa._subtask_prep import ClonedSandbox
+    from embry0.workflows.qa.subtask_nodes import acquire_sandbox_node
+
+    clone = AsyncMock(return_value=ClonedSandbox(head_sha=workspace_head))
+    with (
+        patch("embry0.workflows.qa._subtask_prep.prep_qa_sandbox_clone", clone),
+        patch("embry0.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson", AsyncMock(return_value=None)),
+    ):
+        out = await acquire_sandbox_node(state, config)
+    return out, clone.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_a_shared_volume_must_hold_the_round_s_commit():
+    """A shared volume at the round's commit is used as it is; one at another commit (the warmer did
+    not run for this round, or a concurrent run moved it) fails the round instead of QA-ing other code."""
+    name, labels = _job_volume("JOB-42")
+    config = _make_acquire_config()
+    config["configurable"]["qa_shared_volume_manager"] = _volume_manager({name: labels})
+
+    out, prep = await _acquire(_round_state(shared_volume_name=name), config, workspace_head=_NEW_HEAD)
+    assert out.get("status") is None, f"a volume at the round's commit must be used: {out.get('failure_summary')}"
+    assert out["cache_hits_partial"]["shared_volume"] is True
+
+    config = _make_acquire_config()
+    config["configurable"]["qa_shared_volume_manager"] = _volume_manager({name: labels})
+    out, prep = await _acquire(_round_state(shared_volume_name=name), config, workspace_head=_OLD_HEAD)
+
+    assert prep.get("cached_volume") == name and not prep.get("head_sha"), (
+        "a sub-task never moves a shared volume's tree: the warmer pins it"
+    )
+    assert out.get("status") == SubTaskStatus.INFRA_FAILURE, "a volume at another commit must fail the round"
+    assert f"expected {_NEW_HEAD[:12]}" in out["failure_summary"] and _OLD_HEAD[:12] in out["failure_summary"], (
+        f"the failure must name both commits: {out['failure_summary']}"
+    )
+    config["configurable"]["sandbox_manager"].destroy.assert_awaited_once_with("cid-test")
+
+
+@pytest.mark.parametrize("image", [None, "embry0-qa-acme_monorepo:2026-11-01"])
+@pytest.mark.asyncio
+async def test_a_workspace_the_sub_task_checks_out_itself_is_pinned_to_the_round_s_commit(image):
+    """No shared volume (a plain clone, or a pre-built image's baked checkout): the sub-task's own
+    checkout is pinned to the round's commit."""
+    config = _make_acquire_config()
+
+    out, prep = await _acquire(_round_state(prebaked_image_tag=image), config, workspace_head=_NEW_HEAD)
+
+    assert prep.get("cached_volume") is None
+    assert prep.get("head_sha") == _NEW_HEAD, f"the checkout must be pinned to the round's commit; prep got {prep}"
+    assert out.get("status") is None, f"unexpected failure: {out.get('failure_summary')}"
+
+
+@pytest.mark.parametrize("image", [None, "embry0-qa-acme_monorepo:2026-11-01"])
+@pytest.mark.asyncio
+async def test_a_workspace_at_another_commit_fails_the_round_without_a_shared_volume(image):
+    config = _make_acquire_config()
+
+    out, _prep = await _acquire(_round_state(prebaked_image_tag=image), config, workspace_head=_OLD_HEAD)
+
+    assert out.get("status") == SubTaskStatus.INFRA_FAILURE, (
+        "the head check applies to every workspace, not only to a shared volume"
+    )
+    assert f"expected {_NEW_HEAD[:12]}" in out["failure_summary"]
