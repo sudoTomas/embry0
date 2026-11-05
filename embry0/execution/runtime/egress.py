@@ -80,6 +80,8 @@ from typing import Any
 
 import structlog
 
+from embry0.execution.docker_client import DAEMON_LISTING_MAX_BYTES
+
 logger = structlog.get_logger(__name__)
 
 HELPER_IMAGE = "embry0-egress-helper:latest"
@@ -287,7 +289,8 @@ class EgressEnforcer:
                 script,
             ]
         )
-        return str(await self._docker.run_cmd(cmd, timeout=timeout))
+        # `iptables -S DOCKER-USER` lists a few rules for every sandbox on the daemon.
+        return str(await self._docker.run_cmd(cmd, timeout=timeout, max_bytes=DAEMON_LISTING_MAX_BYTES))
 
     async def ensure_helper_image(self) -> None:
         """Build the iptables helper image on the DinD daemon if absent."""

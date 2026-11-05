@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, Mock
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -151,3 +153,40 @@ async def test_line_counts_refuse_a_base_ending_in_a_newline() -> None:
     counts = await diff_line_counts(docker=docker, container_id="c1", base_branch="main\n")
     assert counts is None, f"a base ending in a newline must not be diffed: {counts}"
     docker.run_cmd.assert_not_awaited()
+
+
+def _process(out: bytes) -> SimpleNamespace:
+    """A finished command that printed ``out``."""
+    stdout, stderr = asyncio.StreamReader(), asyncio.StreamReader()
+    stdout.feed_data(out)
+    stdout.feed_eof()
+    stderr.feed_eof()
+
+    async def wait() -> int:
+        return 0
+
+    async def communicate(input: bytes | None = None) -> tuple[bytes, bytes]:
+        # What a whole-output read does: the client this replaced called it.
+        return await stdout.read(), await stderr.read()
+
+    return SimpleNamespace(
+        stdout=stdout, stderr=stderr, stdin=None, returncode=0, pid=4242, wait=wait, communicate=communicate
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_change_of_90_000_files_is_listed_whole() -> None:
+    """Past 4 MiB of paths the strict diff must not read as unavailable: QA would then select no app."""
+    from embry0.execution.docker_client import DockerClient
+    from embry0.execution.workspace_diff import WorkspaceDiffUnavailable
+
+    listing = b"".join(b"apps/web/src/components/generated/file_%06d.tsx\n" % i for i in range(90_000))
+    procs = [_process(b""), _process(listing)]  # the fetch, then the diff
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=procs):
+        try:
+            files = await compute_changed_files_via_diff(
+                docker=DockerClient(), container_id="c1", base_branch="main", strict=True
+            )
+        except WorkspaceDiffUnavailable as exc:
+            pytest.fail(f"a 90,000-file change read as an unavailable diff: {exc}")
+    assert len(files) == 90_000, f"listed {len(files)} of 90000 changed files"

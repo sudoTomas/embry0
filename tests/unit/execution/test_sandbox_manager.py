@@ -397,7 +397,7 @@ async def test_the_maven_cache_is_never_chowned_from_inside_the_sandbox(manager:
 async def test_a_maven_cache_that_cannot_be_handed_over_fails_the_sandbox(manager: SandboxManager):
     from embry0.execution.sandbox_manager import SandboxInitError
 
-    async def run(cmd, timeout=60):  # noqa: ASYNC109 — mirrors DockerClient.run_cmd
+    async def run(cmd, timeout=60, **_kwargs):  # noqa: ASYNC109 — mirrors DockerClient.run_cmd
         if "--entrypoint" in cmd:
             raise RuntimeError("Docker command failed: chown: Operation not permitted")
         return "container-abc123"

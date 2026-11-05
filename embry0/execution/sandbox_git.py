@@ -73,6 +73,11 @@ REFUSED_MARK = "embry0-git-refused:"
 MIN_GIT = (2, 32)
 #: The page that explains a refusal to an operator.
 DOCS = "docs/sandbox-git.md"
+#: The stdout cap for a git listing of paths (``diff --name-only``,
+#: ``--numstat``, ``status --porcelain``, a changed-path file). A change can
+#: touch any number of files, at roughly 75 bytes a path: the 4 MiB default
+#: stops near 55,000 paths, and 64 MiB holds about 900,000.
+GIT_LISTING_MAX_BYTES = 64 * 1024 * 1024
 
 
 class GitStep(StrEnum):
@@ -552,8 +557,12 @@ async def run(
     job_id: str | None = None,
     env: dict[str, str] | None = None,
     stdin_data: bytes | None = None,
+    max_bytes: int | None = None,
 ) -> str:
     """Run a :func:`script` or :func:`command` argv in ``container``; its stdout.
+
+    ``max_bytes`` is ``docker.run_cmd``'s stdout cap, its default when None
+    (a listing of paths names :data:`GIT_LISTING_MAX_BYTES`).
 
     Raises :class:`SandboxGitRefused` (a RuntimeError) when the prelude
     refused the step, after logging it and counting it; any other failure as
@@ -568,6 +577,8 @@ async def run(
     if stdin_data is not None:
         kwargs["interactive"] = True
         exec_kwargs["stdin_data"] = stdin_data
+    if max_bytes is not None:
+        exec_kwargs["max_bytes"] = max_bytes
     try:
         return str(await docker.run_cmd(docker.build_exec_cmd(container, argv, **kwargs), **exec_kwargs))
     except RuntimeError as exc:

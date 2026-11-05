@@ -99,39 +99,196 @@ def _elide(token: str) -> str:
     return f"{token[:_LOG_TOKEN_HEAD]}…[{cut} chars]…{token[-_LOG_TOKEN_TAIL:]}"
 
 
-async def kill_process_group(proc: asyncio.subprocess.Process, *, wait_seconds: float = 5) -> bool:
-    """Kill ``proc`` and every process of its group, then reap it; True when it was reaped in time.
-
-    ``proc`` must have been started with ``start_new_session=True``, so its group
-    holds nothing else. Killing only ``proc`` is not enough: a child it started
-    (the compose plugin ``docker compose`` runs, say) keeps the stdout pipe open,
-    and ``wait()`` waits for the pipes to close too, so the killed process is left
-    to the garbage collector, transport and all.
-    """
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=wait_seconds)
-    except TimeoutError:
-        return False
-    return True
-
-
 class ExecStdinTimeoutError(RuntimeError):
     """stream_exec's command never read its stdin payload (a wedged exec)."""
 
 
 class OutputTooLargeError(RuntimeError):
-    """run_cmd_bytes' command wrote more than its byte cap to stdout; the command was killed."""
+    """A docker command printed more than its byte cap to stdout; the command was stopped.
+
+    A RuntimeError, so a caller's ``except RuntimeError`` fails its step as it
+    does for any other failed command.
+    """
 
 
-#: How much run_cmd_bytes asks the pipe for at a time.
+#: The stdout a docker command may print before it is stopped (run_cmd and
+#: run_cmd_bytes), unless its caller names another cap. Nearly every caller
+#: reads a short answer: an id, an inspect field, a marker line, a small file
+#: or listing written in a sandbox. 4 MiB is far above all of those and still
+#: bounds what one command can make the orchestrator hold; a caller that reads
+#: more names a larger cap.
+DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+#: The cap for a listing of the daemon's own objects (containers, images,
+#: volumes, networks, firewall rules). Its size follows how many objects the
+#: daemon holds, not what one process prints; 64 MiB is far past any real one.
+DAEMON_LISTING_MAX_BYTES = 64 * 1024 * 1024
+#: The largest cap any caller may name. A cap is a promise about how much the
+#: orchestrator holds for one command; past this one it no longer bounds
+#: anything worth having, so it is refused rather than trusted.
+MAX_OUTPUT_CAP_BYTES = 256 * 1024 * 1024
+#: The stdout kept by a command whose output is only a log (``keep_tail``): the
+#: cause of a failure is at its end, and run_cmd's error quotes the last 2000
+#: characters.
+LOG_TAIL_BYTES = 64 * 1024
+
+#: How much the reader asks a pipe for at a time.
 _READ_CHUNK = 64 * 1024
-#: How much of a command's stderr run_cmd_bytes keeps (the rest is drained and dropped).
-_STDERR_KEEP = 64 * 1024
+#: How much of a command's stderr is kept from its start, and from its end; the
+#: rest is read and dropped. The end is where a failing build or install says why.
+_STDERR_HEAD = 64 * 1024
+_STDERR_TAIL = 16 * 1024
+
+
+def _check_cap(max_bytes: int) -> None:
+    """Refuse a cap that is not 1..MAX_OUTPUT_CAP_BYTES bytes: no command reads without a real one."""
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not 0 < max_bytes <= MAX_OUTPUT_CAP_BYTES:
+        raise ValueError(f"max_bytes must be 1..{MAX_OUTPUT_CAP_BYTES} bytes, not {max_bytes!r}")
+
+
+class _Kept:
+    """What is kept of one pipe: up to ``head`` bytes from its start and ``tail`` from its end."""
+
+    def __init__(self, *, head: int = 0, tail: int = 0) -> None:
+        self._head_room = head
+        self._tail_room = tail
+        self.head = bytearray()
+        self.tail = bytearray()
+        self.total = 0
+
+    def add(self, chunk: bytes) -> None:
+        self.total += len(chunk)
+        room = self._head_room - len(self.head)
+        if room > 0:
+            self.head += chunk[:room]
+            chunk = chunk[room:]
+        if chunk and self._tail_room:
+            self.tail += chunk
+            del self.tail[: max(0, len(self.tail) - self._tail_room)]
+
+    def data(self) -> bytes:
+        """The kept bytes, with a line saying how many were dropped where they were."""
+        dropped = self.total - len(self.head) - len(self.tail)
+        if dropped <= 0:
+            return bytes(self.head + self.tail)
+        return bytes(self.head) + f"\n[... {dropped} bytes not kept ...]\n".encode() + bytes(self.tail)
+
+
+async def _drain(pipe: asyncio.StreamReader, kept: _Kept, limit: int | None) -> None:
+    """Read ``pipe`` to its end into ``kept``.
+
+    With ``limit`` the pipe is never asked for more than ``limit + 1`` bytes in
+    all, and :class:`OutputTooLargeError` is raised once it has handed over more
+    than ``limit``.
+    """
+    while True:
+        want = _READ_CHUNK if limit is None else min(_READ_CHUNK, limit + 1 - kept.total)
+        chunk = await pipe.read(want)
+        if not isinstance(chunk, bytes):
+            # Only a stand-in pipe does this; looping on it would never reach EOF.
+            raise TypeError(f"a pipe read returned {type(chunk).__name__}, not bytes")
+        if not chunk:
+            return
+        kept.add(chunk)
+        if limit is not None and kept.total > limit:
+            raise OutputTooLargeError(f"command output passed its {limit}-byte cap; the command was stopped")
+
+
+async def _feed(stdin: asyncio.StreamWriter, data: bytes) -> None:
+    """Write ``data`` to a command's stdin and close it.
+
+    A command that exits without reading it is not an error, as with
+    ``communicate()``: its exit code and stderr say what happened.
+    """
+    try:
+        stdin.write(data)
+        await stdin.drain()
+    except (BrokenPipeError, ConnectionResetError):
+        pass
+    stdin.close()
+
+
+async def _stop(proc: asyncio.subprocess.Process, readers: list[asyncio.Future[None]], *, kill_group: bool) -> bool:
+    """Kill ``proc`` (its whole group with ``kill_group``), stop its readers and reap it; True when reaped in time.
+
+    With ``kill_group``, ``proc`` must have been started with
+    ``start_new_session=True``, so its group holds nothing else. Killing only
+    ``proc`` is not enough there: a child it started (the compose plugin
+    ``docker compose`` runs, say) keeps the stdout pipe open (#334).
+    """
+    if kill_group:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+    elif proc.returncode is None:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+    for reader in readers:
+        reader.cancel()
+    await asyncio.gather(*readers, return_exceptions=True)
+    # A reader stopped with data still in the pipe leaves that pipe paused short
+    # of EOF, and wait() also waits for every pipe to close: close them before
+    # waiting, or the wait runs out its 5 s on a process that is already dead.
+    transport = getattr(proc, "_transport", None)
+    if transport is not None:
+        transport.close()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except TimeoutError:
+        return False
+    return True
+
+
+async def collect_output(
+    proc: asyncio.subprocess.Process,
+    *,
+    timeout: float,
+    max_bytes: int,
+    keep_tail: bool = False,
+    stdin_data: bytes | None = None,
+    kill_group: bool = False,
+    stuck_event: str = "docker_cmd_kill_stuck",
+    log_fields: dict[str, Any] | None = None,
+) -> tuple[bytes, bytes]:
+    """Feed ``proc`` its ``stdin_data``, read its stdout and stderr in chunks and reap it: ``(stdout, stderr)``.
+
+    The one reader of a docker command's output (run_cmd, run_cmd_bytes,
+    exec_with_stdin, the runtime's compose listing). It never holds more than
+    ``max_bytes`` of stdout: past that the command is stopped and
+    :class:`OutputTooLargeError` raised, or, with ``keep_tail`` (a command
+    whose output is only a log), the oldest bytes are dropped and the last
+    ``max_bytes`` returned. stderr keeps its first 64 KiB and its last 16 KiB;
+    the rest is read and dropped, so the command never blocks on a full pipe.
+
+    On the cap, on ``timeout`` (TimeoutError) and on cancellation the command
+    is killed (its whole process group with ``kill_group``, for a process
+    started with ``start_new_session=True``), its readers stopped and it is
+    reaped before the exception propagates; one that cannot be reaped in time
+    is logged as ``stuck_event``. ``proc.returncode`` is set once this returns.
+    """
+    _check_cap(max_bytes)
+    if proc.stdout is None:
+        raise ValueError("collect_output reads a process started with stdout=PIPE")
+    out = _Kept(tail=max_bytes) if keep_tail else _Kept(head=max_bytes)
+    err = _Kept(head=_STDERR_HEAD, tail=_STDERR_TAIL)
+    tasks: list[asyncio.Future[None]] = [
+        asyncio.ensure_future(_drain(proc.stdout, out, None if keep_tail else max_bytes))
+    ]
+    if proc.stderr is not None:
+        tasks.append(asyncio.ensure_future(_drain(proc.stderr, err, None)))
+    if stdin_data is not None and proc.stdin is not None:
+        tasks.append(asyncio.ensure_future(_feed(proc.stdin, stdin_data)))
+    try:
+        async with asyncio.timeout(timeout):
+            for task in tasks:
+                await task
+            await proc.wait()
+    except BaseException:
+        if not await _stop(proc, tasks, kill_group=kill_group):
+            logger.error(stuck_event, **{**(log_fields or {}), "pid": proc.pid})
+        raise
+    return out.data(), err.data()
 
 
 class DockerClient:
@@ -382,7 +539,8 @@ class DockerClient:
         """
         cmd = self._build_base_cmd()
         cmd.extend(["network", "inspect", name])
-        output = await self.run_cmd(cmd, timeout=15)
+        # The inspect lists every container attached to the network.
+        output = await self.run_cmd(cmd, timeout=15, max_bytes=DAEMON_LISTING_MAX_BYTES)
         try:
             data = json.loads(output)
         except json.JSONDecodeError as exc:
@@ -435,6 +593,8 @@ class DockerClient:
         log_context: dict[str, Any] | None = None,
         expected_failure: bool = False,
         stdin_data: bytes | None = None,
+        max_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+        keep_tail: bool = False,
     ) -> str:
         """Execute a Docker command and return stdout.
 
@@ -442,10 +602,27 @@ class DockerClient:
         (and kills the subprocess to prevent zombie Docker commands that would
         otherwise block the Docker daemon).
 
-        ``log_context`` is merged into failure logs only (timeout, kill, non-zero
-        exit). Callers that already know which container and phase a command
-        belongs to — proxy cleanup, which has no job to bind a trace id from —
-        pass that here. It is not a retry policy; ``run_cmd`` still fails immediately.
+        ``max_bytes`` bounds the stdout the command may print. The pipe is read
+        in chunks (:func:`collect_output`), so whatever a process in a sandbox
+        writes into an exec's output, the orchestrator holds at most that much:
+        past the cap the command is stopped and :class:`OutputTooLargeError` (a
+        RuntimeError) raised. ``keep_tail`` is for a command whose output is
+        only a log (an install, a build, a seed script): the oldest bytes are
+        dropped instead of stopping it, and the result is the output's last
+        ``max_bytes``; such a command is bounded by its timeout. stderr keeps
+        its first 64 KiB and its last 16 KiB. A cap above
+        ``MAX_OUTPUT_CAP_BYTES`` is refused.
+
+        stdout is decoded with ``errors="replace"``: a log read with
+        ``tail -c`` can start inside a multi-byte character (#394). Only bytes
+        that are not UTF-8 change, each to U+FFFD, so markers, JSON structure
+        and ASCII fields decode as they always did.
+
+        ``log_context`` is merged into failure logs only (timeout, kill, cap,
+        non-zero exit). Callers that already know which container and phase a
+        command belongs to — proxy cleanup, which has no job to bind a trace id
+        from — pass that here. It is not a retry policy; ``run_cmd`` still fails
+        immediately.
 
         ``expected_failure`` logs a non-zero exit at debug instead of error, for
         probes whose "no" is an answer rather than a fault (``image inspect`` of
@@ -454,7 +631,11 @@ class DockerClient:
         ``stdin_data`` is written to the command's stdin (a ``docker exec -i``):
         the way to hand a sandbox a secret without putting it on a command line.
         """
+        _check_cap(max_bytes)
         scrubbed = _scrub_cmd_for_log(cmd)
+        # Standard fields win over caller context so a context key cannot hide
+        # the command, the daemon's stderr, or the exit code.
+        context: dict[str, Any] = dict(log_context or {})
         logger.debug("docker_cmd", cmd=scrubbed)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -463,24 +644,29 @@ class DockerClient:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            communicate = proc.communicate() if stdin_data is None else proc.communicate(input=stdin_data)
-            stdout, stderr = await asyncio.wait_for(communicate, timeout=timeout)
+            stdout, stderr = await collect_output(
+                proc,
+                timeout=timeout,
+                max_bytes=max_bytes,
+                keep_tail=keep_tail,
+                stdin_data=stdin_data,
+                stuck_event="docker_cmd_kill_stuck",
+                log_fields={**context, "cmd": scrubbed},
+            )
+        except OutputTooLargeError:
+            logger.warning("docker_cmd_too_large", **{**context, "cmd": scrubbed, "max_bytes": max_bytes})
+            raise
         except TimeoutError:
-            # The subprocess would otherwise keep running and hold a Docker slot.
-            # Kill → wait briefly for exit → re-raise so callers can fail cleanly.
-            logger.warning("docker_cmd_timeout", cmd=scrubbed, timeout=timeout, **(log_context or {}))
-            proc.kill()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except TimeoutError:
-                logger.error("docker_cmd_kill_stuck", cmd=scrubbed, pid=proc.pid, **(log_context or {}))
+            # collect_output killed and reaped the subprocess, which would
+            # otherwise keep running and hold a Docker slot.
+            logger.warning("docker_cmd_timeout", **{**context, "cmd": scrubbed, "timeout": timeout})
             # A bare TimeoutError has an empty str() — every caller folding
             # {exc} into a failure_summary then reports "failed: " with no
             # cause (observed: "sandbox clone failed: " on job-06f63d7ba031).
             raise TimeoutError(f"docker command timed out after {timeout}s") from None
 
         if proc.returncode != 0:
-            err = stderr.decode().strip()
+            err = stderr.decode(errors="replace").strip()
             if not err:
                 # Commands that fold stderr into stdout (`... 2>&1`) fail with
                 # an empty stderr — surface the stdout tail instead, or the
@@ -488,9 +674,7 @@ class DockerClient:
                 # (RAV-1400: the first CC image bake failed exactly this way).
                 tail = stdout.decode(errors="replace").strip()[-2000:]
                 err = f"(stderr empty; stdout tail) {tail}" if tail else f"exit code {proc.returncode}"
-            # Standard fields win over caller context so a context key cannot
-            # hide the command, the daemon's stderr, or the exit code.
-            failure: dict[str, Any] = dict(log_context or {})
+            failure: dict[str, Any] = dict(context)
             failure.update(cmd=scrubbed, stderr=err[:2000], returncode=proc.returncode)
             if expected_failure:
                 logger.debug("docker_cmd_failed", **failure)
@@ -498,20 +682,24 @@ class DockerClient:
                 logger.error("docker_cmd_failed", **failure)
             raise RuntimeError(f"Docker command failed: {err}")
 
-        return stdout.decode().strip()
+        return stdout.decode(errors="replace").strip()
 
-    async def run_cmd_bytes(self, cmd: list[str], timeout: int = 60, *, max_bytes: int | None = None) -> bytes:
+    async def run_cmd_bytes(
+        self, cmd: list[str], timeout: int = 60, *, max_bytes: int = DEFAULT_MAX_OUTPUT_BYTES
+    ) -> bytes:
         """Execute a Docker command and return its stdout as raw bytes, never buffering past ``max_bytes``.
 
         Like :meth:`run_cmd` but it does not decode or strip — for output that
         is a file's contents or a NUL-delimited listing
         (``sandbox_files.read_regular_file``, the deliverables listing). The
-        pipe is read in chunks and never asked for more than ``max_bytes + 1``
-        bytes in total, so whatever a process in the sandbox writes into it,
-        the orchestrator holds at most that much: past the cap the command is
-        killed and :class:`OutputTooLargeError` raised. stderr keeps its first
-        64 KiB. Raises RuntimeError on non-zero exit, TimeoutError on timeout.
+        same reader (:func:`collect_output`) never asks the pipe for more than
+        ``max_bytes + 1`` bytes in total, so whatever a process in the sandbox
+        writes into it, the orchestrator holds at most that much: past the cap
+        the command is killed and :class:`OutputTooLargeError` raised. stderr
+        keeps its first 64 KiB and its last 16 KiB. Raises RuntimeError on
+        non-zero exit, TimeoutError on timeout.
         """
+        _check_cap(max_bytes)
         scrubbed = _scrub_cmd_for_log(cmd)
         logger.debug("docker_cmd_bytes", cmd=scrubbed, max_bytes=max_bytes)
         proc = await asyncio.create_subprocess_exec(
@@ -519,76 +707,25 @@ class DockerClient:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout_pipe, stderr_pipe = proc.stdout, proc.stderr
-        assert stdout_pipe is not None and stderr_pipe is not None
-
-        async def read_stdout() -> bytes:
-            buf = bytearray()
-            while True:
-                want = _READ_CHUNK if max_bytes is None else min(_READ_CHUNK, max_bytes + 1 - len(buf))
-                chunk = await stdout_pipe.read(want)
-                if not chunk:
-                    return bytes(buf)
-                buf += chunk
-                if max_bytes is not None and len(buf) > max_bytes:
-                    raise OutputTooLargeError(f"command output passed its {max_bytes}-byte cap")
-
-        async def read_stderr() -> bytes:
-            kept = bytearray()
-            while True:
-                chunk = await stderr_pipe.read(_READ_CHUNK)
-                if not chunk:
-                    return bytes(kept)
-                if len(kept) < _STDERR_KEEP:
-                    kept += chunk[: _STDERR_KEEP - len(kept)]
-
-        out_task = asyncio.ensure_future(read_stdout())
-        err_task = asyncio.ensure_future(read_stderr())
         try:
-            async with asyncio.timeout(timeout):
-                stdout = await out_task
-                stderr = await err_task
-                await proc.wait()
+            stdout, stderr = await collect_output(
+                proc,
+                timeout=timeout,
+                max_bytes=max_bytes,
+                stuck_event="docker_cmd_bytes_kill_stuck",
+                log_fields={"cmd": scrubbed},
+            )
         except OutputTooLargeError:
-            await self._abandon_proc(proc, (out_task, err_task), scrubbed)
             logger.warning("docker_cmd_bytes_too_large", cmd=scrubbed, max_bytes=max_bytes)
             raise
         except TimeoutError:
-            await self._abandon_proc(proc, (out_task, err_task), scrubbed)
             logger.warning("docker_cmd_bytes_timeout", cmd=scrubbed, timeout=timeout)
             raise TimeoutError(f"docker command timed out after {timeout}s") from None
-        except BaseException:
-            await self._abandon_proc(proc, (out_task, err_task), scrubbed)
-            raise
         if proc.returncode != 0:
             err = stderr.decode(errors="replace").strip() or f"exit code {proc.returncode}"
             logger.error("docker_cmd_bytes_failed", cmd=scrubbed, stderr=err[:2000], returncode=proc.returncode)
             raise RuntimeError(f"Docker command failed: {err}")
         return stdout
-
-    @staticmethod
-    async def _abandon_proc(
-        proc: asyncio.subprocess.Process, tasks: tuple[asyncio.Future[bytes], ...], scrubbed: list[str]
-    ) -> None:
-        """Kill ``proc``, stop its pipe readers, and reap it (run_cmd_bytes' failure path)."""
-        if proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except TimeoutError:
-            logger.error("docker_cmd_bytes_kill_stuck", cmd=scrubbed, pid=proc.pid)
-        # The abandoned stdout reader was paused with data still in the pipe, so
-        # the pipe never reaches EOF on its own: close the transport now, while
-        # the loop runs, instead of leaving it to the garbage collector.
-        transport = getattr(proc, "_transport", None)
-        if transport is not None:
-            transport.close()
 
     async def stream_exec(
         self,
@@ -650,7 +787,8 @@ class DockerClient:
 
         Sibling of stream_exec for the write direction — used to stream tar
         archives into a sandbox (local workspace-init contexts) without a
-        host bind mount. Raises RuntimeError on non-zero exit.
+        host bind mount. Raises RuntimeError on non-zero exit. Its stdout is
+        not used: it is read and dropped, past the last 64 KiB.
         """
         cmd = self.build_exec_cmd(container, command, interactive=True)
         logger.debug("docker_exec_with_stdin", cmd=_scrub_cmd_for_log(cmd), stdin=stdin_bytes_path)
@@ -663,10 +801,16 @@ class DockerClient:
                 start_new_session=True,  # its own group: a timeout kills all of it (#334)
             )
             try:
-                _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                _stdout, stderr = await collect_output(
+                    proc,
+                    timeout=timeout,
+                    max_bytes=LOG_TAIL_BYTES,
+                    keep_tail=True,
+                    kill_group=True,
+                    stuck_event="docker_exec_with_stdin_kill_stuck",
+                    log_fields={"container": container},
+                )
             except TimeoutError:
-                if not await kill_process_group(proc):
-                    logger.error("docker_exec_with_stdin_kill_stuck", container=container, pid=proc.pid)
                 raise RuntimeError(f"Docker exec-with-stdin timed out after {timeout}s")
         if proc.returncode != 0:
             err = stderr.decode(errors="replace").strip()

@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 
 import structlog
 
-from embry0.execution.docker_client import DockerClient, kill_process_group
+from embry0.execution.docker_client import DAEMON_LISTING_MAX_BYTES, LOG_TAIL_BYTES, DockerClient, collect_output
 from embry0.execution.runtime import egress as _egress
 from embry0.execution.runtime import isolation as _isolation
 from embry0.execution.runtime.protocol import ContainerSummary, DiskUsage, ImageSummary, VolumeSummary
@@ -180,7 +180,7 @@ class DockerRuntime:
         if ancestor is not None:
             args += ["--filter", f"ancestor={ancestor}"]
         args += ["--format", _PS_FORMAT]
-        output = await self._client.run_cmd(self._cmd(*args), timeout=timeout)
+        output = await self._client.run_cmd(self._cmd(*args), timeout=timeout, max_bytes=DAEMON_LISTING_MAX_BYTES)
         found: list[ContainerSummary] = []
         for line in (output or "").split("\n"):
             fields = line.split("\t")
@@ -215,11 +215,16 @@ class DockerRuntime:
         ]
 
     async def mounted_sources(self, *, timeout: int = 30) -> set[str]:
-        ids = (await self._client.run_cmd(self._cmd("ps", "-aq"), timeout=timeout) or "").split()
+        listed = await self._client.run_cmd(self._cmd("ps", "-aq"), timeout=timeout, max_bytes=DAEMON_LISTING_MAX_BYTES)
+        ids = (listed or "").split()
         if not ids:
             return set()
         # One inspect for every container: one line of JSON each.
-        output = await self._client.run_cmd(self._cmd("inspect", "--format", "{{json .Mounts}}", *ids), timeout=timeout)
+        output = await self._client.run_cmd(
+            self._cmd("inspect", "--format", "{{json .Mounts}}", *ids),
+            timeout=timeout,
+            max_bytes=DAEMON_LISTING_MAX_BYTES,
+        )
         sources: set[str] = set()
         for line in (output or "").splitlines():
             if line.strip():
@@ -264,11 +269,13 @@ class DockerRuntime:
             args += ["--filter", f"name={name}"]
         for label in labels:
             args += ["--filter", f"label={label}"]
-        output = await self._client.run_cmd(self._cmd(*args), timeout=timeout)
+        output = await self._client.run_cmd(self._cmd(*args), timeout=timeout, max_bytes=DAEMON_LISTING_MAX_BYTES)
         return (output or "").split()
 
     async def inspect_volumes(self, volumes: Sequence[str], *, timeout: int = 30) -> list[VolumeSummary]:
-        raw = await self._client.run_cmd(self._cmd("volume", "inspect", *volumes), timeout=timeout)
+        raw = await self._client.run_cmd(
+            self._cmd("volume", "inspect", *volumes), timeout=timeout, max_bytes=DAEMON_LISTING_MAX_BYTES
+        )
         return [
             VolumeSummary(
                 name=entry["Name"],
@@ -302,7 +309,9 @@ class DockerRuntime:
 
     async def list_networks(self, *, name: str, timeout: int = 10) -> list[str]:
         output = await self._client.run_cmd(
-            self._cmd("network", "ls", "-q", "--filter", f"name={name}"), timeout=timeout
+            self._cmd("network", "ls", "-q", "--filter", f"name={name}"),
+            timeout=timeout,
+            max_bytes=DAEMON_LISTING_MAX_BYTES,
         )
         return (output or "").split()
 
@@ -350,7 +359,8 @@ class DockerRuntime:
         for key, value in (labels or {}).items():
             args += ["--label", f"{key}={value}"]
         args += ["-f", dockerfile, context]
-        await self._client.run_cmd(self._cmd(*args), timeout=timeout)
+        # A build's progress is a log: only its end (the cause of a failure) is kept.
+        await self._client.run_cmd(self._cmd(*args), timeout=timeout, max_bytes=LOG_TAIL_BYTES, keep_tail=True)
 
     async def remove_image(self, image: str, *, timeout: int = 30) -> None:
         await self._client.run_cmd(self._cmd("rmi", "-f", image), timeout=timeout)
@@ -358,12 +368,18 @@ class DockerRuntime:
     async def list_images(self, *, timeout: int = 60) -> list[ImageSummary]:
         # --all: without it Docker 27 leaves out every image with no tag, a QA
         # image left with its registry digest alone included.
-        listed = await self._client.run_cmd(self._cmd("image", "ls", "--all", "--quiet", "--no-trunc"), timeout=timeout)
+        listed = await self._client.run_cmd(
+            self._cmd("image", "ls", "--all", "--quiet", "--no-trunc"),
+            timeout=timeout,
+            max_bytes=DAEMON_LISTING_MAX_BYTES,
+        )
         ids = list(dict.fromkeys((listed or "").split()))  # one line per tag: keep each image once
         images: list[ImageSummary] = []
         for i in range(0, len(ids), _INSPECT_CHUNK):
             raw = await self._client.run_cmd(
-                self._cmd("image", "inspect", *ids[i : i + _INSPECT_CHUNK]), timeout=timeout
+                self._cmd("image", "inspect", *ids[i : i + _INSPECT_CHUNK]),
+                timeout=timeout,
+                max_bytes=DAEMON_LISTING_MAX_BYTES,
             )
             for entry in json.loads(raw or "[]"):
                 images.append(
@@ -382,7 +398,11 @@ class DockerRuntime:
         await self._client.run_cmd(self._cmd("rmi", *refs), timeout=timeout)
 
     async def disk_usage(self, *, timeout: int = 120) -> DiskUsage:
-        raw = await self._client.run_cmd(self._cmd("system", "df", "-v", "--format", "{{json .}}"), timeout=timeout)
+        raw = await self._client.run_cmd(
+            self._cmd("system", "df", "-v", "--format", "{{json .}}"),
+            timeout=timeout,
+            max_bytes=DAEMON_LISTING_MAX_BYTES,
+        )
         data = json.loads(raw or "{}")
         images: dict[str, int] = {}
         for entry in data.get("Images") or ():
@@ -413,15 +433,18 @@ class DockerRuntime:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             # Its own group: `docker compose` runs the compose plugin as a child,
-            # which a timeout must kill too (kill_process_group).
+            # which a timeout must kill too (collect_output's kill_group).
             start_new_session=True,
         )
-        try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except TimeoutError:
-            if not await kill_process_group(proc):
-                logger.error("compose_services_kill_stuck", project=project, pid=proc.pid)
-            raise
+        # A timeout or the cap kills the whole group and reaps it before raising.
+        out, _ = await collect_output(
+            proc,
+            timeout=timeout,
+            max_bytes=DAEMON_LISTING_MAX_BYTES,
+            kill_group=True,
+            stuck_event="compose_services_kill_stuck",
+            log_fields={"project": project},
+        )
         if proc.returncode != 0:
             raise RuntimeError(f"docker compose ps for {project} exited {proc.returncode}")
         return [line.strip() for line in out.decode(errors="replace").splitlines() if line.strip()]

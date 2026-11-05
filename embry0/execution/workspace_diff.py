@@ -119,7 +119,9 @@ async def compute_changed_files_via_diff(
     diff_shell = sandbox_git.git("diff", "--name-only", f"origin/{base_branch}...HEAD")
     diff_cmd = sandbox_git.script(diff_shell if strict else f"{diff_shell} || true")
     try:
-        raw = await sandbox_git.run(docker, container_id, diff_cmd, step=step, timeout=30)
+        raw = await sandbox_git.run(
+            docker, container_id, diff_cmd, step=step, timeout=30, max_bytes=sandbox_git.GIT_LISTING_MAX_BYTES
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "workspace_diff_failed",
@@ -173,7 +175,12 @@ async def diff_line_counts(*, docker: Any, container_id: str, base_branch: str) 
     )
     try:
         raw = await sandbox_git.run(
-            docker, container_id, sandbox_git.script(shell), step=sandbox_git.GitStep.DIFF_LINES, timeout=60
+            docker,
+            container_id,
+            sandbox_git.script(shell),
+            step=sandbox_git.GitStep.DIFF_LINES,
+            timeout=60,
+            max_bytes=sandbox_git.GIT_LISTING_MAX_BYTES,
         )
     except Exception as exc:  # noqa: BLE001 - the count is a bonus, never a failure
         logger.warning("workspace_diff_numstat_failed", base_branch=base_branch, error=str(exc))

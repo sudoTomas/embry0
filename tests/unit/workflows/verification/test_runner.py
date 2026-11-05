@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from embry0.execution.docker_client import OutputTooLargeError
 from embry0.workflows.verification.config import VerificationConfig
 from embry0.workflows.verification.runner import BASE_DIR, HEAD_DIR, run_gate, select_targets
 
@@ -25,20 +29,24 @@ class FakeDocker:
         self.prepare_fails = prepare_fails
         self.runs: list[tuple[str, str]] = []
         self.timeouts: list[int] = []
+        self.caps: list[int | None] = []
         self.cleaned = False
 
     def build_exec_cmd(self, container: str, command: list[str], workdir: Any = None, env: Any = None, **_: Any):
         return {"container": container, "command": command, "env": env or {}}
 
-    async def run_cmd(self, cmd: dict[str, Any], timeout: int = 60) -> str:
+    async def run_cmd(self, cmd: dict[str, Any], timeout: int = 60, *, max_bytes: int | None = None) -> str:
         env = cmd["env"]
         script = cmd["command"][-1]
         if "EMBRY0_VERIFY_CMD" in env:
             key = (env["EMBRY0_VERIFY_DIR"], env["EMBRY0_VERIFY_CMD"])
             self.runs.append(key)
             self.timeouts.append(int(env["EMBRY0_VERIFY_TIMEOUT"]))
+            self.caps.append(max_bytes)
             queue = self.results[key]
             code, output = queue.pop(0) if len(queue) > 1 else queue[0]
+            if code == -3:
+                raise OutputTooLargeError(f"command output passed its {max_bytes}-byte cap; the command was stopped")
             if code == -2:
                 raise TimeoutError("docker command timed out")
             if code == -1:
@@ -163,6 +171,22 @@ async def test_a_docker_failure_is_an_error_verdict_not_a_pass() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_run_that_prints_past_its_cap_is_an_error_verdict_that_says_so() -> None:
+    """A run reads back its log tail and marker line; anything past that is stopped, recorded as not run, never a pass."""
+    from embry0.workflows.verification import runner
+
+    cap = getattr(runner, "RUN_OUTPUT_MAX_BYTES", None)
+    assert cap is not None and cap > runner.PARSE_TAIL_BYTES, "a run must be read with a cap just past its log tail"
+    docker = FakeDocker({(HEAD_DIR, JVM): [(-3, "")], (BASE_DIR, JVM): [(0, "ok")]})
+    report = await _gate(docker, _config(), ["platform/api/Foo.java"])
+    head = report.runs_for("head")[0]
+    assert head.outcome == "errored"
+    assert f"printed more than {cap} bytes" in head.output_tail, f"the note must say why: {head.output_tail!r}"
+    assert report.verdict == "error"
+    assert docker.caps == [cap], f"every run is read with RUN_OUTPUT_MAX_BYTES: {docker.caps}"
+
+
+@pytest.mark.asyncio
 async def test_a_workspace_that_cannot_be_prepared_is_an_error_verdict() -> None:
     report = await _gate(FakeDocker({}, prepare_fails=True), _config(), ["platform/api/Foo.java"])
     assert report.verdict == "error"
@@ -239,8 +263,8 @@ async def test_a_docker_client_that_does_not_strip_its_output_still_works() -> N
     did not strip (review of #341)."""
 
     class UnstrippedDocker(FakeDocker):
-        async def run_cmd(self, cmd, timeout: int = 60) -> str:
-            return await super().run_cmd(cmd, timeout) + "\n\n"
+        async def run_cmd(self, cmd, timeout: int = 60, *, max_bytes: int | None = None) -> str:
+            return await super().run_cmd(cmd, timeout, max_bytes=max_bytes) + "\n\n"
 
     docker = UnstrippedDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]})
     report = await _gate(docker, _config(), ["platform/api/Foo.java"])
@@ -281,3 +305,42 @@ async def test_a_secret_cut_by_the_tail_boundary_leaves_no_fragment(registered_s
     report = await _gate(docker, _config(head_reruns=0), ["platform/api/Foo.java"])
     tail = report.runs_for("head")[0].output_tail
     assert registered_secret[-8:] not in tail, tail[:40]
+
+
+def _process(out: bytes) -> SimpleNamespace:
+    """A finished command that printed ``out``."""
+    stdout, stderr = asyncio.StreamReader(), asyncio.StreamReader()
+    stdout.feed_data(out)
+    stdout.feed_eof()
+    stderr.feed_eof()
+
+    async def wait() -> int:
+        return 0
+
+    async def communicate(input: bytes | None = None) -> tuple[bytes, bytes]:
+        # What a whole-output read does: the client this replaced called it.
+        return await stdout.read(), await stderr.read()
+
+    return SimpleNamespace(
+        stdout=stdout, stderr=stderr, stdin=None, returncode=0, pid=4242, wait=wait, communicate=communicate
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_log_tail_starts_inside_a_character_still_passes() -> None:
+    """The run's log is read back with `tail -c`, which can cut a multi-byte character (#394)."""
+    from embry0.execution.docker_client import DockerClient
+
+    prepared = f"EMBRY0_VERIFY_HEAD={HEAD_SHA}\nEMBRY0_VERIFY_BASE={BASE_SHA}\n".encode()
+    run = "✓ 12 tests passed\n".encode()[1:] + b"\nEMBRY0_VERIFY_RESULT exit=0 ms=1234\n"
+    procs = [_process(prepared), _process(run), _process(b"")]  # prepare, the head run, cleanup
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=procs):
+        report = await run_gate(
+            docker=DockerClient(),
+            container_id="c1",
+            config=_config(base_run="on_head_failure"),
+            changed_files=["platform/api/Foo.java"],
+            base_ref="main",
+        )
+    assert [r.outcome for r in report.runs] == ["passed"], [(r.outcome, r.output_tail) for r in report.runs]
+    assert report.verdict == "passed"

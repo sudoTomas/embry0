@@ -24,6 +24,7 @@ _BY_CODE: dict[str, str] = {
     ErrorCode.BUDGET_REFUSED: "a spend or dispatch limit had already been reached, so the job was not started",
     ErrorCode.AGENT_TIMEOUT: "an agent ran out of its time allowance",
     ErrorCode.DOCKER_TIMEOUT: "the sandbox did not respond in time",
+    ErrorCode.DOCKER_OUTPUT_TOO_LARGE: "a Docker command printed more output than embry0 reads, so it was stopped",
     ErrorCode.MAX_RETRIES: "the change did not pass review within the allowed number of attempts",
     ErrorCode.QA_FAILURES_UNRESOLVED: "the change did not pass QA within the allowed number of attempts",
     ErrorCode.VERIFY_NEW_TEST_FAILURES: "the change breaks automated tests that passed before it",

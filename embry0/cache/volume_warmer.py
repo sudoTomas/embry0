@@ -44,6 +44,7 @@ from embry0.cache.volume_manager import (
     VolumeScope,
 )
 from embry0.execution import sandbox_git
+from embry0.execution.docker_client import LOG_TAIL_BYTES
 from embry0.storage.repositories.qa_volume_state import QAVolumeStateRepository
 from embry0.workflows.qa._subtask_prep import prep_qa_sandbox_clone
 
@@ -246,8 +247,9 @@ async def warm_shared_volume(
         if install_needed:
             # Run the repo's install command (qa.yaml cache.install_command,
             # default `npm ci --prefer-offline`) so a warm npm cache shortens
-            # subsequent installs.  Output is piped to logs; non-zero exit
-            # propagates as a RuntimeError and causes the finally-destroy.
+            # subsequent installs. Only the end of its output is kept, for the
+            # error; a non-zero exit propagates as a RuntimeError and causes
+            # the finally-destroy.
             install = install_command or DEFAULT_INSTALL_COMMAND
             await docker.run_cmd(
                 docker.build_exec_cmd(
@@ -255,6 +257,8 @@ async def warm_shared_volume(
                     ["bash", "-c", f"cd /workspace && {install} 2>&1"],
                 ),
                 timeout=600,
+                max_bytes=LOG_TAIL_BYTES,
+                keep_tail=True,
             )
             await state_repo.upsert(
                 scope=scope,

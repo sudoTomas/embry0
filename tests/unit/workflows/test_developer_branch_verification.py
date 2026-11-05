@@ -178,7 +178,7 @@ async def test_developer_rescue_pushes_branch_the_agent_left_local():
 
     calls: list[list[str]] = []
 
-    async def fake_run_cmd(cmd, timeout=None):  # noqa: ARG001
+    async def fake_run_cmd(cmd, timeout=None, **_kwargs):  # noqa: ARG001
         calls.append(cmd)
         joined = readable(cmd)
         if "rev-list" in joined:
@@ -238,7 +238,7 @@ async def test_developer_does_not_rescue_when_there_is_nothing_to_push():
 
     calls: list[list[str]] = []
 
-    async def fake_run_cmd(cmd, timeout=None):  # noqa: ARG001
+    async def fake_run_cmd(cmd, timeout=None, **_kwargs):  # noqa: ARG001
         calls.append(cmd)
         if "rev-list" in readable(cmd):
             return "0\n"  # nothing to push
@@ -311,7 +311,7 @@ def _dirty_tree_docker() -> tuple[MagicMock, list[list[str]]]:
     calls: list[list[str]] = []
     state = {"committed": False, "pushed": False}
 
-    async def fake_run_cmd(cmd, timeout=None):  # noqa: ARG001
+    async def fake_run_cmd(cmd, timeout=None, **_kwargs):  # noqa: ARG001
         calls.append(cmd)
         joined = readable(cmd)
         if "status" in joined and "--porcelain" in joined:
@@ -414,7 +414,7 @@ async def test_turn_cap_with_committed_work_still_just_pushes_and_advances():
     calls: list[list[str]] = []
     pushed = {"yes": False}
 
-    async def fake_run_cmd(cmd, timeout=None):  # noqa: ARG001
+    async def fake_run_cmd(cmd, timeout=None, **_kwargs):  # noqa: ARG001
         calls.append(cmd)
         joined = readable(cmd)
         if "status" in joined and "--porcelain" in joined:
@@ -512,7 +512,7 @@ class _NoOriginHeadDocker:
     def build_exec_cmd(self, container_id, cmd, **_kw):
         return ["docker", "exec", container_id, *cmd]
 
-    async def run_cmd(self, cmd, timeout=None):  # noqa: ARG002
+    async def run_cmd(self, cmd, timeout=None, **_kwargs):  # noqa: ARG002
         joined = readable(cmd)
         self.calls.append(joined)
         if "origin/HEAD" in joined:

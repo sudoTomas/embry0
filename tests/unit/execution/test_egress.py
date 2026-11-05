@@ -8,6 +8,8 @@ generated commands (mirroring test_network_assertion.py's approach).
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -208,11 +210,16 @@ async def test_a_fresh_daemon_without_the_helper_image_logs_no_error():
 
     from embry0.execution.docker_client import DockerClient
 
-    def _proc(rc: int, err: bytes) -> AsyncMock:
-        process = AsyncMock()
-        process.communicate = AsyncMock(return_value=(b"", err))
-        process.returncode = rc
-        return process
+    def _proc(rc: int, err: bytes) -> SimpleNamespace:
+        stdout, stderr = asyncio.StreamReader(), asyncio.StreamReader()
+        stdout.feed_eof()
+        stderr.feed_data(err)
+        stderr.feed_eof()
+
+        async def wait() -> int:
+            return rc
+
+        return SimpleNamespace(stdout=stdout, stderr=stderr, stdin=None, returncode=rc, pid=4242, wait=wait)
 
     probe, build = _proc(1, b"Error response from daemon: No such image: x\n"), _proc(0, b"")
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=[probe, build]):

@@ -18,6 +18,7 @@ from typing import Any, Protocol
 import structlog
 
 from embry0.execution import sandbox_git
+from embry0.execution.docker_client import OutputTooLargeError
 from embry0.safety.redaction import known_secret_values
 from embry0.workflows.qa._glob_match import compile_glob, match_any
 from embry0.workflows.verification.config import TestTarget, VerificationConfig
@@ -40,6 +41,9 @@ BASE_DIR = f"{SCRATCH_DIR}/base"
 # Output read back per run for parsing, and the part of it kept in the report.
 PARSE_TAIL_BYTES = 1_048_576
 STORED_TAIL_CHARS = 8000
+# What one run may print back: the log tail and the marker line. More than that
+# came from something else writing into the exec's output, and stops the run.
+RUN_OUTPUT_MAX_BYTES = PARSE_TAIL_BYTES + 64 * 1024
 # `timeout` exits 124 on expiry, 137 when the -k SIGKILL was needed.
 _TIMEOUT_EXIT_CODES = frozenset({124, 137})
 _RESULT_RE = re.compile(r"^EMBRY0_VERIFY_RESULT exit=(\d+) ms=(\d+)$")
@@ -64,7 +68,7 @@ printf '\\nEMBRY0_VERIFY_RESULT exit=%s ms=%s\\n' "$code" "$((end - start))"
 class SandboxDocker(Protocol):
     def build_exec_cmd(self, container: str, command: list[str], *args: Any, **kwargs: Any) -> Any: ...
 
-    async def run_cmd(self, cmd: Any, timeout: int = 60) -> str: ...
+    async def run_cmd(self, cmd: Any, timeout: int = 60, *, max_bytes: int = ...) -> str: ...
 
 
 def select_targets(targets: list[TestTarget], changed_files: list[str]) -> list[TestTarget]:
@@ -132,9 +136,14 @@ async def _run_once(
     try:
         # The in-sandbox `timeout` is the real limit; this one only catches a
         # wedged docker exec.
-        raw = await docker.run_cmd(cmd, timeout=target.timeout_seconds + 90)
+        raw = await docker.run_cmd(cmd, timeout=target.timeout_seconds + 90, max_bytes=RUN_OUTPUT_MAX_BYTES)
     except TimeoutError:
         return replace(_not_run(target, side, attempt, "the run did not return in time"), outcome="timed_out")
+    except OutputTooLargeError:
+        logger.warning("verify_run_output_too_large", target=target.name, side=side, max_bytes=RUN_OUTPUT_MAX_BYTES)
+        return _not_run(
+            target, side, attempt, f"the run printed more than {RUN_OUTPUT_MAX_BYTES} bytes back, so it was stopped"
+        )
     except Exception as exc:  # noqa: BLE001 — a docker failure is a recorded result, not a crash
         logger.warning("verify_run_exec_failed", target=target.name, side=side, error=str(exc)[:300])
         return _not_run(target, side, attempt, "the command could not be started in the sandbox")

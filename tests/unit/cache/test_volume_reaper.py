@@ -32,7 +32,7 @@ def _docker(volumes: list[dict], *, rm_fails: set[str] | None = None):
     docker = MagicMock()
     docker._build_base_cmd = lambda: ["docker"]
 
-    async def run_cmd(cmd, timeout=None):
+    async def run_cmd(cmd, timeout=None, **_kwargs):
         if cmd[1:3] == ["volume", "ls"]:
             flt = cmd[cmd.index("--filter") + 1]
             if flt.startswith("label="):
@@ -232,7 +232,7 @@ async def test_decision_not_the_list_filter_is_what_protects_foreign_volumes():
     docker = _docker([theirs])
     inner = docker.run_cmd.side_effect
 
-    async def leaky(cmd, timeout=None):
+    async def leaky(cmd, timeout=None, **_kwargs):
         if cmd[1:3] == ["volume", "ls"]:
             return theirs["Name"]
         return await inner(cmd, timeout=timeout)

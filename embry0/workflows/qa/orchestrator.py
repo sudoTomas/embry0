@@ -24,6 +24,7 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
+from embry0.cache.lockfile_hash import LOCKFILE_MAX_BYTES
 from embry0.cache.trusted_run import DefaultHead, forge_default_head, trusted_per_repo_volume
 from embry0.execution import events
 from embry0.orchestration.budget import BudgetOverrunError, resolve_job_cap
@@ -297,6 +298,7 @@ async def _init_orchestrator_node_impl(
                     ],
                 ),
                 timeout=10,
+                max_bytes=LOCKFILE_MAX_BYTES,
             )
         except Exception as lock_exc:  # noqa: BLE001
             logger.warning("bootstrap_lockfile_read_failed", error=str(lock_exc))

@@ -1831,3 +1831,32 @@ async def test_a_workspace_at_another_commit_fails_the_round_without_a_shared_vo
         "the head check applies to every workspace, not only to a shared volume"
     )
     assert f"expected {_NEW_HEAD[:12]}" in out["failure_summary"]
+
+
+@pytest.mark.asyncio
+async def test_the_boot_log_tail_survives_a_cut_inside_a_character() -> None:
+    """The dashboard's boot log is read with `tail -c 8192`, which can cut a multi-byte character (#394)."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from embry0.execution.docker_client import DockerClient
+    from embry0.workflows.qa._subtask_boot_phase import _read_boot_log_tail
+
+    stdout, stderr = asyncio.StreamReader(), asyncio.StreamReader()
+    stdout.feed_data("▶ compiled\nready on http://localhost:3000\n".encode()[2:])
+    stdout.feed_eof()
+    stderr.feed_eof()
+
+    async def wait() -> int:
+        return 0
+
+    async def communicate(input: bytes | None = None) -> tuple[bytes, bytes]:
+        # What a whole-output read does: the client this replaced called it.
+        return await stdout.read(), await stderr.read()
+
+    proc = SimpleNamespace(
+        stdout=stdout, stderr=stderr, stdin=None, returncode=0, pid=4242, wait=wait, communicate=communicate
+    )
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
+        tail = await _read_boot_log_tail(docker=DockerClient(), sandbox_id="sandbox-1")
+    assert "ready on http://localhost:3000" in tail, f"the boot log tail was lost: {tail!r}"
