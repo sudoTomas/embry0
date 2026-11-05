@@ -29,6 +29,16 @@ export const DEFAULT_COLOR: PaletteId = "slate";
 export const DISPLAY_NAME_MAX = 60;
 export const TAGLINE_MAX = 140;
 
+/** Where the guild hall draws an agent when it is home: the art objects its row may name (`station`, #167). */
+export const STATIONS = ["desk", "anvil", "lectern", "alchemy_table", "map_table"] as const;
+export type StationId = (typeof STATIONS)[number];
+export const DEFAULT_STATION: StationId = "desk";
+
+/** The station a row names, or the desk for one the hall does not draw (an older backend sends none). */
+export function stationOf(value: string | null | undefined): StationId {
+  return (STATIONS as readonly string[]).includes(value ?? "") ? (value as StationId) : DEFAULT_STATION;
+}
+
 export interface BuiltinIdentity { display_name: string; avatar: string; color: string; tagline: string }
 
 export const BUILTIN_IDENTITY: Record<string, BuiltinIdentity> = {

@@ -37,9 +37,12 @@ export interface WorldCharacter {
   quests_out: number;
   stats: CharacterStats;
   idle_too_long: boolean;
-  /** The template a quest the player writes for it runs; null for the developer's usual pipeline. */
+  /** The template a quest the player writes for it runs; null for one that names none (triage picks the route). */
   quest_template: string | null;
+  /** Whether its agent row gives it a task the guild can send (`quest_template`, #167). */
   can_quest: boolean;
+  /** Where the guild hall draws it when it is home, from its agent row (#167). Absent on an older backend. */
+  station?: string;
 }
 
 export interface Party {

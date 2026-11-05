@@ -1,4 +1,4 @@
-"""Agent identity vocabulary: the avatar roster and the color palette.
+"""Agent identity vocabulary: the avatar roster, the color palette and the guild hall's stations.
 
 One source for the backend validators and, through docs/contracts/identity.json,
 for the frontend (frontend/src/lib/agentIdentity.ts). The frontend keys its sprites
@@ -58,6 +58,10 @@ DEFAULT_AVATAR: Final = "golem"
 DEFAULT_COLOR: Final = "slate"
 DISPLAY_NAME_MAX: Final = 60
 TAGLINE_MAX: Final = 140
+#: Where the guild hall draws an agent when it is home (#167): the objects of the world art
+#: (frontend/public/world/manifest.json) a character works at. An agent's row names one.
+STATIONS: Final[tuple[str, ...]] = ("desk", "anvil", "lectern", "alchemy_table", "map_table")
+DEFAULT_STATION: Final = "desk"
 
 #: Identity of every builtin agent row; seeds and migration 101 write these.
 BUILTIN_IDENTITY: Final[dict[str, dict[str, str]]] = {
@@ -186,6 +190,12 @@ def validate_color(value: str) -> str:
     return value
 
 
+def validate_station(value: str) -> str:
+    if value not in STATIONS:
+        raise ValueError(f"station must be one of {', '.join(STATIONS)}; got {value!r}")
+    return value
+
+
 def contract() -> dict[str, Any]:
     """The identity vocabulary as docs/contracts/identity.json carries it."""
     return {
@@ -193,6 +203,8 @@ def contract() -> dict[str, Any]:
         "palette": list(PALETTE),
         "default_avatar": DEFAULT_AVATAR,
         "default_color": DEFAULT_COLOR,
+        "stations": list(STATIONS),
+        "default_station": DEFAULT_STATION,
         "display_name_max": DISPLAY_NAME_MAX,
         "tagline_max": TAGLINE_MAX,
         "builtin": BUILTIN_IDENTITY,

@@ -18,6 +18,7 @@ from typing import Any
 import structlog
 
 from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_AGENT_TYPES
+from embry0.workflows.row_behaviour import CODING_AGENT_TYPES, DEFAULT_CODER
 
 logger = structlog.get_logger(__name__)
 
@@ -30,11 +31,11 @@ logger = structlog.get_logger(__name__)
 # type needs its BUILTIN_SEED row and an entry here.
 GENERIC_AGENT_TYPES: tuple[str, ...] = ("research", "analysis", "ops", *SPECIALIST_AGENT_TYPES)
 
-# The agents that run on the developer node (spec 2026-10-25, slop dungeon):
-# the developer, and the Slopmaster, whose slop-cleanup step is a cleanup on
-# the same branch, push and PR machinery. plan_route records which one a job
-# runs as state["coding_agent"]; the node runs that definition under that type.
-CODING_AGENT_TYPES: tuple[str, ...] = ("developer", "slopmaster")
+# The agents that run on the developer node (spec 2026-10-25, slop dungeon) are
+# row_behaviour.CODING_AGENT_TYPES: the developer, and the Slopmaster, whose
+# slop-cleanup step is a cleanup on the same branch, push and PR machinery.
+# plan_route records which one a job runs as state["coding_agent"]; the node
+# runs that definition under that type.
 
 # Template agent_type → physical LangGraph node. ``qa`` maps to the head of
 # the whole QA chain (init_orchestrator → orchestrate_qa → qa_report →
@@ -98,21 +99,6 @@ def build_route_plan(graph_definition: dict[str, Any]) -> list[dict[str, Any]]:
             plan.append({"agent_type": agent_type, "node_id": node_id, "config": node_config(node)})
         node_id = successors.get(node_id)
     return plan
-
-
-def specialist_job_kind(plan: list[dict[str, Any]]) -> str | None:
-    """``"analysis"`` for a route whose agents are all specialists, else None.
-
-    A specialist route (kintsugi-trace, interrogate, ...) declares no
-    ``default_for_kind`` and is never triage's pick: a job reaches it only by
-    naming it (``SPECIALIST_TEMPLATE_NAMES``). Its agent examines a cloned
-    repository and reports, which is what the analysis kind means, so
-    plan_route records the job as one whatever kind triage guessed.
-    """
-    agents = [step.get("agent_type") for step in plan if step.get("agent_type") != "output"]
-    if agents and all(agent in SPECIALIST_AGENT_TYPES for agent in agents):
-        return "analysis"
-    return None
 
 
 def _step_target(step: dict[str, Any]) -> str:
@@ -260,7 +246,7 @@ def coding_agent_of(plan: list[dict[str, Any]]) -> str:
     for step in plan:
         if step.get("agent_type") in CODING_AGENT_TYPES:
             return str(step["agent_type"])
-    return "developer"
+    return DEFAULT_CODER
 
 
 def advance(state: dict[str, Any]) -> dict[str, Any]:

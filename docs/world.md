@@ -16,7 +16,7 @@ Every panel and dialog (a job's report, an agent's panel, a lead, New task) clos
 
 From Quests on offer: the quest's dialog says what it is, where, the evidence and what starting it runs; pick the model and key with Run with, and press Start. That is the owner proposal's yes, recorded as you.
 
-**New task** gives one agent a task you write, on a repository you pick. The developer runs the usual pipeline; a specialist (Why, How, Kintsugi and the rest) runs its own. Triage, review and QA work only inside another job.
+**New task** gives one agent a task you write, on a repository you pick. The developer runs the usual pipeline; a specialist (Why, How, Kintsugi and the rest) runs its own. Triage, review and QA work only inside another job. Which agents the guild can send, and what each task runs, is the agent's row (`quest_template`, on the agent form under *Guild*), so an agent of your own joins the list once its row names a task; where the hall draws each agent is its row's `station`. See [api.md](api.md#agents).
 
 ## Watching
 

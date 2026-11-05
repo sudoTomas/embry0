@@ -6,9 +6,10 @@ import {
   deleteTemplate,
   renameTemplate,
   duplicateTemplate,
+  setTemplateBehaviour,
   setTemplateDefaultKind,
 } from "@/api/pipelines";
-import type { PipelineGraph, TemplateKind } from "@/lib/types";
+import type { PipelineGraph, TemplateBehaviour, TemplateKind } from "@/lib/types";
 
 export function useTemplates() {
   return useQuery({
@@ -71,6 +72,16 @@ export function useSetTemplateDefault() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ templateId, kind }: { templateId: string; kind: TemplateKind | null }) => setTemplateDefaultKind(templateId, kind),
+    onSuccess: (_data, { templateId }) => invalidateTemplate(qc, templateId),
+  });
+}
+
+/** Write what a template's row says about its jobs (#167); the list and the template are read again. */
+export function useSetTemplateBehaviour() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ templateId, behaviour }: { templateId: string; behaviour: TemplateBehaviour }) =>
+      setTemplateBehaviour(templateId, behaviour),
     onSuccess: (_data, { templateId }) => invalidateTemplate(qc, templateId),
   });
 }

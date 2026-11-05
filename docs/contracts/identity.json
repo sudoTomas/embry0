@@ -169,6 +169,7 @@
   },
   "default_avatar": "golem",
   "default_color": "slate",
+  "default_station": "desk",
   "display_name_max": 60,
   "palette": [
     "gold",
@@ -179,6 +180,13 @@
     "amber",
     "sky",
     "slate"
+  ],
+  "stations": [
+    "desk",
+    "anvil",
+    "lectern",
+    "alchemy_table",
+    "map_table"
   ],
   "tagline_max": 140
 }

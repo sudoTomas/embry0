@@ -29,7 +29,9 @@ replicas build once; a reader's snapshot never sees a write half done.
 What stays stale: an event recorded more than :data:`SETTLE` after its own
 time, for a day already folded, counts from the next full rebuild, so at
 most a day late. So does a change to a row of a folded day (a job's last
-run names whom its resumed event credits). An event's time never moves (a
+run names whom its resumed event credits), and a change to a template's
+``leader_agent``, which names whom its jobs' pull requests and audits credit
+(#167). An event's time never moves (a
 job's events happen when it finished, never at its update time), so none
 is counted twice, and a job's event does not come and go with its pull
 request (a job that finished its work keeps it when the pull request
@@ -64,9 +66,9 @@ NIGHTLY_AT = time(3)
 Action = Literal["built", "rebuilt", "advanced"]
 
 #: The modules whose code decides what a fold of the history holds: what an event is (the events
-#: query, and the actor that marks a finding's fix job as no audit), what it earns (pricing, the
-#: action categories, an audit's claims, the vocabulary), the curve, the quest rewards, the fold
-#: and its rows.
+#: query, the actor that marks a finding's fix job as no audit, and whom a job's events credit: the
+#: coding agents, the Slopmaster, the QA pipeline's leader), what it earns (pricing, the action
+#: categories, an audit's claims, the vocabulary), the curve, the quest rewards, the fold and its rows.
 FOLD_MODULES = (
     "embry0.execution.skill_actions",
     "embry0.orchestration.dispatch_actors",
@@ -76,8 +78,10 @@ FOLD_MODULES = (
     "embry0.services.progression_rollup",
     "embry0.services.progression_vocabulary",
     "embry0.services.quests",
+    "embry0.services.slop",
     "embry0.storage.repositories.progression",
     "embry0.storage.repositories.progression_rollup",
+    "embry0.workflows.row_behaviour",
 )
 
 

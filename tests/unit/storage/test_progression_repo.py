@@ -11,6 +11,7 @@ from embry0.services.progression_pack import FactQuery, default_rules, fact_key
 from embry0.services.progression_vocabulary import METRICS
 from embry0.storage.repositories.job_delivery import DeliveryWrite, JobDeliveryRepository
 from embry0.storage.repositories.progression import ProgressionRepository
+from tests.fixtures.builtin_rows import seed_builtin_templates
 
 pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
 
@@ -69,6 +70,7 @@ async def _trace(
 async def test_every_source_yields_its_events_and_nothing_else(db_with_migrations) -> None:
     """The healed, watched and scheduled sources were read and never priced: they are gone (#176)."""
     db = db_with_migrations
+    await seed_builtin_templates(db)  # the templates whose leaders a job's events credit (#167)
     await _job(db, "job-merged", status="pr_merged")
     await db.execute("UPDATE jobs SET pr_url = 'https://forge/pr/1' WHERE job_id = 'job-merged'")
     await _job(db, "job-qa", status="completed", template="qa")

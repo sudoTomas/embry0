@@ -25,6 +25,7 @@ from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_SYSTEM_PRO
 from embry0.workflows.onboard.agent_seed import SYSTEM_PROMPT as _ONBOARDING_SYSTEM_PROMPT
 from embry0.workflows.pr_review.agent_seed import PR_REVIEWER_AGENT_SEED as _PR_REVIEWER_AGENT_SEED
 from embry0.workflows.qa.agent_seed import QA_AGENT_SEED as _QA_AGENT_SEED
+from embry0.workflows.row_behaviour import AGENT_DEFAULTS, checked_quest_template, checked_station
 
 logger = structlog.get_logger(__name__)
 
@@ -74,7 +75,7 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
     },
     # Slop dungeon (spec 2026-10-25): a code job triage judged slop runs the
     # slop-cleanup template, whose slopmaster step runs on the developer node
-    # (route_plan.CODING_AGENT_TYPES) with this definition. Behavior is the
+    # (row_behaviour.CODING_AGENT_TYPES) with this definition. Behavior is the
     # system prompt; branch, push and PR mechanics are the developer node's.
     "slopmaster": {
         "description": (
@@ -386,11 +387,42 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
 # copies, so this touches the copies only (their own seeds carry it too).
 for _agent_type, _ident in BUILTIN_IDENTITY.items():
     BUILTIN_SEED[_agent_type].update(_ident)
+
+# Where the guild hall draws each builtin, and the task the guild can give it
+# (#167, embry0/workflows/row_behaviour.py; migration 143 writes the same on
+# an upgrade). The developer's task names no template, so triage picks its
+# route; every other one runs its own template. The qa and pr-reviewer
+# stations ride their own seeds. A builtin left out sits at a desk and gets no
+# task: triage, review, QA, onboarding and pull-request review work only
+# inside another job.
+_GUILD: dict[str, dict[str, Any]] = {
+    "developer": {"station": "anvil", "quest_template": ""},
+    "review": {"station": "lectern"},
+    "interrogator": {"station": "lectern", "quest_template": "interrogate"},
+    "kintsugi": {"station": "alchemy_table", "quest_template": "kintsugi-trace"},
+    "research": {"station": "map_table", "quest_template": "research-default"},
+    "analysis": {"station": "map_table", "quest_template": "analysis-default"},
+    "ops": {"station": "map_table", "quest_template": "ops-default"},
+    "area-mapper": {"station": "map_table", "quest_template": "map-areas"},
+    "blast-radius": {"station": "map_table", "quest_template": "blast-radius"},
+    "gardener": {"quest_template": "garden"},
+    "why": {"quest_template": "why"},
+    "how": {"quest_template": "how"},
+    "comment-sicko": {"quest_template": "comment-pass"},
+    "design-auditor": {"quest_template": "design-audit"},
+    "context-auditor": {"quest_template": "context-audit"},
+    "slopmaster": {"quest_template": "slop-cleanup"},
+}
+for _agent_type, _guild in _GUILD.items():
+    BUILTIN_SEED[_agent_type].update(_guild)
 # Every builtin runs in jobs unless its entry says otherwise (migration 138's
-# default), and triage may add none of its skills unless it says so (142's).
+# default), triage may add none of its skills unless it says so (142's), and
+# it sits at a desk with no guild task unless it says so (143's).
 for _seed in BUILTIN_SEED.values():
     _seed.setdefault("runs_in_jobs", True)
     _seed.setdefault("triage_may_add_skills", [])
+    for _key, _default in AGENT_DEFAULTS.items():
+        _seed.setdefault(_key, _default)
 
 _ALLOWED_UPDATE_FIELDS = {
     "description",
@@ -406,6 +438,8 @@ _ALLOWED_UPDATE_FIELDS = {
     "color",
     "tagline",
     "triage_may_add_skills",
+    "station",
+    "quest_template",
 }
 
 
@@ -444,22 +478,29 @@ class AgentDefinitionsRepository:
         tagline: str = "",
         runs_in_jobs: bool = True,
         triage_may_add_skills: list[str] | None = None,
+        station: str = AGENT_DEFAULTS["station"],
+        quest_template: str | None = None,
     ) -> dict[str, Any]:
         """Insert a new custom agent definition; ``runs_in_jobs`` is the seeder's to set (the API never passes it).
 
-        ``triage_may_add_skills`` is checked (``checked_triage_may_add``): a
-        malformed value raises ValueError naming the field. Raises ValueError
-        when ``tools`` names a tool outside the tool catalog
-        (embry0.services.tool_catalog): every seeder writes through here.
+        ``triage_may_add_skills``, ``station`` and ``quest_template`` are
+        checked (``checked_triage_may_add``, ``row_behaviour``): a malformed
+        value raises ValueError naming the field. Whether ``quest_template``
+        names a template that exists is the API's check: a seeder may write
+        an agent before its template. Raises ValueError when ``tools`` names
+        a tool outside the tool catalog (embry0.services.tool_catalog): every
+        seeder writes through here.
         """
         check_agent_tools(agent_type, tools or [], mcp_servers=mcp_servers)
         may_add = checked_triage_may_add(triage_may_add_skills or [])
+        guild = (checked_station(station), checked_quest_template(quest_template))
         row = await self._db.fetchrow(
             """
             INSERT INTO agent_definitions
                 (type, description, model, tools, skills, system_prompt, is_builtin, execution_mode, auth_mode,
-                 mcp_servers, display_name, avatar, color, tagline, runs_in_jobs, triage_may_add_skills)
-            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                 mcp_servers, display_name, avatar, color, tagline, runs_in_jobs, triage_may_add_skills,
+                 station, quest_template)
+            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             RETURNING *
             """,
             agent_type,
@@ -477,6 +518,7 @@ class AgentDefinitionsRepository:
             tagline,
             runs_in_jobs,
             may_add,
+            *guild,
         )
         logger.info("agent_definition_created", agent_type=agent_type)
         assert row is not None, "INSERT ... RETURNING must return a row"
@@ -493,6 +535,10 @@ class AgentDefinitionsRepository:
             raise ValueError(f"Unknown fields for update: {unknown}")
         if TRIAGE_MAY_ADD_FIELD in fields:
             fields = {**fields, TRIAGE_MAY_ADD_FIELD: checked_triage_may_add(fields[TRIAGE_MAY_ADD_FIELD])}
+        if "station" in fields:
+            fields = {**fields, "station": checked_station(fields["station"])}
+        if "quest_template" in fields:
+            fields = {**fields, "quest_template": checked_quest_template(fields["quest_template"])}
         if "tools" in fields or "mcp_servers" in fields:
             stored = {} if {"tools", "mcp_servers"} <= set(fields) else (await self.get(agent_type) or {})
             tools = fields["tools"] if "tools" in fields else stored.get("tools")
@@ -556,6 +602,8 @@ class AgentDefinitionsRepository:
                 tagline = $12,
                 runs_in_jobs = $14,
                 triage_may_add_skills = $15,
+                station = $16,
+                quest_template = $17,
                 updated_at = NOW()
             WHERE type = $13 AND is_builtin
             RETURNING *
@@ -575,6 +623,8 @@ class AgentDefinitionsRepository:
             agent_type,
             seed.get("runs_in_jobs", True),
             checked_triage_may_add(seed.get("triage_may_add_skills", [])),
+            checked_station(seed.get("station", AGENT_DEFAULTS["station"])),
+            checked_quest_template(seed.get("quest_template")),
         )
         if row is None:
             if await self.get(agent_type) is not None:

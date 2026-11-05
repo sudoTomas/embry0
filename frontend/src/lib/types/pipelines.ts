@@ -87,6 +87,29 @@ export interface PipelineGraph {
 export const TEMPLATE_KINDS = ["code", "research", "analysis", "ops"] as const;
 export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
 
+/** What a template's row says about its jobs (#167, docs/api.md "Pipeline templates"). */
+export interface TemplateBehaviour {
+  /** A job that names it skips triage: its route is fixed. */
+  fixed_route: boolean;
+  /** Triage is offered it, and plan_route keeps triage's pick of it. */
+  offered_to_triage: boolean;
+  /** The kind its jobs are recorded as when it is no kind's default; null leaves triage's. */
+  job_kind: TemplateKind | null;
+  /** What its jobs hand back, in the person's words, for their briefs; "" says nothing. */
+  delivers: string;
+  /** The agent its jobs are drawn as before one starts, and credited to; null for none. */
+  leader_agent: string | null;
+}
+
+/** A row from a backend that predates #167 behaves as one of the deployment's own did. */
+export const DEFAULT_TEMPLATE_BEHAVIOUR: TemplateBehaviour = {
+  fixed_route: false,
+  offered_to_triage: true,
+  job_kind: null,
+  delivers: "",
+  leader_agent: null,
+};
+
 export interface PipelineTemplate {
   template_id: string;
   name: string;
@@ -111,6 +134,8 @@ export interface PipelineTemplateSummary {
   /** The kind this template is the default route for, or null. */
   default_for_kind?: TemplateKind | null;
   sandbox_profile?: string | null;
+  /** What the row says about its jobs (#167); the list always sets it. */
+  behaviour?: TemplateBehaviour;
 }
 
 export interface AgentTypeInfo {

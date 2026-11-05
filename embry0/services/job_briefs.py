@@ -42,6 +42,7 @@ from embry0.services.brief_writer import (
     system_prompt,
 )
 from embry0.services.lead_kinds import id_pattern
+from embry0.workflows.row_behaviour import WORKFLOW_PIPELINES, builtin_template, delivers
 
 #: Part of every brief's input hash: a change to the user prompt or the schema rewrites the briefs on the next
 #: ticks. The system prompt is the agent definition's, which an operator edits (see brief_writer).
@@ -119,15 +120,8 @@ class JobBrief:
         return {"title": self.title, "what": self.what, "why": self.why, "done": self.done, "size": self.size}
 
 
-# What each kind of job hands back, in the person's words.
-_TEMPLATE_DELIVERS = {
-    "analysis-default": "an analysis of the production logs, and a ticket when it finds a problem worth one",
-    "context-audit": "a report of the claims that look wrong in the files that steer coding agents",
-    "map-areas": "a pull request that maps the repository's areas",
-    "pr-review": "a review on the pull request",
-    "qa": "a test report",
-    "onboard": "a test setup for the repository",
-}
+# What each kind of job hands back, in the person's words, when its template's row says nothing
+# (``pipeline_templates.delivers``, #167).
 _KIND_DELIVERS = {
     "code": "a pull request with the change",
     "research": "a written report",
@@ -173,10 +167,27 @@ def input_hash(job: Mapping[str, Any]) -> str:
     return hashlib.sha256(json.dumps(folded, sort_keys=True).encode()).hexdigest()[:24]
 
 
+def what_it_delivers(job: Mapping[str, Any]) -> str:
+    """What the job hands back, in the person's words: what its template's row says (``delivers``, #167), or
+    what a pipeline the code defines says, else what its kind hands back.
+
+    ``template_delivers`` is the row's, as the candidates query reads it; a
+    job read without it (no database) takes the built-in template's as
+    seeded. It is no input of the brief's hash: a changed ``delivers``
+    reaches the briefs written after it, and rewrites none.
+    """
+    template = str(job.get("pipeline_template") or "")
+    if "template_delivers" in job:
+        said = str(job.get("template_delivers") or "") or delivers(WORKFLOW_PIPELINES.get(template))
+    else:
+        said = delivers(builtin_template(template))
+    return said or _KIND_DELIVERS.get(str(job.get("job_kind") or "")) or "the result of the work"
+
+
 def user_prompt(job: Mapping[str, Any]) -> str:
     inputs = job_inputs(job)
-    kind, template = inputs["job_kind"], inputs["template"]
-    delivers = _TEMPLATE_DELIVERS.get(template) or _KIND_DELIVERS.get(kind) or "the result of the work"
+    kind = inputs["job_kind"]
+    delivers = what_it_delivers(job)
     lines = [f"Kind of work: {_KIND_WORDS.get(kind, kind or 'not classified yet')}"]
     repo = inputs["repo"].split("/", 1)[-1]
     if repo:

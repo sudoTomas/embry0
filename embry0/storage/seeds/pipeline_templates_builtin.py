@@ -1,10 +1,13 @@
 """Builtin pipeline-template seeding.
 
 Run at orchestrator startup to upsert the canonical embry0 starter
-pipelines. The seeds overwrite every field but ``default_for_kind`` (per
-upsert_builtin): the default an operator moved or cleared stays where they
-put it. Users who want a customized variant should clone the builtin under
-a different name.
+pipelines. The seeds overwrite the graph, the description and the sandbox
+profile (per upsert_builtin), not the operator's decisions: the default an
+operator moved or cleared, and what a template's row says about its jobs
+(``fixed_route``, ``offered_to_triage``, ``job_kind``, ``delivers``,
+``leader_agent``; #167, ``embry0.workflows.row_behaviour``), stay where they
+put them. A first insert takes the seed's. Users who want a customized
+variant should clone the builtin under a different name.
 
 Each template is a small graph in the same shape the frontend stores
 under ``graph_definition``: ``{nodes: [...], edges: [...], metadata: {...}}``.
@@ -17,6 +20,7 @@ from typing import Any
 import structlog
 
 from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
+from embry0.workflows.row_behaviour import TEMPLATE_DEFAULTS
 
 logger = structlog.get_logger(__name__)
 
@@ -56,15 +60,21 @@ def _graph(name: str, description: str, nodes: list[dict[str, Any]], edges: list
     }
 
 
-def _specialist_route(name: str, agent_type: str, description: str) -> dict[str, Any]:
+def _specialist_route(name: str, agent_type: str, description: str, *, delivers: str = "") -> dict[str, Any]:
     """A specialist route: triage, the specialist on the generic node, output.
 
     No ``default_for_kind``, and triage is not offered it: a job reaches it
-    only by naming the template (``SPECIALIST_TEMPLATE_NAMES``), and
-    plan_route records it as an analysis job (``specialist_job_kind``).
+    only by naming the template, and then skips triage (``fixed_route``).
+    plan_route records it as an analysis job (``job_kind``), and the world
+    draws it as its specialist (``leader_agent``).
     """
     return {
         "description": description,
+        "fixed_route": True,
+        "offered_to_triage": False,
+        "job_kind": "analysis",
+        "leader_agent": agent_type,
+        "delivers": delivers,
         "graph_definition": _graph(
             name=name,
             description=f"Triage → {agent_type} → output.",
@@ -163,6 +173,7 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
         ),
         "sandbox_profile": "slim",
         "default_for_kind": "research",
+        "leader_agent": "research",
     },
     "analysis-default": {
         "description": (
@@ -184,6 +195,8 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
         ),
         "sandbox_profile": "slim",
         "default_for_kind": "analysis",
+        "leader_agent": "analysis",
+        "delivers": "an analysis of the production logs, and a ticket when it finds a problem worth one",
     },
     "ops-default": {
         "description": (
@@ -205,6 +218,7 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
         ),
         "sandbox_profile": "slim",
         "default_for_kind": "ops",
+        "leader_agent": "ops",
     },
     # Slop dungeon (spec 2026-10-25): the route of a code job triage judged
     # slop, not a bug. The Slopmaster runs on the developer node (its step
@@ -235,6 +249,7 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
             ],
         ),
         "sandbox_profile": "slim",
+        "leader_agent": "slopmaster",
     },
     "pr-followup": {
         "description": (
@@ -263,8 +278,8 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
     },
     # One route per specialist agent (specialist_agents.py). Each is
     # read-only and delivers one report, and the descriptions say so on the
-    # Pipelines page. Triage is not offered these (SPECIALIST_TEMPLATE_NAMES):
-    # a job runs one only by naming it.
+    # Pipelines page. Triage is not offered these (offered_to_triage): a job
+    # runs one only by naming it.
     "kintsugi-trace": _specialist_route(
         "kintsugi-trace",
         "kintsugi",
@@ -320,14 +335,21 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
         "Read-only: triage → context-auditor → output. Checks the files that steer a coding agent "
         "against the code and its history and delivers the stale lines with their evidence and a "
         "diff that corrects the certain ones.",
+        delivers="a report of the claims that look wrong in the files that steer coding agents",
     ),
     "map-areas": _specialist_route(
         "map-areas",
         "area-mapper",
         "Read-only: triage → area-mapper → output. Maps a monorepo's parts (paths, the names their "
         "logs run under, owners) into .embry0/areas.yml; the output step opens the pull request.",
+        delivers="a pull request that maps the repository's areas",
     ),
 }
+
+# Every template's row says what #167's columns say of it; a seed that leaves one out takes the column's default.
+for _seed in BUILTIN_PIPELINE_TEMPLATES.values():
+    for _key, _default in TEMPLATE_DEFAULTS.items():
+        _seed.setdefault(_key, _default)
 
 
 async def seed_builtin_pipeline_templates(repo: PipelineTemplatesRepository) -> None:

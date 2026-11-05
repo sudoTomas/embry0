@@ -14,7 +14,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langgraph.types import Command
 
-from embry0.workflows.issue_to_pr.nodes._triage import fixed_route_decision
+from embry0.workflows.issue_to_pr.nodes._triage import fixed_route_decision as _fixed_route_decision
+from embry0.workflows.row_behaviour import builtin_template
+
+
+def fixed_route_decision(state: dict[str, Any]) -> dict[str, Any] | None:
+    """The decision for ``state`` under the built-in row of the template it names, as seeded (#167)."""
+    return _fixed_route_decision(state, builtin_template(state.get("pipeline_template_request")))
 
 
 def _state(**extra: Any) -> dict[str, Any]:

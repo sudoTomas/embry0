@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Loot, WorldCharacter } from "@/api/world";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
+import { stationOf } from "@/lib/agentIdentity";
 import { STATE_POSE } from "@/lib/world";
-import { SPACING, STATION_OF, chestOf, hallLayout } from "@/lib/worldHall";
+import { SPACING, chestOf, hallLayout } from "@/lib/worldHall";
 import { ArtObjectAt, EffectAt } from "./art/Pieces";
 import { Torchlight } from "./art/Nightfall";
 import { anchored } from "./art/style";
@@ -23,7 +24,7 @@ interface HallSceneProps {
 
 /**
  * The guild hall's inside: the floor and walls, each character standing at
- * its station (the station stands empty while it is out), the quest board,
+ * its station (its agent row's, #167; the station stands empty while it is out), the quest board,
  * the loot chest. Drawn at the art's size and scaled by a whole number to
  * fill the width; a click on a character opens its panel. It is night
  * (Nightfall, art/relight.ts): the wall torches and the quest board light
@@ -84,12 +85,12 @@ export function HallScene({ art, characters, loot, xpDrops, levelUps, onSelect, 
 
           {ordered.map((c, i) => {
             const spot = layout.station(i);
-            const station = STATION_OF[c.agent_type] ?? "desk";
+            const station = stationOf(c.station);
             const home = c.state === "idle" || c.state === "returning" || c.state === "defeated" || c.state === "recalled";
             const identity = lookup(c.agent_type);
             const drop = xpDrops.get(c.agent_type);
             return (
-              <div key={c.agent_type}>
+              <div key={c.agent_type} data-testid="hall-station" data-station={station}>
                 <ArtObjectAt art={art} name={station} x={spot.x - 10} y={spot.y} />
                 <button
                   type="button"

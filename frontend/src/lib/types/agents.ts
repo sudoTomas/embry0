@@ -58,6 +58,11 @@ export interface AgentDefinition {
   /** The skills triage may add to this agent for a job, each only from a source its skills
    * already load (docs/api.md, Agents). Absent on a backend that predates it. */
   triage_may_add_skills?: string[];
+  /** Where the guild hall draws it (#167). Absent on a backend that predates it. */
+  station?: string;
+  /** The task the guild can give it: null none, "" a task naming no template (triage picks), else that
+   * template (#167). Absent on a backend that predates it. */
+  quest_template?: string | null;
   /** Write responses only: skills accepted from a source that is not ready, and what a job runs without. */
   warnings?: string[];
   created_at?: string;
@@ -79,6 +84,8 @@ export interface AgentCreateRequest {
   color?: string;
   tagline?: string;
   triage_may_add_skills?: string[];
+  station?: string;
+  quest_template?: string | null;
 }
 
 /** PUT semantics (RAV-1058): omitted fields stay untouched; an explicitly-sent
@@ -99,4 +106,8 @@ export interface AgentUpdateRequest {
   tagline?: string;
   /** Not nullable on the backend: [] lets triage add none. */
   triage_may_add_skills?: string[];
+  /** Not nullable on the backend either. */
+  station?: string;
+  /** null takes the agent's task out of the guild. */
+  quest_template?: string | null;
 }

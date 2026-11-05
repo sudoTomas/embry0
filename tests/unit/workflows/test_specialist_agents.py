@@ -27,14 +27,19 @@ from embry0.workflows.issue_to_pr.route_plan import (
     GENERIC_AGENT_TYPES,
     build_route_plan,
     next_route,
-    specialist_job_kind,
     step_template_config,
 )
 from embry0.workflows.issue_to_pr.specialist_agents import (
     CONTEXT_AUDITOR_SYSTEM_PROMPT,
     REPORT_TARGET_CHARS,
     SPECIALIST_AGENT_TYPES,
-    SPECIALIST_TEMPLATE_NAMES,
+)
+from embry0.workflows.row_behaviour import (
+    TEMPLATE_DEFAULTS,
+    fixed_route,
+    leader,
+    offered_to_triage,
+    recorded_kind,
 )
 
 # Agent type -> the template that routes a job to it. Written out rather than
@@ -276,17 +281,17 @@ def test_template_validates_and_routes_to_the_generic_node(agent_type, template)
     assert [step["agent_type"] for step in plan] == [agent_type, "output"]
     assert next_route({"route_plan": plan, "route_cursor": 0, "qa": {}}) == "agent"
     assert AGENT_TYPE_TO_NODE[agent_type] == "generic_agent"
-    assert specialist_job_kind(plan) == "analysis"
+    # What its row says (#167): an analysis job, led by its specialist.
+    assert recorded_kind(seeded) == "analysis"
+    assert leader(seeded) == agent_type
 
 
-def test_the_specialist_templates_are_the_nine_all_specialist_routes():
-    assert SPECIALIST_TEMPLATE_NAMES == set(SPECIALISTS.values())
-    all_specialist = {
-        name
-        for name, seeded in BUILTIN_PIPELINE_TEMPLATES.items()
-        if specialist_job_kind(build_route_plan(seeded["graph_definition"]))
-    }
-    assert all_specialist == SPECIALIST_TEMPLATE_NAMES
+def test_the_fixed_routes_triage_is_not_offered_are_the_specialist_templates():
+    """The seeded rows say what SPECIALIST_TEMPLATE_NAMES said before #167: those ten, and no other."""
+    fixed = {name for name, seeded in BUILTIN_PIPELINE_TEMPLATES.items() if fixed_route(seeded)}
+    hidden = {name for name, seeded in BUILTIN_PIPELINE_TEMPLATES.items() if not offered_to_triage(seeded)}
+    assert fixed == set(SPECIALISTS.values()), f"the fixed routes: {sorted(fixed)}"
+    assert hidden == set(SPECIALISTS.values()), f"the templates triage is not offered: {sorted(hidden)}"
 
 
 def test_every_agent_type_list_accepts_the_specialists():
@@ -303,14 +308,6 @@ def test_every_agent_type_list_accepts_the_specialists():
         # ...and its per-step config reaches the agent it names.
         state = {"route_plan": [{"agent_type": agent_type, "config": {"model": "m-x"}}], "route_cursor": 0}
         assert step_template_config(state, agent_type) == {"agent_models": {agent_type: "m-x"}}
-
-
-def test_specialist_kind_needs_every_agent_to_be_a_specialist():
-    assert specialist_job_kind([{"agent_type": "developer"}, {"agent_type": "kintsugi"}]) is None
-    assert specialist_job_kind([{"agent_type": "analysis"}, {"agent_type": "output"}]) is None
-    assert specialist_job_kind([{"agent_type": "output"}]) is None
-    assert specialist_job_kind([]) is None
-    assert specialist_job_kind([{"agent_type": "why"}, {"agent_type": "how"}, {"agent_type": "output"}]) == "analysis"
 
 
 # ---- running one -----------------------------------------------------------------
@@ -375,6 +372,8 @@ class _TemplatesRepo:
                 "graph_definition": BUILTIN_PIPELINE_TEMPLATES[name]["graph_definition"],
                 "default_for_kind": BUILTIN_PIPELINE_TEMPLATES[name].get("default_for_kind"),
                 "description": "",
+                # What the row says of its jobs (#167), as seeded.
+                **{key: BUILTIN_PIPELINE_TEMPLATES[name][key] for key in TEMPLATE_DEFAULTS},
             }
             for i, name in enumerate(names)
         }
@@ -467,7 +466,7 @@ async def test_triage_is_not_offered_the_specialist_templates():
     prompt = run.await_args_list[0].kwargs["prompt"]
     listed_block = prompt.split("Available pipeline templates:\n", 1)[1].split("\n\n", 1)[0]
     listed = {line[2:].split()[0].rstrip(":") for line in listed_block.splitlines()}
-    assert listed == set(BUILTIN_PIPELINE_TEMPLATES) - SPECIALIST_TEMPLATE_NAMES
+    assert listed == set(BUILTIN_PIPELINE_TEMPLATES) - set(SPECIALISTS.values())
     assert "quick-fix" in listed
 
 

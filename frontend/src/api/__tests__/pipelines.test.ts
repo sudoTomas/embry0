@@ -23,6 +23,7 @@ import {
   fetchTemplate,
   fetchTemplates,
   renameTemplate,
+  setTemplateBehaviour,
   setTemplateDefaultKind,
   validatePipeline,
 } from "../pipelines";
@@ -76,8 +77,46 @@ describe("pipelines API client — boundary mappers", () => {
         sandbox_profile: "slim",
         is_builtin: true,
         default_for_kind: null,
+        // An older backend's row says nothing of its jobs: it behaves as a template of the deployment's own (#167).
+        behaviour: { fixed_route: false, offered_to_triage: true, job_kind: null, delivers: "", leader_agent: null },
       },
     ]);
+  });
+
+  it("fetchTemplates reads what each row says about its jobs (#167)", async () => {
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: [
+        {
+          id: "abc",
+          name: "why",
+          description: "",
+          created_at: "2026-05-04T00:00:00Z",
+          updated_at: "2026-05-04T00:00:00Z",
+          fixed_route: true,
+          offered_to_triage: false,
+          job_kind: "analysis",
+          delivers: "an answer",
+          leader_agent: "why",
+        },
+      ],
+    });
+    const [row] = await fetchTemplates();
+    expect(row.behaviour).toEqual({
+      fixed_route: true,
+      offered_to_triage: false,
+      job_kind: "analysis",
+      delivers: "an answer",
+      leader_agent: "why",
+    });
+  });
+
+  it("setTemplateBehaviour sends every field, the nulls that clear included", async () => {
+    (api.put as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: { id: "abc", name: "n", description: "", graph_definition: SAMPLE_GRAPH, created_at: "", updated_at: "" },
+    });
+    const behaviour = { fixed_route: false, offered_to_triage: true, job_kind: null, delivers: "", leader_agent: null };
+    await setTemplateBehaviour("abc", behaviour);
+    expect(api.put).toHaveBeenCalledWith("/pipelines/templates/abc", behaviour);
   });
 
   it("fetchTemplate maps graph_definition → graph", async () => {

@@ -280,6 +280,8 @@ Budget controls, context injection, and sandbox profiles are configurable via th
 
 - **Context audit**: `PATCH /api/v1/config/settings/context_audit?owner={owner}` with `{"days": N}` (1 to 365, `false` for off) audits the files that steer a coding agent in each of the owner's registered repositories on a schedule, and `GET /api/v1/orgs/{owner}/context-audit` reads what it sees. The interval, whether an audit opens a pull request and the files it reads are the `context_audit` section's, in the organization's or a repository's layer for their own; its two caps are the `budget` section's `context_audit_job_usd` and `context_audit_max_jobs_per_tick`, in the organization's layer for its own. See [context-audit.md](context-audit.md).
 
+- **Agent and template behaviour** (#167): what embry0 does with an agent or a pipeline template is a column of its row, not a list of the built-in ones' names, so an operator's own take part the same way. A template's `fixed_route` (a job that names it skips triage), `offered_to_triage`, `job_kind`, `delivers` (what its jobs' briefs say they hand back) and `leader_agent` (who the guild draws its jobs as and credits their work to): `POST`/`PUT /api/v1/pipelines/templates` and *Behaviour…* in a template's menu on the Pipelines page. An agent's `station` and `quest_template` (the task the guild can give it): `POST`/`PUT /api/v1/agents`, the MCP tools `agent_create` and `agent_update`, and *Guild* on the agent form. Each value is checked, a 422 naming the field; the boot seed writes a built-in's on its first insert only, so a change survives a restart. The rules: [api.md](api.md#pipeline-templates) and [api.md](api.md#agents).
+
 See [api.md](api.md) for request examples.
 
 ## Settings document

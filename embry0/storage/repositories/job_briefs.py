@@ -15,10 +15,13 @@ j.job_id, LEFT(j.task, {TASK_CHARS}) AS task, j.repo, j.area, j.job_kind, j.pipe
 i.title AS issue_title
 """
 
+# What the job's template says it delivers (#167): read for the prompt, no input of the hash.
 _CANDIDATES_SQL = f"""
-SELECT {_INPUTS}, j.status, b.input_hash AS brief_hash, b.prompt_hash AS brief_prompt_hash
+SELECT {_INPUTS}, t.delivers AS template_delivers, j.status, b.input_hash AS brief_hash,
+       b.prompt_hash AS brief_prompt_hash
 FROM jobs j
 LEFT JOIN issues i ON i.id = j.issue_id
+LEFT JOIN pipeline_templates t ON t.name = j.pipeline_template
 LEFT JOIN job_briefs b ON b.job_id = j.job_id
 WHERE j.status = ANY($1::text[]) OR j.finished_at > NOW() - make_interval(days => $2)
 ORDER BY (j.status = ANY($1::text[])) DESC, j.created_at DESC

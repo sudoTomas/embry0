@@ -10,7 +10,9 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
+from embry0.services.slop import SLOPMASTER
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.progression import coder_sql, template_join
 
 #: Job statuses a party is still out on.
 LIVE_STATUSES = ("pending", "running", "awaiting_input", "paused")
@@ -84,13 +86,15 @@ LIMIT $2
 
 # Slop dungeon (spec 2026-10-25): the slop cleanups merged in the last ``$1``
 # days, by repository and area — what each Slop Dungeon's ``cleaned`` counts.
-_CLEANED_SQL = """
-SELECT repo, area, COUNT(*) AS cleaned
-FROM jobs
-WHERE pipeline_template = 'slop-cleanup' AND repo IS NOT NULL
-  AND (status = 'pr_merged' OR delivery_state = 'merged')
-  AND COALESCE(delivery_state_at, finished_at, created_at) > NOW() - make_interval(days => $1)
-GROUP BY repo, area
+# A slop cleanup is a job the Slopmaster coded: its template's leader (#167,
+# progression.coder_sql).
+_CLEANED_SQL = f"""
+SELECT j.repo, j.area, COUNT(*) AS cleaned
+FROM jobs j {template_join("j", "jt")}
+WHERE {coder_sql("jt")} = '{SLOPMASTER}' AND j.repo IS NOT NULL
+  AND (j.status = 'pr_merged' OR j.delivery_state = 'merged')
+  AND COALESCE(j.delivery_state_at, j.finished_at, j.created_at) > NOW() - make_interval(days => $1)
+GROUP BY j.repo, j.area
 """
 
 

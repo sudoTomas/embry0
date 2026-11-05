@@ -24,12 +24,10 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from embry0.orchestration.dispatch_actors import PROPOSALS
+from embry0.services.slop import SLOPMASTER
 from embry0.storage.database import DatabasePool
 from embry0.storage.schemas import FINISHED_WELL_STATUSES
-
-# The character a job's code is credited to: the Slopmaster for a slop cleanup
-# (spec 2026-10-25, slop dungeon), the developer otherwise.
-_CODER = "CASE WHEN {job}.pipeline_template = 'slop-cleanup' THEN 'slopmaster' ELSE 'developer' END"
+from embry0.workflows.row_behaviour import CODING_AGENT_TYPES, DEFAULT_CODER, WORKFLOW_PIPELINES
 
 #: The template a context audit runs on.
 AUDIT_TEMPLATE = "context-audit"
@@ -42,6 +40,29 @@ FIX_ACTOR = PROPOSALS
 
 def _literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+#: The pipeline the code defines for a QA job, and the character it credits (``row_behaviour.WORKFLOW_PIPELINES``).
+QA_PIPELINE = str(WORKFLOW_PIPELINES["qa"]["name"])
+_QA_AGENT = str(WORKFLOW_PIPELINES["qa"]["leader_agent"])
+
+
+def template_join(job: str, template: str) -> str:
+    """The join of the job aliased ``job`` to its template's row, aliased ``template`` (#167): by name, as jobs
+    name their template, so a job whose template has no row (a pipeline the code defines, a template since
+    renamed) reads as one whose row says nothing."""
+    return f"LEFT JOIN pipeline_templates {template} ON {template}.name = {job}.pipeline_template"
+
+
+def coder_sql(template: str) -> str:
+    """The character a job's pull request is credited to, from its template's row aliased ``template``: the
+    row's leader when that is a coding agent (the Slopmaster, for a slop cleanup; spec 2026-10-25, slop
+    dungeon), else the developer. ``embry0.workflows.row_behaviour.coder`` is the same rule in Python."""
+    coders = ", ".join(_literal(agent) for agent in CODING_AGENT_TYPES)
+    return (
+        f"COALESCE(CASE WHEN {template}.leader_agent IN ({coders}) THEN {template}.leader_agent END, "
+        f"{_literal(DEFAULT_CODER)})"
+    )
 
 
 def an_audit(job: str) -> str:
@@ -85,30 +106,30 @@ WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL
     ),
     (
         "COALESCE(j.delivery_state_at, j.finished_at)",
-        f"""-- the developer (the Slopmaster, for a slop cleanup): a pull request a job opened was merged
-SELECT 1, j.job_id, 'merged', {_CODER.format(job="j")}, COALESCE(j.delivery_state_at, j.finished_at),
+        f"""-- the job's coder (coder_sql): a pull request a job opened was merged
+SELECT 1, j.job_id, 'merged', {coder_sql("jt")}, COALESCE(j.delivery_state_at, j.finished_at),
        NULL, NULL, NULL
-FROM jobs j WHERE j.status = 'pr_merged'""",
+FROM jobs j {template_join("j", "jt")} WHERE j.status = 'pr_merged'""",
     ),
     (
         "j.finished_at",
-        f"""-- the developer (or the Slopmaster): a job that opened a pull request, once it finished
-SELECT 2, j.job_id, 'opened', {_CODER.format(job="j")}, j.finished_at, NULL, NULL, NULL
-FROM jobs j WHERE j.pr_url IS NOT NULL AND j.finished_at IS NOT NULL""",
+        f"""-- the job's coder: a job that opened a pull request, once it finished
+SELECT 2, j.job_id, 'opened', {coder_sql("jt")}, j.finished_at, NULL, NULL, NULL
+FROM jobs j {template_join("j", "jt")} WHERE j.pr_url IS NOT NULL AND j.finished_at IS NOT NULL""",
     ),
     (
         "COALESCE(j.delivery_state_at, j.finished_at)",
-        """-- the Slopmaster: a merged slop cleanup, with the lines it added and removed as its report
-SELECT 3, j.job_id, 'cleaned', 'slopmaster', COALESCE(j.delivery_state_at, j.finished_at),
+        f"""-- the Slopmaster: a merged job it coded (a slop cleanup), with the lines it added and removed as its report
+SELECT 3, j.job_id, 'cleaned', {coder_sql("jt")}, COALESCE(j.delivery_state_at, j.finished_at),
        (j.work_nature -> 'cleanup')::text, NULL, NULL
-FROM jobs j WHERE j.status = 'pr_merged' AND j.pipeline_template = 'slop-cleanup'""",
+FROM jobs j {template_join("j", "jt")} WHERE j.status = 'pr_merged' AND {coder_sql("jt")} = {_literal(SLOPMASTER)}""",
     ),
     (
         "COALESCE(m.delivery_state_at, m.finished_at)",
-        f"""-- the developer (or the Slopmaster): a merge on an issue whose earlier job had failed
-SELECT 4, m.job_id, 'comeback', {_CODER.format(job="m")}, COALESCE(m.delivery_state_at, m.finished_at),
+        f"""-- the job's coder: a merge on an issue whose earlier job had failed
+SELECT 4, m.job_id, 'comeback', {coder_sql("mt")}, COALESCE(m.delivery_state_at, m.finished_at),
        NULL, NULL, NULL
-FROM jobs m
+FROM jobs m {template_join("m", "mt")}
 WHERE m.status = 'pr_merged' AND m.issue_id IS NOT NULL
   AND EXISTS (
     SELECT 1 FROM jobs f
@@ -125,15 +146,16 @@ FROM jobs j WHERE j.resume_attempts > 0 AND {finished_well("j")}""",
     ),
     (
         "j.finished_at",
-        f"""-- QA: a QA job that finished its work
-SELECT 6, j.job_id, 'qa_passed', 'qa', j.finished_at, NULL, NULL, NULL
-FROM jobs j WHERE j.pipeline_template = 'qa' AND {finished_well("j")}""",
+        f"""-- QA: a job of the QA pipeline that finished its work, credited to the pipeline's leader
+SELECT 6, j.job_id, 'qa_passed', {_literal(_QA_AGENT)}, j.finished_at, NULL, NULL, NULL
+FROM jobs j WHERE j.pipeline_template = {_literal(QA_PIPELINE)} AND {finished_well("j")}""",
     ),
     (
         "j.finished_at",
-        f"""-- the context auditor: an audit that finished its work, with its report; a finding's fix job is no audit
-SELECT 7, j.job_id, 'audited', 'context-auditor', j.finished_at, j.result_summary, NULL, NULL
-FROM jobs j WHERE {an_audit("j")} AND {finished_well("j")}""",
+        f"""-- the audit template's leader (the context auditor): an audit that finished its work, with its report;
+-- a finding's fix job is no audit
+SELECT 7, j.job_id, 'audited', jt.leader_agent, j.finished_at, j.result_summary, NULL, NULL
+FROM jobs j {template_join("j", "jt")} WHERE {an_audit("j")} AND {finished_well("j")}""",
     ),
     (
         "a.created_at",
@@ -401,9 +423,9 @@ FRAGMENTS: dict[str, str] = {
         WHERE t.agent_type = ANY({agents}::text[]) AND t.result = 'success' AND t.error_code IS NULL""",
     "review_posted": """
         SELECT r.posted_at, 1, r.repo || ' #' || r.number, NULL, NULL FROM pr_reviews r WHERE r.posted_at IS NOT NULL""",
-    "qa_passed": """
+    "qa_passed": f"""
         SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, NULL, NULL
-        FROM jobs j WHERE j.pipeline_template = 'qa' AND """
+        FROM jobs j WHERE j.pipeline_template = {_literal(QA_PIPELINE)} AND """
     + finished_well("j"),
     "gate_blocked": """
         SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, j.pr_url, NULL

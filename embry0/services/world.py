@@ -18,7 +18,7 @@ import asyncio
 import json
 import math
 import time
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,8 +27,9 @@ from embry0.services.lead_kinds import lead_kind
 from embry0.services.progression import price
 from embry0.services.progression_pack import Rules
 from embry0.services.proposals import ACTOR as PROPOSALS_ACTOR
-from embry0.services.slop import SLOP_TEMPLATE, SLOPMASTER
+from embry0.services.slop import SLOPMASTER
 from embry0.storage.repositories.progression import ProgressEvent
+from embry0.workflows import row_behaviour
 
 #: How long a party that finished stays out, walking home, before it is back in the hall.
 RETURN_SECONDS = 180.0
@@ -51,38 +52,18 @@ CACHE_SECONDS = 60.0
 
 _SEVERITY = {"critical": 4, "high": 3, "medium": 2, "low": 1, "misleads": 2, "dead": 1, "drift": 1}
 
-#: The character that leads a job of each template when no agent has started yet.
-LEADER_BY_TEMPLATE: dict[str, str] = {
-    "analysis-default": "analysis",
-    "research-default": "research",
-    "ops-default": "ops",
-    "qa": "qa",
-    "pr-review": "pr-reviewer",
-    "onboard": "onboarding",
-    "kintsugi-trace": "kintsugi",
-    "garden": "gardener",
-    "interrogate": "interrogator",
-    "why": "why",
-    "how": "how",
-    "blast-radius": "blast-radius",
-    "comment-pass": "comment-sicko",
-    "design-audit": "design-auditor",
-    "context-audit": "context-auditor",
-    "map-areas": "area-mapper",
-    SLOP_TEMPLATE: SLOPMASTER,
-}
+#: The pipelines a job's ``pipeline_template`` can name, by name: the template rows and the code's own
+#: (``row_behaviour.pipelines_by_name``). None, wherever a function takes it, is the built-in rows as seeded.
+Pipelines = Mapping[str, Mapping[str, Any]]
 
-#: The template a quest the player writes for a character runs: its own, or None for the
-#: developer's (triage picks the pipeline). A character missing here cannot be given a
-#: free-form quest (triage, review and QA work only inside another quest).
-QUEST_TEMPLATE_BY_AGENT: dict[str, str | None] = {
-    "developer": None,
-    **{
-        agent: template
-        for template, agent in LEADER_BY_TEMPLATE.items()
-        if template not in ("qa", "pr-review", "onboard")
-    },
-}
+
+def pipeline_of(job: Mapping[str, Any], pipelines: Pipelines | None) -> Mapping[str, Any] | None:
+    """The row of the pipeline the job ran: from ``pipelines``, or the built-in one as seeded without them."""
+    name = str(job.get("pipeline_template") or "")
+    if pipelines is None:
+        return row_behaviour.builtin_template(name)
+    return pipelines.get(name)
+
 
 #: Job statuses, as the world says them.
 _FINISHED_STATE = {
@@ -172,19 +153,22 @@ def job_state(status: str, current: str | None, members: list[str]) -> str:
     return _FINISHED_STATE.get(status, "returning")
 
 
-def leader_of(job: Mapping[str, Any], members: list[str], current: str | None) -> str:
-    """The character a job is drawn as: the one working now, else the last that worked other than triage, else its template's."""
+def leader_of(
+    job: Mapping[str, Any], members: list[str], current: str | None, pipelines: Pipelines | None = None
+) -> str:
+    """The character a job is drawn as: the one working now, else the last that worked other than triage, else
+    its template's leader (its row's ``leader_agent``, #167)."""
     if current and current != "triage":
         return current
     worked = [m for m in members if m != "triage"]
     if worked:
         return worked[-1]
-    template = str(job.get("pipeline_template") or "")
-    if template in LEADER_BY_TEMPLATE:
-        return LEADER_BY_TEMPLATE[template]
+    lead = row_behaviour.leader(pipeline_of(job, pipelines))
+    if lead:
+        return lead
     if members:
         return current or members[-1]
-    return "developer"
+    return row_behaviour.DEFAULT_CODER
 
 
 def quest_title(task: str | None) -> str:
@@ -264,6 +248,7 @@ def job_entry(
     lead_id: str | None,
     last_event_at: Any,
     now: datetime,
+    pipelines: Pipelines | None = None,
 ) -> dict[str, Any]:
     """One party: who leads it, who is in it, where it is, and whether it looks stuck."""
     members, current = party_of(runs)
@@ -277,7 +262,7 @@ def job_entry(
         "title": quest_title(job.get("task")),
         "status": status,
         "state": state,
-        "leader": leader_of(job, members, current),
+        "leader": leader_of(job, members, current, pipelines),
         "party": members,
         "working": current,
         "lead_id": lead_id,
@@ -326,16 +311,24 @@ def character_entries(
     parties: list[dict[str, Any]],
     stats: Mapping[str, Mapping[str, Any]],
     now: datetime,
+    *,
+    agents: Mapping[str, Mapping[str, Any]] | None = None,
+    templates: Collection[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Every character with where it is now: the party it leads (or is in), and how its quests have gone.
 
     A character on several quests at once is drawn at the newest one it
     leads, with the count; one on none is in the hall, idle too long when its
-    last quest is more than :data:`IDLE_DAYS` old.
+    last quest is more than :data:`IDLE_DAYS` old. Its station and the task
+    the guild can give it are its agent row's (``agents``, by type; without
+    them, the built-in rows as seeded): a task naming a template that is not
+    among ``templates`` is no task (#167).
     """
     out = []
     for character in characters:
         agent = str(character["agent_type"])
+        row = agents.get(agent) if agents is not None else row_behaviour.builtin_agent(agent)
+        task = row_behaviour.quest(row, templates)
         leading = [p for p in parties if p["leader"] == agent]
         along = [p for p in parties if agent in p["party"] and p["leader"] != agent]
         out_now = [p for p in leading + along if p["state"] in ("travelling", "working", "waiting")]
@@ -351,8 +344,9 @@ def character_entries(
                 "quests_out": len(out_now),
                 "stats": entry_stats,
                 "idle_too_long": primary is None and (since_last is None or since_last > IDLE_DAYS * 86_400),
-                "quest_template": QUEST_TEMPLATE_BY_AGENT.get(agent),
-                "can_quest": agent in QUEST_TEMPLATE_BY_AGENT,
+                "station": row_behaviour.station(row),
+                "quest_template": task.template,
+                "can_quest": task.offered,
             }
         )
     return out
@@ -388,8 +382,11 @@ def quest_fallbacks(runs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return list(entries.values())
 
 
-def quest_xp(job: Mapping[str, Any], runs: Iterable[Mapping[str, Any]], *, rules: Rules) -> list[dict[str, Any]]:
-    """What a quest earned each character, by skill, under ``rules``: its agents' runs, and the pull request it opened or merged."""
+def quest_xp(
+    job: Mapping[str, Any], runs: Iterable[Mapping[str, Any]], *, rules: Rules, pipelines: Pipelines | None = None
+) -> list[dict[str, Any]]:
+    """What a quest earned each character, by skill, under ``rules``: its agents' runs, and the pull request it
+    opened or merged, credited to its template's coder (``row_behaviour.coder``)."""
     gains: dict[tuple[str, str], int] = {}
     at = job.get("finished_at") or job.get("created_at") or datetime.now(UTC)
     events = [
@@ -399,9 +396,10 @@ def quest_xp(job: Mapping[str, Any], runs: Iterable[Mapping[str, Any]], *, rules
         for r in runs
         if r.get("agent_type") and not r.get("error_code") and r.get("result") == "success"
     ]
-    # A slop cleanup's pull request is the Slopmaster's, and its merge earns
-    # the code it removed (spec 2026-10-25, slop dungeon).
-    coder = SLOPMASTER if job.get("pipeline_template") == SLOP_TEMPLATE else "developer"
+    # A slop cleanup's pull request is the Slopmaster's, the leader of its
+    # template, and its merge earns the code it removed (spec 2026-10-25, slop
+    # dungeon); any other job's is the developer's.
+    coder = row_behaviour.coder(pipeline_of(job, pipelines))
     if job.get("pr_url"):
         events.append(ProgressEvent("opened", coder, at))
     if job.get("status") == "pr_merged" or job.get("delivery_state") == "merged":
@@ -442,3 +440,11 @@ class WorldCache:
 
     def drop(self, key: str) -> None:
         self._entries.pop(key, None)
+
+
+def forget_rows(app_state: Any, key: str) -> None:
+    """Drop the world's cached ``agents`` or ``templates`` rows after a write to them, so the guild hall draws
+    the change on its next read rather than up to :data:`CACHE_SECONDS` later (#167)."""
+    cache = getattr(app_state, "world_cache", None)
+    if isinstance(cache, WorldCache):
+        cache.drop(key)

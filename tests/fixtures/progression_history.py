@@ -120,7 +120,11 @@ async def _trace(
 
 
 async def seed_history(db: DatabasePool) -> None:
-    """Write the history: jobs, runs, cases, answers, reviews, setups and a standard."""
+    """Write the history: jobs, runs, cases, answers, reviews, setups and a standard, over the built-in
+    templates every deployment has (``tests/fixtures/builtin_rows.py``)."""
+    from tests.fixtures.builtin_rows import seed_builtin_templates
+
+    await seed_builtin_templates(db)
     for agent in AGENTS:
         await db.execute(
             "INSERT INTO agent_definitions (type, description, model) VALUES ($1, 'd', 'm') ON CONFLICT (type) DO NOTHING",

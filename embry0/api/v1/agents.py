@@ -24,7 +24,9 @@ from embry0.services.provider_readiness import (
     ensure_model_provider_ready,
 )
 from embry0.services.tool_catalog import unknown_tools, unknown_tools_message
+from embry0.services.world import forget_rows
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
+from embry0.workflows.row_behaviour import quest_template_problem
 
 # Agent definitions run in every repository's jobs: not a key with a repository allowlist's to change.
 router = APIRouter(dependencies=[deployment_writes("change the deployment's agents")])
@@ -147,6 +149,24 @@ def _agent_warnings(agent: dict[str, Any]) -> list[str]:
     return [*_no_tools_warnings(agent), *_no_shell_server_warnings(agent), *_triage_may_add_warnings(agent)]
 
 
+async def _template_names(request: Request) -> set[str] | None:
+    """Every pipeline template's name; None when no repository is wired (minimal test apps)."""
+    repo = getattr(request.app.state, "templates_repo", None)
+    if repo is None:
+        return None
+    return {str(t["name"]) for t in await repo.list_all()}
+
+
+async def _reject_unknown_quest_template(request: Request, value: str | None) -> None:
+    """A ``quest_template`` that names no template is a 422 naming the field (#167): the guild's task would
+    run the kind default instead of what the operator chose."""
+    if not value:
+        return
+    problem = quest_template_problem(value, await _template_names(request))
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+
+
 @router.post("/agents", status_code=201, dependencies=[require_admin])
 async def create_agent(
     req: AgentCreateRequest,
@@ -154,6 +174,7 @@ async def create_agent(
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> dict[str, Any]:
     await _reject_if_disabled(request, req.model)
+    await _reject_unknown_quest_template(request, req.quest_template)
     warnings = await check_added_skills(request, req.skills or [])
     try:
         created = await repo.create(
@@ -171,11 +192,14 @@ async def create_agent(
             color=req.color,
             tagline=req.tagline,
             triage_may_add_skills=req.triage_may_add_skills,
+            station=req.station,
+            quest_template=req.quest_template,
         )
     except Exception as exc:
         if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():
             raise HTTPException(status_code=409, detail=f"Agent type '{req.type}' already exists") from exc
         raise
+    forget_rows(request.app.state, "agents")
     return {**created, "warnings": [*warnings, *_agent_warnings(created)]}
 
 
@@ -199,10 +223,11 @@ async def update_agent(
     # `v is not None` filter made clearing impossible over the API).
     updates = req.model_dump(exclude_unset=True)
     # The identity columns are NOT NULL: unlike execution_mode, null has no meaning there.
-    for key in ("display_name", "avatar", "color", "tagline", "triage_may_add_skills"):
+    for key in ("display_name", "avatar", "color", "tagline", "triage_may_add_skills", "station"):
         if key in updates and updates[key] is None:
             raise HTTPException(status_code=422, detail=f"{key} cannot be null")
     await _reject_if_disabled(request, updates.get("model"))
+    await _reject_unknown_quest_template(request, updates.get("quest_template"))
     if updates.get("system_prompt"):
         # A definition no job runs is a brief writer's voice (#166): the answer's format is the code's, so a voice
         # that defines one of its keys would fight the format added after it.
@@ -234,12 +259,14 @@ async def update_agent(
             raise HTTPException(status_code=404, detail="Agent type not found")
         return {**agent, "warnings": [*warnings, *_agent_warnings(agent)]}
     updated = await repo.update(agent_type, **updates)
+    forget_rows(request.app.state, "agents")
     return {**updated, "warnings": [*warnings, *_agent_warnings(updated)]}
 
 
 @router.delete("/agents/{agent_type}", dependencies=[require_admin])
 async def delete_agent(
     agent_type: str,
+    request: Request,
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> dict[str, Any]:
     try:
@@ -248,18 +275,22 @@ async def delete_agent(
         if "not found" in str(exc):
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    forget_rows(request.app.state, "agents")
     return {"type": agent_type, "status": "deleted"}
 
 
 @router.post("/agents/{agent_type}/reset", dependencies=[require_admin])
 async def reset_agent(
     agent_type: str,
+    request: Request,
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> dict[str, Any]:
     try:
-        return await repo.reset(agent_type)
+        reset = await repo.reset(agent_type)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    forget_rows(request.app.state, "agents")
+    return reset
 
 
 @router.post("/agents/{agent_type}/skills/{skill_name}", dependencies=[require_admin])

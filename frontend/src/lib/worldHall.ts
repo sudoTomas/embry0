@@ -2,23 +2,9 @@ import type { Loot } from "@/api/world";
 
 /**
  * The guild hall's inside (spec 2026-10-25, Guild hall): a floor walled on
- * every side, the top wall three tiles deep, and the stations in rows.
+ * every side, the top wall three tiles deep, and the stations in rows. Where
+ * each character works is its agent row's `station` (#167).
  */
-
-/** Where each character works when it is home: the developer at the anvil, the readers at lecterns, and so on. */
-export const STATION_OF: Record<string, string> = {
-  developer: "anvil",
-  review: "lectern",
-  "pr-reviewer": "lectern",
-  interrogator: "lectern",
-  qa: "alchemy_table",
-  kintsugi: "alchemy_table",
-  analysis: "map_table",
-  research: "map_table",
-  ops: "map_table",
-  "area-mapper": "map_table",
-  "blast-radius": "map_table",
-};
 
 /** Pixels between two stations of a row, between two rows, and from the hall's top to the first row's feet. */
 export const SPACING = 72;

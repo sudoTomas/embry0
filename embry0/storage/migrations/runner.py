@@ -3999,6 +3999,134 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'The skills triage may add to this agent (source:skill names), each only from a source the agent''s skills already load.';
         """,
     ),
+    (
+        143,
+        "behaviour from agent and template rows, not built-in names (#167)",
+        # What embry0 did by a template's or an agent's built-in name is now a
+        # column of its row, so an operator's own take part the same way
+        # (embry0/workflows/row_behaviour.py):
+        #
+        # - pipeline_templates.fixed_route: a job that names the template skips
+        #   triage; offered_to_triage: triage is offered it and keeps its pick;
+        #   job_kind: the kind its jobs are recorded as when it is no kind's
+        #   default; delivers: what its jobs hand back, for their briefs;
+        #   leader_agent: who its jobs are drawn as and credited to;
+        # - agent_definitions.station: where the guild hall draws it;
+        #   quest_template: the task the guild can give it (NULL none, '' a
+        #   task naming no template, else that template).
+        #
+        # Every row is written what the code said of its name before, so an
+        # upgraded deployment behaves as it did: the ten specialist templates
+        # are fixed, not offered and analysis; the leaders and deliverables of
+        # the maps they came from; a template of the deployment's own whose
+        # every step is a specialist keeps being recorded as analysis. Rows
+        # are matched by name, as the code matched them, built-in or not. The
+        # boot seed writes these columns on a first insert only, so what an
+        # operator changes later stays.
+        """
+        ALTER TABLE pipeline_templates
+            ADD COLUMN IF NOT EXISTS fixed_route BOOLEAN NOT NULL DEFAULT false,
+            ADD COLUMN IF NOT EXISTS offered_to_triage BOOLEAN NOT NULL DEFAULT true,
+            ADD COLUMN IF NOT EXISTS job_kind TEXT,
+            ADD COLUMN IF NOT EXISTS delivers TEXT NOT NULL DEFAULT '',
+            ADD COLUMN IF NOT EXISTS leader_agent TEXT;
+        ALTER TABLE agent_definitions
+            ADD COLUMN IF NOT EXISTS station TEXT NOT NULL DEFAULT 'desk',
+            ADD COLUMN IF NOT EXISTS quest_template TEXT;
+
+        UPDATE pipeline_templates t
+           SET fixed_route = true, offered_to_triage = false, job_kind = 'analysis', leader_agent = v.agent
+          FROM (VALUES
+            ('kintsugi-trace', 'kintsugi'),
+            ('garden', 'gardener'),
+            ('interrogate', 'interrogator'),
+            ('why', 'why'),
+            ('how', 'how'),
+            ('blast-radius', 'blast-radius'),
+            ('comment-pass', 'comment-sicko'),
+            ('design-audit', 'design-auditor'),
+            ('context-audit', 'context-auditor'),
+            ('map-areas', 'area-mapper')
+          ) AS v(name, agent)
+         WHERE t.name = v.name;
+        UPDATE pipeline_templates t SET leader_agent = v.agent
+          FROM (VALUES
+            ('analysis-default', 'analysis'),
+            ('research-default', 'research'),
+            ('ops-default', 'ops'),
+            ('slop-cleanup', 'slopmaster')
+          ) AS v(name, agent)
+         WHERE t.name = v.name;
+        UPDATE pipeline_templates t SET delivers = v.delivers
+          FROM (VALUES
+            ('analysis-default', 'an analysis of the production logs, and a ticket when it finds a problem worth one'),
+            ('context-audit', 'a report of the claims that look wrong in the files that steer coding agents'),
+            ('map-areas', 'a pull request that maps the repository''s areas')
+          ) AS v(name, delivers)
+         WHERE t.name = v.name;
+        UPDATE pipeline_templates t SET job_kind = 'analysis'
+         WHERE t.default_for_kind IS NULL AND t.job_kind IS NULL
+           AND jsonb_typeof(t.graph_definition -> 'nodes') = 'array'
+           AND EXISTS (
+               SELECT 1 FROM jsonb_array_elements(t.graph_definition -> 'nodes') n
+                WHERE COALESCE(n ->> 'agent_type', '') NOT IN ('triage', 'output'))
+           AND NOT EXISTS (
+               SELECT 1 FROM jsonb_array_elements(t.graph_definition -> 'nodes') n
+                WHERE COALESCE(n ->> 'agent_type', '') NOT IN (
+                    'triage', 'output', 'kintsugi', 'gardener', 'interrogator', 'why', 'how',
+                    'blast-radius', 'comment-sicko', 'design-auditor', 'context-auditor', 'area-mapper'));
+
+        UPDATE agent_definitions a SET station = v.station
+          FROM (VALUES
+            ('developer', 'anvil'),
+            ('review', 'lectern'),
+            ('pr-reviewer', 'lectern'),
+            ('interrogator', 'lectern'),
+            ('qa', 'alchemy_table'),
+            ('kintsugi', 'alchemy_table'),
+            ('analysis', 'map_table'),
+            ('research', 'map_table'),
+            ('ops', 'map_table'),
+            ('area-mapper', 'map_table'),
+            ('blast-radius', 'map_table')
+          ) AS v(type, station)
+         WHERE a.type = v.type;
+        UPDATE agent_definitions a SET quest_template = v.template
+          FROM (VALUES
+            ('developer', ''),
+            ('analysis', 'analysis-default'),
+            ('research', 'research-default'),
+            ('ops', 'ops-default'),
+            ('kintsugi', 'kintsugi-trace'),
+            ('gardener', 'garden'),
+            ('interrogator', 'interrogate'),
+            ('why', 'why'),
+            ('how', 'how'),
+            ('blast-radius', 'blast-radius'),
+            ('comment-sicko', 'comment-pass'),
+            ('design-auditor', 'design-audit'),
+            ('context-auditor', 'context-audit'),
+            ('area-mapper', 'map-areas'),
+            ('slopmaster', 'slop-cleanup')
+          ) AS v(type, template)
+         WHERE a.type = v.type;
+
+        COMMENT ON COLUMN pipeline_templates.fixed_route IS
+            '#167: a job that names this template skips triage; its route is fixed.';
+        COMMENT ON COLUMN pipeline_templates.offered_to_triage IS
+            '#167: triage is offered this template and plan_route keeps its pick of it; false runs it only when a job names it.';
+        COMMENT ON COLUMN pipeline_templates.job_kind IS
+            '#167: the kind a job of this template is recorded as when it is no kind''s default; NULL leaves triage''s.';
+        COMMENT ON COLUMN pipeline_templates.delivers IS
+            '#167: what a job of this template hands back, in the person''s words, for its brief; empty says nothing.';
+        COMMENT ON COLUMN pipeline_templates.leader_agent IS
+            '#167: the agent a job of this template is drawn as before one starts, and its outcomes are credited to.';
+        COMMENT ON COLUMN agent_definitions.station IS
+            '#167: where the guild hall draws this agent when it is home (embry0/agents/identity.py STATIONS).';
+        COMMENT ON COLUMN agent_definitions.quest_template IS
+            '#167: the task the guild can give this agent: NULL none, empty a task naming no template, else that template.';
+        """,
+    ),
 ]
 
 

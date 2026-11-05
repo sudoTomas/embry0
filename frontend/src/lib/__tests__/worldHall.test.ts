@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Loot } from "@/api/world";
-import { MAX_ROWS, SPACING, STATION_OF, chestOf, hallLayout } from "../worldHall";
+import { MAX_ROWS, SPACING, chestOf, hallLayout } from "../worldHall";
 
 const loot = (merged: boolean): Loot => ({ job_id: "job-1", repo: "acme/web", area: null, title: "Add the export", pr_url: "https://example.test/pull/1", merged, at: null });
 
@@ -34,11 +34,6 @@ describe("the guild hall's inside", () => {
     const layout = hallLayout(19, 340);
     expect(Math.ceil(19 / layout.perRow)).toBeLessThanOrEqual(MAX_ROWS);
     expect(layout.width).toBeGreaterThan(340);
-  });
-
-  it("gives the developer the anvil and the readers lecterns", () => {
-    expect(STATION_OF.developer).toBe("anvil");
-    expect(STATION_OF["pr-reviewer"]).toBe("lectern");
   });
 
   it("fills the chest by the loot: closed, open, gold once something merged", () => {
