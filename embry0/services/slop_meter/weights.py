@@ -2,9 +2,13 @@
 
 After Slop-O-Meter's published slop score algorithm
 (https://github.com/slop-o-meter/slop-o-meter, docs/slop-score-algorithm.md):
-a line weighs by its file's type, half for tests and examples, nothing for
-non-code, vendored, generated or linter-ignored files, and nothing for an
-outlier file smaller than its fair share.
+a line weighs by its file's type, a share of that for tests and examples,
+nothing for non-code, vendored, generated or linter-ignored files, and
+nothing for an outlier file smaller than its fair share. What each kind of
+file weighs, which directories are vendored and what a test is are the
+settings document's ``slop_meter`` section (#169), read as a
+:class:`FileRules`; which ignore lists are read and the outlier rule are the
+algorithm's.
 """
 
 from __future__ import annotations
@@ -13,70 +17,94 @@ import json
 import re
 import tomllib
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from functools import lru_cache
 from statistics import quantiles
 from typing import Any
 
-#: A test or example file's weight, as a share of its type's.
-NON_PRODUCTION_WEIGHT = 0.5
+from embry0.services.slop_meter.globs import compile_glob, marked
+from embry0.settings.sections.slop_meter import SLOP_METER, SlopMeterSettings
 
-_CORE = (
-    "py", "pyi", "ts", "mts", "cts", "js", "mjs", "cjs", "go", "rs", "java", "kt", "kts", "scala", "c", "h",
-    "cc", "cpp", "cxx", "hpp", "hh", "cs", "rb", "php", "swift", "m", "mm", "ex", "exs", "erl", "clj", "cljs",
-    "hs", "ml", "fs", "lua", "pl", "pm", "r", "jl", "dart", "zig", "nim", "groovy", "sh", "bash", "zsh",
-    "ps1", "tf", "sol", "proto", "graphql", "gql",
-)  # fmt: skip
-_UI = ("tsx", "jsx", "vue", "svelte", "astro", "html", "htm", "erb", "hbs", "ejs", "jinja", "j2", "twig", "liquid")
-_STYLE = ("css", "scss", "sass", "less", "styl", "pcss")
-TYPE_WEIGHTS: dict[str, float] = {
-    **dict.fromkeys(_CORE, 1.0),
-    "sql": 0.8,
-    **dict.fromkeys(_UI, 0.5),
-    **dict.fromkeys(_STYLE, 0.3),
-}
+_LITERAL_SUFFIX = re.compile(r"\*[^*?/]+\Z")
 
-_VENDORED_DIRS = ("vendor", "node_modules", "third_party", "third-party", "external", "deps", "bower_components")
-_GENERATED = re.compile(r"(\.min\.(js|css)|\.bundle\.js|\.map|\.d\.ts)\Z")
-_NON_PRODUCTION_DIRS = (
-    "__tests__",
-    "tests",
-    "test",
-    "spec",
-    "specs",
-    "examples",
-    "example",
-    "demos",
-    "demo",
-    "samples",
-    "sample",
-    "fixtures",
-    "testdata",
-)
-_NON_PRODUCTION_FILE = re.compile(r"(\.(test|spec|stories|story)\.[^.]+|_test\.(go|py|rb|exs?)|_spec\.rb)\Z|(\A|/)test_[^/]+\.py\Z")  # fmt: skip
+
+@lru_cache(maxsize=4096)
+def _matcher(glob: str) -> tuple[str, Any]:
+    """How one glob is checked: a name's suffix for ``*`` and a literal (``*.py``, most globs), else its
+    expression (:func:`embry0.services.slop_meter.globs.compile_glob`)."""
+    lowered = glob.lower()
+    if _LITERAL_SUFFIX.match(lowered):
+        return lowered[1:], None
+    return lowered, compile_glob(lowered)
+
+
+def _hit(matcher: tuple[str, Any], path: str, name: str) -> bool:
+    text, pattern = matcher
+    if pattern is None:
+        return name.endswith(text)
+    return pattern.fullmatch(path if "/" in text else name) is not None
+
+
+@dataclass(frozen=True)
+class FileRules:
+    """What a changed line of each file weighs, from the ``slop_meter`` section (:meth:`of`).
+
+    ``weights`` are ``(glob, weight)`` pairs in the order they are tried:
+    the longest glob first, so the first that matches is the one that wins,
+    and between globs of one length the first in alphabetical order.
+    """
+
+    weights: tuple[tuple[str, float], ...]
+    excluded_dirs: frozenset[str]
+    test_dirs: frozenset[str]
+    test_files: tuple[str, ...]
+    test_marks: frozenset[str]
+    test_weight: float
+
+    @classmethod
+    def of(cls, settings: SlopMeterSettings) -> FileRules:
+        ordered = sorted(settings.weights.items(), key=lambda item: (-len(item[0]), item[0]))
+        return cls(
+            weights=tuple((glob.lower(), float(weight)) for glob, weight in ordered),
+            excluded_dirs=frozenset(name.lower() for name in settings.excluded_dirs),
+            test_dirs=frozenset(name.lower() for name in settings.test_dirs),
+            test_files=tuple(glob.lower() for glob in settings.test_files),
+            test_marks=frozenset(mark.lower() for mark in settings.test_marks),
+            test_weight=float(settings.test_weight),
+        )
+
+    def weight(self, path: str) -> float:
+        """A path's weight before ignore lists and outliers: its glob's, a share for tests, 0 when excluded."""
+        lowered = path.lower()
+        parts = lowered.split("/")
+        name = parts[-1]
+        if any(p in self.excluded_dirs for p in parts[:-1]):
+            return 0.0
+        weight = next((w for glob, w in self.weights if _hit(_matcher(glob), lowered, name)), 0.0)
+        if weight and (
+            any(p in self.test_dirs for p in parts[:-1])
+            or marked(name, self.test_marks)
+            or any(_hit(_matcher(glob), lowered, name) for glob in self.test_files)
+        ):
+            weight *= self.test_weight
+        return weight
+
+
+#: The rules of the section's defaults: what every reading used before the section, and still uses where
+#: nothing is written.
+DEFAULT_RULES = FileRules.of(SLOP_METER.defaults())
+
+
+def type_weight(path: str, rules: FileRules = DEFAULT_RULES) -> float:
+    """A path's weight before ignore lists and outliers, under ``rules`` (the defaults when none is given)."""
+    return rules.weight(path)
+
+
+# ---- ignore lists ----
 
 #: The ignore files a linter or formatter reads (gitignore-style globs), at the repository root.
 IGNORE_FILES = (".prettierignore", ".eslintignore", ".stylelintignore")
 CONFIG_FILES = (*IGNORE_FILES, ".gitattributes", "biome.json", "pyproject.toml", "ruff.toml", ".ruff.toml")
-
-
-def _extension(path: str) -> str:
-    name = path.rsplit("/", 1)[-1]
-    return name.rsplit(".", 1)[-1].lower() if "." in name else ""
-
-
-def type_weight(path: str) -> float:
-    """A path's weight before ignore lists and outliers: its type's, halved for tests and examples, 0 when excluded."""
-    lowered = path.lower()
-    parts = lowered.split("/")
-    if any(p in _VENDORED_DIRS for p in parts[:-1]) or _GENERATED.search(lowered):
-        return 0.0
-    weight = TYPE_WEIGHTS.get(_extension(lowered), 0.0)
-    if weight and (any(p in _NON_PRODUCTION_DIRS for p in parts[:-1]) or _NON_PRODUCTION_FILE.search(lowered)):
-        weight *= NON_PRODUCTION_WEIGHT
-    return weight
-
-
-# ---- ignore lists ----
 
 
 def _ignore_lines(text: str) -> list[str]:
@@ -188,12 +216,19 @@ def outlier_files(sizes: Mapping[str, int]) -> set[str]:
 
 
 class Weigher:
-    """A repository's line weights: by type, ignore lists, and outlier files."""
+    """A repository's line weights: by ``rules`` (its ``slop_meter`` section), ignore lists, and outlier files."""
 
-    def __init__(self, patterns: Iterable[str] = (), excluded: Iterable[str] = ()) -> None:
+    def __init__(
+        self, patterns: Iterable[str] = (), excluded: Iterable[str] = (), rules: FileRules = DEFAULT_RULES
+    ) -> None:
         self._patterns = tuple(patterns)
         self._excluded = frozenset(excluded)
+        self._rules = rules
         self._cache: dict[str, float] = {}
+
+    @property
+    def rules(self) -> FileRules:
+        return self._rules
 
     def __call__(self, path: str) -> float:
         cached = self._cache.get(path)
@@ -201,6 +236,6 @@ class Weigher:
             if path in self._excluded or (self._patterns and ignored(path, self._patterns)):
                 cached = 0.0
             else:
-                cached = type_weight(path)
+                cached = self._rules.weight(path)
             self._cache[path] = cached
         return cached

@@ -677,11 +677,25 @@ def read_sections(catalog: Catalog, data: Mapping[str, Any]) -> Sections:
 # ---- text -----------------------------------------------------------------------------
 
 
+class _BlockDumper(yaml.SafeDumper):
+    """The safe dumper, writing a text of several lines as a literal block (``|``), line for line."""
+
+
+def _represent_text(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
+    # A text the literal style cannot hold (a line ending in a blank, say) falls back to the
+    # emitter's own choice, so the YAML always reads back as the same text.
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|" if "\n" in data else None)
+
+
+_BlockDumper.add_representer(str, _represent_text)
+
+
 def dump_yaml(values: Mapping[str, Any]) -> str:
-    """``values`` as block-style YAML, keys in their given order; ``""`` for nothing."""
+    """``values`` as block-style YAML, keys in their given order, a text of several lines as a literal block;
+    ``""`` for nothing."""
     if not values:
         return ""
-    return yaml.safe_dump(dict(values), sort_keys=False, default_flow_style=False, allow_unicode=True)
+    return yaml.dump(dict(values), Dumper=_BlockDumper, sort_keys=False, default_flow_style=False, allow_unicode=True)
 
 
 def _comment(comment: str, indent: str = "", newline: str = "\n") -> str:

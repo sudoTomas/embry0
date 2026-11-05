@@ -83,7 +83,13 @@ async def test_the_repository_page_reads_its_score_areas_and_weeks(app: Any) -> 
         "lines": 9000.0,
         "score": 0.2,
     }
-    assert body["reading"] == {"commits_read": 120, "commits_total": 120, "computed_at": AT.isoformat(), "error": None}
+    assert body["reading"] == {
+        "commits_read": 120,
+        "commits_total": 120,
+        "computed_at": AT.isoformat(),
+        "error": None,
+        "config_version": None,
+    }, "a score from before #169 names no configuration version"
 
 
 async def test_an_area_series_and_the_refusals(app: Any) -> None:

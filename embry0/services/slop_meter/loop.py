@@ -1,23 +1,30 @@
 """The Slop-O-Meter's background loop (spec 2026-10-26, slop-o-meter).
 
-Once a day (``SLOP_METER_INTERVAL_SECONDS``; 0 is off), for every repository
-in the meter's scope: registered, active and enrolled in ``background.slop_meter``
-of the settings document, through its organization's layer and its own
+Every ``slop_meter.interval_hours`` of the settings document (a day by
+default; ``slop_meter.enabled: false`` stops the reading), for every
+repository in the meter's scope: registered, active and enrolled in
+``background.slop_meter``, through its organization's layer and its own
 (:mod:`embry0.services.background_scope`, #165). First, once that enrollment
 is settled, what the meter keeps of any repository that left its scope is
 removed, ``background.prune_after_days`` after it left
 (:mod:`embry0.services.slop_meter.prune`); an inactive repository is not read
-and keeps what was read. Then, for each repository
-in scope: fetch its bare mirror, read the next batch of its history, read its
-forge events from their cursors and map a few logins (forge calls dealt
-round-robin from a shared per-tick budget, stopping at the credential's
-rate-limit reserve), judge a few outlier commits, and, once it is caught up,
-recompute its weekly series and its scores (repository and areas) off the
-event loop. Every step is bounded and resumes where the last tick stopped;
-while a repository has a backlog the loop comes back sooner
-(``SLOP_METER_CATCHUP_SECONDS``). A tick reads its enrollment and its judge's
-model from one snapshot of the settings documents (:func:`meter_reader`), so a
-change to either applies on the next tick with no restart.
+and keeps what was read. Then, for each repository in scope: fetch its bare
+mirror, read the next batch of its history, read its forge events from their
+cursors and map a few logins (forge calls dealt round-robin from a per-tick
+budget for each credential, stopping at its rate-limit reserve), judge a few
+outlier commits, and, once it is caught up, recompute its weekly series and
+its scores (repository and areas) off the event loop. Every step is bounded
+and resumes where the last tick stopped; while a repository has a backlog the
+loop comes back sooner (``SLOP_METER_CATCHUP_SECONDS``).
+
+A tick reads its enrollment, its judge's model and the ``slop_meter``
+section from one snapshot of the settings documents (:func:`meter_reader`),
+and scores each repository with the section as that repository reads it
+(#169). Each score records the section's :func:`config_version` for it. The
+schedule looks at the settings every :data:`LOOK_SECONDS`, so turning the
+meter on or off, or a new interval, applies within them, and a change to what
+a repository's score is computed from runs the next tick at once instead of
+at its next interval: the change rescores on the next run.
 """
 
 from __future__ import annotations
@@ -25,8 +32,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
 import httpx
@@ -39,6 +46,7 @@ from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReade
 from embry0.services.slop_meter.history import (
     HISTORY_VERSION,
     Commit,
+    agent_prefixes,
     is_bot,
     login_of_email,
     own_identities,
@@ -47,42 +55,58 @@ from embry0.services.slop_meter.history import (
 )
 from embry0.services.slop_meter.judge import FEATURE
 from embry0.services.slop_meter.prune import Audit, PruneOutcome, Pruner
-from embry0.services.slop_meter.score import Event, Meter, meters, outliers
-from embry0.services.slop_meter.weights import CONFIG_FILES, Weigher, ignore_patterns, outlier_files
+from embry0.services.slop_meter.score import DEFAULTS, Event, Meter, meters, outliers
+from embry0.services.slop_meter.weights import CONFIG_FILES, FileRules, Weigher, ignore_patterns, outlier_files
+from embry0.settings.layers import PerRepository
+from embry0.settings.sections.slop_meter import SLOP_METER, SlopMeterSettings, config_version
 
 logger = structlog.get_logger(__name__)
 
+#: The longest the schedule waits between two looks at the settings: how soon turning the meter on or off, a
+#: new interval, or a change to what a score is computed from applies.
+LOOK_SECONDS: Final = 300.0
+
 
 @dataclass(frozen=True)
-class SlopMeterSettings:
-    interval_seconds: float = 86_400.0
+class SlopMeterLimits:
+    """What one tick may do per repository, and how soon it comes back while a history is behind.
+
+    The process's own limits, from the environment (``SLOP_METER_*``): they
+    bound the work and the memory of one tick. What the meter reads and how
+    it scores are the ``slop_meter`` section of the settings document.
+    """
+
     catchup_seconds: float = 300.0
     commits_per_tick: int = 5_000
     event_pages: int = 10
     reviews_per_tick: int = 50
     logins_per_tick: int = 20
     judgments_per_tick: int = 5
-    #: Forge API calls one tick may make across every repository, and the rate limit it leaves for jobs.
-    api_calls_per_tick: int = 200
-    rate_reserve: int = 2_000
 
 
-def slop_meter_settings(config: Any) -> SlopMeterSettings:
-    return SlopMeterSettings(
-        interval_seconds=float(getattr(config, "slop_meter_interval_seconds", 86_400)),
+def slop_meter_limits(config: Any) -> SlopMeterLimits:
+    return SlopMeterLimits(
         catchup_seconds=float(getattr(config, "slop_meter_catchup_seconds", 300)),
         commits_per_tick=int(getattr(config, "slop_meter_commits_per_tick", 5_000)),
         event_pages=int(getattr(config, "slop_meter_event_pages", 10)),
         reviews_per_tick=int(getattr(config, "slop_meter_reviews_per_tick", 50)),
         logins_per_tick=int(getattr(config, "slop_meter_logins_per_tick", 20)),
         judgments_per_tick=int(getattr(config, "slop_meter_judgments_per_tick", 5)),
-        api_calls_per_tick=int(getattr(config, "slop_meter_api_calls_per_tick", 200)),
-        rate_reserve=int(getattr(config, "slop_meter_rate_reserve", 2_000)),
     )
 
 
 #: The meter's key of the settings document's ``background`` section.
 SCOPE: Final = "slop_meter"
+
+
+class _Defaults:
+    """The ``slop_meter`` section with nothing written, for every repository: a read that names no snapshot."""
+
+    def deployment(self) -> SlopMeterSettings:
+        return DEFAULTS
+
+    def repo(self, repo: str | None) -> SlopMeterSettings:
+        return DEFAULTS
 
 
 @dataclass(frozen=True)
@@ -93,39 +117,52 @@ class MeterRead:
     models: ModelLookup
     #: Which repositories it reads (``background.slop_meter``), and whether that is settled.
     enrollment: Enrollment
+    #: The ``slop_meter`` section: the deployment's values (whether and how often it reads), and each
+    #: repository's (its organization's layer and its own over the deployment's).
+    meter: PerRepository[SlopMeterSettings] = field(default_factory=_Defaults)
 
 
 def meter_reader(store: Any) -> Callable[[], Awaitable[MeterRead]]:
     """The reader the meter is built with: each call takes one snapshot of the settings documents
-    (``store.snapshot()``) and reads both the judge's model and the enrollment from it."""
+    (``store.snapshot()``) and reads the judge's model, the enrollment and the ``slop_meter`` section from it."""
 
     async def read() -> MeterRead:
         snapshot = await store.snapshot()
-        return MeterRead(models=model_lookup(snapshot, "slop_judge"), enrollment=enrollment(snapshot))
+        return MeterRead(
+            models=model_lookup(snapshot, "slop_judge"),
+            enrollment=enrollment(snapshot),
+            meter=snapshot.scoped(SLOP_METER),
+        )
 
     return read
 
 
 @dataclass(frozen=True)
 class Inputs:
-    """What a repository's score is computed from: its history and its head's config files."""
+    """What a repository's score is computed from: its history, its head's config files, and its settings."""
 
     commits: list[Commit]
     events: list[Event]
     logins: dict[str, str]
     judgments: dict[str, bool]
     files: dict[str, str | None]
+    #: The ``slop_meter`` section as the repository reads it.
+    settings: SlopMeterSettings = DEFAULTS
 
 
-def weigher_for(commits: Iterable[Commit], files: Mapping[str, str | None]) -> Weigher:
-    """The repository's line weights: its type weights, its linters' ignore lists, and its outlier files."""
-    base = Weigher(ignore_patterns(files))
+def weigher_for(
+    commits: Iterable[Commit], files: Mapping[str, str | None], settings: SlopMeterSettings = DEFAULTS
+) -> Weigher:
+    """The repository's line weights: its ``slop_meter`` file rules, its linters' ignore lists, and its
+    outlier files."""
+    rules = FileRules.of(settings)
+    base = Weigher(ignore_patterns(files), rules=rules)
     sizes: dict[str, int] = {}
     for c in commits:
         for path, a, d in c.files:
             if base(path):
                 sizes[path] = sizes.get(path, 0) + a - d
-    return Weigher(ignore_patterns(files), outlier_files({p: s for p, s in sizes.items() if s > 0}))
+    return Weigher(ignore_patterns(files), outlier_files({p: s for p, s in sizes.items() if s > 0}), rules=rules)
 
 
 def logins_from(commits: Iterable[Commit], looked_up: Mapping[str, str]) -> dict[str, str]:
@@ -143,8 +180,9 @@ def logins_from(commits: Iterable[Commit], looked_up: Mapping[str, str]) -> dict
 
 
 def compute(inputs: Inputs) -> dict[str, Meter]:
-    """The repository's meter (``""``) and its areas', from the history as read. Pure: runs in a thread."""
-    weigh = weigher_for(inputs.commits, inputs.files)
+    """The repository's meter (``""``) and its areas', from the history as read, scored with ``inputs.settings``.
+    Pure: runs in a thread."""
+    weigh = weigher_for(inputs.commits, inputs.files, inputs.settings)
     areas = parse_areas(inputs.files.get(AREAS_PATH))
 
     def area_of(path: str) -> str | None:
@@ -152,7 +190,9 @@ def compute(inputs: Inputs) -> dict[str, Meter]:
         return found.name if found is not None else None
 
     logins = logins_from(inputs.commits, inputs.logins)
-    return meters(inputs.commits, inputs.events, logins, weigh, inputs.judgments, area_of=area_of)
+    return meters(
+        inputs.commits, inputs.events, logins, weigh, inputs.judgments, area_of=area_of, settings=inputs.settings
+    )
 
 
 TokenFor = Callable[[str], Awaitable[tuple[str, str, str] | None]]
@@ -170,12 +210,21 @@ class _Work:
     credential: str = ""
 
 
-async def repo_bots(repo: str, *, prefs: Any, orgs: Any, credentials: Any) -> list[str]:
-    """The identities a repository's readings count as bots beyond embry0's default one (#184).
+#: Reads what an organization's own settings still say of a moved key, until its layer has imported it
+#: (``BudgetView.moved_values``): ``(section, owner, settings) -> {key: value}``.
+MovedReader = Callable[[str, str, Mapping[str, Any]], Awaitable[Mapping[str, Any]]]
 
-    The addresses embry0 commits under there (the repository's preferred author,
-    the owner's credential's author) and the bots the owner lists in its
-    ``slop_meter_bots`` setting.
+
+async def repo_bots(
+    repo: str, *, prefs: Any, orgs: Any, credentials: Any, moved: MovedReader | None = None
+) -> list[str]:
+    """The identities a repository's readings count as bots beyond embry0's default one and the
+    ``slop_meter.bots`` its layers list (#184).
+
+    The addresses embry0 commits under there (the repository's preferred
+    author, the owner's credential's author), and, until the organization's
+    layer has imported it, the ``slop_meter_bots`` its own settings still
+    list (``moved``; :data:`embry0.services.organizations.MOVED_SETTINGS`).
     """
     out: list[str] = []
     pref = await prefs.get(repo)
@@ -187,9 +236,10 @@ async def repo_bots(repo: str, *, prefs: Any, orgs: Any, credentials: Any) -> li
             cred = await credentials.get(org.credential_id)
             if cred and cred.get("git_author_email"):
                 out.append(str(cred["git_author_email"]))
-        listed = org.settings.get("slop_meter_bots")
-        if isinstance(listed, list):
-            out.extend(str(v) for v in listed)
+        if moved is not None:
+            listed = (await moved(SLOP_METER.name, org.owner, org.settings)).get("bots")
+            if isinstance(listed, list | tuple):
+                out.extend(str(v) for v in listed)
     return out
 
 
@@ -199,17 +249,20 @@ class SlopMeterLoop:
     ``repos()`` lists the registered repositories, active or not
     (:func:`embry0.services.background_scope.registry_reader`): the tick reads
     the active ones enrolled in the meter, and keeps what it read of every
-    enrolled one. ``read()``, once a tick, the enrollment and the model each
+    enrolled one. ``read()``, once a tick, the enrollment, the model each
     repository's outliers are judged on ('' for none:
-    ``background_models.slop_judge``, else its default), from one snapshot
-    (:func:`meter_reader`); ``token_for(repo)`` the forge, credential and
+    ``background_models.slop_judge``, else its default) and the
+    ``slop_meter`` section, from one snapshot (:func:`meter_reader`);
+    ``token_for(repo)`` the forge, credential and
     GitLab URL to fetch with (None when there is none), ``client_for(repo)``
     the GitHub client to read events with (None for a GitLab repository), and
     ``calls`` makes each judgment's call with the repository's key, the
     budget caps and the spend recorded (#164). ``mirror``, ``store``,
     ``exits`` and ``audit`` remove what the meter keeps of a repository that
     left its scope, after ``background.prune_after_days``
-    (:class:`embry0.services.slop_meter.prune.Pruner`).
+    (:class:`embry0.services.slop_meter.prune.Pruner`). ``limits`` are the
+    process's (:class:`SlopMeterLimits`), and ``sleep`` how the schedule
+    waits (:meth:`start`).
     """
 
     def __init__(
@@ -225,9 +278,10 @@ class SlopMeterLoop:
         client_for: ClientFor,
         bots: Callable[[str], Awaitable[Iterable[str]]],
         calls: BackgroundCalls,
-        settings: SlopMeterSettings,
+        limits: SlopMeterLimits,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         http: httpx.AsyncClient | None = None,
+        sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
     ) -> None:
         self._repos = repos
         self._read = read
@@ -236,37 +290,60 @@ class SlopMeterLoop:
         self._pruner = Pruner(store=store, mirror=mirror, exits=exits, audit=audit, clock=clock)
         self._token_for = token_for
         self._client_for = client_for
-        #: The tick's ``repo -> model``, read at its start.
+        #: The tick's ``repo -> model`` and ``slop_meter`` section, read at its start.
         self._lookup: ModelLookup | None = None
+        self._meter: PerRepository[SlopMeterSettings] = _Defaults()
         #: A repository's own bots and embry0's commit identities for it (#184).
         self._bots = bots
         self._calls = calls
-        self._settings = settings
+        self._limits = limits
         self._clock = clock
         self._http = http
+        self._sleep = sleep
         self._turn = 0
+        #: When the last run of the schedule ended; None before the first.
+        self._last_pass: datetime | None = None
+        #: When the next run falls due, as the last look read the section.
+        self._due: datetime | None = None
+        #: Whether the last run left a repository with a backlog: the next comes ``catchup_seconds`` later.
+        self._backlog = False
+        #: Whether the last look found the meter on; None before the first.
+        self._enabled: bool | None = None
+        #: Each repository the last run read, with the configuration version it read it with: a look that finds
+        #: one of them reading another version runs the next tick at once.
+        self._versions: dict[str, str] = {}
 
-    async def tick(self) -> bool:
-        """One pass over the repositories in scope; True when one still has a backlog.
+    @property
+    def last_pass(self) -> datetime | None:
+        """When the schedule's last run ended, a reading or a removal only; None before its first."""
+        return self._last_pass
+
+    async def tick(self, read: MeterRead | None = None) -> bool:
+        """One pass over the repositories in scope, whether the meter is on or off; True when one still has a
+        backlog. ``read`` is what the schedule's look read (else it is read now).
 
         The settings and the registry are read first: which repositories are
-        enrolled, and the judge's model, from one snapshot. What the meter
-        keeps under a spelling the registry spells otherwise moves onto the
-        registry's. Once the enrollment is settled, what it keeps of a
-        repository out of scope is removed after the grace period. Then the
-        git work (no API calls). Then the forge calls, dealt one per
-        repository in turn from a budget shared by all of them, so a large
+        enrolled, the judge's model and the ``slop_meter`` section, from one
+        snapshot. What the meter keeps under a spelling the registry spells
+        otherwise moves onto the registry's. Once the enrollment is settled,
+        what it keeps of a repository out of scope is removed after the grace
+        period. Then the git work (no API calls). Then the forge calls, dealt
+        one per repository in turn from its credential's budget, so a large
         backlog in one cannot starve the rest; the starting repository
-        rotates every tick. Last, every repository that is caught up is scored.
+        rotates every tick. Last, every repository that is caught up is
+        scored with the section as it reads it, recording its version.
         """
-        read = await self._read()
+        if read is None:
+            read = await self._read()
         registered = await self._repos()
         await self._respell(registered.every)
         await self._prune(read, registered)
         names = read.enrollment.scope(SCOPE, registered.active)
+        self._versions = {repo: config_version(read.meter.repo(repo)) for repo in names}
         if not names:
             return False
         self._lookup = read.models
+        self._meter = read.meter
         turn = self._turn % len(names)
         self._turn += 1
         order = names[turn:] + names[:turn]
@@ -318,9 +395,10 @@ class SlopMeterLoop:
             logger.warning("slop_meter_prune_failed", exc_info=True)
             return None
 
-    async def prune_only(self) -> PruneOutcome | None:
-        """What a tick removes, and nothing else."""
-        read = await self._read()
+    async def prune_only(self, read: MeterRead | None = None) -> PruneOutcome | None:
+        """What a tick removes, and nothing else: the run of a schedule with the meter off."""
+        if read is None:
+            read = await self._read()
         registered = await self._repos()
         await self._respell(registered.every)
         return await self._prune(read, registered)
@@ -352,7 +430,7 @@ class SlopMeterLoop:
                 await self._store.forget_history(repo)
                 done = 0
             await self._store.set_state(repo, history_version=HISTORY_VERSION)
-        batch = history[done : done + self._settings.commits_per_tick]
+        batch = history[done : done + self._limits.commits_per_tick]
         if batch:
             commits = parse_log(await self._mirror.log(repo, batch))
             await self._store.add_commits(repo, done, [c.to_row() for c in commits])
@@ -365,7 +443,7 @@ class SlopMeterLoop:
         client = await self._client_for(repo)
         if client is None:
             return None
-        s = self._settings
+        s = self._limits
         state = await self._store.state(repo)
         known = set(await self._store.logins())
         known |= {login for email in await self._store.authors(repo) if (login := login_of_email(email))}
@@ -386,12 +464,15 @@ class SlopMeterLoop:
         """Every GitHub repository's events, one API call per repository in turn.
 
         Repositories read with one credential share its budget for the tick:
-        ``api_calls_per_tick`` calls, stopping at its rate limit's reserve. One
-        credential running low never stops a repository read with another (#185).
+        ``slop_meter.api_calls_per_tick`` calls, stopping at its rate limit's
+        ``rate_reserve``, each as the repository's organization reads them;
+        where organizations that read with one credential set different
+        values, the fewest calls and the largest reserve apply, since the rate
+        limit is the credential's. One credential running low never stops a
+        repository read with another (#185).
         """
-        s = self._settings
-        budgets: dict[str, ApiBudget] = {}
         readers: dict[str, EventReader] = {}
+        bounds: dict[str, tuple[int, int]] = {}
         for repo in order:
             if repo in work and work[repo].forge == "github":
                 try:
@@ -401,7 +482,13 @@ class SlopMeterLoop:
                     continue
                 if reader is not None:
                     readers[repo] = reader
-                    budgets.setdefault(work[repo].credential, ApiBudget(s.api_calls_per_tick, s.rate_reserve))
+                    own = self._meter.repo(repo)
+                    calls, reserve = bounds.get(work[repo].credential, (own.api_calls_per_tick, own.rate_reserve))
+                    bounds[work[repo].credential] = (
+                        min(calls, own.api_calls_per_tick),
+                        max(reserve, own.rate_reserve),
+                    )
+        budgets = {credential: ApiBudget(calls, reserve) for credential, (calls, reserve) in bounds.items()}
         active = list(readers)
         waiting: list[str] = []
         while active:
@@ -425,7 +512,7 @@ class SlopMeterLoop:
                 "slop_meter_api_budget_spent",
                 calls=[b.made for b in spent],
                 remaining=[b.remaining for b in spent],
-                reserve=s.rate_reserve,
+                reserve=[b.reserve for b in spent],
                 waiting=sorted(waiting),
             )
         for repo, reader in readers.items():
@@ -442,33 +529,43 @@ class SlopMeterLoop:
             if repo in waiting:
                 work[repo].more = True
 
-    async def _inputs(self, repo: str) -> Inputs:
-        bots = own_identities(await self._bots(repo))
-        commits = with_bots([Commit.from_row(r) for r in await self._store.commits(repo)], bots)
+    async def _inputs(self, repo: str, settings: SlopMeterSettings) -> Inputs:
+        bots = own_identities([*await self._bots(repo), *settings.bots])
+        agents = agent_prefixes(settings.ai_agents)
+        commits = with_bots([Commit.from_row(r) for r in await self._store.commits(repo)], bots, agents)
         events = [
             Event(str(e["login"]), e["at"], str(e["kind"]))
             for e in await self._store.events(repo)
-            if not is_bot(str(e["login"]), "", bots)
+            if not is_bot(str(e["login"]), "", bots, agents)
         ]
         files = {name: await self._mirror.read(repo, name) for name in (*CONFIG_FILES, AREAS_PATH)}
-        return Inputs(commits, events, await self._store.logins(), await self._store.judgments(repo), files)
+        return Inputs(commits, events, await self._store.logins(), await self._store.judgments(repo), files, settings)
 
     async def _score(self, repo: str) -> None:
-        inputs = await self._inputs(repo)
+        """Score ``repo`` with the ``slop_meter`` section as it reads it, recording that section's version."""
+        settings = self._meter.repo(repo)
+        version = config_version(settings)
+        inputs = await self._inputs(repo, settings)
         await self._judge(repo, inputs)
         results = await asyncio.to_thread(compute, inputs)
         now = self._clock()
-        await self._store.store(repo, results, now)
+        await self._store.store(repo, results, now, config_version=version)
         await self._store.set_state(repo, computed_at=now, error=None, error_at=None)
         top = results[""]
         logger.info(
-            "slop_meter_scored", repo=repo, score=round(top.score, 4), level=top.name, provisional=top.provisional
+            "slop_meter_scored",
+            repo=repo,
+            score=round(top.score, 4),
+            level=top.name,
+            provisional=top.provisional,
+            config_version=version,
         )
 
     async def _judge(self, repo: str, inputs: Inputs) -> None:
         """Ask the model about a few outlier commits not judged yet; what it answers is kept on ``inputs``."""
-        weigh = weigher_for(inputs.commits, inputs.files)
-        pending = [o for o in outliers(inputs.commits, weigh, inputs.judgments) if o.slop is None]
+        settings = inputs.settings
+        weigh = weigher_for(inputs.commits, inputs.files, settings)
+        pending = [o for o in outliers(inputs.commits, weigh, inputs.judgments, settings) if o.slop is None]
         if not pending:
             return
         lookup = self._lookup if self._lookup is not None else (await self._read()).models
@@ -480,9 +577,11 @@ class SlopMeterLoop:
 
         client = self._http or httpx.AsyncClient()
         try:
-            for outlier in pending[: self._settings.judgments_per_tick]:
+            for outlier in pending[: self._limits.judgments_per_tick]:
                 try:
-                    slop, reason = await judge(repo, outlier, endpoint, client, self._calls)
+                    slop, reason = await judge(
+                        repo, outlier, endpoint, client, self._calls, guidance=settings.judge_prompt
+                    )
                 except BackgroundCallRefused:
                     break
                 except (httpx.HTTPError, ValueError) as exc:
@@ -494,19 +593,77 @@ class SlopMeterLoop:
             if self._http is None:
                 await client.aclose()
 
+    # ---- the schedule ----
+
+    def wait_seconds(self) -> float:
+        """How long the schedule waits after a look: :data:`LOOK_SECONDS`, or less when a run falls due sooner."""
+        if self._due is None:
+            return 0.0
+        return min(LOOK_SECONDS, max(0.0, (self._due - self._clock()).total_seconds()))
+
+    def _changed(self, read: MeterRead) -> list[str]:
+        """The repositories the last run read whose configuration version is another now."""
+        return [repo for repo, version in self._versions.items() if config_version(read.meter.repo(repo)) != version]
+
+    async def scheduled(self) -> bool:
+        """What the schedule does each time it looks; True when it ran.
+
+        Reads the settings first, so turning the meter on or off and a new
+        interval apply at this look. It runs when the interval (or, while a
+        history is behind, ``catchup_seconds``) has passed since the last run
+        ended, at once when the meter was just turned on, and at once when the
+        ``slop_meter`` section reads another :func:`config_version` for a
+        repository the last run read: that rescores it. With the meter off a
+        run only removes what left the scope (:meth:`prune_only`), once an
+        interval.
+        """
+        read = await self._read()
+        policy = read.meter.deployment()
+        turned_on = policy.enabled and self._enabled is False
+        if policy.enabled != self._enabled:
+            logger.info(
+                "slop_meter_on" if policy.enabled else "slop_meter_off",
+                reason="slop_meter.enabled in the settings document",
+            )
+            self._enabled = policy.enabled
+        last = self._last_pass
+        if last is not None and not turned_on:
+            next_run = last + timedelta(seconds=self._period(policy))
+            changed = self._changed(read) if policy.enabled and self._clock() < next_run else []
+            if self._clock() < next_run and not changed:
+                self._due = next_run
+                return False
+        else:
+            changed = []
+        if changed:
+            logger.info("slop_meter_settings_changed", repos=sorted(changed), hint="rescoring them now")
+        try:
+            if policy.enabled:
+                self._backlog = await self.tick(read)
+            else:
+                self._backlog = False
+                self._versions = {}
+                await self.prune_only(read)
+        finally:
+            self._last_pass = self._clock()
+            self._due = self._last_pass + timedelta(seconds=self._period(policy))
+        return True
+
+    def _period(self, policy: SlopMeterSettings) -> float:
+        """Seconds from the end of one run to the next: ``catchup_seconds`` while a history is behind, else the
+        interval."""
+        if self._backlog and policy.enabled:
+            return self._limits.catchup_seconds
+        return policy.interval_hours * 3600
+
     async def start(self) -> None:  # pragma: no cover - exercised by the app
-        if self._settings.interval_seconds <= 0:
-            # Off: nothing is read, but what was kept of a repository that left the scope still goes, once.
-            logger.info("slop_meter_off")
-            try:
-                await self.prune_only()
-            except Exception:  # noqa: BLE001 - the next start tries again
-                logger.warning("slop_meter_prune_failed", exc_info=True)
-            return
+        """Look for ever, whether the meter is on or off, so turning it on, or any change to the section, needs
+        no restart. The first look runs at once."""
         while True:
             try:
-                backlog = await self.tick()
+                await self.scheduled()
             except Exception:  # noqa: BLE001 - the loop goes on
                 logger.warning("slop_meter_tick_failed", exc_info=True)
-                backlog = False
-            await asyncio.sleep(self._settings.catchup_seconds if backlog else self._settings.interval_seconds)
+                if self._due is None or self._due <= self._clock():
+                    self._due = self._clock() + timedelta(seconds=LOOK_SECONDS)
+            await self._sleep(self.wait_seconds())

@@ -6,6 +6,13 @@ written from its description alone. Each week's cost is its net weighted
 additions, dampened by the codebase's size; its capacity is the human session
 time behind it, as lines; the excess is slop, and the score is the history's
 slop over its cost. Pure functions over parsed rows: no git, no network.
+
+Every number the algorithm names (the size ramp, the hours a commit or a
+comment implies, the lines an hour covers, the weekly cap, the core team's
+ramp, the outlier thresholds) and the levels a score reads as are the
+settings document's ``slop_meter`` section (#169): each function takes the
+section as its repository reads it, and the section's defaults, the
+published values, when none is given.
 """
 
 from __future__ import annotations
@@ -17,36 +24,22 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
 from embry0.services.slop_meter.history import Commit, is_bot
+from embry0.settings.sections.slop_meter import SLOP_METER, SlopMeterSettings
 
-BOOTSTRAP_THRESHOLD = 5_000
-COMPLEXITY_WEIGHT = 0.05
-BASE_NEIGHBORHOOD = 1.0
-MARGINAL_HOURS_PER_SUBCOMMIT = 1.0
-AI_CO_AUTHOR_ATTENTION_WEIGHT = 0.8
-CO_AUTHOR_WEIGHTS = (0.5, 0.25, 0.125)
-LINES_PER_HOUR = 40.0
-CORE_RAMP_START = 10
-CORE_RAMP_END = 60
-WEEKLY_HOURS_CAP = 80.0
-OUTLIER_MIN_ADDITIONS = 2_000
-OUTLIERS_PER_YEAR = 4
-
-#: (upper bound, level, name), the score's interpretation.
-LEVELS: tuple[tuple[float, int, str], ...] = (
-    (0.2, 1, "Buttered Noodles"),
-    (0.4, 2, "Spaghetti Bolognese"),
-    (0.6, 3, "Lasagna"),
-    (0.8, 4, "Sloppy Joe"),
-    (math.inf, 5, "Just The Slop"),
-)
+#: The ``slop_meter`` section with nothing written: the published algorithm's values.
+DEFAULTS: SlopMeterSettings = SLOP_METER.defaults()
+#: The size past which the log bonus of the size dampening grows by ``complexity_weight`` per doubling.
+_COMPLEXITY_LINES = 100_000
 _YEAR = timedelta(days=365.25)
 
 
-def level_of(score: float) -> tuple[int, str]:
-    for bound, level, name in LEVELS:
+def level_of(score: float, settings: SlopMeterSettings = DEFAULTS) -> tuple[int, str]:
+    """The level (1 the least slop) and its name: the first whose bound the score is below, else the last."""
+    names = settings.level_names
+    for index, bound in enumerate(settings.level_bounds):
         if score < bound:
-            return level, name
-    return LEVELS[-1][1], LEVELS[-1][2]
+            return index + 1, names[index]
+    return len(names), names[-1]
 
 
 def week_of(at: datetime) -> date:
@@ -55,21 +48,26 @@ def week_of(at: datetime) -> date:
     return day - timedelta(days=day.weekday())
 
 
-def size_dampening(cumulative_lines: float) -> float:
-    """A line's weight by the codebase's size: a bootstrap ramp to 5,000 lines plus a slow log bonus."""
+def size_dampening(cumulative_lines: float, settings: SlopMeterSettings = DEFAULTS) -> float:
+    """A line's weight by the codebase's size: a bootstrap ramp to ``bootstrap_lines`` plus a slow log bonus."""
     lines = max(0.0, cumulative_lines)
-    return min(1.0, lines / BOOTSTRAP_THRESHOLD) + COMPLEXITY_WEIGHT * math.log2(1 + lines / 100_000)
+    return min(1.0, lines / settings.bootstrap_lines) + settings.complexity_weight * math.log2(
+        1 + lines / _COMPLEXITY_LINES
+    )
 
 
-def capped_hours(hours: float) -> float:
+def capped_hours(hours: float, settings: SlopMeterSettings = DEFAULTS) -> float:
     """Effective hours under the concave overtime curve: ``h − h³/(3·cap²)``, flat past the cap."""
-    h = min(max(0.0, hours), WEEKLY_HOURS_CAP)
-    return h - h**3 / (3 * WEEKLY_HOURS_CAP**2)
+    cap = settings.weekly_hours_cap
+    h = min(max(0.0, hours), cap)
+    return h - h**3 / (3 * cap**2)
 
 
-def core_factor(commits: int, total_commits: int) -> float:
-    """How much of a contributor's time counts: 0 below 10 commits, 1 at 60, up to 1.25× for a large share."""
-    ramp = min(1.0, max(0.0, (commits - CORE_RAMP_START) / (CORE_RAMP_END - CORE_RAMP_START)))
+def core_factor(commits: int, total_commits: int, settings: SlopMeterSettings = DEFAULTS) -> float:
+    """How much of a contributor's time counts: 0 below ``core_min_commits``, 1 at ``core_full_commits``, up to
+    1.25× for a large share."""
+    start, end = settings.core_min_commits, settings.core_full_commits
+    ramp = min(1.0, max(0.0, (commits - start) / (end - start)))
     share = commits / total_commits if total_commits else 0.0
     return ramp * (1 + 0.25 * share)
 
@@ -117,40 +115,47 @@ def contributor_of(login: str, logins: Mapping[str, str]) -> str:
 
 
 def weekly_capacity(
-    commits: Sequence[Commit], events: Iterable[Event], logins: Mapping[str, str]
+    commits: Sequence[Commit],
+    events: Iterable[Event],
+    logins: Mapping[str, str],
+    settings: SlopMeterSettings = DEFAULTS,
 ) -> dict[str, dict[date, float]]:
     """Each contributor's attention spent per week, in lines (already capped and core-weighted)."""
+    s = settings
+    shares = s.coauthor_shares
     neighborhoods: dict[str, list[tuple[datetime, datetime]]] = defaultdict(list)
     authored: dict[str, int] = defaultdict(int)
     for c in commits:
         if c.bot:
             continue
         authored[c.author] += 1
-        hours = BASE_NEIGHBORHOOD + c.subcommits * MARGINAL_HOURS_PER_SUBCOMMIT
+        hours = s.commit_hours + c.subcommits * s.subcommit_hours
         if c.ai_coauthor:
-            hours *= AI_CO_AUTHOR_ATTENTION_WEIGHT
+            hours *= s.ai_coauthor_share
         neighborhoods[c.author].append((c.at - timedelta(hours=hours), c.at))
         for i, (_name, email) in enumerate(c.coauthors):
-            weight = CO_AUTHOR_WEIGHTS[min(i, len(CO_AUTHOR_WEIGHTS) - 1)]
-            neighborhoods[email.lower()].append((c.at - timedelta(hours=BASE_NEIGHBORHOOD * weight), c.at))
+            share = shares[min(i, len(shares) - 1)]
+            neighborhoods[email.lower()].append((c.at - timedelta(hours=s.commit_hours * share), c.at))
     for e in events:
         if is_bot(e.login, ""):
             continue
-        neighborhoods[contributor_of(e.login, logins)].append((e.at - timedelta(hours=BASE_NEIGHBORHOOD), e.at))
+        neighborhoods[contributor_of(e.login, logins)].append((e.at - timedelta(hours=s.event_hours), e.at))
     total = sum(authored.values())
     # A small repository has no core team to measure drive-bys against: when
-    # no author reaches CORE_RAMP_START commits, everyone's time counts in
+    # no author reaches core_min_commits commits, everyone's time counts in
     # full. Otherwise its every author would count for nothing and all its
     # code read as slop. This is embry0's departure from the published
-    # algorithm; a repository with a core contributor is scored as written.
-    small = not authored or max(authored.values()) < CORE_RAMP_START
+    # algorithm (small_repository_in_full); a repository with a core
+    # contributor is scored as written.
+    small = s.small_repository_in_full and (not authored or max(authored.values()) < s.core_min_commits)
     out: dict[str, dict[date, float]] = {}
     for who, spans in neighborhoods.items():
-        factor = 1.0 if small else core_factor(authored.get(who, 0), total)
+        factor = 1.0 if small else core_factor(authored.get(who, 0), total, s)
         if factor <= 0:
             continue
         out[who] = {
-            week: capped_hours(hours * factor) * LINES_PER_HOUR for week, hours in _hours_by_week(_merge(spans)).items()
+            week: capped_hours(hours * factor, s) * s.lines_per_hour
+            for week, hours in _hours_by_week(_merge(spans)).items()
         }
     return out
 
@@ -198,8 +203,14 @@ def commit_lines(commit: Commit, weigh: Callable[[str], float]) -> tuple[float, 
     return add, delete
 
 
-def outliers(commits: Sequence[Commit], weigh: Callable[[str], float], judgments: Mapping[str, bool]) -> list[Outlier]:
-    """The top ``⌈4 × age in years⌉`` commits of at least 2,000 net weighted additions, with what is known of them.
+def outliers(
+    commits: Sequence[Commit],
+    weigh: Callable[[str], float],
+    judgments: Mapping[str, bool],
+    settings: SlopMeterSettings = DEFAULTS,
+) -> list[Outlier]:
+    """The top ``⌈outliers_per_year × age in years⌉`` commits of at least ``outlier_min_lines`` net weighted
+    additions, with what is known of them.
 
     At least one commit is considered, however young the repository. The
     repository's first two commits are never slop; the rest are what the model
@@ -211,12 +222,12 @@ def outliers(commits: Sequence[Commit], weigh: Callable[[str], float], judgments
     # At least one: a history that spans no time (one commit, or one day of
     # commits at one instant) would otherwise judge none, and its first
     # commit, setup the spec always excuses, would count as slop.
-    count = max(1, math.ceil(OUTLIERS_PER_YEAR * (last - first) / _YEAR))
+    count = max(1, math.ceil(settings.outliers_per_year * (last - first) / _YEAR))
     nets: list[tuple[float, int, Commit]] = []
     for index, c in enumerate(commits):
         add, delete = commit_lines(c, weigh)
         net = max(0.0, add - delete)
-        if net >= OUTLIER_MIN_ADDITIONS:
+        if net >= settings.outlier_min_lines:
             nets.append((net, index, c))
     top = sorted(nets, key=lambda item: -item[0])[:count]
     sizes = _sizes_by_week(commits, weigh)
@@ -244,6 +255,7 @@ def meters(
     weigh: Callable[[str], float],
     judgments: Mapping[str, bool],
     area_of: Callable[[str], str | None] = lambda _path: None,
+    settings: SlopMeterSettings = DEFAULTS,
 ) -> dict[str, Meter]:
     """The repository's meter (key ``""``) and each area's, from the history oldest first.
 
@@ -251,11 +263,12 @@ def meters(
     the repository's size; its capacity is each contributor's weekly capacity
     apportioned by the share of their weighted churn that week in the area
     (their history-wide share in a week without commits of their own).
+    ``settings`` is the ``slop_meter`` section as the repository reads it.
     """
     commits = sorted(commits, key=lambda c: c.at)
     if not commits:
-        return {"": Meter(0.0, 1, LEVELS[0][2], False)}
-    found = outliers(commits, weigh, judgments)
+        return {"": Meter(0.0, 1, settings.level_names[0], False)}
+    found = outliers(commits, weigh, judgments, settings)
     left_out = {o.commit.sha for o in found if o.slop is not True}
     provisional = any(o.slop is None for o in found)
 
@@ -290,7 +303,7 @@ def meters(
                 churn[scope][(c.author, week)] += scope_add + scope_del
                 churn_all[scope][c.author] += scope_add + scope_del
 
-    capacity_by_who = weekly_capacity(commits, events, logins)
+    capacity_by_who = weekly_capacity(commits, events, logins, settings)
     first_week = week_of(commits[0].at)
     last_week = week_of(commits[-1].at)
     weeks = [first_week + timedelta(weeks=i) for i in range((last_week - first_week).days // 7 + 1)]
@@ -300,7 +313,7 @@ def meters(
     size = 0.0
     for week in weeks:
         size = max(0.0, size + adds[""][week] - dels[""][week])
-        damp[week] = size_dampening(size)
+        damp[week] = size_dampening(size, settings)
 
     out: dict[str, Meter] = {}
     for scope in adds:
@@ -332,7 +345,7 @@ def meters(
             cum_slop += slop
             series.append(Week(week, cost, capacity, slop, scope_size, cum_slop / cum_cost if cum_cost else 0.0))
         score = cum_slop / cum_cost if cum_cost else 0.0
-        level, name = level_of(score)
+        level, name = level_of(score, settings)
         out[scope] = Meter(score, level, name, provisional, series, len(commits))
-    out.setdefault("", Meter(0.0, 1, LEVELS[0][2], provisional, [], len(commits)))
+    out.setdefault("", Meter(0.0, 1, settings.level_names[0], provisional, [], len(commits)))
     return out

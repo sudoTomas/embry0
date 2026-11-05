@@ -1064,8 +1064,10 @@ async def org_update(
     365 or null, context_audit_open_prs a boolean, the caps a number more than 0 and at most 50 and an
     integer 0 to 50, or null for the deployment's), and writes them into that layer; the answer's
     deprecated says so.
-    slop_meter_bots (list of up to 100 strings): the owner's own bots, as commit names, addresses
-    or forge logins, which the Slop-O-Meter counts as a bot's work, not a person's attention.
+    slop_meter_bots (list of up to 100 strings): deprecated. It is the organization's layer of the
+    settings document's slop_meter section now (bots): set it with
+    settings_set_keys(section="slop_meter", owner=...). Until 0.2.0 this tool still takes it and
+    writes it into that layer; the answer's deprecated says so.
     An unknown key, a wrong type or a value out of range is refused. Returns the organization. Needs
     an admin-scope key. Requires confirm=true (changes what embry0 does, and may spend, for every
     repository under the owner)."""

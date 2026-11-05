@@ -26,7 +26,7 @@ from structlog.testing import capture_logs
 from embry0.api.schemas.repo_path import REPO_PATH_PATTERN
 from embry0.services.background_scope import Registered
 from embry0.services.slop_meter import mirror as mirror_mod
-from embry0.services.slop_meter.loop import SlopMeterLoop, SlopMeterSettings
+from embry0.services.slop_meter.loop import SlopMeterLimits, SlopMeterLoop
 from embry0.services.slop_meter.mirror import GitError, GitMirror, MirrorRefused
 from tests.unit.services.slop_meter.test_loop import FakeCalls, FakeStore, NoExits, _read, no_audit
 from tests.unit.services.slop_meter.test_prune import GRACE, NOW, Audit, Exits, Store, _pruner
@@ -323,7 +323,7 @@ async def test_subgroup_projects_are_mirrored_read_and_scored(tmp_path: Path, mo
         client_for=nothing,
         bots=no_bots,
         calls=FakeCalls(),
-        settings=SlopMeterSettings(commits_per_tick=100),
+        limits=SlopMeterLimits(commits_per_tick=100),
         clock=lambda: datetime(2025, 3, 1, tzinfo=UTC),
     )
     assert await loop.tick() is False, "every history is read in one tick"

@@ -34,9 +34,10 @@ STATUSES = ("active", "paused", "removed")
 # and context_audit_open_prs: moved into the settings document (MOVED_SETTINGS
 # below), the first into the `context_audit` section's days (ADR 0020), the
 # next two into the `budget` section's caps (ADR 0021), the last into
-# `context_audit`'s open_prs (ADR 0022). PATCH /orgs still takes them until
-# MOVED_SETTINGS_REMOVED_IN and writes them into the organization's layer;
-# nothing reads them here any more.
+# `context_audit`'s open_prs (ADR 0022). slop_meter_bots, the owner's own
+# bots (#184), moved into the `slop_meter` section's bots (#169). PATCH /orgs
+# still takes them until MOVED_SETTINGS_REMOVED_IN and writes them into the
+# organization's layer; nothing reads them here any more.
 SETTINGS: dict[str, type] = {
     "auto_register": bool,
     "rediscover_hours": int,
@@ -200,8 +201,27 @@ def context_audit_open_prs_moved(settings: Mapping[str, Any]) -> bool | None:
     return True if context_audit_open_prs(settings) else None
 
 
+def slop_meter_bots(settings: Mapping[str, Any]) -> list[str] | None:
+    """The owner's ``slop_meter_bots`` as the meter read them (#184): each string, stripped, blanks left out, and
+    each named once without regard to case (the first spelling kept), as matching ignored case; None for none.
+
+    A row written before ``POST /orgs`` checked its settings may hold anything
+    here, so a value that is no list reads as none, as it did.
+    """
+    value = settings.get("slop_meter_bots")
+    if not isinstance(value, list):
+        return None
+    seen: dict[str, str] = {}
+    for entry in value:
+        text = entry.strip() if isinstance(entry, str) else ""
+        if text:
+            seen.setdefault(text.lower(), text)
+    return list(seen.values()) or None
+
+
 #: The settings sections took over: an organization's own caps of its context audits, which the `budget`
-#: section took (#171), and whether and how its repositories are audited, which `context_audit` took (#170).
+#: section took (#171), whether and how its repositories are audited, which `context_audit` took (#170), and
+#: its own bots, which `slop_meter` took (#169).
 MOVED_SETTINGS: Final[tuple[MovedSetting, ...]] = (
     MovedSetting("context_audit_budget_usd", "budget", "context_audit_job_usd", context_audit_budget_usd),
     MovedSetting(
@@ -209,6 +229,7 @@ MOVED_SETTINGS: Final[tuple[MovedSetting, ...]] = (
     ),
     MovedSetting("context_audit_days", "context_audit", "days", context_audit_days),
     MovedSetting("context_audit_open_prs", "context_audit", "open_prs", context_audit_open_prs_moved),
+    MovedSetting("slop_meter_bots", "slop_meter", "bots", slop_meter_bots),
 )
 MOVED: Final[dict[str, MovedSetting]] = {moved.legacy: moved for moved in MOVED_SETTINGS}
 

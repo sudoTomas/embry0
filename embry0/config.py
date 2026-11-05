@@ -855,20 +855,26 @@ class Embry0Config(BaseSettings):
     # (#165). SLOP_METER_REPOS and SLOP_METER_EXCLUDE (comma-separated) are
     # only the import source of the repository layers' background.slop_meter,
     # read once at the first start of the release that added the section, and
-    # removed in the next release. Each one's bare mirror lives under the data
-    # path, removed with its rows background.prune_after_days after it leaves
-    # the scope (docs/ops/background-data.md). The loop runs every interval (0 is off),
-    # sooner while a history is still being read, and each tick reads at most
-    # these many commits, event pages, pull requests' reviews, logins and
-    # outlier judgments per repository. Its forge calls share one budget per
-    # tick and stop when the credential's remaining rate limit drops below the
-    # reserve (jobs use the same credential). Outliers are judged on
-    # background_models.slop_judge.
+    # removed in the next release.
     slop_meter_repos: Annotated[str, NOT_SECRET] = ""
     slop_meter_exclude: Annotated[str, NOT_SECRET] = ""
+    # How often it reads, whether it reads at all and its forge budget are the
+    # settings document's `slop_meter` section now (#169): interval_hours and
+    # enabled (SLOP_METER_INTERVAL_SECONDS=0 was off), api_calls_per_tick and
+    # rate_reserve, an organization's layer over the deployment's. These
+    # three are only its import source: read once, at the first start of the
+    # release that added the section, and ignored after that; removed in the
+    # next release.
     slop_meter_api_calls_per_tick: int = Field(default=200, ge=0)
     slop_meter_rate_reserve: int = Field(default=2_000, ge=0)
     slop_meter_interval_seconds: float = Field(default=86_400.0, ge=0)
+    # The process's own limits, which stay variables: each repository's bare
+    # mirror lives under the data path (a container path), removed with its
+    # rows background.prune_after_days after it leaves the scope
+    # (docs/ops/background-data.md); every git call has a timeout; while a
+    # history is still being read the loop comes back after the catch-up
+    # interval; and each tick reads at most these many commits, event pages,
+    # pull requests' reviews, logins and outlier judgments per repository.
     slop_meter_catchup_seconds: float = Field(default=300.0, gt=0)
     slop_meter_data_path: Annotated[str, NOT_SECRET] = "/data/embry0/slop-meter"
     slop_meter_git_timeout_seconds: float = Field(default=900.0, gt=0)
