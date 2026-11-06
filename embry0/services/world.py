@@ -157,13 +157,14 @@ def leader_of(
     job: Mapping[str, Any], members: list[str], current: str | None, pipelines: Pipelines | None = None
 ) -> str:
     """The character a job is drawn as: the one working now, else the last that worked other than triage, else
-    its template's leader (its row's ``leader_agent``, #167)."""
+    its template's leader: the one it recorded when it was planned (``jobs.leader_agent``, #167), or before
+    then its template row's."""
     if current and current != "triage":
         return current
     worked = [m for m in members if m != "triage"]
     if worked:
         return worked[-1]
-    lead = row_behaviour.leader(pipeline_of(job, pipelines))
+    lead = job.get("leader_agent") or row_behaviour.leader(pipeline_of(job, pipelines))
     if lead:
         return lead
     if members:
@@ -382,11 +383,9 @@ def quest_fallbacks(runs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return list(entries.values())
 
 
-def quest_xp(
-    job: Mapping[str, Any], runs: Iterable[Mapping[str, Any]], *, rules: Rules, pipelines: Pipelines | None = None
-) -> list[dict[str, Any]]:
+def quest_xp(job: Mapping[str, Any], runs: Iterable[Mapping[str, Any]], *, rules: Rules) -> list[dict[str, Any]]:
     """What a quest earned each character, by skill, under ``rules``: its agents' runs, and the pull request it
-    opened or merged, credited to its template's coder (``row_behaviour.coder``)."""
+    opened or merged, credited to the agent that coded it (``jobs.coding_agent``, as progression credits it)."""
     gains: dict[tuple[str, str], int] = {}
     at = job.get("finished_at") or job.get("created_at") or datetime.now(UTC)
     events = [
@@ -396,10 +395,10 @@ def quest_xp(
         for r in runs
         if r.get("agent_type") and not r.get("error_code") and r.get("result") == "success"
     ]
-    # A slop cleanup's pull request is the Slopmaster's, the leader of its
-    # template, and its merge earns the code it removed (spec 2026-10-25, slop
-    # dungeon); any other job's is the developer's.
-    coder = row_behaviour.coder(pipeline_of(job, pipelines))
+    # A slop cleanup's pull request is the Slopmaster's, the agent that coded
+    # it, and its merge earns the code it removed (spec 2026-10-25, slop
+    # dungeon); a job that recorded no coder is the developer's.
+    coder = str(job.get("coding_agent") or row_behaviour.DEFAULT_CODER)
     if job.get("pr_url"):
         events.append(ProgressEvent("opened", coder, at))
     if job.get("status") == "pr_merged" or job.get("delivery_state") == "merged":

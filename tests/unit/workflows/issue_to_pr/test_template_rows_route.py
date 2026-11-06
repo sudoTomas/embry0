@@ -194,3 +194,107 @@ async def test_a_named_template_records_the_kind_its_row_says() -> None:
 
     assert out["route_template_name"] == "scout-pass"
     assert out["job_kind"] == "research", "the row's job_kind, not triage's code"
+
+
+_SPECIALISTS = {
+    "nodes": [
+        {"node_id": "triage", "agent_type": "triage"},
+        {"node_id": "why", "agent_type": "why"},
+        {"node_id": "how", "agent_type": "how"},
+        {"node_id": "output", "agent_type": "output"},
+    ],
+    "edges": [
+        {"edge_id": "e1", "source": "triage", "target": "why", "edge_type": "flow"},
+        {"edge_id": "e2", "source": "why", "target": "how", "edge_type": "flow"},
+        {"edge_id": "e3", "source": "how", "target": "output", "edge_type": "flow"},
+    ],
+}
+_WHY_THEN_CODE = {
+    "nodes": [
+        {"node_id": "triage", "agent_type": "triage"},
+        {"node_id": "why", "agent_type": "why"},
+        {"node_id": "dev", "agent_type": "developer"},
+    ],
+    "edges": [
+        {"edge_id": "e1", "source": "triage", "target": "why", "edge_type": "flow"},
+        {"edge_id": "e2", "source": "why", "target": "dev", "edge_type": "flow"},
+    ],
+}
+
+
+async def _planned(templates: _Templates, name: str) -> dict[str, Any]:
+    jobs = AsyncMock()
+    config = {"configurable": {"pipeline_templates_repo": templates, "jobs_repo": jobs, "db": None}}
+    state = {
+        "job_id": "job-1",
+        "task": "t",
+        "triage_decision": {"job_kind": "code", "pipeline_template": name},
+        "pipeline_template_request": name,
+    }
+    out = await plan_route.plan_route_node(state, config)
+    return {**out, "recorded": jobs.update.await_args.kwargs}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_no_stream_writer")
+async def test_a_new_template_of_specialists_only_records_its_jobs_as_analysis() -> None:
+    """Probe C: a template written after the upgrade, every step a specialist and no job_kind, is analysis,
+    as the route made it before #167, however it is named."""
+    out = await _planned(_Templates(_row("explain-twice", _SPECIALISTS)), "explain-twice")
+    assert out["job_kind"] == "analysis", "a route of specialists only is analysis"
+    assert out["recorded"]["job_kind"] == "analysis"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_no_stream_writer")
+async def test_a_specialist_route_given_a_coding_step_is_no_longer_analysis() -> None:
+    """Probe D: the built-in why template edited to add a developer step records triage's kind: the kind is
+    read from the route as it is now, and only an operator's job_kind overrides it."""
+    from embry0.workflows.row_behaviour import builtin_template
+
+    # The built-in row as the seed wrote it, its graph edited since.
+    edited = {**(builtin_template("why") or {}), "id": "why", "graph_definition": _WHY_THEN_CODE}
+    out = await _planned(_Templates(edited), "why")
+    assert out["job_kind"] == "code", "an edited route keeps no stale analysis kind"
+    overridden = await _planned(_Templates({**edited, "job_kind": "research"}), "why")
+    assert overridden["job_kind"] == "research", "the operator's job_kind overrides what the route makes it"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_no_stream_writer")
+async def test_plan_route_records_who_codes_the_job_and_who_leads_its_template() -> None:
+    slop_route = {
+        "nodes": [
+            {"node_id": "triage", "agent_type": "triage"},
+            {"node_id": "slop", "agent_type": "slopmaster"},
+        ],
+        "edges": [{"edge_id": "e1", "source": "triage", "target": "slop", "edge_type": "flow"}],
+    }
+    out = await _planned(_Templates(_row("tidy", slop_route, leader_agent="slopmaster")), "tidy")
+    assert (out["recorded"]["coding_agent"], out["recorded"]["leader_agent"]) == ("slopmaster", "slopmaster")
+    fix = await _planned(_Templates(_row("quick-fix", _CODE)), "quick-fix")
+    assert (fix["recorded"]["coding_agent"], fix["recorded"]["leader_agent"]) == ("developer", None)
+
+
+class _Unreadable(_Templates):
+    async def list_all(self) -> list[dict[str, Any]]:
+        raise ConnectionError("the database is gone")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_read_fixes_no_route_and_triage_runs() -> None:
+    """When the templates cannot be read nothing is known: the seed's word that why is fixed is not taken,
+    since the operator may have changed it (#167)."""
+    run = _triage_answers({"action": "proceed", "confidence": 0.9, "job_kind": "analysis", "reasoning": "x"})
+    await _triage(_state(pipeline_template_request="why"), _Unreadable(), run)
+    assert run.await_count == 1, "a failed read fixed the route from the seed"
+    prompt = run.await_args_list[0].kwargs["prompt"]
+    assert "Available pipeline templates" not in prompt, "a template list that could not be read offers none"
+
+
+@pytest.mark.asyncio
+async def test_triage_may_not_pick_a_template_whose_row_cannot_be_read() -> None:
+    assert await plan_route._offered_to_triage(_Unreadable(), "scout-pass") is False
+    assert await plan_route._offered_to_triage(None, "why") is False, "without a database the seed says it"
+    assert await plan_route._offered_to_triage(None, "quick-fix") is True
+    assert await plan_route._offered_to_triage(_Templates(), "unknown") is True, "a name with no row is not found later"

@@ -21,6 +21,7 @@ from embry0.services.progression_pack import default_rules
 from embry0.services.quests import Diary, evaluate_diaries, evaluate_quests, run_agents
 from embry0.storage.repositories.job_delivery import JobDeliveryRepository
 from embry0.storage.repositories.progression import ProgressionRepository
+from tests.fixtures.builtin_rows import planned_credit
 
 pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
 
@@ -63,12 +64,15 @@ async def _job(
     report: str | None = None,
     pr: int | None = None,
 ) -> None:
-    """A job created half an hour before it finished, with an open pull request numbered ``pr``."""
+    """A job created half an hour before it finished, with an open pull request numbered ``pr``, and what
+    plan_route records for its template (#167)."""
+    credit = planned_credit(template)
     await db.execute(
         """
         INSERT INTO jobs (job_id, repo, task, status, issue_id, pipeline_template, result_summary, pr_url,
-                          delivery_state, created_at, started_at, finished_at, updated_at, budget_overrun_usd)
-        VALUES ($1, $2, 't', $3, $4, $5, $6, $7, $8, $9, $9, $10, $10, 0)
+                          delivery_state, created_at, started_at, finished_at, updated_at, budget_overrun_usd,
+                          coding_agent, leader_agent)
+        VALUES ($1, $2, 't', $3, $4, $5, $6, $7, $8, $9, $9, $10, $10, 0, $11, $12)
         """,
         job_id,
         REPO,
@@ -80,6 +84,8 @@ async def _job(
         "pr_open" if pr is not None else "none",
         finished - timedelta(minutes=30),
         finished,
+        credit["coding_agent"],
+        credit["leader_agent"],
     )
 
 

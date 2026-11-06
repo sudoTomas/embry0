@@ -27,14 +27,16 @@ from embry0.orchestration.dispatch_actors import PROPOSALS
 from embry0.services.slop import SLOPMASTER
 from embry0.storage.database import DatabasePool
 from embry0.storage.schemas import FINISHED_WELL_STATUSES
-from embry0.workflows.row_behaviour import CODING_AGENT_TYPES, DEFAULT_CODER, WORKFLOW_PIPELINES
+from embry0.workflows.row_behaviour import DEFAULT_CODER, WORKFLOW_PIPELINES
 
-#: The template a context audit runs on.
-AUDIT_TEMPLATE = "context-audit"
+#: The agent a context audit is led by, whose report an audit's claims are read from (``context_audit``): a job
+#: whose template's leader it was when the job was planned (``jobs.leader_agent``, #167) is an audit, a copy of
+#: the context-audit template included.
+AUDITOR = "context-auditor"
 #: The actor of a context-audit finding's fix job (``context_audit.FIX_ACTOR``, #240): the job an owner starts by
-#: accepting one finding. It runs on :data:`AUDIT_TEMPLATE` but is no audit, so it earns no audit's credit (no
+#: accepting one finding. It is led by the :data:`AUDITOR` but is no audit, so it earns no audit's credit (no
 #: ``audited`` event, no lore, no ``audit_merged``); merged, it is credited as the proposal it is (#241). Every
-#: check of progression for an audit reads :func:`an_audit` or :attr:`JobRow.is_audit`, never the template alone.
+#: check of progression for an audit reads :func:`an_audit` or :attr:`JobRow.is_audit`, never the leader alone.
 FIX_ACTOR = PROPOSALS
 
 
@@ -47,30 +49,22 @@ QA_PIPELINE = str(WORKFLOW_PIPELINES["qa"]["name"])
 _QA_AGENT = str(WORKFLOW_PIPELINES["qa"]["leader_agent"])
 
 
-def template_join(job: str, template: str) -> str:
-    """The join of the job aliased ``job`` to its template's row, aliased ``template`` (#167): by name, as jobs
-    name their template, so a job whose template has no row (a pipeline the code defines, a template since
-    renamed) reads as one whose row says nothing."""
-    return f"LEFT JOIN pipeline_templates {template} ON {template}.name = {job}.pipeline_template"
+def coder_sql(job: str) -> str:
+    """The character the pull request of the job aliased ``job`` is credited to: the agent that coded it, as
+    plan_route recorded it (``jobs.coding_agent``, #167: the Slopmaster for a slop cleanup, spec 2026-10-25),
+    the developer for a job that recorded none. What it recorded never moves with a later template edit."""
+    return f"COALESCE({job}.coding_agent, {_literal(DEFAULT_CODER)})"
 
 
-def coder_sql(template: str) -> str:
-    """The character a job's pull request is credited to, from its template's row aliased ``template``: the
-    row's leader when that is a coding agent (the Slopmaster, for a slop cleanup; spec 2026-10-25, slop
-    dungeon), else the developer. ``embry0.workflows.row_behaviour.coder`` is the same rule in Python."""
-    coders = ", ".join(_literal(agent) for agent in CODING_AGENT_TYPES)
-    return (
-        f"COALESCE(CASE WHEN {template}.leader_agent IN ({coders}) THEN {template}.leader_agent END, "
-        f"{_literal(DEFAULT_CODER)})"
-    )
+def a_cleanup(job: str) -> str:
+    """The SQL condition that the job aliased ``job`` is a slop cleanup: the Slopmaster coded it."""
+    return f"{job}.coding_agent = {_literal(SLOPMASTER)}"
 
 
 def an_audit(job: str) -> str:
-    """The SQL condition that the job aliased ``job`` is a context audit: on its template, and not a finding's fix job."""
-    return (
-        f"({job}.pipeline_template = {_literal(AUDIT_TEMPLATE)}"
-        f" AND {job}.dispatched_by IS DISTINCT FROM {_literal(FIX_ACTOR)})"
-    )
+    """The SQL condition that the job aliased ``job`` is a context audit: led by the :data:`AUDITOR` when it was
+    planned, and not a finding's fix job."""
+    return f"({job}.leader_agent = {_literal(AUDITOR)} AND {job}.dispatched_by IS DISTINCT FROM {_literal(FIX_ACTOR)})"
 
 
 #: The statuses of a job that finished its work, ``FINISHED_WELL_STATUSES`` in ``embry0/storage/schemas.py``:
@@ -107,29 +101,29 @@ WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL
     (
         "COALESCE(j.delivery_state_at, j.finished_at)",
         f"""-- the job's coder (coder_sql): a pull request a job opened was merged
-SELECT 1, j.job_id, 'merged', {coder_sql("jt")}, COALESCE(j.delivery_state_at, j.finished_at),
+SELECT 1, j.job_id, 'merged', {coder_sql("j")}, COALESCE(j.delivery_state_at, j.finished_at),
        NULL, NULL, NULL
-FROM jobs j {template_join("j", "jt")} WHERE j.status = 'pr_merged'""",
+FROM jobs j WHERE j.status = 'pr_merged'""",
     ),
     (
         "j.finished_at",
         f"""-- the job's coder: a job that opened a pull request, once it finished
-SELECT 2, j.job_id, 'opened', {coder_sql("jt")}, j.finished_at, NULL, NULL, NULL
-FROM jobs j {template_join("j", "jt")} WHERE j.pr_url IS NOT NULL AND j.finished_at IS NOT NULL""",
+SELECT 2, j.job_id, 'opened', {coder_sql("j")}, j.finished_at, NULL, NULL, NULL
+FROM jobs j WHERE j.pr_url IS NOT NULL AND j.finished_at IS NOT NULL""",
     ),
     (
         "COALESCE(j.delivery_state_at, j.finished_at)",
         f"""-- the Slopmaster: a merged job it coded (a slop cleanup), with the lines it added and removed as its report
-SELECT 3, j.job_id, 'cleaned', {coder_sql("jt")}, COALESCE(j.delivery_state_at, j.finished_at),
+SELECT 3, j.job_id, 'cleaned', {_literal(SLOPMASTER)}, COALESCE(j.delivery_state_at, j.finished_at),
        (j.work_nature -> 'cleanup')::text, NULL, NULL
-FROM jobs j {template_join("j", "jt")} WHERE j.status = 'pr_merged' AND {coder_sql("jt")} = {_literal(SLOPMASTER)}""",
+FROM jobs j WHERE j.status = 'pr_merged' AND {a_cleanup("j")}""",
     ),
     (
         "COALESCE(m.delivery_state_at, m.finished_at)",
         f"""-- the job's coder: a merge on an issue whose earlier job had failed
-SELECT 4, m.job_id, 'comeback', {coder_sql("mt")}, COALESCE(m.delivery_state_at, m.finished_at),
+SELECT 4, m.job_id, 'comeback', {coder_sql("m")}, COALESCE(m.delivery_state_at, m.finished_at),
        NULL, NULL, NULL
-FROM jobs m {template_join("m", "mt")}
+FROM jobs m
 WHERE m.status = 'pr_merged' AND m.issue_id IS NOT NULL
   AND EXISTS (
     SELECT 1 FROM jobs f
@@ -152,10 +146,9 @@ FROM jobs j WHERE j.pipeline_template = {_literal(QA_PIPELINE)} AND {finished_we
     ),
     (
         "j.finished_at",
-        f"""-- the audit template's leader (the context auditor): an audit that finished its work, with its report;
--- a finding's fix job is no audit
-SELECT 7, j.job_id, 'audited', jt.leader_agent, j.finished_at, j.result_summary, NULL, NULL
-FROM jobs j {template_join("j", "jt")} WHERE {an_audit("j")} AND {finished_well("j")}""",
+        f"""-- the context auditor: an audit it led that finished its work, with its report; a finding's fix job is no audit
+SELECT 7, j.job_id, 'audited', {_literal(AUDITOR)}, j.finished_at, j.result_summary, NULL, NULL
+FROM jobs j WHERE {an_audit("j")} AND {finished_well("j")}""",
     ),
     (
         "a.created_at",
@@ -245,6 +238,7 @@ class ProgressionRepository:
                     r["report"],
                     r["delivery_state_at"],
                     r["dispatched_by"],
+                    r["leader"],
                 )
                 for r in jobs
                 if r["finished_at"] is not None
@@ -311,8 +305,8 @@ class FactFragment(Protocol):
 # ``dispatched_by`` tells a context audit from a finding's fix job (an_audit).
 _FACTS_CTES = """
 WITH merged AS (
-    SELECT j.job_id, j.repo, j.issue_id, j.pr_url, j.pipeline_template, j.dispatched_by, j.area, j.total_cost_usd,
-           j.created_at, j.started_at, j.finished_at,
+    SELECT j.job_id, j.repo, j.issue_id, j.pr_url, j.pipeline_template, j.leader_agent, j.dispatched_by, j.area,
+           j.total_cost_usd, j.created_at, j.started_at, j.finished_at,
            COALESCE(j.delivery_state_at, j.finished_at, j.updated_at) AS at,
            COALESCE(j.repo, 'a job') || COALESCE(' #' || substring(j.pr_url from '([0-9]+)/?$'), '') AS label
     FROM jobs j
@@ -525,11 +519,13 @@ class JobRow:
     delivery_state_at: datetime | None = None
     #: Who asked for it (``jobs.dispatched_by``): :data:`FIX_ACTOR` for a finding's fix job.
     dispatched_by: str | None = None
+    #: The leader of its template when it was planned (``jobs.leader_agent``, #167): the :data:`AUDITOR` for an audit.
+    leader: str | None = None
 
     @property
     def is_audit(self) -> bool:
         """A context audit, and not a finding's fix job: :func:`an_audit` for one row of the journal."""
-        return self.template == AUDIT_TEMPLATE and self.dispatched_by != FIX_ACTOR
+        return self.leader == AUDITOR and self.dispatched_by != FIX_ACTOR
 
     @property
     def merged_at(self) -> datetime | None:
@@ -562,6 +558,7 @@ class Journal:
 _JOBS_SQL = f"""
 SELECT j.repo, j.issue_id, j.pipeline_template AS template, j.status, j.created_at,
        COALESCE(j.finished_at, j.updated_at) AS finished_at, j.delivery_state_at, j.dispatched_by,
+       j.leader_agent AS leader,
        CASE WHEN {an_audit("j")} AND {finished_well("j")} THEN j.result_summary END AS report
 FROM jobs j
 WHERE j.repo IS NOT NULL

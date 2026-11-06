@@ -411,7 +411,14 @@ async def test_a_named_specialist_route_is_an_analysis_job_whatever_triage_guess
     assert out["route_template_name"] == template
     assert [step["agent_type"] for step in out["route_plan"]] == [agent_type, "output"]
     assert out["job_kind"] == "analysis", "a specialist route is recorded as analysis, not triage's 'code'"
-    jobs_repo.update.assert_awaited_once_with("job-1", job_kind="analysis", pipeline_template=template)
+    jobs_repo.update.assert_awaited_once_with(
+        "job-1",
+        job_kind="analysis",
+        pipeline_template=template,
+        # Who codes it (no coding step: the developer by default) and who leads it, recorded for its credit (#167).
+        coding_agent="developer",
+        leader_agent=agent_type,
+    )
 
 
 @pytest.mark.asyncio

@@ -146,6 +146,9 @@ _UPDATABLE_FIELDS = frozenset(
         "work_nature",
         # Done when (migration 120): the job's finish line and the report on it.
         "done_when",
+        # #167 (migration 143): who coded the job and who led its template, as plan_route recorded them.
+        "coding_agent",
+        "leader_agent",
     }
 )
 

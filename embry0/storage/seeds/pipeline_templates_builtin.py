@@ -65,14 +65,14 @@ def _specialist_route(name: str, agent_type: str, description: str, *, delivers:
 
     No ``default_for_kind``, and triage is not offered it: a job reaches it
     only by naming the template, and then skips triage (``fixed_route``).
-    plan_route records it as an analysis job (``job_kind``), and the world
-    draws it as its specialist (``leader_agent``).
+    plan_route records it as an analysis job, what a route of specialists
+    is (``row_behaviour.recorded_kind``: no ``job_kind`` overrides it), and
+    the world draws it as its specialist (``leader_agent``).
     """
     return {
         "description": description,
         "fixed_route": True,
         "offered_to_triage": False,
-        "job_kind": "analysis",
         "leader_agent": agent_type,
         "delivers": delivers,
         "graph_definition": _graph(

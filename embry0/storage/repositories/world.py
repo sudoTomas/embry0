@@ -10,9 +10,8 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from embry0.services.slop import SLOPMASTER
 from embry0.storage.database import DatabasePool
-from embry0.storage.repositories.progression import coder_sql, template_join
+from embry0.storage.repositories.progression import a_cleanup
 
 #: Job statuses a party is still out on.
 LIVE_STATUSES = ("pending", "running", "awaiting_input", "paused")
@@ -51,7 +50,7 @@ SELECT repo FROM repos WHERE active ORDER BY repo LIMIT $1
 _JOBS_SQL = """
 SELECT job_id, repo, task, status, pipeline_template, job_kind, created_at, started_at, finished_at,
        pr_url, delivery_state, area, issue_id, dispatched_by, current_stage, error_code, error_message,
-       account_wait
+       account_wait, coding_agent, leader_agent
 FROM jobs
 WHERE (status = ANY($2::text[])
    OR COALESCE(finished_at, updated_at) > NOW() - make_interval(secs => $1))
@@ -86,12 +85,12 @@ LIMIT $2
 
 # Slop dungeon (spec 2026-10-25): the slop cleanups merged in the last ``$1``
 # days, by repository and area — what each Slop Dungeon's ``cleaned`` counts.
-# A slop cleanup is a job the Slopmaster coded: its template's leader (#167,
-# progression.coder_sql).
+# A slop cleanup is a job the Slopmaster coded, as plan_route recorded it
+# (#167, progression.a_cleanup).
 _CLEANED_SQL = f"""
 SELECT j.repo, j.area, COUNT(*) AS cleaned
-FROM jobs j {template_join("j", "jt")}
-WHERE {coder_sql("jt")} = '{SLOPMASTER}' AND j.repo IS NOT NULL
+FROM jobs j
+WHERE {a_cleanup("j")} AND j.repo IS NOT NULL
   AND (j.status = 'pr_merged' OR j.delivery_state = 'merged')
   AND COALESCE(j.delivery_state_at, j.finished_at, j.created_at) > NOW() - make_interval(days => $1)
 GROUP BY j.repo, j.area
@@ -145,7 +144,7 @@ _QUEST_SQL = """
 SELECT j.job_id, j.repo, j.context, j.area, j.task, j.status, j.delivery_state, j.delivery_state_at, j.pr_url,
        j.pipeline_template, j.job_kind, j.created_at, j.started_at, j.finished_at, j.error_code, j.error_message,
        j.total_cost_usd, j.result_summary, j.dispatched_by, j.issue_id, j.account_wait, j.work_nature,
-       r.rating, r.verdict, r.note, r.followup_job_id, r.rated_by, r.rated_at
+       j.coding_agent, j.leader_agent, r.rating, r.verdict, r.note, r.followup_job_id, r.rated_by, r.rated_at
 FROM jobs j LEFT JOIN job_ratings r ON r.job_id = j.job_id
 WHERE j.job_id = $1
 """

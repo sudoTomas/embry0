@@ -60,9 +60,11 @@ export interface AgentDefinition {
   triage_may_add_skills?: string[];
   /** Where the guild hall draws it (#167). Absent on a backend that predates it. */
   station?: string;
-  /** The task the guild can give it: null none, "" a task naming no template (triage picks), else that
-   * template (#167). Absent on a backend that predates it. */
+  /** The task the guild can give it: null none, "" a task naming no template (triage picks; a coding
+   * agent's only), else that template (#167). Absent on a backend that predates it. */
   quest_template?: string | null;
+  /** Read-only: whether the developer node runs it, so a guild task naming no template is its to take. */
+  coding_agent?: boolean;
   /** Write responses only: skills accepted from a source that is not ready, and what a job runs without. */
   warnings?: string[];
   created_at?: string;

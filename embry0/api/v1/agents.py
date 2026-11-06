@@ -26,7 +26,7 @@ from embry0.services.provider_readiness import (
 from embry0.services.tool_catalog import unknown_tools, unknown_tools_message
 from embry0.services.world import forget_rows
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
-from embry0.workflows.row_behaviour import quest_template_problem
+from embry0.workflows.row_behaviour import CODING_AGENT_TYPES, quest_template_problem, untemplated_task_problem
 
 # Agent definitions run in every repository's jobs: not a key with a repository allowlist's to change.
 router = APIRouter(dependencies=[deployment_writes("change the deployment's agents")])
@@ -80,7 +80,7 @@ async def list_agents(
     and the model and provider a job that names no model runs it on
     (``effective_model``, ``effective_model_source``, ``effective_provider``,
     ``effective_provider_ready``)."""
-    return await annotate_agents(await repo.list_all(), request.app.state)
+    return [_with_coding(a) for a in await annotate_agents(await repo.list_all(), request.app.state)]
 
 
 @router.get("/agents/{agent_type}")
@@ -93,6 +93,7 @@ async def get_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent type not found")
     [annotated] = await annotate_agents([agent], request.app.state)
+    annotated = _with_coding(annotated)
     known = await catalog_skill_names(request)
     # A repository skill (no colon) is never in the catalog, and never an orphan.
     annotated["orphan_skills"] = (
@@ -157,14 +158,22 @@ async def _template_names(request: Request) -> set[str] | None:
     return {str(t["name"]) for t in await repo.list_all()}
 
 
-async def _reject_unknown_quest_template(request: Request, value: str | None) -> None:
-    """A ``quest_template`` that names no template is a 422 naming the field (#167): the guild's task would
-    run the kind default instead of what the operator chose."""
-    if not value:
-        return
-    problem = quest_template_problem(value, await _template_names(request))
+async def _reject_unrunnable_task(request: Request, agent_type: str, value: str | None) -> None:
+    """A ``quest_template`` the guild could not run is a 422 naming the field (#167): one that names no
+    template (the task would run the kind default instead of what the operator chose), or '' for an agent
+    that does not code. Only a value the write changes is checked: a stored one whose template was deleted
+    since does not stop the agent's other fields from saving."""
+    problem = untemplated_task_problem(agent_type, value)
+    if problem is None and value:
+        problem = quest_template_problem(value, await _template_names(request))
     if problem:
         raise HTTPException(status_code=422, detail=problem)
+
+
+def _with_coding(agent: dict[str, Any]) -> dict[str, Any]:
+    """The row with ``coding_agent``, read-only: whether the developer node runs it, so it can take a guild
+    task that names no template."""
+    return {**agent, "coding_agent": str(agent.get("type") or "") in CODING_AGENT_TYPES}
 
 
 @router.post("/agents", status_code=201, dependencies=[require_admin])
@@ -174,7 +183,7 @@ async def create_agent(
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> dict[str, Any]:
     await _reject_if_disabled(request, req.model)
-    await _reject_unknown_quest_template(request, req.quest_template)
+    await _reject_unrunnable_task(request, req.type, req.quest_template)
     warnings = await check_added_skills(request, req.skills or [])
     try:
         created = await repo.create(
@@ -227,7 +236,10 @@ async def update_agent(
         if key in updates and updates[key] is None:
             raise HTTPException(status_code=422, detail=f"{key} cannot be null")
     await _reject_if_disabled(request, updates.get("model"))
-    await _reject_unknown_quest_template(request, updates.get("quest_template"))
+    if "quest_template" in updates:
+        current = await repo.get(agent_type) or {}
+        if updates["quest_template"] != current.get("quest_template"):
+            await _reject_unrunnable_task(request, agent_type, updates["quest_template"])
     if updates.get("system_prompt"):
         # A definition no job runs is a brief writer's voice (#166): the answer's format is the code's, so a voice
         # that defines one of its keys would fight the format added after it.

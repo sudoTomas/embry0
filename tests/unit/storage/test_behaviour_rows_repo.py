@@ -13,10 +13,10 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED, AgentDefinitionsRepository
 from embry0.storage.repositories.job_briefs import JobBriefsRepository
 from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
-from embry0.storage.repositories.progression import ProgressionRepository, coder_sql
+from embry0.storage.repositories.progression import ProgressionRepository
 from embry0.storage.repositories.world import WorldRepository
+from embry0.storage.seeds.pipeline_templates_builtin import BUILTIN_PIPELINE_TEMPLATES
 from embry0.workflows import row_behaviour as rb
-from tests.fixtures.builtin_rows import seed_builtin_templates
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -127,65 +127,126 @@ async def _job(db: DatabasePool, job_id: str, template: str | None, **row: Any) 
     )
 
 
-async def test_a_jobs_pull_request_is_credited_as_its_template_row_says(db_with_migrations: DatabasePool) -> None:
-    """The SQL rule (progression.coder_sql) and the Python one (row_behaviour.coder) agree for every job."""
+async def _seed(db: DatabasePool) -> None:
+    """The built-in templates and agents, as the boot seeders write them."""
+    from embry0.storage.seeds.agents_builtin import seed_missing_builtin_agents
+    from embry0.storage.seeds.pipeline_templates_builtin import seed_builtin_pipeline_templates
+
+    await seed_builtin_pipeline_templates(PipelineTemplatesRepository(db))
+    await seed_missing_builtin_agents(AgentDefinitionsRepository(db))
+
+
+async def _plan(db: DatabasePool, job_id: str, template: str, kind: str = "code") -> dict[str, Any]:
+    """Plan ``job_id``, which names ``template``, as the job's plan_route step does."""
+    from unittest.mock import patch
+
+    from embry0.storage.repositories.jobs import JobsRepository
+    from embry0.workflows.issue_to_pr import plan_route
+
+    config = {
+        "configurable": {
+            "pipeline_templates_repo": PipelineTemplatesRepository(db),
+            "jobs_repo": JobsRepository(db),
+            "db": db,
+        }
+    }
+    state = {
+        "job_id": job_id,
+        "task": "Clean the flags",
+        "pipeline_template_request": template,
+        "triage_decision": {"job_kind": kind, "pipeline_template": template},
+    }
+    with patch.object(plan_route, "get_stream_writer", return_value=lambda _e: None):
+        return await plan_route.plan_route_node(state, config)
+
+
+def _credit(events: list[Any]) -> list[tuple[str, str | None]]:
+    return sorted((e.source, e.agent_type) for e in events if e.source in ("merged", "opened", "cleaned", "audited"))
+
+
+async def test_a_job_keeps_the_credit_it_recorded_whatever_its_template_row_says_later(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """Credit is what plan_route recorded on the job (#167): an edit or a deletion of the template row after
+    changes no past credit, and a new job is credited as the row says by then."""
     db = db_with_migrations
-    await seed_builtin_templates(db)
+    await _seed(db)
     repo = PipelineTemplatesRepository(db)
-    # A slop template of the deployment's own, led by the Slopmaster; one led by an agent that does not code.
-    await repo.create(name="my-slop", graph_definition=GRAPH, leader_agent="slopmaster")
-    await repo.create(name="my-report", graph_definition=GRAPH, leader_agent="why")
-    jobs = {
-        "j-slop": "slop-cleanup",
-        "j-my-slop": "my-slop",
-        "j-report": "my-report",
-        "j-fix": "quick-fix",
-        "j-map": "map-areas",
-        "j-qa": "qa",
-        "j-none": None,
-        "j-gone": "renamed-since",
+    slop_graph = BUILTIN_PIPELINE_TEMPLATES["slop-cleanup"]["graph_definition"]
+    await repo.create(name="my-slop", graph_definition=slop_graph, leader_agent="slopmaster")
+    planned = {"j-slop": "slop-cleanup", "j-my-slop": "my-slop", "j-fix": "quick-fix", "j-audit": "context-audit"}
+    for job_id, template in planned.items():
+        await _job(db, job_id, template, status="running", pr_url=None, delivery_state="none")
+        await _plan(db, job_id, template, kind="analysis" if template == "context-audit" else "code")
+    recorded = {
+        r["job_id"]: (r["coding_agent"], r["leader_agent"])
+        for r in await db.fetch("SELECT job_id, coding_agent, leader_agent FROM jobs")
     }
-    for job_id, template in jobs.items():
-        await _job(db, job_id, template)
+    assert recorded == {
+        "j-slop": ("slopmaster", "slopmaster"),
+        "j-my-slop": ("slopmaster", "slopmaster"),
+        "j-fix": ("developer", None),
+        "j-audit": ("developer", "context-auditor"),
+    }, f"what plan_route records: {recorded}"
+    await db.execute(
+        "UPDATE jobs SET status = 'pr_merged', delivery_state = 'merged', pr_url = 'https://forge/pull/' || job_id "
+        "WHERE job_id <> 'j-audit'"
+    )
+    await db.execute("UPDATE jobs SET status = 'completed', result_summary = 'Stale: 1' WHERE job_id = 'j-audit'")
+    before_edit = _credit(await ProgressionRepository(db).events())
+    cleaned = await WorldRepository(db).cleaned(days=100_000)
+    assert ("audited", "context-auditor") in before_edit and before_edit.count(("cleaned", "slopmaster")) == 2
+    assert cleaned == {("acme/widgets", "Billing"): 2}, cleaned
 
-    events = await ProgressionRepository(db).events()
-    rows = rb.pipelines_by_name(await repo.list_all())
-    credited = {
-        r["job_id"]: r["agent_type"]
-        for r in await db.fetch(
-            f"SELECT j.job_id, {coder_sql('jt')} AS agent_type "
-            "FROM jobs j LEFT JOIN pipeline_templates jt ON jt.name = j.pipeline_template"
-        )
-    }
-    want = {job_id: rb.coder(rows.get(template or "")) for job_id, template in jobs.items()}
-    assert credited == want, f"the SQL and the Python credit differ: {credited} != {want}"
-    assert (want["j-slop"], want["j-my-slop"], want["j-report"]) == ("slopmaster", "slopmaster", "developer")
-    merged = sorted(str(e.agent_type) for e in events if e.source == "merged")
-    assert merged == sorted(want.values()), f"each merged job is credited to its coder: {merged}"
+    # The operator clears the audit's leader, gives the slop route to the developer and deletes their own.
+    fix_graph = BUILTIN_PIPELINE_TEMPLATES["quick-fix"]["graph_definition"]
+    await db.execute("UPDATE pipeline_templates SET leader_agent = NULL WHERE name = 'context-audit'")
+    await db.execute(
+        "UPDATE pipeline_templates SET leader_agent = 'developer', graph_definition = $1 WHERE name = 'slop-cleanup'",
+        fix_graph,
+    )
+    await db.execute("DELETE FROM pipeline_templates WHERE name = 'my-slop'")
+    assert _credit(await ProgressionRepository(db).events()) == before_edit, "an edit of the rows moved past credit"
+    assert await WorldRepository(db).cleaned(days=100_000) == cleaned, "an edit of the rows moved the dungeon"
 
-    cleaned = sorted(e.agent_type for e in events if e.source == "cleaned")
-    assert cleaned == ["slopmaster", "slopmaster"], f"each job the Slopmaster coded is a cleanup: {cleaned}"
-    by_area = await WorldRepository(db).cleaned(days=100_000)
-    assert by_area == {("acme/widgets", "Billing"): 2}, f"the dungeon counts both cleanups: {by_area}"
+    # A job planned since is credited as the rows say now.
+    await _job(db, "j-after", "slop-cleanup", status="running", pr_url=None, delivery_state="none")
+    await _plan(db, "j-after", "slop-cleanup")
+    after = await db.fetchrow("SELECT coding_agent, leader_agent FROM jobs WHERE job_id = 'j-after'")
+    assert (after["coding_agent"], after["leader_agent"]) == ("developer", "developer"), dict(after)
 
 
-async def test_an_audit_is_credited_to_its_templates_leader(db_with_migrations: DatabasePool) -> None:
+async def test_an_audit_is_a_job_the_context_auditor_led(db_with_migrations: DatabasePool) -> None:
+    """A copy of the context-audit template is an audit (it keeps the leader); a template led by another agent
+    is not, whatever its name (#167)."""
     db = db_with_migrations
-    await seed_builtin_templates(db)
-    await _job(db, "j-audit", "context-audit", status="completed", pr_url=None, delivery_state="none")
-    await db.execute("UPDATE jobs SET result_summary = 'Stale: 1' WHERE job_id = 'j-audit'")
-    audited = [e.agent_type for e in await ProgressionRepository(db).events() if e.source == "audited"]
-    assert audited == ["context-auditor"], audited
-    await db.execute("UPDATE pipeline_templates SET leader_agent = 'why' WHERE name = 'context-audit'")
-    audited = [e.agent_type for e in await ProgressionRepository(db).events() if e.source == "audited"]
-    assert audited == ["why"], f"the row's leader, not a name in the query: {audited}"
+    await _seed(db)
+    repo = PipelineTemplatesRepository(db)
+    audit = next(r for r in await repo.list_all() if r["name"] == "context-audit")
+    await repo.duplicate(audit["id"], new_name="my-audit")
+    other = await repo.create(
+        name="audit-led-by-why", graph_definition=BUILTIN_PIPELINE_TEMPLATES["why"]["graph_definition"]
+    )
+    await repo.update(other["id"], leader_agent="why")
+    for job_id, template in (("j-copy", "my-audit"), ("j-why", "audit-led-by-why"), ("j-builtin", "context-audit")):
+        await _job(db, job_id, template, status="running", pr_url=None, delivery_state="none")
+        await _plan(db, job_id, template, kind="analysis")
+    await db.execute("UPDATE jobs SET status = 'completed', result_summary = 'Stale: 2'")
+    audited = sorted(
+        (e.agent_type, e.report) for e in await ProgressionRepository(db).events() if e.source == "audited"
+    )
+    assert audited == [("context-auditor", "Stale: 2"), ("context-auditor", "Stale: 2")], (
+        f"the copy and the built-in are audits, the template led by why is none: {audited}"
+    )
+    journal = await ProgressionRepository(db).journal()
+    assert sorted(j.template for j in journal.jobs if j.is_audit) == ["context-audit", "my-audit"]
 
 
 async def test_a_brief_says_what_the_jobs_template_row_delivers(db_with_migrations: DatabasePool) -> None:
     from embry0.services.job_briefs import input_hash, user_prompt
 
     db = db_with_migrations
-    await seed_builtin_templates(db)
+    await _seed(db)
     await PipelineTemplatesRepository(db).create(name="scout-pass", graph_definition=GRAPH, **BEHAVIOUR)
     for job_id, template in (("j-own", "scout-pass"), ("j-map", "map-areas"), ("j-qa", "qa"), ("j-none", None)):
         await _job(db, job_id, template, status="running", pr_url=None, delivery_state="none", finished_at=None)
@@ -201,3 +262,19 @@ async def test_a_brief_says_what_the_jobs_template_row_delivers(db_with_migratio
     }, said
     stripped = {k: v for k, v in candidates["j-own"].items() if k != "template_delivers"}
     assert input_hash(candidates["j-own"]) == input_hash(stripped), "what a template delivers is no input of the hash"
+
+
+async def test_a_rename_carries_each_agents_guild_task_with_it(db_with_migrations: DatabasePool) -> None:
+    """An agent's quest_template names a template: renaming the template moves it in the same transaction, so
+    the guild keeps sending the agent on what the operator chose (#167)."""
+    db = db_with_migrations
+    templates = PipelineTemplatesRepository(db)
+    agents = AgentDefinitionsRepository(db)
+    made = await templates.create(name="scout-pass", graph_definition=GRAPH)
+    await agents.create("scout", "d", "m", tools=["Read"], quest_template="scout-pass")
+    await agents.create("watcher", "d", "m", tools=["Read"], quest_template="other")
+    await templates.update(made["id"], name="scout-run")
+    tasks = {r["type"]: r["quest_template"] for r in await agents.list_all() if r["type"] in ("scout", "watcher")}
+    assert tasks == {"scout": "scout-run", "watcher": "other"}, f"the task did not follow the rename: {tasks}"
+    await templates.update(made["id"], description="same name")
+    assert (await agents.get("scout"))["quest_template"] == "scout-run", "a save that keeps the name moves nothing"

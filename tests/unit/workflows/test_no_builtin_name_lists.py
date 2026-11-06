@@ -24,6 +24,7 @@ REPO = Path(__file__).resolve().parents[3]
         ("embry0.services.world", "LEADER_BY_TEMPLATE"),
         ("embry0.services.world", "QUEST_TEMPLATE_BY_AGENT"),
         ("embry0.storage.repositories.progression", "_CODER"),
+        ("embry0.storage.repositories.progression", "AUDIT_TEMPLATE"),
     ],
 )
 def test_the_name_list_is_gone(module: str, name: str) -> None:
@@ -44,9 +45,10 @@ def test_the_progression_and_world_queries_credit_from_the_rows() -> None:
     from embry0.storage.repositories.progression import events_sql
 
     for sql in (events_sql(), world._CLEANED_SQL):
-        for literal in ("'slop-cleanup'", "'context-auditor'"):
-            assert literal not in sql, f"a query still names {literal}: a template's row says it now"
-        assert "pipeline_templates" in sql, "the query reads the job's template row"
+        for literal in ("'slop-cleanup'", "'context-audit'"):
+            assert literal not in sql, f"a query still names the template {literal}: the job's recorded credit says it"
+        assert "coding_agent" in sql, "the query credits the job from what it recorded when it was planned"
+        assert "pipeline_templates" not in sql, "a past job's credit must not move with today's template rows"
 
 
 def test_the_guild_hall_draws_each_station_from_the_row() -> None:

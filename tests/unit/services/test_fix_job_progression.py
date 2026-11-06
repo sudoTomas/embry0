@@ -22,7 +22,6 @@ from embry0.services.progression import Progression, ProgressionService
 from embry0.services.progression_pack import ShippedPack, default_rules
 from embry0.storage.repositories.progression import ProgressionRepository
 from embry0.storage.repositories.progression_rollup import ProgressionRollupRepository
-from tests.fixtures.builtin_rows import seed_builtin_templates
 
 pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
 
@@ -50,13 +49,14 @@ async def _job(
     pr: int,
     merged: bool = False,
 ) -> None:
-    """A context-audit job created half an hour before it finished, with its pull request open or merged."""
+    """A context-audit job created half an hour before it finished, with its pull request open or merged, led by
+    the context auditor as plan_route records it (#167)."""
     await db.execute(
         """
         INSERT INTO jobs (job_id, repo, task, status, pipeline_template, dispatched_by, result_summary, pr_url,
                           delivery_state, delivery_state_at, created_at, started_at, finished_at, updated_at,
-                          budget_overrun_usd)
-        VALUES ($1, $2, 't', $3, 'context-audit', $4, $5, $6, $7, $8, $9, $9, $10, $10, 0)
+                          budget_overrun_usd, leader_agent)
+        VALUES ($1, $2, 't', $3, 'context-audit', $4, $5, $6, $7, $8, $9, $9, $10, $10, 0, 'context-auditor')
         """,
         job_id,
         repo,
@@ -131,7 +131,6 @@ def _audit_tasks(progression: Progression, repo: str) -> dict[str, datetime | No
 @pytest.mark.parametrize("through_rollup", [False, True], ids=["raw", "rollup"])
 async def test_a_completed_fix_job_earns_no_audit_credit(db_with_migrations, through_rollup: bool) -> None:
     db = db_with_migrations
-    await seed_builtin_templates(db)  # the context-audit template, whose leader an audit credits (#167)
     await _job(
         db, "job-audit", repo=AUDITED_REPO, by=CONTEXT_AUDIT, finished=hour(1), report="Stale: 3\nFiles: 2\n", pr=1
     )
@@ -168,7 +167,6 @@ async def test_a_completed_fix_job_earns_no_audit_credit(db_with_migrations, thr
 @pytest.mark.parametrize("through_rollup", [False, True], ids=["raw", "rollup"])
 async def test_a_merged_fix_job_is_credited_once_as_a_merged_proposal(db_with_migrations, through_rollup: bool) -> None:
     db = db_with_migrations
-    await seed_builtin_templates(db)  # the context-audit template, whose leader an audit credits (#167)
     await _job(
         db,
         "job-audit",

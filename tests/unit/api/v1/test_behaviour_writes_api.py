@@ -78,14 +78,66 @@ async def test_an_agent_is_stored_with_its_station_and_its_task(app: Any) -> Non
         f"a new agent sits at a desk and the guild gives it no task: {created}"
     )
 
-    for body, want in (
-        ({"station": "map_table"}, {"station": "map_table"}),
-        ({"quest_template": ""}, {"quest_template": ""}),
-        ({"quest_template": None}, {"quest_template": None}),
+    for path, body, want in (
+        ("scout", {"station": "map_table"}, {"station": "map_table"}),
+        ("scout", {"quest_template": "scout-pass"}, {"quest_template": "scout-pass"}),
+        ("scout", {"quest_template": None}, {"quest_template": None}),
+        ("developer", {"quest_template": ""}, {"quest_template": ""}),
     ):
-        resp = await _send(app, "PUT", "/api/v1/agents/scout", body)
+        resp = await _send(app, "PUT", f"/api/v1/agents/{path}", body)
         assert resp.status_code == 200, resp.text
         assert app.state.agent_defs_repo.update.call_args.kwargs == want, f"{body} reached the repository as sent"
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "base"), [("POST", "/api/v1/agents", NEW_AGENT), ("PUT", "/api/v1/agents/scout", {})]
+)
+async def test_a_task_naming_no_template_is_a_coding_agents_only(app: Any, method, path, base) -> None:
+    """'' runs the route triage picks, whose coding step is the developer's: an agent that does not code
+    cannot take it."""
+    resp = await _send(app, method, path, {**base, "quest_template": ""})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"].startswith("quest_template: ''"), resp.json()
+
+
+async def test_a_save_that_keeps_a_stored_task_or_leader_is_not_refused_for_it(app: Any) -> None:
+    """The forms send every field: a stored task whose template is gone, or a stored leader that no longer runs
+    in jobs, must not stop the rest from saving. Only a value the write changes is checked."""
+    app.state.agent_defs_repo.get = AsyncMock(return_value={**AGENT, "quest_template": "deleted-route"})
+    resp = await _send(app, "PUT", "/api/v1/agents/scout", {"description": "new", "quest_template": "deleted-route"})
+    assert resp.status_code == 200, f"an unchanged task was refused: {resp.text}"
+    resp = await _send(app, "PUT", "/api/v1/agents/scout", {"quest_template": "other-route"})
+    assert resp.status_code == 422, "a task the write changes is still checked"
+
+    app.state.templates_repo.get = AsyncMock(return_value={**TEMPLATE, "leader_agent": "retired"})
+    resp = await _send(
+        app, "PUT", "/api/v1/pipelines/templates/t-1", {"leader_agent": "retired", "delivers": "a report"}
+    )
+    assert resp.status_code == 200, f"an unchanged leader was refused: {resp.text}"
+    resp = await _send(app, "PUT", "/api/v1/pipelines/templates/t-1", {"leader_agent": "ghost"})
+    assert resp.status_code == 422, "a leader the write changes is still checked"
+
+
+async def test_an_agent_says_whether_it_codes(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        listed = (await client.get("/api/v1/agents")).json()
+        one = (await client.get("/api/v1/agents/scout")).json()
+    assert {a["type"]: a["coding_agent"] for a in listed} == {"scout": False, "developer": True}, listed
+    assert one["coding_agent"] is False
+
+
+@pytest.mark.parametrize("name", ["qa", "onboard", "pr-review"])
+async def test_a_template_cannot_take_a_code_pipelines_name(app: Any, name: str) -> None:
+    for method, path, body in (
+        ("POST", "/api/v1/pipelines/templates", {"name": name, "graph_definition": GRAPH}),
+        ("PUT", "/api/v1/pipelines/templates/t-1", {"name": name}),
+        ("POST", "/api/v1/pipelines/templates/t-1/duplicate", {"name": name}),
+    ):
+        resp = await _send(app, method, path, body)
+        assert resp.status_code == 422, f"{method} {path} named {name}: {resp.status_code}"
+        assert "a pipeline embry0 defines" in resp.text, resp.text
+    app.state.templates_repo.create.assert_not_awaited()
+    app.state.templates_repo.update.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

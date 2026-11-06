@@ -32,7 +32,7 @@ from embry0.workflows.issue_to_pr.route_plan import (
     coding_agent_of,
     triage_template_config,
 )
-from embry0.workflows.row_behaviour import builtin_template, offered_to_triage, recorded_kind
+from embry0.workflows.row_behaviour import builtin_template, leader, offered_to_triage, recorded_kind
 
 logger = structlog.get_logger(__name__)
 
@@ -265,28 +265,42 @@ async def _find_template(
 async def template_row(templates_repo: Any, name: str) -> dict[str, Any] | None:
     """The template ``name``'s row, for what it says about its jobs (#167); None when there is none.
 
-    Without a repository, or when it cannot be read, the built-in template as
-    seeded answers (``row_behaviour.builtin_template``): every deployment has
-    those rows. A lookup failure is logged.
+    Without a repository (no database) the built-in template as seeded
+    answers (``row_behaviour.builtin_template``): every deployment has those
+    rows. A read that fails raises its error: the seed's answer is no
+    stand-in for it, since an operator may have changed the row. Each
+    caller says what an unknown row means.
     """
     if not name or name in _LEGACY_TEMPLATE_VALUES:
         return None
     if templates_repo is None:
         return builtin_template(name)
-    try:
-        return await _find_template(templates_repo, name=name)
-    except Exception:
-        logger.warning("template_lookup_failed", template=name, exc_info=True)
-        return builtin_template(name)
+    return await _find_template(templates_repo, name=name)
 
 
 async def pinned_template(state: dict[str, Any], templates_repo: Any) -> dict[str, Any] | None:
     """The row of the template the job named up front (``pipeline_template_request``), or None.
 
     Only such a template is known before triage runs; one that triage picks,
-    or a kind default, is resolved after it (``template_row``).
+    or a kind default, is resolved after it (``template_row``). None too when
+    the templates cannot be read: then no route is fixed, and triage runs.
     """
-    return await template_row(templates_repo, str(state.get("pipeline_template_request") or ""))
+    name = str(state.get("pipeline_template_request") or "")
+    try:
+        return await template_row(templates_repo, name)
+    except Exception:
+        logger.warning("template_lookup_failed", template=name, exc_info=True)
+        return None
+
+
+async def _offered_to_triage(templates_repo: Any, name: str) -> bool:
+    """Whether triage may pick ``name``: its row's ``offered_to_triage``; a name with no row is (it is not
+    found later, and logged); when the templates cannot be read, no (the kind default routes instead)."""
+    try:
+        return offered_to_triage(await template_row(templates_repo, name))
+    except Exception:
+        logger.warning("template_lookup_failed", template=name, exc_info=True)
+        return False
 
 
 async def pinned_triage_template_config(state: dict[str, Any], templates_repo: Any) -> dict[str, Any] | None:
@@ -375,11 +389,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     # A template triage is not offered (its row's offered_to_triage, #167: a
     # specialist's, say) runs only when the job names it, so triage's pick of
     # one is dropped and the kind default routes.
-    if (
-        explicit
-        and requested != requested_user
-        and not offered_to_triage(await template_row(templates_repo, requested))
-    ):
+    if explicit and requested != requested_user and not await _offered_to_triage(templates_repo, requested):
         logger.info(
             "plan_route_triage_pick_overridden",
             job_id=state.get("job_id"),
@@ -407,6 +417,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     resolved_name: str | None = None
     resolved_kind: str | None = None
     resolved_graph: dict[str, Any] | None = None
+    resolved_row: dict[str, Any] | None = None
     explicit_invalid = False
 
     if templates_repo is not None:
@@ -438,6 +449,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
             resolved_name = row["name"]
             resolved_kind = recorded_kind(row)
             resolved_graph = graph
+            resolved_row = row
             break
 
     if plan is None:
@@ -479,11 +491,17 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
             str(state.get("task") or ""),
             ticket_sections=job_section(state, DONE_WHEN).ticket_sections,
         )
+    # #167: who codes the job and who leads its template, as they are now:
+    # progression and the world credit the job from these, so a later edit
+    # of the template row changes no credit it earned.
+    coding_agent = coding_agent_of(plan)
     if jobs_repo is not None:
         try:
             await jobs_repo.update(
                 state.get("job_id", ""),
                 job_kind=effective_kind,
+                coding_agent=coding_agent,
+                leader_agent=leader(resolved_row),
                 **({"pipeline_template": resolved_name} if resolved_name else {}),
                 **({"work_nature": work_nature} if work_nature is not None else {}),
                 **({"done_when": done_when} if done_when is not None else {}),
@@ -528,7 +546,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
         "route_cursor": 0,
         "route_template_name": resolved_name,
         "work_nature": work_nature,
-        "coding_agent": coding_agent_of(plan),
+        "coding_agent": coding_agent,
         "done_when": done_when,
     }
 

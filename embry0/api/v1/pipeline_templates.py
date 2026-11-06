@@ -264,13 +264,15 @@ async def update_template(
     _reject_unpriced(graph)
     if "graph_definition" in updates:
         added = _added_skills(graph)
-    if updates.get("leader_agent") is not None:
-        rows = rows if rows is not None else await _agent_rows(request)
-        _reject_unknown_leader(rows, updates["leader_agent"])
     # 2. The template must exist: the added names are measured against it.
     stored = await repo.get(template_id) if repo is not None else None
     if stored is None:
         raise HTTPException(status_code=404, detail="Template not found")
+    # Only a leader the write changes is checked: the dialog sends every field, and a stored leader that
+    # no longer runs in jobs must not stop the rest from saving.
+    if updates.get("leader_agent") is not None and updates["leader_agent"] != stored.get("leader_agent"):
+        rows = rows if rows is not None else await _agent_rows(request)
+        _reject_unknown_leader(rows, updates["leader_agent"])
     # 3. Only the names this save adds are checked; names the stored template has keep working.
     already = _stored_added_skills(stored)
     warnings = await check_added_skills(request, [s for s in added if s not in already])
@@ -289,6 +291,9 @@ async def update_template(
     if not updated:
         raise HTTPException(status_code=404, detail="Template not found")
     forget_rows(request.app.state, "templates")
+    if "name" in updates and updates["name"] != stored.get("name"):
+        # The rename carried each agent's guild task with it (the repository's update).
+        forget_rows(request.app.state, "agents")
     return {**updated, "warnings": warnings}
 
 

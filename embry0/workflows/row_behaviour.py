@@ -9,21 +9,25 @@ part the way the built-in ones do. A template's row says:
 - ``offered_to_triage``: triage's list of templates names it, and plan_route
   keeps triage's pick of it; a template that is not offered runs only when
   the job names it;
-- ``job_kind``: the kind a job of the template is recorded as when the
-  template is no kind's default (``default_for_kind`` wins);
+- ``job_kind``: the kind a job of the template is recorded as, an
+  operator's override; when it is NULL the kind is the one the template is
+  the default for, else the one its route makes it (a route of specialists
+  only is analysis: :func:`recorded_kind`);
 - ``delivers``: what a job of the template hands back, in the person's
   words, for the job's brief;
 - ``leader_agent``: the character the world draws a job of the template as
-  before an agent has started, and the one its outcomes are credited to;
-  a pull request is its leader's only when the leader is a coding agent
-  (:func:`coder`).
+  before an agent has started. plan_route records it on the job
+  (``jobs.leader_agent``) with the agent that coded it (``jobs.coding_agent``),
+  and a job's outcomes are credited from what it recorded, so a later edit
+  of the row changes no past credit.
 
 An agent's row says:
 
 - ``station``: where the guild hall draws it when it is home;
 - ``quest_template``: whether the guild can give it a task, and what that
   task runs: NULL is no task, ``''`` a task that names no template (triage
-  picks the route, as for the developer), a name that template.
+  picks the route; a coding agent's only, the developer's), a name that
+  template.
 
 The pipelines the code defines (QA, onboarding, pull-request review) have
 no template row: :data:`WORKFLOW_PIPELINES` says the same of them. Without a
@@ -32,6 +36,10 @@ database the built-in rows as they are seeded answer
 these columns (a fake, a summary from an older release) reads as its
 column's default: the behaviour of a template or an agent of the
 deployment's own before #167.
+
+The built-in rows answer only where there is no database at all. Where a
+read of the rows fails, nothing is known: no route is fixed, so triage
+runs, and triage's pick of a template is not trusted (plan_route).
 """
 
 from __future__ import annotations
@@ -52,10 +60,10 @@ NAME_MAX: Final = 100
 
 #: The agent types the developer node runs: the developer, and the Slopmaster on a slop-cleanup route
 #: (spec 2026-10-25, slop dungeon). They are the graph's own vocabulary (``_validation.FIXED_NODE_TYPES``),
-#: not rows: route_plan maps their steps to the developer node, salvage reads their outputs, and a job's
-#: pull request is credited to one of them (:func:`coder`).
+#: not rows: route_plan maps their steps to the developer node, salvage reads their outputs, and plan_route
+#: records the one a job's route runs (``jobs.coding_agent``), whom its pull request is credited to.
 CODING_AGENT_TYPES: Final[tuple[str, ...]] = ("developer", "slopmaster")
-#: The coding agent of a route that names no other, and of a job whose template's leader is no coding agent.
+#: The coding agent of a route that names no other, and of a job that recorded none.
 DEFAULT_CODER: Final = "developer"
 
 #: Each column #167 added to ``pipeline_templates``, with what a row without it means.
@@ -99,10 +107,25 @@ def offered_to_triage(template: Mapping[str, Any] | None) -> bool:
     return bool(_column(template, "offered_to_triage", TEMPLATE_DEFAULTS))
 
 
+def derived_kind(graph: Mapping[str, Any] | None) -> str | None:
+    """The kind a route makes its jobs: ``"analysis"`` when every step but the output is a specialist (one of
+    ``specialist_agents.SPECIALIST_AGENT_TYPES``, each of which examines a repository and reports), else None.
+    Triage is the selector, not a step."""
+    from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_AGENT_TYPES
+
+    nodes = (graph or {}).get("nodes") or []
+    steps = [str(n.get("agent_type") or "") for n in nodes if n.get("agent_type") not in ("triage", "output")]
+    if steps and all(step in SPECIALIST_AGENT_TYPES for step in steps):
+        return "analysis"
+    return None
+
+
 def recorded_kind(template: Mapping[str, Any] | None) -> str | None:
-    """The kind a job of the template is recorded as: the kind it is the default for, else its ``job_kind``."""
+    """The kind a job of the template is recorded as: the kind it is the default for, else its ``job_kind``,
+    else the one its route makes it (:func:`derived_kind`), read from the row's graph as it is now."""
     row = template or {}
-    return str(row.get("default_for_kind") or row.get("job_kind") or "") or None
+    said = str(row.get("default_for_kind") or row.get("job_kind") or "")
+    return said or derived_kind(row.get("graph_definition"))
 
 
 def delivers(template: Mapping[str, Any] | None) -> str:
@@ -113,13 +136,6 @@ def delivers(template: Mapping[str, Any] | None) -> str:
 def leader(template: Mapping[str, Any] | None) -> str | None:
     """The character a job of the template is drawn as before an agent starts, and its outcomes' credit."""
     return str(_column(template, "leader_agent", TEMPLATE_DEFAULTS) or "") or None
-
-
-def coder(template: Mapping[str, Any] | None) -> str:
-    """The character a job's pull request is credited to: its template's leader when that is a coding agent,
-    else the developer. ``embry0.storage.repositories.progression.coder_sql`` is the same rule in SQL."""
-    agent = leader(template)
-    return agent if agent in CODING_AGENT_TYPES else DEFAULT_CODER
 
 
 # --- what an agent's row says ------------------------------------------------------------------------------
@@ -174,7 +190,7 @@ def checked_delivers(value: Any) -> str:
     text = value.strip()
     if len(text) > DELIVERS_MAX:
         raise ValueError(f"delivers must be at most {DELIVERS_MAX} characters; got {len(text)}")
-    if any(ch in text for ch in "\r\n") or any(ord(ch) < 32 for ch in text):
+    if any(ord(ch) < 32 for ch in text):
         raise ValueError("delivers must be one line of text")
     return text
 
@@ -217,6 +233,28 @@ def leader_problem(value: str | None, agent_types: Collection[str] | None) -> st
     return f"leader_agent: no agent named {value!r} runs in jobs"
 
 
+def untemplated_task_problem(agent_type: str, value: str | None) -> str | None:
+    """Why ``agent_type`` cannot take a task that names no template: such a task runs the route triage picks,
+    whose coding step is a coding agent's, so it is only a coding agent's (:data:`CODING_AGENT_TYPES`)."""
+    if value != "" or agent_type in CODING_AGENT_TYPES:
+        return None
+    return (
+        "quest_template: '' (a task that names no template) runs the route triage picks, which only a coding "
+        f"agent ({', '.join(CODING_AGENT_TYPES)}) works on; name a template for {agent_type!r}"
+    )
+
+
+def template_name_problem(name: str | None) -> str | None:
+    """Why a template cannot be named ``name``: it is the name of a pipeline the code defines, which a job's
+    ``pipeline_template`` already means (:data:`WORKFLOW_PIPELINES`)."""
+    if name is None or name.strip() not in WORKFLOW_PIPELINES:
+        return None
+    return (
+        f"name: {name.strip()!r} is a pipeline embry0 defines ({', '.join(WORKFLOW_PIPELINES)}); "
+        "a template cannot take its name"
+    )
+
+
 def quest_template_problem(value: str | None, template_names: Collection[str] | None) -> str | None:
     """Why ``quest_template`` cannot be saved: it names no template. None when it can, or when the templates
     are unknown (no database)."""
@@ -240,8 +278,8 @@ def pipelines_by_name(templates: Iterable[Mapping[str, Any]]) -> dict[str, Mappi
 def builtin_template(name: str | None) -> dict[str, Any] | None:
     """The built-in template ``name`` as the seeder writes it, or a pipeline the code defines; None for others.
 
-    What answers without a database (or when it cannot be read): the rows
-    every deployment has.
+    What answers without a database: the rows every deployment has. Never a
+    stand-in for a read that failed.
     """
     from embry0.storage.seeds.pipeline_templates_builtin import BUILTIN_PIPELINE_TEMPLATES
 

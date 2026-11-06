@@ -151,8 +151,9 @@ The job is recorded as an analysis job, and the agent's report is its
 deliverable. The repository must be registered.
 
 None of that is the templates' names: each template's row says it
-(`offered_to_triage` false, `fixed_route` true, `job_kind` analysis, and
-`leader_agent` its specialist; [api.md](api.md#pipeline-templates)). A
+(`offered_to_triage` false, `fixed_route` true, and `leader_agent` its
+specialist; a route of specialists only is analysis unless its `job_kind`
+says otherwise; [api.md](api.md#pipeline-templates)). A
 template of your own takes the same columns, so a specialist route you write
 behaves like these ten, and a duplicate of one of them keeps them.
 

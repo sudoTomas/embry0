@@ -22,6 +22,7 @@ from embry0.workflows.row_behaviour import (
     checked_leader_agent,
     checked_quest_template,
     checked_station,
+    template_name_problem,
 )
 
 # Slash-separated alnum + . _ - : segments. Colon allowed for ISO timestamps in
@@ -624,6 +625,15 @@ class _TemplateBehaviour(BaseModel):
     def _leader_agent(cls, v: Any) -> str | None:
         return checked_leader_agent(v)
 
+    @field_validator("name", check_fields=False)
+    @classmethod
+    def _name(cls, v: Any) -> Any:
+        # A pipeline the code defines already owns its name (row_behaviour.WORKFLOW_PIPELINES).
+        problem = template_name_problem(v) if isinstance(v, str) else None
+        if problem:
+            raise ValueError(problem)
+        return v
+
 
 class TemplateCreateRequest(_TemplateWriteRequest, _TemplateBehaviour):
     name: str = Field(..., min_length=1, max_length=100)
@@ -663,6 +673,14 @@ class TemplateUpdateRequest(_TemplateWriteRequest, _TemplateBehaviour):
 
 class TemplateDuplicateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        problem = template_name_problem(v)
+        if problem:
+            raise ValueError(problem)
+        return v
 
 
 # --- Integration Config ---

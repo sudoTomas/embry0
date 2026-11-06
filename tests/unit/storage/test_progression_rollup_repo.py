@@ -27,7 +27,6 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.job_delivery import DeliveryWrite, JobDeliveryRepository
 from embry0.storage.repositories.progression import Journal, ProgressEvent, ProgressionRepository
 from embry0.storage.repositories.progression_rollup import ProgressionRollupRepository
-from tests.fixtures.builtin_rows import seed_builtin_templates
 from tests.fixtures.progression_history import _job, _trace
 from tests.unit.services.test_progression_rollup import KEYS, PACKS, Packs, differences
 
@@ -209,7 +208,6 @@ async def test_events_at_one_time_come_in_one_order_whatever_the_bounds(db_with_
     tie must not be broken by whatever order Postgres happens to return.
     """
     db = db_with_migrations
-    await seed_builtin_templates(db)  # the templates whose leaders a job's events credit (#167)
     created = datetime(2026, 3, 1, 10, tzinfo=UTC)
     await _job(db, "j-b", status="pr_merged", pr_url="https://forge/acme/widgets/pull/2", at=created)
     await _job(
@@ -444,7 +442,6 @@ async def test_a_job_keeps_what_it_earned_when_its_pull_request_merges_after_its
 ) -> None:
     """A finished audit or QA run whose pull request merges reads the same from the rollup, a full read and a rebuild."""
     db = db_with_migrations
-    await seed_builtin_templates(db)  # the templates whose leaders a job's events credit (#167)
     for agent in ("developer", "qa", "context-auditor"):
         await db.execute(
             "INSERT INTO agent_definitions (type, description, model) VALUES ($1, 'd', 'm') ON CONFLICT DO NOTHING",

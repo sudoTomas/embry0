@@ -4008,21 +4008,34 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         #
         # - pipeline_templates.fixed_route: a job that names the template skips
         #   triage; offered_to_triage: triage is offered it and keeps its pick;
-        #   job_kind: the kind its jobs are recorded as when it is no kind's
-        #   default; delivers: what its jobs hand back, for their briefs;
-        #   leader_agent: who its jobs are drawn as and credited to;
+        #   job_kind: an operator's override of the kind its jobs are recorded
+        #   as (NULL: the kind it is the default for, else the one its route
+        #   makes it, read from its graph); delivers: what its jobs hand back,
+        #   for their briefs; leader_agent: who its jobs are drawn as;
         # - agent_definitions.station: where the guild hall draws it;
         #   quest_template: the task the guild can give it (NULL none, '' a
-        #   task naming no template, else that template).
+        #   task naming no template, else that template);
+        # - jobs.coding_agent and jobs.leader_agent: the agent that coded a job
+        #   and its template's leader, which plan_route records when it plans
+        #   the job. Progression and the world credit a job from these, so an
+        #   edit of a template row later changes no past credit.
         #
-        # Every row is written what the code said of its name before, so an
-        # upgraded deployment behaves as it did: the ten specialist templates
-        # are fixed, not offered and analysis; the leaders and deliverables of
-        # the maps they came from; a template of the deployment's own whose
-        # every step is a specialist keeps being recorded as analysis. Rows
-        # are matched by name, as the code matched them, built-in or not. The
-        # boot seed writes these columns on a first insert only, so what an
-        # operator changes later stays.
+        # Every row is written what the code said of its name before, matched
+        # by name as the code matched it, built-in or not: the ten specialist
+        # templates are fixed and not offered, and the leaders, deliverables,
+        # stations and guild tasks are the old maps'. Each job is credited as
+        # the old name rules credited it: a slop-cleanup job was coded by the
+        # Slopmaster (NULL reads as the developer), and a job of a template
+        # with a leader in the old map is led by it, so a context-audit job is
+        # led by the context auditor (a job of a pipeline the code defines is
+        # never planned, and records none). job_kind is left NULL: the graph gives what the old rule
+        # did. The boot seed writes the template columns on a first insert
+        # only, so what an operator changes later stays.
+        #
+        # A template may no longer take the name of a pipeline the code
+        # defines (qa, onboard, pr-review): a job's pipeline_template naming
+        # one means that pipeline. A row with such a name is renamed to
+        # <name>-template (with its id's head when that is taken too).
         """
         ALTER TABLE pipeline_templates
             ADD COLUMN IF NOT EXISTS fixed_route BOOLEAN NOT NULL DEFAULT false,
@@ -4033,10 +4046,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE agent_definitions
             ADD COLUMN IF NOT EXISTS station TEXT NOT NULL DEFAULT 'desk',
             ADD COLUMN IF NOT EXISTS quest_template TEXT;
+        ALTER TABLE jobs
+            ADD COLUMN IF NOT EXISTS coding_agent TEXT,
+            ADD COLUMN IF NOT EXISTS leader_agent TEXT;
 
         UPDATE pipeline_templates t
-           SET fixed_route = true, offered_to_triage = false, job_kind = 'analysis', leader_agent = v.agent
+           SET name = t.name || '-template'
+         WHERE t.name IN ('qa', 'onboard', 'pr-review')
+           AND NOT EXISTS (SELECT 1 FROM pipeline_templates o WHERE o.name = t.name || '-template');
+        UPDATE pipeline_templates t
+           SET name = t.name || '-template-' || left(t.id, 8)
+         WHERE t.name IN ('qa', 'onboard', 'pr-review');
+
+        UPDATE pipeline_templates t
+           SET fixed_route = true, offered_to_triage = false
+         WHERE t.name IN ('kintsugi-trace', 'garden', 'interrogate', 'why', 'how', 'blast-radius',
+                          'comment-pass', 'design-audit', 'context-audit', 'map-areas');
+        UPDATE pipeline_templates t SET leader_agent = v.agent
           FROM (VALUES
+            ('analysis-default', 'analysis'),
+            ('research-default', 'research'),
+            ('ops-default', 'ops'),
             ('kintsugi-trace', 'kintsugi'),
             ('garden', 'gardener'),
             ('interrogate', 'interrogator'),
@@ -4046,14 +4076,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ('comment-pass', 'comment-sicko'),
             ('design-audit', 'design-auditor'),
             ('context-audit', 'context-auditor'),
-            ('map-areas', 'area-mapper')
-          ) AS v(name, agent)
-         WHERE t.name = v.name;
-        UPDATE pipeline_templates t SET leader_agent = v.agent
-          FROM (VALUES
-            ('analysis-default', 'analysis'),
-            ('research-default', 'research'),
-            ('ops-default', 'ops'),
+            ('map-areas', 'area-mapper'),
             ('slop-cleanup', 'slopmaster')
           ) AS v(name, agent)
          WHERE t.name = v.name;
@@ -4064,17 +4087,6 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ('map-areas', 'a pull request that maps the repository''s areas')
           ) AS v(name, delivers)
          WHERE t.name = v.name;
-        UPDATE pipeline_templates t SET job_kind = 'analysis'
-         WHERE t.default_for_kind IS NULL AND t.job_kind IS NULL
-           AND jsonb_typeof(t.graph_definition -> 'nodes') = 'array'
-           AND EXISTS (
-               SELECT 1 FROM jsonb_array_elements(t.graph_definition -> 'nodes') n
-                WHERE COALESCE(n ->> 'agent_type', '') NOT IN ('triage', 'output'))
-           AND NOT EXISTS (
-               SELECT 1 FROM jsonb_array_elements(t.graph_definition -> 'nodes') n
-                WHERE COALESCE(n ->> 'agent_type', '') NOT IN (
-                    'triage', 'output', 'kintsugi', 'gardener', 'interrogator', 'why', 'how',
-                    'blast-radius', 'comment-sicko', 'design-auditor', 'context-auditor', 'area-mapper'));
 
         UPDATE agent_definitions a SET station = v.station
           FROM (VALUES
@@ -4111,20 +4123,46 @@ MIGRATIONS: list[tuple[int, str, str]] = [
           ) AS v(type, template)
          WHERE a.type = v.type;
 
+        ALTER TABLE jobs DISABLE TRIGGER trg_jobs_updated_at;
+        UPDATE jobs SET coding_agent = 'slopmaster' WHERE pipeline_template = 'slop-cleanup';
+        UPDATE jobs j SET leader_agent = v.agent
+          FROM (VALUES
+            ('analysis-default', 'analysis'),
+            ('research-default', 'research'),
+            ('ops-default', 'ops'),
+            ('kintsugi-trace', 'kintsugi'),
+            ('garden', 'gardener'),
+            ('interrogate', 'interrogator'),
+            ('why', 'why'),
+            ('how', 'how'),
+            ('blast-radius', 'blast-radius'),
+            ('comment-pass', 'comment-sicko'),
+            ('design-audit', 'design-auditor'),
+            ('context-audit', 'context-auditor'),
+            ('map-areas', 'area-mapper'),
+            ('slop-cleanup', 'slopmaster')
+          ) AS v(name, agent)
+         WHERE j.pipeline_template = v.name;
+        ALTER TABLE jobs ENABLE TRIGGER trg_jobs_updated_at;
+
         COMMENT ON COLUMN pipeline_templates.fixed_route IS
             '#167: a job that names this template skips triage; its route is fixed.';
         COMMENT ON COLUMN pipeline_templates.offered_to_triage IS
             '#167: triage is offered this template and plan_route keeps its pick of it; false runs it only when a job names it.';
         COMMENT ON COLUMN pipeline_templates.job_kind IS
-            '#167: the kind a job of this template is recorded as when it is no kind''s default; NULL leaves triage''s.';
+            '#167: an override of the kind a job of this template is recorded as; NULL is its default kind, else what its route makes it.';
         COMMENT ON COLUMN pipeline_templates.delivers IS
             '#167: what a job of this template hands back, in the person''s words, for its brief; empty says nothing.';
         COMMENT ON COLUMN pipeline_templates.leader_agent IS
-            '#167: the agent a job of this template is drawn as before one starts, and its outcomes are credited to.';
+            '#167: the agent a job of this template is drawn as before one starts; plan_route records it on the job.';
         COMMENT ON COLUMN agent_definitions.station IS
             '#167: where the guild hall draws this agent when it is home (embry0/agents/identity.py STATIONS).';
         COMMENT ON COLUMN agent_definitions.quest_template IS
             '#167: the task the guild can give this agent: NULL none, empty a task naming no template, else that template.';
+        COMMENT ON COLUMN jobs.coding_agent IS
+            '#167: the agent that coded the job, as plan_route recorded it; NULL is the developer. Its pull request is credited to it.';
+        COMMENT ON COLUMN jobs.leader_agent IS
+            '#167: the leader of the job''s template when it was planned; a job led by the context auditor is an audit.';
         """,
     ),
 ]

@@ -38,6 +38,7 @@ from embry0.services.progression_rollup import (
 from embry0.services.quests import Reward, quest_rewards, run_agents
 from embry0.storage.repositories.progression import FINISHED_WELL, Fact, JobRow, Journal, ProgressEvent, RunRow
 from embry0.storage.repositories.progression_rollup import DailyXp, Milestone, RollupHead, StoredRollup
+from tests.fixtures.builtin_rows import planned_credit
 
 RULES = default_rules()
 
@@ -852,7 +853,8 @@ def _journal_with_every_agent(rng: random.Random) -> Journal:
         status = rng.choice(("failed", "pr_merged", "completed"))
         template = rng.choice((None, "qa", "onboard", "context-audit"))
         report = "Stale: 0\nFiles: 3\n" if template == "context-audit" and status in FINISHED_WELL else None
-        jobs.append(JobRow(repo, issue, template, status, created, created + timedelta(hours=1), report))
+        leader = planned_credit(template)["leader_agent"]  # as plan_route records it (#167)
+        jobs.append(JobRow(repo, issue, template, status, created, created + timedelta(hours=1), report, leader=leader))
         for _ in range(rng.randint(0, 3)):
             agent = rng.choice(("review", "pr-reviewer", "qa", "triage", "developer", "ops", "research"))
             runs.append(RunRow(agent, repo, issue, created + timedelta(minutes=rng.uniform(0, 50))))

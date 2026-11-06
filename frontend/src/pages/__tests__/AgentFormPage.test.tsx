@@ -630,11 +630,12 @@ describe("AgentFormPage — the guild (#167)", () => {
     expect(screen.getByLabelText("Station")).toHaveValue("lectern");
     expect(screen.getByLabelText("Task from the guild")).toHaveValue("scout-pass");
 
+    const task = screen.getByLabelText("Task from the guild");
+    expect([...task.querySelectorAll("option")].map((o) => o.value)).not.toContain("__triage__");
     await user.selectOptions(screen.getByLabelText("Station"), "map_table");
-    await user.selectOptions(screen.getByLabelText("Task from the guild"), "__triage__");
     await user.click(screen.getByRole("button", { name: "Save Agent" }));
     expect(mockUpdateMutate).toHaveBeenLastCalledWith(
-      expect.objectContaining({ type: "scout", station: "map_table", quest_template: "" }),
+      expect.objectContaining({ type: "scout", station: "map_table", quest_template: "scout-pass" }),
       expect.anything(),
     );
 
@@ -646,6 +647,21 @@ describe("AgentFormPage — the guild (#167)", () => {
     );
   });
 
+  it("offers a coding agent a task that names no template, and only a coding agent", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({
+      data: { ...EXISTING, station: "anvil", quest_template: null, coding_agent: true },
+      isLoading: false,
+    });
+    renderEdit();
+    await user.selectOptions(screen.getByLabelText("Task from the guild"), "__triage__");
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "developer", quest_template: "" }),
+      expect.anything(),
+    );
+  });
+
   it("starts a new agent at a desk with no task from the guild", async () => {
     const user = userEvent.setup();
     mockUseAgent.mockReturnValue({ data: undefined, isLoading: false });
@@ -653,6 +669,7 @@ describe("AgentFormPage — the guild (#167)", () => {
     expect(screen.getByLabelText("Station")).toHaveValue("desk");
     const task = screen.getByLabelText("Task from the guild");
     expect(task).toHaveValue("__none__");
+    expect([...task.querySelectorAll("option")].map((o) => o.value)).not.toContain("__triage__");
     expect([...task.querySelectorAll("option")].map((o) => o.textContent)).toContain("Runs scout-pass");
     await user.type(screen.getByLabelText("Type (slug)"), "scout");
     await user.click(screen.getByRole("button", { name: "Save Agent" }));

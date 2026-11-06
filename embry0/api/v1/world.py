@@ -151,15 +151,24 @@ async def _regions(request: Request) -> dict[str, Any]:
 
 async def _rows(request: Request, name: str) -> list[dict[str, Any]] | None:
     """Every row of the repository ``name`` on the app (agent definitions, pipeline templates); None when none
-    is wired or it cannot be read, so the built-in rows as seeded answer (#167)."""
+    is wired (no database), so the built-in rows as seeded answer (#167). A read that fails raises: the cache
+    keeps no answer of it."""
     repo = getattr(request.app.state, name, None)
     if repo is None:
         return None
+    return [dict(r) for r in await repo.list_all()]
+
+
+async def _cached_rows(request: Request, cache: WorldCache, name: str, key: str) -> list[dict[str, Any]] | None:
+    """The rows ``_rows`` reads, kept for :data:`~embry0.services.world.CACHE_SECONDS`; when they cannot be read,
+    none, for this read only: a character is then drawn at a desk with no task, a party with no leader of its
+    template, until a read succeeds (never the built-in rows, which an operator may have changed)."""
     try:
-        return [dict(r) for r in await repo.list_all()]
-    except Exception:  # noqa: BLE001 - the hall is drawn from the built-in rows instead
+        rows: list[dict[str, Any]] | None = await cache.get(key, lambda: _rows(request, name))
+        return rows
+    except Exception:  # noqa: BLE001 - the hall is drawn without the rows rather than not at all
         logger.warning("world_rows_unread", repository=name, exc_info=True)
-        return None
+        return []
 
 
 @dataclass(frozen=True)
@@ -173,8 +182,8 @@ class _Rows:
 
 async def _behaviour_rows(request: Request, cache: WorldCache) -> _Rows:
     agents, templates = await asyncio.gather(
-        cache.get("agents", lambda: _rows(request, "agent_defs_repo")),
-        cache.get("templates", lambda: _rows(request, "templates_repo")),
+        _cached_rows(request, cache, "agent_defs_repo", "agents"),
+        _cached_rows(request, cache, "templates_repo", "templates"),
     )
     return _Rows(
         agents={str(a["type"]): a for a in agents} if agents is not None else None,
@@ -417,14 +426,13 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
     repo = _state(request, "world_repo")
     verifications = getattr(request.app.state, "job_verifications_repo", None)
     rules = await _state(request, "progression").rules()
-    runs, approval, links, verification, pr, titles, rows = await asyncio.gather(
+    runs, approval, links, verification, pr, titles = await asyncio.gather(
         repo.quest_runs(job_id),
         repo.merge_approval(job_id),
         repo.lead_links([job_id]),
         verifications.get(job_id) if verifications is not None else asyncio.sleep(0, result=None),
         _pr_stats(request, quest.get("pr_url")),
         _brief_titles(request, [job_id]),
-        _behaviour_rows(request, _cache(request)),
     )
     party: dict[str, dict[str, Any]] = {}
     for run in runs:
@@ -468,7 +476,7 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
         "account_wait": account_wait_view(quest),
         # Slop dungeon: the slopometer's verdict, and a cleanup's diff counts.
         "work_nature": quest.get("work_nature"),
-        "xp": quest_xp(quest, runs, rules=rules, pipelines=rows.pipelines),
+        "xp": quest_xp(quest, runs, rules=rules),
         "cost_usd": round(float(quest.get("total_cost_usd") or 0), 4),
         "seconds": (finished - started).total_seconds()
         if isinstance(started, datetime) and isinstance(finished, datetime)

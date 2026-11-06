@@ -108,7 +108,9 @@ class PipelineTemplatesRepository:
     async def update(self, template_id: str, **fields: Any) -> dict[str, Any]:
         """Update allowed fields on a pipeline template and return the updated record.
 
-        A malformed behaviour column raises ValueError naming its field.
+        A malformed behaviour column raises ValueError naming its field. A
+        rename moves each agent's ``quest_template`` that named the old name
+        to the new one, in the same transaction.
         """
         valid = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
         valid.update(_behaviour(valid))
@@ -121,10 +123,18 @@ class PipelineTemplatesRepository:
                 args.append(value)
                 idx += 1
             sets.append("updated_at = NOW()")
-            await self._db.execute(
-                f"UPDATE pipeline_templates SET {', '.join(sets)} WHERE id = $1",
-                *args,
-            )
+            async with self._db.transaction() as conn:
+                old_name = await conn.fetchval("SELECT name FROM pipeline_templates WHERE id = $1", template_id)
+                await conn.execute(f"UPDATE pipeline_templates SET {', '.join(sets)} WHERE id = $1", *args)
+                if "name" in valid and old_name is not None and valid["name"] != old_name:
+                    # An agent's guild task names its template (#167): it follows a rename, in the same
+                    # transaction, so the task keeps running what the operator chose.
+                    moved = await conn.execute(
+                        "UPDATE agent_definitions SET quest_template = $1, updated_at = NOW() WHERE quest_template = $2",
+                        valid["name"],
+                        old_name,
+                    )
+                    logger.info("agent_quest_templates_renamed", old=old_name, new=valid["name"], result=moved)
             logger.info("pipeline_template_updated", template_id=template_id, fields=list(valid.keys()))
         row = await self.get(template_id)
         return row  # type: ignore[return-value]

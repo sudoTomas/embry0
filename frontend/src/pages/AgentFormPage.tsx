@@ -531,7 +531,10 @@ export function AgentFormPage() {
                 className="mt-1"
               >
                 <option value={NO_TASK}>None: it works only inside another job</option>
-                <option value={TRIAGE_PICKS}>Names no template: triage picks the route</option>
+                {/* A task naming no template runs the route triage picks, a coding agent's (#167). */}
+                {(existing?.coding_agent || form.quest === TRIAGE_PICKS) && (
+                  <option value={TRIAGE_PICKS}>Names no template: triage picks the route</option>
+                )}
                 {[...new Set([...(templates ?? []).map((t) => t.name), ...(questTemplateOf(form.quest) ? [form.quest] : [])])].map(
                   (name) => (
                     <option key={name} value={name}>

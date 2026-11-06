@@ -14,6 +14,7 @@ from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
 from embry0.storage.seeds.pipeline_templates_builtin import BUILTIN_PIPELINE_TEMPLATES
 from embry0.workflows import row_behaviour as rb
 from embry0.workflows._validation import FIXED_NODE_TYPES
+from embry0.workflows.issue_to_pr.route_plan import build_route_plan, coding_agent_of
 from tests.fixtures import name_lists_before_rows as before
 
 # --- the helper on its own ----------------------------------------------------------------------------------
@@ -26,20 +27,28 @@ def test_a_row_without_the_columns_reads_as_a_template_of_the_deployments_own() 
         assert rb.recorded_kind(row) is None, f"{row!r} records no kind"
         assert rb.delivers(row) == "", f"{row!r} says nothing it delivers"
         assert rb.leader(row) is None, f"{row!r} has no leader"
-        assert rb.coder(row) == "developer", f"{row!r}'s pull request is the developer's"
 
 
-def test_the_kind_a_template_records_is_its_default_kind_first() -> None:
+def _graph(*agents: str) -> dict:
+    return {"nodes": [{"node_id": a, "agent_type": a} for a in ("triage", *agents)]}
+
+
+def test_the_kind_a_template_records_is_its_default_kind_then_its_override_then_its_route() -> None:
     assert rb.recorded_kind({"default_for_kind": "ops", "job_kind": "analysis"}) == "ops"
-    assert rb.recorded_kind({"job_kind": "analysis"}) == "analysis"
+    assert rb.recorded_kind({"job_kind": "research", "graph_definition": _graph("why")}) == "research", (
+        "job_kind overrides what the route makes it"
+    )
     assert rb.recorded_kind({"default_for_kind": "", "job_kind": ""}) is None
 
 
-def test_a_pull_request_is_its_leaders_only_when_the_leader_codes() -> None:
-    assert rb.coder({"leader_agent": "slopmaster"}) == "slopmaster"
-    assert rb.coder({"leader_agent": "developer"}) == "developer"
-    assert rb.coder({"leader_agent": "area-mapper"}) == "developer", "a map's pull request is the developer's"
-    assert rb.coder({"leader_agent": "my-own-coder"}) == "developer", "only the developer node's agents code"
+def test_a_route_of_specialists_only_is_analysis_whatever_it_is_named() -> None:
+    """The column is an override; NULL reads the graph as it is now, as specialist_job_kind did (#167)."""
+    assert rb.recorded_kind({"name": "my-pass", "graph_definition": _graph("why", "how", "output")}) == "analysis"
+    assert rb.recorded_kind({"name": "why", "graph_definition": _graph("why", "developer")}) is None, (
+        "a specialist route given a coding step since is no analysis"
+    )
+    assert rb.derived_kind(_graph("output")) is None and rb.derived_kind(None) is None
+    assert rb.derived_kind(_graph("analysis")) is None, "the analysis agent is no specialist"
 
 
 def test_the_coding_agents_are_the_developer_nodes_fixed_types() -> None:
@@ -98,6 +107,22 @@ def test_a_well_formed_value_is_stored_trimmed() -> None:
     assert rb.checked_station("map_table") == "map_table"
 
 
+def test_a_task_naming_no_template_is_a_coding_agents_only() -> None:
+    assert rb.untemplated_task_problem("developer", "") is None
+    assert rb.untemplated_task_problem("slopmaster", "") is None
+    assert rb.untemplated_task_problem("scout", "why") is None and rb.untemplated_task_problem("scout", None) is None
+    problem = rb.untemplated_task_problem("scout", "")
+    assert problem is not None and problem.startswith("quest_template: ") and "'scout'" in problem, problem
+
+
+def test_a_template_cannot_take_a_code_pipelines_name() -> None:
+    for name in rb.WORKFLOW_PIPELINES:
+        problem = rb.template_name_problem(name)
+        assert problem is not None and problem.startswith("name: "), (name, problem)
+    assert rb.template_name_problem(" qa ") is not None
+    assert rb.template_name_problem("qa-pass") is None and rb.template_name_problem(None) is None
+
+
 def test_what_names_nothing_is_said() -> None:
     assert rb.leader_problem("ghost", {"why"}) == "leader_agent: no agent named 'ghost' runs in jobs"
     assert rb.leader_problem("why", {"why"}) is None and rb.leader_problem("ghost", None) is None
@@ -110,6 +135,9 @@ def test_the_pipelines_a_job_can_name_are_the_rows_and_the_codes_own() -> None:
     rows = rb.pipelines_by_name([{"name": "mine", "leader_agent": "why"}])
     assert set(rows) == {"mine", "qa", "pr-review", "onboard"}
     assert rb.leader(rows["mine"]) == "why" and rb.leader(rows["qa"]) == "qa"
+    assert rb.pipelines_by_name([{"name": "qa", "leader_agent": "x"}])["qa"]["leader_agent"] == "x", (
+        "a row would win over the code's pipeline, which is why no template may take its name"
+    )
 
 
 def test_the_codes_pipelines_are_the_workflows_with_no_template_row() -> None:
@@ -134,7 +162,8 @@ def test_each_builtin_template_says_what_its_name_said(name: str) -> None:
     assert rb.offered_to_triage(row) is (name not in before.SPECIALIST_TEMPLATE_NAMES), f"{name}: offered_to_triage"
     assert rb.recorded_kind(row) == old_kind, f"{name}: the kind its jobs are recorded as"
     assert rb.leader(row) == before.LEADER_BY_TEMPLATE.get(name), f"{name}: its leader"
-    assert rb.coder(row) == before.coder(name), f"{name}: whom its pull request is credited to"
+    plan = build_route_plan(seed["graph_definition"])
+    assert coding_agent_of(plan) == before.coder(name), f"{name}: whom plan_route records its pull request is to"
     for kind in (*rb.JOB_KINDS, ""):
         job = {"pipeline_template": name, "job_kind": kind}
         assert job_briefs.what_it_delivers(job) == before.delivers(name, kind), f"{name}/{kind}: what it delivers"
@@ -146,7 +175,7 @@ def test_each_builtin_template_says_what_its_name_said(name: str) -> None:
 def test_each_pipeline_the_code_defines_says_what_its_name_said(name: str) -> None:
     row = rb.builtin_template(name)
     assert rb.leader(row) == before.LEADER_BY_TEMPLATE[name], f"{name}: its leader"
-    assert rb.coder(row) == before.coder(name)
+    assert before.coder(name) == rb.DEFAULT_CODER, "it is never planned: it records no coder, the developer"
     for kind in (*rb.JOB_KINDS, ""):
         job = {"pipeline_template": name, "job_kind": kind}
         assert job_briefs.what_it_delivers(job) == before.delivers(name, kind), f"{name}/{kind}"
@@ -156,7 +185,7 @@ def test_each_pipeline_the_code_defines_says_what_its_name_said(name: str) -> No
 
 
 def test_a_template_of_the_deployments_own_says_what_no_name_said() -> None:
-    assert rb.coder(None) == before.coder("mine") == before.coder(None)
+    assert coding_agent_of([]) == before.coder("mine") == before.coder(None)
     for kind in (*rb.JOB_KINDS, ""):
         job = {"pipeline_template": "mine", "job_kind": kind, "template_delivers": ""}
         assert job_briefs.what_it_delivers(job) == before.delivers("mine", kind), kind

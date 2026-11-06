@@ -142,3 +142,47 @@ def test_forgetting_rows_without_a_cache_does_nothing() -> None:
     state = State()
     state.world_cache = WorldCache()
     forget_rows(state, "templates")
+
+
+class _Failing:
+    def __init__(self) -> None:
+        self.reads = 0
+
+    async def list_all(self) -> list[dict[str, Any]]:
+        self.reads += 1
+        raise ConnectionError("the database is gone")
+
+
+async def test_a_failed_read_draws_no_task_and_is_not_kept(app: Any) -> None:
+    """A read of the rows that fails is no answer: nobody is offered a task from the built-in rows the operator
+    may have changed, and the next read tries again instead of keeping the failure for a minute."""
+    failing = _Failing()
+    app.state.agent_defs_repo = failing
+    characters = {c["agent_type"]: c for c in (await _world(app))["characters"]}
+    assert not any(c["can_quest"] for c in characters.values()), "a failed read offered tasks"
+    assert characters["developer"]["station"] == "desk"
+    await _world(app)
+    assert failing.reads == 2, "a failed read was kept"
+
+
+async def test_a_planned_party_is_drawn_as_the_leader_it_recorded(app: Any) -> None:
+    async def jobs(**_kw: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "job_id": "job-planned",
+                "repo": "acme/web",
+                "task": "Scout it",
+                "status": "running",
+                "pipeline_template": "scout-pass",
+                "leader_agent": "watchman",
+                "created_at": NOW,
+            }
+        ]
+
+    async def no_runs(ids: list[str]) -> dict[str, list[tuple[str, str]]]:
+        return {}
+
+    app.state.world_repo.jobs = jobs
+    app.state.world_repo.agent_runs = no_runs
+    party = (await _world(app))["parties"][0]
+    assert party["leader"] == "watchman", f"the leader it recorded when planned, not the row's now: {party}"

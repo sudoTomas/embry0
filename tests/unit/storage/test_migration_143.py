@@ -17,6 +17,7 @@ from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import MIGRATIONS, run_migrations
 from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 from embry0.storage.seeds.pipeline_templates_builtin import BUILTIN_PIPELINE_TEMPLATES
+from embry0.workflows.row_behaviour import recorded_kind
 from tests.fixtures import name_lists_before_rows as before
 
 #: This migration's number.
@@ -24,6 +25,7 @@ VERSION = 143
 
 TEMPLATE_COLUMNS = ("fixed_route", "offered_to_triage", "job_kind", "delivers", "leader_agent")
 AGENT_COLUMNS = ("station", "quest_template")
+JOB_COLUMNS = ("coding_agent", "leader_agent")
 
 
 def test_the_behaviour_rows_migration_is_the_last_entry() -> None:
@@ -51,7 +53,9 @@ async def _undo(db: DatabasePool) -> None:
         "agent_definitions lacks station or quest_template after migrating"
     )
     await db.execute("ALTER TABLE pipeline_templates " + ", ".join(f"DROP COLUMN {c}" for c in TEMPLATE_COLUMNS))
+    assert await _columns(db, "jobs", JOB_COLUMNS) == sorted(JOB_COLUMNS), "jobs lacks the recorded credit"
     await db.execute("ALTER TABLE agent_definitions DROP COLUMN station, DROP COLUMN quest_template")
+    await db.execute("ALTER TABLE jobs DROP COLUMN coding_agent, DROP COLUMN leader_agent")
     await db.execute("DELETE FROM embry0_migrations WHERE version = $1", VERSION)
 
 
@@ -87,13 +91,13 @@ async def _agents(db: DatabasePool) -> dict[str, dict[str, Any]]:
     return {str(r["type"]): {"station": r["station"], "quest_template": r["quest_template"]} for r in rows}
 
 
-def _what_the_name_said(name: str, graph: dict[str, Any], kind: str | None) -> dict[str, Any]:
+def _what_the_name_said(name: str) -> dict[str, Any]:
     specialist = name in before.SPECIALIST_TEMPLATE_NAMES
     return {
         "fixed_route": specialist,
         "offered_to_triage": not specialist,
-        # A kind default records its own kind; job_kind is what a template that is none records.
-        "job_kind": None if kind else before.recorded_kind(name, graph, None),
+        # No override: the kind is read from the graph, as the old rule read it (row_behaviour.recorded_kind).
+        "job_kind": None,
         "delivers": before.TEMPLATE_DELIVERS.get(name, ""),
         "leader_agent": before.LEADER_BY_TEMPLATE.get(name),
     }
@@ -115,22 +119,27 @@ async def test_an_upgrade_writes_each_template_what_its_name_said(db_with_migrat
     await run_migrations(db)
 
     after = await _templates(db)
-    expected = {
-        name: _what_the_name_said(name, seed["graph_definition"], seed.get("default_for_kind"))
-        for name, seed in BUILTIN_PIPELINE_TEMPLATES.items()
-    }
-    for name, graph, kind in (
-        ("my-why", BUILTIN_PIPELINE_TEMPLATES["why"]["graph_definition"], None),
-        ("two-specialists", _route("why", "how", "output"), None),
-        ("my-fix", _route("developer", "reviewer"), None),
-        ("specialist-then-code", _route("kintsugi", "developer"), None),
-        ("empty", {"nodes": [], "edges": []}, None),
-    ):
-        expected[name] = _what_the_name_said(name, graph, kind)
+    graphs = {name: seed["graph_definition"] for name, seed in BUILTIN_PIPELINE_TEMPLATES.items()}
+    graphs.update(
+        {
+            "my-why": BUILTIN_PIPELINE_TEMPLATES["why"]["graph_definition"],
+            "two-specialists": _route("why", "how", "output"),
+            "my-fix": _route("developer", "reviewer"),
+            "specialist-then-code": _route("kintsugi", "developer"),
+            "empty": {"nodes": [], "edges": []},
+        }
+    )
+    expected = {name: _what_the_name_said(name) for name in graphs}
     differ = {name: (after.get(name), want) for name, want in expected.items() if after.get(name) != want}
     assert not differ, f"rows that say other than their names did (got, want): {differ}"
-    assert expected["two-specialists"]["job_kind"] == "analysis", "a route of specialists only stays analysis"
     assert expected["my-why"]["fixed_route"] is False, "a copy of a specialist route was triaged before, by name"
+    full = {r["name"]: dict(r) for r in await db.fetch("SELECT * FROM pipeline_templates")}
+    kinds = {
+        name: (recorded_kind(full[name]), before.recorded_kind(name, graph, full[name]["default_for_kind"]))
+        for name, graph in graphs.items()
+    }
+    assert all(got == want for got, want in kinds.values()), f"each row records the kind its name did: {kinds}"
+    assert kinds["two-specialists"][0] == "analysis", "a route of specialists only stays analysis"
 
 
 @pytest.mark.requires_postgres
@@ -177,7 +186,7 @@ async def test_the_boot_seed_keeps_what_an_operator_changed(db_with_migrations: 
     assert seeded["why"] == {
         "fixed_route": True,
         "offered_to_triage": False,
-        "job_kind": "analysis",
+        "job_kind": None,
         "delivers": "",
         "leader_agent": "why",
     }, seeded["why"]
@@ -203,3 +212,52 @@ async def test_the_boot_seed_keeps_what_an_operator_changed(db_with_migrations: 
     graph = await db.fetchval("SELECT graph_definition FROM pipeline_templates WHERE name = 'why'")
     assert graph == BUILTIN_PIPELINE_TEMPLATES["why"]["graph_definition"], "the seed still restores the graph"
     assert after["how"] == seeded["how"], "a built-in inserted again takes the seed's values"
+
+
+@pytest.mark.requires_postgres
+async def test_an_upgrade_credits_each_job_as_its_name_did(db_with_migrations: DatabasePool) -> None:
+    """A job's pull request, cleanup and audit are credited from what it recorded (#167); a job planned before
+    the migration gets what the old name rules gave it."""
+    db = db_with_migrations
+    await _undo(db)
+    templates = (*before.LEADER_BY_TEMPLATE, "quick-fix", "full-magnum-opus", "pr-followup", "mine", None)
+    for n, template in enumerate(templates):
+        await db.execute(
+            "INSERT INTO jobs (job_id, repo, task, status, pipeline_template, budget_overrun_usd) "
+            "VALUES ($1, 'acme/widgets', 't', 'completed', $2, 0)",
+            f"job-{n}",
+            template,
+        )
+    stamped = await db.fetchval("SELECT updated_at FROM jobs WHERE job_id = 'job-0'")
+    await run_migrations(db)
+
+    rows = {
+        r["pipeline_template"]: (r["coding_agent"], r["leader_agent"])
+        for r in await db.fetch("SELECT pipeline_template, coding_agent, leader_agent FROM jobs")
+    }
+    for template in templates:
+        coder, lead = rows[template]
+        assert (coder or "developer") == before.coder(template), f"{template}: coded by {coder}"
+        led = before.LEADER_BY_TEMPLATE.get(template or "")
+        want = None if template in ("qa", "pr-review", "onboard") else led
+        assert lead == want, f"{template}: led by {lead}, want {want} (a code pipeline is never planned)"
+    assert rows["context-audit"][1] == "context-auditor", "a context audit stays an audit"
+    assert rows["slop-cleanup"][0] == "slopmaster", "a slop cleanup stays the Slopmaster's"
+    assert await db.fetchval("SELECT updated_at FROM jobs WHERE job_id = 'job-0'") == stamped, (
+        "the backfill must not move a job's update time: the reaper reads it"
+    )
+
+
+@pytest.mark.requires_postgres
+async def test_a_template_named_like_a_code_pipeline_is_renamed(db_with_migrations: DatabasePool) -> None:
+    """A job's pipeline_template naming qa, onboard or pr-review means that pipeline: no template may hold the
+    name, so the migration renames one that did."""
+    db = db_with_migrations
+    await _undo(db)
+    for name in ("qa", "pr-review", "onboard-template", "onboard"):
+        await _old_template(db, name, _route("developer"), builtin=False)
+    await run_migrations(db)
+    names = sorted(r["name"] for r in await db.fetch("SELECT name FROM pipeline_templates"))
+    assert "qa" not in names and "pr-review" not in names and "onboard" not in names, names
+    assert {"qa-template", "pr-review-template", "onboard-template"} <= set(names), names
+    assert any(n.startswith("onboard-template-") for n in names), f"a taken name gets the id's head: {names}"

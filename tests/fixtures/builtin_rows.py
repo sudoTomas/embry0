@@ -1,19 +1,26 @@
-"""The built-in rows a deployment always has, for a test whose database holds only what the migrations wrote.
+"""What a job of a built-in template records when plan_route plans it (#167), for tests that write jobs directly.
 
-The boot seeder upserts the built-in pipeline templates before anything
-reads them (``embry0.storage.seeds.pipeline_templates_builtin``); the
-migrations write none. What a job's template row says (#167, its
-``leader_agent`` above all) is what progression credits its work to, so a
-test of that reads the rows the seeder writes.
+Progression and the world credit a job from what it recorded when it was
+planned: ``jobs.coding_agent`` (the agent its route's coding step runs as)
+and ``jobs.leader_agent`` (its template's leader). A test that inserts a
+job of a built-in template, or builds its journal row, gives it these, as
+a job planned since migration 143 has them (and an older one was given by
+the migration).
 """
 
 from __future__ import annotations
 
-from embry0.storage.database import DatabasePool
-from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
-from embry0.storage.seeds.pipeline_templates_builtin import seed_builtin_pipeline_templates
+from typing import Any
+
+from embry0.workflows.issue_to_pr.route_plan import build_route_plan, coding_agent_of
+from embry0.workflows.row_behaviour import builtin_template, leader
 
 
-async def seed_builtin_templates(db: DatabasePool) -> None:
-    """Write the built-in pipeline templates as the boot seeder does."""
-    await seed_builtin_pipeline_templates(PipelineTemplatesRepository(db))
+def planned_credit(template: str | None) -> dict[str, Any]:
+    """``coding_agent`` and ``leader_agent`` as plan_route records them for a job of the built-in ``template``
+    (a pipeline the code defines records none of its own: plan_route never runs for it)."""
+    row = builtin_template(template)
+    graph = (row or {}).get("graph_definition")
+    if not graph:
+        return {"coding_agent": None, "leader_agent": None}
+    return {"coding_agent": coding_agent_of(build_route_plan(graph)), "leader_agent": leader(row)}
