@@ -29,8 +29,9 @@ _SET_LINE = re.compile(r"^(  )(?!#)(.)")
 
 
 def _comment_out(text: str) -> str:
-    """``text`` with every indented line that is not a comment written as one, as the example writes keys."""
-    return "\n".join(_SET_LINE.sub(r"\1# \2", line) for line in text.split("\n"))
+    """``text`` with every indented line that is not a comment written as one, as the example writes keys: a
+    blank line of a text's block, which is the indent alone, as the bare mark."""
+    return "\n".join("  #" if line == "  " else _SET_LINE.sub(r"\1# \2", line) for line in text.split("\n"))
 
 
 def test_the_committed_example_is_what_the_sections_render() -> None:

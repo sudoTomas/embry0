@@ -201,7 +201,9 @@ def case_proposal(row: Mapping[str, Any]) -> Proposal:
     extra: dict[str, Any] = {"severity": severity, "occurrences": seen, "signature": row.get("signature")}
     # Slop dungeon (spec 2026-10-25): a finding the watcher judged slop reads
     # as a cleanup, so the owner is not asked to "fix" what is shape, not a bug.
-    verdict = parse_work_nature(row.get("work_nature"))
+    # The verdict was parsed with its stack's slop_policy.kinds when it was
+    # stored: every kind it kept is read back (#169).
+    verdict = parse_work_nature(row.get("work_nature"), kinds=None)
     if verdict is not None:
         extra.update(nature=verdict["nature"], slop_score=verdict["slop_score"], slop_kinds=verdict["kinds"])
     if is_slop(verdict):

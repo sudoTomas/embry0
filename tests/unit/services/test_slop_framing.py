@@ -75,11 +75,15 @@ def test_a_merged_cleanup_is_priced_by_its_net_lines_removed() -> None:
 
 def test_triage_is_asked_for_the_verdict_and_a_bad_one_never_fails_it() -> None:
     from embry0.settings.sections.done_when import DONE_WHEN
+    from embry0.settings.sections.slop_meter import SLOP_METER
+    from embry0.settings.sections.slop_policy import SLOP_POLICY
 
     prompt = build_triage_system_prompt(
         default_model="m",
         tier_models={"model_heavy": "h", "model_medium": "m", "model_light": "l"},
         ticket_sections=DONE_WHEN.defaults().ticket_sections,
+        slop_policy=SLOP_POLICY.defaults(),
+        level_names=SLOP_METER.defaults().level_names,
     )
     assert "## Bug or slop" in prompt and "symptom_patch" in prompt and "<<SLOP_GUIDE>>" not in prompt
     decision = parse_triage_response(json.dumps({"action": "proceed", "confidence": 0.8, "work_nature": SLOP}))

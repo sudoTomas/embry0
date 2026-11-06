@@ -65,6 +65,10 @@ NAME_MAX: Final = 100
 CODING_AGENT_TYPES: Final[tuple[str, ...]] = ("developer", "slopmaster")
 #: The coding agent of a route that names no other, and of a job that recorded none.
 DEFAULT_CODER: Final = "developer"
+#: The agent types of a route's review step and of its QA step, the graph's own vocabulary too: a job pinned to
+#: the full pipeline (#306) keeps both whatever route a policy sends it to (:func:`full_pipeline_problem`).
+REVIEW_AGENT_TYPES: Final[tuple[str, ...]] = ("reviewer", "review")
+QA_AGENT_TYPE: Final = "qa"
 
 #: Each column #167 added to ``pipeline_templates``, with what a row without it means.
 TEMPLATE_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType(
@@ -136,6 +140,47 @@ def delivers(template: Mapping[str, Any] | None) -> str:
 def leader(template: Mapping[str, Any] | None) -> str | None:
     """The character a job of the template is drawn as before an agent starts, and its outcomes' credit."""
     return str(_column(template, "leader_agent", TEMPLATE_DEFAULTS) or "") or None
+
+
+def code_job_problem(template: Mapping[str, Any]) -> str | None:
+    """Why a code job cannot be sent to ``template`` by a policy (``slop_policy.route_template``); None when it can.
+
+    The row says how a job of the template is recorded (:func:`recorded_kind`):
+    one recorded as another kind, the research default or a route of
+    specialists, would not run a code job as one. And its route needs a
+    coding step (:data:`CODING_AGENT_TYPES`), or the job would change
+    nothing. The words name the template, never a value of another key.
+    """
+    name = str(template.get("name") or "")
+    kind = recorded_kind(template)
+    if kind is not None and kind != "code":
+        return f"{name!r} records its jobs as {kind} jobs, so a code job sent to it would not run as one"
+    nodes = (template.get("graph_definition") or {}).get("nodes") or []
+    if not any(str(node.get("agent_type") or "") in CODING_AGENT_TYPES for node in nodes):
+        return (
+            f"{name!r} has no coding step ({', '.join(CODING_AGENT_TYPES)}), so a code job sent to it would change "
+            "nothing"
+        )
+    return None
+
+
+def full_pipeline_problem(template: Mapping[str, Any]) -> str | None:
+    """Why a job pinned to the full pipeline cannot be sent to ``template`` by a policy; None when it can.
+
+    A job working a watcher-origin case keeps review and QA (#306,
+    ``pin_full_pipeline``): a route a policy sends it to must have a review
+    step (:data:`REVIEW_AGENT_TYPES`) and a QA step (:data:`QA_AGENT_TYPE`).
+    """
+    name = str(template.get("name") or "")
+    steps = {str(node.get("agent_type") or "") for node in (template.get("graph_definition") or {}).get("nodes") or []}
+    missing = [
+        step
+        for step, present in (("review", bool(steps & set(REVIEW_AGENT_TYPES))), ("QA", QA_AGENT_TYPE in steps))
+        if not present
+    ]
+    if not missing:
+        return None
+    return f"{name!r} has no {' or '.join(missing)} step, and a job pinned to the full pipeline keeps review and QA"
 
 
 # --- what an agent's row says ------------------------------------------------------------------------------

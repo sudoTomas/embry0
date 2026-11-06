@@ -23,7 +23,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from embry0.execution import events, sandbox_files
-from embry0.services.slop import SLOP_TEMPLATE, is_slop, parse_work_nature
+from embry0.services.slop import is_slop, parse_work_nature
 from embry0.workflows._validation import validate_graph_definition
 from embry0.workflows.issue_to_pr.route_plan import (
     GENERIC_AGENT_TYPES,
@@ -32,7 +32,14 @@ from embry0.workflows.issue_to_pr.route_plan import (
     coding_agent_of,
     triage_template_config,
 )
-from embry0.workflows.row_behaviour import builtin_template, leader, offered_to_triage, recorded_kind
+from embry0.workflows.row_behaviour import (
+    builtin_template,
+    code_job_problem,
+    full_pipeline_problem,
+    leader,
+    offered_to_triage,
+    recorded_kind,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -346,13 +353,19 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
 
     1. triage's explicit ``pipeline_template`` name (legacy values skipped,
        and a template triage is not offered, which runs only when the job
-       names it: ``offered_to_triage``, #167);
+       names it: ``offered_to_triage``, #167), or, for a code job judged
+       slop, the template its repository's ``slop_policy`` routes it to
+       (#169) when the policy routes and the verdict's score reaches its
+       threshold;
     2. the template whose ``default_for_kind`` matches the job_kind;
     3. the legacy synthesized plan (bit-for-bit today's dev→review→qa chain).
 
     An invalid template falls through to the next tier — except an
     *explicitly requested* invalid template with no kind default, which
-    fails loudly (silently-wrong routing would be worse).
+    fails loudly (silently-wrong routing would be worse). The slop route is
+    a policy's, not a person's: one that is gone, invalid, no longer takes
+    a code job, or lacks the review and QA steps a pinned job keeps, is
+    logged and falls through, and never fails the job.
 
     #306: a job working a watcher-origin case (``pin_full_pipeline``) always
     runs the full code pipeline — the ``code`` kind default (review and QA),
@@ -400,18 +413,43 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
         requested, explicit = "", False
 
     # Slop dungeon (spec 2026-10-25): a code job triage judged slop, not a
-    # bug, runs the Slopmaster's cleanup. It keeps review and QA, so a
-    # watcher-origin job may take it too; a template a person named wins
-    # below. A missing slop-cleanup template falls to the kind default.
-    work_nature = parse_work_nature(decision.get("work_nature"))
+    # bug, runs the cleanup its repository's slop_policy names (#169), as the
+    # job read it when it started: unless the policy is off for it, or the
+    # verdict's score is below its threshold. A job pinned to the full
+    # pipeline (a watcher-origin case, #306) takes it only when its route has
+    # review and QA steps. A template a person named wins below. A route
+    # template that is gone, no longer takes a code job, or lacks the steps a
+    # pinned job keeps, is logged and the job takes the route its kind
+    # defaults to.
+    from embry0.services.job_settings import job_section
+    from embry0.settings.sections.slop_policy import SLOP_POLICY
+
+    policy = job_section(state, SLOP_POLICY)
+    work_nature = parse_work_nature(decision.get("work_nature"), kinds=policy.kinds)
+    slop_route: str | None = None
     if is_slop(work_nature) and job_kind == "code":
-        logger.info(
-            "plan_route_slop_cleanup",
-            job_id=state.get("job_id"),
-            triage_template=requested or None,
-            slop_score=(work_nature or {}).get("slop_score"),
-        )
-        requested, explicit = SLOP_TEMPLATE, True
+        score = int((work_nature or {}).get("slop_score") or 0)
+        if not policy.enabled or score < policy.min_score_to_route:
+            logger.info(
+                "plan_route_slop_not_routed",
+                job_id=state.get("job_id"),
+                reason=(
+                    "slop_policy.enabled is false"
+                    if not policy.enabled
+                    else f"its slop score is below slop_policy.min_score_to_route ({policy.min_score_to_route})"
+                ),
+                slop_score=score,
+            )
+        else:
+            logger.info(
+                "plan_route_slop_cleanup",
+                job_id=state.get("job_id"),
+                triage_template=requested or None,
+                slop_score=score,
+                template=policy.route_template,
+            )
+            slop_route = policy.route_template
+            requested, explicit = slop_route, True
 
     plan: list[dict[str, Any]] | None = None
     resolved_name: str | None = None
@@ -425,19 +463,28 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
         if explicit_user:
             candidates.append(("explicit", await _find_template(templates_repo, name=requested_user)))
         if explicit and requested != requested_user:
-            candidates.append(("explicit", await _find_template(templates_repo, name=requested)))
+            tier = "slop" if requested == slop_route else "explicit"
+            candidates.append((tier, await _find_template(templates_repo, name=requested)))
         candidates.append(("kind_default", await _find_template(templates_repo, kind=job_kind)))
 
         agent_types = await _known_agent_types(config)
         for tier, row in candidates:
             if row is None:
-                if tier == "explicit":
+                if tier in ("explicit", "slop"):
                     logger.warning(
                         "plan_route_template_not_found",
                         requested=requested_user or requested,
                         job_kind=job_kind,
+                        **({"slop_route": True} if tier == "slop" else {}),
                     )
                 continue
+            if tier == "slop":
+                unfit = code_job_problem(row)
+                if unfit is None and state.get("pin_full_pipeline"):
+                    unfit = full_pipeline_problem(row)
+                if unfit is not None:
+                    logger.warning("plan_route_slop_template_unfit", template=row["name"], problem=unfit)
+                    continue
             graph = row.get("graph_definition") or {}
             problems = validate_graph_definition(row["name"], graph, agent_types)
             if problems:
@@ -482,7 +529,6 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     done_when = None
     if effective_kind == "code":
         from embry0.services.done_when import person_list, resolve
-        from embry0.services.job_settings import job_section
         from embry0.settings.sections.done_when import DONE_WHEN
 
         done_when = await person_list(jobs_repo, str(state.get("job_id") or ""), state.get("done_when"))

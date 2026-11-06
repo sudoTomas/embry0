@@ -487,11 +487,12 @@ A scanner's map of a codebase or an organization, marked and sent to agents ([ma
 
 ## Pipeline templates
 
-The saved pipeline graphs the editor and the Pipelines page work on, under `/api/v1/pipelines/templates`: list, read, create, update, delete and duplicate. Every authenticated principal may read and write them; the two writes with answers worth knowing:
+The saved pipeline graphs the editor and the Pipelines page work on, under `/api/v1/pipelines/templates`: list, read, create, update, delete and duplicate. Every authenticated principal may read and write them; the writes with answers worth knowing:
 
 | Endpoint | Answer |
 |---|---|
-| `PUT /api/v1/pipelines/templates/{id}` | Updates the fields sent. `default_for_kind` set to a kind makes the template that kind's default route; an explicit `null` clears it. 409 when another template already holds the kind (clear it first), or when the new name is taken |
+| `PUT /api/v1/pipelines/templates/{id}` | Updates the fields sent. `default_for_kind` set to a kind makes the template that kind's default route; an explicit `null` clears it. 409 when another template already holds the kind (clear it first), or when the new name is taken. 409 too for a rename, or a change that makes it stop taking a code job, of a template a settings document's `slop_policy.route_template` routes slop jobs to ([slop routing](slop-routing.md#the-route-template)); the answer names those documents |
+| `DELETE /api/v1/pipelines/templates/{id}` | Deletes the template. 409, naming the documents, while a settings document's `slop_policy.route_template` routes slop jobs to it, `slop-cleanup` by default ([slop routing](slop-routing.md#the-route-template)) |
 | `POST /api/v1/pipelines/templates/{id}/duplicate` | `{"name": "..."}` copies the graph, the sandbox profile and what the row says of its jobs (below) under the new name and answers 201; the copy is no kind's default. 409 when a template of that name already exists |
 
 **What a template's row says of its jobs.** Five columns (#167) decide how embry0 treats a job of the template, where it once went by the built-in templates' names. `POST` accepts them, `PUT` changes the ones sent, and every read, the list included, returns them; on the Pipelines page a template's menu edits them under *Behaviour…*:

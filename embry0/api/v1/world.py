@@ -111,6 +111,23 @@ async def _leads(request: Request) -> list[dict[str, Any]]:
         return []
 
 
+async def _dungeon_levels(request: Request) -> Callable[[str], int | None]:
+    """``repo -> level``: the Slop-O-Meter level from which each repository's areas have a dungeon on their meter
+    alone, its ``slop_policy.dungeon_min_level`` (#169); the section's default when the settings cannot be read."""
+    from embry0.settings.sections.slop_policy import SLOP_POLICY
+
+    default = SLOP_POLICY.defaults().dungeon_min_level
+    store = getattr(request.app.state, "settings", None)
+    if store is None:
+        return lambda _repo: default
+    try:
+        scoped = (await store.snapshot()).scoped(SLOP_POLICY)
+    except Exception:  # noqa: BLE001 - a dungeon is still drawn at the default level
+        logger.warning("world_slop_policy_unread", exc_info=True)
+        return lambda _repo: default
+    return lambda repo: scoped.repo(repo).dungeon_min_level
+
+
 async def _meters(request: Request) -> list[dict[str, Any]]:
     """Every Slop-O-Meter score, by repository and area (none without the store)."""
     store = getattr(request.app.state, "slop_meter_repo", None)
@@ -266,7 +283,7 @@ async def read_world(request: Request) -> dict[str, Any]:
         "quests": quests,
         # Slop dungeon (spec 2026-10-25): each repository's and area's open
         # slop, its score, and the cleanups merged lately.
-        "dungeons": dungeons(quests, cleaned, meter_rows),
+        "dungeons": dungeons(quests, cleaned, meter_rows, min_level=await _dungeon_levels(request)),
         "inbox": [
             {
                 "job_id": r["job_id"],

@@ -24,7 +24,9 @@ for a layer.
 **Writing.** Every write locks its document, checks the whole document
 (:func:`embry0.settings.document.check`) with the store's write context
 (:mod:`embry0.settings.write_context`: what the deployment offers, such as
-its model catalogue), a layer together with the values
+its model catalogue and, for a write that may change ``slop_policy``, its
+pipeline templates, read on the write's own connection), a layer together
+with the values
 it inherits, read under the locks of the documents it inherits from so a
 concurrent write to them commits first, stores the text and its values,
 and appends a
@@ -58,6 +60,7 @@ from embry0.settings.document import (
     changes,
     check,
     dump_yaml,
+    effective_models,
     load_yaml,
     patch_section,
     read_sections,
@@ -66,7 +69,7 @@ from embry0.settings.document import (
 from embry0.settings.layers import LayerRefusal, Resolved, resolve, settable_values
 from embry0.settings.registry import DOCUMENT_KEYS, MANAGED_BY_KEY, SCHEMA_VERSION, Catalog, Section, SectionModel
 from embry0.settings.scope import DEPLOYMENT, Scope, ScopeError, current, organization_of, stored_rows
-from embry0.settings.write_context import WriteContext, deployment_context
+from embry0.settings.write_context import WriteContext, WriteReads, deployment_context, deployment_reads
 from embry0.storage import repo_renames
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.config_revisions import ConfigRevisionsRepository, RevisionSource
@@ -479,10 +482,21 @@ class Preview:
     managed_by: str | None = None
 
 
-#: What a write makes of the document it replaces: from the stored text, the stored values and what the
-#: document inherits (None for the deployment's), the text to store and its checked values. Raises
-#: :class:`DocumentInvalid` listing every problem.
-Proposal = Callable[[str, Mapping[str, Any], Mapping[str, Mapping[str, Any]] | None], tuple[str, Checked]]
+#: What a write makes of the document it replaces: from the stored text, the stored values, what the
+#: document inherits (None for the deployment's) and the write's context, the text to store and its checked
+#: values. Raises :class:`DocumentInvalid` listing every problem.
+Proposal = Callable[
+    [str, Mapping[str, Any], Mapping[str, Mapping[str, Any]] | None, Mapping[str, Any]], tuple[str, Checked]
+]
+#: The sections a write may change, from the stored document's values: what its context reads from the database
+#: for (:data:`embry0.settings.write_context.WriteReads`).
+Touches = Callable[[Mapping[str, Any]], frozenset[str]]
+
+
+def changed_sections(proposed: Mapping[str, Any], stored: Mapping[str, Any]) -> frozenset[str]:
+    """The sections ``proposed`` holds otherwise than ``stored`` does: those a write of it may change."""
+    names = (set(proposed) | set(stored)) - DOCUMENT_KEYS
+    return frozenset(str(name) for name in names if proposed.get(name) != stored.get(name))
 
 
 def _matches(expected: int | Collection[int] | None, generation: int) -> bool:
@@ -528,6 +542,7 @@ class SettingsStore:
         catalog: Catalog | None = None,
         *,
         write_context: WriteContext | None = None,
+        write_reads: WriteReads | None = None,
         started: datetime | None = None,
     ) -> None:
         if catalog is None:
@@ -541,6 +556,8 @@ class SettingsStore:
         self.started = started
         #: Built for each write: what the deployment offers now (the model catalogue moves while it runs).
         self._write_context: WriteContext = write_context if write_context is not None else deployment_context
+        #: Read on each write's connection: what the deployment's database holds (its pipeline templates).
+        self._write_reads: WriteReads = write_reads if write_reads is not None else deployment_reads
         self._documents = SettingsDocumentsRepository(db)
         self._revisions = ConfigRevisionsRepository(db)
         self._db = db
@@ -605,6 +622,11 @@ class SettingsStore:
         return await self._documents.layers()
 
     # ---- writing ------------------------------------------------------------
+
+    async def _context(self, conn: Any, sections: frozenset[str]) -> dict[str, Any]:
+        """The context a write that may change ``sections`` is checked with: what the deployment offers now, the
+        database's part read on ``conn`` (the write's connection inside :meth:`edit`, the pool for a dry run)."""
+        return {**self._write_context(), **(await self._write_reads(conn, sections))}
 
     @asynccontextmanager
     async def edit(
@@ -722,6 +744,7 @@ class SettingsStore:
         scope = scope or Scope.deployment()
         return await self._write(
             self._whole(text, values, scope),
+            lambda stored: changed_sections(values, stored),
             actor=actor,
             source=source,
             reason=reason,
@@ -751,6 +774,7 @@ class SettingsStore:
         scope = scope or Scope.deployment()
         return await self._write(
             self._keys(section, keys, scope),
+            lambda _stored: frozenset({section}),
             actor=actor,
             source=source,
             reason=reason,
@@ -762,7 +786,10 @@ class SettingsStore:
         """A write of the whole document: ``values``, kept as ``text`` (or the YAML a JSON object dumps to)."""
 
         def propose(
-            stored_text: str, stored: Mapping[str, Any], inherited: Mapping[str, Mapping[str, Any]] | None
+            stored_text: str,
+            stored: Mapping[str, Any],
+            inherited: Mapping[str, Mapping[str, Any]] | None,
+            context: Mapping[str, Any],
         ) -> tuple[str, Checked]:
             checked = check(
                 self._catalog,
@@ -771,7 +798,7 @@ class SettingsStore:
                 stored_text=stored_text,
                 layer=scope.layer,
                 inherited=inherited,
-                context=self._write_context(),
+                context=context,
             )
             return (text if text is not None else dump_yaml(values)), checked
 
@@ -781,7 +808,10 @@ class SettingsStore:
         """A write of some keys of one section, into the stored text."""
 
         def propose(
-            stored_text: str, stored: Mapping[str, Any], inherited: Mapping[str, Mapping[str, Any]] | None
+            stored_text: str,
+            stored: Mapping[str, Any],
+            inherited: Mapping[str, Mapping[str, Any]] | None,
+            context: Mapping[str, Any],
         ) -> tuple[str, Checked]:
             return patch_section(
                 self._catalog,
@@ -791,7 +821,7 @@ class SettingsStore:
                 stored_text=stored_text,
                 layer=scope.layer,
                 inherited=inherited,
-                context=self._write_context(),
+                context=context,
             )
 
         return propose
@@ -799,6 +829,7 @@ class SettingsStore:
     async def _write(
         self,
         propose: Proposal,
+        touches: Touches,
         *,
         actor: str,
         source: RevisionSource,
@@ -812,7 +843,8 @@ class SettingsStore:
                 raise GenerationMismatch(draft.generation)
             before = draft.data
             inherited = await self._inherited_now(draft.conn, scope)
-            new_text, checked = propose(draft.yaml_text, draft.data, inherited)
+            context = await self._context(draft.conn, touches(draft.data))
+            new_text, checked = propose(draft.yaml_text, draft.data, inherited, context)
             if new_text != draft.yaml_text:
                 draft.replace(new_text, checked.data, checked.schema_version)
         refused: tuple[list[dict[str, Any]], int] = ([], 0)
@@ -839,7 +871,12 @@ class SettingsStore:
     ) -> Preview:
         """What :meth:`save` would change, storing nothing. Raises as :meth:`save` does, ``If-Match`` included."""
         scope = scope or Scope.deployment()
-        return await self._dry_run(self._whole(text, values, scope), if_generation=if_generation, scope=scope)
+        return await self._dry_run(
+            self._whole(text, values, scope),
+            lambda stored: changed_sections(values, stored),
+            if_generation=if_generation,
+            scope=scope,
+        )
 
     async def preview_keys(
         self,
@@ -851,10 +888,15 @@ class SettingsStore:
     ) -> Preview:
         """What :meth:`set_keys` would change, storing nothing. Raises as it does, ``If-Match`` included."""
         scope = scope or Scope.deployment()
-        return await self._dry_run(self._keys(section, keys, scope), if_generation=if_generation, scope=scope)
+        return await self._dry_run(
+            self._keys(section, keys, scope),
+            lambda _stored: frozenset({section}),
+            if_generation=if_generation,
+            scope=scope,
+        )
 
     async def _dry_run(
-        self, propose: Proposal, *, if_generation: int | Collection[int] | None, scope: Scope
+        self, propose: Proposal, touches: Touches, *, if_generation: int | Collection[int] | None, scope: Scope
     ) -> Preview:
         """What ``propose`` would make of the stored document, storing nothing."""
         snapshot = await self.snapshot()
@@ -863,7 +905,8 @@ class SettingsStore:
         row = await self._documents.get(str(stored)) or _empty(stored)
         if not _matches(if_generation, int(row["generation"])):
             raise GenerationMismatch(int(row["generation"]))
-        new_text, checked = propose(row["yaml_text"], row["data"], inherited)
+        context = await self._context(self._db, touches(row["data"]))
+        new_text, checked = propose(row["yaml_text"], row["data"], inherited, context)
         would_change = new_text != row["yaml_text"]
         refused: tuple[list[dict[str, Any]], int] = ([], 0)
         if would_change and scope.layer != "repository":
@@ -927,14 +970,16 @@ class SettingsStore:
             text = str(before_doc.get("yaml_text") or "")
             problem = Problem((), "revision_invalid", "That earlier version is no longer valid.")
             try:
+                restored = load_yaml(text)
+                context = await self._context(draft.conn, changed_sections(restored, draft.data))
                 checked = check(
                     self._catalog,
-                    load_yaml(text),
+                    restored,
                     stored=draft.data,
                     stored_text=draft.yaml_text,
                     layer=scope.layer,
                     inherited=inherited,
-                    context=self._write_context(),
+                    context=context,
                 )
             except DocumentInvalid as exc:
                 raise RevisionInvalid([problem, *exc.problems]) from None
@@ -957,14 +1002,7 @@ def _models(
     catalog: Catalog, data: Mapping[str, Any], scope: Scope, inherited: Mapping[str, Mapping[str, Any]] | None
 ) -> dict[str, SectionModel]:
     """Each section as a reader of the document at ``scope`` holding ``data`` gets it."""
-    if inherited is None:
-        return dict(read_sections(catalog, data).models)
-    out: dict[str, SectionModel] = {}
-    for section in catalog:
-        base = dict(inherited.get(section.name) or {})
-        values = settable_values(section, scope.layer, data)
-        out[section.name] = resolve(section, base, [(str(scope), values)] if values else []).model
-    return out
+    return effective_models(catalog, data, layer=scope.layer, inherited=inherited, scope=str(scope))
 
 
 def describe_changes(

@@ -51,13 +51,14 @@ class SettingsDocumentsRepository:
         )
         return token_of(row)
 
-    async def all(self) -> list[dict[str, Any]]:
+    async def all(self, conn: asyncpg.Connection | None = None) -> list[dict[str, Any]]:
         """Every document's values and import ledger in one statement, so a snapshot's rows belong together;
-        never the text."""
-        rows = await self._db.fetch(
+        never the text. On ``conn`` when given: inside the caller's transaction."""
+        sql = (
             "SELECT scope, data, schema_version, generation, bootstrapped_keys, updated_by, updated_at "
             "FROM settings_documents"
         )
+        rows = await (conn.fetch(sql) if conn is not None else self._db.fetch(sql))
         out = []
         for record in rows:
             row = dict(record)

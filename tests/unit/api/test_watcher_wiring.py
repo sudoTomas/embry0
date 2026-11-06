@@ -41,6 +41,8 @@ REQUIRED_IN_PRODUCTION = (
     "auto_acceptor",
     # #172 — without this a mask stored after startup never reaches a tick.
     "signature_masks",
+    # #169 — without this a stack's slop_policy never reaches its analyses or tickets.
+    "slop_policy",
 )
 
 

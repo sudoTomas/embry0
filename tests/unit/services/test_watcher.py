@@ -656,7 +656,7 @@ def test_a_slop_proposal_carries_its_verdict_and_its_ticket_says_so():
         "kinds": ["symptom_patch"],
         "evidence": [{"path": "svc/outbox.py", "why": "three retry wrappers around one insert"}],
     }
-    assert ticket_section(p["work_nature"]).startswith("## Slop, not a bug")
+    assert ticket_section(p["work_nature"], heading="Slop, not a bug").startswith("## Slop, not a bug")
 
 
 def test_a_proposal_its_verdict_calls_noise_files_nothing():

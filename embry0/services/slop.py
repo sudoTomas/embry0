@@ -8,58 +8,32 @@ and the slop deepened, so the watcher and triage classify first, and a slop job
 runs as a cleanup by the Slopmaster.
 
 This module holds the one shape of that verdict (the slopometer), its lenient
-parser, the words the classifiers and the Slopmaster are given, and the Slop
-Dungeon's score.
+parser, the words the Slopmaster and a slop finding's ticket are given, and
+the Slop Dungeon's score. What the policy decides (the kinds a verdict may
+name, what the classifiers and the reviewer are told, the ticket's heading,
+the route and the meter levels acted on) is the settings document's
+``slop_policy`` section (:mod:`embry0.settings.sections.slop_policy`): each
+function here takes the part it needs from the caller, who read the section
+for the job's or the finding's repository.
 """
 
 from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from datetime import date
 from typing import Any
 
+from embry0.settings.sections.slop_policy import KIND, MAX_KIND_LENGTH
+
 NATURES: tuple[str, ...] = ("bug", "slop", "noise")
-SLOP_KINDS: tuple[str, ...] = (
-    "duplication",
-    "dead_code",
-    "half_wired",
-    "contradicting_layers",
-    "symptom_patch",
-    "misleading_docs",
-    "off_pattern",
-)
 MAX_EVIDENCE = 8
 _WHY_CHARS = 300
 _PATH_CHARS = 300
 
 #: The agent that cleans slop, on the developer node (row_behaviour.CODING_AGENT_TYPES).
 SLOPMASTER = "slopmaster"
-#: The template a slop job runs (storage/seeds/pipeline_templates_builtin.py).
-SLOP_TEMPLATE = "slop-cleanup"
-
-#: What the classifiers are told slop is: triage's prompt and the watcher's contract both quote it.
-CLASSIFIER_GUIDE = """\
-Tell slop apart from bugs:
-- bug: the behavior differs from what the code, its docs or the ticket intend.
-  Fixing it changes behavior.
-- slop: the behavior is what the code says, and the trouble is the code's
-  shape. Cleaning it keeps behavior. Kinds: duplication (the same logic in
-  more than one place), dead_code (paths, flags or files nothing reaches),
-  half_wired (a feature or abstraction started and not finished),
-  contradicting_layers (two layers that disagree about one thing),
-  symptom_patch (guards, retries, fallbacks or catch-alls stacked on a symptom
-  instead of its cause), misleading_docs (comments or docs that say what the
-  code does not do), off_pattern (code that ignores the repository's own way).
-- noise: nothing to do.
-A guard, retry or catch-all stacked on a symptom is slop when removing it and
-fixing the shape keeps the outcome. When the code does the wrong thing (keeps
-retrying what can never succeed, drops or duplicates data, answers wrongly),
-it is a bug, even when sloppy code caused it: say bug, and name the slop in
-the evidence. Do not call a real defect slop to make it look smaller.
-slop_score (0-100) is how much of the trouble is shape rather than behavior:
-0 for a pure bug, 100 for pure slop."""
 
 #: The Slopmaster's system prompt (its builtin agent definition).
 SLOPMASTER_SYSTEM_PROMPT = """\
@@ -84,17 +58,6 @@ developer does; the task prompt has the mechanics.
 Your summary says what was slop, what you removed or merged, and how the tests
 show that behavior did not change."""
 
-#: What the reviewer is told when the change under review is a slop cleanup.
-SLOP_REVIEW_GUIDE = """\
-## This change is a slop cleanup
-
-It was judged slop, not a bug: it must keep behavior and improve shape.
-Approve only when all of these hold, and request changes otherwise, saying which:
-- behavior is unchanged: the tests pass, and no public behavior, API or output
-  moved (removing what nothing reaches is fine);
-- the change removes or merges more than it adds, or is plainly simpler;
-- it adds no new guard, retry, fallback, catch-all or flag to hide a symptom."""
-
 
 def _clamp_score(value: Any) -> int | None:
     if isinstance(value, bool):
@@ -108,13 +71,22 @@ def _clamp_score(value: Any) -> int | None:
     return max(0, min(100, int(round(number))))
 
 
-def parse_work_nature(raw: Any) -> dict[str, Any] | None:
+def _kind(raw: Any) -> str:
+    """A kind as a verdict names it once read: lowercase, ``-`` and spaces as ``_``."""
+    return str(raw).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def parse_work_nature(raw: Any, *, kinds: Collection[str] | None) -> dict[str, Any] | None:
     """The slopometer's verdict in its one shape, or None when there is none.
 
     Lenient on purpose: a classifier's verdict steers routing and framing, it
-    never fails a job. A nature outside bug/slop/noise means no verdict; an
-    unknown kind is dropped; a score is clamped to 0..100 (a slop verdict with
-    no score reads as 100, a bug as 0); evidence keeps its first entries.
+    never fails a job. A nature outside bug/slop/noise means no verdict; a
+    kind not in ``kinds`` (the ``slop_policy.kinds`` of the job's or the
+    finding's repository) is dropped; a score is clamped to 0..100 (a slop
+    verdict with no score reads as 100, a bug as 0); evidence keeps its first
+    entries. ``kinds=None`` reads back a verdict stored after it was parsed:
+    each kind it names is kept when it has a kind's shape, so a kind an
+    organization added is not dropped by a reader of another.
     """
     if not isinstance(raw, Mapping):
         return None
@@ -127,11 +99,12 @@ def parse_work_nature(raw: Any) -> dict[str, Any] | None:
     kinds_raw = raw.get("kinds") or []
     if isinstance(kinds_raw, str):
         kinds_raw = [k for k in re.split(r"[,\s]+", kinds_raw) if k]
-    kinds: list[str] = []
+    named: list[str] = []
     for kind in kinds_raw if isinstance(kinds_raw, list) else []:
-        k = str(kind).strip().lower().replace("-", "_").replace(" ", "_")
-        if k in SLOP_KINDS and k not in kinds:
-            kinds.append(k)
+        k = _kind(kind)
+        known = k in kinds if kinds is not None else len(k) <= MAX_KIND_LENGTH and KIND.fullmatch(k) is not None
+        if known and k not in named:
+            named.append(k)
     evidence: list[dict[str, str]] = []
     items = raw.get("evidence")
     for item in items if isinstance(items, list) else []:
@@ -143,7 +116,7 @@ def parse_work_nature(raw: Any) -> dict[str, Any] | None:
             evidence.append({"path": path, "why": why})
         if len(evidence) >= MAX_EVIDENCE:
             break
-    verdict: dict[str, Any] = {"nature": nature, "slop_score": score, "kinds": kinds, "evidence": evidence}
+    verdict: dict[str, Any] = {"nature": nature, "slop_score": score, "kinds": named, "evidence": evidence}
     cleanup = raw.get("cleanup")
     if isinstance(cleanup, Mapping):
         counts = {k: int(cleanup[k]) for k in ("added", "removed") if isinstance(cleanup.get(k), int)}
@@ -164,8 +137,8 @@ _LINE_RE = {
 }
 
 
-def parse_contract_lines(text: str) -> dict[str, Any] | None:
-    """The watcher's NATURE:/SLOP_SCORE:/SLOP_KINDS:/SLOP_EVIDENCE: lines, as a verdict.
+def parse_contract_lines(text: str, *, kinds: Collection[str]) -> dict[str, Any] | None:
+    """The watcher's NATURE:/SLOP_SCORE:/SLOP_KINDS:/SLOP_EVIDENCE: lines, as a verdict naming only ``kinds``.
 
     Read from the head of a proposal only (before ``BODY:``), so a body that
     quotes these words is not read as a verdict. None without a NATURE line.
@@ -175,15 +148,16 @@ def parse_contract_lines(text: str) -> dict[str, Any] | None:
     if nature is None:
         return None
     score = _LINE_RE["score"].search(head)
-    kinds = _LINE_RE["kinds"].search(head)
+    named = _LINE_RE["kinds"].search(head)
     evidence = [{"path": m.group(1).strip(), "why": m.group(2).strip()} for m in _LINE_RE["evidence"].finditer(head)]
     return parse_work_nature(
         {
             "nature": nature.group(1),
             "slop_score": int(score.group(1)) if score else None,
-            "kinds": kinds.group(1) if kinds else [],
+            "kinds": named.group(1) if named else [],
             "evidence": evidence,
-        }
+        },
+        kinds=kinds,
     )
 
 
@@ -199,10 +173,10 @@ def _kinds_words(verdict: Mapping[str, Any]) -> str:
     return ", ".join(str(k).replace("_", " ") for k in verdict.get("kinds") or []) or "unspecified"
 
 
-def ticket_section(verdict: Mapping[str, Any]) -> str:
-    """The **Slop, not a bug** section a slop finding's draft ticket opens with."""
+def ticket_section(verdict: Mapping[str, Any], *, heading: str) -> str:
+    """The section a slop finding's draft ticket opens with, under ``heading`` (``slop_policy.ticket_heading``)."""
     lines = [
-        "## Slop, not a bug",
+        f"## {heading}",
         f"The watcher judged this slop (slop score {verdict.get('slop_score')}/100: {_kinds_words(verdict)}). "
         "The code does what it says; the trouble is its shape. Clean it up — keep behavior, remove or merge "
         "code — instead of adding another guard or retry.",
@@ -240,8 +214,19 @@ def dungeon_score(scores: Iterable[int]) -> int:
     return int(round(100 * (1 - clean)))
 
 
-#: The Slop-O-Meter level at which an area has a dungeon even with no open slop finding (Spaghetti Bolognese).
-METER_DUNGEON_LEVEL = 2
+def lean_names(level_names: Iterable[str], min_level: int | None) -> tuple[str, ...]:
+    """The Slop-O-Meter level names from ``min_level`` up (``slop_policy.triage_lean_min_level``); none for None."""
+    if min_level is None:
+        return ()
+    return tuple(level_names)[min_level - 1 :]
+
+
+def level_phrase(names: Iterable[str]) -> str:
+    """Level names as a sentence names them: ``A``, ``A or B``, ``A, B or C``."""
+    words = list(names)
+    if len(words) <= 1:
+        return "".join(words)
+    return f"{', '.join(words[:-1])} or {words[-1]}"
 
 
 def meter_view(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -261,13 +246,17 @@ def meter_view(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
 def dungeons(
     leads: Iterable[Mapping[str, Any]],
     cleaned: Mapping[tuple[str, str | None], int],
-    meters: Iterable[Mapping[str, Any]] = (),
+    meters: Iterable[Mapping[str, Any]],
+    *,
+    min_level: Callable[[str], int | None],
 ) -> list[dict[str, Any]]:
     """One Slop Dungeon per repository and area that has open slop, recent cleanups or a sloppy meter, worst first.
 
-    Each carries its Slop-O-Meter reading (``meter``, None when not scored);
-    an area at Spaghetti Bolognese or worse has a dungeon even with no open
-    slop finding.
+    Each carries its Slop-O-Meter reading (``meter``, None when not scored).
+    An area whose reading is at its repository's ``min_level`` or worse
+    (``slop_policy.dungeon_min_level``, Spaghetti Bolognese by default) has
+    a dungeon even with no open slop finding; with None, its meter alone
+    makes none.
     """
     open_scores: dict[tuple[str, str | None], list[int]] = {}
     for lead in leads:
@@ -277,7 +266,7 @@ def dungeons(
         open_scores.setdefault(key, []).append(int(lead.get("slop_score") or 0))
     by_scope = {(str(m["repo"]), m.get("area") or None): m for m in meters}
     keys = set(open_scores) | {k for k, n in cleaned.items() if n}
-    keys |= {k for k, m in by_scope.items() if int(m.get("level") or 1) >= METER_DUNGEON_LEVEL}
+    keys |= {k for k, m in by_scope.items() if _sloppy(int(m.get("level") or 1), min_level(k[0]))}
     out = [
         {
             "repo": repo,
@@ -290,3 +279,7 @@ def dungeons(
         for repo, area in keys
     ]
     return sorted(out, key=lambda d: (-d["score"], -d["open"], d["repo"], d["area"] or ""))
+
+
+def _sloppy(level: int, min_level: int | None) -> bool:
+    return min_level is not None and level >= min_level

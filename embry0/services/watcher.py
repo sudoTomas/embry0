@@ -43,7 +43,7 @@ import inspect
 import json
 import re
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -82,7 +82,6 @@ from embry0.services.signature_delta import (
     classify_window,
 )
 from embry0.services.slop import (
-    CLASSIFIER_GUIDE,
     WATCHER_CONTRACT_LINES,
     is_slop,
     parse_contract_lines,
@@ -90,6 +89,7 @@ from embry0.services.slop import (
 )
 from embry0.services.watcher_budget import resolve_watcher_job_budget
 from embry0.services.watcher_recursion import drop_own_lines
+from embry0.settings.sections.slop_policy import DEFAULT_KINDS, SLOP_POLICY, SlopPolicySettings
 from embry0.storage.repositories.watcher_runs import ANALYSED_ACTIONS, UNPARSEABLE_DETAIL_PREFIX
 from embry0.trackers.filing import DRAFT_TITLE_PREFIX
 
@@ -249,8 +249,8 @@ _NO_ISSUE_VERDICT_RE = re.compile(
 )
 
 
-def _parse_line_format(text: str) -> dict[str, Any] | None:
-    """The RAV-1062 TITLE:/SEVERITY:/BODY: plain-text proposal, or None."""
+def _parse_line_format(text: str, *, kinds: Collection[str] = DEFAULT_KINDS) -> dict[str, Any] | None:
+    """The RAV-1062 TITLE:/SEVERITY:/BODY: plain-text proposal, or None; its verdict names only ``kinds``."""
     title_m = _TITLE_RE.search(text)
     body_m = _BODY_RE.search(text)
     if not (title_m and body_m):
@@ -274,7 +274,7 @@ def _parse_line_format(text: str) -> dict[str, Any] | None:
         "severity": severity if severity in _SEVERITIES else "medium",
         "fingerprint_hint": (fp_m.group(1).strip()[:200] if fp_m else None),
         # Slop dungeon: the NATURE:/SLOP_* lines before BODY:, None without them.
-        "work_nature": parse_contract_lines(text),
+        "work_nature": parse_contract_lines(text, kinds=kinds),
     }
 
 
@@ -299,8 +299,11 @@ def _parse_json_fallback(text: str) -> dict[str, Any] | None:
     return None
 
 
-def parse_proposal(text: str) -> dict[str, Any] | None:
+def parse_proposal(text: str, *, kinds: Collection[str] = DEFAULT_KINDS) -> dict[str, Any] | None:
     """The agent's deliverable → proposal dict, or None when it carries none.
+
+    ``kinds`` are the kinds of slop its verdict may name: the stack's
+    ``slop_policy.kinds`` (#169).
 
     Primary contract (RAV-1062) is the TITLE:/SEVERITY:/BODY: line format —
     log-analysis bodies quote log lines that routinely contain JSON, and a
@@ -314,7 +317,7 @@ def parse_proposal(text: str) -> dict[str, Any] | None:
     """
     if not text or text.strip().upper().startswith("NO_ISSUE"):
         return None
-    return _parse_line_format(text) or _parse_json_fallback(text)
+    return _parse_line_format(text, kinds=kinds) or _parse_json_fallback(text)
 
 
 def _unparseable_reason(text: str) -> str:
@@ -349,8 +352,11 @@ Analysis agent: end with EXACTLY one of the two shapes, each contract line on it
 """
 
 
-def parse_verdict(text: str) -> dict[str, Any]:
+def parse_verdict(text: str, *, kinds: Collection[str] = DEFAULT_KINDS) -> dict[str, Any]:
     """The agent's deliverable → three-way verdict with rationale + memory.
+
+    A proposal's slop verdict names only ``kinds``, the stack's
+    ``slop_policy.kinds`` (#169).
 
     ``kind`` is ``"no_issue"``, ``"proposal"`` or ``"unparseable"`` (SH-P2.4):
     output matching neither contract shape used to read as NO_ISSUE, a silent
@@ -367,7 +373,7 @@ def parse_verdict(text: str) -> dict[str, Any]:
     reason: str | None = None
     if text.strip().upper().startswith("NO_ISSUE"):
         kind = "no_issue"
-    elif (proposal := _parse_line_format(text)) is not None:
+    elif (proposal := _parse_line_format(text, kinds=kinds)) is not None:
         kind = "proposal"
     elif _NO_ISSUE_VERDICT_RE.search(text):
         kind = "no_issue"
@@ -534,9 +540,15 @@ class WatcherService:
         # PUT applies to the next one without a restart. None: the masks the
         # stack had when this watcher was built (``config``), for good.
         signature_masks: Callable[[], Awaitable[Any]] | None = None,
+        # #169: ``() -> policy``, the settings document's slop_policy as the
+        # stack's repository reads it now: what the analysis is told of slop,
+        # the kinds its verdict may name and the heading of a slop finding's
+        # ticket. None: the section's defaults, for good.
+        slop_policy: Callable[[], Awaitable[SlopPolicySettings]] | None = None,
     ) -> None:
         self._config = config
         self._signature_masks = signature_masks
+        self._slop_policy = slop_policy
         # The masks the last tick clustered with; until one has, the stack's
         # masks at startup.
         self._masks: SignatureMasks = _compiled_masks(
@@ -1317,13 +1329,24 @@ class WatcherService:
         """
         return False
 
+    async def _policy(self) -> SlopPolicySettings:
+        """The stack's slop_policy now (#169); the section's defaults without a reader, or when it fails."""
+        if self._slop_policy is None:
+            return SLOP_POLICY.defaults()
+        try:
+            return await self._slop_policy()
+        except Exception:
+            logger.warning("watcher_slop_policy_unread", stack=self._repo, exc_info=True)
+            return SLOP_POLICY.defaults()
+
     async def _recover_proposal(self, job_id: str | None) -> dict[str, Any] | None:
         """A deferred finding's proposal, re-read from its analysis job. The
         ledger holds no proposal text (it quotes log lines); the job row does."""
         if not job_id:
             return None
         job = cast("dict[str, Any] | None", await self._jobs.get(job_id))
-        verdict = parse_verdict(str((job or {}).get("result_summary") or ""))
+        kinds = (await self._policy()).kinds
+        verdict = parse_verdict(str((job or {}).get("result_summary") or ""), kinds=kinds)
         return cast("dict[str, Any] | None", verdict["proposal"])
 
     async def _drain_deferred(self, window_days: int, *, slot_free: bool) -> tuple[bool, int]:
@@ -1425,9 +1448,13 @@ class WatcherService:
         self, proposal: dict[str, Any], job_id: str | None, window_start: datetime, window_end: datetime
     ) -> dict[str, Any] | None:
         """Create the DRAFT tracker ticket for a proposal (never labelled)."""
-        # Slop dungeon: a slop finding's ticket opens by saying so, so whoever
-        # works it (triage first) is not handed it as a bug.
-        opening = ticket_section(proposal["work_nature"]) if is_slop(proposal.get("work_nature")) else ""
+        # Slop dungeon: a slop finding's ticket opens by saying so, under the
+        # stack's slop_policy.ticket_heading, so whoever works it (triage
+        # first) is not handed it as a bug.
+        opening = ""
+        if is_slop(proposal.get("work_nature")):
+            heading = (await self._policy()).ticket_heading
+            opening = ticket_section(proposal["work_nature"], heading=heading)
         description = (
             f"{opening}{proposal['body']}\n\n---\n"
             f"*Filed by the embry0 watcher (severity: {proposal['severity']}; "
@@ -1611,7 +1638,7 @@ class WatcherService:
         # isinstance, not truthiness: test doubles answer any attribute.
         return wait.record() if isinstance(wait, AccountWait) else None
 
-    async def _analyse(self, task: str) -> dict[str, Any]:
+    async def _analyse(self, task: str, *, kinds: Collection[str] = DEFAULT_KINDS) -> dict[str, Any]:
         """Run the analysis to a parsed verdict, re-running it ONCE on garbage.
 
         SH-P2.4: a completed job whose deliverable matches neither contract
@@ -1646,7 +1673,7 @@ class WatcherService:
                 if job and job.get("error_code"):
                     failure += f" error_code={job['error_code']}"
                 break
-            verdict = parse_verdict(str(job.get("result_summary") or ""))
+            verdict = parse_verdict(str(job.get("result_summary") or ""), kinds=kinds)
             if verdict["kind"] != "unparseable":
                 failure = None
                 break
@@ -1925,6 +1952,9 @@ class WatcherService:
                 if clusters and self._clustering_mode() == "on":
                     excerpt_block = format_cluster_table(clusters, redact=redact_log_text)
 
+                # #169: what the analysis is told of slop, and the kinds its verdict may name, are the
+                # stack's repository's slop_policy, read for this analysis.
+                policy = await self._policy()
                 task = _ANALYSIS_TASK_TEMPLATE.format(
                     window_start=window_start.strftime("%Y-%m-%d %H:%M"),
                     window_end=window_end.strftime("%Y-%m-%d %H:%M"),
@@ -1933,7 +1963,7 @@ class WatcherService:
                     known_issues=known_issues,
                     excerpts=excerpt_block,
                     drilldown=self._drilldown_section(),
-                    slop_guide=CLASSIFIER_GUIDE,
+                    slop_guide=policy.classifier_guide,
                     slop_lines=WATCHER_CONTRACT_LINES,
                     **sections,
                 )
@@ -1944,7 +1974,7 @@ class WatcherService:
                     return await record(
                         "skipped_account_paused", log_lines=len(lines), detail=_account_wait_detail(waiting)
                     )
-                analysis = await self._analyse(task)
+                analysis = await self._analyse(task, kinds=policy.kinds)
                 tick_fields.update(analysis["run_fields"])
                 if analysis.get("account_wait"):
                     return await record(
