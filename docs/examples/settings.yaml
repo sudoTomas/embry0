@@ -416,15 +416,17 @@ slop_meter:
   # interval_hours: 24.0
 
   # Forge API calls one run may make with one credential, shared round-robin
-  # by the repositories read with it, to read comments, reviews and logins.
-  # Where repositories of organizations that set different values are read
-  # with one credential, the smallest applies. Git fetches are not API calls.
+  # by the repositories read with it, to read comments, reviews and logins:
+  # the deployment's value is the credential's budget. An organization's value
+  # only narrows its own repositories' share of it, never widens it, and never
+  # lowers another organization's on the same credential. Git fetches are not
+  # API calls.
   # api_calls_per_tick: 200
 
   # The rate limit a credential keeps for the jobs that use it: once its
   # remaining calls (X-RateLimit-Remaining) drop below this, the run makes no
-  # further call with it. Where organizations that set different values share
-  # one credential, the largest applies.
+  # further call with it. An organization's larger value stops only its own
+  # repositories' reads sooner; a smaller one changes nothing.
   # rate_reserve: 2000
 
   # What one changed line of a file weighs, by glob, from 0 to 10; a file no
@@ -432,10 +434,15 @@ slop_meter:
   # with no '/' matches a file's name in any directory (*.py), one with a '/'
   # its path from the repository's root (db/migrations/*.sql, generated/**);
   # '*' matches within one name, '?' one character, '**' any directories.
-  # Where several match, the longest glob wins (*.min.js over *.js). Write
-  # globs in lowercase, quoted: matching ignores case, and YAML reads a bare *
-  # as an alias. Merged entry by entry: a document adds or changes the globs
-  # it names and keeps every other, so a glob set to 0 stops counting.
+  # Where several match, the most specific wins: a glob with a '/' over any
+  # without one; between two with one, more segments free of wildcards, then
+  # more segments, then more literal characters; between two without, more
+  # literal characters (*.min.js over *.js); then the first in alphabetical
+  # order. So generated/** weighs every file under generated/, whatever its
+  # kind. Write globs in lowercase, quoted: matching ignores case, and YAML
+  # reads a bare * as an alias. Merged entry by entry: a document adds or
+  # changes the globs it names and keeps every other, so a glob set to 0 stops
+  # counting.
   # weights:
   #   '*.py': 1.0
   #   '*.pyi': 1.0
@@ -670,18 +677,22 @@ slop_meter:
   # - Sloppy Joe
   # - Just The Slop
 
-  # The owner's own bots, as commit names, addresses or forge logins matched
-  # whole without regard to case: their commits add lines but no attention,
-  # and as a co-author they count as an AI agent does. Beyond the ones every
-  # deployment knows ([bot] accounts, noreply@ addresses, known coding agents)
-  # and embry0's own commit identities. Was the organization's
+  # Bots, as commit names, addresses or forge logins matched whole without
+  # regard to case: their commits add lines but no attention, and as a
+  # co-author they count as an AI agent does. Beyond the ones every deployment
+  # knows ([bot] accounts, noreply@ addresses, known coding agents) and
+  # embry0's own commit identities. Each document adds to the list it
+  # inherits, so a bot the deployment lists counts for every organization; no
+  # layer takes one out. At most 200 in all. Was the organization's
   # slop_meter_bots.
   # bots: []
 
-  # AI coding agents beyond the known ones, as the start of their commit
-  # address (aider@), matched without regard to case: a commit one authors
-  # adds lines but no attention, and one it co-authors counts
-  # ai_coauthor_share of its author's hours.
+  # AI coding agents beyond the known ones, each its commit address up to and
+  # including the @ (aider@, any domain) or a whole address
+  # (agent@tools.example), matched without regard to case: a commit one
+  # authors adds lines but no attention, and one it co-authors counts
+  # ai_coauthor_share of its author's hours. Each document adds to the list it
+  # inherits, as bots. At most 200 in all.
   # ai_agents: []
 
 # What the dashboard shows: the game layer, and the page it opens on.

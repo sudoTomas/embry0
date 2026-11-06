@@ -11,6 +11,7 @@ there. Discovery, the needs list and the wizard build on it.
 from __future__ import annotations
 
 import math
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -18,6 +19,8 @@ from typing import Any, Final, Protocol, TypeGuard
 from urllib.parse import quote
 
 import structlog
+
+from embry0.settings.registry import UNPRINTABLE_CATEGORIES
 
 logger = structlog.get_logger(__name__)
 
@@ -176,6 +179,8 @@ class MovedSetting:
     section: str
     key: str
     read: Callable[[Mapping[str, Any]], Any]
+    #: How a value the routes still take is written into the layer; None writes it as checked.
+    write: Callable[[Any], Any] | None = None
 
     @property
     def path(self) -> str:
@@ -201,22 +206,50 @@ def context_audit_open_prs_moved(settings: Mapping[str, Any]) -> bool | None:
     return True if context_audit_open_prs(settings) else None
 
 
+def _bots_cleaned(value: Any) -> list[str] | None:
+    """A ``slop_meter_bots`` value as the ``slop_meter`` section takes it: each string, stripped, blanks left out,
+    each named once without regard to case (the first spelling kept), as matching ignored case. An entry the
+    section would refuse (longer than an entry may be, or holding a line break, a tab, a control, format or
+    separator character) is left out and logged, by its position, never its text, so it never costs the rest;
+    so is every entry past the most a list holds. None for a value that is no list."""
+    if not isinstance(value, list):
+        return None
+    seen: dict[str, str] = {}
+    dropped: list[int] = []
+    for position, entry in enumerate(value, start=1):
+        text = entry.strip() if isinstance(entry, str) else ""
+        if not text:
+            continue
+        if len(text) > LIST_MAX_LENGTH or any(unicodedata.category(char) in UNPRINTABLE_CATEGORIES for char in text):
+            dropped.append(position)
+            continue
+        seen.setdefault(text.lower(), text)
+    kept = list(seen.values())
+    if len(kept) > LIST_MAX_ITEMS or dropped:
+        logger.warning(
+            "slop_meter_bots_entries_dropped",
+            positions=dropped,
+            past_the_most=max(0, len(kept) - LIST_MAX_ITEMS),
+            hint="left out of slop_meter.bots: an entry the section cannot hold",
+        )
+    return kept[:LIST_MAX_ITEMS]
+
+
 def slop_meter_bots(settings: Mapping[str, Any]) -> list[str] | None:
-    """The owner's ``slop_meter_bots`` as the meter read them (#184): each string, stripped, blanks left out, and
-    each named once without regard to case (the first spelling kept), as matching ignored case; None for none.
+    """The owner's ``slop_meter_bots`` as the meter read them (#184), cleaned as :func:`_bots_cleaned` cleans a
+    list; None for none, so nothing is copied.
 
     A row written before ``POST /orgs`` checked its settings may hold anything
     here, so a value that is no list reads as none, as it did.
     """
-    value = settings.get("slop_meter_bots")
-    if not isinstance(value, list):
-        return None
-    seen: dict[str, str] = {}
-    for entry in value:
-        text = entry.strip() if isinstance(entry, str) else ""
-        if text:
-            seen.setdefault(text.lower(), text)
-    return list(seen.values()) or None
+    return _bots_cleaned(settings.get("slop_meter_bots")) or None
+
+
+def slop_meter_bots_written(value: Any) -> list[str]:
+    """A ``slop_meter_bots`` value ``PATCH`` or ``POST /orgs`` takes, as it is written into the organization's
+    layer: cleaned as the copy at the first start cleans one, so a list the route took before is never refused
+    for spelling one bot twice. An empty list stays, and takes the organization's own bots out."""
+    return _bots_cleaned(value) or []
 
 
 #: The settings sections took over: an organization's own caps of its context audits, which the `budget`
@@ -229,7 +262,7 @@ MOVED_SETTINGS: Final[tuple[MovedSetting, ...]] = (
     ),
     MovedSetting("context_audit_days", "context_audit", "days", context_audit_days),
     MovedSetting("context_audit_open_prs", "context_audit", "open_prs", context_audit_open_prs_moved),
-    MovedSetting("slop_meter_bots", "slop_meter", "bots", slop_meter_bots),
+    MovedSetting("slop_meter_bots", "slop_meter", "bots", slop_meter_bots, slop_meter_bots_written),
 )
 MOVED: Final[dict[str, MovedSetting]] = {moved.legacy: moved for moved in MOVED_SETTINGS}
 

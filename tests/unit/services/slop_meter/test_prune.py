@@ -795,7 +795,7 @@ async def test_with_the_meter_off_it_still_removes_what_left_its_scope_at_its_fi
     exits.rows[("slop_meter", "acme/widgets")] = NOW - timedelta(days=8)
     store, mirror = Store(["acme/widgets", "other/kit"]), Mirror()
     loop = _meter(documents, store, mirror, ["acme/widgets", "other/kit"], exits=exits)
-    assert await loop.scheduled() is True
+    assert await loop.scheduled() == "run"
     assert store.forgotten == ["acme/widgets"] == mirror.removed, (
         "slop_meter.enabled: false stops the reading, not the removal: the first look removes what the meter "
         "kept of a repository whose week out of its scope has passed (reading other/kit would have failed: this "

@@ -150,7 +150,7 @@ def test_every_refused_key_is_named_in_one_answer() -> None:
             "test_weight": 1.5,
             "level_bounds": [0.2, 0.2, 0.6, 0.8],
             "level_names": ["One", "Two", "Three", "Four"],
-            "bots": ["release-bot", "Release-Bot"],
+            "bots": ["release-bot", "line\nbreak"],
             "ai_agents": ["aider @"],
             "judge_prompt": "  \n ",
             "interval_hours": 0.1,
@@ -172,7 +172,7 @@ def test_every_refused_key_is_named_in_one_answer() -> None:
         "lines_per_hour",
     }, f"one answer names every refused key: {problems}"
     assert "lowercase" in problems["weights"] and "once" in problems["excluded_dirs"]
-    assert "above the one before" in problems["level_bounds"] and "once" in problems["bots"]
+    assert "above the one before" in problems["level_bounds"] and "one line" in problems["bots"]
 
 
 @pytest.mark.parametrize(
@@ -214,6 +214,46 @@ def test_an_organization_says_what_counts_and_a_repository_says_its_layout() -> 
     )
     assert section.settable("repository") == {"weights", "excluded_dirs", "test_dirs", "test_files", "test_marks"}
     assert section.merged_keys == {"weights"}, "weights merge entry by entry"
+
+
+def test_an_ai_agent_is_an_address_or_the_start_of_one_up_to_its_at() -> None:
+    for refused in (["dev"], ["a"], ["@tools.example"], ["a@b@c"], ["aider @"]):
+        assert "ai_agents" in _problems({"ai_agents": refused}), f"{refused} would name people's addresses too"
+    assert _problems({"ai_agents": ["aider@", "agent@tools.example"]}) == {}
+
+
+def test_bots_and_ai_agents_add_to_what_each_layer_inherits() -> None:
+    section = _section()
+    assert section.added_keys == {"bots", "ai_agents"}, "no layer takes out a bot the layer below lists"
+    snapshot = _snapshot(
+        {
+            "deployment": {"bots": ["ci-runner"], "ai_agents": ["helper@"]},
+            "organization:acme": {"bots": ["release-bot", "ci-runner"]},
+        }
+    )
+    from embry0.settings.sections.slop_meter import SLOP_METER
+
+    widgets = snapshot.scoped(SLOP_METER).repo(WIDGETS)
+    assert widgets.bots == ("ci-runner", "release-bot"), "the deployment's bot counts in acme too, each once"
+    assert widgets.ai_agents == ("helper@",)
+    assert snapshot.scoped(SLOP_METER).repo(GADGETS).bots == ("ci-runner",), "and in every other organization"
+
+
+def test_a_text_of_several_lines_is_a_literal_block_in_the_settings_document_only() -> None:
+    """The settings document writes the judge's guidance as it reads; a progression pack, which keeps its own
+    writer and compares stored texts, writes exactly what it wrote before."""
+    import yaml
+
+    from embry0.services import progression_pack_store
+    from embry0.settings.document import dump_yaml
+
+    _section()
+    text = {"judge_prompt": "One line.\nAnother line."}
+    assert dump_yaml(text) == "judge_prompt: |-\n  One line.\n  Another line.\n"
+    assert yaml.safe_load(dump_yaml(text)) == text
+    assert progression_pack_store.dump_yaml(text) == yaml.safe_dump(
+        text, sort_keys=False, allow_unicode=True, default_flow_style=False, width=100
+    ), "a pack's YAML is unchanged, so no pack gets a new version"
 
 
 def test_weights_merge_entry_by_entry_through_every_layer() -> None:

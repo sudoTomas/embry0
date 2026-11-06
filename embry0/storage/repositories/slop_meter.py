@@ -258,6 +258,11 @@ class SlopMeterRepository:
                 ],
             )
 
+    async def versions(self) -> dict[str, str]:
+        """Each scored repository's configuration version, as its repository score (area '') records it."""
+        rows = await self._db.fetch("SELECT repo, config_version FROM slop_meter_scores WHERE area = ''")
+        return {str(r["repo"]): str(r["config_version"]) for r in rows}
+
     async def scores(self, repo: str | None = None) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
             "SELECT * FROM slop_meter_scores WHERE ($1::text IS NULL OR repo = $1) ORDER BY repo, area", repo

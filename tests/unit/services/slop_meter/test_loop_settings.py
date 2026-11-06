@@ -2,10 +2,12 @@
 
 On the fakes of test_loop.py: no git, no network, no database. Each score
 records the configuration version its repository read; a change to what a
-score is computed from rescores at the next look instead of at the next
-interval; ``enabled`` and ``interval_hours`` pace the schedule; each
-organization's forge budget applies to the credential it reads with; and the
-section's bots, AI agents and judge guidance reach the scoring.
+score is computed from rescores, at the next look, only the repositories it
+touches, from what was read, with no fetch and no forge call; ``enabled`` and
+``interval_hours`` pace the schedule; a credential's forge budget is the
+deployment's, an organization's values narrowing only its own share; and the
+section's bots, AI agents and judge guidance reach the scoring, the weighing
+off the event loop.
 """
 
 from __future__ import annotations
@@ -125,35 +127,72 @@ async def test_a_score_records_the_configuration_version_of_its_repository_s_set
     store = fakes.FakeStore()
     loop = _loop(Section({"weights": {"*.sql": 1.0}}), store, fakes.FakeMirror(records, order), [NOW])
     assert await loop.tick() is False
-    assert store.versions[REPO] == _version({"weights": {"*.sql": 1.0}}) != _version({}), (
-        f"the score records the version of the settings it was computed with: {store.versions}"
+    assert store.versions_of[REPO] == _version({"weights": {"*.sql": 1.0}}) != _version({}), (
+        f"the score records the version of the settings it was computed with: {store.versions_of}"
     )
 
 
-async def test_a_changed_weight_rescores_at_the_next_look_and_records_the_new_version() -> None:
+class Mirrors(fakes.FakeMirror):
+    """One fake history for every repository; ``synced`` names each fetch."""
+
+
+async def test_a_changed_weight_rescores_only_the_repository_it_touches_with_no_fetch_and_no_forge_call() -> None:
+    acme, globex = "acme/web", "globex/web"
     records, order = _sql_history()
-    store, clock = fakes.FakeStore(), [NOW]
+    forges = {name: fakes.FakeForge(repo=name) for name in (acme, globex)}
+    store, mirror, clock = fakes.FakeStore(), Mirrors(records, order), [NOW]
     section = Section()
-    loop = _loop(section, store, fakes.FakeMirror(records, order), clock)
-    assert await loop.scheduled() is True, "the first look runs at once"
-    before = store.stored[REPO][""]
-    assert store.versions[REPO] == _version({})
+    loop = _loop(section, store, mirror, clock, repos=(acme, globex), forges=forges)
+    assert await loop.scheduled() == "run", "the first look runs at once"
+    before = {repo: store.stored[repo][""] for repo in (acme, globex)}
+    first = dict(store.versions_of)
+    fetched, called = len(mirror.synced), {name: len(forge.calls) for name, forge in forges.items()}
+    assert fetched == 2 and all(called.values()), "the run fetched both and read both forges"
+
     clock[0] += timedelta(minutes=5)
-    assert await loop.scheduled() is False, "nothing changed and the day has not passed: no run"
-    section.values = {"weights": {"*.sql": 0.0}}
+    assert await loop.scheduled() is None, "nothing changed and the day has not passed: nothing runs"
+    section.owners["acme"] = {"weights": {"*.sql": 0.0}}
     clock[0] += timedelta(minutes=5)
-    assert await loop.scheduled() is True, "a weight changed: the next look rescores, not tomorrow's run"
-    after = store.stored[REPO][""]
-    assert store.versions[REPO] == _version({"weights": {"*.sql": 0.0}}), "and records the new version"
-    assert sum(w.cost for w in after.weeks) < sum(w.cost for w in before.weeks), (
-        "SQL weighing nothing lowers the attention cost the score is computed from"
+    assert await loop.scheduled() == "rescore", "acme's weight changed: the next look rescores"
+    assert len(mirror.synced) == fetched, "with no fetch"
+    assert {name: len(forge.calls) for name, forge in forges.items()} == called, "and no forge call, for either"
+    assert store.versions_of[acme] == _version({"weights": {"*.sql": 0.0}}) != first[acme], "acme records its new one"
+    assert store.versions_of[globex] == first[globex] and store.stored[globex][""] is before[globex], (
+        "globex, which the change does not touch, is not rescored"
+    )
+    assert sum(w.cost for w in store.stored[acme][""].weeks) < sum(w.cost for w in before[acme].weeks), (
+        "SQL weighing nothing lowers acme's attention cost"
     )
     clock[0] += timedelta(minutes=5)
-    assert await loop.scheduled() is False, "once rescored, the next look waits for the interval again"
+    assert await loop.scheduled() is None, "once rescored, the next look does nothing"
     assert 0 < loop.wait_seconds() <= loop_mod.LOOK_SECONDS
+    clock[0] = NOW + timedelta(hours=24, minutes=1)
+    assert await loop.scheduled() == "run", "the full run keeps its interval from the last one"
+    assert len(mirror.synced) == fetched + 2
 
 
-async def test_a_key_no_score_is_computed_from_runs_nothing_early() -> None:
+async def test_a_repository_whose_rescore_fails_is_not_tried_again_every_look() -> None:
+    records, order = _sql_history()
+    store, mirror, clock = fakes.FakeStore(), fakes.FakeMirror(records, order), [NOW]
+    section = Section()
+    loop = _loop(section, store, mirror, clock)
+    await loop.scheduled()
+    tries: list[str] = []
+
+    async def failing(repo: str, name: str) -> str | None:
+        tries.append(repo)
+        raise RuntimeError("the mirror cannot be read")
+
+    mirror.read = failing  # type: ignore[method-assign]
+    section.values = {"weights": {"*.sql": 0.0}}
+    for _ in range(3):
+        clock[0] += timedelta(minutes=5)
+        await loop.scheduled()
+    assert len(tries) == 1, f"one try per version, not one a look: {len(tries)} tries"
+    assert "the mirror cannot be read" in store.states[REPO]["error"], "and the failure is recorded"
+
+
+async def test_a_key_no_score_is_computed_from_rescores_nothing() -> None:
     records, order = _sql_history()
     store, clock = fakes.FakeStore(), [NOW]
     section = Section()
@@ -161,7 +200,7 @@ async def test_a_key_no_score_is_computed_from_runs_nothing_early() -> None:
     await loop.scheduled()
     section.values = {"api_calls_per_tick": 10, "judge_prompt": "Judge it."}
     clock[0] += timedelta(minutes=5)
-    assert await loop.scheduled() is False, "the forge budget and the judge's guidance rescore nothing"
+    assert await loop.scheduled() is None, "the forge budget and the judge's guidance rescore nothing"
 
 
 async def test_off_reads_nothing_and_turned_on_it_reads_at_the_next_look() -> None:
@@ -169,13 +208,13 @@ async def test_off_reads_nothing_and_turned_on_it_reads_at_the_next_look() -> No
     store, mirror, clock = fakes.FakeStore(), fakes.FakeMirror(records, order), [NOW]
     section = Section({"enabled": False})
     loop = _loop(section, store, mirror, clock)
-    assert await loop.scheduled() is True, "off, the first look still runs: it removes what left the scope"
+    assert await loop.scheduled() == "run", "off, the first look still runs: it removes what left the scope"
     assert mirror.synced == [] and store.stored == {}, "and reads and scores nothing"
     clock[0] += timedelta(minutes=5)
-    assert await loop.scheduled() is False
+    assert await loop.scheduled() is None
     section.values = {}
     clock[0] += timedelta(minutes=5)
-    assert await loop.scheduled() is True, "turned on, the next look reads, not a day after the last removal"
+    assert await loop.scheduled() == "run", "turned on, the next look reads, not a day after the last removal"
     assert mirror.synced == [(REPO, "github")] and REPO in store.stored
 
 
@@ -185,38 +224,9 @@ async def test_the_interval_is_the_section_s() -> None:
     loop = _loop(Section({"interval_hours": 1}), store, fakes.FakeMirror(records, order), clock)
     await loop.scheduled()
     clock[0] += timedelta(minutes=59)
-    assert await loop.scheduled() is False and loop.wait_seconds() == pytest.approx(60), "due in a minute"
+    assert await loop.scheduled() is None and loop.wait_seconds() == pytest.approx(60), "due in a minute"
     clock[0] += timedelta(minutes=2)
-    assert await loop.scheduled() is True, "an hour after the last run ended"
-
-
-async def test_each_organization_s_forge_budget_applies_to_its_credential_and_a_shared_one_takes_the_strictest() -> (
-    None
-):
-    acme, globex = "acme/app", "globex/app"
-    records, order = fakes._history(2)
-    section = Section({}, acme={"api_calls_per_tick": 3, "rate_reserve": 0}, globex={"api_calls_per_tick": 12})
-
-    def forges() -> dict[str, Any]:
-        return {name: fakes.FakeForge(comment_pages=50, repo=name) for name in (acme, globex)}
-
-    apart = forges()
-    tokens = {acme: "token-acme", globex: "token-globex"}
-    loop = _loop(section, fakes.FakeStore(), fakes.FakeMirror(records, order), [NOW], repos=(acme, globex))
-    loop._client_for = _clients(apart)  # noqa: SLF001
-    loop._token_for = _tokens(tokens)  # noqa: SLF001
-    await loop.tick()
-    assert (len(apart[acme].calls), len(apart[globex].calls)) == (3, 12), (
-        "each organization's credential has the calls its organization allows: "
-        f"{len(apart[acme].calls)} and {len(apart[globex].calls)}"
-    )
-    shared = forges()
-    loop = _loop(section, fakes.FakeStore(), fakes.FakeMirror(records, order), [NOW], repos=(acme, globex))
-    loop._client_for = _clients(shared)  # noqa: SLF001
-    await loop.tick()
-    assert len(shared[acme].calls) + len(shared[globex].calls) == 3, (
-        "read with one credential, the two share the fewer calls either organization allows"
-    )
+    assert await loop.scheduled() == "run", "an hour after the last run ended"
 
 
 def _clients(forges: Mapping[str, Any]) -> Any:
@@ -231,6 +241,48 @@ def _tokens(tokens: Mapping[str, str]) -> Any:
         return ("github", tokens[repo], "")
 
     return token_for
+
+
+def _calls(forges: Mapping[str, Any]) -> dict[str, int]:
+    return {name: len(forge.calls) for name, forge in forges.items()}
+
+
+async def test_an_organization_s_budget_narrows_only_its_own_share_of_a_credential() -> None:
+    acme, globex = "acme/app", "globex/app"
+    records, order = fakes._history(2)
+
+    def forges(remaining: int = 4_000) -> dict[str, Any]:
+        return {name: fakes.FakeForge(comment_pages=50, repo=name, remaining=remaining) for name in (acme, globex)}
+
+    async def read_with(section: Section, found: dict[str, Any], tokens: Mapping[str, str] | None = None) -> None:
+        loop = _loop(section, fakes.FakeStore(), fakes.FakeMirror(records, order), [NOW], repos=(acme, globex))
+        loop._client_for = _clients(found)  # noqa: SLF001
+        if tokens is not None:
+            loop._token_for = _tokens(tokens)  # noqa: SLF001
+        await loop.tick()
+
+    deployment = {"api_calls_per_tick": 20, "rate_reserve": 0}
+    shared = forges()
+    await read_with(Section(deployment, acme={"api_calls_per_tick": 0}), shared)
+    assert _calls(shared) == {acme: 0, globex: 20}, (
+        f"acme's 0 stops acme's reads alone; globex, on the same credential, reads the deployment's 20: {_calls(shared)}"
+    )
+    shared = forges()
+    await read_with(Section(deployment, acme={"rate_reserve": 100_000}), shared)
+    assert _calls(shared)[acme] == 1 and _calls(shared)[globex] == 19, (
+        f"acme's large reserve stops acme after the first answer names the limit; globex goes on: {_calls(shared)}"
+    )
+    shared = forges()
+    await read_with(Section(deployment, acme={"api_calls_per_tick": 5}, globex={"api_calls_per_tick": 500}), shared)
+    assert _calls(shared) == {acme: 5, globex: 15}, (
+        f"an organization's value narrows its share and never widens it past the credential's 20: {_calls(shared)}"
+    )
+    apart = forges()
+    tokens = {acme: "token-acme", globex: "token-globex"}
+    await read_with(Section(deployment, acme={"api_calls_per_tick": 3}), apart, tokens)
+    assert _calls(apart) == {acme: 3, globex: 20}, (
+        f"on two credentials, each has its own budget (#185): {_calls(apart)}"
+    )
 
 
 async def test_the_section_s_bots_and_ai_agents_are_bots_when_scored(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,18 +312,66 @@ async def test_the_section_s_bots_and_ai_agents_are_bots_when_scored(monkeypatch
     assert inputs.settings.bots == ("Release@Acme.example",), "the repository is scored with its owner's section"
 
 
-async def test_the_judge_hears_the_repository_s_guidance(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_the_judge_hears_the_repository_s_guidance_and_the_weighing_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     records, order = fakes._history(40)
     records["big"] = fakes._record("big", fakes.START + timedelta(days=200), [("src/drop.py", 9_000, 0)])
     order.append("big")
     heard: list[str] = []
+    threaded: list[str] = []
+    to_thread = loop_mod.asyncio.to_thread
 
     async def judge(repo: str, outlier: Any, ep: Any, client: Any, calls: Any, *, guidance: str) -> tuple[bool, str]:
         heard.append(guidance)
         return False, "a vendored parser"
 
+    async def spy(function: Any, *args: Any) -> Any:
+        threaded.append(function.__name__)
+        return await to_thread(function, *args)
+
     monkeypatch.setattr("embry0.services.slop_meter.judge.judge", judge)
+    monkeypatch.setattr(loop_mod.asyncio, "to_thread", spy)
     section = Section({}, acme={"judge_prompt": "Imports under third_party are never slop."})
     loop = _loop(section, fakes.FakeStore(), fakes.FakeMirror(records, order), [NOW], model="custom/local")
     await loop.tick()
     assert heard == ["Imports under third_party are never slop."], f"the owner's guidance reached the judge: {heard}"
+    assert threaded == ["unjudged", "compute"], (
+        f"finding the outliers to judge weighs every path, so it runs in a thread, as the scoring does: {threaded}"
+    )
+
+
+async def test_until_the_import_succeeds_the_meter_reads_the_variables_it_read_before() -> None:
+    """A first start whose environment import failed leaves ``slop_meter.*`` out of the ledger: a deployment that
+    had the meter off (``SLOP_METER_INTERVAL_SECONDS=0``) keeps it off, as the budget's readers keep their caps."""
+    import os
+    from unittest.mock import patch
+
+    from embry0.config import Embry0Config
+    from embry0.settings.store import build_snapshot
+
+    _settings({})
+    with patch.dict(
+        os.environ, {"SLOP_METER_INTERVAL_SECONDS": "0", "SLOP_METER_API_CALLS_PER_TICK": "50"}, clear=True
+    ):
+        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
+
+    class Store:
+        def __init__(self, data: dict[str, Any], ledger: list[str]) -> None:
+            self.rows = [
+                {"scope": "deployment", "data": data, "generation": 1, "updated_at": None, "bootstrapped_keys": ledger},
+                {"scope": "organization:acme", "data": {"slop_meter": {"api_calls_per_tick": 7}}, "generation": 1},
+            ]
+
+        async def snapshot(self) -> Any:
+            return build_snapshot(CATALOG, self.rows, token=(), log=False)
+
+    pending = await loop_mod.meter_reader(Store({}, []), config)()
+    assert pending.meter.deployment().enabled is False, "not imported yet: the variable's 0 still turns it off"
+    assert pending.meter.repo("globex/web").api_calls_per_tick == 50, "and its budget is still the variable's"
+    assert pending.meter.repo(REPO).api_calls_per_tick == 7, "where an organization's layer sets one, it wins"
+    ledger = [f"slop_meter.{key}" for key in ("enabled", "interval_hours", "api_calls_per_tick", "rate_reserve")]
+    imported = await loop_mod.meter_reader(Store({}, ledger), config)()
+    assert imported.meter.deployment().enabled is True, "once imported, the document is read: here, nothing written"
+    written = await loop_mod.meter_reader(Store({"slop_meter": {"enabled": True}}, []), config)()
+    assert written.meter.deployment().enabled is True, "a key written into the document since wins"

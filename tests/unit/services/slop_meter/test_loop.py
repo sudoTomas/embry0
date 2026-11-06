@@ -60,7 +60,7 @@ class FakeStore:
         self.judged: dict[tuple[str, str], bool] = {}
         self.stored: dict[str, Any] = {}
         #: Each repository's configuration version, as its last scoring recorded it.
-        self.versions: dict[str, str] = {}
+        self.versions_of: dict[str, str] = {}
 
     async def state(self, repo: str) -> dict[str, Any]:
         return dict(self.states.get(repo, {"repo": repo, "commits_read": 0}))
@@ -105,7 +105,10 @@ class FakeStore:
 
     async def store(self, repo: str, results: dict[str, Any], computed_at: datetime, config_version: str = "") -> None:
         self.stored[repo] = results
-        self.versions[repo] = config_version
+        self.versions_of[repo] = config_version
+
+    async def versions(self) -> dict[str, str]:
+        return dict(self.versions_of)
 
 
 async def _no_bots() -> tuple[str, ...]:

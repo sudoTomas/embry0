@@ -50,8 +50,8 @@ slop_meter:
 |---|---|---|
 | `enabled` | `true` | Whether the meter reads and scores at all. Off, it still removes what it kept of a repository that left its scope |
 | `interval_hours` | `24` | Hours between two runs over every enrolled repository, at least a quarter hour |
-| `api_calls_per_tick` | `200` | Forge API calls one run makes with one credential |
-| `rate_reserve` | `2000` | The rate limit a credential keeps for jobs: below it, the run calls the forge no more with it |
+| `api_calls_per_tick` | `200` | Forge API calls one run makes with one credential. An organization's value only narrows its own share |
+| `rate_reserve` | `2000` | The rate limit a credential keeps for jobs: below it, the run calls the forge no more with it. An organization's larger value stops only its own reads sooner |
 | `weights` | the published file types | What a changed line weighs, by glob, from 0 to 10 |
 | `excluded_dirs` | `vendor`, `node_modules`, `third_party`, `third-party`, `external`, `deps`, `bower_components` | Directories whose files weigh nothing |
 | `test_dirs` | `__tests__`, `tests`, `test`, `spec`, `specs`, `examples`, `example`, `demos`, `demo`, `samples`, `sample`, `fixtures`, `testdata` | Directories of tests and examples |
@@ -68,20 +68,38 @@ slop_meter:
 | `outlier_min_lines`, `outliers_per_year` | `2000`, `4` | Which commits are outliers |
 | `judge_prompt` | what the model is told slop is | The judge's guidance; the answer's form is added after it |
 | `level_bounds`, `level_names` | `[0.2, 0.4, 0.6, 0.8]`, the five names above | The levels |
-| `bots` | none | The owner's own bots, by commit name, address or forge login |
-| `ai_agents` | none | AI coding agents beyond the known ones, by the start of their commit address (`aider@`) |
+| `bots` | none | Bots, by commit name, address or forge login; each layer adds to the list it inherits |
+| `ai_agents` | none | AI coding agents beyond the known ones, by their commit address up to the `@` (`aider@`) or a whole address; each layer adds to the list |
 
-**Globs.** A glob with no `/` matches a file's name in any directory (`*.py`); one with a `/` matches its path from the repository's root (`db/migrations/*.sql`, `generated/**`). `*` matches within one name, `?` one character, `**` any number of directories. Matching ignores case, so globs are written in lowercase, and quoted in YAML, which reads a bare `*` as an alias. Where several globs of `weights` match a file, the longest wins (`*.min.js` over `*.js`), and between two of one length the first in alphabetical order. A file no glob matches weighs nothing.
+**Globs.** A glob with no `/` matches a file's name in any directory (`*.py`); one with a `/` matches its path from the repository's root (`db/migrations/*.sql`, `generated/**`). `*` matches within one name, `?` one character, `**` any number of directories. Matching ignores case, so globs are written in lowercase, and quoted in YAML, which reads a bare `*` as an alias. A file no glob matches weighs nothing. Where several globs of `weights` match a file, the most specific wins:
 
-**Layers.** An organization's layer may set every key but `enabled` and `interval_hours`, for its repositories: what counts as code, how fast its team attends to it, where its levels fall, its judge's guidance, its own bots and the forge budget of the credential it reads with. A repository's layer may set what counts as code in its own layout: `weights`, `excluded_dirs`, `test_dirs`, `test_files` and `test_marks`. `weights` is merged glob by glob, through every layer: a document adds or changes the globs it names and keeps every other, so a glob set to `0` stops counting. Every other key a layer sets replaces the inherited value whole. Where repositories of organizations that set different forge budgets are read with one credential, the fewest calls and the largest reserve apply, since the rate limit is the credential's.
+1. A glob with a `/` wins over any glob without one, so `generated/**: 0` weighs every file under `generated/` nothing, `.py`, `.proto` and `.graphql` alike.
+2. Between two globs with a `/`: the one with more segments free of wildcards (`src/legacy/**` over `src/**`), then the one with more segments, then the one with more literal characters (any but `*`, `?` and `/`).
+3. Between two globs without a `/`: the one with more literal characters (`*.min.js` over `*.js`).
+4. Any tie: the glob first in alphabetical order.
+
+The meter checks each path only against the globs that could match it (those under its first directory, those for its extension, and the few others) and weighs each path once a run.
+
+**Layers.** An organization's layer may set every key but `enabled` and `interval_hours`, for its repositories: what counts as code, how fast its team attends to it, where its levels fall, its judge's guidance, its own bots and a narrower forge budget. A repository's layer may set what counts as code in its own layout: `weights`, `excluded_dirs`, `test_dirs`, `test_files` and `test_marks`.
+
+- `weights` is merged glob by glob, through every layer: a document adds or changes the globs it names and keeps every other, so a glob set to `0` stops counting.
+- `bots` and `ai_agents` add to what a layer inherits: a bot the deployment lists counts for every organization, and no layer takes one out.
+- `excluded_dirs` and the `test_*` lists replace what they inherit whole, so a repository can take back a directory the default excludes (a `deps/` of its own code), restating the rest.
+- Every other key a layer sets replaces the inherited value.
+- **The forge budget.** A credential's budget is the deployment's `api_calls_per_tick` and `rate_reserve`. An organization's values only narrow its own repositories' share of it: fewer calls, or a larger reserve they stop at. They never widen it, and never lower what another organization reading with the same credential gets.
 
 **Before this section.** `SLOP_METER_INTERVAL_SECONDS` (`0` turned the reading off), `SLOP_METER_API_CALLS_PER_TICK` and `SLOP_METER_RATE_RESERVE` are imported once, at the first start of the release that added the section, as `interval_hours` (or `enabled: false`), `api_calls_per_tick` and `rate_reserve`, and ignored after that. Each organization's `slop_meter_bots` was copied into its layer as `bots` ([api.md](api.md#organizations)). Everything else was a constant in the meter's code, and its default is that constant.
 
 ## How a change rescores
 
-Each score row records `config_version`: a digest of every key its repository's score is computed from, as that repository reads them through its organization's layer and its own. The meter looks at the section every five minutes. When a repository it read last reads another version (an operator changed a weight, a level, the pace, the bots), the meter runs at once, without waiting for `interval_hours`, rescores it and records the new version; undoing the change rescores it back. `GET /api/v1/repos/{repo}/-/slop-meter` shows the version of the repository's score in `reading.config_version` ([api.md](api.md)).
+Each score row records `config_version`: a digest of every key its repository's score is computed from, as that repository reads them through its organization's layer and its own. Every five minutes the meter compares each enrolled repository's stored version with the one it reads now. It rescores the repositories whose versions differ, and only those, from what it already read: no fetch, no forge call and no judgment, so a change costs a rescore of what it touches. The next full run keeps its time. Undoing a change rescores back the same way. `GET /api/v1/repos/{repo}/-/slop-meter` shows the version of the repository's score in `reading.config_version` ([api.md](api.md)).
 
-Four keys are not what a score is computed from, and change no version: `enabled`, `interval_hours`, `api_calls_per_tick` and `rate_reserve`. Neither does `judge_prompt`: a judgment is kept per commit and never asked again, so new guidance applies to the outlier commits judged after it, and a change to the weights that makes another commit an outlier has that one judged. A repository still reading its history is scored once it is caught up.
+- A repository still reading its history is left to its catch-up, which scores it.
+- A rescore that fails is recorded on the repository and not tried again for that version.
+- An outlier commit a change makes new is judged at the next full run; until then the score is provisional.
+- A score stored before the version was recorded holds none, and a release that adds a key to what a score is computed from changes every digest. Either way the first run after the start, which scores every repository it reads, records the new versions.
+
+Four keys are not what a score is computed from, and change no version: `enabled`, `interval_hours`, `api_calls_per_tick` and `rate_reserve`. Neither does `judge_prompt`: a judgment is kept per commit and never asked again, so new guidance applies to the outlier commits judged after it.
 
 ## Which repositories
 
@@ -89,7 +107,7 @@ The meter reads the registered, active repositories enrolled in it: `background.
 
 A repository that leaves the meter's scope, opted out or unregistered, loses its mirror and everything the meter kept of it `background.prune_after_days` (a week) later, unless it comes back first; one made inactive is not read and keeps what was read ([what it keeps](#what-it-keeps)).
 
-The loop is on by default and reads what is enrolled. `slop_meter.enabled: false` turns the reading off; turned on again, the meter reads within five minutes.
+The loop is on by default and reads what is enrolled. `slop_meter.enabled: false` turns the reading off; turned on again, the meter reads within five minutes. Until the first start's import has imported `SLOP_METER_INTERVAL_SECONDS`, `SLOP_METER_API_CALLS_PER_TICK` and `SLOP_METER_RATE_RESERVE` (a start whose import failed: it is tried again while the orchestrator runs), the meter reads them as the release before did, so a meter that was off stays off (`slop_meter_settings_not_imported`).
 
 ## What it reads, and how much
 

@@ -22,10 +22,12 @@ organization can score as the algorithm is written.
 ``api_calls_per_tick``, ``rate_reserve`` and ``judge_prompt``
 (:data:`NOT_SCORED`) is what a score is computed from. Each score row records
 :func:`config_version`, a digest of those keys as its repository read them;
-a change to one of them changes the digest, and the meter rescores every
-repository it reads that the change reaches within five minutes, not at its
-next daily run. ``judge_prompt`` applies to the outlier commits judged after
-it changes: a judgment is kept and never asked again.
+a change to one of them changes the digest. Every five minutes the meter
+compares each repository's stored digest with the one it reads now, and
+rescores the repositories whose digests differ from what was read, with no
+fetch and no forge call, without waiting for its next run. ``judge_prompt``
+applies to the outlier commits judged after it changes: a judgment is kept
+and never asked again.
 
 **Layers.** What counts as code, how fast a team attends to it, where the
 level bands fall, the judge's guidance and the owner's own bots are an
@@ -33,10 +35,13 @@ organization's to say for its repositories; what counts as code is also a
 repository's own, for its layout (``weights``, ``excluded_dirs``,
 ``test_dirs``, ``test_files``, ``test_marks``). ``weights`` is merged entry
 by entry, so a layer adds or changes the globs it names and keeps every
-other. ``api_calls_per_tick`` and ``rate_reserve`` bound the forge calls one
-tick makes with a credential, so an organization may set them for the
-credential it reads with. Whether the meter runs and how often are the
-deployment's alone.
+other. ``bots`` and ``ai_agents`` add to what a layer inherits, so a bot the
+deployment lists counts for every organization and no layer takes one out;
+``excluded_dirs`` and the ``test_*`` lists replace what they inherit, so a
+repository can take back a directory the default excludes. A credential's
+forge budget is the deployment's ``api_calls_per_tick`` and
+``rate_reserve``; an organization's own values only narrow its own share of
+it. Whether the meter runs and how often are the deployment's alone.
 
 **Before this section** the reading pace was ``SLOP_METER_INTERVAL_SECONDS``
 (``0`` turned the reading off), ``SLOP_METER_API_CALLS_PER_TICK`` and
@@ -114,8 +119,9 @@ DEFAULT_INTERVAL_HOURS: Final = 24.0
 MIN_INTERVAL_HOURS: Final = 0.25
 #: The most entries ``weights`` holds.
 MAX_WEIGHTS: Final = 1000
-#: The most entries ``bots`` and ``ai_agents`` hold, as ``slop_meter_bots`` held on the organization row.
-MAX_IDENTITIES: Final = 100
+#: The most entries ``bots`` and ``ai_agents`` hold once every layer has added its own: twice what
+#: ``slop_meter_bots`` held on the organization row.
+MAX_IDENTITIES: Final = 200
 MAX_IDENTITY_LENGTH: Final = 200
 MAX_LEVEL_NAME_LENGTH: Final = 60
 MAX_JUDGE_PROMPT_LENGTH: Final = 4000
@@ -145,13 +151,19 @@ def interval_from_env(value: Any) -> float:
     return max(MIN_INTERVAL_HOURS, seconds / 3600)
 
 
-def _each(values: tuple[str, ...], check: Any, what: str) -> tuple[str, ...]:
-    """``values`` when ``check`` takes each and no two are the same without regard to case."""
+def _checked(values: tuple[str, ...], check: Any, what: str) -> tuple[str, ...]:
+    """``values`` when ``check`` takes each."""
     for position, value in enumerate(values, start=1):
         try:
             check(value)
         except ValueError as exc:
             raise ValueError(f"{what} {position}: {exc}") from None
+    return values
+
+
+def _each(values: tuple[str, ...], check: Any, what: str) -> tuple[str, ...]:
+    """``values`` when ``check`` takes each and no two are the same without regard to case."""
+    _checked(values, check, what)
     if len({value.lower() for value in values}) != len(values):
         raise ValueError(f"name each {what} once")
     return values
@@ -167,8 +179,12 @@ def _identity(text: str) -> str:
 
 
 def _agent(text: str) -> str:
-    if not text or any(char.isspace() for char in text):
-        raise ValueError("an AI agent is the start of its commit address, such as aider@, with no blanks")
+    local, at, domain = text.partition("@")
+    if not local or not at or "@" in domain or any(char.isspace() for char in text):
+        raise ValueError(
+            "an AI agent is its commit address up to and including the @, such as aider@, or a whole address, "
+            "with no blanks"
+        )
     refuse_unprintable(text, what="an AI agent's address")
     return text
 
@@ -200,8 +216,9 @@ class SlopMeterSettings(SectionModel):
         le=10_000,
         description=(
             "Forge API calls one run may make with one credential, shared round-robin by the repositories read "
-            "with it, to read comments, reviews and logins. Where repositories of organizations that set "
-            "different values are read with one credential, the smallest applies. Git fetches are not API calls."
+            "with it, to read comments, reviews and logins: the deployment's value is the credential's budget. "
+            "An organization's value only narrows its own repositories' share of it, never widens it, and never "
+            "lowers another organization's on the same credential. Git fetches are not API calls."
         ),
     )
     rate_reserve: int = Field(
@@ -210,8 +227,8 @@ class SlopMeterSettings(SectionModel):
         le=100_000,
         description=(
             "The rate limit a credential keeps for the jobs that use it: once its remaining calls "
-            "(X-RateLimit-Remaining) drop below this, the run makes no further call with it. Where organizations "
-            "that set different values share one credential, the largest applies."
+            "(X-RateLimit-Remaining) drop below this, the run makes no further call with it. An organization's "
+            "larger value stops only its own repositories' reads sooner; a smaller one changes nothing."
         ),
     )
     # ---- what a changed line weighs ----
@@ -222,10 +239,13 @@ class SlopMeterSettings(SectionModel):
             "What one changed line of a file weighs, by glob, from 0 to 10; a file no glob matches weighs 0, so "
             "data, documents and binaries never count. A glob with no '/' matches a file's name in any directory "
             "(*.py), one with a '/' its path from the repository's root (db/migrations/*.sql, generated/**); '*' "
-            "matches within one name, '?' one character, '**' any directories. Where several match, the longest "
-            "glob wins (*.min.js over *.js). Write globs in lowercase, quoted: matching ignores case, and YAML "
-            "reads a bare * as an alias. Merged entry by entry: a document adds or changes the globs it names and "
-            "keeps every other, so a glob set to 0 stops counting."
+            "matches within one name, '?' one character, '**' any directories. Where several match, the most "
+            "specific wins: a glob with a '/' over any without one; between two with one, more segments free of "
+            "wildcards, then more segments, then more literal characters; between two without, more literal "
+            "characters (*.min.js over *.js); then the first in alphabetical order. So generated/** weighs every "
+            "file under generated/, whatever its kind. Write globs in lowercase, quoted: matching ignores case, "
+            "and YAML reads a bare * as an alias. Merged entry by entry: a document adds or changes the globs it "
+            "names and keeps every other, so a glob set to 0 stops counting."
         ),
     )
     excluded_dirs: tuple[DirName, ...] = Field(
@@ -411,19 +431,22 @@ class SlopMeterSettings(SectionModel):
         default=(),
         max_length=MAX_IDENTITIES,
         description=(
-            "The owner's own bots, as commit names, addresses or forge logins matched whole without regard to "
-            "case: their commits add lines but no attention, and as a co-author they count as an AI agent does. "
-            "Beyond the ones every deployment knows ([bot] accounts, noreply@ addresses, known coding agents) "
-            "and embry0's own commit identities. Was the organization's slop_meter_bots."
+            "Bots, as commit names, addresses or forge logins matched whole without regard to case: their commits "
+            "add lines but no attention, and as a co-author they count as an AI agent does. Beyond the ones every "
+            "deployment knows ([bot] accounts, noreply@ addresses, known coding agents) and embry0's own commit "
+            "identities. Each document adds to the list it inherits, so a bot the deployment lists counts for "
+            "every organization; no layer takes one out. At most 200 in all. Was the organization's "
+            "slop_meter_bots."
         ),
     )
     ai_agents: tuple[Identity, ...] = Field(
         default=(),
         max_length=MAX_IDENTITIES,
         description=(
-            "AI coding agents beyond the known ones, as the start of their commit address (aider@), matched "
-            "without regard to case: a commit one authors adds lines but no attention, and one it co-authors "
-            "counts ai_coauthor_share of its author's hours."
+            "AI coding agents beyond the known ones, each its commit address up to and including the @ (aider@, "
+            "any domain) or a whole address (agent@tools.example), matched without regard to case: a commit one "
+            "authors adds lines but no attention, and one it co-authors counts ai_coauthor_share of its author's "
+            "hours. Each document adds to the list it inherits, as bots. At most 200 in all."
         ),
     )
 
@@ -500,12 +523,12 @@ class SlopMeterSettings(SectionModel):
     @field_validator("bots")
     @classmethod
     def _bots(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return _each(value, _identity, "bot")
+        return _checked(value, _identity, "bot")
 
     @field_validator("ai_agents")
     @classmethod
     def _ai_agents(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return _each(value, _agent, "AI agent")
+        return _checked(value, _agent, "AI agent")
 
     @model_validator(mode="after")
     def _core_ramp(self) -> SlopMeterSettings:
@@ -517,9 +540,11 @@ class SlopMeterSettings(SectionModel):
 def config_version(settings: SlopMeterSettings) -> str:
     """A digest of every key a score is computed from (all but :data:`NOT_SCORED`), as a repository reads them.
 
-    Stable across processes and releases for the same values: the keys and
-    the entries of ``weights`` are sorted, and every value is written as the
-    model dumps it to JSON. Each score row records it.
+    The same for the same keys and values in any process: the keys and the
+    entries of ``weights`` are sorted, and every value is written as the
+    model dumps it to JSON. A release that adds a key to what a score is
+    computed from changes every digest, so its first run rescores every
+    repository. Each score row records it.
     """
     values = {key: value for key, value in settings.model_dump(mode="json").items() if key not in NOT_SCORED}
     text = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -547,6 +572,8 @@ SLOP_METER = Section(
     org_keys=_ORG_KEYS,
     repo_keys=_REPO_KEYS,
     merged_keys=frozenset({"weights"}),
+    # A bot or an agent the deployment knows is one in every organization: each layer adds to the lists.
+    added_keys=frozenset({"bots", "ai_agents"}),
     env={
         "enabled": EnvImport(_INTERVAL_VARIABLE, enabled_from_env),
         "interval_hours": EnvImport(_INTERVAL_VARIABLE, interval_from_env),

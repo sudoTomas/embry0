@@ -2739,7 +2739,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # background_scope_exits, each removal audited); the enrollment, the judge's model
         # (background_models.slop_judge) and the slop_meter section come from one snapshot a tick.
         repos=registry_reader(app.state.repos_repo),
-        read=meter_reader(app.state.settings),
+        read=meter_reader(app.state.settings, config),
         store=app.state.slop_meter_repo,
         mirror=GitMirror(_Path(config.slop_meter_data_path), timeout=config.slop_meter_git_timeout_seconds),
         exits=ScopeExitsRepository(db),

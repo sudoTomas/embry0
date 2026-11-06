@@ -118,7 +118,11 @@ def _section_table(section: Section[Any]) -> list[str]:
     for key in section.fields:
         prop = _resolve(props.get(key, {}), defs)
         layers = [
-            f"{name}, entry by entry" if key in section.merged_keys else name
+            f"{name}, entry by entry"
+            if key in section.merged_keys
+            else f"{name}, added to"
+            if key in section.added_keys
+            else name
             for name, keys in (("organization", section.org_keys), ("repository", section.repo_keys))
             if key in keys
         ]

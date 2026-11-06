@@ -235,16 +235,71 @@ def _rules(values: dict[str, Any]) -> Any:
     return FileRules.of(settings)
 
 
-def test_the_longest_glob_wins_and_a_glob_with_a_slash_matches_from_the_root() -> None:
+def test_a_folder_glob_weighs_every_file_under_it_whatever_its_extension() -> None:
+    """A glob with a '/' is more specific than any glob without one, so it wins over the file's extension glob
+    however long that is: ranking by length let *.graphql beat gen/**."""
+    rules = _rules({"weights": {"gen/**": 0.0}})
+    for path in ("gen/a.py", "gen/api.proto", "gen/x.swift", "gen/schema.graphql", "gen/deep/er/x.min.js"):
+        assert type_weight(path, rules) == 0.0, f"{path} is under gen/"
+    assert type_weight("src/schema.graphql", rules) == 1.0 and type_weight("gene/a.py", rules) == 1.0
+
+
+def test_the_most_specific_glob_wins() -> None:
+    from embry0.services.slop_meter.globs import specificity
+
+    rules = _rules(
+        {
+            "weights": {
+                "src/**": 2.0,
+                "src/legacy/**": 0.2,
+                "src/legacy/keep/*.py": 3.0,
+                "**/vendored/*.go": 0.1,
+                "db/*": 0.7,
+                "db/schema.sql": 0.9,
+            }
+        }
+    )
+    assert type_weight("src/a.py", rules) == 2.0 and type_weight("src/README.md", rules) == 2.0, (
+        "src/** weighs every file under it"
+    )
+    assert type_weight("src/legacy/a.py", rules) == 0.2, "more segments free of wildcards: src/legacy/** over src/**"
+    assert type_weight("src/legacy/keep/a.py", rules) == 3.0, "three such segments over two"
+    assert type_weight("lib/vendored/x.go", rules) == 0.1, "a glob with a '/' over the extension's"
+    assert type_weight("db/schema.sql", rules) == 0.9 and type_weight("db/q.sql", rules) == 0.7
+    assert specificity("*.min.js") > specificity("*.js"), "between two without a '/', more literal characters"
+    assert specificity("a/b/c/*") > specificity("a/**/b.py") > specificity("**/b.py") > specificity("*.longername"), (
+        "segments free of wildcards first, then segments, then literal characters; any '/' over none"
+    )
+
+
+def test_the_most_specific_glob_wins_and_a_glob_with_a_slash_matches_from_the_root() -> None:
     rules = _rules({"weights": {"src/*.py": 2.0, "generated/**": 0.0, "*.sql": 1.0, "migrations/**/*.sql": 0.2}})
     assert type_weight("src/a.py", rules) == 2.0 and type_weight("lib/src/a.py", rules) == 1.0, (
-        "src/*.py is anchored at the root, and longer than *.py where both match"
+        "src/*.py is anchored at the root, and wins over *.py where both match"
     )
     assert type_weight("Generated/deep/x.py", rules) == 0.0, "generated/** reaches every file below it, any case"
     assert type_weight("migrations/v1/up.sql", rules) == 0.2 and type_weight("db/q.sql", rules) == 1.0
     assert type_weight("src/a_test.py", rules) == 1.0, "the test share applies to the glob's weight (2.0 × 0.5)"
     assert type_weight("src/tests/a.py", rules) == 0.5, "'*' stays within one name: src/*.py does not reach it"
     assert type_weight("README.md", rules) == 0.0, "a file no glob matches weighs nothing"
+
+
+def test_a_path_is_checked_against_the_few_globs_that_could_match_it() -> None:
+    """20,000 paths under 200 directories, against the default globs and 900 globs of other directories: each
+    path is checked against a handful, not against every glob, and each path once however often it is asked."""
+    rng = random.Random(3)
+    extensions = ("py", "ts", "js", "go", "rs", "java", "md", "json", "tsx", "css", "proto", "swift")
+    paths = [f"d{rng.randrange(200)}/s{rng.randrange(50)}/f{i}.{rng.choice(extensions)}" for i in range(20_000)]
+    rules = _rules({"weights": {f"x{i}/legacy/**": 0.0 for i in range(900)}})
+    weigh = Weigher(rules=rules)
+    for path in paths + paths:
+        weigh(path)
+    for path in paths:
+        type_weight(path, rules)
+    assert rules.evaluations < 5 * len(paths), (
+        f"{rules.evaluations} glob checks for {len(paths)} paths: a path is checked against every glob, or more "
+        "than once"
+    )
 
 
 def test_what_a_test_is_and_what_it_weighs() -> None:

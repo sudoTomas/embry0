@@ -17,74 +17,80 @@ import json
 import re
 import tomllib
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 from functools import lru_cache
 from statistics import quantiles
 from typing import Any
 
-from embry0.services.slop_meter.globs import compile_glob, marked
+from embry0.services.slop_meter.globs import GlobIndex, marked
 from embry0.settings.sections.slop_meter import SLOP_METER, SlopMeterSettings
 
-_LITERAL_SUFFIX = re.compile(r"\*[^*?/]+\Z")
+#: The most path weights one :class:`FileRules` keeps.
+_KEPT_MAX = 200_000
 
 
-@lru_cache(maxsize=4096)
-def _matcher(glob: str) -> tuple[str, Any]:
-    """How one glob is checked: a name's suffix for ``*`` and a literal (``*.py``, most globs), else its
-    expression (:func:`embry0.services.slop_meter.globs.compile_glob`)."""
-    lowered = glob.lower()
-    if _LITERAL_SUFFIX.match(lowered):
-        return lowered[1:], None
-    return lowered, compile_glob(lowered)
-
-
-def _hit(matcher: tuple[str, Any], path: str, name: str) -> bool:
-    text, pattern = matcher
-    if pattern is None:
-        return name.endswith(text)
-    return pattern.fullmatch(path if "/" in text else name) is not None
-
-
-@dataclass(frozen=True)
 class FileRules:
     """What a changed line of each file weighs, from the ``slop_meter`` section (:meth:`of`).
 
-    ``weights`` are ``(glob, weight)`` pairs in the order they are tried:
-    the longest glob first, so the first that matches is the one that wins,
-    and between globs of one length the first in alphabetical order.
+    The globs of ``weights`` and ``test_files`` are compiled and indexed once
+    (:class:`embry0.services.slop_meter.globs.GlobIndex`): where several
+    match a file, the most specific counts. Each path's weight is kept, so one
+    run weighs a path once however often it is asked. Build one per run: the
+    kept weights are its own.
     """
 
-    weights: tuple[tuple[str, float], ...]
-    excluded_dirs: frozenset[str]
-    test_dirs: frozenset[str]
-    test_files: tuple[str, ...]
-    test_marks: frozenset[str]
-    test_weight: float
+    def __init__(
+        self,
+        weights: Mapping[str, float],
+        *,
+        excluded_dirs: Iterable[str],
+        test_dirs: Iterable[str],
+        test_files: Iterable[str],
+        test_marks: Iterable[str],
+        test_weight: float,
+    ) -> None:
+        self._weights: GlobIndex[float] = GlobIndex((glob, float(weight)) for glob, weight in weights.items())
+        self._tests: GlobIndex[bool] = GlobIndex((glob, True) for glob in test_files)
+        self.excluded_dirs = frozenset(name.lower() for name in excluded_dirs)
+        self.test_dirs = frozenset(name.lower() for name in test_dirs)
+        self.test_marks = frozenset(mark.lower() for mark in test_marks)
+        self.test_weight = float(test_weight)
+        self._kept: dict[str, float] = {}
 
     @classmethod
     def of(cls, settings: SlopMeterSettings) -> FileRules:
-        ordered = sorted(settings.weights.items(), key=lambda item: (-len(item[0]), item[0]))
         return cls(
-            weights=tuple((glob.lower(), float(weight)) for glob, weight in ordered),
-            excluded_dirs=frozenset(name.lower() for name in settings.excluded_dirs),
-            test_dirs=frozenset(name.lower() for name in settings.test_dirs),
-            test_files=tuple(glob.lower() for glob in settings.test_files),
-            test_marks=frozenset(mark.lower() for mark in settings.test_marks),
-            test_weight=float(settings.test_weight),
+            settings.weights,
+            excluded_dirs=settings.excluded_dirs,
+            test_dirs=settings.test_dirs,
+            test_files=settings.test_files,
+            test_marks=settings.test_marks,
+            test_weight=settings.test_weight,
         )
+
+    @property
+    def evaluations(self) -> int:
+        """How many globs these rules have checked a path against so far."""
+        return self._weights.evaluations + self._tests.evaluations
 
     def weight(self, path: str) -> float:
         """A path's weight before ignore lists and outliers: its glob's, a share for tests, 0 when excluded."""
+        kept = self._kept.get(path)
+        if kept is None:
+            if len(self._kept) >= _KEPT_MAX:
+                self._kept.clear()  # rules kept for long (the defaults) never grow without bound
+            kept = self._kept[path] = self._weigh(path)
+        return kept
+
+    def _weigh(self, path: str) -> float:
         lowered = path.lower()
         parts = lowered.split("/")
-        name = parts[-1]
         if any(p in self.excluded_dirs for p in parts[:-1]):
             return 0.0
-        weight = next((w for glob, w in self.weights if _hit(_matcher(glob), lowered, name)), 0.0)
+        weight = self._weights.best(lowered) or 0.0
         if weight and (
             any(p in self.test_dirs for p in parts[:-1])
-            or marked(name, self.test_marks)
-            or any(_hit(_matcher(glob), lowered, name) for glob in self.test_files)
+            or marked(parts[-1], self.test_marks)
+            or self._tests.best(lowered) is not None
         ):
             weight *= self.test_weight
         return weight

@@ -222,3 +222,32 @@ def test_a_merged_key_no_layer_may_set_is_refused() -> None:
 
     with pytest.raises(SectionError, match="merged_keys names 'limits', which no layer may set"):
         Section(name="mapped", model=Mapped, summary="A test section.", merged_keys=frozenset({"limits"}))
+
+
+def test_an_added_key_holds_what_every_document_below_lists_and_its_own() -> None:
+    """``added_keys`` (#169): a list a layer adds its items to, after the inherited ones and the default's, each
+    once; no layer takes an item out of the list below it. Any other key still replaces whole."""
+    from embry0.settings.registry import Section
+
+    assert "added_keys" in Section.__dataclass_fields__, "a section names the list keys a layer adds to"
+    section = _mapped_section(added_keys=frozenset({"names"}))
+    over_default = resolve(section, {}, [("organization:acme", {"names": ["z", "x"]})])
+    assert over_default.model.model_dump(mode="json")["names"] == ["x", "y", "z"], "the default's, then its own"
+    over_stored = resolve(section, {"names": ["x", "y", "w"]}, [("organization:acme", {"names": ["z"]})])
+    assert over_stored.model.model_dump(mode="json")["names"] == ["x", "y", "w", "z"], "over the deployment's"
+    plain = resolve(_mapped_section(), {}, [("organization:acme", {"names": ["z"]})])
+    assert plain.model.model_dump(mode="json")["names"] == ["z"], "without added_keys a layer replaces whole"
+
+
+@pytest.mark.parametrize(
+    ("added", "problem"),
+    [
+        ({"limits"}, "added_keys names 'limits', which is not a list"),
+        ({"nothing"}, "added_keys names no field of the model: ['nothing']"),
+    ],
+)
+def test_only_a_list_a_layer_may_set_can_be_added_to(added: set[str], problem: str) -> None:
+    from embry0.settings.registry import SectionError
+
+    with pytest.raises(SectionError, match=re.escape(problem)):
+        _mapped_section(added_keys=frozenset(added))

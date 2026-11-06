@@ -175,7 +175,8 @@ async def test_a_weight_changed_in_the_document_rescores_on_the_next_run_and_rec
     db = db_with_migrations
     clock = [NOW]
     loop = _meter(app, clock)
-    assert await loop.scheduled() is True, "the first look reads and scores the enrolled repository"
+    assert await loop.scheduled() == "run", "the first look reads and scores the enrolled repository"
+    fetched = len(loop._mirror.synced)  # noqa: SLF001 - the fake mirror records each fetch
     first_score, first_version = await _score(db)
     assert first_version == await _effective_version(app) != "", (
         "the score records the version of the settings acme/widgets reads"
@@ -184,7 +185,8 @@ async def test_a_weight_changed_in_the_document_rescores_on_the_next_run_and_rec
     resp = await _patch(app, {"weights": {"*.sql": 0.1}}, owner="acme")
     assert resp.status_code == 200, resp.text
     clock[0] += timedelta(minutes=5)
-    assert await loop.scheduled() is True, "a weight changed: the next look rescores, without waiting for the day"
+    assert await loop.scheduled() == "rescore", "a weight changed: the next look rescores, without waiting for the day"
+    assert len(loop._mirror.synced) == fetched, "from what was read: nothing is fetched"  # noqa: SLF001
     second_score, second_version = await _score(db)
     assert second_version == await _effective_version(app) != first_version, (
         f"the rescored row records the new version: {first_version} → {second_version}"
@@ -198,15 +200,15 @@ async def test_a_weight_changed_in_the_document_rescores_on_the_next_run_and_rec
     undo = await _call(app, "POST", f"{URL}/revisions/{newest['id']}/undo")
     assert undo.status_code == 200, f"the change has history with undo: {undo.text}"
     clock[0] += timedelta(minutes=5)
-    assert await loop.scheduled() is True, "undoing it is a change too"
+    assert await loop.scheduled() == "rescore", "undoing it is a change too"
     assert await _score(db) == (first_score, first_version), "and scores as before, recording the first version"
 
 
 async def test_a_write_names_every_refused_key_and_a_repository_may_set_only_its_layout(app: Any) -> None:
-    resp = await _patch(app, {"weights": {"*.PY": 1}, "level_bounds": [0.5, 0.4, 0.6, 0.8], "bots": ["x", "X"]})
+    resp = await _patch(app, {"weights": {"*.PY": 1}, "level_bounds": [0.5, 0.4, 0.6, 0.8], "ai_agents": ["dev"]})
     assert resp.status_code == 422, resp.text
     named = {tuple(problem["loc"])[-1] for problem in resp.json()["detail"]}
-    assert {"weights", "level_bounds", "bots"} <= named, f"422 names every refused key: {resp.json()['detail']}"
+    assert {"weights", "level_bounds", "ai_agents"} <= named, f"422 names every refused key: {resp.json()['detail']}"
     assert (await _patch(app, {"weights": {"generated/**": 0}}, repo=REPO)).status_code == 200
     refused = await _patch(app, {"lines_per_hour": 10}, repo=REPO)
     assert refused.status_code == 422 and "lines_per_hour" in refused.text, "a team's pace is its organization's"
@@ -230,12 +232,31 @@ async def test_a_write_names_every_refused_key_and_a_repository_may_set_only_its
 
 
 async def test_an_organization_s_bots_move_into_its_layer(app: Any, db_with_migrations: DatabasePool) -> None:
-    resp = await _call(app, "PATCH", "/api/v1/orgs/acme", json={"settings": {"slop_meter_bots": [" release-bot "]}})
-    assert resp.status_code == 200, resp.text
+    await _put(app, "slop_meter:\n  enabled: true\n  bots: [ci-runner]\n")
+    bots = {"slop_meter_bots": [" release-bot ", "Release-Bot", "tab\tbot"]}
+    resp = await _call(app, "PATCH", "/api/v1/orgs/acme", json={"settings": bots})
+    assert resp.status_code == 200, f"a list the route took before is taken, each bot once: {resp.text}"
     assert [note["moved_to"] for note in resp.json()["deprecated"]] == ["slop_meter.bots"], resp.json()
     layer = await _call(app, "GET", URL, params={"owner": "acme"})
-    assert layer.json()["data"]["slop_meter"]["bots"] == ["release-bot"], "written into acme's layer"
+    assert layer.json()["data"]["slop_meter"]["bots"] == ["release-bot"], (
+        "written into acme's layer once, the entry the section cannot hold left out"
+    )
     assert "slop_meter_bots" not in resp.json()["settings"], "and no longer shown as the organization's own"
+    from embry0.settings.sections.slop_meter import SLOP_METER
+
+    snapshot = await app.state.settings.snapshot()
+    assert snapshot.scoped(SLOP_METER).repo(REPO).bots == ("ci-runner", "release-bot"), (
+        "acme's bots add to the deployment's: a bot the deployment lists counts for every organization"
+    )
+    effective = (await _call(app, "GET", f"{URL}/effective", params={"repo": REPO})).json()
+    [section] = [s for s in effective["sections"] if s["name"] == "slop_meter"]
+    listed = next(k for k in section["keys"] if k["key"] == "bots")
+    assert listed["merged_by_entry"] and {e["entry"]: e["source"] for e in listed["entries"]} == {
+        "ci-runner": "document",
+        "release-bot": "organization",
+    }, f"the values in effect name the document each bot comes from: {listed}"
+    posted = await _call(app, "POST", "/api/v1/orgs", json={"owner": "initech", "probe": False, "settings": bots})
+    assert posted.status_code == 201, f"registering an owner with them registers it and writes its layer: {posted.text}"
 
     # An owner whose row still lists bots its layer never imported (registered and written after the start's
     # copy) is read from its row, and copied into its layer by the budget policy's retry.
@@ -259,12 +280,36 @@ async def test_the_first_start_copies_each_organization_s_bots_into_its_layer(
     db = db_with_migrations
     await db.execute(
         "INSERT INTO organizations (owner, forge, settings) VALUES ('acme', 'github', $1::jsonb)",
-        {"slop_meter_bots": ["release-bot", "Release-Bot", " ", "ci@acme.example"]},
+        {"slop_meter_bots": ["release-bot", "Release-Bot", " ", "zero\u200bwidth", "ci@acme.example"]},
     )
     app = create_app(_config(db, tmp_path))
     async with lifespan(app):
         await _started(app)
         layer = await _call(app, "GET", URL, params={"owner": "acme"})
     assert layer.json()["data"].get("slop_meter", {}).get("bots") == ["release-bot", "ci@acme.example"], (
-        f"the start copies the owner's bots into its layer, each once: {layer.json()['data']}"
+        "the start copies the owner's bots into its layer, each once, leaving out the entry the section cannot "
+        f"hold rather than refusing the list: {layer.json()['data']}"
     )
+
+
+async def test_a_moved_setting_the_section_refuses_is_refused_before_the_owner_is_registered(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``POST /orgs`` checks each moved setting as its layer would take it before registering anything, so a
+    refusal never leaves an owner registered without the layer it asked for. Shown here with the cleaning of
+    ``slop_meter_bots`` turned off, since a cleaned list is one the section always takes."""
+    import dataclasses
+
+    from embry0.services import organizations as org_service
+
+    monkeypatch.setitem(
+        org_service.MOVED, "slop_meter_bots", dataclasses.replace(org_service.MOVED["slop_meter_bots"], write=None)
+    )
+    posted = await _call(
+        app,
+        "POST",
+        "/api/v1/orgs",
+        json={"owner": "umbrella", "probe": False, "settings": {"slop_meter_bots": ["a\tb"]}},
+    )
+    assert posted.status_code == 422 and "slop_meter_bots" in posted.text, posted.text
+    assert await app.state.organizations_repo.get("umbrella") is None, "nothing was registered"

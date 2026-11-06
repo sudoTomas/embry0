@@ -44,8 +44,9 @@ def test_the_meter_lists_registered_repositories_and_reads_its_enrollment_every_
         "the meter's candidates are the registered repositories, active or not (it reads the active ones and "
         f"keeps what it read of the inactive), never the world map's regions: got repos={passed.get('repos')!r}"
     )
-    assert passed.get("read") == "meter_reader(app.state.settings)", (
-        "the meter reads background.slop_meter and its judge's model from one snapshot a tick: "
+    assert passed.get("read") == "meter_reader(app.state.settings, config)", (
+        "the meter reads background.slop_meter, its judge's model and the slop_meter section from one snapshot a "
+        "tick, and the old variables of a key the import has not imported (#169): "
         f"got read={passed.get('read')!r}"
     )
     assert "models" not in passed, "no second reader of the settings documents: a tick could mix two versions"

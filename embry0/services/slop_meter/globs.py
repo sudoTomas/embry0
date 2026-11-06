@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import functools
 import re
+from collections.abc import Iterable
 from typing import Final
 
 MAX_GLOB_LENGTH: Final = 200
@@ -130,3 +131,102 @@ def marked(name: str, marks: frozenset[str]) -> bool:
         return False
     word = stem.rpartition(".")[2]
     return bool(stem) and "." in stem and word in marks
+
+
+def specificity(glob: str) -> tuple[int, int, int, int]:
+    """How specific ``glob`` is, larger the more specific; where several globs match one file, the most specific
+    is the one that counts (:class:`GlobIndex`).
+
+    A glob with a ``/`` is more specific than any glob without one. Between two
+    with a ``/``: the one with more segments free of wildcards, then the one with
+    more segments, then the one with more literal characters. Between two
+    without: the one with more literal characters, so ``*.min.js`` is more
+    specific than ``*.js``. A literal character is any but ``*``, ``?`` and ``/``.
+    """
+    lowered = glob.lower()
+    literal = sum(1 for char in lowered if char not in "*?/")
+    if "/" not in lowered:
+        return (0, literal, 0, 0)
+    segments = lowered.split("/")
+    plain = sum(1 for segment in segments if not any(char in segment for char in "*?"))
+    return (1, plain, len(segments), literal)
+
+
+#: A glob's place among others: :func:`specificity`, the most specific first, then the glob's text.
+_Order = tuple[tuple[int, ...], str]
+
+
+def _order(glob: str) -> _Order:
+    """Sorts the most specific glob first; between two of one specificity, the first in alphabetical order."""
+    return tuple(-part for part in specificity(glob)), glob.lower()
+
+
+class GlobIndex[V]:
+    """Globs, each with a value, indexed so a path is checked against the few that could match it.
+
+    :meth:`best` answers the value of the most specific glob that matches a
+    path (:func:`specificity`; a tie goes to the glob first in alphabetical
+    order), or None. A glob ``*`` and a literal holding a ``.`` (``*.py``,
+    ``*_test.go``) is filed under its last extension and checked only against
+    names with that extension; a glob with no wildcard against the one name it
+    is; a glob with a ``/`` whose first segment is a name only against paths
+    under that directory. ``evaluations`` counts the globs checked.
+    """
+
+    def __init__(self, entries: Iterable[tuple[str, V]]) -> None:
+        self._exact: dict[str, tuple[_Order, V]] = {}
+        self._by_extension: dict[str, list[tuple[_Order, str, V]]] = {}
+        self._names: list[tuple[_Order, re.Pattern[str], V]] = []
+        self._by_head: dict[str, list[tuple[_Order, re.Pattern[str], V]]] = {}
+        self._paths: list[tuple[_Order, re.Pattern[str], V]] = []
+        self.evaluations = 0
+        for glob, value in sorted(entries, key=lambda entry: _order(entry[0])):
+            lowered = glob.lower()
+            order = _order(lowered)
+            if "/" in lowered:
+                head = lowered.split("/", 1)[0]
+                wild = any(char in head for char in "*?")
+                target = self._paths if wild else self._by_head.setdefault(head, [])
+                target.append((order, compile_glob(lowered), value))
+            elif not any(char in lowered for char in "*?"):
+                self._exact.setdefault(lowered, (order, value))
+            elif lowered.startswith("*") and "." in lowered and not any(char in lowered[1:] for char in "*?"):
+                extension = lowered.rpartition(".")[2]
+                self._by_extension.setdefault(extension, []).append((order, lowered[1:], value))
+            else:
+                self._names.append((order, compile_glob(lowered), value))
+
+    def _first(self, candidates: Iterable[tuple[_Order, re.Pattern[str], V]], text: str) -> tuple[_Order, V] | None:
+        for order, pattern, value in candidates:
+            self.evaluations += 1
+            if pattern.fullmatch(text) is not None:
+                return order, value
+        return None
+
+    def best(self, path: str) -> V | None:
+        """The value of the most specific glob matching ``path``, lowercased and from the repository's root."""
+        found: list[tuple[_Order, V]] = []
+        if "/" in path:
+            hit = self._first(self._by_head.get(path.split("/", 1)[0], ()), path)
+            if hit is not None:
+                found.append(hit)
+        hit = self._first(self._paths, path)
+        if hit is not None:
+            found.append(hit)
+        if not found:
+            # Only when no glob with a '/' matches: any of them is more specific than every glob without one.
+            name = path.rsplit("/", 1)[-1]
+            exact = self._exact.get(name)
+            if exact is not None:
+                self.evaluations += 1
+                found.append(exact)
+            if "." in name:
+                for order, suffix, value in self._by_extension.get(name.rpartition(".")[2], ()):
+                    self.evaluations += 1
+                    if name.endswith(suffix):
+                        found.append((order, value))
+                        break
+            hit = self._first(self._names, name)
+            if hit is not None:
+                found.append(hit)
+        return min(found, key=lambda item: item[0])[1] if found else None

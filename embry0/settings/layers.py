@@ -6,8 +6,9 @@ A layer may set only the keys its section declares for its level
 (``Section.settable``), and replaces the inherited value of such a key
 whole, except a key of ``Section.merged_keys``, a mapping it merges entry by
 entry over the inherited one (:func:`merged`), as the deployment's document
-merges it over the section's default (:func:`over_default`). Every other key
-it holds is ignored.
+merges it over the section's default (:func:`over_default`), and a key of
+``Section.added_keys``, a list it adds its items to the inherited one with.
+Every other key it holds is ignored.
 
 A section can check its fields against each other, so a value accepted when
 it was written can be refused later, together with what it inherits, once
@@ -99,10 +100,21 @@ def _reason(errors: Sequence[Mapping[str, Any]], key: str | None) -> str:
 
 def merged(section: Section[Any], inherited: Mapping[str, Any], values: Mapping[str, Any]) -> dict[str, Any]:
     """A document's ``values`` as they apply over ``inherited``: each key of ``section.merged_keys`` it sets, a
-    mapping, holds the section's default entries, then the inherited ones, under its own; every other key as the
-    document wrote it."""
+    mapping, holds the section's default entries, then the inherited ones, under its own; each key of
+    ``section.added_keys`` it sets, a list, holds the section's default items, then the inherited ones, then its
+    own, each once; every other key as the document wrote it."""
     out = dict(values)
     defaults: dict[str, Any] | None = None
+    for key in section.added_keys & set(values):
+        own = values[key]
+        if not isinstance(own, list | tuple):
+            continue
+        defaults = defaults if defaults is not None else section.defaults().model_dump(mode="json")
+        items: list[Any] = []
+        for layer in (defaults.get(key), inherited.get(key), own):
+            if isinstance(layer, list | tuple):
+                items.extend(item for item in layer if item not in items)
+        out[key] = items
     for key in section.merged_keys & set(values):
         own = values[key]
         if not isinstance(own, Mapping):

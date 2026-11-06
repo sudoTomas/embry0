@@ -22,9 +22,11 @@ section from one snapshot of the settings documents (:func:`meter_reader`),
 and scores each repository with the section as that repository reads it
 (#169). Each score records the section's :func:`config_version` for it. The
 schedule looks at the settings every :data:`LOOK_SECONDS`, so turning the
-meter on or off, or a new interval, applies within them, and a change to what
-a repository's score is computed from runs the next tick at once instead of
-at its next interval: the change rescores on the next run.
+meter on or off, or a new interval, applies within them. Between runs, each
+look compares every repository's stored version with the one it reads now and
+rescores only the repositories whose versions differ, from what was read,
+with no fetch and no forge call (:meth:`SlopMeterLoop.rescore_changed`): a
+change rescores what it touches at once, and the next run keeps its time.
 """
 
 from __future__ import annotations
@@ -42,7 +44,7 @@ import structlog
 from embry0.services.areas import AREAS_PATH, area_of_path, parse_areas
 from embry0.services.background_models import BackgroundCallRefused, BackgroundCalls, ModelLookup, model_lookup
 from embry0.services.background_scope import Enrollment, Registered, enrollment
-from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader
+from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader, ShareBudget
 from embry0.services.slop_meter.history import (
     HISTORY_VERSION,
     Commit,
@@ -55,7 +57,7 @@ from embry0.services.slop_meter.history import (
 )
 from embry0.services.slop_meter.judge import FEATURE
 from embry0.services.slop_meter.prune import Audit, PruneOutcome, Pruner
-from embry0.services.slop_meter.score import DEFAULTS, Event, Meter, meters, outliers
+from embry0.services.slop_meter.score import DEFAULTS, Event, Meter, Outlier, meters, outliers
 from embry0.services.slop_meter.weights import CONFIG_FILES, FileRules, Weigher, ignore_patterns, outlier_files
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.slop_meter import SLOP_METER, SlopMeterSettings, config_version
@@ -122,17 +124,69 @@ class MeterRead:
     meter: PerRepository[SlopMeterSettings] = field(default_factory=_Defaults)
 
 
-def meter_reader(store: Any) -> Callable[[], Awaitable[MeterRead]]:
+@dataclass(frozen=True)
+class _NotImported:
+    """The ``slop_meter`` section with the keys the import has not imported read from their variables, as the
+    release before read them (``legacy``), where no layer sets them."""
+
+    scoped: Any
+    legacy: Mapping[str, Any]
+
+    def deployment(self) -> SlopMeterSettings:
+        model: SlopMeterSettings = self.scoped.deployment()
+        return model.model_copy(update=dict(self.legacy))
+
+    def repo(self, repo: str | None) -> SlopMeterSettings:
+        resolved = self.scoped.snapshot.resolve(SLOP_METER, repo=repo)
+        own = {key for values in resolved.applied.values() for key in values}
+        updates = {key: value for key, value in self.legacy.items() if key not in own}
+        model: SlopMeterSettings = resolved.model
+        return model.model_copy(update=updates) if updates else model
+
+
+def not_imported(snapshot: Any, config: Any) -> dict[str, Any]:
+    """The keys of the ``slop_meter`` section the environment import has not imported into the deployment's
+    document (a first start whose import failed) and that it does not set, each with its variable's value as the
+    import would read it; a variable not set is left out, so its key reads its default, as it did."""
+    from embry0.settings.bootstrap import env_value
+    from embry0.settings.document import mapping
+
+    stored = mapping(snapshot.data.get(SLOP_METER.name))
+    out: dict[str, Any] = {}
+    for key in SLOP_METER.imports():
+        if snapshot.imported(f"{SLOP_METER.name}.{key}") or key in stored:
+            continue
+        value = env_value(SLOP_METER, key, config)
+        if value is not None:
+            out[key] = value
+    return out
+
+
+def meter_reader(store: Any, config: Any = None) -> Callable[[], Awaitable[MeterRead]]:
     """The reader the meter is built with: each call takes one snapshot of the settings documents
-    (``store.snapshot()``) and reads the judge's model, the enrollment and the ``slop_meter`` section from it."""
+    (``store.snapshot()``) and reads the judge's model, the enrollment and the ``slop_meter`` section from it.
+
+    With ``config``, a key the environment import has not imported yet reads
+    its variable, as the budget's readers do (#171): a deployment that had the
+    meter off keeps it off until the import, which the budget policy tries
+    again while it runs, succeeds (``slop_meter_settings_not_imported``).
+    """
+    logged: set[str] = set()
 
     async def read() -> MeterRead:
         snapshot = await store.snapshot()
-        return MeterRead(
-            models=model_lookup(snapshot, "slop_judge"),
-            enrollment=enrollment(snapshot),
-            meter=snapshot.scoped(SLOP_METER),
-        )
+        meter: PerRepository[SlopMeterSettings] = snapshot.scoped(SLOP_METER)
+        legacy = not_imported(snapshot, config) if config is not None else {}
+        if legacy:
+            meter = _NotImported(meter, legacy)
+            if set(legacy) - logged:
+                logged.update(legacy)
+                logger.error(
+                    "slop_meter_settings_not_imported",
+                    keys=sorted(f"{SLOP_METER.name}.{key}" for key in legacy),
+                    hint="read from their variables, as the release before read them, until the import succeeds",
+                )
+        return MeterRead(models=model_lookup(snapshot, "slop_judge"), enrollment=enrollment(snapshot), meter=meter)
 
     return read
 
@@ -148,14 +202,19 @@ class Inputs:
     files: dict[str, str | None]
     #: The ``slop_meter`` section as the repository reads it.
     settings: SlopMeterSettings = DEFAULTS
+    #: Its file rules, built once for one score (they keep each path's weight); None builds them.
+    rules: FileRules | None = None
 
 
 def weigher_for(
-    commits: Iterable[Commit], files: Mapping[str, str | None], settings: SlopMeterSettings = DEFAULTS
+    commits: Iterable[Commit],
+    files: Mapping[str, str | None],
+    settings: SlopMeterSettings = DEFAULTS,
+    rules: FileRules | None = None,
 ) -> Weigher:
     """The repository's line weights: its ``slop_meter`` file rules, its linters' ignore lists, and its
     outlier files."""
-    rules = FileRules.of(settings)
+    rules = rules if rules is not None else FileRules.of(settings)
     base = Weigher(ignore_patterns(files), rules=rules)
     sizes: dict[str, int] = {}
     for c in commits:
@@ -182,7 +241,7 @@ def logins_from(commits: Iterable[Commit], looked_up: Mapping[str, str]) -> dict
 def compute(inputs: Inputs) -> dict[str, Meter]:
     """The repository's meter (``""``) and its areas', from the history as read, scored with ``inputs.settings``.
     Pure: runs in a thread."""
-    weigh = weigher_for(inputs.commits, inputs.files, inputs.settings)
+    weigh = weigher_for(inputs.commits, inputs.files, inputs.settings, inputs.rules)
     areas = parse_areas(inputs.files.get(AREAS_PATH))
 
     def area_of(path: str) -> str | None:
@@ -193,6 +252,12 @@ def compute(inputs: Inputs) -> dict[str, Meter]:
     return meters(
         inputs.commits, inputs.events, logins, weigh, inputs.judgments, area_of=area_of, settings=inputs.settings
     )
+
+
+def unjudged(inputs: Inputs) -> list[Outlier]:
+    """The repository's outlier commits no model has judged yet. Pure: runs in a thread."""
+    weigh = weigher_for(inputs.commits, inputs.files, inputs.settings, inputs.rules)
+    return [o for o in outliers(inputs.commits, weigh, inputs.judgments, inputs.settings) if o.slop is None]
 
 
 TokenFor = Callable[[str], Awaitable[tuple[str, str, str] | None]]
@@ -309,9 +374,10 @@ class SlopMeterLoop:
         self._backlog = False
         #: Whether the last look found the meter on; None before the first.
         self._enabled: bool | None = None
-        #: Each repository the last run read, with the configuration version it read it with: a look that finds
-        #: one of them reading another version runs the next tick at once.
-        self._versions: dict[str, str] = {}
+        #: Each repository's configuration version as this process last scored it, or tried to: a look rescores a
+        #: repository whose stored score has another version only once per version, so one whose rescoring fails
+        #: is not tried again every look.
+        self._tried: dict[str, str] = {}
 
     @property
     def last_pass(self) -> datetime | None:
@@ -339,7 +405,6 @@ class SlopMeterLoop:
         await self._respell(registered.every)
         await self._prune(read, registered)
         names = read.enrollment.scope(SCOPE, registered.active)
-        self._versions = {repo: config_version(read.meter.repo(repo)) for repo in names}
         if not names:
             return False
         self._lookup = read.models
@@ -464,15 +529,19 @@ class SlopMeterLoop:
         """Every GitHub repository's events, one API call per repository in turn.
 
         Repositories read with one credential share its budget for the tick:
-        ``slop_meter.api_calls_per_tick`` calls, stopping at its rate limit's
-        ``rate_reserve``, each as the repository's organization reads them;
-        where organizations that read with one credential set different
-        values, the fewest calls and the largest reserve apply, since the rate
-        limit is the credential's. One credential running low never stops a
-        repository read with another (#185).
+        the deployment's ``slop_meter.api_calls_per_tick`` calls, stopping at
+        its rate limit's ``rate_reserve``. An organization's own values only
+        narrow its own share of that budget (:class:`ShareBudget`): fewer calls
+        for its repositories, or a larger reserve they stop at, never more,
+        and never less for another organization's repositories on the same
+        credential. One credential running low never stops a repository read
+        with another (#185).
         """
+        deployment = self._meter.deployment()
         readers: dict[str, EventReader] = {}
-        bounds: dict[str, tuple[int, int]] = {}
+        budgets: dict[str, ApiBudget] = {}
+        shares: dict[tuple[str, str], ShareBudget] = {}
+        share_of: dict[str, ShareBudget] = {}
         for repo in order:
             if repo in work and work[repo].forge == "github":
                 try:
@@ -482,21 +551,27 @@ class SlopMeterLoop:
                     continue
                 if reader is not None:
                     readers[repo] = reader
-                    own = self._meter.repo(repo)
-                    calls, reserve = bounds.get(work[repo].credential, (own.api_calls_per_tick, own.rate_reserve))
-                    bounds[work[repo].credential] = (
-                        min(calls, own.api_calls_per_tick),
-                        max(reserve, own.rate_reserve),
+                    credential = work[repo].credential
+                    shared = budgets.setdefault(
+                        credential, ApiBudget(deployment.api_calls_per_tick, deployment.rate_reserve)
                     )
-        budgets = {credential: ApiBudget(calls, reserve) for credential, (calls, reserve) in bounds.items()}
+                    owner = repo.split("/", 1)[0].lower()
+                    if (credential, owner) not in shares:
+                        own = self._meter.repo(repo)
+                        shares[(credential, owner)] = ShareBudget(
+                            shared,
+                            calls=min(own.api_calls_per_tick, deployment.api_calls_per_tick),
+                            reserve=max(own.rate_reserve, deployment.rate_reserve),
+                        )
+                    share_of[repo] = shares[(credential, owner)]
         active = list(readers)
         waiting: list[str] = []
         while active:
             for repo in list(active):
                 try:
-                    going = await readers[repo].step(budgets[work[repo].credential])
+                    going = await readers[repo].step(share_of[repo])
                 except BudgetSpent:
-                    # Its credential's budget is gone; the others' repositories go on.
+                    # Its share of its credential's budget is gone; the others' repositories go on.
                     active.remove(repo)
                     waiting.append(repo)
                     continue
@@ -507,7 +582,7 @@ class SlopMeterLoop:
                 if not going:
                     active.remove(repo)
         if waiting:
-            spent = [b for b in budgets.values() if b.spent]
+            spent = [b for b in shares.values() if b.spent]
             logger.info(
                 "slop_meter_api_budget_spent",
                 calls=[b.made for b in spent],
@@ -539,14 +614,24 @@ class SlopMeterLoop:
             if not is_bot(str(e["login"]), "", bots, agents)
         ]
         files = {name: await self._mirror.read(repo, name) for name in (*CONFIG_FILES, AREAS_PATH)}
-        return Inputs(commits, events, await self._store.logins(), await self._store.judgments(repo), files, settings)
+        logins, judgments = await self._store.logins(), await self._store.judgments(repo)
+        return Inputs(commits, events, logins, judgments, files, settings, FileRules.of(settings))
 
-    async def _score(self, repo: str) -> None:
-        """Score ``repo`` with the ``slop_meter`` section as it reads it, recording that section's version."""
+    async def _score(self, repo: str, *, judge: bool = True) -> None:
+        """Score ``repo`` with the ``slop_meter`` section as it reads it, recording that section's version.
+
+        From the rows and the mirror's files as kept: nothing is fetched and
+        nothing is read from the forge. ``judge`` asks the model about a few
+        outlier commits not judged yet first; a rescore for a change of the
+        settings does not, so it spends nothing: a new outlier stays unjudged,
+        and the score provisional, until the next run.
+        """
         settings = self._meter.repo(repo)
         version = config_version(settings)
+        self._tried[repo] = version
         inputs = await self._inputs(repo, settings)
-        await self._judge(repo, inputs)
+        if judge:
+            await self._judge(repo, inputs)
         results = await asyncio.to_thread(compute, inputs)
         now = self._clock()
         await self._store.store(repo, results, now, config_version=version)
@@ -564,8 +649,7 @@ class SlopMeterLoop:
     async def _judge(self, repo: str, inputs: Inputs) -> None:
         """Ask the model about a few outlier commits not judged yet; what it answers is kept on ``inputs``."""
         settings = inputs.settings
-        weigh = weigher_for(inputs.commits, inputs.files, settings)
-        pending = [o for o in outliers(inputs.commits, weigh, inputs.judgments, settings) if o.slop is None]
+        pending = await asyncio.to_thread(unjudged, inputs)
         if not pending:
             return
         lookup = self._lookup if self._lookup is not None else (await self._read()).models
@@ -601,21 +685,57 @@ class SlopMeterLoop:
             return 0.0
         return min(LOOK_SECONDS, max(0.0, (self._due - self._clock()).total_seconds()))
 
-    def _changed(self, read: MeterRead) -> list[str]:
-        """The repositories the last run read whose configuration version is another now."""
-        return [repo for repo, version in self._versions.items() if config_version(read.meter.repo(repo)) != version]
+    async def rescore_changed(self, read: MeterRead | None = None) -> list[str]:
+        """Rescore each repository in scope whose stored score was computed with another configuration version than
+        the one it reads now: an operator changed what its score is computed from. Answers the ones rescored.
 
-    async def scheduled(self) -> bool:
-        """What the schedule does each time it looks; True when it ran.
+        Only those, from their rows and mirrors as kept, with no fetch, no
+        forge call and no judgment (:meth:`_score`), so a change made every few
+        minutes costs a rescore of what it touches and nothing more. One still
+        reading its history is left to its catch-up, and each version is tried
+        once per process.
+        """
+        if read is None:
+            read = await self._read()
+        registered = await self._repos()
+        names = read.enrollment.scope(SCOPE, registered.active)
+        if not names:
+            return []
+        stored = await self._store.versions()
+        changed: list[str] = []
+        for repo in names:
+            version = config_version(read.meter.repo(repo))
+            held = stored.get(repo)
+            if held is not None and held != version and self._tried.get(repo) != version:
+                changed.append(repo)
+        if not changed:
+            return []
+        logger.info("slop_meter_settings_changed", repos=changed, hint="rescoring them from what was read")
+        self._meter = read.meter
+        rescored: list[str] = []
+        for repo in changed:
+            self._tried[repo] = config_version(read.meter.repo(repo))
+            state = await self._store.state(repo)
+            if int(state.get("commits_read") or 0) < int(state.get("commits_total") or 0):
+                continue  # still reading its history: its catch-up scores it
+            try:
+                await self._score(repo, judge=False)
+                rescored.append(repo)
+            except Exception as exc:  # noqa: BLE001 - one repository's failure never stops the rest
+                await self._failed(repo, exc)
+        return rescored
+
+    async def scheduled(self) -> str | None:
+        """What the schedule does each time it looks: ``"run"``, ``"rescore"`` or nothing (None).
 
         Reads the settings first, so turning the meter on or off and a new
-        interval apply at this look. It runs when the interval (or, while a
-        history is behind, ``catchup_seconds``) has passed since the last run
-        ended, at once when the meter was just turned on, and at once when the
-        ``slop_meter`` section reads another :func:`config_version` for a
-        repository the last run read: that rescores it. With the meter off a
-        run only removes what left the scope (:meth:`prune_only`), once an
-        interval.
+        interval apply at this look. It runs (:meth:`tick`, or with the meter
+        off :meth:`prune_only`, which only removes what left the scope) when
+        the interval, or while a history is behind ``catchup_seconds``, has
+        passed since the last run ended, and at once when the meter was just
+        turned on. Between runs, a repository whose stored score has another
+        configuration version than it reads now is rescored alone
+        (:meth:`rescore_changed`); the next run keeps its time.
         """
         read = await self._read()
         policy = read.meter.deployment()
@@ -629,25 +749,21 @@ class SlopMeterLoop:
         last = self._last_pass
         if last is not None and not turned_on:
             next_run = last + timedelta(seconds=self._period(policy))
-            changed = self._changed(read) if policy.enabled and self._clock() < next_run else []
-            if self._clock() < next_run and not changed:
+            if self._clock() < next_run:
                 self._due = next_run
-                return False
-        else:
-            changed = []
-        if changed:
-            logger.info("slop_meter_settings_changed", repos=sorted(changed), hint="rescoring them now")
+                if policy.enabled and await self.rescore_changed(read):
+                    return "rescore"
+                return None
         try:
             if policy.enabled:
                 self._backlog = await self.tick(read)
             else:
                 self._backlog = False
-                self._versions = {}
                 await self.prune_only(read)
         finally:
             self._last_pass = self._clock()
             self._due = self._last_pass + timedelta(seconds=self._period(policy))
-        return True
+        return "run"
 
     def _period(self, policy: SlopMeterSettings) -> float:
         """Seconds from the end of one run to the next: ``catchup_seconds`` while a history is behind, else the
