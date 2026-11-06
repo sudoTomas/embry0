@@ -254,12 +254,13 @@ async def collect_output(
     """Feed ``proc`` its ``stdin_data``, read its stdout and stderr in chunks and reap it: ``(stdout, stderr)``.
 
     The one reader of a docker command's output (run_cmd, run_cmd_bytes,
-    exec_with_stdin, the runtime's compose listing). It never holds more than
-    ``max_bytes`` of stdout: past that the command is stopped and
-    :class:`OutputTooLargeError` raised, or, with ``keep_tail`` (a command
-    whose output is only a log), the oldest bytes are dropped and the last
-    ``max_bytes`` returned. stderr keeps its first 64 KiB and its last 16 KiB;
-    the rest is read and dropped, so the command never blocks on a full pipe.
+    run_cmd_status, exec_with_stdin, the runtime's compose listing). It
+    never holds more than ``max_bytes`` of stdout: past that the command is
+    stopped and :class:`OutputTooLargeError` raised, or, with ``keep_tail``
+    (a command whose output is only a log), the oldest bytes are dropped and
+    the last ``max_bytes`` returned. stderr keeps its first 64 KiB and its
+    last 16 KiB; the rest is read and dropped, so the command never blocks
+    on a full pipe.
 
     On the cap, on ``timeout`` (TimeoutError) and on cancellation the command
     is killed (its whole process group with ``kill_group``, for a process
@@ -726,6 +727,48 @@ class DockerClient:
             logger.error("docker_cmd_bytes_failed", cmd=scrubbed, stderr=err[:2000], returncode=proc.returncode)
             raise RuntimeError(f"Docker command failed: {err}")
         return stdout
+
+    async def run_cmd_status(
+        self, cmd: list[str], timeout: int = 60, *, max_bytes: int = DEFAULT_MAX_OUTPUT_BYTES
+    ) -> tuple[int, str, str]:
+        """Execute a Docker command and return ``(returncode, stdout, stderr)``; a non-zero exit is not raised.
+
+        For a caller whose answer is the exit status itself, such as a test
+        run in a sandbox: :meth:`run_cmd` turns a non-zero exit into an error
+        and folds the output into its message. The same reader
+        (:func:`collect_output`) and caps: stdout past ``max_bytes`` stops the
+        command and raises :class:`OutputTooLargeError`, stderr keeps its first
+        64 KiB and its last 16 KiB, and a timeout kills the command and raises
+        TimeoutError. Both outputs are decoded with ``errors="replace"`` and
+        returned as printed, not stripped.
+        """
+        _check_cap(max_bytes)
+        scrubbed = _scrub_cmd_for_log(cmd)
+        logger.debug("docker_cmd_status", cmd=scrubbed, max_bytes=max_bytes)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await collect_output(
+                proc,
+                timeout=timeout,
+                max_bytes=max_bytes,
+                stuck_event="docker_cmd_status_kill_stuck",
+                log_fields={"cmd": scrubbed},
+            )
+        except OutputTooLargeError:
+            logger.warning("docker_cmd_status_too_large", cmd=scrubbed, max_bytes=max_bytes)
+            raise
+        except TimeoutError:
+            logger.warning("docker_cmd_status_timeout", cmd=scrubbed, timeout=timeout)
+            raise TimeoutError(f"docker command timed out after {timeout}s") from None
+        if proc.returncode is None:
+            # collect_output reaps the command before it returns; a status it
+            # did not set is not one to answer with.
+            raise RuntimeError("docker command finished without an exit status")
+        return proc.returncode, stdout.decode(errors="replace"), stderr.decode(errors="replace")
 
     async def stream_exec(
         self,
