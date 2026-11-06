@@ -39,14 +39,23 @@ say about its behaviour", tested on its own
 | `station` | `agent_definitions` | `STATION_OF` | the world's characters, the hall |
 | `quest_template` | `agent_definitions` | `QUEST_TEMPLATE_BY_AGENT`, `can_quest` | the world's characters |
 
-- **Credit is recorded on the job.** plan_route records the agent its route's
-  coding step runs as (`jobs.coding_agent`, one of `CODING_AGENT_TYPES`) and
-  its template's leader (`jobs.leader_agent`). A job's pull request is its
-  coder's (the developer's when it recorded none), a slop cleanup is a merged
-  job the Slopmaster coded, and an audit is a job the context auditor led
-  (the agent whose report the audit's claims are read from), not a fix job.
-  So a later edit or deletion of a template row changes no past credit, and
-  a copy of the context-audit template is an audit.
+- **Credit is recorded on the job.** A job that names a template takes its
+  row's leader when it is created (`jobs.leader_agent`); plan_route records
+  it again with the agent its route's coding step runs as
+  (`jobs.coding_agent`, one of `CODING_AGENT_TYPES`). A job's pull request is
+  its coder's (the developer's when it recorded none) and a slop cleanup is a
+  merged job the Slopmaster coded, so a later edit or deletion of a template
+  row changes no past credit.
+- **An audit** is one predicate (`audit_jobs.an_audit`): a job the context
+  auditor led (the agent whose report the audit's claims are read from), not
+  a finding's fix job. Progression and the findings feed both read it, so a
+  copy of the context-audit template earns audit credit and offers its
+  findings, and a context-audit job led by another agent does neither. The
+  scheduler counts every audit for its cadence, plus its own template's jobs
+  and its own dispatches whatever led them, so a changed leader never makes
+  it start an audit on every tick; it always dispatches its own template.
+- **Renames** read the old name under the row's lock (`FOR UPDATE`), so two
+  renames at once carry an agent's guild task to the final name.
 - **The kind** is `default_for_kind`, else the `job_kind` override, else the
   one the route makes it as it is now: every step but the output a
   specialist is analysis. A new template of specialists only is analysis; a

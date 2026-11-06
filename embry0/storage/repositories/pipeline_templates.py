@@ -124,7 +124,11 @@ class PipelineTemplatesRepository:
                 idx += 1
             sets.append("updated_at = NOW()")
             async with self._db.transaction() as conn:
-                old_name = await conn.fetchval("SELECT name FROM pipeline_templates WHERE id = $1", template_id)
+                # FOR UPDATE: a rename running beside this one waits for it, then reads the name it left, so
+                # the agents' tasks follow every rename to the last.
+                old_name = await conn.fetchval(
+                    "SELECT name FROM pipeline_templates WHERE id = $1 FOR UPDATE", template_id
+                )
                 await conn.execute(f"UPDATE pipeline_templates SET {', '.join(sets)} WHERE id = $1", *args)
                 if "name" in valid and old_name is not None and valid["name"] != old_name:
                     # An agent's guild task names its template (#167): it follows a rename, in the same

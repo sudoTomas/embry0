@@ -84,6 +84,7 @@ class FakeJobs:
         pipeline_template: str,
         dispatched_by: str | None = None,
         exclude_dispatched_by: Collection[str] = (),
+        leader_agent: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         return {row["repo"]: {**row, "live": True} for row in self.rows if row["repo"] in repos}
 

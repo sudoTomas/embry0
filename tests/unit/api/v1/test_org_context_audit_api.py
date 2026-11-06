@@ -47,8 +47,10 @@ class FakeJobs:
         pipeline_template: str,
         dispatched_by: str | None = None,
         exclude_dispatched_by: Collection[str] = (),
+        leader_agent: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         assert pipeline_template == TEMPLATE and dispatched_by == "embry0:context-audit"
+        assert leader_agent == "context-auditor", "every audit counts, a copy of the template's included (#167)"
         assert sorted(repos) == ["acme/plain", "acme/web"], "only the owner's own registered repositories"
         when = datetime(2026, 10, 1, tzinfo=UTC)
         return {

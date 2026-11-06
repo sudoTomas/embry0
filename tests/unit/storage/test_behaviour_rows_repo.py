@@ -278,3 +278,114 @@ async def test_a_rename_carries_each_agents_guild_task_with_it(db_with_migration
     assert tasks == {"scout": "scout-run", "watcher": "other"}, f"the task did not follow the rename: {tasks}"
     await templates.update(made["id"], description="same name")
     assert (await agents.get("scout"))["quest_template"] == "scout-run", "a save that keeps the name moves nothing"
+
+
+async def _audit_job(
+    db: DatabasePool, job_id: str, repo: str, template: str, leader: str, by: str | None = None
+) -> None:
+    await db.execute(
+        "INSERT INTO jobs (job_id, repo, task, status, pipeline_template, leader_agent, dispatched_by, result_summary, "
+        "finished_at, created_at, budget_overrun_usd) "
+        "VALUES ($1, $2, 't', 'completed', $3, $4, $5, 'Stale: 3', $6, $7, 0)",
+        job_id,
+        repo,
+        template,
+        leader,
+        by,
+        AT,
+        AT - timedelta(hours=1),
+    )
+
+
+async def test_progression_the_findings_feed_and_the_scheduler_agree_on_what_an_audit_is(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """One predicate (audit_jobs): a copy of the context-audit template, led by the context auditor, is an audit
+    to all three; a context-audit job led by another agent, after an operator changed the template's leader, earns
+    no audit credit and offers no findings. The scheduler counts every audit, and also its own template's jobs
+    and its own dispatches whatever led them, so it never starts an audit again on every tick."""
+    from embry0.services.context_audit import ACTOR, FIX_ACTOR, ContextAuditLoop
+    from embry0.storage.repositories.jobs import JobsRepository
+    from embry0.storage.repositories.proposals import ProposalsRepository
+
+    db = db_with_migrations
+    await _audit_job(db, "j-copy", "acme/copy", "my-audit", "context-auditor")
+    await _audit_job(db, "j-changed", "acme/changed", "context-audit", "interrogator")
+    await _audit_job(db, "j-scheduled", "acme/scheduled", "context-audit", "interrogator", by=ACTOR)
+    await _audit_job(db, "j-fix", "acme/fix", "context-audit", "context-auditor", by=FIX_ACTOR)
+
+    journal = await ProgressionRepository(db).journal()
+    progression = sorted(j.repo for j in journal.jobs if j.is_audit)
+    audited = [e.agent_type for e in await ProgressionRepository(db).events() if e.source == "audited"]
+    offered = sorted(r["repo"] for r in await ProposalsRepository(db).audits())
+    loop = ContextAuditLoop.__new__(ContextAuditLoop)  # only _audits is read; it needs the jobs repository alone
+    loop._jobs = JobsRepository(db)  # noqa: SLF001
+    newest, live = await loop._audits(["acme/copy", "acme/changed", "acme/scheduled", "acme/fix"])  # noqa: SLF001
+
+    assert progression == ["acme/copy"], f"progression's audits: {progression}"
+    assert audited == ["context-auditor"], f"one audit earns its credit: {audited}"
+    assert offered == progression, f"the findings feed offers what progression counts as audits: {offered}"
+    assert sorted(newest) == ["acme/changed", "acme/copy", "acme/scheduled"], (
+        f"the scheduler's newest: every audit, the copy included, and its own template's and dispatches' jobs, "
+        f"never a fix job: {sorted(newest)}"
+    )
+    assert live == set(), live
+
+
+async def test_a_job_that_names_a_template_takes_its_leader_when_it_is_created(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """Before plan_route records it: a pending audit is known for one (the scheduler's live check reads it)."""
+    from embry0.storage.repositories.jobs import JobsRepository
+
+    db = db_with_migrations
+    await PipelineTemplatesRepository(db).create(
+        name="my-audit", graph_definition=GRAPH, leader_agent="context-auditor"
+    )
+    jobs = JobsRepository(db)
+    named = await jobs.create(repo="acme/widgets", task="t", pipeline_template="my-audit")
+    plain = await jobs.create(repo="acme/widgets", task="t")
+    unknown = await jobs.create(repo="acme/widgets", task="t", pipeline_template="qa")
+    leaders = {r["job_id"]: r["leader_agent"] for r in await db.fetch("SELECT job_id, leader_agent FROM jobs")}
+    assert leaders == {named: "context-auditor", plain: None, unknown: None}, leaders
+
+
+async def test_two_renames_at_once_carry_the_task_to_the_last_name(db_with_migrations: DatabasePool) -> None:
+    """The rename reads the old name under the row's lock: a rename beside it waits, then reads the name it left,
+    so an agent's task follows both renames to the template's final name."""
+    import asyncio
+
+    import asyncpg
+
+    db = db_with_migrations
+    templates = PipelineTemplatesRepository(db)
+    made = await templates.create(name="alpha", graph_definition=GRAPH)
+    await AgentDefinitionsRepository(db).create("scout", "d", "m", tools=["Read"], quest_template="alpha")
+    # Two of the pool's connections open, one for each rename, before the row is held.
+    await asyncio.gather(*(db.fetchval("SELECT pg_sleep(0.05)") for _ in range(3)))
+    blocker = await asyncpg.connect(db._url)  # noqa: SLF001 - a second session, holding the row
+    try:
+        held = blocker.transaction()
+        await held.start()
+        await blocker.execute("SELECT 1 FROM pipeline_templates WHERE id = $1 FOR UPDATE", made["id"])
+        first = asyncio.create_task(templates.update(made["id"], name="beta"))
+        second = asyncio.create_task(templates.update(made["id"], name="gamma"))
+        for _ in range(200):  # until both renames wait on the row
+            waiting = await blocker.fetchval(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+            )
+            if waiting >= 2:
+                break
+            await asyncio.sleep(0.02)
+        activity = await blocker.fetch(
+            "SELECT state, wait_event_type, wait_event, left(query, 60) AS q FROM pg_stat_activity "
+            "WHERE datname = current_database()"
+        )
+        assert waiting >= 2, f"both renames should wait on the row before it is let go: {[dict(a) for a in activity]}"
+        await held.rollback()
+    finally:
+        await blocker.close()
+    await asyncio.gather(first, second)
+    name = await db.fetchval("SELECT name FROM pipeline_templates WHERE id = $1", made["id"])
+    task = (await AgentDefinitionsRepository(db).get("scout"))["quest_template"]
+    assert task == name, f"template now {name}, the agent's task {task}: a rename read a stale name"

@@ -77,6 +77,7 @@ FOLD_MODULES = (
     "embry0.services.progression_vocabulary",
     "embry0.services.quests",
     "embry0.services.slop",
+    "embry0.storage.repositories.audit_jobs",
     "embry0.storage.repositories.progression",
     "embry0.storage.repositories.progression_rollup",
     "embry0.workflows.row_behaviour",

@@ -46,6 +46,10 @@ async def test_the_issues_are_open_with_no_job(db_with_migrations) -> None:
     assert [i["id"] for i in await ProposalsRepository(db).issues()] == ["iss-new"]
 
 
+# Each context-audit job below is led by the context auditor, as one records when it is created and planned
+# (jobs.leader_agent, #167): what makes a job an audit to the findings feed and to progression alike.
+
+
 async def test_each_repo_s_newest_completed_audit(db_with_migrations) -> None:
     db = db_with_migrations
     for job_id, repo, status, days_ago in (
@@ -56,8 +60,8 @@ async def test_each_repo_s_newest_completed_audit(db_with_migrations) -> None:
     ):
         await db.execute(
             """
-            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, result_summary, finished_at)
-            VALUES ($1, $2, 't', $3, 'context-audit', 'Stale: 0', NOW() - make_interval(days => $4))
+            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, leader_agent, result_summary, finished_at)
+            VALUES ($1, $2, 't', $3, 'context-audit', 'context-auditor', 'Stale: 0', NOW() - make_interval(days => $4))
             """,
             job_id,
             repo,
@@ -79,9 +83,9 @@ async def _audits(db, *rows: tuple[str, str, str, int | None]) -> dict[str, str]
     for job_id, repo, status, days_ago in rows:
         await db.execute(
             """
-            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, result_summary, created_at, finished_at,
-                              delivery_state, delivery_state_at, updated_at)
-            VALUES ($1, $2, 't', $3, 'context-audit', 'Stale: 1',
+            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, leader_agent, result_summary, created_at,
+                              finished_at, delivery_state, delivery_state_at, updated_at)
+            VALUES ($1, $2, 't', $3, 'context-audit', 'context-auditor', 'Stale: 1',
                     NOW() - make_interval(days => COALESCE($4, 0)::int, hours => 1),
                     NOW() - make_interval(days => $4::int),
                     CASE $3 WHEN 'pr_merged' THEN 'merged' WHEN 'pr_closed' THEN 'closed' ELSE 'none' END,
@@ -165,9 +169,9 @@ async def _offered_of(db, *runs: _Run) -> str | None:
         delivery = {"pr_merged": "merged", "pr_closed": "closed"}.get(run.status, "none")
         await db.execute(
             """
-            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, dispatched_by, result_summary,
-                              created_at, finished_at, delivery_state, delivery_state_at, updated_at)
-            VALUES ($1, $2, 't', $3, 'context-audit', $4, 'Stale: 1',
+            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, leader_agent, dispatched_by,
+                              result_summary, created_at, finished_at, delivery_state, delivery_state_at, updated_at)
+            VALUES ($1, $2, 't', $3, 'context-audit', 'context-auditor', $4, 'Stale: 1',
                     NOW() - make_interval(hours => $5), NOW() - make_interval(hours => $6),
                     $7, CASE WHEN $9 THEN NOW() - make_interval(hours => $8::int) END,
                     NOW() - make_interval(hours => COALESCE($8::int, $6)))
@@ -297,9 +301,9 @@ async def _offered_with_a_fix_job(db, fix_status: str) -> tuple[str, list[tuple[
     ):
         await db.execute(
             """
-            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, dispatched_by, result_summary,
-                              created_at, finished_at)
-            VALUES ($1, 'o/r', 't', $2, 'context-audit', $3, $4,
+            INSERT INTO jobs (job_id, repo, task, status, pipeline_template, leader_agent, dispatched_by,
+                              result_summary, created_at, finished_at)
+            VALUES ($1, 'o/r', 't', $2, 'context-audit', 'context-auditor', $3, $4,
                     NOW() - make_interval(days => $5, hours => 1), NOW() - make_interval(days => $5))
             """,
             job_id,

@@ -9,9 +9,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from embry0.services.context_audit import FIX_ACTOR
 from embry0.services.proposals import Decision
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.audit_jobs import an_audit
 from embry0.storage.schemas import FINISHED_WELL_STATUSES, JobStatus
 
 _CASES_SQL = """
@@ -44,25 +44,24 @@ ORDER BY i.created_at DESC
 # which is no earlier than merge sync recording the merge, so an unknown date can only leave
 # out more, never offer a claim the merge may have fixed. A pull request closed unmerged fixed
 # nothing, and its audit's findings stand. A newer audit that failed or has not finished is
-# passed over. A finding's fix job ($3, context_audit.FIX_ACTOR) is no audit: whatever became
+# passed over. A finding's fix job (context_audit.FIX_ACTOR) is no audit: whatever became
 # of it or its pull request, the audit before it is still the newest, and its other findings
 # are still offered; the one the job fixes was answered when its owner accepted it (#222). Its
-# merge leaves no audit out either: it changed that one claim.
-_AUDITS_SQL = """
+# merge leaves no audit out either: it changed that one claim. Which jobs are audits is
+# audit_jobs.an_audit, as progression counts them (#167): a job the context auditor led.
+_AUDITS_SQL = f"""
 SELECT newest.repo, newest.job_id, newest.finished_at, newest.result_summary
 FROM (
     SELECT DISTINCT ON (j.repo) j.repo, j.job_id, j.status, j.created_at,
            COALESCE(j.finished_at, j.updated_at) AS finished_at, j.result_summary
     FROM jobs j
-    WHERE j.pipeline_template = 'context-audit' AND j.status = ANY($1::text[]) AND j.repo IS NOT NULL
-      AND NOT (COALESCE(j.dispatched_by, '') = ANY($3::text[]))
+    WHERE {an_audit("j")} AND j.status = ANY($1::text[]) AND j.repo IS NOT NULL
     ORDER BY j.repo, COALESCE(j.finished_at, j.updated_at) DESC
 ) newest
 WHERE newest.status <> $2
   AND NOT EXISTS (
     SELECT 1 FROM jobs merged
-    WHERE merged.repo = newest.repo AND merged.pipeline_template = 'context-audit' AND merged.status = $2
-      AND NOT (COALESCE(merged.dispatched_by, '') = ANY($3::text[]))
+    WHERE merged.repo = newest.repo AND {an_audit("merged")} AND merged.status = $2
       AND COALESCE(merged.delivery_state_at, merged.updated_at) > newest.created_at
   )
 """
@@ -88,7 +87,7 @@ class ProposalsRepository:
         until an audit that started after the merge finishes. A finding's fix job is no audit, and
         its merge does not count.
         """
-        rows = await self._db.fetch(_AUDITS_SQL, list(FINISHED_WELL_STATUSES), JobStatus.PR_MERGED.value, [FIX_ACTOR])
+        rows = await self._db.fetch(_AUDITS_SQL, list(FINISHED_WELL_STATUSES), JobStatus.PR_MERGED.value)
         return [dict(r) for r in rows]
 
     async def owners(self) -> dict[str, list[str]]:

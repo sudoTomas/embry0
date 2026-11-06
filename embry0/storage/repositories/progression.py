@@ -23,21 +23,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
-from embry0.orchestration.dispatch_actors import PROPOSALS
 from embry0.services.slop import SLOPMASTER
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.audit_jobs import AUDITOR, an_audit, is_audit
 from embry0.storage.schemas import FINISHED_WELL_STATUSES
 from embry0.workflows.row_behaviour import DEFAULT_CODER, WORKFLOW_PIPELINES
 
-#: The agent a context audit is led by, whose report an audit's claims are read from (``context_audit``): a job
-#: whose template's leader it was when the job was planned (``jobs.leader_agent``, #167) is an audit, a copy of
-#: the context-audit template included.
-AUDITOR = "context-auditor"
-#: The actor of a context-audit finding's fix job (``context_audit.FIX_ACTOR``, #240): the job an owner starts by
-#: accepting one finding. It is led by the :data:`AUDITOR` but is no audit, so it earns no audit's credit (no
-#: ``audited`` event, no lore, no ``audit_merged``); merged, it is credited as the proposal it is (#241). Every
-#: check of progression for an audit reads :func:`an_audit` or :attr:`JobRow.is_audit`, never the leader alone.
-FIX_ACTOR = PROPOSALS
+# Which jobs are context audits is embry0.storage.repositories.audit_jobs's, the one predicate the findings feed and
+# the scheduler read too: a job the context auditor led (``jobs.leader_agent``, #167), a copy of the context-audit
+# template included, and not a finding's fix job (FIX_ACTOR, #240), which earns no audit's credit (no ``audited``
+# event, no lore, no ``audit_merged``) and, merged, is credited as the proposal it is (#241). Every check of
+# progression for an audit reads an_audit or JobRow.is_audit.
 
 
 def _literal(value: str) -> str:
@@ -59,12 +55,6 @@ def coder_sql(job: str) -> str:
 def a_cleanup(job: str) -> str:
     """The SQL condition that the job aliased ``job`` is a slop cleanup: the Slopmaster coded it."""
     return f"{job}.coding_agent = {_literal(SLOPMASTER)}"
-
-
-def an_audit(job: str) -> str:
-    """The SQL condition that the job aliased ``job`` is a context audit: led by the :data:`AUDITOR` when it was
-    planned, and not a finding's fix job."""
-    return f"({job}.leader_agent = {_literal(AUDITOR)} AND {job}.dispatched_by IS DISTINCT FROM {_literal(FIX_ACTOR)})"
 
 
 #: The statuses of a job that finished its work, ``FINISHED_WELL_STATUSES`` in ``embry0/storage/schemas.py``:
@@ -517,7 +507,7 @@ class JobRow:
     report: str | None = None
     #: When its pull request reached the state merge sync last recorded, by the forge's clock; None without one.
     delivery_state_at: datetime | None = None
-    #: Who asked for it (``jobs.dispatched_by``): :data:`FIX_ACTOR` for a finding's fix job.
+    #: Who asked for it (``jobs.dispatched_by``): ``audit_jobs.FIX_ACTOR`` for a finding's fix job.
     dispatched_by: str | None = None
     #: The leader of its template when it was planned (``jobs.leader_agent``, #167): the :data:`AUDITOR` for an audit.
     leader: str | None = None
@@ -525,7 +515,7 @@ class JobRow:
     @property
     def is_audit(self) -> bool:
         """A context audit, and not a finding's fix job: :func:`an_audit` for one row of the journal."""
-        return self.leader == AUDITOR and self.dispatched_by != FIX_ACTOR
+        return is_audit(self.leader, self.dispatched_by)
 
     @property
     def merged_at(self) -> datetime | None:

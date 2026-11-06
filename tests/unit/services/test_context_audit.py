@@ -176,6 +176,7 @@ class FakeJobs:
         pipeline_template: str,
         dispatched_by: str | None = None,
         exclude_dispatched_by: Collection[str] = (),
+        leader_agent: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
         for repo in repos:
@@ -186,6 +187,7 @@ class FakeJobs:
                 and (
                     r["pipeline_template"] == pipeline_template
                     or (dispatched_by and r["dispatched_by"] == dispatched_by)
+                    or (leader_agent and r.get("leader_agent") == leader_agent)
                 )
                 and (r["dispatched_by"] or "") not in exclude_dispatched_by
             ]
