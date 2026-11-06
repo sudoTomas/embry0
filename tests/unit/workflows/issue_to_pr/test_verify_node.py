@@ -74,12 +74,24 @@ def _config(
     return {"configurable": configurable}, verifications
 
 
-async def _run(state: dict[str, Any], config: dict[str, Any], gate: GateReport | Exception | None):
+def _swept() -> Any:
+    from embry0.workflows.verification.sweep import SweepResult
+
+    return AsyncMock(return_value=SweepResult(clean=True))
+
+
+async def _run(
+    state: dict[str, Any], config: dict[str, Any], gate: GateReport | Exception | None, *, diff: list[str] | None = None
+):
+    """Run the node with the gate stubbed; the sandbox's fresh diff lists ``diff``, by default the stored files."""
     run_gate = AsyncMock(side_effect=gate) if isinstance(gate, Exception) else AsyncMock(return_value=gate)
+    fresh = list(state.get("changed_files") or []) if diff is None else diff
     with (
         patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _e: None),
         patch("embry0.workflows.issue_to_pr.nodes._verify.run_gate", new=run_gate),
+        patch("embry0.workflows.issue_to_pr.nodes._verify.sweep_sandbox", new=_swept()),
         patch("embry0.execution.workspace_diff.resolve_base_branch", new=AsyncMock(return_value="main")),
+        patch("embry0.execution.workspace_diff.compute_changed_files_via_diff", new=AsyncMock(return_value=fresh)),
     ):
         return await verify_node(state, config), run_gate  # type: ignore[arg-type]
 
@@ -192,8 +204,7 @@ async def test_a_failing_result_store_does_not_fail_the_job() -> None:
 @pytest.mark.asyncio
 async def test_an_unknown_diff_is_treated_as_frontend() -> None:
     config, _ = _config()
-    with patch("embry0.execution.workspace_diff.compute_changed_files_via_diff", new=AsyncMock(return_value=[])):
-        cmd, _ = await _run(_state([]), config, _gate("passed", "passed"))
+    cmd, _ = await _run(_state([]), config, _gate("passed", "passed"), diff=[])
     assert cmd.update["verification"]["tier"]["tier"] == "frontend"
     assert cmd.update["verification"]["human_merge_only"] is True
 
@@ -301,7 +312,9 @@ async def _drive_real_graph(
     config, _ = _config()
     with (
         patch("embry0.workflows.issue_to_pr.nodes._verify.run_gate", new=AsyncMock(return_value=gate)),
+        patch("embry0.workflows.issue_to_pr.nodes._verify.sweep_sandbox", new=_swept()),
         patch("embry0.execution.workspace_diff.resolve_base_branch", new=AsyncMock(return_value="main")),
+        patch("embry0.execution.workspace_diff.compute_changed_files_via_diff", new=AsyncMock(return_value=files)),
     ):
         final = (
             await graph_mod.IssueToprWorkflow()
@@ -327,3 +340,130 @@ async def test_real_graph_new_test_failures_end_the_job_before_qa_or_output(monk
     assert visited == []
     assert final["error_code"] == ErrorCode.VERIFY_NEW_TEST_FAILURES.value
     assert final["current_stage"] == "verify_failed"
+
+
+# ── the change's files come from a fresh diff in a swept sandbox ─────────────
+
+CLEAN_SWEEP = "EMBRY0_SWEEP stopped=0 passes=0 survivors=0 pids=\n"
+PARSED_HEAD, PARSED_BASE = "d" * 40, "e" * 40
+
+
+class _Sandbox:
+    """The dev sandbox as the verify node and the gate drive it: a sweep, the base, the diff, the runs.
+
+    ``diff`` is what ``git diff --name-only`` prints, or an exception it fails
+    with. Runs pass; their logs say so.
+    """
+
+    def __init__(self, *, diff: str | Exception = "", sweep: tuple[int, str, str] = (0, CLEAN_SWEEP, "")) -> None:
+        self.diff, self.sweep = diff, sweep
+        self.steps: list[str] = []
+        self.diff_caps: list[int | None] = []
+
+    def build_exec_cmd(self, container: str, command: list[str], **kwargs: Any) -> dict[str, Any]:
+        return {"command": command, "env": kwargs.get("env") or {}}
+
+    async def run_cmd_status(self, cmd: dict[str, Any], timeout: int = 60, *, max_bytes: Any = None):
+        command, env = cmd["command"], cmd["env"]
+        if "EMBRY0_SWEEP" in command[-1]:
+            self.steps.append("sweep")
+            return self.sweep
+        if "EMBRY0_VERIFY_CMD" in env:
+            self.steps.append("run")
+            return 0, "", ""
+        if command[0] == "tail":
+            self.steps.append("log")
+            return 0, "1 passed\n", ""
+        raise AssertionError(f"unexpected exec: {command[-1][:80]}")
+
+    async def run_cmd(self, cmd: dict[str, Any], timeout: int = 60, *, max_bytes: Any = None, **_: Any) -> str:
+        from tests.fixtures.sandbox_git_local import readable
+
+        text = readable(cmd["command"])  # the step's own git, without the prelude's
+        if "--name-only" in text:
+            self.steps.append("diff")
+            self.diff_caps.append(max_bytes)
+            if isinstance(self.diff, Exception):
+                raise self.diff
+            return self.diff.strip()
+        if "worktree add" in text:
+            self.steps.append("prepare")
+            return f"EMBRY0_VERIFY_HEAD={PARSED_HEAD}\nEMBRY0_VERIFY_BASE={PARSED_BASE}"
+        if "worktree remove" in text:
+            self.steps.append("cleanup")
+            return ""
+        if "fetch" in text:
+            self.steps.append("fetch")
+            return ""
+        raise AssertionError(f"unexpected exec: {text[:80]}")
+
+
+async def _run_in(sandbox: _Sandbox, state: dict[str, Any], *, gate: GateReport | None = None):
+    config, stored = _config()
+    config["configurable"]["docker"] = sandbox
+    if gate is None:
+        with patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _e: None):
+            cmd = await verify_node(state, config)  # type: ignore[arg-type]
+        return cmd, None, stored
+    run_gate = AsyncMock(return_value=gate)
+    with (
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _e: None),
+        patch("embry0.workflows.issue_to_pr.nodes._verify.run_gate", new=run_gate),
+    ):
+        cmd = await verify_node(state, config)  # type: ignore[arg-type]
+    return cmd, run_gate, stored
+
+
+@pytest.mark.asyncio
+async def test_the_change_is_listed_afresh_after_the_sweep_not_taken_from_the_review() -> None:
+    from embry0.execution.sandbox_git import GIT_LISTING_MAX_BYTES
+
+    sandbox = _Sandbox(diff=f"{JAVA}\n")
+    cmd, run_gate, _ = await _run_in(sandbox, _state([TSX]), gate=_gate("passed", "passed"))
+    assert run_gate is not None
+    assert run_gate.await_args.kwargs["changed_files"] == [JAVA], (
+        "the gate's files must come from a fresh diff, not the list the review stored: "
+        f"{run_gate.await_args.kwargs['changed_files']}"
+    )
+    assert sandbox.steps[:1] == ["sweep"] and "diff" in sandbox.steps, (
+        f"the sweep runs before the diff: {sandbox.steps}"
+    )
+    assert sandbox.diff_caps == [GIT_LISTING_MAX_BYTES], f"the diff is a listing of paths: {sandbox.diff_caps}"
+    assert cmd.update["verification"]["tier"]["tier"] == "backend_only", cmd.update["verification"]["tier"]
+
+
+@pytest.mark.asyncio
+async def test_a_diff_that_fails_is_an_unknown_change_so_every_target_runs() -> None:
+    from embry0.workflows.verification.config import load_verification_config
+    from embry0.workflows.verification.runner import select_targets
+
+    sandbox = _Sandbox(diff=RuntimeError("Docker command failed: fatal: no merge base"))
+    cmd, run_gate, _ = await _run_in(sandbox, _state([JAVA]), gate=_gate("passed", "passed"))
+    assert run_gate is not None
+    files = run_gate.await_args.kwargs["changed_files"]
+    assert files == [], f"a diff that failed is not the review's list; it is unknown, []: {files}"
+    config, _ = load_verification_config(VERIFICATION)
+    assert config is not None and select_targets(config.test_targets, files) == config.test_targets
+    assert cmd.update["verification"]["tier"]["tier"] == "frontend", "an unknown change takes the strictest tier"
+
+
+@pytest.mark.asyncio
+async def test_a_sandbox_the_sweep_could_not_clear_leaves_the_change_unknown() -> None:
+    survivors = (0, "EMBRY0_SWEEP stopped=4 passes=20 survivors=1 pids=88\n", "")
+    sandbox = _Sandbox(diff=f"{JAVA}\n", sweep=survivors)
+    cmd, run_gate, _ = await _run_in(sandbox, _state([JAVA]), gate=_gate("passed", "passed"))
+    assert run_gate is not None
+    assert run_gate.await_args.kwargs["changed_files"] == [], "a diff read beside a surviving process is not trusted"
+    assert "diff" not in sandbox.steps, f"no diff runs while a process could still change the tree: {sandbox.steps}"
+    assert cmd.update["verification"]["tier"]["tier"] == "frontend"
+
+
+@pytest.mark.asyncio
+async def test_the_stored_head_sha_is_the_one_the_gate_parsed() -> None:
+    """The merge-approval check compares the stored head with the PR's: it is the sha the prepare step printed."""
+    sandbox = _Sandbox(diff=f"{JAVA}\n")
+    cmd, _, stored = await _run_in(sandbox, _state([JAVA]))
+    gate = stored.upsert.await_args.kwargs["result"]["gate"]
+    assert gate["verdict"] == "passed", gate
+    assert (gate["head_sha"], gate["base_sha"]) == (PARSED_HEAD, PARSED_BASE), (gate["head_sha"], gate["base_sha"])
+    assert cmd.update["verification"]["gate"]["head_sha"] == PARSED_HEAD

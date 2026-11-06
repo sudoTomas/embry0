@@ -69,9 +69,6 @@ PARSERS: dict[tuple[str, str], str] = {
     ("embry0/services/standards.py", "_HEADING"): "parses one stripped Markdown line into a heading",
     ("embry0/workflows/issue_to_pr/evidence.py", "_HEADING_RE"): "parses one Markdown line into a heading",
     ("embry0/workflows/pr_review/summary.py", "_FENCE_RE"): "parses one Markdown line into a code fence",
-    ("embry0/workflows/verification/runner.py", "_RESULT_RE"): (
-        "parses the stripped result line into exit code and time"
-    ),
 }
 
 #: (module path, the receiver as written) -> why the test cannot read the pattern, and what it is.

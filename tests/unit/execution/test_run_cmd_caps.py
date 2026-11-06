@@ -51,8 +51,8 @@ NAMED_CAPS: dict[tuple[str, str], list[str]] = {
     ("embry0.workflows.qa.subtask_nodes", "seed_node"): ["LOG_TAIL_BYTES+tail"],
     ("embry0.workflows.qa.subtask_nodes", "auth_setup_node"): ["LOG_TAIL_BYTES+tail", "STORAGE_STATE_MAX_BYTES"],
     ("embry0.workflows.qa.subtask_nodes", "e2e_node"): ["LOG_TAIL_BYTES+tail"],
-    # The test gate reads back a 1 MiB log tail and a marker line, nothing more.
-    ("embry0.workflows.verification.runner", "_run_once"): ["RUN_OUTPUT_MAX_BYTES"],
+    # The test gate reads back a run's 1 MiB log tail, nothing more.
+    ("embry0.workflows.verification.runner", "_read_log"): ["RUN_OUTPUT_MAX_BYTES"],
     # Listings of the daemon's own objects grow with the daemon, not with what one process prints.
     ("embry0.execution.docker_client", "DockerClient.inspect_network"): ["DAEMON_LISTING_MAX_BYTES"],
     ("embry0.execution.runtime.egress", "EgressEnforcer._run_in_dind_netns"): ["DAEMON_LISTING_MAX_BYTES"],
