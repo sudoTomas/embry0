@@ -1,8 +1,9 @@
 """The Slop-O-Meter's readings of a repository (spec 2026-10-26, slop-o-meter).
 
 ``GET /repos/{repo}/-/slop-meter``: the repository's score and level, each area's,
-where reading its history stands, and the week-by-week series of attention
-cost, capacity and slop for the repository or one area. After Slop-O-Meter's
+where reading its history stands (and the configuration version its score
+was computed with, #169), and the week-by-week series of attention cost,
+capacity and slop for the repository or one area. After Slop-O-Meter's
 published slop score algorithm (https://github.com/slop-o-meter/slop-o-meter).
 """
 
@@ -61,5 +62,7 @@ async def read_slop_meter(full_repo: str, request: Request, area: str = Query(de
             "commits_total": int(state.get("commits_total") or 0),
             "computed_at": _iso(state.get("computed_at")),
             "error": state.get("error"),
+            # The digest of the slop_meter settings the repository's score was computed from (#169).
+            "config_version": str((rows.get("") or {}).get("config_version") or "") or None,
         },
     }

@@ -73,13 +73,17 @@ _CO_AUTHOR = re.compile(r"^co-authored-by:[ \t]*(.*?)[ \t]*<([^>\n]+)>[ \t]*$", 
 _BULLET = re.compile(r"^[ \t]*[*-][ \t]+\S", re.M)
 
 
-def is_bot(name: str, email: str, bots: frozenset[str] | None = None) -> bool:
+def is_bot(name: str, email: str, bots: frozenset[str] | None = None, agents: Iterable[str] = ()) -> bool:
     """A bot or an AI coding agent: a known name, a ``[bot]`` name or address, ``noreply@``, an agent's address,
-    or a name, address or login in ``bots`` (:func:`own_identities`; embry0's own when none is given)."""
+    a name, address or login in ``bots`` (:func:`own_identities`; embry0's own when none is given), or an
+    address one of ``agents`` names (the ``slop_meter`` section's ``ai_agents``, lowercased): one ending in
+    ``@`` names every address that starts with it, any other the whole address."""
     name, email = name.strip().lower(), email.strip().lower()
     if name in KNOWN_BOTS or name.endswith("[bot]"):
         return True
     if email.endswith("[bot]@users.noreply.github.com") or email.startswith(("noreply@", *_AI_EMAIL_PREFIXES)):
+        return True
+    if email and any(email.startswith(a) if a.endswith("@") else email == a for a in agents):
         return True
     own = _embry0_identities() if bots is None else bots
     return name in own or email in own
@@ -108,14 +112,21 @@ def _embry0_identities() -> frozenset[str]:
     return own_identities()
 
 
-def with_bots(commits: Sequence[Commit], bots: frozenset[str]) -> list[Commit]:
-    """``commits`` as they read with ``bots`` known: a listed author's commit is a bot's, and a listed
-    co-author co-wrote as an agent does, not as a person. Rows read before an identity was listed are
-    corrected here, when scored, without reading the history again."""
+def agent_prefixes(agents: Iterable[str]) -> tuple[str, ...]:
+    """The ``slop_meter`` section's ``ai_agents`` as :func:`is_bot` matches them: lowercased, blanks dropped,
+    each once."""
+    return tuple(dict.fromkeys(a.strip().lower() for a in agents if a.strip()))
+
+
+def with_bots(commits: Sequence[Commit], bots: frozenset[str], agents: Iterable[str] = ()) -> list[Commit]:
+    """``commits`` as they read with ``bots`` and the AI agents ``agents`` (:func:`is_bot`) known: a listed
+    author's commit is a bot's, and a listed co-author co-wrote as an agent does, not as a person. Rows read
+    before an identity was listed are corrected here, when scored, without reading the history again."""
+    prefixes = agent_prefixes(agents)
     out: list[Commit] = []
     for c in commits:
-        bot = c.bot or is_bot(c.author_name, c.author_email, bots)
-        humans = tuple(co for co in c.coauthors if not is_bot(co[0], co[1], bots))
+        bot = c.bot or is_bot(c.author_name, c.author_email, bots, prefixes)
+        humans = tuple(co for co in c.coauthors if not is_bot(co[0], co[1], bots, prefixes))
         ai = c.ai_coauthor or len(humans) != len(c.coauthors)
         unchanged = (bot, humans, ai) == (c.bot, c.coauthors, c.ai_coauthor)
         out.append(c if unchanged else replace(c, bot=bot, coauthors=humans, ai_coauthor=ai))

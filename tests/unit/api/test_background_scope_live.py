@@ -12,6 +12,7 @@ operator writes it, and repositories are unregistered through
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import os
 from collections.abc import AsyncIterator, Sequence
@@ -28,7 +29,7 @@ from embry0.config import Embry0Config
 from embry0.services.leads import Lead
 from embry0.services.scout import ScoutLoop
 from embry0.services.slop_meter.history import Commit
-from embry0.services.slop_meter.loop import SlopMeterLoop, SlopMeterSettings
+from embry0.services.slop_meter.loop import SlopMeterLimits, SlopMeterLoop
 from embry0.services.slop_meter.mirror import GitMirror
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.scout import ScoutRunsRepository
@@ -78,10 +79,14 @@ async def app(
         )
     app = create_app(config)
     async with lifespan(app):
-        # With its schedule off, the meter only removes, once, what left its scope: let that finish first.
-        for task in list(app.state.background_tasks):
-            if task.get_coro().__qualname__ == "SlopMeterLoop.start":
-                await task
+        # With the meter off (slop_meter.enabled: false, imported from SLOP_METER_INTERVAL_SECONDS=0), its first
+        # look only removes what left its scope, then it waits five minutes: let that first look finish first.
+        meter: SlopMeterLoop = app.state.slop_meter
+        for _ in range(500):
+            if meter.last_pass is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert meter.last_pass is not None, "the meter's first look ran at its start"
         for owner in ("acme", "globex"):
             await app.state.organizations_repo.register(owner, "github")
         for repo in ("acme/widgets", "acme/gadgets", "globex/gizmos", "globex/tools"):
@@ -234,7 +239,7 @@ def _meter(app: Any, clock: list[datetime]) -> SlopMeterLoop:
         client_for=no_credential,
         bots=no_bots,
         calls=NoCalls(),  # type: ignore[arg-type]
-        settings=SlopMeterSettings(),
+        limits=SlopMeterLimits(),
         clock=lambda: clock[0],
     )
 

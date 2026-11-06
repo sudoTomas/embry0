@@ -19,11 +19,14 @@ what.
 A key merged entry by entry (``Section.merged_keys``, #166) also answers
 ``merged_by_entry`` true and ``entries``: each entry of its value with the
 document it comes from, ``default``, the deployment's (``document`` or
-``bootstrap``), ``organization`` or ``repository``.
+``bootstrap``), ``organization`` or ``repository``. So does a list each
+document adds to (``Section.added_keys``, #169): each item, as ``entry`` and
+``value``, with the most general document that names it.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -115,6 +118,29 @@ def _entries(
         if layer["set"] and isinstance(layer["value"], Mapping):
             source_of.update(dict.fromkeys(layer["value"], layer["layer"]))
     return [{"entry": entry, "value": value[entry], "source": source_of.get(entry, "default")} for entry in value]
+
+
+def _items(
+    value: list[Any],
+    default: Any,
+    deployment: tuple[str, Mapping[str, Any], str],
+    layers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Each item of an added key's value with the document that first adds it: the most general that names it."""
+    source_of: dict[str, str] = {}
+    deployment_source, stored, key = deployment
+    found: list[tuple[Any, str]] = [(default, "default")]
+    if deployment_source != "default":
+        found.append((stored.get(key), deployment_source))
+    found.extend((layer["value"], layer["layer"]) for layer in layers[1:] if layer["set"])
+    for items, source in found:
+        if isinstance(items, list | tuple):
+            for item in items:
+                source_of.setdefault(json.dumps(item, sort_keys=True), source)
+    return [
+        {"entry": item, "value": item, "source": source_of.get(json.dumps(item, sort_keys=True), "default")}
+        for item in value
+    ]
 
 
 def effective_view(
@@ -249,6 +275,9 @@ def effective_view(
             if key in section.merged_keys and isinstance(value, Mapping):
                 entry_out["merged_by_entry"] = True
                 entry_out["entries"] = _entries(value, defaults.get(key), (deployment_source, stored, key), layers)
+            elif key in section.added_keys and isinstance(value, list):
+                entry_out["merged_by_entry"] = True
+                entry_out["entries"] = _items(value, defaults.get(key), (deployment_source, stored, key), layers)
             keys.append(entry_out)
         sections.append({"name": section.name, "summary": section.summary, "keys": keys})
     out: dict[str, Any] = {

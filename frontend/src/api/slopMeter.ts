@@ -5,7 +5,7 @@ import { repoPath } from "./repoPath";
 export interface SlopMeterReading {
   /** Cumulative slop over cumulative attention cost, 0 to 1. */
   score: number;
-  /** 1 Buttered Noodles … 5 Just The Slop. */
+  /** 1 to 5: 1 the least slop. Their names are the settings document's `slop_meter.level_names`. */
   level: number;
   name: string;
   /** A large commit is not judged yet: its lines are left out of the slop until it is. */
@@ -31,7 +31,14 @@ export interface SlopMeter {
   /** The area the series is of; null for the whole repository. */
   area: string | null;
   weeks: SlopMeterWeek[];
-  reading: { commits_read: number; commits_total: number; computed_at: string | null; error: string | null };
+  reading: {
+    commits_read: number;
+    commits_total: number;
+    computed_at: string | null;
+    error: string | null;
+    /** The version of the `slop_meter` settings the repository's score was computed with; null before one (#169). */
+    config_version?: string | null;
+  };
 }
 
 export async function fetchSlopMeter(fullRepo: string, area = ""): Promise<SlopMeter> {

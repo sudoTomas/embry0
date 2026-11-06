@@ -16,10 +16,11 @@ from embry0.services.slop_meter.context import job_meter, meter_sentence
 from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader
 from embry0.services.slop_meter.history import HISTORY_VERSION, Commit
 from embry0.services.slop_meter.judge import parse_judgment, user_prompt
-from embry0.services.slop_meter.loop import MeterRead, SlopMeterLoop, SlopMeterSettings
+from embry0.services.slop_meter.loop import MeterRead, SlopMeterLimits, SlopMeterLoop
 from embry0.services.slop_meter.mirror import GitError, GitMirror, auth_env
 from embry0.services.slop_meter.score import Outlier
 from embry0.settings.sections.background import BackgroundSettings
+from embry0.settings.sections.slop_meter import SlopMeterSettings
 
 START = datetime(2025, 1, 6, 9, 0, tzinfo=UTC)
 REPO = "acme/web"
@@ -58,6 +59,8 @@ class FakeStore:
         self.login_map: dict[str, str] = {}
         self.judged: dict[tuple[str, str], bool] = {}
         self.stored: dict[str, Any] = {}
+        #: Each repository's configuration version, as its last scoring recorded it.
+        self.versions_of: dict[str, str] = {}
 
     async def state(self, repo: str) -> dict[str, Any]:
         return dict(self.states.get(repo, {"repo": repo, "commits_read": 0}))
@@ -100,8 +103,12 @@ class FakeStore:
     async def judge(self, repo: str, sha: str, *, slop: bool, reason: str, model: str) -> None:
         self.judged[(repo, sha)] = slop
 
-    async def store(self, repo: str, results: dict[str, Any], computed_at: datetime) -> None:
+    async def store(self, repo: str, results: dict[str, Any], computed_at: datetime, config_version: str = "") -> None:
         self.stored[repo] = results
+        self.versions_of[repo] = config_version
+
+    async def versions(self) -> dict[str, str]:
+        return dict(self.versions_of)
 
 
 async def _no_bots() -> tuple[str, ...]:
@@ -140,12 +147,30 @@ async def no_audit(*, action: str, details: dict[str, Any]) -> None:
     return None
 
 
-def _read(model: str = "") -> Any:
-    """A tick's read with every listed repository enrolled and its outliers judged on ``model``. Not settled,
-    so nothing is removed: what the meter removes is tested in test_prune.py."""
+class _Meter:
+    """The ``slop_meter`` section, the same for every repository: the defaults with ``values`` over them."""
+
+    def __init__(self, **values: Any) -> None:
+        self.values = SlopMeterSettings(**values)
+
+    def deployment(self) -> SlopMeterSettings:
+        return self.values
+
+    def repo(self, repo: str | None) -> SlopMeterSettings:
+        return self.values
+
+
+def _read(model: str = "", **meter: Any) -> Any:
+    """A tick's read with every listed repository enrolled, its outliers judged on ``model`` and the
+    ``slop_meter`` section's ``meter`` keys over its defaults. Not settled, so nothing is removed: what the
+    meter removes is tested in test_prune.py."""
 
     async def read() -> MeterRead:
-        return MeterRead(models=lambda repo: model, enrollment=Enrollment(_EveryRepository(), frozenset()))
+        return MeterRead(
+            models=lambda repo: model,
+            enrollment=Enrollment(_EveryRepository(), frozenset()),
+            meter=_Meter(**meter),
+        )
 
     return read
 
@@ -194,7 +219,7 @@ def _loop(
         client_for=client_for,
         bots=bots,
         calls=calls if calls is not None else FakeCalls(),
-        settings=SlopMeterSettings(commits_per_tick=per_tick),
+        limits=SlopMeterLimits(commits_per_tick=per_tick),
         clock=lambda: START + timedelta(days=60),
     )
 
@@ -296,7 +321,7 @@ async def test_an_outlier_is_judged_by_the_model_and_kept(monkeypatch: pytest.Mo
     store = FakeStore()
     asked: list[str] = []
 
-    async def judge(repo: str, outlier: Outlier, ep: Any, client: Any, calls: Any) -> tuple[bool, str]:
+    async def judge(repo: str, outlier: Outlier, ep: Any, client: Any, calls: Any, **_: Any) -> tuple[bool, str]:
         asked.append(outlier.commit.sha)
         return False, "a vendored parser"
 
@@ -479,14 +504,14 @@ async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
         repos=repos,
         exits=NoExits(),
         audit=no_audit,
-        read=_read(),
+        read=_read(api_calls_per_tick=16, rate_reserve=0),
         store=store,
         mirror=mirror,
         token_for=token_for,
         client_for=client_for,
         bots=lambda repo: _no_bots(),
         calls=FakeCalls(),
-        settings=SlopMeterSettings(commits_per_tick=10, event_pages=100, api_calls_per_tick=16, rate_reserve=0),
+        limits=SlopMeterLimits(commits_per_tick=10, event_pages=100),
         clock=lambda: START + timedelta(days=60),
     )
     assert await loop.tick() is True, "the big repository still has comments to read"
@@ -594,19 +619,20 @@ async def test_a_job_hears_its_areas_reading_else_its_repositorys(monkeypatch: p
     assert await job_meter({"configurable": {}}, state) is None
 
 
-def test_the_loop_module_names_its_settings_from_config() -> None:
+def test_the_loop_module_names_its_limits_from_config() -> None:
     class Config:
-        slop_meter_interval_seconds = 0
+        slop_meter_catchup_seconds = 60
         slop_meter_commits_per_tick = 7
 
-    settings = loop_mod.slop_meter_settings(Config())
-    assert settings.interval_seconds == 0 and settings.commits_per_tick == 7 and settings.judgments_per_tick == 5
+    limits = loop_mod.slop_meter_limits(Config())
+    assert limits.catchup_seconds == 60 and limits.commits_per_tick == 7 and limits.judgments_per_tick == 5
 
 
 @pytest.mark.asyncio
 async def test_a_repositorys_bots_are_embry0s_authors_there_and_the_owners_list() -> None:
-    """#184: production's ``bots`` reads the repository's preferred author, the owner's credential's
-    author and the owner's ``slop_meter_bots``; a missing source adds nothing."""
+    """#184: production's ``bots`` reads the repository's preferred author and the owner's credential's author,
+    and, until its layer imported them (#169), the ``slop_meter_bots`` the owner's row still lists; a missing
+    source adds nothing."""
     from types import SimpleNamespace
 
     class Store:
@@ -616,12 +642,23 @@ async def test_a_repositorys_bots_are_embry0s_authors_there_and_the_owners_list(
         async def get(self, key: str) -> Any:
             return self.rows.get(key)
 
+    asked: list[tuple[str, str]] = []
+
+    async def moved(section: str, owner: str, settings: Any) -> dict[str, Any]:
+        asked.append((section, owner))
+        return {"bots": list(settings.get("slop_meter_bots") or [])}
+
     prefs = Store({REPO: {"git_author_email": "agent@acme.example"}})
-    org = SimpleNamespace(credential_id="cred-1", settings={"slop_meter_bots": ["release-bot"]})
+    org = SimpleNamespace(owner="acme", credential_id="cred-1", settings={"slop_meter_bots": ["release-bot"]})
     orgs = Store({REPO.split("/")[0]: org})
     credentials = Store({"cred-1": {"git_author_email": "bot@acme.example"}})
-    got = await loop_mod.repo_bots(REPO, prefs=prefs, orgs=orgs, credentials=credentials)
+    got = await loop_mod.repo_bots(REPO, prefs=prefs, orgs=orgs, credentials=credentials, moved=moved)
     assert got == ["agent@acme.example", "bot@acme.example", "release-bot"]
+    assert asked == [("slop_meter", "acme")], "the owner's row is read through the moved-settings reader"
+    imported = await loop_mod.repo_bots(REPO, prefs=prefs, orgs=orgs, credentials=credentials)
+    assert imported == ["agent@acme.example", "bot@acme.example"], (
+        "without the reader the row is not read: the layer's slop_meter.bots are the section's, read when scored"
+    )
     nothing = await loop_mod.repo_bots(REPO, prefs=Store({}), orgs=Store({}), credentials=Store({}))
     assert nothing == []
 
@@ -650,14 +687,14 @@ async def test_each_credential_keeps_its_own_budget() -> None:
         repos=repos,
         exits=NoExits(),
         audit=no_audit,
-        read=_read(),
+        read=_read(api_calls_per_tick=8, rate_reserve=100),
         store=store,
         mirror=FakeMirror(records, order),
         token_for=token_for,
         client_for=client_for,
         bots=no_bots,
         calls=FakeCalls(),
-        settings=SlopMeterSettings(commits_per_tick=10, event_pages=100, api_calls_per_tick=8, rate_reserve=100),
+        limits=SlopMeterLimits(commits_per_tick=10, event_pages=100),
         clock=lambda: START + timedelta(days=60),
     )
     assert await loop.tick() is True

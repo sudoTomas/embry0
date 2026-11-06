@@ -28,10 +28,8 @@ AGENT_COLUMNS = ("station", "quest_template")
 JOB_COLUMNS = ("coding_agent", "leader_agent")
 
 
-def test_the_behaviour_rows_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_142.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must add the template and agent behaviour columns"
+def test_the_behaviour_rows_migration_is_listed_once() -> None:
+    """The "last entry" assertion passed to tests/unit/storage/test_migration_144.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 

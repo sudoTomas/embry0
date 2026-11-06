@@ -171,8 +171,34 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
 
 
 def _split_moved(settings: dict[str, Any]) -> dict[str, Any]:
-    """Take the settings that moved into the settings document out of ``settings``, and return them."""
-    return {key: settings.pop(key) for key in list(settings) if key in org_service.MOVED}
+    """Take the settings that moved into the settings document out of ``settings``, and return them, each as it is
+    written into the organization's layer (:attr:`embry0.services.organizations.MovedSetting.write`)."""
+    moved = {key: settings.pop(key) for key in list(settings) if key in org_service.MOVED}
+    for key, value in moved.items():
+        write = org_service.MOVED[key].write
+        if write is not None and value is not None:
+            moved[key] = write(value)
+    return moved
+
+
+def _refuse_moved(moved: dict[str, Any]) -> None:
+    """Refuse, with 422 and before anything is stored, a moved setting its section would refuse as a layer's own
+    value: so ``POST /orgs`` never registers an owner and then refuses the layer it writes."""
+    from embry0.settings.registry import SectionRefused
+    from embry0.settings.sections import CATALOG
+
+    problems: list[str] = []
+    for key, value in moved.items():
+        target = org_service.MOVED[key]
+        section = CATALOG.get(target.section)
+        if section is None or value is None:
+            continue
+        try:
+            section.validate_alone({target.key: value})
+        except SectionRefused as exc:
+            problems.extend(f"{key}: {error.get('msg')}" for error in exc.errors)
+    if problems:
+        raise HTTPException(status_code=422, detail="; ".join(problems))
 
 
 async def _write_moved(request: Request, owner: str, moved: dict[str, Any]) -> list[dict[str, Any]]:
@@ -345,6 +371,7 @@ async def register_organization(body: OrganizationBody, request: Request) -> dic
     if moved:
         # Refused before anything is stored: the organization's layer takes a key without an allowlist.
         await enforce_repo_allowlist(request, None, action="change the settings document")
+        _refuse_moved(moved)
     access: dict[str, Any] = {}
     repo_count: int | None = None
     if body.probe:

@@ -227,7 +227,15 @@ class Section[M: SectionModel]:
     entry by entry over what is below it, the deployment's over the field's
     default and a layer over what it inherits (its entries replace the entries
     of the same name below, and every other entry stays), each one also in
-    ``org_keys`` or ``repo_keys``.
+    ``org_keys`` or ``repo_keys``. ``added_keys`` are list fields a document
+    adds to what is below it the same way: the deployment's items after the
+    field's default ones and a layer's after what it inherits, each item once
+    (text without regard to case), so no layer takes an item out of the list
+    below it. A write counts either kind with what it inherits against the
+    field's ``max_length``, refusing only a write that makes an over-bound
+    total larger; a read past it keeps the most specific entries first: the
+    document's own, then those of the documents below it, nearest first,
+    then the default's (:func:`embry0.settings.layers.merged`).
     ``env`` maps a field to the ``Embry0Config`` attribute its value is
     imported from, once (``embry0.settings.bootstrap``): a string is the
     attribute, an :class:`EnvImport` adds a converter, the parts it drops, or a
@@ -241,11 +249,13 @@ class Section[M: SectionModel]:
     repo_keys: frozenset[str] = frozenset()
     env: Mapping[str, str | EnvImport] = field(default_factory=dict)
     merged_keys: frozenset[str] = frozenset()
+    added_keys: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "org_keys", frozenset(self.org_keys))
         object.__setattr__(self, "repo_keys", frozenset(self.repo_keys))
         object.__setattr__(self, "merged_keys", frozenset(self.merged_keys))
+        object.__setattr__(self, "added_keys", frozenset(self.added_keys))
         object.__setattr__(self, "env", dict(self.env))
         problems = _section_problems(self)
         if problems:
@@ -367,6 +377,7 @@ def _section_problems(section: Section[Any]) -> list[str]:
         ("repo_keys", section.repo_keys),
         ("env", section.env),
         ("merged_keys", section.merged_keys),
+        ("added_keys", section.added_keys),
     ):
         unknown = sorted(set(keys) - names)
         if unknown:
@@ -376,6 +387,13 @@ def _section_problems(section: Section[Any]) -> list[str]:
             problems.append(f"merged_keys names {key!r}, which no layer may set")
         if typing.get_origin(model.model_fields[key].annotation) is not dict:
             problems.append(f"merged_keys names {key!r}, which is not a mapping")
+    for key in sorted(section.added_keys & names):
+        if key not in section.org_keys | section.repo_keys:
+            problems.append(f"added_keys names {key!r}, which no layer may set")
+        if typing.get_origin(model.model_fields[key].annotation) not in (tuple, list):
+            problems.append(f"added_keys names {key!r}, which is not a list")
+        if key in section.merged_keys:
+            problems.append(f"{key!r} is in both merged_keys and added_keys")
     if not problems:
         problems.extend(_default_problems(section))
     if not problems:

@@ -13,9 +13,6 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-#: The level at which triage leans toward slop on a borderline verdict (Sloppy Joe).
-LEAN_LEVEL = 4
-
 
 def meter_sentence(scope: str, row: Mapping[str, Any]) -> str:
     """One reading in plain words: the level, the score, and what the score means."""

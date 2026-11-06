@@ -24,7 +24,7 @@ import pytest
 
 from embry0.config import Embry0Config
 from embry0.services.slop_meter.history import Commit
-from embry0.services.slop_meter.loop import SlopMeterLoop, SlopMeterSettings
+from embry0.services.slop_meter.loop import SlopMeterLimits, SlopMeterLoop
 from embry0.services.slop_meter.mirror import GitMirror
 from embry0.settings.scope import Scope
 from embry0.settings.store import SettingsStore
@@ -106,7 +106,7 @@ async def _deployment(db: DatabasePool, tmp_path: Path) -> tuple[Any, SettingsSt
         client_for=nothing,
         bots=no_bots,
         calls=None,  # type: ignore[arg-type]
-        settings=SlopMeterSettings(),
+        limits=SlopMeterLimits(),
         clock=lambda: clock[0],
     )
     return loop, store, clock, audit
@@ -228,7 +228,7 @@ async def test_two_registry_spellings_of_one_repository_are_read_once_and_never_
         client_for=nothing,
         bots=nothing,
         calls=None,  # type: ignore[arg-type]
-        settings=SlopMeterSettings(),
+        limits=SlopMeterLimits(),
     )
     read_counts = []
     for _tick in range(3):

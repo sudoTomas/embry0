@@ -4,7 +4,9 @@ The few commits that add thousands of weighted lines at once are judged one by
 one, on ``background_models.slop_judge`` through the background call every
 brief makes (``embry0.services.background_models``): slop, or not slop
 with a reason (a code drop, a restructuring, a vendored import). A judgment is
-kept per commit and never asked again.
+kept per commit and never asked again. What the model is told slop is, is the
+settings document's ``slop_meter.judge_prompt`` (#169); the form of its answer
+is this module's, said after the guidance, as :func:`parse_judgment` reads it.
 """
 
 from __future__ import annotations
@@ -16,19 +18,19 @@ import httpx
 
 from embry0.services.background_models import BackgroundCalls, Endpoint
 from embry0.services.slop_meter.score import Outlier
+from embry0.settings.sections.slop_meter import DEFAULT_JUDGE_PROMPT
 
 #: The key of ``background_models`` the judge runs on, and what its spend is recorded under.
 FEATURE = "slop_judge"
 
-SYSTEM_PROMPT = """\
-You judge one large commit of a software repository: did it add bulk code no
-person wrote or reviewed line by line (slop, such as a large AI-generated
-change), or is its size explained by something else (not slop: the project's
-initial import, a code drop moved in from elsewhere, a restructuring that moved
-files, a vendored or generated library, a data or fixture dump)?
-Judge from what the message and the files say. When it is unclear, answer
-slop: false only if the files themselves look moved, vendored or generated.
-Answer with JSON: {"slop": true|false, "reason": "<one plain sentence>"}."""
+#: The form of the answer, said after the guidance: what :func:`parse_judgment` reads.
+ANSWER_FORM = """Answer with JSON: {"slop": true|false, "reason": "<one plain sentence>"}."""
+
+
+def system_prompt(guidance: str = DEFAULT_JUDGE_PROMPT) -> str:
+    """What the judge is told: ``guidance`` (``slop_meter.judge_prompt``), then the form of its answer."""
+    return f"{guidance.rstrip()}\n{ANSWER_FORM}"
+
 
 SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -66,16 +68,23 @@ def parse_judgment(text: str) -> tuple[bool, str]:
 
 
 async def judge(
-    repo: str, outlier: Outlier, endpoint: Endpoint, client: httpx.AsyncClient, calls: BackgroundCalls
+    repo: str,
+    outlier: Outlier,
+    endpoint: Endpoint,
+    client: httpx.AsyncClient,
+    calls: BackgroundCalls,
+    *,
+    guidance: str = DEFAULT_JUDGE_PROMPT,
 ) -> tuple[bool, str]:
     """``(slop, reason)``; ``ValueError`` for an answer that is not one, ``httpx.HTTPError`` for a failed call,
-    ``BackgroundCallRefused`` when the budget caps refuse it."""
+    ``BackgroundCallRefused`` when the budget caps refuse it. ``guidance`` is the repository's
+    ``slop_meter.judge_prompt``."""
     answer = await calls.ask(
         FEATURE,
         endpoint,
         client,
         repo=repo,
-        system=SYSTEM_PROMPT,
+        system=system_prompt(guidance),
         user=user_prompt(repo, outlier),
         schema=SCHEMA,
         name="judgment",

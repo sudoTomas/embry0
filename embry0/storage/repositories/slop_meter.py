@@ -1,4 +1,4 @@
-"""The Slop-O-Meter's rows (migration 121, spec 2026-10-26, slop-o-meter).
+"""The Slop-O-Meter's rows (migrations 121, 122 and 144, spec 2026-10-26, slop-o-meter).
 
 A repository's history as read (commits, forge events, login emails, outlier
 commit judgments), where reading it stands, and what is computed from it: the
@@ -229,8 +229,11 @@ class SlopMeterRepository:
 
     # ---- what is computed ----
 
-    async def store(self, repo: str, results: Mapping[str, Any], computed_at: datetime) -> None:
-        """Replace the repository's series and scores with ``results`` (area → Meter, '' the repository)."""
+    async def store(
+        self, repo: str, results: Mapping[str, Any], computed_at: datetime, config_version: str = ""
+    ) -> None:
+        """Replace the repository's series and scores with ``results`` (area → Meter, '' the repository), each
+        score recording ``config_version``, the digest of the settings it was computed from (migration 144)."""
         async with self._db.transaction() as conn:
             await conn.execute("DELETE FROM slop_meter_weeks WHERE repo = $1", repo)
             await conn.execute("DELETE FROM slop_meter_scores WHERE repo = $1", repo)
@@ -246,13 +249,19 @@ class SlopMeterRepository:
                     weeks,
                 )
             await conn.executemany(
-                "INSERT INTO slop_meter_scores (repo, area, score, level, name, provisional, commits, computed_at) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "INSERT INTO slop_meter_scores "
+                "(repo, area, score, level, name, provisional, commits, computed_at, config_version) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                 [
-                    (repo, area, m.score, m.level, m.name, m.provisional, m.commits, computed_at)
+                    (repo, area, m.score, m.level, m.name, m.provisional, m.commits, computed_at, config_version)
                     for area, m in results.items()
                 ],
             )
+
+    async def versions(self) -> dict[str, str]:
+        """Each scored repository's configuration version, as its repository score (area '') records it."""
+        rows = await self._db.fetch("SELECT repo, config_version FROM slop_meter_scores WHERE area = ''")
+        return {str(r["repo"]): str(r["config_version"]) for r in rows}
 
     async def scores(self, repo: str | None = None) -> list[dict[str, Any]]:
         rows = await self._db.fetch(

@@ -4165,6 +4165,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             '#167: the leader of the job''s template when it was planned; a job led by the context auditor is an audit.';
         """,
     ),
+    (
+        144,
+        "slop-o-meter: each score's configuration version, so a change to what a score is computed from rescores it",
+        # The digest of the slop_meter section's scoring keys as the
+        # repository read them (embry0.settings.sections.slop_meter.config_version,
+        # #169). A row scored before this migration has none (''), which no
+        # digest equals, so the next run records one.
+        """
+        ALTER TABLE slop_meter_scores ADD COLUMN IF NOT EXISTS config_version TEXT NOT NULL DEFAULT '';
+        COMMENT ON COLUMN slop_meter_scores.config_version IS
+            'a digest of the slop_meter settings a score was computed from (#169); empty for a score from before it.';
+        """,
+    ),
 ]
 
 

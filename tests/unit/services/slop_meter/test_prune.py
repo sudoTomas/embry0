@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
-from embry0.services.slop_meter.loop import SlopMeterLoop, SlopMeterSettings
+from embry0.services.slop_meter.loop import SlopMeterLimits, SlopMeterLoop
 from embry0.services.slop_meter.mirror import GitMirror
 from embry0.settings.sections import CATALOG
 from embry0.settings.store import build_snapshot
@@ -632,11 +632,20 @@ async def test_a_mirror_the_guard_refuses_is_left_for_a_person_and_its_rows_go_a
 # ---- the loop: the next tick, once enrollment is settled ----
 
 
-def _snapshot(layers: Mapping[str, Mapping[str, Any]], *, imported: bool, grace_days: int = 7) -> Any:
+def _snapshot(
+    layers: Mapping[str, Mapping[str, Any]],
+    *,
+    imported: bool,
+    grace_days: int = 7,
+    meter: Mapping[str, Any] | None = None,
+) -> Any:
+    deployment: dict[str, Any] = {"background": {"prune_after_days": grace_days}}
+    if meter is not None:
+        deployment["slop_meter"] = dict(meter)
     rows: list[dict[str, Any]] = [
         {
             "scope": "deployment",
-            "data": {"background": {"prune_after_days": grace_days}},
+            "data": deployment,
             "generation": 1,
             "updated_at": None,
             "bootstrapped_keys": ["background.slop_meter"] if imported else [],
@@ -707,7 +716,7 @@ def _meter(
         client_for=nothing,
         bots=no_bots,
         calls=None,  # type: ignore[arg-type]
-        settings=SlopMeterSettings(),
+        limits=SlopMeterLimits(),
         clock=lambda: now[0],
     )
 
@@ -774,22 +783,23 @@ async def test_a_registry_read_that_comes_back_empty_removes_nothing() -> None:
     )
 
 
-async def test_with_its_schedule_off_the_meter_still_removes_what_left_its_scope_at_start() -> None:
+async def test_with_the_meter_off_it_still_removes_what_left_its_scope_at_its_first_look() -> None:
     documents = Documents(
         _snapshot(
             {"repository:acme/widgets": {"slop_meter": False}, "organization:other": {"slop_meter": True}},
             imported=True,
+            meter={"enabled": False},
         )
     )
     exits = Exits()
     exits.rows[("slop_meter", "acme/widgets")] = NOW - timedelta(days=8)
     store, mirror = Store(["acme/widgets", "other/kit"]), Mirror()
     loop = _meter(documents, store, mirror, ["acme/widgets", "other/kit"], exits=exits)
-    loop._settings = SlopMeterSettings(interval_seconds=0)  # noqa: SLF001 - SLOP_METER_INTERVAL_SECONDS=0
-    await loop.start()
+    assert await loop.scheduled() == "run"
     assert store.forgotten == ["acme/widgets"] == mirror.removed, (
-        "SLOP_METER_INTERVAL_SECONDS=0 stops the reading, not the removal: the start removes what the meter kept "
-        "of a repository whose week out of its scope has passed"
+        "slop_meter.enabled: false stops the reading, not the removal: the first look removes what the meter "
+        "kept of a repository whose week out of its scope has passed (reading other/kit would have failed: this "
+        "store records no state)"
     )
 
 

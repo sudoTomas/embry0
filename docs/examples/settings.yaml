@@ -396,6 +396,312 @@ scout:
   # none.
   # max_jobs_per_day: null
 
+# How the Slop-O-Meter weighs a changed line and a person's attention, where
+# its levels fall, which identities are bots, and how often and how hard it
+# reads the forge.
+slop_meter:
+  # The meter reads the repositories enrolled in background.slop_meter and
+  # scores them. false stops the reading and the scoring everywhere; what was
+  # kept of a repository that left the scope is still removed after
+  # background.prune_after_days. Was SLOP_METER_INTERVAL_SECONDS=0. The
+  # deployment's alone.
+  # enabled: true
+
+  # Hours between two runs over every enrolled repository: fetch, read the
+  # next part of its history and events, and rescore it once caught up. While
+  # a history is still being read the meter comes back sooner
+  # (SLOP_METER_CATCHUP_SECONDS). A change applies within five minutes. At
+  # least a quarter hour. Was SLOP_METER_INTERVAL_SECONDS. The deployment's
+  # alone.
+  # interval_hours: 24.0
+
+  # Forge API calls one run may make with one credential, shared round-robin
+  # by the repositories read with it, to read comments, reviews and logins:
+  # the deployment's value is the credential's budget. An organization's value
+  # only narrows its own repositories' share of it, never widens it, and never
+  # lowers another organization's on the same credential. A repository its
+  # share stops before its events are all read keeps its previous score, or
+  # stays unscored, until a run reads them all: a run reads from the first
+  # listing again. Git fetches are not API calls.
+  # api_calls_per_tick: 200
+
+  # The rate limit a credential keeps for the jobs that use it: once its
+  # remaining calls (X-RateLimit-Remaining) drop below this, the run makes no
+  # further call with it. An organization's larger value stops only its own
+  # repositories' reads sooner; a smaller one changes nothing.
+  # rate_reserve: 2000
+
+  # What one changed line of a file weighs, by glob, from 0 to 10; a file no
+  # glob matches weighs 0, so data, documents and binaries never count. A glob
+  # with no '/' matches a file's name in any directory (*.py), one with a '/'
+  # its path from the repository's root (db/migrations/*.sql, generated/**);
+  # '*' matches within one name, '?' one character, '**' any directories.
+  # Where several match, the most specific wins: a glob with a '/' over any
+  # without one; between two with one, more segments free of wildcards, then
+  # fewer ** segments, then fewer other segments with a wildcard, then more
+  # segments, then more literal characters; between two without, more literal
+  # characters (*.min.js over *.js); then the first in alphabetical order. So
+  # generated/** weighs every file under generated/, whatever its kind, and
+  # src/main.py wins over src/**/main.py. At most 16 globs that name no
+  # literal directory, no extension and no three literal characters in a row
+  # (*/*, *x*). Write globs in lowercase, quoted: matching ignores case, and
+  # YAML reads a bare * as an alias. Merged entry by entry: a document adds or
+  # changes the globs it names and keeps every other, so a glob set to 0 stops
+  # counting; at most 1000 globs in all, counted with the defaults and what a
+  # write inherits.
+  # weights:
+  #   '*.py': 1.0
+  #   '*.pyi': 1.0
+  #   '*.ts': 1.0
+  #   '*.mts': 1.0
+  #   '*.cts': 1.0
+  #   '*.js': 1.0
+  #   '*.mjs': 1.0
+  #   '*.cjs': 1.0
+  #   '*.go': 1.0
+  #   '*.rs': 1.0
+  #   '*.java': 1.0
+  #   '*.kt': 1.0
+  #   '*.kts': 1.0
+  #   '*.scala': 1.0
+  #   '*.c': 1.0
+  #   '*.h': 1.0
+  #   '*.cc': 1.0
+  #   '*.cpp': 1.0
+  #   '*.cxx': 1.0
+  #   '*.hpp': 1.0
+  #   '*.hh': 1.0
+  #   '*.cs': 1.0
+  #   '*.rb': 1.0
+  #   '*.php': 1.0
+  #   '*.swift': 1.0
+  #   '*.m': 1.0
+  #   '*.mm': 1.0
+  #   '*.ex': 1.0
+  #   '*.exs': 1.0
+  #   '*.erl': 1.0
+  #   '*.clj': 1.0
+  #   '*.cljs': 1.0
+  #   '*.hs': 1.0
+  #   '*.ml': 1.0
+  #   '*.fs': 1.0
+  #   '*.lua': 1.0
+  #   '*.pl': 1.0
+  #   '*.pm': 1.0
+  #   '*.r': 1.0
+  #   '*.jl': 1.0
+  #   '*.dart': 1.0
+  #   '*.zig': 1.0
+  #   '*.nim': 1.0
+  #   '*.groovy': 1.0
+  #   '*.sh': 1.0
+  #   '*.bash': 1.0
+  #   '*.zsh': 1.0
+  #   '*.ps1': 1.0
+  #   '*.tf': 1.0
+  #   '*.sol': 1.0
+  #   '*.proto': 1.0
+  #   '*.graphql': 1.0
+  #   '*.gql': 1.0
+  #   '*.sql': 0.8
+  #   '*.tsx': 0.5
+  #   '*.jsx': 0.5
+  #   '*.vue': 0.5
+  #   '*.svelte': 0.5
+  #   '*.astro': 0.5
+  #   '*.html': 0.5
+  #   '*.htm': 0.5
+  #   '*.erb': 0.5
+  #   '*.hbs': 0.5
+  #   '*.ejs': 0.5
+  #   '*.jinja': 0.5
+  #   '*.j2': 0.5
+  #   '*.twig': 0.5
+  #   '*.liquid': 0.5
+  #   '*.css': 0.3
+  #   '*.scss': 0.3
+  #   '*.sass': 0.3
+  #   '*.less': 0.3
+  #   '*.styl': 0.3
+  #   '*.pcss': 0.3
+  #   '*.min.js': 0.0
+  #   '*.min.css': 0.0
+  #   '*.bundle.js': 0.0
+  #   '*.map': 0.0
+  #   '*.d.ts': 0.0
+
+  # Directories whose files weigh nothing, each one name matched at any depth:
+  # vendored and third-party code. A list replaces the one it inherits whole;
+  # [] excludes none.
+  # excluded_dirs:
+  # - vendor
+  # - node_modules
+  # - third_party
+  # - third-party
+  # - external
+  # - deps
+  # - bower_components
+
+  # Directories whose files are tests or examples, each one name matched at
+  # any depth: their lines weigh test_weight of what weights says. A list
+  # replaces the one it inherits whole.
+  # test_dirs:
+  # - __tests__
+  # - tests
+  # - test
+  # - spec
+  # - specs
+  # - examples
+  # - example
+  # - demos
+  # - demo
+  # - samples
+  # - sample
+  # - fixtures
+  # - testdata
+
+  # Globs of test and example files, in the grammar of weights (*_test.go,
+  # test_?*.py): their lines weigh test_weight of what weights says. A list
+  # replaces the one it inherits whole.
+  # test_files:
+  # - '*_test.go'
+  # - '*_test.py'
+  # - '*_test.rb'
+  # - '*_test.ex'
+  # - '*_test.exs'
+  # - '*_spec.rb'
+  # - test_?*.py
+
+  # Words that mark a test or example file when they come just before its
+  # extension: test marks a.test.ts and b.test.py, but not a.test.helper.ts.
+  # Their lines weigh test_weight of what weights says. A list replaces the
+  # one it inherits whole.
+  # test_marks:
+  # - test
+  # - spec
+  # - stories
+  # - story
+
+  # A test or example file's lines weigh this share of what their file's glob
+  # in weights says.
+  # test_weight: 0.5
+
+  # Size dampening: while a codebase holds fewer weighted lines than this, a
+  # week's lines cost in proportion to its size, so a young project's first
+  # lines cost little; from this size on, in full.
+  # bootstrap_lines: 5000
+
+  # Size dampening: how much more a line costs as the codebase grows, per
+  # doubling past 100,000 weighted lines (the cost is min(1, size /
+  # bootstrap_lines) + complexity_weight × log2(1 + size / 100,000)).
+  # complexity_weight: 0.05
+
+  # Hours of a person's attention each commit they author implies, before its
+  # time.
+  # commit_hours: 1.0
+
+  # Hours more for each commit a squash merge folded in (a body that lists two
+  # or more bullet lines).
+  # subcommit_hours: 1.0
+
+  # Each human Co-authored-by trailer implies this share of commit_hours, in
+  # trailer order; the last share applies to every co-author after it. Each
+  # from 0 to 1.
+  # coauthor_shares:
+  # - 0.5
+  # - 0.25
+  # - 0.125
+
+  # A commit with an AI co-author implies this share of the hours its author's
+  # commit would.
+  # ai_coauthor_share: 0.8
+
+  # Hours of attention each comment, review comment and review on the forge
+  # implies (GitHub only).
+  # event_hours: 1.0
+
+  # Weighted lines one hour of a person's attention covers.
+  # lines_per_hour: 40.0
+
+  # The most hours one person's week counts, on a concave curve (h −
+  # h³/(3·cap²)), so overtime counts for less and nothing past the cap.
+  # weekly_hours_cap: 80.0
+
+  # Authors with fewer human commits than this are drive-bys: their time
+  # counts for nothing. Their share rises to full at core_full_commits, and up
+  # to a quarter more for a large share of the history.
+  # core_min_commits: 10
+
+  # The human commits at which an author's time counts in full. More than
+  # core_min_commits.
+  # core_full_commits: 60
+
+  # When no author has reached core_min_commits, everyone's time counts in
+  # full: a small repository has no core team to call anyone a drive-by, and
+  # read literally every author of it counts for nothing and all its code
+  # reads as slop. embry0's departure from the published algorithm; false
+  # scores such a repository as the algorithm is written.
+  # small_repository_in_full: true
+
+  # Net weighted lines a commit must add to be an outlier, judged by a model
+  # on background_models.slop_judge: slop, or a code drop, an import or a move
+  # that is not.
+  # outlier_min_lines: 2000
+
+  # Outlier commits judged per year of the project's age, the largest first;
+  # at least one however young.
+  # outliers_per_year: 4
+
+  # What the model judging an outlier commit is told slop is and is not. The
+  # answer's form (JSON with slop and a reason) is added after it. Applies to
+  # commits judged after it changes: a judgment is kept and never asked again,
+  # so a change rescores nothing.
+  # judge_prompt: |-
+  #   You judge one large commit of a software repository: did it add bulk code no
+  #   person wrote or reviewed line by line (slop, such as a large AI-generated
+  #   change), or is its size explained by something else (not slop: the project's
+  #   initial import, a code drop moved in from elsewhere, a restructuring that moved
+  #   files, a vendored or generated library, a data or fixture dump)?
+  #   Judge from what the message and the files say. When it is unclear, answer
+  #   slop: false only if the files themselves look moved, vendored or generated.
+
+  # Where the five levels part: a score below the first bound is level 1,
+  # below the second level 2, and so on; at or above the last, level 5. Four
+  # bounds, each above the one before, from 0 to 1.
+  # level_bounds:
+  # - 0.2
+  # - 0.4
+  # - 0.6
+  # - 0.8
+
+  # The five levels' names, level 1 (the least slop) first. Each one line,
+  # each named once.
+  # level_names:
+  # - Buttered Noodles
+  # - Spaghetti Bolognese
+  # - Lasagna
+  # - Sloppy Joe
+  # - Just The Slop
+
+  # Bots, as commit names, addresses or forge logins matched whole without
+  # regard to case: their commits add lines but no attention, and as a
+  # co-author they count as an AI agent does. Beyond the ones every deployment
+  # knows ([bot] accounts, noreply@ addresses, known coding agents) and
+  # embry0's own commit identities. Each document adds to the list it
+  # inherits, so a bot the deployment lists counts for every organization; no
+  # layer takes one out, and a bot spelled otherwise is the same one. At most
+  # 200 in all, counted with what a write inherits. Was the organization's
+  # slop_meter_bots.
+  # bots: []
+
+  # AI coding agents beyond the known ones, each its commit address up to and
+  # including the @ (aider@, any domain) or a whole address
+  # (agent@tools.example), matched without regard to case: a commit one
+  # authors adds lines but no attention, and one it co-authors counts
+  # ai_coauthor_share of its author's hours. Each document adds to the list it
+  # inherits, as bots. At most 200 in all, counted with what a write inherits.
+  # ai_agents: []
+
 # What the dashboard shows: the game layer, and the page it opens on.
 ui:
   # Show the game layer: the guild, the agents' levels, skills and outfits,

@@ -24,6 +24,7 @@ from embry0.settings.sections.done_when import DONE_WHEN
 from embry0.settings.sections.leads import LEADS
 from embry0.settings.sections.salvage import SALVAGE
 from embry0.settings.sections.scout import SCOUT
+from embry0.settings.sections.slop_meter import SLOP_METER
 from embry0.settings.sections.ui import UI
 
 CATALOG: Catalog = Catalog(
@@ -37,6 +38,7 @@ CATALOG: Catalog = Catalog(
         LEADS,
         SALVAGE,
         SCOUT,
+        SLOP_METER,
         UI,
     ]
 )

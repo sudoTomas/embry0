@@ -78,6 +78,38 @@ class ApiBudget:
         return response
 
 
+class ShareBudget:
+    """One organization's share of a credential's :class:`ApiBudget` for the tick (#169).
+
+    At most ``calls`` of the credential's calls, stopping once the credential's
+    remaining rate limit is below ``reserve``; and never past the credential's
+    own budget or reserve, which every share of it draws on. A share narrower
+    than the credential's ends only its own organization's reads.
+    """
+
+    def __init__(self, shared: ApiBudget, *, calls: int, reserve: int) -> None:
+        self.shared = shared
+        self.left = max(0, calls)
+        self.reserve = reserve
+        self.made = 0
+
+    @property
+    def remaining(self) -> int | None:
+        return self.shared.remaining
+
+    @property
+    def spent(self) -> bool:
+        remaining = self.shared.remaining
+        return self.left <= 0 or self.shared.spent or (remaining is not None and remaining < self.reserve)
+
+    async def get(self, client: Any, path: str, **kwargs: Any) -> Any:
+        if self.spent:
+            raise BudgetSpent
+        self.left -= 1
+        self.made += 1
+        return await self.shared.get(client, path, **kwargs)
+
+
 @dataclass
 class EventBatch:
     #: (id, kind, login, at)
@@ -156,7 +188,7 @@ class EventReader:
     def done(self) -> bool:
         return self._stage >= 5
 
-    async def step(self, budget: ApiBudget) -> bool:
+    async def step(self, budget: ApiBudget | ShareBudget) -> bool:
         """Make the next call; False when there is nothing left to read. Raises BudgetSpent with the budget gone."""
         if self._stage <= 1:
             await self._listing_page(budget)
@@ -174,7 +206,9 @@ class EventReader:
         self._stage += 1
         self._next, self._pages = None, 0
 
-    async def _page(self, budget: ApiBudget, path: str, params: dict[str, Any]) -> tuple[list[Any], bool, bool]:
+    async def _page(
+        self, budget: ApiBudget | ShareBudget, path: str, params: dict[str, Any]
+    ) -> tuple[list[Any], bool, bool]:
         """One page of a listing: its items, whether to read the next one, and whether the listing ended.
 
         A listing cut at the page cap, or answered with an error, has not ended
@@ -196,7 +230,7 @@ class EventReader:
             return (body if isinstance(body, list) else []), False, False
         return (body if isinstance(body, list) else []), bool(self._next), not self._next
 
-    async def _listing_page(self, budget: ApiBudget) -> None:
+    async def _listing_page(self, budget: ApiBudget | ShareBudget) -> None:
         name, kind, prefix, cursor = _LISTINGS[self._stage]
         since: datetime | None = getattr(self.batch, cursor)
         params: dict[str, Any] = {"sort": "updated", "direction": "asc"}
@@ -210,7 +244,7 @@ class EventReader:
         if not go_on:
             self._advance()
 
-    async def _pulls_page(self, budget: ApiBudget) -> None:
+    async def _pulls_page(self, budget: ApiBudget | ShareBudget) -> None:
         items, has_next, _ended = await self._page(
             budget, f"/repos/{self._repo}/pulls", {"state": "all", "sort": "updated", "direction": "desc"}
         )
@@ -230,7 +264,7 @@ class EventReader:
             self._pulls.sort()
             self._advance()
 
-    async def _reviews(self, budget: ApiBudget) -> None:
+    async def _reviews(self, budget: ApiBudget | ShareBudget) -> None:
         if not self._pulls or self._max_pulls <= 0:
             if self._pulls:
                 self.batch.more = True
@@ -248,7 +282,7 @@ class EventReader:
         if not self._pulls:
             self._advance()
 
-    async def _login(self, budget: ApiBudget) -> None:
+    async def _login(self, budget: ApiBudget | ShareBudget) -> None:
         if self._logins is None:
             named = self._stored | {login.lower() for _id, _kind, login, _at in self.batch.events}
             missing = sorted(n for n in named if n not in self._known and not is_bot(n, ""))

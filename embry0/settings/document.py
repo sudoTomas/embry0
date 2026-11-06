@@ -26,7 +26,7 @@ from typing import Any, Final
 import structlog
 import yaml
 
-from embry0.settings.layers import over_default
+from embry0.settings.layers import cap_of, merged, over_default
 from embry0.settings.registry import (
     DOCUMENT_KEYS,
     MANAGED_BY_FILE,
@@ -251,6 +251,41 @@ def _message(section: Section[Any], error: Mapping[str, Any]) -> str:
     return msg
 
 
+def _size(value: Any) -> int:
+    return len(value) if isinstance(value, list | tuple | dict) else 0
+
+
+def _read_before(
+    section: Section[Any], base: Mapping[str, Any], stored_own: Mapping[str, Any], spread: Iterable[str]
+) -> dict[str, Any]:
+    """Each key merged or added to as a reader read it before a write: the document's stored entries over what it
+    inherits, or what it inherits alone."""
+    out: dict[str, Any] = {}
+    for name in spread:
+        own = stored_own.get(name, {} if name in section.merged_keys else [])
+        out[name] = merged(section, base, {name: own}, fit=False)[name]
+    return out
+
+
+def _too_many(section: Section[Any], error: Mapping[str, Any], count: int | None) -> str:
+    """A merged or added key that holds ``count`` entries, with what it inherits, more than it may."""
+    ctx = error.get("ctx") or {}
+    actual, most = count if count is not None else ctx.get("actual_length"), ctx.get("max_length")
+    if actual is None or most is None:
+        return _message(section, error)
+    return (
+        f"holds {actual} entries together with the ones it inherits (the default's and those of the documents "
+        f"below this one), more than the {most} it may hold"
+    )
+
+
+def _own_values(section: Section[Any], known: Mapping[str, Any]) -> dict[str, Any]:
+    """The keys of ``known`` a document merges or adds to, each as the document's own entries, checked alone:
+    what is stored, never what it inherits."""
+    names = {name: value for name, value in known.items() if name in section.merged_keys | section.added_keys}
+    return section.validate_alone(names) if names else {}
+
+
 def validate_section(section: Section[Any], raw: Mapping[str, Any]) -> SectionModel:
     """``raw`` as the section's model; :class:`SectionRefused` naming each refused key.
 
@@ -462,14 +497,33 @@ def check(
                 data[key] = clean
             continue
         base = mapping((inherited or {}).get(key)) if layer != "deployment" else {}
-        before = {**base, **{k: v for k, v in kept_section.items() if k in section.model.model_fields}}
+        stored_own = {k: v for k, v in kept_section.items() if k in section.model.model_fields}
+        spread = (section.merged_keys | section.added_keys) & set(section.model.model_fields)
+        # What a reader read before the write: a key merged or added to over what it inherits.
+        before = {**base, **stored_own, **_read_before(section, base, stored_own, spread)}
+        # A key merged or added to is checked as its readers read it, over what it inherits, so a count the read
+        # could not hold is refused here, naming the key; what is stored is the document's own entries. A write
+        # that does not make an over-bound total larger than readers read before (a document below grew since,
+        # and this one writes another key) is taken as the read takes it, fitted.
+        combined = merged(section, base, known, fit=False)
+        fitted = merged(section, base, known, fit=True)
+        for name in spread & set(known):
+            cap = cap_of(section, name)
+            if cap is not None and _size(combined[name]) > cap and _size(combined[name]) <= _size(before.get(name)):
+                combined[name] = fitted[name]
         try:
             model = section.validate(
-                {**base, **known}, context=None if context is None else {**context, STORED: before}
+                {**base, **combined}, context=None if context is None else {**context, STORED: before}
             )
         except SectionRefused as exc:
             for error in exc.errors:
                 loc = tuple(error.get("loc") or ())
+                counted = bool(loc) and str(loc[0]) in known and str(loc[0]) in spread
+                if counted and error.get("type") == "too_long":
+                    entries = combined.get(str(loc[0]))
+                    count = len(entries) if isinstance(entries, list | tuple | dict) else None
+                    problems.append(Problem((key, *loc), "too_long", _too_many(section, error, count)))
+                    continue
                 if layer != "deployment" and not (loc and str(loc[0]) in known):
                     problems.append(
                         Problem(
@@ -481,11 +535,12 @@ def check(
                 else:
                     problems.append(Problem((key, *loc), str(error.get("type")), _message(section, error)))
             continue
+        own = _own_values(section, known)
         if layer == "deployment":
-            clean = {**model.model_dump(mode="json", exclude_unset=True), **kept}
+            clean = {**model.model_dump(mode="json", exclude_unset=True), **own, **kept}
         else:
             dumped = model.model_dump(mode="json")
-            clean = {**{name: dumped[name] for name in known}, **kept}
+            clean = {**{name: dumped[name] for name in known}, **own, **kept}
         if clean:
             data[key] = clean
     if problems:
@@ -677,11 +732,25 @@ def read_sections(catalog: Catalog, data: Mapping[str, Any]) -> Sections:
 # ---- text -----------------------------------------------------------------------------
 
 
+class _BlockDumper(yaml.SafeDumper):
+    """The safe dumper, writing a text of several lines as a literal block (``|``), line for line."""
+
+
+def _represent_text(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
+    # A text the literal style cannot hold (a line ending in a blank, say) falls back to the
+    # emitter's own choice, so the YAML always reads back as the same text.
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|" if "\n" in data else None)
+
+
+_BlockDumper.add_representer(str, _represent_text)
+
+
 def dump_yaml(values: Mapping[str, Any]) -> str:
-    """``values`` as block-style YAML, keys in their given order; ``""`` for nothing."""
+    """``values`` as block-style YAML, keys in their given order, a text of several lines as a literal block;
+    ``""`` for nothing."""
     if not values:
         return ""
-    return yaml.safe_dump(dict(values), sort_keys=False, default_flow_style=False, allow_unicode=True)
+    return yaml.dump(dict(values), Dumper=_BlockDumper, sort_keys=False, default_flow_style=False, allow_unicode=True)
 
 
 def _comment(comment: str, indent: str = "", newline: str = "\n") -> str:

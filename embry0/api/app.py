@@ -2671,9 +2671,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # The Slop-O-Meter (spec 2026-10-26): each enrolled repository's history,
     # read a bounded batch a tick from a bare mirror fetched with its
-    # organization's credential, scored daily. Outliers are judged on
-    # background_models.slop_judge (#164). A repository that leaves its scope
-    # loses its mirror and its rows on the next tick (#165).
+    # organization's credential, scored every slop_meter.interval_hours with
+    # the slop_meter section as the repository reads it (#169). Outliers are
+    # judged on background_models.slop_judge (#164). A repository that leaves
+    # its scope loses its mirror and its rows on the next tick (#165).
     from pathlib import Path as _Path
 
     from fastapi import HTTPException
@@ -2684,7 +2685,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.audit.helpers import emit_audit as _slop_meter_emit_audit
     from embry0.orchestration import dispatch_actors as _slop_meter_actors
     from embry0.services.background_scope import registered_reader, registry_reader
-    from embry0.services.slop_meter.loop import SlopMeterLoop, meter_reader, slop_meter_settings
+    from embry0.services.slop_meter.loop import SlopMeterLoop, meter_reader, slop_meter_limits
     from embry0.services.slop_meter.loop import repo_bots as slop_meter_repo_bots
     from embry0.services.slop_meter.mirror import GitMirror
     from embry0.services.slop_meter.prune import audit_writer as _slop_meter_audit_writer
@@ -2713,22 +2714,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except HTTPException:
             return None
 
+    from types import SimpleNamespace as _SlopMeterOrg
+
+    async def _slop_meter_moved(section: str, owner: str, settings: Mapping[str, Any]) -> Mapping[str, Any]:
+        # An organization whose layer has not imported its slop_meter_bots yet (a first start whose copy
+        # failed) still reads them from its row, and its copy is tried again (#169).
+        view = await app.state.budget_policy.view([_SlopMeterOrg(owner=owner, settings=settings)])
+        moved: Mapping[str, Any] = view.moved_values(section, owner, settings)
+        return moved
+
     async def _slop_meter_bots(repo: str) -> list[str]:
         return await slop_meter_repo_bots(
             repo,
             prefs=app.state.repo_preferences_repo,
             orgs=app.state.organizations_repo,
             credentials=app.state.credentials_repo,
+            moved=_slop_meter_moved,
         )
 
     app.state.slop_meter = SlopMeterLoop(
         # The registered repositories, of which each tick reads the active ones enrolled in
         # background.slop_meter (#165), keeps what it read of every enrolled one, active or not, and
         # removes what it kept of the rest background.prune_after_days after they left (recorded in
-        # background_scope_exits, each removal audited); the enrollment and the judge's model
-        # (background_models.slop_judge) come from one snapshot a tick.
+        # background_scope_exits, each removal audited); the enrollment, the judge's model
+        # (background_models.slop_judge) and the slop_meter section come from one snapshot a tick.
         repos=registry_reader(app.state.repos_repo),
-        read=meter_reader(app.state.settings),
+        read=meter_reader(app.state.settings, config),
         store=app.state.slop_meter_repo,
         mirror=GitMirror(_Path(config.slop_meter_data_path), timeout=config.slop_meter_git_timeout_seconds),
         exits=ScopeExitsRepository(db),
@@ -2739,7 +2750,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         client_for=_slop_meter_client,
         bots=_slop_meter_bots,
         calls=app.state.background_calls,
-        settings=slop_meter_settings(config),
+        limits=slop_meter_limits(config),
     )
     slop_meter_task = asyncio.create_task(app.state.slop_meter.start())
     app.state.background_tasks.add(slop_meter_task)

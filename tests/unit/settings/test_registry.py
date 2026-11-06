@@ -276,13 +276,15 @@ _ALLOWED_IMPORTS = frozenset({"__future__", "pydantic", "embry0.settings.registr
 #: import cycle can pass through them (``test_the_leaves_a_section_may_import_import_nothing_of_embry0``):
 #: the content pack's template grammar, which the salvage subject is written in, and the one rule a
 #: named heading matches a ticket's heading by, which the done_when section checks its headings with,
-#: the lead-kind catalogue, whose kinds and severities the leads section's ask_severities names, and the
-#: instruction-file rules, whose glob grammar the context_audit section checks its globs with.
+#: the lead-kind catalogue, whose kinds and severities the leads section's ask_severities names, the
+#: instruction-file rules, whose glob grammar the context_audit section checks its globs with, and the
+#: Slop-O-Meter's file names, whose glob grammar the slop_meter section checks its globs with.
 LEAF_IMPORTS = frozenset(
     {
         "embry0.services.instruction_files",
         "embry0.services.lead_kinds",
         "embry0.services.progression_templates",
+        "embry0.services.slop_meter.globs",
         "embry0.ticket_headings",
     }
 )
