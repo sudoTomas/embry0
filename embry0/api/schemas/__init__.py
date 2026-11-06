@@ -16,6 +16,14 @@ from embry0.execution.profile_isolation import ISOLATION_FIELDS, field_problem
 from embry0.git_refs import REF_RULE, valid_ref
 from embry0.services.tool_catalog import check_agent_tools
 from embry0.workflows._validation import FIXED_NODE_TYPES
+from embry0.workflows.row_behaviour import (
+    checked_delivers,
+    checked_job_kind,
+    checked_leader_agent,
+    checked_quest_template,
+    checked_station,
+    template_name_problem,
+)
 
 # Slash-separated alnum + . _ - : segments. Colon allowed for ISO timestamps in
 # filenames. No leading/trailing slash. No '..' segments. No double slashes.
@@ -435,11 +443,25 @@ class AgentCreateRequest(BaseModel):
     # The skills triage may add to this agent, each from a source its skills
     # already load (docs/api.md, Agents). Catalog names, each once.
     triage_may_add_skills: list[Any] = Field(default_factory=list)
+    # Where the guild hall draws it, and the task the guild can give it: null
+    # none, "" one that names no template, else that template (#167).
+    station: Any = "desk"
+    quest_template: Any = None
 
     @field_validator("triage_may_add_skills")
     @classmethod
     def _triage_may_add(cls, v: list[Any]) -> list[str]:
         return checked_triage_may_add(v)
+
+    @field_validator("station")
+    @classmethod
+    def _station(cls, v: Any) -> str:
+        return checked_station(v)
+
+    @field_validator("quest_template")
+    @classmethod
+    def _quest_template(cls, v: Any) -> str | None:
+        return checked_quest_template(v)
 
     @field_validator("type")
     @classmethod
@@ -487,11 +509,25 @@ class AgentUpdateRequest(BaseModel):
     tagline: str | None = Field(default=None, max_length=TAGLINE_MAX)
     # Not nullable: [] lets triage add none (the route refuses an explicit null).
     triage_may_add_skills: list[Any] | None = None
+    # Not nullable either (the route refuses an explicit null); quest_template's
+    # null takes the agent's task out of the guild (#167).
+    station: Any = None
+    quest_template: Any = None
 
     @field_validator("triage_may_add_skills")
     @classmethod
     def _triage_may_add(cls, v: list[Any] | None) -> list[str] | None:
         return None if v is None else checked_triage_may_add(v)
+
+    @field_validator("station")
+    @classmethod
+    def _station(cls, v: Any) -> str | None:
+        return None if v is None else checked_station(v)
+
+    @field_validator("quest_template")
+    @classmethod
+    def _quest_template(cls, v: Any) -> str | None:
+        return checked_quest_template(v)
 
     @field_validator("avatar")
     @classmethod
@@ -569,7 +605,37 @@ class _TemplateWriteRequest(BaseModel):
         return data
 
 
-class TemplateCreateRequest(_TemplateWriteRequest):
+class _TemplateBehaviour(BaseModel):
+    """What a template's row says about its jobs (#167, ``embry0.workflows.row_behaviour``): each value is
+    checked here, so a malformed one is a 422 naming its field. Whether ``leader_agent`` names an agent is the
+    route's check."""
+
+    @field_validator("job_kind", check_fields=False)
+    @classmethod
+    def _job_kind(cls, v: Any) -> str | None:
+        return checked_job_kind(v)
+
+    @field_validator("delivers", check_fields=False)
+    @classmethod
+    def _delivers(cls, v: Any) -> str | None:
+        return None if v is None else checked_delivers(v)
+
+    @field_validator("leader_agent", check_fields=False)
+    @classmethod
+    def _leader_agent(cls, v: Any) -> str | None:
+        return checked_leader_agent(v)
+
+    @field_validator("name", check_fields=False)
+    @classmethod
+    def _name(cls, v: Any) -> Any:
+        # A pipeline the code defines already owns its name (row_behaviour.WORKFLOW_PIPELINES).
+        problem = template_name_problem(v) if isinstance(v, str) else None
+        if problem:
+            raise ValueError(problem)
+        return v
+
+
+class TemplateCreateRequest(_TemplateWriteRequest, _TemplateBehaviour):
     name: str = Field(..., min_length=1, max_length=100)
     description: str = ""
     graph_definition: dict[str, Any]
@@ -577,9 +643,16 @@ class TemplateCreateRequest(_TemplateWriteRequest):
     # RAV-601: at most one template per kind is that kind's default route
     # (DB partial unique index enforces the at-most-one).
     default_for_kind: str | None = Field(default=None, pattern="^(code|research|analysis|ops)$")
+    # #167: a job that names it skips triage; triage is offered it; the kind its jobs are
+    # recorded as; what they deliver; who leads them.
+    fixed_route: bool = False
+    offered_to_triage: bool = True
+    job_kind: Any = None
+    delivers: Any = ""
+    leader_agent: Any = None
 
 
-class TemplateUpdateRequest(_TemplateWriteRequest):
+class TemplateUpdateRequest(_TemplateWriteRequest, _TemplateBehaviour):
     name: str | None = None
     description: str | None = None
     graph_definition: dict[str, Any] | None = None
@@ -589,10 +662,25 @@ class TemplateUpdateRequest(_TemplateWriteRequest):
         pattern="^(code|research|analysis|ops)$",
         description="the kind this template is the default route for; an explicit null clears it, an absent field keeps it",
     )
+    # #167. An absent field keeps the column; job_kind's and leader_agent's explicit null clears it, and
+    # delivers' "" does. fixed_route, offered_to_triage and delivers are never null (the route refuses it).
+    fixed_route: bool | None = None
+    offered_to_triage: bool | None = None
+    job_kind: Any = None
+    delivers: Any = None
+    leader_agent: Any = None
 
 
 class TemplateDuplicateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        problem = template_name_problem(v)
+        if problem:
+            raise ValueError(problem)
+        return v
 
 
 # --- Integration Config ---

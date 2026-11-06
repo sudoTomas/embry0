@@ -7,7 +7,6 @@ from datetime import UTC, datetime, timedelta
 from embry0.services.progression_pack import default_rules
 from embry0.services.world import (
     IDLE_DAYS,
-    QUEST_TEMPLATE_BY_AGENT,
     STUCK_SECONDS,
     character_entries,
     failure_words,
@@ -189,7 +188,8 @@ def test_each_character_is_where_its_newest_quest_is():
     assert entries["qa"]["idle_too_long"], "a character that never went out is idle too long"
     assert entries["developer"]["can_quest"] and entries["why"]["quest_template"] == "why"
     assert not entries["qa"]["can_quest"], "QA works only inside another quest"
-    assert "triage" not in QUEST_TEMPLATE_BY_AGENT
+    triage = character_entries([_character("triage")], [], {}, NOW)[0]
+    assert not triage["can_quest"], "triage works only inside another quest"
 
 
 def test_a_quest_earns_its_party_experience_and_the_merge_its_developer():

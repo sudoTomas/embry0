@@ -49,13 +49,14 @@ async def _job(
     pr: int,
     merged: bool = False,
 ) -> None:
-    """A context-audit job created half an hour before it finished, with its pull request open or merged."""
+    """A context-audit job created half an hour before it finished, with its pull request open or merged, led by
+    the context auditor as plan_route records it (#167)."""
     await db.execute(
         """
         INSERT INTO jobs (job_id, repo, task, status, pipeline_template, dispatched_by, result_summary, pr_url,
                           delivery_state, delivery_state_at, created_at, started_at, finished_at, updated_at,
-                          budget_overrun_usd)
-        VALUES ($1, $2, 't', $3, 'context-audit', $4, $5, $6, $7, $8, $9, $9, $10, $10, 0)
+                          budget_overrun_usd, leader_agent)
+        VALUES ($1, $2, 't', $3, 'context-audit', $4, $5, $6, $7, $8, $9, $9, $10, $10, 0, 'context-auditor')
         """,
         job_id,
         repo,

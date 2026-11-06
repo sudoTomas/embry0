@@ -91,6 +91,7 @@ from embry0.settings.sections.context_audit import (
     audit_days,
     file_rules,
 )
+from embry0.storage.repositories import audit_jobs
 from embry0.storage.schemas import FINISHED_WELL_STATUSES
 
 if TYPE_CHECKING:
@@ -114,7 +115,10 @@ ACTOR = dispatch_actors.CONTEXT_AUDIT
 #: files beside it. The actor is the marker because ``jobs.dispatched_by`` is
 #: written once, in the reserved ``embry0:`` names, while plan_route may
 #: rewrite the template column.
-FIX_ACTOR = dispatch_actors.PROPOSALS
+FIX_ACTOR = audit_jobs.FIX_ACTOR
+#: The agent an audit is led by: what makes a job an audit for this loop, progression and the findings feed alike
+#: (``embry0.storage.repositories.audit_jobs``, #167).
+AUDITOR = audit_jobs.AUDITOR
 
 #: Files the task names one by one; past it the task says how many more.
 TASK_FILE_LIMIT = 200
@@ -702,9 +706,10 @@ class _Jobs(Protocol):
         self,
         repos: Collection[str],
         *,
-        pipeline_template: str,
+        pipeline_template: str | None = None,
         dispatched_by: str | None = None,
         exclude_dispatched_by: Collection[str] = (),
+        leader_agent: str | None = None,
     ) -> dict[str, dict[str, Any]]: ...
 
     async def result_summaries(self, job_ids: Collection[str]) -> dict[str, str | None]: ...
@@ -961,15 +966,28 @@ class ContextAuditLoop:
     async def _audits(self, repos: Collection[str]) -> tuple[dict[str, dict[str, Any]], set[str]]:
         """Each repository's newest context audit, and the repositories with a context-audit job live.
 
-        A finding's fix job (:data:`FIX_ACTOR`) is no audit, so it is never
-        the newest and never anchors the due rule. While it runs it still
-        holds its repository, as every context-audit job does: an audit
-        started beside it could open a pull request on the same instruction
-        files. So the live jobs are read with it, the newest without.
+        Every audit counts: a job the context auditor led (``audit_jobs``,
+        #167), as progression and the findings feed count them, a copy of
+        the template's included. So does every job of this loop's own
+        template, and every job it dispatched, whatever led them: such a job
+        works on the instruction files an audit opens a pull request on, and
+        an operator who gave the template another leader must not get an
+        audit started again on every tick. A finding's fix job
+        (:data:`FIX_ACTOR`) is no audit, so it is never the newest and never
+        anchors the due rule. While it runs it still holds its repository,
+        as every such job does: an audit started beside it could open a pull
+        request on the same instruction files. So the live jobs are read
+        with it, the newest without.
         """
-        every = await self._jobs.newest_per_repo(repos, pipeline_template=TEMPLATE, dispatched_by=ACTOR)
+        every = await self._jobs.newest_per_repo(
+            repos, pipeline_template=TEMPLATE, dispatched_by=ACTOR, leader_agent=AUDITOR
+        )
         audits = await self._jobs.newest_per_repo(
-            repos, pipeline_template=TEMPLATE, dispatched_by=ACTOR, exclude_dispatched_by=(FIX_ACTOR,)
+            repos,
+            pipeline_template=TEMPLATE,
+            dispatched_by=ACTOR,
+            leader_agent=AUDITOR,
+            exclude_dispatched_by=(FIX_ACTOR,),
         )
         return audits, {repo for repo, row in every.items() if row.get("live")}
 

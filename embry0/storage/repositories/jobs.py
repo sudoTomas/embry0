@@ -146,6 +146,9 @@ _UPDATABLE_FIELDS = frozenset(
         "work_nature",
         # Done when (migration 120): the job's finish line and the report on it.
         "done_when",
+        # #167 (migration 143): who coded the job and who led its template, as plan_route recorded them.
+        "coding_agent",
+        "leader_agent",
     }
 )
 
@@ -225,7 +228,9 @@ class JobsRepository:
         ``dispatched_by`` is the actor that asked for this job (a webhook
         sender login, an API principal). None when nobody identifiable did —
         the dispatch rate limit skips those rows rather than pooling them
-        (#246).
+        (#246). A job that names a template takes its row's leader now
+        (``leader_agent``, #167), so it is known for what it is (an audit,
+        say) before plan_route records it again.
         """
         if context is None:
             context = {"type": "git", "repo": repo} if repo else {"type": "none"}
@@ -235,9 +240,10 @@ class JobsRepository:
             INSERT INTO jobs (
                 job_id, repo, task, issue_number, issue_id,
                 pipeline_template, pipeline_config, sandbox_profile, trace_id, context,
-                dispatched_by
+                dispatched_by, leader_agent
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                    (SELECT t.leader_agent FROM pipeline_templates t WHERE t.name = $6))
             """,
             job_id,
             repo,
@@ -381,11 +387,13 @@ class JobsRepository:
         self,
         repos: Collection[str],
         *,
-        pipeline_template: str,
+        pipeline_template: str | None = None,
         dispatched_by: str | None = None,
         exclude_dispatched_by: Collection[str] = (),
+        leader_agent: str | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """The newest job of each repository in ``repos`` that names ``pipeline_template``.
+        """The newest job of each repository in ``repos`` that names ``pipeline_template``, or that was led by
+        ``leader_agent`` (``jobs.leader_agent``, #167: what makes a job a context audit, ``audit_jobs``).
 
         A job ``dispatched_by`` started counts too, whatever its template
         column says now: plan_route rewrites the column with the template it
@@ -411,7 +419,7 @@ class JobsRepository:
                 repo, job_id, status, created_at, finished_at, pipeline_config, total_cost_usd, error_code, pr_url,
                 bool_or(NOT (status = ANY($4::text[]))) OVER (PARTITION BY repo) AS live
             FROM jobs
-            WHERE repo = ANY($1::text[]) AND (pipeline_template = $2 OR dispatched_by = $3)
+            WHERE repo = ANY($1::text[]) AND (pipeline_template = $2 OR dispatched_by = $3 OR leader_agent = $6)
               AND NOT (COALESCE(dispatched_by, '') = ANY($5::text[]))
               AND NOT {gate_refusal_sql("jobs")}
             ORDER BY repo, created_at DESC, job_id DESC
@@ -421,6 +429,7 @@ class JobsRepository:
             dispatched_by,
             sorted(str(status) for status in RELEASED_JOB_STATUSES),
             sorted(set(exclude_dispatched_by)),
+            leader_agent,
         )
         return {str(r["repo"]): dict(r) for r in rows}
 

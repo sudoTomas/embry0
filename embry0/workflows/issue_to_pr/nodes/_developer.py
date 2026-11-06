@@ -847,10 +847,10 @@ def _branch_missing_explanation(branch: str, diagnostics: dict[str, Any]) -> str
 def _coding_agent(state: dict[str, Any]) -> str:
     """The agent this node runs as (spec 2026-10-25, slop dungeon): the Slopmaster on a
     slop-cleanup route, else the developer. A job planned before then has none."""
-    from embry0.workflows.issue_to_pr.route_plan import CODING_AGENT_TYPES
+    from embry0.workflows.row_behaviour import CODING_AGENT_TYPES, DEFAULT_CODER
 
-    agent = str(state.get("coding_agent") or "developer")
-    return agent if agent in CODING_AGENT_TYPES else "developer"
+    agent = str(state.get("coding_agent") or DEFAULT_CODER)
+    return agent if agent in CODING_AGENT_TYPES else DEFAULT_CODER
 
 
 def _fallback_system_prompt(coding_agent: str) -> str:
@@ -1363,12 +1363,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
             if held is not None:
                 goto = held
             elif state.get("route_plan"):
-                from embry0.workflows.issue_to_pr.route_plan import (
-                    CODING_AGENT_TYPES,
-                    ROUTE_TARGETS,
-                    advance,
-                    next_route,
-                )
+                from embry0.workflows.issue_to_pr.route_plan import ROUTE_TARGETS, advance, next_route
+                from embry0.workflows.row_behaviour import CODING_AGENT_TYPES
 
                 # RAV-1271: advance only when the cursor is ON a developer
                 # step (fresh forward progression). Re-entry paths — the

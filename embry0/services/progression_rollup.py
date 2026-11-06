@@ -64,9 +64,9 @@ NIGHTLY_AT = time(3)
 Action = Literal["built", "rebuilt", "advanced"]
 
 #: The modules whose code decides what a fold of the history holds: what an event is (the events
-#: query, and the actor that marks a finding's fix job as no audit), what it earns (pricing, the
-#: action categories, an audit's claims, the vocabulary), the curve, the quest rewards, the fold
-#: and its rows.
+#: query, the actor that marks a finding's fix job as no audit, and whom a job's events credit: the
+#: default coder, the Slopmaster, the context auditor, the QA pipeline's leader), what it earns (pricing, the action
+#: categories, an audit's claims, the vocabulary), the curve, the quest rewards, the fold and its rows.
 FOLD_MODULES = (
     "embry0.execution.skill_actions",
     "embry0.orchestration.dispatch_actors",
@@ -76,8 +76,11 @@ FOLD_MODULES = (
     "embry0.services.progression_rollup",
     "embry0.services.progression_vocabulary",
     "embry0.services.quests",
+    "embry0.services.slop",
+    "embry0.storage.repositories.audit_jobs",
     "embry0.storage.repositories.progression",
     "embry0.storage.repositories.progression_rollup",
+    "embry0.workflows.row_behaviour",
 )
 
 

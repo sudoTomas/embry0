@@ -123,6 +123,7 @@ def _quest_xp_cases() -> dict[str, Any]:
             {
                 "status": "pr_merged",
                 "pipeline_template": "slop-cleanup",
+                "coding_agent": "slopmaster",  # as plan_route records it for a slop cleanup (#167)
                 "pr_url": "https://forge/pull/2",
                 "work_nature": {"cleanup": {"added": 3, "removed": 90}},
                 "finished_at": NOW,

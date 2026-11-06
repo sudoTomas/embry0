@@ -71,8 +71,10 @@ const catalogs = vi.hoisted(() => ({
   skills: [
     { name: "superpowers:writing-plans", source_id: "superpowers", description: "Plans", available: true, status: "ready" },
   ],
+  templates: [{ template_id: "t-1", name: "scout-pass", description: "", created_at: "2026-11-01T00:00:00Z" }],
 }));
 vi.mock("@/hooks/useTools", () => ({ useTools: () => ({ data: catalogs.tools, isLoading: false }) }));
+vi.mock("@/hooks/usePipelines", () => ({ useTemplates: () => ({ data: catalogs.templates, isLoading: false }) }));
 vi.mock("@/hooks/useSkills", () => ({ useSkills: () => ({ data: catalogs.skills, isLoading: false }) }));
 const toastWarning = vi.fn();
 vi.mock("sonner", () => ({
@@ -614,5 +616,72 @@ describe("AgentFormPage: picking a skill triage may add", () => {
       expect.objectContaining({ skills: ["superpowers:writing-plans"], triage_may_add_skills: ["superpowers:writing-plans"] }),
       expect.anything(),
     );
+  });
+});
+
+describe("AgentFormPage — the guild (#167)", () => {
+  it("opens on the row's station and task, and saves what is chosen", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({
+      data: { ...GROK_DEV_ROW, type: "scout", station: "lectern", quest_template: "scout-pass" },
+      isLoading: false,
+    });
+    renderEdit("scout");
+    expect(screen.getByLabelText("Station")).toHaveValue("lectern");
+    expect(screen.getByLabelText("Task from the guild")).toHaveValue("scout-pass");
+
+    const task = screen.getByLabelText("Task from the guild");
+    expect([...task.querySelectorAll("option")].map((o) => o.value)).not.toContain("__triage__");
+    await user.selectOptions(screen.getByLabelText("Station"), "map_table");
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "scout", station: "map_table", quest_template: "scout-pass" }),
+      expect.anything(),
+    );
+
+    await user.selectOptions(screen.getByLabelText("Task from the guild"), "__none__");
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ quest_template: null }),
+      expect.anything(),
+    );
+  });
+
+  it("offers a coding agent a task that names no template, and only a coding agent", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({
+      data: { ...EXISTING, station: "anvil", quest_template: null, coding_agent: true },
+      isLoading: false,
+    });
+    renderEdit();
+    await user.selectOptions(screen.getByLabelText("Task from the guild"), "__triage__");
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "developer", quest_template: "" }),
+      expect.anything(),
+    );
+  });
+
+  it("starts a new agent at a desk with no task from the guild", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({ data: undefined, isLoading: false });
+    renderNew();
+    expect(screen.getByLabelText("Station")).toHaveValue("desk");
+    const task = screen.getByLabelText("Task from the guild");
+    expect(task).toHaveValue("__none__");
+    expect([...task.querySelectorAll("option")].map((o) => o.value)).not.toContain("__triage__");
+    expect([...task.querySelectorAll("option")].map((o) => o.textContent)).toContain("Runs scout-pass");
+    await user.type(screen.getByLabelText("Type (slug)"), "scout");
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockCreateMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "scout", station: "desk", quest_template: null }),
+      expect.anything(),
+    );
+  });
+
+  it("keeps a task naming a template the list no longer has", () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, quest_template: "gone-route" }, isLoading: false });
+    renderEdit("grok-dev");
+    expect(screen.getByLabelText("Task from the guild")).toHaveValue("gone-route");
   });
 });

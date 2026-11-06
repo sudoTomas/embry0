@@ -573,6 +573,8 @@ async def test_agent_create_forwards_every_field(fake_client):
         color="sky",
         tagline="Sings.",
         triage_may_add_skills=["sp:a"],
+        station="lectern",
+        quest_template="why",
         confirm=True,
     )
     assert fake_client.calls == [
@@ -581,6 +583,8 @@ async def test_agent_create_forwards_every_field(fake_client):
             ("lantern",),
             {
                 "triage_may_add_skills": ["sp:a"],
+                "station": "lectern",
+                "quest_template": "why",
                 "description": "lights",
                 "model": "claude-sonnet-5",
                 "tools": ["Read"],

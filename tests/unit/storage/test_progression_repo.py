@@ -11,6 +11,7 @@ from embry0.services.progression_pack import FactQuery, default_rules, fact_key
 from embry0.services.progression_vocabulary import METRICS
 from embry0.storage.repositories.job_delivery import DeliveryWrite, JobDeliveryRepository
 from embry0.storage.repositories.progression import ProgressionRepository
+from tests.fixtures.builtin_rows import planned_credit
 
 pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
 
@@ -25,11 +26,12 @@ async def _job(
     error: str | None = None,
     report: str | None = None,
 ) -> None:
+    credit = planned_credit(template)  # what plan_route records for a job of the template (#167)
     await db.execute(
         """
         INSERT INTO jobs (job_id, repo, task, status, pipeline_template, dispatched_by, error_code, result_summary,
-                          finished_at, budget_overrun_usd)
-        VALUES ($1, 'o/r', 't', $2, $3, $4, $5, $6, NOW(), 0)
+                          finished_at, budget_overrun_usd, coding_agent, leader_agent)
+        VALUES ($1, 'o/r', 't', $2, $3, $4, $5, $6, NOW(), 0, $7, $8)
         """,
         job_id,
         status,
@@ -37,6 +39,8 @@ async def _job(
         by,
         error,
         report,
+        credit["coding_agent"],
+        credit["leader_agent"],
     )
 
 
@@ -148,12 +152,13 @@ async def test_the_facts_count_outcomes_with_their_evidence(db_with_migrations) 
         await db.execute(
             """
             INSERT INTO jobs (job_id, repo, task, status, issue_id, total_cost_usd, pr_url, delivery_state,
-                              pipeline_template, created_at, started_at, finished_at, delivery_state_at)
+                              pipeline_template, created_at, started_at, finished_at, delivery_state_at,
+                              leader_agent)
             VALUES ($1, 'o/r', 't', $2, $3, $4, $5, $6, $7,
                     TIMESTAMPTZ '2026-10-06 12:00Z' + make_interval(mins => $8),
                     TIMESTAMPTZ '2026-10-06 12:00Z' + make_interval(mins => $8),
                     TIMESTAMPTZ '2026-10-06 12:00Z' + make_interval(mins => $8 + $9),
-                    TIMESTAMPTZ '2026-10-06 12:00Z' + make_interval(mins => $8 + $9 + 1))
+                    TIMESTAMPTZ '2026-10-06 12:00Z' + make_interval(mins => $8 + $9 + 1), $10)
             """,
             job_id,
             status,
@@ -164,6 +169,7 @@ async def test_the_facts_count_outcomes_with_their_evidence(db_with_migrations) 
             template,
             minutes,
             ran_minutes,
+            planned_credit(template)["leader_agent"],  # as plan_route records it (#167)
         )
 
     await db.execute("INSERT INTO issues (id, title, repo) VALUES ('iss-1', 'Fix the login', 'o/r')")

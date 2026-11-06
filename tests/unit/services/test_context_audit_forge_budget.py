@@ -127,7 +127,13 @@ class Jobs:
         self.rows: list[dict[str, Any]] = []
 
     async def newest_per_repo(
-        self, repos: Any, *, pipeline_template: str, dispatched_by: Any = None, exclude_dispatched_by: Any = ()
+        self,
+        repos: Any,
+        *,
+        pipeline_template: str,
+        dispatched_by: Any = None,
+        exclude_dispatched_by: Any = (),
+        leader_agent: Any = None,
     ) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
         for repo in repos:

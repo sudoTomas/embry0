@@ -29,11 +29,9 @@ import structlog
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.services.progression_templates import Field, parse, render
 from embry0.settings.sections.salvage import MAX_SUBJECT_CHARS
+from embry0.workflows.row_behaviour import CODING_AGENT_TYPES, DEFAULT_CODER
 
 logger = structlog.get_logger(__name__)
-
-#: The agents the developer node runs; their outputs are the coding run's.
-CODING_AGENTS = frozenset({"developer", "slopmaster"})
 
 BUDGET = "budget reached"
 QUESTIONS = "question rounds used up"
@@ -41,7 +39,8 @@ QUESTIONS = "question rounds used up"
 
 def _last_coding_output(result: dict[str, Any]) -> dict[str, Any] | None:
     for out in reversed(result.get("agent_outputs") or []):
-        if isinstance(out, dict) and out.get("agent_type") in CODING_AGENTS:
+        # The agents the developer node runs: their outputs are the coding run's.
+        if isinstance(out, dict) and out.get("agent_type") in CODING_AGENT_TYPES:
             return dict(out)
     return None
 
@@ -49,7 +48,7 @@ def _last_coding_output(result: dict[str, Any]) -> dict[str, Any] | None:
 def coding_agent(result: dict[str, Any], state: dict[str, Any]) -> str:
     """The agent the run was: its output's type, else the state's coding agent, else the developer."""
     out = _last_coding_output(result)
-    return str((out or {}).get("agent_type") or state.get("coding_agent") or "developer")
+    return str((out or {}).get("agent_type") or state.get("coding_agent") or DEFAULT_CODER)
 
 
 def stop_reason(result: dict[str, Any]) -> str | None:

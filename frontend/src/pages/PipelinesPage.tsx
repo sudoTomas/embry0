@@ -40,6 +40,8 @@ function TemplateCard({ template, onOpen, loading }: TemplateCardProps) {
           <span>{formatDay(template.created_at)}</span>
           {template.is_builtin && <Badge tone="neutral">Built in</Badge>}
           {template.default_for_kind && <Badge tone="info">{`Default for ${template.default_for_kind}`}</Badge>}
+          {template.behaviour?.fixed_route && <Badge tone="neutral">Skips triage</Badge>}
+          {template.behaviour && !template.behaviour.offered_to_triage && <Badge tone="neutral">Runs only when named</Badge>}
         </div>
       </button>
       <div className="absolute right-2 top-2">

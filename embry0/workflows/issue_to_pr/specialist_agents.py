@@ -14,8 +14,10 @@ agent node: the behavior is the system prompt below, seeded into
 ``agent_definitions`` via ``BUILTIN_SEED`` and restored by ``POST
 /agents/{type}/reset``. Each runs single-pass over a cloned repository and
 returns one Markdown deliverable as its final message. A job reaches one
-only by naming its pipeline template (``SPECIALIST_TEMPLATE_NAMES``): triage
-is not offered those templates, and plan_route drops triage naming one.
+only by naming its pipeline template, whose row says so (#167,
+``embry0.workflows.row_behaviour``): triage is not offered it
+(``offered_to_triage``), plan_route drops triage naming one, and a job that
+names one skips triage (``fixed_route``).
 """
 
 from embry0.agents.output_text import MAX_OUTPUT_CHARS
@@ -882,22 +884,3 @@ SPECIALIST_SYSTEM_PROMPTS: dict[str, str] = {
 }
 
 SPECIALIST_AGENT_TYPES: tuple[str, ...] = tuple(SPECIALIST_SYSTEM_PROMPTS)
-
-# The built-in pipeline templates that run them (pipeline_templates_builtin.py),
-# one per agent. A job runs one only by naming it: triage's template list
-# leaves them out, and plan_route drops triage naming one, so a job that names
-# no template never ends as a report when it asked for code.
-SPECIALIST_TEMPLATE_NAMES: frozenset[str] = frozenset(
-    {
-        "kintsugi-trace",
-        "garden",
-        "interrogate",
-        "why",
-        "how",
-        "blast-radius",
-        "comment-pass",
-        "design-audit",
-        "context-audit",
-        "map-areas",
-    }
-)

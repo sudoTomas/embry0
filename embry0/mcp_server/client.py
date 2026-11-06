@@ -373,10 +373,15 @@ class Embry0Client:
         color: str | None = None,
         tagline: str | None = None,
         triage_may_add_skills: list[str] | None = None,
+        station: str | None = None,
+        quest_template: str | None = None,
+        clear_quest_template: bool = False,
     ) -> dict[str, Any]:
         body = _drop_none(
             {
                 "triage_may_add_skills": triage_may_add_skills,
+                "station": station,
+                "quest_template": quest_template,
                 "description": description,
                 "model": model,
                 "tools": tools,
@@ -391,6 +396,9 @@ class Embry0Client:
                 "tagline": tagline,
             }
         )
+        if clear_quest_template:
+            # The one null this tool sends: it takes the agent's task out of the guild (#167).
+            body["quest_template"] = None
         return _as_dict(await self._request("PUT", f"/api/v1/agents/{agent_type}", body=body))
 
     async def agent_create(
@@ -410,11 +418,15 @@ class Embry0Client:
         color: str = "slate",
         tagline: str = "",
         triage_may_add_skills: list[str] | None = None,
+        station: str | None = None,
+        quest_template: str | None = None,
     ) -> dict[str, Any]:
         body = _drop_none(
             {
                 "type": agent_type,
                 "triage_may_add_skills": triage_may_add_skills,
+                "station": station,
+                "quest_template": quest_template,
                 "description": description,
                 "model": model,
                 "tools": tools,

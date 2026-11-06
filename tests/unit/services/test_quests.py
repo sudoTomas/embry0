@@ -10,6 +10,7 @@ import pytest
 from embry0.services.progression_pack import default_rules
 from embry0.services.quests import evaluate_diaries, evaluate_quests, quest_rewards
 from embry0.storage.repositories.progression import JobRow, Journal, RunRow
+from tests.fixtures.builtin_rows import planned_credit
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 RULES = default_rules()
@@ -29,7 +30,9 @@ def job(
     template: str | None = None,
     report: str | None = None,
 ) -> JobRow:
-    return JobRow(repo, issue, template, status, at(hours) - timedelta(minutes=30), at(hours), report)
+    # Led by its template's leader, as plan_route records it (#167): a context-audit job is an audit.
+    leader = planned_credit(template)["leader_agent"]
+    return JobRow(repo, issue, template, status, at(hours) - timedelta(minutes=30), at(hours), report, leader=leader)
 
 
 def run(hours: float, agent: str, *, repo: str = "o/app", issue: str | None = None) -> RunRow:

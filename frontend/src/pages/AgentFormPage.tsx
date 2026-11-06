@@ -26,8 +26,19 @@ import { useModels } from "@/hooks/useModels";
 import { ModelSelect } from "@/components/models/ModelSelect";
 import { useProgression } from "@/hooks/useProgression";
 import { useSkills } from "@/hooks/useSkills";
+import { useTemplates } from "@/hooks/usePipelines";
 import { useTools } from "@/hooks/useTools";
-import { DEFAULT_AVATAR, DEFAULT_COLOR, identityOf, type AvatarId, type PaletteId } from "@/lib/agentIdentity";
+import {
+  DEFAULT_AVATAR,
+  DEFAULT_COLOR,
+  DEFAULT_STATION,
+  STATIONS,
+  identityOf,
+  stationOf,
+  type AvatarId,
+  type PaletteId,
+  type StationId,
+} from "@/lib/agentIdentity";
 import { runOverrideNote } from "@/lib/effectiveModel";
 import { providerForModel } from "@/lib/providers";
 import { providerLabel } from "@/lib/status";
@@ -54,10 +65,28 @@ interface FormState {
   mcpServersText: string;
   /** The skills triage may add to this agent for a job (`triage_may_add_skills`). */
   triageMayAddSkills: string[];
+  /** Where the guild hall draws it (`station`, #167). */
+  station: StationId;
+  /** The guild's task for it (`quest_template`): NO_TASK, TRIAGE_PICKS, or a template's name. */
+  quest: string;
+}
+
+/** The quest select's two values that are no template: no task (null), and a task naming none (""). */
+const NO_TASK = "__none__";
+const TRIAGE_PICKS = "__triage__";
+
+function questOf(value: string | null | undefined): string {
+  if (value === null || value === undefined) return NO_TASK;
+  return value === "" ? TRIAGE_PICKS : value;
+}
+
+function questTemplateOf(quest: string): string | null {
+  if (quest === NO_TASK) return null;
+  return quest === TRIAGE_PICKS ? "" : quest;
 }
 
 /** The page's parts, top to bottom: the character it has become, then what it is configured to be. */
-const SECTIONS = ["character", "identity", "model", "tools", "packs", "mcp", "prompt"] as const;
+const SECTIONS = ["character", "identity", "guild", "model", "tools", "packs", "mcp", "prompt"] as const;
 type SectionId = (typeof SECTIONS)[number];
 
 /** A new agent opens every part to fill in; a saved one opens on its character, its configuration closed to a line each. */
@@ -96,6 +125,8 @@ const EMPTY_FORM: FormState = {
   auth_mode: "",
   mcpServersText: "",
   triageMayAddSkills: [],
+  station: DEFAULT_STATION,
+  quest: NO_TASK,
 };
 
 /** The CLI tools that run a shell command; an agent with none gets no MCP server that runs a command. */
@@ -124,6 +155,12 @@ function serversDroppedWithoutShell(tools: string[], mcpServersText: string): st
     if (!names.includes(b) && tools.some((t) => t.startsWith(`mcp__${b}__`))) names.push(b);
   }
   return names;
+}
+
+/** The guild task in a line. */
+function questSummary(quest: string): string {
+  if (quest === NO_TASK) return "no guild task";
+  return quest === TRIAGE_PICKS ? "guild task: triage picks" : `guild task: ${quest}`;
 }
 
 export function AgentFormPage() {
@@ -162,6 +199,7 @@ export function AgentFormPage() {
   );
 
   const { data: toolCatalog } = useTools();
+  const { data: templates } = useTemplates();
   const { data: skillCatalog, isLoading: skillsLoading } = useSkills();
 
   const createAgent = useCreateAgent();
@@ -202,6 +240,8 @@ export function AgentFormPage() {
       auth_mode: existing.auth_mode ?? "",
       mcpServersText: mcp && Object.keys(mcp).length > 0 ? JSON.stringify(mcp, null, 2) : "",
       triageMayAddSkills: existing.triage_may_add_skills ?? [],
+      station: stationOf(existing.station),
+      quest: questOf(existing.quest_template),
     });
   }, [existing, offeredModels]);
 
@@ -313,6 +353,8 @@ export function AgentFormPage() {
         auth_mode: form.auth_mode || null,
         mcp_servers: mcpServers,
         triage_may_add_skills: form.triageMayAddSkills,
+        station: form.station,
+        quest_template: questTemplateOf(form.quest),
       };
       updateAgent.mutate(update, {
         onSuccess: onSaved("Agent updated"),
@@ -331,6 +373,8 @@ export function AgentFormPage() {
         ...(form.auth_mode ? { auth_mode: form.auth_mode } : {}),
         ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
         triage_may_add_skills: form.triageMayAddSkills,
+        station: form.station,
+        quest_template: questTemplateOf(form.quest),
       };
       createAgent.mutate(create, {
         onSuccess: onSaved("Agent created"),
@@ -452,6 +496,60 @@ export function AgentFormPage() {
           </div>
         </div>
       </ConfigSection>
+
+      {!runsInNoJob && (
+        <ConfigSection
+          id="guild"
+          title="Guild"
+          summary={`${form.station.replace("_", " ")} · ${questSummary(form.quest)}`}
+          open={sections.guild}
+          onToggle={(open) => setSections((prev) => ({ ...prev, guild: open }))}
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="agent-station">Station</Label>
+              <Select
+                id="agent-station"
+                value={form.station}
+                onChange={(e) => setForm((prev) => ({ ...prev, station: e.target.value as StationId }))}
+                className="mt-1"
+              >
+                {STATIONS.map((station) => (
+                  <option key={station} value={station}>
+                    {station.replace("_", " ")}
+                  </option>
+                ))}
+              </Select>
+              <p className="text-xs text-white/30 mt-1">Where the guild hall draws it when it is home.</p>
+            </div>
+            <div>
+              <Label htmlFor="agent-quest">Task from the guild</Label>
+              <Select
+                id="agent-quest"
+                value={form.quest}
+                onChange={(e) => setForm((prev) => ({ ...prev, quest: e.target.value }))}
+                className="mt-1"
+              >
+                <option value={NO_TASK}>None: it works only inside another job</option>
+                {/* A task naming no template runs the route triage picks, a coding agent's (#167). */}
+                {(existing?.coding_agent || form.quest === TRIAGE_PICKS) && (
+                  <option value={TRIAGE_PICKS}>Names no template: triage picks the route</option>
+                )}
+                {[...new Set([...(templates ?? []).map((t) => t.name), ...(questTemplateOf(form.quest) ? [form.quest] : [])])].map(
+                  (name) => (
+                    <option key={name} value={name}>
+                      Runs {name}
+                    </option>
+                  ),
+                )}
+              </Select>
+              <p className="text-xs text-white/30 mt-1" data-testid="agent-quest-help">
+                A task the guild gives this agent runs the template chosen here. With none, the guild cannot send it.
+              </p>
+            </div>
+          </div>
+        </ConfigSection>
+      )}
 
       <ConfigSection
         id="model"

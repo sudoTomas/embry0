@@ -171,6 +171,8 @@ QA_AGENT_SEED: dict[str, Any] = {
     "auth_mode": None,
     "mcp_servers": PLAYWRIGHT.mcp_servers(),
     **BUILTIN_IDENTITY["qa"],
+    # Where the guild hall draws it (#167).
+    "station": "alchemy_table",
 }
 
 
@@ -197,6 +199,7 @@ async def seed_qa_agent(repo: AgentDefinitionsRepository) -> None:
         avatar=QA_AGENT_SEED["avatar"],
         color=QA_AGENT_SEED["color"],
         tagline=QA_AGENT_SEED["tagline"],
+        station=QA_AGENT_SEED["station"],
     )
     # is_builtin is outside update()'s fields on purpose: only seeders mark a
     # row as builtin, so it is set via direct SQL.

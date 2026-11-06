@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import contractText from "../../../../docs/contracts/identity.json?raw";
+import manifestText from "../../../public/world/manifest.json?raw";
 import { PRESET_IDS } from "@/components/roster/appearance";
 import {
-  ADVENTURER_AVATARS, AVATARS, BUILTIN_IDENTITY, DEFAULT_AVATAR, DEFAULT_COLOR, DISPLAY_NAME_MAX, LEGACY_AVATARS, PALETTE, PALETTE_CLASSES, PALETTE_HEX, TAGLINE_MAX,
-  isAdventurerId, isAvatarId, isLegacyAvatarId,
+  ADVENTURER_AVATARS, AVATARS, BUILTIN_IDENTITY, DEFAULT_AVATAR, DEFAULT_COLOR, DEFAULT_STATION, DISPLAY_NAME_MAX, LEGACY_AVATARS, PALETTE, PALETTE_CLASSES, PALETTE_HEX, STATIONS, TAGLINE_MAX,
+  isAdventurerId, isAvatarId, isLegacyAvatarId, stationOf,
 } from "../agentIdentity";
 
 interface Contract {
   avatars: string[]; palette: string[]; default_avatar: string; default_color: string;
+  stations: string[]; default_station: string;
   display_name_max: number; tagline_max: number;
   builtin: Record<string, { display_name: string; avatar: string; color: string; tagline: string }>;
 }
@@ -22,6 +24,15 @@ describe("identity contract mirror (docs/contracts/identity.json)", () => {
     expect([DEFAULT_AVATAR, DEFAULT_COLOR, DISPLAY_NAME_MAX, TAGLINE_MAX]).toEqual([
       contract.default_avatar, contract.default_color, contract.display_name_max, contract.tagline_max,
     ]);
+  });
+  it("lists the same stations, in order, each an object the hall's art draws", async () => {
+    expect([...STATIONS]).toEqual(contract.stations);
+    expect(DEFAULT_STATION).toBe(contract.default_station);
+    const manifest = JSON.parse(manifestText) as { objects: Record<string, unknown> };
+    for (const station of STATIONS) expect(manifest.objects[station], station).toBeDefined();
+    expect(stationOf("lectern")).toBe("lectern");
+    expect(stationOf("throne")).toBe("desk");
+    expect(stationOf(undefined)).toBe("desk");
   });
   it("carries every builtin identity verbatim", () => {
     expect(BUILTIN_IDENTITY).toEqual(contract.builtin);

@@ -340,6 +340,7 @@ async def test_a_merged_cleanup_is_the_slopmasters_and_earns_its_removed_lines(a
         status="pr_merged",
         delivery_state="merged",
         pipeline_template="slop-cleanup",
+        coding_agent="slopmaster",  # as plan_route records it for a slop cleanup (#167)
         work_nature={
             "nature": "slop",
             "slop_score": 80,

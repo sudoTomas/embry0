@@ -12,9 +12,11 @@ from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.schemas import TemplateCreateRequest, TemplateDuplicateRequest, TemplateUpdateRequest
 from embry0.api.v1._skill_writes import check_added_skills
 from embry0.services.model_enablement import UnpricedModelError, ensure_models_priced
+from embry0.services.world import forget_rows
 from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 from embry0.workflows._validation import validate_graph_definition
 from embry0.workflows.issue_to_pr.route_plan import node_config, step_run_type
+from embry0.workflows.row_behaviour import leader_problem
 
 logger = structlog.get_logger(__name__)
 
@@ -140,6 +142,30 @@ def _no_shell_step_warnings(rows: list[dict[str, Any]] | None, graph: dict[str, 
     return warnings
 
 
+#: The template fields whose explicit null is a write (it clears the column); every other field's null means
+#: "unchanged", and a null for one of :data:`_NOT_NULL` is refused.
+_CLEARABLE = ("default_for_kind", "job_kind", "leader_agent")
+_NOT_NULL = ("fixed_route", "offered_to_triage", "delivers")
+
+
+def _reject_unknown_leader(rows: list[dict[str, Any]] | None, leader: str | None) -> None:
+    """A ``leader_agent`` that names no agent a job runs is a 422 naming the field (#167)."""
+    problem = leader_problem(leader, _job_agent_types(rows))
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+
+
+def _fixed_route_warnings(fixed: bool, graph: dict[str, Any] | None) -> list[str]:
+    """What a fixed route skips: a job that names it is not triaged, and only triage asks for QA, so its qa
+    step never runs."""
+    if not fixed or not any(n.get("agent_type") == "qa" for n in (graph or {}).get("nodes") or []):
+        return []
+    return [
+        "fixed_route: a job that names this template skips triage, and only triage asks for QA, "
+        "so its qa step never runs"
+    ]
+
+
 async def _check_template_skills(request: Request, graph: dict[str, Any] | None) -> list[str]:
     """Check every name the graph adds; return the warnings."""
     return await check_added_skills(request, _added_skills(graph))
@@ -176,8 +202,10 @@ async def create_template(
     if problems:
         raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(req.graph_definition)
+    _reject_unknown_leader(rows, req.leader_agent)
     warnings = await _check_template_skills(request, req.graph_definition)
     warnings += _no_shell_step_warnings(rows, req.graph_definition)
+    warnings += _fixed_route_warnings(req.fixed_route, req.graph_definition)
     try:
         created = await repo.create(
             name=req.name,
@@ -185,12 +213,18 @@ async def create_template(
             graph_definition=req.graph_definition,
             sandbox_profile=req.sandbox_profile,
             default_for_kind=req.default_for_kind,
+            fixed_route=req.fixed_route,
+            offered_to_triage=req.offered_to_triage,
+            job_kind=req.job_kind,
+            delivers=req.delivers,
+            leader_agent=req.leader_agent,
         )
     except asyncpg.UniqueViolationError as exc:
         # The server names the constraint it refused; the body cannot tell the two apart.
         if exc.constraint_name == _DEFAULT_KIND_INDEX:
             raise _default_kind_taken(req.default_for_kind) from None
         raise _template_name_taken(req.name) from None
+    forget_rows(request.app.state, "templates")
     return {**created, "warnings": warnings}
 
 
@@ -202,10 +236,17 @@ async def update_template(
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
-    # Only this field's null is a write: it clears the default so another
-    # template can take the kind. Every other field's null means "unchanged".
-    if "default_for_kind" in req.model_fields_set and req.default_for_kind is None:
-        updates["default_for_kind"] = None
+    # Only these fields' null is a write: default_for_kind's clears the default
+    # so another template can take the kind, job_kind's and leader_agent's
+    # clear theirs (#167). Every other field's null means "unchanged", but the
+    # behaviour columns are NOT NULL: a null sent for one is refused.
+    sent = req.model_dump()
+    for key in _NOT_NULL:
+        if key in req.model_fields_set and sent[key] is None:
+            raise HTTPException(status_code=422, detail=f"{key} cannot be null")
+    for key in _CLEARABLE:
+        if key in req.model_fields_set and sent[key] is None:
+            updates[key] = None
     if not updates:
         template = await repo.get(template_id)
         if not template:
@@ -227,10 +268,20 @@ async def update_template(
     stored = await repo.get(template_id) if repo is not None else None
     if stored is None:
         raise HTTPException(status_code=404, detail="Template not found")
+    # Only a leader the write changes is checked: the dialog sends every field, and a stored leader that
+    # no longer runs in jobs must not stop the rest from saving.
+    if updates.get("leader_agent") is not None and updates["leader_agent"] != stored.get("leader_agent"):
+        rows = rows if rows is not None else await _agent_rows(request)
+        _reject_unknown_leader(rows, updates["leader_agent"])
     # 3. Only the names this save adds are checked; names the stored template has keep working.
     already = _stored_added_skills(stored)
     warnings = await check_added_skills(request, [s for s in added if s not in already])
     warnings += _no_shell_step_warnings(rows, graph)
+    if "fixed_route" in updates or "graph_definition" in updates:
+        warnings += _fixed_route_warnings(
+            bool(updates.get("fixed_route", stored.get("fixed_route"))),
+            updates.get("graph_definition", stored.get("graph_definition")),
+        )
     try:
         updated = await repo.update(template_id, **updates)
     except asyncpg.UniqueViolationError as exc:
@@ -239,15 +290,21 @@ async def update_template(
         raise _template_name_taken(updates.get("name")) from None
     if not updated:
         raise HTTPException(status_code=404, detail="Template not found")
+    forget_rows(request.app.state, "templates")
+    if "name" in updates and updates["name"] != stored.get("name"):
+        # The rename carried each agent's guild task with it (the repository's update).
+        forget_rows(request.app.state, "agents")
     return {**updated, "warnings": warnings}
 
 
 @router.delete("/pipelines/templates/{template_id}", dependencies=[_TEMPLATE_WRITE])
 async def delete_template(
     template_id: str,
+    request: Request,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
     await repo.delete(template_id)
+    forget_rows(request.app.state, "templates")
     return {"id": template_id, "status": "deleted"}
 
 
@@ -255,14 +312,17 @@ async def delete_template(
 async def duplicate_template(
     template_id: str,
     req: TemplateDuplicateRequest,
+    request: Request,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
     try:
-        return await repo.duplicate(template_id, new_name=req.name)
+        copy = await repo.duplicate(template_id, new_name=req.name)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except asyncpg.UniqueViolationError:
         raise _template_name_taken(req.name) from None
+    forget_rows(request.app.state, "templates")
+    return copy
 
 
 @router.post("/pipelines/validate")

@@ -55,6 +55,8 @@ PR_REVIEWER_AGENT_SEED: dict[str, Any] = {
     "auth_mode": None,
     "mcp_servers": {},
     **BUILTIN_IDENTITY["pr-reviewer"],
+    # Where the guild hall draws it (#167).
+    "station": "lectern",
 }
 
 
@@ -80,6 +82,7 @@ async def seed_pr_reviewer_agent(repo: AgentDefinitionsRepository) -> None:
         avatar=seed["avatar"],
         color=seed["color"],
         tagline=seed["tagline"],
+        station=seed["station"],
     )
     # is_builtin is outside update()'s fields: only seeders set it (seed_onboarding_agent does the same).
     await repo._db.execute(  # noqa: SLF001

@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from embry0.storage.database import DatabasePool
+from tests.fixtures.builtin_rows import planned_credit
 
 BASE = datetime(2025, 10, 1, 12, tzinfo=UTC)  # a Wednesday
 
@@ -76,6 +77,9 @@ OLD_TOOLS = {
 
 async def _job(db: DatabasePool, job_id: str, **row: Any) -> None:
     row = {"repo": "acme/widgets", "task": "t", "status": "completed", "budget_overrun_usd": 0, **row}
+    # What plan_route records for a job of its template (#167): whom its work is credited to.
+    for key, value in planned_credit(row.get("pipeline_template")).items():
+        row.setdefault(key, value)
     created = row.pop("at")
     ran = row.pop("ran_hours", 0.5)
     row.setdefault("created_at", created)

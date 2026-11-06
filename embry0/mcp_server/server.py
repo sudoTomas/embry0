@@ -433,6 +433,9 @@ async def agent_update(
     color: str | None = None,
     tagline: str | None = None,
     triage_may_add_skills: list[str] | None = None,
+    station: str | None = None,
+    quest_template: str | None = None,
+    clear_quest_template: bool = False,
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Update an agent definition (only provided fields change). execution_mode: sdk|cli;
@@ -440,9 +443,14 @@ async def agent_update(
     does not have yet are checked, and a bare name (no colon) is the target repository's own skill.
     triage_may_add_skills: the source:skill names triage may add to the agent for a job, each only from a
     source the agent's skills already load; [] lets it add none.
+    station: where the guild hall draws it (desk, anvil, lectern, alchemy_table, map_table).
+    quest_template: the template a task the guild gives it runs; '' gives it a task that names no template
+    (triage picks the route). clear_quest_template=true takes its task out of the guild.
     Requires confirm=true (changes live pipeline behavior)."""
     if not confirm:
         return _confirmation_refusal("agent_update", f"update agent definition {agent_type!r}")
+    if clear_quest_template and quest_template is not None:
+        return {"error": "quest_template and clear_quest_template are each other's opposite: send one"}
     return await _get_client().agent_update(
         agent_type,
         description=description,
@@ -458,6 +466,9 @@ async def agent_update(
         color=color,
         tagline=tagline,
         triage_may_add_skills=triage_may_add_skills,
+        station=station,
+        quest_template=quest_template,
+        clear_quest_template=clear_quest_template,
     )
 
 
@@ -477,11 +488,15 @@ async def agent_create(
     color: str = "slate",
     tagline: str = "",
     triage_may_add_skills: list[str] | None = None,
+    station: str = "desk",
+    quest_template: str | None = None,
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Create a custom agent definition. avatar is one of the roster ids and color one of the palette ids
     (see GET /agents for the builtins' values). triage_may_add_skills: the source:skill names triage may add
-    for a job, each only from a source the agent's skills load. Requires confirm=true (adds a runnable agent)."""
+    for a job, each only from a source the agent's skills load. station: where the guild hall draws it.
+    quest_template: the template a task the guild gives it runs ('' names none: triage picks); left out, the
+    guild gives it no task. Requires confirm=true (adds a runnable agent)."""
     if not confirm:
         return _confirmation_refusal("agent_create", f"create agent definition {agent_type!r}")
     return await _get_client().agent_create(
@@ -499,6 +514,8 @@ async def agent_create(
         color=color,
         tagline=tagline,
         triage_may_add_skills=triage_may_add_skills,
+        station=station,
+        quest_template=quest_template,
     )
 
 

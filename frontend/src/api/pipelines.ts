@@ -1,5 +1,12 @@
 import { api } from "./client";
-import type { PipelineGraph, PipelineTemplate, PipelineTemplateSummary, TemplateKind } from "@/lib/types";
+import {
+  DEFAULT_TEMPLATE_BEHAVIOUR,
+  type PipelineGraph,
+  type PipelineTemplate,
+  type PipelineTemplateSummary,
+  type TemplateBehaviour,
+  type TemplateKind,
+} from "@/lib/types";
 
 /**
  * The embry0 pipeline-templates API uses snake_case fields that don't quite
@@ -22,8 +29,26 @@ interface ApiTemplateSummary {
   sandbox_profile?: string | null;
   is_builtin?: boolean;
   default_for_kind?: string | null;
+  /** #167; absent on an older backend. */
+  fixed_route?: boolean;
+  offered_to_triage?: boolean;
+  job_kind?: string | null;
+  delivers?: string;
+  leader_agent?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** What the row says about its jobs; a field an older backend leaves out reads as its default. */
+function behaviourOf(row: ApiTemplateSummary): TemplateBehaviour {
+  const d = DEFAULT_TEMPLATE_BEHAVIOUR;
+  return {
+    fixed_route: row.fixed_route ?? d.fixed_route,
+    offered_to_triage: row.offered_to_triage ?? d.offered_to_triage,
+    job_kind: (row.job_kind as TemplateKind | null | undefined) ?? d.job_kind,
+    delivers: row.delivers ?? d.delivers,
+    leader_agent: row.leader_agent ?? d.leader_agent,
+  };
 }
 
 interface ApiTemplate extends ApiTemplateSummary {
@@ -41,6 +66,7 @@ function mapSummary(row: ApiTemplateSummary): PipelineTemplateSummary {
     sandbox_profile: row.sandbox_profile ?? null,
     is_builtin: row.is_builtin === true,
     default_for_kind: (row.default_for_kind as TemplateKind | null | undefined) ?? null,
+    behaviour: behaviourOf(row),
   };
 }
 
@@ -121,5 +147,14 @@ export async function duplicateTemplate(templateId: string, name: string): Promi
  */
 export async function setTemplateDefaultKind(templateId: string, kind: TemplateKind | null): Promise<PipelineTemplate> {
   const { data } = await api.put<ApiTemplate>(`/pipelines/templates/${templateId}`, { default_for_kind: kind });
+  return mapTemplate(data);
+}
+
+/**
+ * Write what a template's row says about its jobs (#167). Every field is sent:
+ * job_kind's and leader_agent's null clears them.
+ */
+export async function setTemplateBehaviour(templateId: string, behaviour: TemplateBehaviour): Promise<PipelineTemplate> {
+  const { data } = await api.put<ApiTemplate>(`/pipelines/templates/${templateId}`, behaviour);
   return mapTemplate(data);
 }

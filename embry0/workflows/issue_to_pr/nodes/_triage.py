@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 import structlog
@@ -27,7 +28,7 @@ from embry0.workflows.issue_to_pr.nodes._common import (
     _format_user_answers_block,
     _max_turns_recovery_session,
 )
-from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_TEMPLATE_NAMES
+from embry0.workflows.row_behaviour import fixed_route, offered_to_triage, recorded_kind
 
 logger = structlog.get_logger(__name__)
 
@@ -53,24 +54,29 @@ def _log_triage_agent_failure(event: str, output: dict[str, Any], *, fallback: s
     return message
 
 
-def fixed_route_decision(state: dict[str, Any]) -> dict[str, Any] | None:
-    """The decision for a job whose specialist template fixes its route, or None when triage must decide.
+def fixed_route_decision(state: dict[str, Any], template: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The decision for a job whose named template fixes its route, or None when triage must decide.
 
-    A re-entry with something to decide (a QA failure, a person's answers)
-    still goes to the agent.
+    ``template`` is the row of the template the job names
+    (``plan_route.pinned_template``); its ``fixed_route`` says whether triage
+    has anything to choose (#167). The decision records the kind the row
+    says its jobs are (``job_kind``, else the kind it is the default for),
+    or triage's default kind when it says none. A re-entry with something to
+    decide (a QA failure, a person's answers) still goes to the agent.
     """
     from embry0.orchestration.nodes.triage import parse_triage_response
 
     requested = str(state.get("pipeline_template_request") or "")
-    if requested not in SPECIALIST_TEMPLATE_NAMES:
+    if not requested or template is None or template.get("name") != requested or not fixed_route(template):
         return None
     if (state.get("qa") or {}).get("final_status") == "failed" or state.get("user_answers"):
         return None
+    kind = recorded_kind(template)
     decision = parse_triage_response(
         json.dumps(
             {
                 "action": "proceed",
-                "job_kind": "analysis",
+                **({"job_kind": kind} if kind else {}),
                 "confidence": 1.0,
                 "pipeline_template": requested,
                 "reasoning": f"The job names the {requested} template; its route is fixed.",
@@ -100,13 +106,17 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     attempt = agent_attempt(state, "triage")
     writer(events.node_started(node="triage", agent="triage", attempt=attempt))
 
-    # A job that names a specialist template (a context audit, a map of a
-    # repository's areas, a design audit) already has its route: plan_route
-    # runs the named template whatever triage picks. Asking the classifier
-    # anyway costs a model call, and handed the specialist's task with the
-    # repository's tools it starts doing that task itself and can run out of
-    # time before it decides.
-    fixed = fixed_route_decision(state)
+    # A job that names a template whose route is fixed (a specialist's: a
+    # context audit, a map of a repository's areas, a design audit) already
+    # has its route: plan_route runs the named template whatever triage picks.
+    # Asking the classifier anyway costs a model call, and handed the
+    # specialist's task with the repository's tools it starts doing that task
+    # itself and can run out of time before it decides.
+    from embry0.workflows.issue_to_pr.plan_route import pinned_template, triage_config_of
+
+    templates_repo = config["configurable"].get("pipeline_templates_repo")
+    pinned = await pinned_template(state, templates_repo)
+    fixed = fixed_route_decision(state, pinned)
     if fixed is not None:
         from embry0.orchestration.nodes.triage import apply_job_config_overrides
 
@@ -184,7 +194,6 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # RAV-601: list available templates so triage can pick one by NAME. Rides
     # the user prompt — the system prompt carries nothing job-specific, so
     # CLI prompt caching keeps covering it (EMB-35).
-    templates_repo = config["configurable"].get("pipeline_templates_repo")
     if templates_repo is not None:
         try:
             template_rows = await templates_repo.list_all()
@@ -193,8 +202,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             template_rows = []
         template_lines = []
         for row in template_rows:
-            # A specialist runs only when the job names its template.
-            if row["name"] in SPECIALIST_TEMPLATE_NAMES:
+            # A template triage is not offered (a specialist's) runs only when the job names it.
+            if not offered_to_triage(row):
                 continue
             entry = f"- {row['name']}"
             if row.get("default_for_kind"):
@@ -286,9 +295,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # #468: a template the job named up front is known before triage runs,
     # so its triage node's config (model, tools, skills) applies here the way
     # a step's config applies to its agent.
-    from embry0.workflows.issue_to_pr.plan_route import pinned_triage_template_config
-
-    triage_template_config = await pinned_triage_template_config(state, templates_repo)
+    triage_template_config = triage_config_of(pinned) if templates_repo is not None else None
 
     # Collect agent events locally so we can scan for agent_ask_user events
     # after the agent finishes. We still forward every event to the graph
