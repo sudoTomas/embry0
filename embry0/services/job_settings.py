@@ -4,7 +4,9 @@ The settings document's ``done_when`` and ``salvage`` sections are policy per
 repository: the deployment's values, then its organization's layer, then its
 own. So is the ``context_audit`` section's choice of instruction files, which
 the context auditor's command is written from when its task carries none
-(#170). A job reads them for its repository when it starts (``_run_workflow``,
+(#170), and the ``slop_policy`` section, which says what triage is told of
+slop, where a code job judged slop is routed and what its reviewer checks
+(#169). A job reads them for its repository when it starts (``_run_workflow``,
 one snapshot) and keeps what it read on its state, under :data:`STATE_KEY`.
 The state is checkpointed, so every node of the job reads the same values,
 and so does the job after a pause, an answer or a restart: a change to the
@@ -30,6 +32,7 @@ from embry0.settings.registry import Section, SectionModel, SectionRefused
 from embry0.settings.sections.context_audit import CONTEXT_AUDIT
 from embry0.settings.sections.done_when import DONE_WHEN
 from embry0.settings.sections.salvage import SALVAGE
+from embry0.settings.sections.slop_policy import SLOP_POLICY
 
 if TYPE_CHECKING:
     from embry0.settings.store import SettingsStore
@@ -37,7 +40,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 #: The sections a job reads when it starts.
-JOB_SECTIONS: Final[tuple[Section[Any], ...]] = (CONTEXT_AUDIT, DONE_WHEN, SALVAGE)
+JOB_SECTIONS: Final[tuple[Section[Any], ...]] = (CONTEXT_AUDIT, DONE_WHEN, SALVAGE, SLOP_POLICY)
 #: Where a job keeps them: a ``JobState`` key, each section's values as plain JSON under its name.
 STATE_KEY: Final = "job_settings"
 

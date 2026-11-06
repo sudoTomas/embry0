@@ -212,9 +212,8 @@ async def test_a_templates_update_writes_what_it_sends_and_clears_what_it_nulls(
     ):
         resp = await _send(app, "PUT", "/api/v1/pipelines/templates/t-1", body)
         assert resp.status_code == 200, resp.text
-        assert app.state.templates_repo.update.call_args.kwargs == want, (
-            f"{body}: {app.state.templates_repo.update.call_args}"
-        )
+        sent = {k: v for k, v in app.state.templates_repo.update.call_args.kwargs.items() if k != "guard"}
+        assert sent == want, f"{body}: {app.state.templates_repo.update.call_args}"
 
 
 @pytest.mark.parametrize(

@@ -13,6 +13,13 @@ from embry0.services.slop import (
     slop_brief,
     ticket_section,
 )
+from embry0.settings.sections.slop_policy import DEFAULT_DUNGEON_MIN_LEVEL, DEFAULT_KINDS, DEFAULT_TICKET_HEADING
+
+KINDS = DEFAULT_KINDS
+
+
+def _default_level(_repo: str) -> int:
+    return DEFAULT_DUNGEON_MIN_LEVEL
 
 
 def test_a_slop_verdict_keeps_its_known_kinds_and_clamped_score() -> None:
@@ -22,7 +29,8 @@ def test_a_slop_verdict_keeps_its_known_kinds_and_clamped_score() -> None:
             "slop_score": 140,
             "kinds": ["symptom-patch", "duplication", "vibes", "duplication"],
             "evidence": [{"path": "svc/outbox.py", "why": "three retry wrappers around one insert"}, "junk"],
-        }
+        },
+        kinds=KINDS,
     )
     assert verdict == {
         "nature": "slop",
@@ -33,14 +41,14 @@ def test_a_slop_verdict_keeps_its_known_kinds_and_clamped_score() -> None:
 
 
 def test_no_verdict_is_better_than_a_wrong_one() -> None:
-    assert parse_work_nature({"nature": "feature"}) is None
-    assert parse_work_nature("slop") is None
-    assert parse_work_nature(None) is None
+    assert parse_work_nature({"nature": "feature"}, kinds=KINDS) is None
+    assert parse_work_nature("slop", kinds=KINDS) is None
+    assert parse_work_nature(None, kinds=KINDS) is None
 
 
 def test_a_missing_score_reads_from_the_nature_and_evidence_is_capped() -> None:
-    bug = parse_work_nature({"nature": "bug"})
-    slop = parse_work_nature({"nature": "slop", "evidence": [{"path": f"f{i}.py"} for i in range(20)]})
+    bug = parse_work_nature({"nature": "bug"}, kinds=KINDS)
+    slop = parse_work_nature({"nature": "slop", "evidence": [{"path": f"f{i}.py"} for i in range(20)]}, kinds=KINDS)
     assert bug is not None and bug["slop_score"] == 0
     assert slop is not None and slop["slop_score"] == 100 and len(slop["evidence"]) == MAX_EVIDENCE
 
@@ -51,14 +59,16 @@ def test_the_watcher_lines_parse_from_the_head_only() -> None:
         "SLOP_KINDS: symptom_patch, duplication\nSLOP_EVIDENCE: svc/outbox.py | three retry wrappers\n"
         "BODY:\n## Evidence\nNATURE: bug\n"
     )
-    verdict = parse_contract_lines(text)
+    verdict = parse_contract_lines(text, kinds=KINDS)
     assert verdict == {
         "nature": "slop",
         "slop_score": 72,
         "kinds": ["symptom_patch", "duplication"],
         "evidence": [{"path": "svc/outbox.py", "why": "three retry wrappers"}],
     }
-    assert parse_contract_lines("TITLE: x\nBODY:\nNATURE: slop\n") is None, "a body quoting the line is no verdict"
+    assert parse_contract_lines("TITLE: x\nBODY:\nNATURE: slop\n", kinds=KINDS) is None, (
+        "a body quoting the line is no verdict"
+    )
 
 
 def test_the_ticket_and_the_prompt_say_it_is_slop() -> None:
@@ -68,8 +78,8 @@ def test_the_ticket_and_the_prompt_say_it_is_slop() -> None:
         "kinds": ["symptom_patch"],
         "evidence": [{"path": "a.py", "why": "x"}],
     }
-    assert ticket_section(verdict).startswith("## Slop, not a bug\n")
-    assert "slop score 72/100: symptom patch" in ticket_section(verdict)
+    assert ticket_section(verdict, heading=DEFAULT_TICKET_HEADING).startswith("## Slop, not a bug\n")
+    assert "slop score 72/100: symptom patch" in ticket_section(verdict, heading=DEFAULT_TICKET_HEADING)
     brief = slop_brief(verdict)
     assert "Do not add guards" in brief and "- a.py: x" in brief
     assert slop_brief({"nature": "bug", "slop_score": 0, "kinds": [], "evidence": []}) == ""
@@ -86,7 +96,7 @@ def test_a_dungeon_rises_with_slop_and_falls_as_it_is_cleaned() -> None:
         {"repo": "acme/web", "area": None, "nature": "bug", "slop_score": 0},
         {"repo": "acme/api", "area": None, "nature": "slop", "slop_score": 30},
     ]
-    found = dungeons(leads, {("acme/web", "Billing"): 2, ("acme/old", None): 1})
+    found = dungeons(leads, {("acme/web", "Billing"): 2, ("acme/old", None): 1}, (), min_level=_default_level)
     assert found == [
         {"repo": "acme/web", "area": "Billing", "score": 80, "open": 2, "cleaned": 2, "meter": None},
         {"repo": "acme/api", "area": None, "score": 30, "open": 1, "cleaned": 0, "meter": None},
@@ -127,7 +137,7 @@ def test_a_dungeon_carries_its_meter_and_a_sloppy_area_has_one_without_findings(
         },
     ]
     leads = [{"repo": "acme/web", "area": "Billing", "nature": "slop", "slop_score": 60}]
-    found = {(d["repo"], d["area"]): d for d in dungeons(leads, {}, meters)}
+    found = {(d["repo"], d["area"]): d for d in dungeons(leads, {}, meters, min_level=_default_level)}
     assert set(found) == {("acme/web", "Billing"), ("acme/api", None)}, "a clean repository has no dungeon of its own"
     assert found[("acme/web", "Billing")]["meter"] == {
         "score": 0.73,

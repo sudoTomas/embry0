@@ -12,8 +12,10 @@ from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.schemas import TemplateCreateRequest, TemplateDuplicateRequest, TemplateUpdateRequest
 from embry0.api.v1._skill_writes import check_added_skills
 from embry0.services.model_enablement import UnpricedModelError, ensure_models_priced
+from embry0.services.slop_routing import TemplateInUse, slop_route_guard
 from embry0.services.world import forget_rows
-from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
+from embry0.storage.repositories.pipeline_templates import Guard, PipelineTemplatesRepository
+from embry0.storage.repositories.settings_documents import SettingsDocumentsRepository
 from embry0.workflows._validation import validate_graph_definition
 from embry0.workflows.issue_to_pr.route_plan import node_config, step_run_type
 from embry0.workflows.row_behaviour import leader_problem
@@ -166,6 +168,15 @@ def _fixed_route_warnings(fixed: bool, graph: dict[str, Any] | None) -> list[str
     ]
 
 
+def _route_guard(request: Request) -> Guard | None:
+    """The guard a template's change runs: a template a settings document routes slop jobs to (#169) is not
+    deleted, renamed or made to stop taking a code job. None without the settings store (tests)."""
+    store = getattr(request.app.state, "settings", None)
+    if store is None:
+        return None
+    return slop_route_guard(SettingsDocumentsRepository(store.db), store.catalog)
+
+
 async def _check_template_skills(request: Request, graph: dict[str, Any] | None) -> list[str]:
     """Check every name the graph adds; return the warnings."""
     return await check_added_skills(request, _added_skills(graph))
@@ -283,7 +294,9 @@ async def update_template(
             updates.get("graph_definition", stored.get("graph_definition")),
         )
     try:
-        updated = await repo.update(template_id, **updates)
+        updated = await repo.update(template_id, guard=_route_guard(request), **updates)
+    except TemplateInUse as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     except asyncpg.UniqueViolationError as exc:
         if exc.constraint_name == _DEFAULT_KIND_INDEX:
             raise _default_kind_taken(updates.get("default_for_kind")) from None
@@ -303,7 +316,10 @@ async def delete_template(
     request: Request,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
-    await repo.delete(template_id)
+    try:
+        await repo.delete(template_id, guard=_route_guard(request))
+    except TemplateInUse as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     forget_rows(request.app.state, "templates")
     return {"id": template_id, "status": "deleted"}
 

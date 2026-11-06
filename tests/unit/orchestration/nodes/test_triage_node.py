@@ -446,8 +446,14 @@ def test_parse_triage_response_keeps_its_done_when_list():
     raw = json.dumps({"action": "proceed", "confidence": 0.8, "reasoning": "r", "done_when": listed})
     assert parse_triage_response(raw)["done_when"] == listed
     from embry0.settings.sections.done_when import DONE_WHEN
+    from embry0.settings.sections.slop_meter import SLOP_METER
+    from embry0.settings.sections.slop_policy import SLOP_POLICY
 
     prompt = build_triage_system_prompt(
-        default_model="m", tier_models={}, ticket_sections=DONE_WHEN.defaults().ticket_sections
+        default_model="m",
+        tier_models={},
+        ticket_sections=DONE_WHEN.defaults().ticket_sections,
+        slop_policy=SLOP_POLICY.defaults(),
+        level_names=SLOP_METER.defaults().level_names,
     )
     assert "## Done when" in prompt and "<<" not in prompt

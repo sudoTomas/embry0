@@ -216,6 +216,11 @@ class EnvImport:
     relied_on: ReliedOn | None = None
 
 
+#: ``(before, after, context) -> [(key, why)]``: a section's check of what a write's readers read, the section's
+#: model before and after the write, with the write's context (:attr:`Section.effective_check`).
+EffectiveCheck = Callable[[Any, Any, Mapping[str, Any]], Iterable[tuple[str, str]]]
+
+
 @dataclass(frozen=True)
 class Section[M: SectionModel]:
     """One feature's part of the settings document.
@@ -239,7 +244,14 @@ class Section[M: SectionModel]:
     ``env`` maps a field to the ``Embry0Config`` attribute its value is
     imported from, once (``embry0.settings.bootstrap``): a string is the
     attribute, an :class:`EnvImport` adds a converter, the parts it drops, or a
-    :class:`ReliedOn`.
+    :class:`ReliedOn`. ``effective_check`` is for a value a write is checked
+    against the running deployment by what its readers read, not by what the
+    write sets: it is given the section as the written document's readers
+    read it before the write and after it, defaults included, and the write's
+    context (:func:`validate_values`), and names each key whose new value the
+    deployment cannot take, with why. A field's own validator never sees a
+    key a write takes out, whose value then falls back to what the document
+    inherits or to its default (:data:`EffectiveCheck`).
     """
 
     name: str
@@ -250,6 +262,7 @@ class Section[M: SectionModel]:
     env: Mapping[str, str | EnvImport] = field(default_factory=dict)
     merged_keys: frozenset[str] = frozenset()
     added_keys: frozenset[str] = frozenset()
+    effective_check: EffectiveCheck | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "org_keys", frozenset(self.org_keys))

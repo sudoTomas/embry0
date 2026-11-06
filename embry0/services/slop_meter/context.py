@@ -24,6 +24,28 @@ def meter_sentence(scope: str, row: Mapping[str, Any]) -> str:
     )
 
 
+async def level_names(config: Any, repo: str) -> tuple[str, ...]:
+    """The meter's level names as ``repo`` reads them now (``slop_meter.level_names``), which triage's lean names.
+
+    Read when triage writes its prompt, as the reading itself is, so the
+    names it leans by are the names its reading is given in. The defaults
+    without a database, and when the settings cannot be read.
+    """
+    from embry0.settings.sections.slop_meter import SLOP_METER
+
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, Mapping) else {}
+    db = configurable.get("db")
+    if db is None:
+        return SLOP_METER.defaults().level_names
+    try:
+        from embry0.settings.store import SettingsStore
+
+        return (await SettingsStore(db).snapshot()).get(SLOP_METER, repo=repo or None).level_names
+    except Exception:  # noqa: BLE001 - the names are words of a prompt, never a failure
+        logger.info("slop_meter_level_names_unread", repo=repo, exc_info=True)
+        return SLOP_METER.defaults().level_names
+
+
 async def job_meter(config: Any, state: Mapping[str, Any]) -> tuple[str, dict[str, Any]] | None:
     """``(scope, score row)`` for the job: its area's when scored, else its repository's; None without one."""
     configurable = (config or {}).get("configurable", {}) if isinstance(config, Mapping) else {}

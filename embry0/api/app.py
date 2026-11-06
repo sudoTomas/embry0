@@ -669,6 +669,21 @@ def _watcher_signature_masks(app: FastAPI, repo: str) -> Any:
     return read
 
 
+def _watcher_slop_policy(app: FastAPI, repo: str) -> Any:
+    """``() -> policy``: the settings document's ``slop_policy`` as the stack's repository reads it now (#169).
+
+    Read for each analysis and each filing, so a change applies to the next
+    one without a restart: what the analysis is told of slop, the kinds its
+    verdict may name and the heading of a slop finding's ticket.
+    """
+    from embry0.settings.sections.slop_policy import SLOP_POLICY
+
+    async def read() -> Any:
+        return (await app.state.settings.snapshot()).get(SLOP_POLICY, repo=repo or None)
+
+    return read
+
+
 def _watcher_auto_acceptor(app: FastAPI) -> Any:
     """``(repo, bar) -> accepted``: accepts a stack's tracked drafts that clear its bar (spec 2026-10-25).
 
@@ -2185,6 +2200,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             auto_acceptor=auto_acceptor,
             local_first_model=_watcher_local_first_model(app, stack.repo),
             signature_masks=_watcher_signature_masks(app, stack.repo),
+            slop_policy=_watcher_slop_policy(app, stack.repo),
             cases_repo=app.state.healing_cases_repo,
             case_recorder=app.state.case_recorder,
             # #278: a deploy marker is reported on a case only after the forge

@@ -401,7 +401,7 @@ async def test_an_explicit_null_clears_the_default_kind(app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"default_for_kind": None}, headers=_XHR)
     assert resp.status_code == 200, resp.text
-    app.state.templates_repo.update.assert_awaited_once_with("tmpl-1", default_for_kind=None)
+    app.state.templates_repo.update.assert_awaited_once_with("tmpl-1", guard=None, default_for_kind=None)
 
 
 @pytest.mark.asyncio
@@ -410,7 +410,7 @@ async def test_an_absent_default_kind_is_kept(app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"name": "Renamed"}, headers=_XHR)
     assert resp.status_code == 200, resp.text
-    app.state.templates_repo.update.assert_awaited_once_with("tmpl-1", name="Renamed")
+    app.state.templates_repo.update.assert_awaited_once_with("tmpl-1", guard=None, name="Renamed")
 
 
 @pytest.mark.asyncio

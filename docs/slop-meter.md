@@ -143,8 +143,8 @@ The loop is on by default and reads what is enrolled. `slop_meter.enabled: false
 ## Where it shows
 
 - `GET /api/v1/repos/{repo}/-/slop-meter` and the repository page: the score, the level and a week-by-week line of cost, capacity and slop ([api.md](api.md)).
-- The Slop Dungeons in the [world](world.md) carry each area's reading; an area at level 2 or worse has a dungeon even with no open slop finding.
-- Triage is told the job's area's (else the repository's) level, and the Slopmaster how much of the area landed beyond human attention.
+- The Slop Dungeons in the [world](world.md) carry each area's reading; an area at `slop_policy.dungeon_min_level` or worse (level 2 by default) has a dungeon even with no open slop finding.
+- Triage is told the job's area's (else the repository's) level and leans toward slop on a borderline verdict from `slop_policy.triage_lean_min_level` (Sloppy Joe by default), and the Slopmaster is told how much of the area landed beyond human attention. What a verdict of slop does to a job is [slop routing](slop-routing.md).
 
 ## Not covered
 

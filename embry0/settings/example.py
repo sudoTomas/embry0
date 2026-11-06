@@ -82,8 +82,16 @@ def _section(section: Section[Any], *, commented: bool) -> list[str]:
             lines.append("")
         lines.extend(_comment(section.model.model_fields[key].description or "", indent))
         mark = "# " if commented else ""
-        lines.extend(f"{indent}{mark}{line}" for line in dump_yaml({key: defaults[key]}).splitlines())
+        lines.extend(_key_line(indent, mark, line) for line in dump_yaml({key: defaults[key]}).splitlines())
     return lines
+
+
+def _key_line(indent: str, mark: str, line: str) -> str:
+    """One line of a key and its value at the section's indent, commented with ``mark``. A blank line of a
+    text's block (a guide with paragraphs) is the bare mark, so the file holds no trailing blank."""
+    if line:
+        return f"{indent}{mark}{line}"
+    return f"{indent}{mark.rstrip()}"
 
 
 def render(catalog: Catalog, *, commented: bool = True) -> str:

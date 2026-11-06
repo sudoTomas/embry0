@@ -26,7 +26,7 @@ from typing import Any, Final
 import structlog
 import yaml
 
-from embry0.settings.layers import cap_of, merged, over_default
+from embry0.settings.layers import cap_of, merged, over_default, resolve, settable_values
 from embry0.settings.registry import (
     DOCUMENT_KEYS,
     MANAGED_BY_FILE,
@@ -378,9 +378,12 @@ def check(
     (:func:`embry0.settings.registry.validate_values`): the settings store
     passes it on every write it stores, and each section gets it with its
     values before the write under ``STORED``, so a value the write leaves as
-    it was is not checked against the deployment again. Offline, and for a
-    layer's file checked without what it inherits, there is none, and those
-    checks are left to the write.
+    it was is not checked against the deployment again. A section's
+    ``effective_check`` is then given the section as the document's readers
+    read it before and after the write (:func:`effective_models`), so a value
+    that changes because the write took its key out is checked too. Offline,
+    and for a layer's file checked without what it inherits, there is none,
+    and those checks are left to the write.
     """
     problems: list[Problem] = []
     data: dict[str, Any] = {}
@@ -543,6 +546,19 @@ def check(
             clean = {**{name: dumped[name] for name in known}, **own, **kept}
         if clean:
             data[key] = clean
+    if context is not None and (layer == "deployment" or inherited is not None):
+        refused = {str(problem.loc[0]) for problem in problems if problem.loc}
+        problems.extend(
+            _effective_problems(
+                catalog,
+                stored,
+                data,
+                layer=layer,
+                inherited=inherited if layer != "deployment" else None,
+                context=context,
+                skip=refused,
+            )
+        )
     if problems:
         raise DocumentInvalid(problems)
     return Checked(
@@ -551,6 +567,62 @@ def check(
         unknown_sections=tuple(sorted(unknown)),
         unknown_keys=tuple(sorted(unknown_keys)),
     )
+
+
+def effective_models(
+    catalog: Catalog,
+    data: Mapping[str, Any],
+    *,
+    layer: str = "deployment",
+    inherited: Mapping[str, Mapping[str, Any]] | None = None,
+    scope: str = "",
+) -> dict[str, SectionModel]:
+    """Each section as a reader of the document at ``layer`` holding ``data`` gets it, defaults included.
+
+    ``inherited`` None reads the deployment's document; a layer reads the
+    values it may set over ``inherited``, what it inherits, without defaults.
+    ``scope`` names the layer in what a refusal would say. Never raises.
+    """
+    if inherited is None:
+        return dict(read_sections(catalog, data).models)
+    out: dict[str, SectionModel] = {}
+    for section in catalog:
+        base = dict(inherited.get(section.name) or {})
+        values = settable_values(section, layer, data)
+        out[section.name] = resolve(section, base, [(scope or layer, values)] if values else []).model
+    return out
+
+
+def _effective_problems(
+    catalog: Catalog,
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    *,
+    layer: str,
+    inherited: Mapping[str, Mapping[str, Any]] | None,
+    context: Mapping[str, Any],
+    skip: set[str],
+) -> list[Problem]:
+    """What each section's ``effective_check`` refuses of a write, from its readers' values before and after it.
+
+    A section refused already (``skip``) is left out: what it would hold is
+    not known.
+    """
+    checks = {
+        section.name: section.effective_check
+        for section in catalog
+        if section.effective_check is not None and section.name not in skip
+    }
+    if not checks:
+        return []
+    sections = Catalog([section for section in catalog if section.name in checks])
+    old = effective_models(sections, before, layer=layer, inherited=inherited)
+    new = effective_models(sections, after, layer=layer, inherited=inherited)
+    problems: list[Problem] = []
+    for name, check_effective in checks.items():
+        for key, why in check_effective(old[name], new[name], context):
+            problems.append(Problem((name, key), "unavailable", why))
+    return problems
 
 
 def _patch_problems(

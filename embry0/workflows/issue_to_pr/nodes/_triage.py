@@ -226,12 +226,14 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         prompt += f"\n\n{open_prs_block}"
 
     # The Slop-O-Meter (spec 2026-10-26): how sloppy the job's area is, so a
-    # borderline bug-or-slop verdict leans toward slop in a sloppy one.
-    from embry0.services.slop_meter.context import job_meter, meter_sentence
+    # borderline bug-or-slop verdict leans toward slop in a sloppy one, from
+    # the level its slop_policy names (#169), told by the meter's own names.
+    from embry0.services.slop_meter.context import job_meter, level_names, meter_sentence
 
     reading = await job_meter(config, state)
     if reading is not None:
         prompt += f"\n\n{meter_sentence(*reading)}"
+    meter_levels = await level_names(config, repo)
 
     # EMB-35: the triage instructions ride as a real system prompt (appended
     # to the CLI's preset system block, which its prompt caching covers)
@@ -253,9 +255,12 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # those settings change, so it still caches.
     default_model, tier_models = await load_triage_model_settings(config)
     # #182: the "Done when" section names the ticket headings the job's
-    # repository writes its criteria under, as the job read them at its start.
+    # repository writes its criteria under, as the job read them at its start;
+    # #169: "Bug or slop" says what its slop_policy tells the classifiers and
+    # does to the route.
     from embry0.services.job_settings import job_section
     from embry0.settings.sections.done_when import DONE_WHEN
+    from embry0.settings.sections.slop_policy import SLOP_POLICY
 
     # The skill selection offers the skills the developer's row lets triage
     # add, from a source its skills load; none, or no row, leaves it out.
@@ -264,6 +269,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         default_model=default_model,
         tier_models=tier_models,
         ticket_sections=job_section(state, DONE_WHEN).ticket_sections,
+        slop_policy=job_section(state, SLOP_POLICY),
+        level_names=meter_levels,
         skill_choices=triage_skill_choices(developer_row or {}),
     )
 

@@ -1,9 +1,10 @@
 """Pipeline templates repository — CRUD + duplicate for graph-based pipeline definitions."""
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+import asyncpg
 import structlog
 
 from embry0.storage.database import DatabasePool
@@ -31,6 +32,11 @@ _CHECKS: dict[str, Callable[[Any], Any]] = {
     "fixed_route": bool,
     "offered_to_triage": bool,
 }
+
+
+#: Called inside a template's change once its row is locked ``FOR UPDATE``: ``(conn, before, after)``, ``after``
+#: None for a delete. It raises to refuse the change, which is rolled back (``embry0.services.slop_routing``).
+Guard = Callable[[asyncpg.Connection, Mapping[str, Any], Mapping[str, Any] | None], Awaitable[None]]
 
 
 def _behaviour(fields: dict[str, Any]) -> dict[str, Any]:
@@ -105,12 +111,14 @@ class PipelineTemplatesRepository:
         row = await self.get(template_id)
         return row  # type: ignore[return-value]
 
-    async def update(self, template_id: str, **fields: Any) -> dict[str, Any]:
+    async def update(self, template_id: str, *, guard: Guard | None = None, **fields: Any) -> dict[str, Any]:
         """Update allowed fields on a pipeline template and return the updated record.
 
         A malformed behaviour column raises ValueError naming its field. A
         rename moves each agent's ``quest_template`` that named the old name
-        to the new one, in the same transaction.
+        to the new one, in the same transaction. ``guard`` sees the row
+        before and after, in that transaction, and refuses the change by
+        raising (:data:`Guard`).
         """
         valid = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
         valid.update(_behaviour(valid))
@@ -125,11 +133,14 @@ class PipelineTemplatesRepository:
             sets.append("updated_at = NOW()")
             async with self._db.transaction() as conn:
                 # FOR UPDATE: a rename running beside this one waits for it, then reads the name it left, so
-                # the agents' tasks follow every rename to the last.
-                old_name = await conn.fetchval(
-                    "SELECT name FROM pipeline_templates WHERE id = $1 FOR UPDATE", template_id
-                )
+                # the agents' tasks follow every rename to the last; a settings write that reads the templates
+                # FOR SHARE waits for it too, so the guard and that write see each other's commit.
+                before = await conn.fetchrow("SELECT * FROM pipeline_templates WHERE id = $1 FOR UPDATE", template_id)
+                old_name = before["name"] if before is not None else None
                 await conn.execute(f"UPDATE pipeline_templates SET {', '.join(sets)} WHERE id = $1", *args)
+                if guard is not None and before is not None:
+                    after = await conn.fetchrow("SELECT * FROM pipeline_templates WHERE id = $1", template_id)
+                    await guard(conn, dict(before), dict(after) if after is not None else None)
                 if "name" in valid and old_name is not None and valid["name"] != old_name:
                     # An agent's guild task names its template (#167): it follows a rename, in the same
                     # transaction, so the task keeps running what the operator chose.
@@ -143,9 +154,13 @@ class PipelineTemplatesRepository:
         row = await self.get(template_id)
         return row  # type: ignore[return-value]
 
-    async def delete(self, template_id: str) -> None:
-        """Delete a pipeline template by id."""
-        await self._db.execute("DELETE FROM pipeline_templates WHERE id = $1", template_id)
+    async def delete(self, template_id: str, *, guard: Guard | None = None) -> None:
+        """Delete a pipeline template by id; ``guard`` sees its row, locked, and refuses by raising (:data:`Guard`)."""
+        async with self._db.transaction() as conn:
+            before = await conn.fetchrow("SELECT * FROM pipeline_templates WHERE id = $1 FOR UPDATE", template_id)
+            if guard is not None and before is not None:
+                await guard(conn, dict(before), None)
+            await conn.execute("DELETE FROM pipeline_templates WHERE id = $1", template_id)
         logger.info("pipeline_template_deleted", template_id=template_id)
 
     async def upsert_builtin(

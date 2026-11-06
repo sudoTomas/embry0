@@ -128,8 +128,13 @@ def _prompt(skill_choices: list[str] | None) -> str:
     if skill_choices is not None:
         params = inspect.signature(build_triage_system_prompt).parameters
         assert "skill_choices" in params, "build_triage_system_prompt takes no skill_choices: it cannot follow the row"
+    from embry0.settings.sections.slop_meter import SLOP_METER
+    from embry0.settings.sections.slop_policy import SLOP_POLICY
+
     kwargs: dict[str, Any] = {"default_model": "m", "tier_models": {}}
     kwargs["ticket_sections"] = DONE_WHEN.defaults().ticket_sections
+    kwargs["slop_policy"] = SLOP_POLICY.defaults()
+    kwargs["level_names"] = SLOP_METER.defaults().level_names
     if skill_choices is not None:
         kwargs["skill_choices"] = skill_choices
     return build_triage_system_prompt(**kwargs)

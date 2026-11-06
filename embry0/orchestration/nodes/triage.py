@@ -8,6 +8,7 @@ Analyzes the issue/task and determines:
 
 import json
 import re
+import textwrap
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
@@ -16,7 +17,8 @@ import structlog
 from embry0.agents.model_policy import TIER_KEYS
 from embry0.orchestration.state import TriageDecision
 from embry0.services.done_when import done_when_guide
-from embry0.services.slop import CLASSIFIER_GUIDE
+from embry0.services.slop import lean_names, level_phrase
+from embry0.settings.sections.slop_policy import DEFAULT_ROUTE_TEMPLATE, SlopPolicySettings
 
 logger = structlog.get_logger(__name__)
 
@@ -29,6 +31,12 @@ _DONE_WHEN_GUIDE_SLOT = "<<DONE_WHEN_GUIDE>>"
 # Where the developer's skill selection goes: the skills its row lets triage
 # add (agent_definitions.triage_may_add_skills), or nothing when it lets none.
 _SKILL_SELECTION_SLOT = "<<SKILL_SELECTION>>"
+# Where the "Bug or slop" section's guide and its routing paragraph go: the
+# job's slop_policy (#169), what its organization tells the classifiers.
+_SLOP_GUIDE_SLOT = "<<SLOP_GUIDE>>"
+_SLOP_ROUTING_SLOT = "<<SLOP_ROUTING>>"
+#: A slot of the template: every one is filled in one pass (:func:`_fill_slots`).
+_SLOT = re.compile(r"<<[A-Z_]+>>")
 
 # What the prompt says of a skill triage may add. A skill not named here gets
 # a line of its own (_GENERIC_SKILL_GUIDANCE).
@@ -98,14 +106,7 @@ Before you route a code job, read the code the task points at and judge its
 nature. A developer handed slop as a bug patches the symptom and adds more
 slop, so this verdict decides who works the job and how they are briefed.
 <<SLOP_GUIDE>>
-Fill `work_nature` for every code job, with at most 8 evidence entries naming
-files you read. When the task carries a watcher "Slop, not a bug" section,
-weigh it, then make your own call. A slop verdict routes the job to the
-Slopmaster's cleanup (keep behavior, remove or merge code) whatever template
-you name; leave pipeline_template empty for it. The task context may give the
-area's Slop-O-Meter reading (how much of its code landed beyond human
-attention); when your verdict is borderline and it reads Sloppy Joe or Just
-The Slop, lean toward slop.
+<<SLOP_ROUTING>>
 
 <<DONE_WHEN_GUIDE>>
 
@@ -239,7 +240,7 @@ action ends the job with ERR_TRIAGE_QA_ACTION_INVALID.
 Omit `qa_failure_action` entirely on the initial invocation (when QA
 hasn't run yet).
 
-Respond ONLY with the JSON object, no markdown fences or extra text.""".replace("<<SLOP_GUIDE>>", CLASSIFIER_GUIDE)
+Respond ONLY with the JSON object, no markdown fences or extra text."""
 
 _SUB_AGENT_MODELS_NOTE = """\
 - The developer agent itself can dispatch sub-agents (via the Agent tool) for
@@ -323,26 +324,88 @@ def build_skill_selection(skill_choices: Sequence[str]) -> str:
     return section
 
 
+def build_slop_routing(slop_policy: SlopPolicySettings, level_names: Sequence[str]) -> str:
+    """The paragraph after the guide in "Bug or slop": what a verdict does to the job's route, and when the
+    Slop-O-Meter's reading tips a borderline one, as the job's ``slop_policy`` has it.
+
+    ``level_names`` are the meter's (``slop_meter.level_names`` of the job's
+    repository). Wrapped at 78 columns, as the prompt is written, so the
+    defaults give the paragraph the prompt held before the policy existed,
+    to the byte.
+    """
+    sentences = [
+        "Fill `work_nature` for every code job, with at most 8 evidence entries naming files you read.",
+        f'When the task carries a watcher "{slop_policy.ticket_heading}" section, weigh it, then make your own call.',
+    ]
+    if not slop_policy.enabled:
+        sentences.append("A slop verdict does not change the job's route here: pick its template as for a bug.")
+    else:
+        floor = slop_policy.min_score_to_route
+        verdict = f"A slop verdict with a slop_score of {floor} or more" if floor else "A slop verdict"
+        sentences.append(
+            f"{verdict} routes the job to {_cleanup_route(slop_policy.route_template)} (keep behavior, remove or "
+            "merge code) whatever template you name; leave pipeline_template empty for it."
+        )
+        if floor:
+            sentences.append("Below that score, pick its template as for a bug.")
+    reading = (
+        "The task context may give the area's Slop-O-Meter reading (how much of its code landed beyond human attention)"
+    )
+    leaning = lean_names(level_names, slop_policy.triage_lean_min_level)
+    if leaning:
+        sentences.append(
+            f"{reading}; when your verdict is borderline and it reads {level_phrase(leaning)}, lean toward slop."
+        )
+    else:
+        sentences.append(f"{reading}.")
+    return textwrap.fill(" ".join(sentences), width=78, break_long_words=False, break_on_hyphens=False)
+
+
+def _cleanup_route(template: str) -> str:
+    """What the slop route is called in the prompt: the built-in cleanup is the Slopmaster's (its graph is the
+    seed's, written again at every start); any other is named, whoever codes it."""
+    if template == DEFAULT_ROUTE_TEMPLATE:
+        return "the Slopmaster's cleanup"
+    return f"the cleanup pipeline `{template}`"
+
+
+def _fill_slots(template: str, slots: Mapping[str, str]) -> str:
+    """``template`` with each of ``slots`` in its place, in one pass: what one slot holds (an operator's guide,
+    a heading, a skill's name) is never read for another slot's marker."""
+    return _SLOT.sub(lambda found: slots.get(found.group(0), found.group(0)), template)
+
+
 def build_triage_system_prompt(
     *,
     default_model: str,
     tier_models: Mapping[str, str],
     ticket_sections: Sequence[str],
+    slop_policy: SlopPolicySettings,
+    level_names: Sequence[str],
     skill_choices: Sequence[str] = (),
 ) -> str:
-    """The triage system prompt for one deployment configuration and one repository's ticket headings.
+    """The triage system prompt for one deployment configuration and one repository's settings.
 
-    ``ticket_sections`` is the job's ``done_when.ticket_sections``.
-    ``skill_choices`` are the skills triage may add to the developer
-    (``build_skill_selection``); none leaves the skill selection out.
-    Identical for every job of a repository while the provider settings,
-    that section and the developer's row are unchanged, so the CLI's prompt
-    caching still covers it (EMB-35).
+    ``ticket_sections`` is the job's ``done_when.ticket_sections``,
+    ``slop_policy`` its ``slop_policy`` section (what the classifier is told
+    and what a verdict does to the route) and ``level_names`` the
+    Slop-O-Meter's level names for its repository. ``skill_choices`` are the
+    skills triage may add to the developer (``build_skill_selection``); none
+    leaves the skill selection out. Identical for every job of a repository
+    while the provider settings, those sections and the developer's row are
+    unchanged, so the CLI's prompt caching still covers it (EMB-35).
     """
     guidance = build_triage_model_guidance(default_model=default_model, tier_models=tier_models)
-    prompt = _TRIAGE_SYSTEM_PROMPT_TEMPLATE.replace(_MODEL_GUIDANCE_SLOT, guidance)
-    prompt = prompt.replace(_SKILL_SELECTION_SLOT, build_skill_selection(skill_choices))
-    return prompt.replace(_DONE_WHEN_GUIDE_SLOT, done_when_guide(ticket_sections))
+    return _fill_slots(
+        _TRIAGE_SYSTEM_PROMPT_TEMPLATE,
+        {
+            _SLOP_GUIDE_SLOT: slop_policy.classifier_guide,
+            _SLOP_ROUTING_SLOT: build_slop_routing(slop_policy, level_names),
+            _DONE_WHEN_GUIDE_SLOT: done_when_guide(ticket_sections),
+            _MODEL_GUIDANCE_SLOT: guidance,
+            _SKILL_SELECTION_SLOT: build_skill_selection(skill_choices),
+        },
+    )
 
 
 def _extract_json_payload(raw: str) -> str:

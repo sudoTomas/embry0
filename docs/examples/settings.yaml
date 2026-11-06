@@ -702,6 +702,92 @@ slop_meter:
   # inherits, as bots. At most 200 in all, counted with what a write inherits.
   # ai_agents: []
 
+# What embry0 does with a code job or a finding judged slop: whether and where
+# it is routed, what the classifiers and the reviewer are told, its kinds, its
+# ticket heading and the meter levels it acts on.
+slop_policy:
+  # A code job judged slop runs route_template instead of the route triage
+  # picked. False: it takes its normal route, the verdict is still recorded on
+  # the job, and triage is told so.
+  # enabled: true
+
+  # The pipeline template a code job judged slop runs. A write that changes
+  # it, by naming another or by taking the key out, must leave a template that
+  # takes a code job: one whose jobs are recorded as code jobs and whose route
+  # has a coding step. A template a document routes to cannot be deleted,
+  # renamed or changed to stop taking one. A job pinned to the full pipeline
+  # takes it only when its route also has review and QA. A template a person
+  # named for the job still wins.
+  # route_template: slop-cleanup
+
+  # The least slop_score (0 to 100, how much of the trouble is shape) a slop
+  # verdict needs to be routed. 0 routes every slop verdict; one below it
+  # takes its normal route.
+  # min_score_to_route: 0
+
+  # The kinds of slop a verdict may name, as lowercase words joined by _. A
+  # kind a classifier names that is not here is dropped from its verdict.
+  # Describe each in classifier_guide, which is what the classifiers are told.
+  # kinds:
+  # - duplication
+  # - dead_code
+  # - half_wired
+  # - contradicting_layers
+  # - symptom_patch
+  # - misleading_docs
+  # - off_pattern
+
+  # What triage and the watcher are told slop, a bug and noise are, and what
+  # slop_score means, in their system prompts. Name each of kinds in it.
+  # classifier_guide: |-
+  #   Tell slop apart from bugs:
+  #   - bug: the behavior differs from what the code, its docs or the ticket intend.
+  #     Fixing it changes behavior.
+  #   - slop: the behavior is what the code says, and the trouble is the code's
+  #     shape. Cleaning it keeps behavior. Kinds: duplication (the same logic in
+  #     more than one place), dead_code (paths, flags or files nothing reaches),
+  #     half_wired (a feature or abstraction started and not finished),
+  #     contradicting_layers (two layers that disagree about one thing),
+  #     symptom_patch (guards, retries, fallbacks or catch-alls stacked on a symptom
+  #     instead of its cause), misleading_docs (comments or docs that say what the
+  #     code does not do), off_pattern (code that ignores the repository's own way).
+  #   - noise: nothing to do.
+  #   A guard, retry or catch-all stacked on a symptom is slop when removing it and
+  #   fixing the shape keeps the outcome. When the code does the wrong thing (keeps
+  #   retrying what can never succeed, drops or duplicates data, answers wrongly),
+  #   it is a bug, even when sloppy code caused it: say bug, and name the slop in
+  #   the evidence. Do not call a real defect slop to make it look smaller.
+  #   slop_score (0-100) is how much of the trouble is shape rather than behavior:
+  #   0 for a pure bug, 100 for pure slop.
+
+  # What the reviewer of a change the Slopmaster made is told to check, before
+  # its usual instructions. The lines the branch adds and removes are said
+  # after it.
+  # review_guide: |-
+  #   ## This change is a slop cleanup
+  #
+  #   It was judged slop, not a bug: it must keep behavior and improve shape.
+  #   Approve only when all of these hold, and request changes otherwise, saying which:
+  #   - behavior is unchanged: the tests pass, and no public behavior, API or output
+  #     moved (removing what nothing reaches is fine);
+  #   - the change removes or merges more than it adds, or is plainly simpler;
+  #   - it adds no new guard, retry, fallback, catch-all or flag to hide a symptom.
+
+  # The heading, without its # marks, that the watcher's draft ticket for a
+  # finding judged slop opens with, in the tracker it files to. Triage is told
+  # to weigh a section under it.
+  # ticket_heading: Slop, not a bug
+
+  # The Slop-O-Meter level (1 to 5) from which triage leans toward slop on a
+  # borderline verdict, told with the levels' names (slop_meter.level_names).
+  # Null: it is given the reading and never told to lean.
+  # triage_lean_min_level: 4
+
+  # The Slop-O-Meter level (1 to 5) from which a repository or an area has a
+  # Slop Dungeon on the world map even with no open slop finding. Null: only
+  # open slop and recent cleanups make one.
+  # dungeon_min_level: 2
+
 # What the dashboard shows: the game layer, and the page it opens on.
 ui:
   # Show the game layer: the guild, the agents' levels, skills and outfits,

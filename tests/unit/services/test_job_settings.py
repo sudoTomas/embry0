@@ -24,6 +24,7 @@ from embry0.orchestration.state import JobState
 from embry0.services import done_when as dw
 from embry0.services.issue_executor import IssueExecutor
 from embry0.settings.sections import CATALOG
+from embry0.settings.sections.slop_policy import SLOP_POLICY
 from embry0.settings.store import build_snapshot
 
 WIDGETS = "acme/widgets"
@@ -287,6 +288,8 @@ async def test_without_a_store_or_with_one_that_fails_a_job_runs_on_the_defaults
         },
         "done_when": {"retries": 1, "ticket_sections": ["Acceptance criteria"]},
         "salvage": {"commit_subject": WIP},
+        # #169: what a slop verdict does to the job (tests/unit/settings/test_slop_policy_section.py pins them).
+        "slop_policy": SLOP_POLICY.defaults().model_dump(mode="json"),
     }
     assert await js.read_for_job(None, WIDGETS) == defaults
     broken = MagicMock()
