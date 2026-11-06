@@ -1,6 +1,8 @@
 import asyncio
+import inspect
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -295,10 +297,7 @@ async def test_run_cmd_success():
     """run_cmd returns stdout on success."""
     client = DockerClient()
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
-        process = AsyncMock()
-        process.communicate = AsyncMock(return_value=(b"container-id\n", b""))
-        process.returncode = 0
-        mock_proc.return_value = process
+        mock_proc.return_value = _Proc(_Pipe(data=b"container-id\n"))
 
         result = await client.run_cmd(["docker", "ps"])
         assert result == "container-id"
@@ -332,15 +331,24 @@ async def test_run_cmd_writes_stdin_data_to_the_command(tmp_path):
 
 
 class _Pipe:
-    """A process pipe: hands out ``total`` bytes (``fill``) in whatever sizes are asked for, then EOF."""
+    """A process pipe: hands out ``total`` bytes (``fill``) in whatever sizes are asked for, then EOF.
 
-    def __init__(self, total: int = 0, data: bytes = b"", fill: bytes = b"x") -> None:
+    ``requests`` records every size asked for (-1 is a whole-output read);
+    ``hang`` never answers, like a command that prints nothing and never exits.
+    """
+
+    def __init__(self, total: int = 0, data: bytes = b"", fill: bytes = b"x", hang: bool = False) -> None:
         self._data = data
         self._total = total if not data else len(data)
         self._fill = fill
+        self._hang = hang
         self.handed = 0
+        self.requests: list[int] = []
 
     async def read(self, n: int = -1) -> bytes:
+        self.requests.append(n)
+        if self._hang:
+            await asyncio.sleep(3600)
         if self.handed >= self._total:
             return b""
         k = self._total - self.handed if n < 0 else min(n, self._total - self.handed)
@@ -428,13 +436,265 @@ async def test_run_cmd_bytes_cap_holds_against_a_real_process():
         )
 
 
+def _bounded(name: str) -> Any:
+    """A constant docker_client must define to bound what a command can make embry0 hold."""
+    from embry0.execution import docker_client
+
+    value = getattr(docker_client, name, None)
+    assert value is not None, f"docker_client must define {name}: no docker command may be read without a cap"
+    return value
+
+
+def _run_cmd_takes_a_cap() -> None:
+    params = inspect.signature(DockerClient.run_cmd).parameters
+    assert "max_bytes" in params and "keep_tail" in params, (
+        "run_cmd must cap the stdout it holds (max_bytes), or keep only its tail (keep_tail)"
+    )
+
+
 @pytest.mark.asyncio
-async def test_run_cmd_bytes_keeps_only_the_head_of_a_flooded_stderr():
+async def test_run_cmd_stops_a_command_that_prints_past_its_cap():
+    """A process that keeps writing (8 MiB here) is stopped at the cap: the pipe is never asked for more than cap+1."""
+    from structlog.testing import capture_logs
+
+    _run_cmd_takes_a_cap()
+    OutputTooLargeError = _too_large_error()
+    stdout = _Pipe(total=8 * 1024 * 1024)
+    proc = _Proc(stdout)
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc, capture_logs() as logs:
+        mock_proc.return_value = proc
+        with pytest.raises(OutputTooLargeError) as caught:
+            await DockerClient().run_cmd(
+                ["docker", "exec", "c", "git", "status"], max_bytes=1024, log_context={"phase": "probe"}
+            )
+    assert isinstance(caught.value, RuntimeError), "an over-cap command must fail its step like any failed command"
+    assert stdout.handed <= 1024 + 1, f"read {stdout.handed} bytes from the pipe; the cap is 1024"
+    assert -1 not in stdout.requests, "stdout must be read in chunks, never whole"
+    assert proc.killed, "the command is killed once it passes the cap"
+    assert proc.returncode is not None, "the killed command is reaped"
+    warned = [e for e in logs if e["event"] == "docker_cmd_too_large"]
+    assert len(warned) == 1, f"one warning names the stopped command: {logs}"
+    assert warned[0]["log_level"] == "warning" and warned[0]["max_bytes"] == 1024 and warned[0]["phase"] == "probe"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["run_cmd", "run_cmd_bytes"])
+async def test_a_command_is_bounded_without_a_cap_of_its_own(method: str):
+    """A caller that names no cap still gets one: DEFAULT_MAX_OUTPUT_BYTES."""
+    default = _bounded("DEFAULT_MAX_OUTPUT_BYTES")
+    OutputTooLargeError = _too_large_error()
+    stdout = _Pipe(total=default + 1024 * 1024)
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
-        mock_proc.return_value = _Proc(_Pipe(), _Pipe(total=4 * 1024 * 1024, fill=b"e"), returncode=1)
+        mock_proc.return_value = _Proc(stdout)
+        with pytest.raises(OutputTooLargeError):
+            await getattr(DockerClient(), method)(["docker", "exec", "c", "cat", "/x"])
+    assert stdout.handed <= default + 1, f"{method} read {stdout.handed} bytes; the default cap is {default}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cap", [None, 0, -1, True, 1.5])
+async def test_no_command_runs_without_a_positive_cap(cap: Any):
+    """Nothing can ask for an unbounded read: a missing or non-positive cap is refused before the command starts."""
+    _run_cmd_takes_a_cap()
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        for method in ("run_cmd", "run_cmd_bytes"):
+            with pytest.raises(ValueError, match="max_bytes"):
+                await getattr(DockerClient(), method)(["docker", "x"], max_bytes=cap)
+    mock_proc.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_cap_above_the_ceiling_is_refused():
+    """A cap bounds what is held only up to MAX_OUTPUT_CAP_BYTES: a larger one is refused, not trusted."""
+    ceiling = _bounded("MAX_OUTPUT_CAP_BYTES")
+    assert ceiling >= _bounded("DAEMON_LISTING_MAX_BYTES"), "every named cap must fit under the ceiling"
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(data=b"ok\n"))
+        for method in ("run_cmd", "run_cmd_bytes"):
+            with pytest.raises(ValueError, match="max_bytes"):
+                await getattr(DockerClient(), method)(["docker", "x"], max_bytes=ceiling + 1)
+        assert mock_proc.call_count == 0, "a command with a refused cap must not start"
+        assert await DockerClient().run_cmd(["docker", "x"], max_bytes=ceiling) == "ok", "the ceiling itself is a cap"
+
+
+@pytest.mark.asyncio
+async def test_a_log_cut_inside_a_character_is_read_not_refused():
+    """`tail -c` can start a log inside a multi-byte character (#394): it is read, the cut bytes replaced."""
+    log = "é ready on :3000\nEMBRY0_VERIFY_RESULT exit=0 ms=5\n".encode()[1:]  # starts on é's second byte
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(data=log))
+        try:
+            out = await DockerClient().run_cmd(["docker", "exec", "c", "tail", "-c", "8192", "/x.log"])
+        except UnicodeDecodeError as exc:
+            pytest.fail(f"a log cut inside a character must still be read: {exc}")
+    assert out == "\ufffd ready on :3000\nEMBRY0_VERIFY_RESULT exit=0 ms=5", out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["run_cmd", "run_cmd_bytes"])
+async def test_a_real_process_past_the_cap_is_stopped_and_reaped_at_once(method: str):
+    """A real pipe: 8 MiB written, a 1 KiB cap. The killed command is reaped at once, not logged as stuck after 5 s."""
+    import time
+
+    from structlog.testing import capture_logs
+
+    if method == "run_cmd":
+        _run_cmd_takes_a_cap()
+    OutputTooLargeError = _too_large_error()
+    started = time.monotonic()
+    with capture_logs() as logs, pytest.raises(OutputTooLargeError):
+        await getattr(DockerClient(), method)(
+            [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x' * (8 << 20))"], timeout=20, max_bytes=1024
+        )
+    elapsed = time.monotonic() - started
+    assert elapsed < 3, f"{method}: the stopped command was reaped only after {elapsed:.1f}s"
+    stuck = [e for e in logs if str(e["event"]).endswith("kill_stuck")]
+    assert not stuck, f"{method}: a command that was killed and reaped was logged as stuck: {stuck}"
+
+
+@pytest.mark.asyncio
+async def test_a_flooded_stderr_is_drained_and_the_command_still_succeeds():
+    """stderr is read to its end in chunks and dropped past what is kept: a chatty command neither blocks nor fails."""
+    stderr = _Pipe(total=8 * 1024 * 1024, fill=b"e")
+    proc = _Proc(_Pipe(data=b"ok\n"), stderr)
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = proc
+        assert await DockerClient().run_cmd(["docker", "exec", "c", "make"]) == "ok"
+    assert -1 not in stderr.requests, "stderr must be read in chunks, never whole"
+    assert stderr.handed == 8 * 1024 * 1024, "stderr must be drained to its end"
+    assert not proc.killed, "a command that exits 0 is not stopped for its stderr"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["run_cmd", "run_cmd_bytes"])
+async def test_a_failure_keeps_the_start_and_the_end_of_a_flooded_stderr(method: str):
+    """A failing build prints its cause last: the error keeps stderr's first 64 KiB and last 16 KiB, never all of it."""
+    flood = b"FIRST LINE\n" + b"e" * (4 * 1024 * 1024) + b"\nERROR: the real cause"
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(), _Pipe(data=flood), returncode=1)
         with pytest.raises(RuntimeError) as caught:
-            await DockerClient().run_cmd_bytes(["docker", "x"])
-    assert len(str(caught.value)) < 70 * 1024, "stderr is kept to its first 64 KiB"
+            await getattr(DockerClient(), method)(["docker", "build", "."])
+    message = str(caught.value)
+    assert "FIRST LINE" in message, "the error must keep the start of stderr"
+    assert "ERROR: the real cause" in message, "the error must keep the end of stderr, where a build says why"
+    assert len(message) < 82 * 1024, f"the error carried {len(message)} characters of stderr"
+    assert "bytes not kept" in message, "the error must say that part of stderr was dropped"
+
+
+@pytest.mark.asyncio
+async def test_keep_tail_returns_the_end_of_a_long_log_without_stopping_it():
+    """An install's output is a log: read to its end, only its last bytes kept and returned."""
+    _run_cmd_takes_a_cap()
+    log = b"x" * (8 * 1024 * 1024) + b"\nadded 1450 packages"
+    stdout = _Pipe(data=log)
+    proc = _Proc(stdout)
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = proc
+        out = await DockerClient().run_cmd(["docker", "exec", "c", "npm", "ci"], max_bytes=4096, keep_tail=True)
+    assert out.endswith("added 1450 packages"), "the end of the log is returned"
+    assert len(out) < 4096 + 100, f"kept {len(out)} characters of a log whose tail is 4096 bytes"
+    assert not proc.killed, "a log is read to its end, not stopped"
+    assert stdout.handed == len(log) and -1 not in stdout.requests, "the log is drained in chunks"
+
+
+@pytest.mark.asyncio
+async def test_keep_tail_failure_quotes_the_end_of_the_log():
+    """`install 2>&1` fails with an empty stderr: the error quotes the end of the log, and only that."""
+    _run_cmd_takes_a_cap()
+    log = b"npm warn deprecated\n" * 400_000 + b"npm error engine mismatch\n"
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(data=log), returncode=1)
+        with pytest.raises(RuntimeError) as caught:
+            await DockerClient().run_cmd(["docker", "exec", "c", "npm", "ci"], max_bytes=4096, keep_tail=True)
+    message = str(caught.value)
+    assert "npm error engine mismatch" in message and "stdout tail" in message
+    assert len(message) < 2200, f"the error carried {len(message)} characters"
+
+
+@pytest.mark.asyncio
+async def test_a_git_step_that_floods_its_output_is_stopped_at_the_default_cap():
+    """Every embry0 git step in a sandbox goes through sandbox_git.run, which names no cap: the default holds there."""
+    from embry0.execution import sandbox_git
+
+    default = _bounded("DEFAULT_MAX_OUTPUT_BYTES")
+    OutputTooLargeError = _too_large_error()
+    stdout = _Pipe(total=default + 1024 * 1024)
+    proc = _Proc(stdout)
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = proc
+        with pytest.raises(OutputTooLargeError):
+            await sandbox_git.run(
+                DockerClient(),
+                "sandbox-1",
+                sandbox_git.command("status", "--porcelain"),
+                step=sandbox_git.GitStep.SALVAGE_COMMIT,
+                timeout=15,
+            )
+    assert stdout.handed <= default + 1, f"read {stdout.handed} bytes; the default cap is {default}"
+    assert proc.killed, "the git step is stopped"
+
+
+@pytest.mark.asyncio
+async def test_a_git_listing_reads_past_the_default_cap_up_to_its_own():
+    """A change touching 90,000 files lists past the 4 MiB default: a git listing names GIT_LISTING_MAX_BYTES."""
+    from embry0.execution import sandbox_git
+
+    default = _bounded("DEFAULT_MAX_OUTPUT_BYTES")
+    cap = getattr(sandbox_git, "GIT_LISTING_MAX_BYTES", None)
+    assert isinstance(cap, int) and cap > default, "sandbox_git must define GIT_LISTING_MAX_BYTES above the default"
+    listing = b"".join(b"apps/web/src/components/generated/file_%06d.tsx\n" % i for i in range(90_000))
+    assert len(listing) > default
+    argv = sandbox_git.command("diff", "--name-only", "origin/main...HEAD")
+    step = sandbox_git.GitStep.CHANGED_FILES
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(data=listing))
+        out = await sandbox_git.run(DockerClient(), "sandbox-1", argv, step=step, max_bytes=cap)
+    assert len(out.splitlines()) == 90_000, "the whole listing is read"
+    stdout = _Pipe(total=cap + 1024 * 1024)
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(stdout)
+        with pytest.raises(_too_large_error()):
+            await sandbox_git.run(DockerClient(), "sandbox-1", argv, step=step, max_bytes=cap)
+    assert stdout.handed <= cap + 1, f"read {stdout.handed} bytes; the listing cap is {cap}"
+
+
+@pytest.mark.asyncio
+async def test_exec_with_stdin_reads_its_output_in_chunks_and_keeps_little(tmp_path: Path, monkeypatch):
+    """The write direction's output is not used: it is drained in chunks, never collected whole."""
+    killed_groups: list[int] = []
+    monkeypatch.setattr("os.killpg", lambda pgid, sig: killed_groups.append(pgid))
+    payload = tmp_path / "ctx.tar"
+    payload.write_bytes(b"x")
+    stdout = _Pipe(total=8 * 1024 * 1024)
+    stderr = _Pipe(data=b"tar: start\n" + b"w" * (1024 * 1024) + b"\ntar: the real cause\n")
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(stdout, stderr, returncode=2)
+        with pytest.raises(RuntimeError) as caught:
+            await DockerClient().exec_with_stdin("sandbox-1", ["tar", "-x"], str(payload))
+    assert -1 not in stdout.requests and -1 not in stderr.requests, "the exec's output must be read in chunks"
+    assert stdout.handed == 8 * 1024 * 1024, "stdout is drained to its end"
+    message = str(caught.value)
+    assert "tar: the real cause" in message and len(message) < 82 * 1024, f"{len(message)} characters"
+    assert killed_groups == [], "a command that exits on its own is not killed"
+
+
+@pytest.mark.asyncio
+async def test_the_compose_service_listing_is_capped(monkeypatch):
+    """The live-log tabs' service listing goes through the same reader, with the daemon-listing cap."""
+    from embry0.execution.runtime import DockerRuntime
+
+    cap = _bounded("DAEMON_LISTING_MAX_BYTES")
+    OutputTooLargeError = _too_large_error()
+    killed_groups: list[int] = []
+    monkeypatch.setattr("os.killpg", lambda pgid, sig: killed_groups.append(pgid))
+    stdout = _Pipe(total=cap + 1024 * 1024, fill=b"s")
+    proc = _Proc(stdout)
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = proc
+        with pytest.raises(OutputTooLargeError):
+            await DockerRuntime(DockerClient()).compose_services("qa_job-1")
+    assert stdout.handed <= cap + 1, f"read {stdout.handed} bytes; the cap is {cap}"
+    assert killed_groups == [proc.pid], "the listing's whole process group is killed"
 
 
 @pytest.mark.asyncio
@@ -442,10 +702,7 @@ async def test_run_cmd_failure():
     """run_cmd raises on non-zero exit."""
     client = DockerClient()
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
-        process = AsyncMock()
-        process.communicate = AsyncMock(return_value=(b"", b"Error: something failed\n"))
-        process.returncode = 1
-        mock_proc.return_value = process
+        mock_proc.return_value = _Proc(_Pipe(), _Pipe(data=b"Error: something failed\n"), returncode=1)
 
         with pytest.raises(RuntimeError, match="something failed"):
             await client.run_cmd(["docker", "ps"])
@@ -459,10 +716,9 @@ async def test_run_cmd_failure_log_includes_caller_context():
 
     client = DockerClient()
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
-        process = AsyncMock()
-        process.communicate = AsyncMock(return_value=(b"", b"Cannot connect to the Docker daemon at tcp://dind:2376\n"))
-        process.returncode = 1
-        mock_proc.return_value = process
+        mock_proc.return_value = _Proc(
+            _Pipe(), _Pipe(data=b"Cannot connect to the Docker daemon at tcp://dind:2376\n"), returncode=1
+        )
 
         with capture_logs() as logs, pytest.raises(RuntimeError):
             await client.run_cmd(
@@ -485,20 +741,15 @@ async def test_run_cmd_kills_subprocess_on_timeout(monkeypatch):
     running as a zombie that holds Docker daemon slots)."""
     killed = False
 
-    class _FakeProc:
+    class _FakeProc(_Proc):
         def __init__(self) -> None:
-            self.pid = 123456
-            self.returncode = -9
-
-        async def communicate(self):
-            await asyncio.sleep(30)  # longer than timeout — wait_for will fire
+            # Prints nothing and never exits: longer than the timeout.
+            super().__init__(_Pipe(hang=True), _Pipe(hang=True))
 
         def kill(self) -> None:
             nonlocal killed
             killed = True
-
-        async def wait(self) -> int:
-            return -9
+            super().kill()
 
     async def _fake_create(*args, **kwargs):
         return _FakeProc()
@@ -590,15 +841,8 @@ async def test_run_cmd_failure_surfaces_stdout_tail_when_stderr_empty(monkeypatc
     with no cause — the output was on stdout, which the error discarded."""
     client = DockerClient()
 
-    class _Proc:
-        returncode = 1
-        pid = 4242
-
-        async def communicate(self):
-            return (b"npm error code EUSAGE\nnpm error engine mismatch\n", b"")
-
     async def fake_exec(*cmd, **kw):
-        return _Proc()
+        return _Proc(_Pipe(data=b"npm error code EUSAGE\nnpm error engine mismatch\n"), returncode=1)
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
     with pytest.raises(RuntimeError) as exc:
@@ -717,10 +961,9 @@ async def test_an_image_the_daemon_lacks_is_an_answer_not_an_error():
 
     runtime = DockerRuntime(DockerClient())
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
-        process = AsyncMock()
-        process.communicate = AsyncMock(return_value=(b"", b"Error response from daemon: No such image: x\n"))
-        process.returncode = 1
-        mock_proc.return_value = process
+        mock_proc.return_value = _Proc(
+            _Pipe(), _Pipe(data=b"Error response from daemon: No such image: x\n"), returncode=1
+        )
 
         with capture_logs() as logs:
             assert await runtime.image_exists("registry:5000/embry0-proxy:latest") is False

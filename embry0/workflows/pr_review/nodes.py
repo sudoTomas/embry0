@@ -213,7 +213,11 @@ async def init_pr_review_node(state: dict[str, Any], config: RunnableConfig) -> 
             timeout=CHECKOUT_TIMEOUT_SECONDS,
             job_id=job_id,
         )
-        listing = await docker.run_cmd(docker.build_exec_cmd(container_id, ["cat", FILES_NUL]), timeout=30)
+        listing = await docker.run_cmd(
+            docker.build_exec_cmd(container_id, ["cat", FILES_NUL]),
+            timeout=30,
+            max_bytes=sandbox_git.GIT_LISTING_MAX_BYTES,
+        )
     except Exception as exc:  # noqa: BLE001
         failed = _failed(rv, ErrorCode.PR_REVIEW_INIT_FAILED.value, f"checking out the pull request failed: {exc}")
         return {**failed, "sandbox_container_id": container_id}

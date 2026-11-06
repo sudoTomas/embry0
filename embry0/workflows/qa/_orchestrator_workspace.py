@@ -19,6 +19,7 @@ from typing import Any
 
 import structlog
 
+from embry0.cache.lockfile_hash import LOCKFILE_MAX_BYTES
 from embry0.execution.workspace_diff import compute_changed_files_via_diff, resolve_base_branch
 
 __all__ = ["compute_changed_files_via_diff", "resolve_base_branch", "stage_workspace_for_provider"]
@@ -103,6 +104,7 @@ async def stage_workspace_for_provider(
             content = await docker.run_cmd(
                 docker.build_exec_cmd(container_id, cat_lock),
                 timeout=10,
+                max_bytes=LOCKFILE_MAX_BYTES,
             )
         except Exception:
             continue

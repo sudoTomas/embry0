@@ -35,6 +35,7 @@ class ErrorCode(StrEnum):
         "ERR_SANDBOX_GONE"  # a paused job's sandbox container no longer exists or is stopped; dispatch the job again
     )
     DOCKER_TIMEOUT = "ERR_DOCKER_TIMEOUT"  # Underlying docker command timed out
+    DOCKER_OUTPUT_TOO_LARGE = "ERR_DOCKER_OUTPUT_TOO_LARGE"  # a docker command printed more than its stdout cap and was stopped (embry0/execution/docker_client.py)
     MAX_AGENT_QUESTIONS = "ERR_MAX_AGENT_QUESTIONS"  # Agent exceeded the ask_user round cap
     MAX_TRIAGE_QUESTIONS = "ERR_MAX_TRIAGE_QUESTIONS"  # Triage interrupt/resume loop exceeded the 5-round cap
     UNSUPPORTED_CONTEXT = "ERR_UNSUPPORTED_CONTEXT"  # Unknown context type — no workspace-init strategy registered
@@ -179,6 +180,7 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.SANDBOX_INIT: _C.INFRA,
     ErrorCode.SANDBOX_GONE: _C.INFRA,
     ErrorCode.DOCKER_TIMEOUT: _C.INFRA,
+    ErrorCode.DOCKER_OUTPUT_TOO_LARGE: _C.INFRA,
     ErrorCode.MAX_AGENT_QUESTIONS: _C.AGENT,
     ErrorCode.MAX_TRIAGE_QUESTIONS: _C.AGENT,
     ErrorCode.UNSUPPORTED_CONTEXT: _C.CONFIG,
@@ -323,7 +325,9 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     ("embry0.execution.workspace_diff:WorkspaceDiffUnavailable", ErrorCode.QA_NO_APPS),
     ("embry0.execution.sandbox_git:SandboxGitRefused", ErrorCode.SANDBOX_GIT_REFUSED),
     ("embry0.execution.sandbox_files:SandboxReadRefused", ErrorCode.SANDBOX_COPY_OUT_REFUSED),
-    ("embry0.execution.docker_client:OutputTooLargeError", ErrorCode.SANDBOX_COPY_OUT_REFUSED),
+    # Any docker command's stdout past its cap; a file read out of a sandbox
+    # raises SandboxReadRefused instead (above).
+    ("embry0.execution.docker_client:OutputTooLargeError", ErrorCode.DOCKER_OUTPUT_TOO_LARGE),
     ("embry0.workspace_init.base:LocalContextDeniedError", ErrorCode.LOCAL_CONTEXT_DENIED),
     ("embry0.workspace_init.base:HttpFetchError", ErrorCode.HTTP_FETCH_FAILED),
     ("embry0.workspace_init.base:WorkspaceInitError", ErrorCode.SANDBOX_INIT),

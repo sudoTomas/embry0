@@ -1438,6 +1438,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_WORKFLOW_UNKNOWN` | Referenced workflow is not registered. |
 | `ERR_SANDBOX_INIT` | Sandbox container creation failed. |
 | `ERR_DOCKER_TIMEOUT` | An underlying Docker command timed out. |
+| `ERR_DOCKER_OUTPUT_TOO_LARGE` | A Docker command printed more to stdout than its cap (4 MiB unless the caller names another) and was stopped. See `DockerClient.run_cmd`. |
 | `ERR_MAX_AGENT_QUESTIONS` | Agent exceeded the `ask_user` rounds cap (default 10, `ASK_USER_ROUNDS_CAP`). |
 | `ERR_MAX_TRIAGE_QUESTIONS` | Triage exceeded the 5-round needs_info cap (Plan C / B6). |
 | `ERR_QA_FAILURES_UNRESOLVED` | QA failure rounds hit the cap without a passing run. |

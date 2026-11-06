@@ -137,7 +137,7 @@ def _chain_docker(tmp_path, *, restore_broken: bool = False) -> tuple[MagicMock,
     if restore_broken:
         env["FAKE_RESTORE_BROKEN"] = "1"
 
-    async def run_cmd(cmd: list[str], timeout: int = 30) -> str:
+    async def run_cmd(cmd: list[str], timeout: int = 30, *, max_bytes: int | None = None) -> str:
         done = subprocess.run(["sh", "-c", cmd[-1]], env=env, capture_output=True, text=True)
         if done.returncode:
             raise RuntimeError(f"Docker command failed: {done.stderr.strip()}")

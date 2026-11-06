@@ -344,3 +344,17 @@ def test_a_code_with_no_category_entry_does_not_raise_into_stats():
         }
     finally:
         ERROR_CATEGORIES[victim] = saved
+
+
+def test_a_command_stopped_at_its_output_cap_has_its_own_code() -> None:
+    """An over-cap docker command is not a refused file read: it says what happened, in the infra bucket."""
+    from embry0.execution.docker_client import OutputTooLargeError
+    from embry0.execution.sandbox_files import READ_TOO_LARGE, SandboxReadRefused
+
+    code = getattr(ErrorCode, "DOCKER_OUTPUT_TOO_LARGE", None)
+    assert code is not None, "a docker command stopped at its output cap needs a code of its own"
+    exc = OutputTooLargeError("command output passed its 4194304-byte cap; the command was stopped")
+    assert classify_failure(exc=exc) is code
+    assert category_for_code(code.value) is FailureCategory.INFRA
+    refused = SandboxReadRefused(READ_TOO_LARGE, "over the limit")
+    assert classify_failure(exc=refused) is ErrorCode.SANDBOX_COPY_OUT_REFUSED, "a refused file read keeps its code"

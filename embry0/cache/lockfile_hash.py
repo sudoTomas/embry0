@@ -17,6 +17,12 @@ _LOCKFILE_CANDIDATES: tuple[str, ...] = (
 )
 
 
+#: The most of a lockfile embry0 reads out of a sandbox (the docker command's
+#: stdout cap). A large monorepo's package-lock.json runs to tens of MiB; one
+#: past this cap is not read, and the read is stopped.
+LOCKFILE_MAX_BYTES = 64 * 1024 * 1024
+
+
 class LockfileNotFoundError(FileNotFoundError):
     """No recognized lockfile in the given workspace root."""
 

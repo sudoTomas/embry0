@@ -556,7 +556,13 @@ async def _commit_unfinished_work(
     step = sandbox_git.GitStep.SALVAGE_COMMIT
     try:
         dirty = await sandbox_git.run(
-            docker, container_id, sandbox_git.command("status", "--porcelain"), step=step, timeout=15, job_id=job_id
+            docker,
+            container_id,
+            sandbox_git.command("status", "--porcelain"),
+            step=step,
+            timeout=15,
+            job_id=job_id,
+            max_bytes=sandbox_git.GIT_LISTING_MAX_BYTES,
         )
         # Nothing uncommitted: either the agent committed (so _rescue_push_branch
         # can push it as it always has) or it truly produced nothing.

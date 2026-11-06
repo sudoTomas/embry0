@@ -21,8 +21,9 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from embry0.cache.lockfile_hash import compute_lockfile_sha
+from embry0.cache.lockfile_hash import LOCKFILE_MAX_BYTES, compute_lockfile_sha
 from embry0.cache.prebaked_staleness import container_base_image, image_digest, pull_image
+from embry0.execution.docker_client import LOG_TAIL_BYTES
 from embry0.execution.image_registry import pushed_digest, qualify_image, strip_digest
 from embry0.workflows.qa._subtask_prep import prep_qa_sandbox_clone
 
@@ -188,6 +189,7 @@ async def build_qa_image(
                 ],
             ),
             timeout=10,
+            max_bytes=LOCKFILE_MAX_BYTES,
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_root = Path(tmpdir)
@@ -206,6 +208,9 @@ async def build_qa_image(
                     ["bash", "-c", f"cd /workspace && {install} 2>&1"],
                 ),
                 timeout=1200,
+                # The install's output is a log: only its end (why it failed) is kept.
+                max_bytes=LOG_TAIL_BYTES,
+                keep_tail=True,
             )
         except Exception as exc:
             raise ImageBuildError(f"dependency install ({install!r}) failed: {exc}") from exc
@@ -222,6 +227,8 @@ async def build_qa_image(
                     ],
                 ),
                 timeout=900,
+                max_bytes=LOG_TAIL_BYTES,
+                keep_tail=True,
             )
         except Exception as exc:
             logger.warning("turbo_warm_failed", error=str(exc))

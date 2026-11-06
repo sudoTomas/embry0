@@ -70,7 +70,7 @@ class _Sandbox:
     def build_exec_cmd(self, container_id: str, cmd: list[str], **_kw: Any) -> list[str]:
         return ["docker", "exec", container_id, *cmd]
 
-    async def run_cmd(self, cmd: list[str], timeout: float | None = None) -> str:  # noqa: ARG002
+    async def run_cmd(self, cmd: list[str], timeout: float | None = None, **_kwargs: Any) -> str:  # noqa: ARG002
         self.calls.append(cmd)
         joined = readable(cmd)
         if "status" in joined and "--porcelain" in joined:

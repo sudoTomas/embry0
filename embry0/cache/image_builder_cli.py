@@ -14,6 +14,7 @@ from typing import Any, Literal
 import structlog
 
 from embry0.cache.image_builder import build_qa_image
+from embry0.cache.lockfile_hash import LOCKFILE_MAX_BYTES
 from embry0.cache.prebaked_staleness import BaseFreshness, BaseImageDigestResolver, freshness
 
 logger = structlog.get_logger(__name__)
@@ -90,6 +91,7 @@ async def _compute_remote_lockfile_sha(
                 ],
             ),
             timeout=10,
+            max_bytes=LOCKFILE_MAX_BYTES,
         )
         return hashlib.sha256((lockfile_text or "").encode("utf-8")).hexdigest()
     finally:

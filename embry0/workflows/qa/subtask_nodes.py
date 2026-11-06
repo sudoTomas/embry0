@@ -24,6 +24,7 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 
 from embry0.execution import events
+from embry0.execution.docker_client import LOG_TAIL_BYTES
 from embry0.execution.runtime.egress import derive_deployed_egress_allowlist
 from embry0.workflows.qa._subtask_boot_phase import (
     _boot_phase_from_state,
@@ -44,6 +45,14 @@ from embry0.workflows.qa.subtask_state import (
 )
 
 logger = structlog.get_logger(__name__)
+
+#: The most of a Playwright storage-state file auth setup reads back. It holds
+#: an app's cookies and local storage, and with Playwright's ``indexedDB``
+#: option its IndexedDB records too, where an app may keep an offline cache
+#: of tens of MiB. 128 MiB leaves room for that and stays under
+#: ``MAX_OUTPUT_CAP_BYTES``; a larger state is reported as unreadable, so the
+#: sub-task ends inconclusive.
+STORAGE_STATE_MAX_BYTES = 128 * 1024 * 1024
 
 
 def _parent_writer(config: RunnableConfig) -> Any:
@@ -571,9 +580,12 @@ async def seed_node(state: SubTaskState, config: RunnableConfig) -> dict[str, An
         }
 
     try:
+        # The seed's output is a log: its end is kept (and stored), never all of it.
         out = await docker.run_cmd(
             docker.build_exec_cmd(sandbox_id, ["bash", "-c", resolved.seed_command]),
             timeout=resolved.seed_timeout_seconds,
+            max_bytes=LOG_TAIL_BYTES,
+            keep_tail=True,
         )
     except Exception as exc:  # noqa: BLE001
         return {
@@ -649,7 +661,7 @@ async def auth_setup_node(state: SubTaskState, config: RunnableConfig) -> dict[s
         )
 
     try:
-        await docker.run_cmd(exec_cmd, timeout=src.timeout_seconds)
+        await docker.run_cmd(exec_cmd, timeout=src.timeout_seconds, max_bytes=LOG_TAIL_BYTES, keep_tail=True)
     except Exception as exc:  # noqa: BLE001
         return _inconclusive(f"{source} step failed: {exc}")
 
@@ -657,6 +669,7 @@ async def auth_setup_node(state: SubTaskState, config: RunnableConfig) -> dict[s
         raw = await docker.run_cmd(
             docker.build_exec_cmd(sandbox_id, ["cat", QA_STORAGE_STATE_PATH]),
             timeout=10,
+            max_bytes=STORAGE_STATE_MAX_BYTES,
         )
     except Exception as exc:  # noqa: BLE001
         return _inconclusive(f"storage-state file not readable after {source} step: {exc}")
@@ -741,9 +754,12 @@ async def e2e_node(state: SubTaskState, config: RunnableConfig) -> dict[str, Any
         }
 
     try:
+        # The suite's output is a log: its end is kept (and stored), never all of it.
         out = await docker.run_cmd(
             docker.build_exec_cmd(sandbox_id, ["bash", "-c", resolved.e2e.command]),
             timeout=resolved.e2e.timeout_seconds,
+            max_bytes=LOG_TAIL_BYTES,
+            keep_tail=True,
         )
     except Exception as exc:  # noqa: BLE001
         return {

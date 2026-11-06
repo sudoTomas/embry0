@@ -147,7 +147,7 @@ async def test_build_qa_image_destroys_sandbox_on_npm_ci_failure(stub_helpers, m
         lambda root: "abc",
     )
 
-    async def crash(cmd, timeout=None):
+    async def crash(cmd, timeout=None, **_kwargs):
         joined = " ".join(cmd)
         if "npm ci" in joined:
             raise RuntimeError("npm exited non-zero")
