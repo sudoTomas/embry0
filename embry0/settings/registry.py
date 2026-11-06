@@ -229,8 +229,11 @@ class Section[M: SectionModel]:
     of the same name below, and every other entry stays), each one also in
     ``org_keys`` or ``repo_keys``. ``added_keys`` are list fields a document
     adds to what is below it the same way: the deployment's items after the
-    field's default ones and a layer's after what it inherits, each item once,
-    so no layer takes an item out of the list below it.
+    field's default ones and a layer's after what it inherits, each item once
+    (text without regard to case), so no layer takes an item out of the list
+    below it. A write counts either kind with what it inherits against the
+    field's ``max_length``; a read past it keeps the document's own entries
+    and the inherited ones that fit (:func:`embry0.settings.layers.merged`).
     ``env`` maps a field to the ``Embry0Config`` attribute its value is
     imported from, once (``embry0.settings.bootstrap``): a string is the
     attribute, an :class:`EnvImport` adds a converter, the parts it drops, or a

@@ -285,6 +285,36 @@ async def test_an_organization_s_budget_narrows_only_its_own_share_of_a_credenti
     )
 
 
+@pytest.mark.parametrize(
+    "narrower", [{"api_calls_per_tick": 0}, {"api_calls_per_tick": 3}, {"rate_reserve": 100_000}], ids=str
+)
+async def test_an_organization_that_reads_less_never_holds_the_meter_on_catch_up(narrower: dict[str, int]) -> None:
+    """A repository stopped only by its organization's narrower share is scored with what it read and goes on at the
+    next run: six hours of looks at a 24-hour interval are one full run, one fetch of the other organization."""
+    acme, globex = "acme/app", "globex/app"
+    records, order = fakes._history(2)
+    forges = {name: fakes.FakeForge(comment_pages=1, repo=name) for name in (acme, globex)}
+    store, mirror, clock = fakes.FakeStore(), fakes.FakeMirror(records, order), [NOW]
+    loop = _loop(Section({}, acme=narrower), store, mirror, clock, repos=(acme, globex), forges=forges)
+    runs = []
+    for _ in range(72):
+        runs.append(await loop.scheduled())
+        clock[0] += timedelta(minutes=5)
+    assert runs.count("run") == 1, f"one full run in six hours, not one every catch-up: {runs.count('run')}"
+    assert [repo for repo, _ in mirror.synced].count(globex) == 1, "globex is fetched once"
+    assert acme in store.stored and globex in store.stored, "and acme is scored with the events it read"
+
+
+async def test_the_credential_s_own_budget_still_holds_the_meter_on_catch_up() -> None:
+    """The deployment's budget running out is a backlog, as before: the repository is scored once its events
+    are read (#396 is the separate matter of many repositories on one credential)."""
+    records, order = fakes._history(2)
+    forges = {REPO: fakes.FakeForge(comment_pages=50, repo=REPO)}
+    store = fakes.FakeStore()
+    loop = _loop(Section({"api_calls_per_tick": 3}), store, fakes.FakeMirror(records, order), [NOW], forges=forges)
+    assert await loop.tick() is True and REPO not in store.stored, "a backlog: not scored until its events are read"
+
+
 async def test_the_section_s_bots_and_ai_agents_are_bots_when_scored(monkeypatch: pytest.MonkeyPatch) -> None:
     def record(sha: str, hours: int, email: str, body: str = "Work") -> str:
         at = fakes.START + timedelta(hours=hours)
@@ -336,8 +366,9 @@ async def test_the_judge_hears_the_repository_s_guidance_and_the_weighing_runs_o
     loop = _loop(section, fakes.FakeStore(), fakes.FakeMirror(records, order), [NOW], model="custom/local")
     await loop.tick()
     assert heard == ["Imports under third_party are never slop."], f"the owner's guidance reached the judge: {heard}"
-    assert threaded == ["unjudged", "compute"], (
-        f"finding the outliers to judge weighs every path, so it runs in a thread, as the scoring does: {threaded}"
+    assert threaded == ["history_of", "unjudged", "compute"], (
+        "building the history, finding the outliers to judge and scoring each go through every commit or path, "
+        f"so each runs in a thread: {threaded}"
     )
 
 

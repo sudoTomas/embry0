@@ -284,21 +284,67 @@ def test_the_most_specific_glob_wins_and_a_glob_with_a_slash_matches_from_the_ro
     assert type_weight("README.md", rules) == 0.0, "a file no glob matches weighs nothing"
 
 
-def test_a_path_is_checked_against_the_few_globs_that_could_match_it() -> None:
-    """20,000 paths under 200 directories, against the default globs and 900 globs of other directories: each
-    path is checked against a handful, not against every glob, and each path once however often it is asked."""
+def test_an_exact_path_wins_over_one_that_reaches_it_through_wildcards() -> None:
+    rules = _rules({"weights": {"src/**/main.py": 0.1, "src/main.py": 2.0, "docs/**/api.md": 0.1, "docs/api.md": 2.0}})
+    assert type_weight("src/main.py", rules) == 2.0, "src/main.py over src/**/main.py"
+    assert type_weight("src/app/main.py", rules) == 0.1, "which still weighs main.py deeper down"
+    assert type_weight("docs/api.md", rules) == 2.0, "docs/api.md over docs/**/api.md"
+    nested = _rules({"weights": {"a/**/b/*.ts": 0.1, "a/b/*.ts": 2.0}})
+    assert type_weight("a/b/c.ts", nested) == 2.0 and type_weight("a/x/b/c.ts", nested) == 0.1, (
+        "a/b/*.ts over a/**/b/*.ts where both match"
+    )
+
+
+@pytest.mark.parametrize(
+    "globs",
+    [
+        {f"x{i}/legacy/**": 0.0 for i in range(900)},
+        {f"**/d{i}/**": 0.0 for i in range(900)},
+        {f"*/x{i}/*.py": 0.0 for i in range(900)},
+        {f"*x{i}x*": 0.0 for i in range(900)},
+        {f"**/*_gen{i}*": 0.0 for i in range(900)},
+    ],
+    ids=[
+        "literal head",
+        "wildcard head, literal segment",
+        "wildcard head, extension",
+        "name, inner text",
+        "path, inner text",
+    ],
+)
+def test_a_path_is_checked_against_the_few_globs_that_could_match_it(globs: dict[str, float]) -> None:
+    """20,000 paths under 200 directories, against the default globs and 900 more: each path is checked against a
+    handful, not against every glob, whether a glob starts with a directory, a wildcard or neither, and each path
+    once however often it is asked."""
     rng = random.Random(3)
     extensions = ("py", "ts", "js", "go", "rs", "java", "md", "json", "tsx", "css", "proto", "swift")
     paths = [f"d{rng.randrange(200)}/s{rng.randrange(50)}/f{i}.{rng.choice(extensions)}" for i in range(20_000)]
-    rules = _rules({"weights": {f"x{i}/legacy/**": 0.0 for i in range(900)}})
+    rules = _rules({"weights": globs})
     weigh = Weigher(rules=rules)
     for path in paths + paths:
         weigh(path)
     for path in paths:
         type_weight(path, rules)
-    assert rules.evaluations < 5 * len(paths), (
+    assert rules.evaluations < 8 * len(paths), (
         f"{rules.evaluations} glob checks for {len(paths)} paths: a path is checked against every glob, or more "
         "than once"
+    )
+
+
+def test_globs_checked_against_every_path_are_bounded_when_written() -> None:
+    from embry0.services.slop_meter.globs import MAX_BROAD_GLOBS, broad
+
+    assert broad("*/*") and broad("*x*") and not broad("**/vendored/**") and not broad("*fixture*")
+    many = {f"*{chr(97 + i % 26)}{i // 26}*": 0.0 for i in range(MAX_BROAD_GLOBS + 1)}
+    assert all(broad(glob) for glob in many)
+    section = CATALOG.get("slop_meter")
+    assert section is not None
+    from embry0.settings.registry import SectionRefused
+
+    with pytest.raises(SectionRefused, match="checked against every path"):
+        section.validate({"weights": many}, context={})
+    assert len(section.validate({"weights": many}).weights) == len(many), (
+        "a stored value is never refused for it when read: a document below that grows later costs time, not the key"
     )
 
 

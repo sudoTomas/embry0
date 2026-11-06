@@ -254,6 +254,24 @@ def compute(inputs: Inputs) -> dict[str, Meter]:
     )
 
 
+def history_of(
+    rows: Iterable[Mapping[str, Any]],
+    event_rows: Iterable[Mapping[str, Any]],
+    bots: frozenset[str],
+    agents: Iterable[str],
+) -> tuple[list[Commit], list[Event]]:
+    """A repository's stored commits and events as a score reads them: each commit with ``bots`` and the AI
+    agents ``agents`` known (:func:`embry0.services.slop_meter.history.with_bots`), and the events of people.
+    Pure: runs in a thread."""
+    commits = with_bots([Commit.from_row(dict(row)) for row in rows], bots, agents)
+    events = [
+        Event(str(e["login"]), e["at"], str(e["kind"]))
+        for e in event_rows
+        if not is_bot(str(e["login"]), "", bots, agents)
+    ]
+    return commits, events
+
+
 def unjudged(inputs: Inputs) -> list[Outlier]:
     """The repository's outlier commits no model has judged yet. Pure: runs in a thread."""
     weigh = weigher_for(inputs.commits, inputs.files, inputs.settings, inputs.rules)
@@ -536,6 +554,14 @@ class SlopMeterLoop:
         and never less for another organization's repositories on the same
         credential. One credential running low never stops a repository read
         with another (#185).
+
+        A repository stopped by its credential's own budget or reserve waits:
+        it is scored once its events are read, and the loop comes back after
+        ``catchup_seconds``, as before. One stopped only by its organization's
+        narrower share is scored with what it read and goes on from its
+        cursors at the next run, at the interval: an organization that reads
+        less never holds the meter, and every other organization's
+        repositories, on its catch-up cadence.
         """
         deployment = self._meter.deployment()
         readers: dict[str, EventReader] = {}
@@ -566,14 +592,16 @@ class SlopMeterLoop:
                     share_of[repo] = shares[(credential, owner)]
         active = list(readers)
         waiting: list[str] = []
+        narrowed: list[str] = []
         while active:
             for repo in list(active):
                 try:
                     going = await readers[repo].step(share_of[repo])
                 except BudgetSpent:
-                    # Its share of its credential's budget is gone; the others' repositories go on.
+                    # Its share is gone; the others' repositories go on. Whose limit stopped it, the
+                    # credential's or only its organization's, is what it is at this moment.
                     active.remove(repo)
-                    waiting.append(repo)
+                    (waiting if share_of[repo].shared.spent else narrowed).append(repo)
                     continue
                 except Exception as exc:  # noqa: BLE001 - this repository's events stop for the tick
                     logger.warning("slop_meter_events_failed", repo=repo, error=str(exc)[:300])
@@ -581,7 +609,7 @@ class SlopMeterLoop:
                     continue
                 if not going:
                     active.remove(repo)
-        if waiting:
+        if waiting or narrowed:
             spent = [b for b in shares.values() if b.spent]
             logger.info(
                 "slop_meter_api_budget_spent",
@@ -589,6 +617,7 @@ class SlopMeterLoop:
                 remaining=[b.remaining for b in spent],
                 reserve=[b.reserve for b in spent],
                 waiting=sorted(waiting),
+                narrowed=sorted(narrowed),
             )
         for repo, reader in readers.items():
             batch = reader.batch
@@ -607,12 +636,9 @@ class SlopMeterLoop:
     async def _inputs(self, repo: str, settings: SlopMeterSettings) -> Inputs:
         bots = own_identities([*await self._bots(repo), *settings.bots])
         agents = agent_prefixes(settings.ai_agents)
-        commits = with_bots([Commit.from_row(r) for r in await self._store.commits(repo)], bots, agents)
-        events = [
-            Event(str(e["login"]), e["at"], str(e["kind"]))
-            for e in await self._store.events(repo)
-            if not is_bot(str(e["login"]), "", bots, agents)
-        ]
+        rows, event_rows = await self._store.commits(repo), await self._store.events(repo)
+        # Building every commit of a long history takes a while: off the event loop, as the scoring is.
+        commits, events = await asyncio.to_thread(history_of, rows, event_rows, bots, agents)
         files = {name: await self._mirror.read(repo, name) for name in (*CONFIG_FILES, AREAS_PATH)}
         logins, judgments = await self._store.logins(), await self._store.judgments(repo)
         return Inputs(commits, events, logins, judgments, files, settings, FileRules.of(settings))

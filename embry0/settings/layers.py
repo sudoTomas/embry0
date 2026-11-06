@@ -22,11 +22,16 @@ snapshot as a :class:`PerRepository`, so the service never imports the store.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+import structlog
+
 from embry0.settings.registry import Section, SectionModel, SectionRefused
+
+logger = structlog.get_logger(__name__)
 
 
 @runtime_checkable
@@ -98,11 +103,53 @@ def _reason(errors: Sequence[Mapping[str, Any]], key: str | None) -> str:
     return str((errors[0] if errors else {}).get("msg") or "refused").removeprefix("Value error, ")
 
 
-def merged(section: Section[Any], inherited: Mapping[str, Any], values: Mapping[str, Any]) -> dict[str, Any]:
-    """A document's ``values`` as they apply over ``inherited``: each key of ``section.merged_keys`` it sets, a
-    mapping, holds the section's default entries, then the inherited ones, under its own; each key of
-    ``section.added_keys`` it sets, a list, holds the section's default items, then the inherited ones, then its
-    own, each once; every other key as the document wrote it."""
+def _same(item: Any) -> Any:
+    """What two items of an added list are compared by: text without regard to case, as a list of bots is
+    matched; anything else as JSON writes it."""
+    return item.lower() if isinstance(item, str) else json.dumps(item, sort_keys=True)
+
+
+def cap_of(section: Section[Any], key: str) -> int | None:
+    """The most entries ``key`` of ``section`` holds, as its model's ``max_length`` says; None for no bound."""
+    info = section.model.model_fields.get(key)
+    for meta in getattr(info, "metadata", ()) or ():
+        bound = getattr(meta, "max_length", None)
+        if isinstance(bound, int):
+            return bound
+    return None
+
+
+def _trimmed(section: Section[Any], key: str, below: int, kept: int) -> None:
+    logger.warning(
+        "settings_layer_entries_left_out",
+        section=section.name,
+        key=key,
+        inherited=below,
+        kept=kept,
+        hint="the layer's own entries and the ones it inherits are more than the key holds: every entry of the "
+        "layer's own is kept, and the inherited ones that fit, in their order",
+    )
+
+
+def merged(
+    section: Section[Any], inherited: Mapping[str, Any], values: Mapping[str, Any], *, fit: bool = True
+) -> dict[str, Any]:
+    """A document's ``values`` as they apply over ``inherited``.
+
+    Each key of ``section.merged_keys`` it sets, a mapping, holds the section's
+    default entries, then the inherited ones, under its own. Each key of
+    ``section.added_keys`` it sets, a list, holds the section's default items,
+    then the inherited ones, then its own, each once (text without regard to
+    case: the first spelling stays). Every other key is as the document wrote
+    it.
+
+    ``fit`` is how a read takes a key that, so merged, holds more entries than
+    its ``max_length``, as when the document below it grew after the layer was
+    written: every entry the document names itself is kept, and the inherited
+    ones that fit, in their order, the rest left out with a warning
+    (``settings_layer_entries_left_out``). A write checks with ``fit`` false,
+    so the same count is refused there, naming the key.
+    """
     out = dict(values)
     defaults: dict[str, Any] | None = None
     for key in section.added_keys & set(values):
@@ -110,28 +157,65 @@ def merged(section: Section[Any], inherited: Mapping[str, Any], values: Mapping[
         if not isinstance(own, list | tuple):
             continue
         defaults = defaults if defaults is not None else section.defaults().model_dump(mode="json")
-        items: list[Any] = []
-        for layer in (defaults.get(key), inherited.get(key), own):
+        below: list[Any] = []
+        seen: set[Any] = set()
+        for layer in (defaults.get(key), inherited.get(key)):
             if isinstance(layer, list | tuple):
-                items.extend(item for item in layer if item not in items)
+                for item in layer:
+                    if _same(item) not in seen:
+                        seen.add(_same(item))
+                        below.append(item)
+        mine: list[Any] = []
+        named: set[Any] = set()
+        for item in own:
+            if _same(item) not in named:
+                named.add(_same(item))
+                mine.append(item)
+        items = below + [item for item in mine if _same(item) not in seen]
+        cap = cap_of(section, key)
+        if fit and cap is not None and len(items) > cap:
+            room = cap - len(mine)
+            trimmed: list[Any] = []
+            for item in below:
+                if _same(item) in named:
+                    trimmed.append(item)
+                elif room > 0:
+                    trimmed.append(item)
+                    room -= 1
+            trimmed.extend(item for item in mine if _same(item) not in seen)
+            _trimmed(section, key, len(below), len(trimmed))
+            items = trimmed
         out[key] = items
     for key in section.merged_keys & set(values):
         own = values[key]
         if not isinstance(own, Mapping):
             continue
         defaults = defaults if defaults is not None else section.defaults().model_dump(mode="json")
-        below: dict[str, Any] = {}
+        entries: dict[str, Any] = {}
         for layer in (defaults.get(key), inherited.get(key)):
             if isinstance(layer, Mapping):
-                below.update(layer)
-        out[key] = {**below, **own}
+                entries.update(layer)
+        cap = cap_of(section, key)
+        if fit and cap is not None and len({**entries, **own}) > cap:
+            room = cap - len(own)
+            kept: dict[str, Any] = {}
+            for name, value in entries.items():
+                if name in own:
+                    continue
+                if room <= 0:
+                    break
+                kept[name] = value
+                room -= 1
+            _trimmed(section, key, len(entries), len(kept) + len(own))
+            entries = kept
+        out[key] = {**entries, **own}
     return out
 
 
-def over_default(section: Section[Any], values: Mapping[str, Any]) -> dict[str, Any]:
+def over_default(section: Section[Any], values: Mapping[str, Any], *, fit: bool = True) -> dict[str, Any]:
     """The deployment's stored ``values`` as its readers read them: each merged key over the section's default
-    entries, so writing one entry never drops the others' defaults."""
-    return merged(section, {}, values)
+    entries, so writing one entry never drops the others' defaults. ``fit`` as :func:`merged` takes it."""
+    return merged(section, {}, values, fit=fit)
 
 
 def resolve(

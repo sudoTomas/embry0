@@ -348,3 +348,65 @@ def test_the_section_reads_as_an_operator_writes_it() -> None:
         "level_names": ["Clean", "Fine", "Mixed", "Sloppy", "Slop"],
         "bots": ["release-bot", "ci@acme.example"],
     }, data
+
+
+# ---- caps of keys merged over what they inherit ----
+
+
+def _layer_problems(values: Mapping[str, Any], inherited: Mapping[str, Any]) -> dict[str, str]:
+    """Each key an organization's layer writing ``values`` over ``inherited`` is refused at, with its message."""
+    _section()
+    try:
+        check(
+            CATALOG,
+            {"slop_meter": dict(values)},
+            stored={},
+            layer="organization",
+            inherited={"slop_meter": dict(inherited)},
+        )
+    except DocumentInvalid as exc:
+        return {".".join(str(part) for part in problem.loc[1:]): problem.msg for problem in exc.problems}
+    return {}
+
+
+def test_a_list_added_to_is_counted_with_what_it_inherits_when_written() -> None:
+    deployment = [f"dep-bot-{i}" for i in range(150)]
+    problems = _layer_problems({"bots": [f"org-bot-{i}" for i in range(60)]}, {"bots": deployment})
+    assert "holds 210 entries together with the ones it inherits" in problems.get("bots", ""), problems
+    variants = [name.upper() for name in deployment[:50]] + [f"org-bot-{i}" for i in range(50)]
+    assert _layer_problems({"bots": variants}, {"bots": deployment}) == {}, (
+        "a bot spelled otherwise is the same bot, as matching ignores case: 200, not 250"
+    )
+
+
+def test_globs_are_counted_with_the_defaults_and_what_they_inherit_when_written() -> None:
+    assert _layer_problems({"weights": {f"proj{i}/**": 0.0 for i in range(900)}}, {}) == {}, "979 with the defaults"
+    problems = _layer_problems({"weights": {f"proj{i}/**": 0.0 for i in range(990)}}, {})
+    assert "holds 1069 entries together with the ones it inherits" in problems.get("weights", ""), problems
+    deployment_problems = _problems({"weights": {f"proj{i}/**": 0.0 for i in range(990)}})
+    assert "holds 1069 entries" in deployment_problems.get("weights", ""), "the deployment's, over the defaults"
+
+
+def test_a_layer_keeps_its_own_entries_when_the_document_below_grows_past_the_cap() -> None:
+    """Written within the cap, the organization's list then meets a deployment that grew: every entry of its own
+    is still read, with the inherited ones that fit, never the inherited list alone."""
+    from embry0.settings.sections.slop_meter import SLOP_METER
+
+    snapshot = _snapshot(
+        {
+            "deployment": {"bots": [f"dep-bot-{i}" for i in range(190)]},
+            "organization:acme": {
+                "bots": [f"org-bot-{i}" for i in range(60)],
+                "weights": {f"proj{i}/**": 0.0 for i in range(990)},
+                "lines_per_hour": 20,
+            },
+        }
+    )
+    widgets = snapshot.resolve(SLOP_METER, repo=WIDGETS)
+    assert widgets.refused == (), f"nothing of acme's layer is refused: {widgets.refused}"
+    bots = widgets.model.bots
+    assert len(bots) == 200 and all(f"org-bot-{i}" in bots for i in range(60)), "all 60 of acme's own bots"
+    assert bots[:140] == tuple(f"dep-bot-{i}" for i in range(140)), "and the deployment's that fit, in order"
+    weights = widgets.model.weights
+    assert len(weights) == 1000 and all(f"proj{i}/**" in weights for i in range(990)), "all of acme's own globs"
+    assert widgets.model.lines_per_hour == 20, "and the rest of its layer"

@@ -57,14 +57,18 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
+from collections.abc import Iterable
 from typing import Annotated, Any, Final
 
-from pydantic import Field, StringConstraints, field_validator, model_validator
+from pydantic import Field, StringConstraints, ValidationInfo, field_validator, model_validator
 
 from embry0.services.slop_meter.globs import (
+    GRAM,
+    MAX_BROAD_GLOBS,
     MAX_DIR_LENGTH,
     MAX_GLOB_LENGTH,
     MAX_MARK_LENGTH,
+    broad,
     check_dir_name,
     check_glob,
     check_mark,
@@ -169,6 +173,24 @@ def _each(values: tuple[str, ...], check: Any, what: str) -> tuple[str, ...]:
     return values
 
 
+def _few_broad(globs: Iterable[str], info: ValidationInfo) -> None:
+    """Refuse, on a write, more broad globs than :data:`MAX_BROAD_GLOBS`: each is checked against every path.
+
+    Checked when a write is stored (it carries a validation context), with what
+    the key inherits, never when a stored value is read: a document below that
+    grows later never makes a layer's globs read as refused.
+    """
+    if info.context is None:
+        return
+    count = sum(1 for glob in globs if broad(glob))
+    if count > MAX_BROAD_GLOBS:
+        raise ValueError(
+            f"{count} globs, with the ones inherited, name no literal directory, no extension and no "
+            f"{GRAM} literal characters in a row (such as */* or *x*); at most {MAX_BROAD_GLOBS}, since each is "
+            "checked against every path"
+        )
+
+
 def _identity(text: str) -> str:
     if not text.strip():
         raise ValueError("write a name, an address or a login, not blanks")
@@ -241,11 +263,14 @@ class SlopMeterSettings(SectionModel):
             "(*.py), one with a '/' its path from the repository's root (db/migrations/*.sql, generated/**); '*' "
             "matches within one name, '?' one character, '**' any directories. Where several match, the most "
             "specific wins: a glob with a '/' over any without one; between two with one, more segments free of "
-            "wildcards, then more segments, then more literal characters; between two without, more literal "
-            "characters (*.min.js over *.js); then the first in alphabetical order. So generated/** weighs every "
-            "file under generated/, whatever its kind. Write globs in lowercase, quoted: matching ignores case, "
+            "wildcards, then fewer ** segments, then fewer other segments with a wildcard, then more segments, "
+            "then more literal characters; between two without, more literal characters (*.min.js over *.js); "
+            "then the first in alphabetical order. So generated/** weighs every file under generated/, whatever "
+            "its kind, and src/main.py wins over src/**/main.py. At most 16 globs that name no literal "
+            "directory, no extension and no three literal characters in a row (*/*, *x*). Write globs in lowercase, quoted: matching ignores case, "
             "and YAML reads a bare * as an alias. Merged entry by entry: a document adds or changes the globs it "
-            "names and keeps every other, so a glob set to 0 stops counting."
+            "names and keeps every other, so a glob set to 0 stops counting; at most 1000 globs in all, counted "
+            "with the defaults and what a write inherits."
         ),
     )
     excluded_dirs: tuple[DirName, ...] = Field(
@@ -435,8 +460,8 @@ class SlopMeterSettings(SectionModel):
             "add lines but no attention, and as a co-author they count as an AI agent does. Beyond the ones every "
             "deployment knows ([bot] accounts, noreply@ addresses, known coding agents) and embry0's own commit "
             "identities. Each document adds to the list it inherits, so a bot the deployment lists counts for "
-            "every organization; no layer takes one out. At most 200 in all. Was the organization's "
-            "slop_meter_bots."
+            "every organization; no layer takes one out, and a bot spelled otherwise is the same one. At most 200 "
+            "in all, counted with what a write inherits. Was the organization's slop_meter_bots."
         ),
     )
     ai_agents: tuple[Identity, ...] = Field(
@@ -446,13 +471,14 @@ class SlopMeterSettings(SectionModel):
             "AI coding agents beyond the known ones, each its commit address up to and including the @ (aider@, "
             "any domain) or a whole address (agent@tools.example), matched without regard to case: a commit one "
             "authors adds lines but no attention, and one it co-authors counts ai_coauthor_share of its author's "
-            "hours. Each document adds to the list it inherits, as bots. At most 200 in all."
+            "hours. Each document adds to the list it inherits, as bots. At most 200 in all, counted with what a write "
+            "inherits."
         ),
     )
 
     @field_validator("weights")
     @classmethod
-    def _weights(cls, value: dict[str, float]) -> dict[str, float]:
+    def _weights(cls, value: dict[str, float], info: ValidationInfo) -> dict[str, float]:
         for position, (glob, weight) in enumerate(value.items(), start=1):
             try:
                 check_glob(glob)
@@ -460,6 +486,7 @@ class SlopMeterSettings(SectionModel):
                 raise ValueError(f"glob {position}: {exc}") from None
             if not 0 <= weight <= 10:
                 raise ValueError(f"glob {position}: a weight is from 0 to 10")
+        _few_broad(value, info)
         return value
 
     @field_validator("excluded_dirs", "test_dirs")
@@ -469,8 +496,10 @@ class SlopMeterSettings(SectionModel):
 
     @field_validator("test_files")
     @classmethod
-    def _test_files(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return _each(value, check_glob, "glob")
+    def _test_files(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
+        _each(value, check_glob, "glob")
+        _few_broad(value, info)
+        return value
 
     @field_validator("test_marks")
     @classmethod

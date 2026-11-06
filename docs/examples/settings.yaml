@@ -436,13 +436,17 @@ slop_meter:
   # '*' matches within one name, '?' one character, '**' any directories.
   # Where several match, the most specific wins: a glob with a '/' over any
   # without one; between two with one, more segments free of wildcards, then
-  # more segments, then more literal characters; between two without, more
-  # literal characters (*.min.js over *.js); then the first in alphabetical
-  # order. So generated/** weighs every file under generated/, whatever its
-  # kind. Write globs in lowercase, quoted: matching ignores case, and YAML
-  # reads a bare * as an alias. Merged entry by entry: a document adds or
+  # fewer ** segments, then fewer other segments with a wildcard, then more
+  # segments, then more literal characters; between two without, more literal
+  # characters (*.min.js over *.js); then the first in alphabetical order. So
+  # generated/** weighs every file under generated/, whatever its kind, and
+  # src/main.py wins over src/**/main.py. At most 16 globs that name no
+  # literal directory, no extension and no three literal characters in a row
+  # (*/*, *x*). Write globs in lowercase, quoted: matching ignores case, and
+  # YAML reads a bare * as an alias. Merged entry by entry: a document adds or
   # changes the globs it names and keeps every other, so a glob set to 0 stops
-  # counting.
+  # counting; at most 1000 globs in all, counted with the defaults and what a
+  # write inherits.
   # weights:
   #   '*.py': 1.0
   #   '*.pyi': 1.0
@@ -683,7 +687,8 @@ slop_meter:
   # knows ([bot] accounts, noreply@ addresses, known coding agents) and
   # embry0's own commit identities. Each document adds to the list it
   # inherits, so a bot the deployment lists counts for every organization; no
-  # layer takes one out. At most 200 in all. Was the organization's
+  # layer takes one out, and a bot spelled otherwise is the same one. At most
+  # 200 in all, counted with what a write inherits. Was the organization's
   # slop_meter_bots.
   # bots: []
 
@@ -692,7 +697,7 @@ slop_meter:
   # (agent@tools.example), matched without regard to case: a commit one
   # authors adds lines but no attention, and one it co-authors counts
   # ai_coauthor_share of its author's hours. Each document adds to the list it
-  # inherits, as bots. At most 200 in all.
+  # inherits, as bots. At most 200 in all, counted with what a write inherits.
   # ai_agents: []
 
 # What the dashboard shows: the game layer, and the page it opens on.

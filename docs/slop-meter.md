@@ -74,19 +74,37 @@ slop_meter:
 **Globs.** A glob with no `/` matches a file's name in any directory (`*.py`); one with a `/` matches its path from the repository's root (`db/migrations/*.sql`, `generated/**`). `*` matches within one name, `?` one character, `**` any number of directories. Matching ignores case, so globs are written in lowercase, and quoted in YAML, which reads a bare `*` as an alias. A file no glob matches weighs nothing. Where several globs of `weights` match a file, the most specific wins:
 
 1. A glob with a `/` wins over any glob without one, so `generated/**: 0` weighs every file under `generated/` nothing, `.py`, `.proto` and `.graphql` alike.
-2. Between two globs with a `/`: the one with more segments free of wildcards (`src/legacy/**` over `src/**`), then the one with more segments, then the one with more literal characters (any but `*`, `?` and `/`).
+2. Between two globs with a `/`, in this order:
+   1. the one with more segments free of wildcards (`src/legacy/**` over `src/**`);
+   2. then the one with fewer `**` segments (`src/main.py` over `src/**/main.py`, `a/b/*.ts` over `a/**/b/*.ts`);
+   3. then the one with fewer other segments holding a wildcard;
+   4. then the one with more segments;
+   5. then the one with more literal characters (any but `*`, `?` and `/`).
 3. Between two globs without a `/`: the one with more literal characters (`*.min.js` over `*.js`).
 4. Any tie: the glob first in alphabetical order.
 
-The meter checks each path only against the globs that could match it (those under its first directory, those for its extension, and the few others) and weighs each path once a run.
+The meter files each glob once and checks a path only against the globs that could match it, then weighs each path once a run:
+
+| A glob… | is checked against |
+|---|---|
+| that names one file (`makefile`) | that name |
+| of one name with an extension (`*.py`, `test_?*.py`) | names with that extension |
+| of one name with three literal characters in a row (`*fixture*`) | names holding them |
+| with a `/` whose first segment is a name (`src/**`) | paths under that directory |
+| with a `/` and a segment that is a name (`**/vendored/**`) | paths holding that segment |
+| with a `/` whose last segment has an extension (`*/*.py`) | names with that extension |
+| with a `/` and three literal characters in a row (`**/*_gen*`) | paths holding them |
+
+Any other glob (`*/*`, `*x*`) is checked against every path, so a write may hold at most 16 of them in `weights`, and 16 in `test_files`, counted with what it inherits.
 
 **Layers.** An organization's layer may set every key but `enabled` and `interval_hours`, for its repositories: what counts as code, how fast its team attends to it, where its levels fall, its judge's guidance, its own bots and a narrower forge budget. A repository's layer may set what counts as code in its own layout: `weights`, `excluded_dirs`, `test_dirs`, `test_files` and `test_marks`.
 
 - `weights` is merged glob by glob, through every layer: a document adds or changes the globs it names and keeps every other, so a glob set to `0` stops counting.
-- `bots` and `ai_agents` add to what a layer inherits: a bot the deployment lists counts for every organization, and no layer takes one out.
+- `bots` and `ai_agents` add to what a layer inherits: a bot the deployment lists counts for every organization, and no layer takes one out. A bot spelled otherwise (`CI-Bot`, `ci-bot`) is the same bot, kept once.
+- **Counts.** A write is refused (422, naming the key and the count) when `weights`, `bots` or `ai_agents`, merged with what it inherits, would hold more than the key may (1000 globs, 200 bots, 200 agents). When a document below grows later, a layer read past the bound keeps every entry of its own, and the inherited ones that fit, in their order, with a warning (`settings_layer_entries_left_out`): never only the inherited list.
 - `excluded_dirs` and the `test_*` lists replace what they inherit whole, so a repository can take back a directory the default excludes (a `deps/` of its own code), restating the rest.
 - Every other key a layer sets replaces the inherited value.
-- **The forge budget.** A credential's budget is the deployment's `api_calls_per_tick` and `rate_reserve`. An organization's values only narrow its own repositories' share of it: fewer calls, or a larger reserve they stop at. They never widen it, and never lower what another organization reading with the same credential gets.
+- **The forge budget.** A credential's budget is the deployment's `api_calls_per_tick` and `rate_reserve`. An organization's values only narrow its own repositories' share of it: fewer calls, or a larger reserve they stop at. They never widen it, and never lower what another organization reading with the same credential gets. A repository stopped only by its organization's share is scored with the events it read, and reads on from where it stopped at the next run; only the credential's own budget running out brings the meter back sooner (`SLOP_METER_CATCHUP_SECONDS`).
 
 **Before this section.** `SLOP_METER_INTERVAL_SECONDS` (`0` turned the reading off), `SLOP_METER_API_CALLS_PER_TICK` and `SLOP_METER_RATE_RESERVE` are imported once, at the first start of the release that added the section, as `interval_hours` (or `enabled: false`), `api_calls_per_tick` and `rate_reserve`, and ignored after that. Each organization's `slop_meter_bots` was copied into its layer as `bots` ([api.md](api.md#organizations)). Everything else was a constant in the meter's code, and its default is that constant.
 

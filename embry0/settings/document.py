@@ -26,7 +26,7 @@ from typing import Any, Final
 import structlog
 import yaml
 
-from embry0.settings.layers import over_default
+from embry0.settings.layers import merged, over_default
 from embry0.settings.registry import (
     DOCUMENT_KEYS,
     MANAGED_BY_FILE,
@@ -251,6 +251,25 @@ def _message(section: Section[Any], error: Mapping[str, Any]) -> str:
     return msg
 
 
+def _too_many(section: Section[Any], error: Mapping[str, Any], count: int | None) -> str:
+    """A merged or added key that holds ``count`` entries, with what it inherits, more than it may."""
+    ctx = error.get("ctx") or {}
+    actual, most = count if count is not None else ctx.get("actual_length"), ctx.get("max_length")
+    if actual is None or most is None:
+        return _message(section, error)
+    return (
+        f"holds {actual} entries together with the ones it inherits (the default's and those of the documents "
+        f"above this one), more than the {most} it may hold"
+    )
+
+
+def _own_values(section: Section[Any], known: Mapping[str, Any]) -> dict[str, Any]:
+    """The keys of ``known`` a document merges or adds to, each as the document's own entries, checked alone:
+    what is stored, never what it inherits."""
+    names = {name: value for name, value in known.items() if name in section.merged_keys | section.added_keys}
+    return section.validate_alone(names) if names else {}
+
+
 def validate_section(section: Section[Any], raw: Mapping[str, Any]) -> SectionModel:
     """``raw`` as the section's model; :class:`SectionRefused` naming each refused key.
 
@@ -463,13 +482,22 @@ def check(
             continue
         base = mapping((inherited or {}).get(key)) if layer != "deployment" else {}
         before = {**base, **{k: v for k, v in kept_section.items() if k in section.model.model_fields}}
+        # A key merged or added to is checked as its readers read it, over what it inherits, so a count the read
+        # could not hold is refused here, naming the key; what is stored is the document's own entries.
+        combined = merged(section, base, known, fit=False)
         try:
             model = section.validate(
-                {**base, **known}, context=None if context is None else {**context, STORED: before}
+                {**base, **combined}, context=None if context is None else {**context, STORED: before}
             )
         except SectionRefused as exc:
             for error in exc.errors:
                 loc = tuple(error.get("loc") or ())
+                spread = loc and str(loc[0]) in known and str(loc[0]) in section.merged_keys | section.added_keys
+                if spread and error.get("type") == "too_long":
+                    entries = combined.get(str(loc[0]))
+                    count = len(entries) if isinstance(entries, list | tuple | dict) else None
+                    problems.append(Problem((key, *loc), "too_long", _too_many(section, error, count)))
+                    continue
                 if layer != "deployment" and not (loc and str(loc[0]) in known):
                     problems.append(
                         Problem(
@@ -481,11 +509,12 @@ def check(
                 else:
                     problems.append(Problem((key, *loc), str(error.get("type")), _message(section, error)))
             continue
+        own = _own_values(section, known)
         if layer == "deployment":
-            clean = {**model.model_dump(mode="json", exclude_unset=True), **kept}
+            clean = {**model.model_dump(mode="json", exclude_unset=True), **own, **kept}
         else:
             dumped = model.model_dump(mode="json")
-            clean = {**{name: dumped[name] for name in known}, **kept}
+            clean = {**{name: dumped[name] for name in known}, **own, **kept}
         if clean:
             data[key] = clean
     if problems:
