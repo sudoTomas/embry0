@@ -57,7 +57,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Annotated, Any, Final
 
 from pydantic import Field, StringConstraints, ValidationInfo, field_validator, model_validator
@@ -73,7 +73,7 @@ from embry0.services.slop_meter.globs import (
     check_glob,
     check_mark,
 )
-from embry0.settings.registry import EnvImport, Section, SectionModel, refuse_unprintable
+from embry0.settings.registry import STORED, EnvImport, Section, SectionModel, refuse_unprintable
 
 # ---- the defaults: the published algorithm's values, as the meter read them before this section ----
 
@@ -178,12 +178,18 @@ def _few_broad(globs: Iterable[str], info: ValidationInfo) -> None:
 
     Checked when a write is stored (it carries a validation context), with what
     the key inherits, never when a stored value is read: a document below that
-    grows later never makes a layer's globs read as refused.
+    grows later never makes a layer's globs read as refused. A write that leaves
+    no more broad globs than readers read before it (:data:`STORED`, merged with
+    what it inherits) is taken, so a layer over the bound because a document
+    below grew can still change its other keys, or take globs out.
     """
     if info.context is None:
         return
     count = sum(1 for glob in globs if broad(glob))
-    if count > MAX_BROAD_GLOBS:
+    stored = info.context.get(STORED) if isinstance(info.context, Mapping) else None
+    held = stored.get(info.field_name) if isinstance(stored, Mapping) and info.field_name else None
+    before = sum(1 for glob in held or () if broad(glob))
+    if count > MAX_BROAD_GLOBS and count > before:
         raise ValueError(
             f"{count} globs, with the ones inherited, name no literal directory, no extension and no "
             f"{GRAM} literal characters in a row (such as */* or *x*); at most {MAX_BROAD_GLOBS}, since each is "
@@ -240,7 +246,9 @@ class SlopMeterSettings(SectionModel):
             "Forge API calls one run may make with one credential, shared round-robin by the repositories read "
             "with it, to read comments, reviews and logins: the deployment's value is the credential's budget. "
             "An organization's value only narrows its own repositories' share of it, never widens it, and never "
-            "lowers another organization's on the same credential. Git fetches are not API calls."
+            "lowers another organization's on the same credential. A repository its share stops before its events "
+            "are all read keeps its previous score, or stays unscored, until a run reads them all: a run reads "
+            "from the first listing again. Git fetches are not API calls."
         ),
     )
     rate_reserve: int = Field(

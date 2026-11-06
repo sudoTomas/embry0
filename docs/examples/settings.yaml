@@ -419,8 +419,10 @@ slop_meter:
   # by the repositories read with it, to read comments, reviews and logins:
   # the deployment's value is the credential's budget. An organization's value
   # only narrows its own repositories' share of it, never widens it, and never
-  # lowers another organization's on the same credential. Git fetches are not
-  # API calls.
+  # lowers another organization's on the same credential. A repository its
+  # share stops before its events are all read keeps its previous score, or
+  # stays unscored, until a run reads them all: a run reads from the first
+  # listing again. Git fetches are not API calls.
   # api_calls_per_tick: 200
 
   # The rate limit a credential keeps for the jobs that use it: once its

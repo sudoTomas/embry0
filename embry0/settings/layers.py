@@ -23,7 +23,7 @@ snapshot as a :class:`PerRepository`, so the service never imports the store.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -126,13 +126,44 @@ def _trimmed(section: Section[Any], key: str, below: int, kept: int) -> None:
         key=key,
         inherited=below,
         kept=kept,
-        hint="the layer's own entries and the ones it inherits are more than the key holds: every entry of the "
-        "layer's own is kept, and the inherited ones that fit, in their order",
+        hint="the layer's own entries and the ones it inherits are more than the key holds: the most specific are "
+        "kept, the layer's own, then those of the documents below it, nearest first, then the default's",
     )
 
 
+def _name(entry: Any) -> Any:
+    """What two entries of a merged mapping are compared by: their name."""
+    return entry
+
+
+def _entries(value: Any, mapping_key: bool) -> list[Any]:
+    """The entries of a merged key's value (a mapping's names) or an added key's (a list's items); none for any
+    other value."""
+    if mapping_key:
+        return list(value) if isinstance(value, Mapping) else []
+    return list(value) if isinstance(value, list | tuple) else []
+
+
+def beyond_default(section: Section[Any], key: str, value: Any) -> Any:
+    """The part of the deployment's merged ``value`` of ``key`` that is its own: what it adds to the section's
+    default, or changes in it."""
+    default = section.defaults().model_dump(mode="json").get(key)
+    if isinstance(value, Mapping):
+        base = default if isinstance(default, Mapping) else {}
+        return {name: entry for name, entry in value.items() if name not in base or base[name] != entry}
+    if isinstance(value, list | tuple):
+        known = {_same(item) for item in default or ()}
+        return [item for item in value if _same(item) not in known]
+    return value
+
+
 def merged(
-    section: Section[Any], inherited: Mapping[str, Any], values: Mapping[str, Any], *, fit: bool = True
+    section: Section[Any],
+    inherited: Mapping[str, Any],
+    values: Mapping[str, Any],
+    *,
+    fit: bool = True,
+    tiers: Mapping[str, Sequence[Any]] | None = None,
 ) -> dict[str, Any]:
     """A document's ``values`` as they apply over ``inherited``.
 
@@ -144,71 +175,55 @@ def merged(
     it.
 
     ``fit`` is how a read takes a key that, so merged, holds more entries than
-    its ``max_length``, as when the document below it grew after the layer was
-    written: every entry the document names itself is kept, and the inherited
-    ones that fit, in their order, the rest left out with a warning
-    (``settings_layer_entries_left_out``). A write checks with ``fit`` false,
-    so the same count is refused there, naming the key.
+    its ``max_length``, as when a document below it grew after the layer was
+    written. The entries kept are the most specific first: every entry the
+    document names itself, then those of the documents below it, nearest
+    first, then the default's, each in its order, until the bound; the rest
+    are left out with a warning (``settings_layer_entries_left_out``).
+    ``tiers`` names, per key, the values of the documents below, nearest
+    first, ending with the default (:func:`resolve` knows them); without it,
+    the inherited value counts as one document. A write checks with ``fit``
+    false, so the same count is refused there, naming the key.
     """
     out = dict(values)
     defaults: dict[str, Any] | None = None
-    for key in section.added_keys & set(values):
+    for key in (section.merged_keys | section.added_keys) & set(values):
+        mapping_key = key in section.merged_keys
         own = values[key]
-        if not isinstance(own, list | tuple):
+        if not isinstance(own, Mapping if mapping_key else list | tuple):
             continue
         defaults = defaults if defaults is not None else section.defaults().model_dump(mode="json")
-        below: list[Any] = []
-        seen: set[Any] = set()
-        for layer in (defaults.get(key), inherited.get(key)):
-            if isinstance(layer, list | tuple):
-                for item in layer:
+        below = (defaults.get(key), inherited.get(key))
+        union: Any
+        if mapping_key:
+            union = {}
+            for layer in below:
+                if isinstance(layer, Mapping):
+                    union.update(layer)
+            union.update(own)
+        else:
+            union, seen = [], set()
+            for layer in (*below, own):
+                for item in _entries(layer, False):
                     if _same(item) not in seen:
                         seen.add(_same(item))
-                        below.append(item)
-        mine: list[Any] = []
-        named: set[Any] = set()
-        for item in own:
-            if _same(item) not in named:
-                named.add(_same(item))
-                mine.append(item)
-        items = below + [item for item in mine if _same(item) not in seen]
+                        union.append(item)
         cap = cap_of(section, key)
-        if fit and cap is not None and len(items) > cap:
-            room = cap - len(mine)
-            trimmed: list[Any] = []
-            for item in below:
-                if _same(item) in named:
-                    trimmed.append(item)
-                elif room > 0:
-                    trimmed.append(item)
-                    room -= 1
-            trimmed.extend(item for item in mine if _same(item) not in seen)
-            _trimmed(section, key, len(below), len(trimmed))
-            items = trimmed
-        out[key] = items
-    for key in section.merged_keys & set(values):
-        own = values[key]
-        if not isinstance(own, Mapping):
-            continue
-        defaults = defaults if defaults is not None else section.defaults().model_dump(mode="json")
-        entries: dict[str, Any] = {}
-        for layer in (defaults.get(key), inherited.get(key)):
-            if isinstance(layer, Mapping):
-                entries.update(layer)
-        cap = cap_of(section, key)
-        if fit and cap is not None and len({**entries, **own}) > cap:
-            room = cap - len(own)
-            kept: dict[str, Any] = {}
-            for name, value in entries.items():
-                if name in own:
-                    continue
-                if room <= 0:
-                    break
-                kept[name] = value
-                room -= 1
-            _trimmed(section, key, len(entries), len(kept) + len(own))
-            entries = kept
-        out[key] = {**entries, **own}
+        if fit and cap is not None and len(union) > cap:
+            identity: Callable[[Any], Any] = _name if mapping_key else _same
+            order = (own, *(tiers.get(key, ()) if tiers is not None else (inherited.get(key), defaults.get(key))))
+            keep: set[Any] = {identity(entry) for entry in _entries(own, mapping_key)}
+            for layer in order[1:]:
+                for entry in _entries(layer, mapping_key):
+                    if len(keep) >= cap:
+                        break
+                    keep.add(identity(entry))
+            _trimmed(section, key, len(union) - len(_entries(own, mapping_key)), len(keep))
+            if mapping_key:
+                union = {name: entry for name, entry in union.items() if name in keep}
+            else:
+                union = [item for item in union if _same(item) in keep]
+        out[key] = union
     return out
 
 
@@ -235,8 +250,15 @@ def resolve(
     current = dict(base)
     applied: dict[str, dict[str, Any]] = {}
     refused: list[LayerRefusal] = []
+    # Per key merged or added to, the documents below the next layer, nearest first, then the default: what a read
+    # past the key's bound keeps, the most specific first (:func:`merged`).
+    spread = (section.merged_keys | section.added_keys) & set(section.model.model_fields)
+    defaults = section.defaults().model_dump(mode="json") if spread else {}
+    tiers: dict[str, list[Any]] = {
+        key: [beyond_default(section, key, base.get(key)), defaults.get(key)] for key in spread
+    }
     for scope, values in layers:
-        accepted = merged(section, current, values)
+        accepted = merged(section, current, values, tiers=tiers)
         while accepted:
             try:
                 section.validate({**current, **accepted})
@@ -255,6 +277,8 @@ def resolve(
         if accepted:
             current = {**current, **accepted}
             applied[scope] = accepted
+            for key in spread & set(accepted):
+                tiers[key] = [values[key], *tiers[key]]
     if not applied and base_model is not None:
         return Resolved(base_model, {}, tuple(refused))
     try:

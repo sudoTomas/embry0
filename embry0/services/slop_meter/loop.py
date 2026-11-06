@@ -291,6 +291,9 @@ class _Work:
     #: Which credential reads it: a digest of its token, never the token. Each
     #: credential has its own rate limit, so each gets its own budget (#185).
     credential: str = ""
+    #: Its events were cut short by its organization's narrower share alone: not scored this run, and no
+    #: reason to come back sooner.
+    held: bool = False
 
 
 #: Reads what an organization's own settings still say of a moved key, until its layer has imported it
@@ -392,6 +395,9 @@ class SlopMeterLoop:
         self._backlog = False
         #: Whether the last look found the meter on; None before the first.
         self._enabled: bool | None = None
+        #: The repositories the last full run did not score because their organization's share cut their events
+        #: short: a rescore from what was read would score that short read, so they wait for a run that reads all.
+        self._held: set[str] = set()
         #: Each repository's configuration version as this process last scored it, or tried to: a look rescores a
         #: repository whose stored score has another version only once per version, so one whose rescoring fails
         #: is not tried again every look.
@@ -444,6 +450,17 @@ class SlopMeterLoop:
             if work[repo].more:
                 backlog = True
                 continue
+            if work[repo].held:
+                self._held.add(repo)
+                logger.info(
+                    "slop_meter_score_held",
+                    repo=repo,
+                    reason="its organization's forge share ran out before its events were read",
+                    hint="its previous score stays; a larger api_calls_per_tick for the organization lets a run "
+                    "read them all",
+                )
+                continue
+            self._held.discard(repo)
             try:
                 await self._score(repo)
             except Exception as exc:  # noqa: BLE001
@@ -558,10 +575,14 @@ class SlopMeterLoop:
         A repository stopped by its credential's own budget or reserve waits:
         it is scored once its events are read, and the loop comes back after
         ``catchup_seconds``, as before. One stopped only by its organization's
-        narrower share is scored with what it read and goes on from its
-        cursors at the next run, at the interval: an organization that reads
-        less never holds the meter, and every other organization's
-        repositories, on its catch-up cadence.
+        narrower share keeps its previous score, or stays unscored, since a
+        read cut short would look complete: its events are stored and its
+        listings' cursors move, but a run starts its reading over at the first
+        listing, so a share too small for one whole read never reaches the
+        reviews (#396 would keep the reader's place). It waits for the next
+        run, at the interval: an organization that reads less never holds the
+        meter, or every other organization's repositories, on its catch-up
+        cadence.
         """
         deployment = self._meter.deployment()
         readers: dict[str, EventReader] = {}
@@ -632,6 +653,8 @@ class SlopMeterLoop:
                 await self._store.set_login(login, email)
             if repo in waiting:
                 work[repo].more = True
+            elif repo in narrowed:
+                work[repo].held = True
 
     async def _inputs(self, repo: str, settings: SlopMeterSettings) -> Inputs:
         bots = own_identities([*await self._bots(repo), *settings.bots])
@@ -744,6 +767,8 @@ class SlopMeterLoop:
             state = await self._store.state(repo)
             if int(state.get("commits_read") or 0) < int(state.get("commits_total") or 0):
                 continue  # still reading its history: its catch-up scores it
+            if repo in self._held:
+                continue  # its events were cut short: a full run that reads them all scores it
             try:
                 await self._score(repo, judge=False)
                 rescored.append(repo)

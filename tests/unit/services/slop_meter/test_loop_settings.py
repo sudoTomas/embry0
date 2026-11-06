@@ -289,8 +289,8 @@ async def test_an_organization_s_budget_narrows_only_its_own_share_of_a_credenti
     "narrower", [{"api_calls_per_tick": 0}, {"api_calls_per_tick": 3}, {"rate_reserve": 100_000}], ids=str
 )
 async def test_an_organization_that_reads_less_never_holds_the_meter_on_catch_up(narrower: dict[str, int]) -> None:
-    """A repository stopped only by its organization's narrower share is scored with what it read and goes on at the
-    next run: six hours of looks at a 24-hour interval are one full run, one fetch of the other organization."""
+    """A repository stopped only by its organization's narrower share waits for the next run, at the interval: six
+    hours of looks at a 24-hour interval are one full run, and one fetch of the other organization."""
     acme, globex = "acme/app", "globex/app"
     records, order = fakes._history(2)
     forges = {name: fakes.FakeForge(comment_pages=1, repo=name) for name in (acme, globex)}
@@ -302,7 +302,50 @@ async def test_an_organization_that_reads_less_never_holds_the_meter_on_catch_up
         clock[0] += timedelta(minutes=5)
     assert runs.count("run") == 1, f"one full run in six hours, not one every catch-up: {runs.count('run')}"
     assert [repo for repo, _ in mirror.synced].count(globex) == 1, "globex is fetched once"
-    assert acme in store.stored and globex in store.stored, "and acme is scored with the events it read"
+    assert globex in store.stored, "and scored"
+
+
+def _narrowed(share: int, store: fakes.FakeStore | None = None) -> tuple[SlopMeterLoop, fakes.FakeStore, Any]:
+    acme, globex = "acme/app", "globex/app"
+    records, order = fakes._history(5)
+    forges = {name: fakes.FakeForge(comment_pages=1, repo=name) for name in (acme, globex)}
+    store = store if store is not None else fakes.FakeStore()
+    section = Section({}, acme={"api_calls_per_tick": share})
+    loop = _loop(section, store, fakes.FakeMirror(records, order), [NOW], repos=(acme, globex), forges=forges)
+    return loop, store, section
+
+
+@pytest.mark.parametrize("share", [1, 2, 3])
+async def test_a_share_too_small_for_a_whole_read_scores_nothing(share: int) -> None:
+    """A run starts reading at the first listing again, so a share that never reaches the reviews would score a
+    read that looks complete: the repository stays unscored, and never puts the meter on catch-up (#396 would
+    keep the reader's place)."""
+    loop, store, _ = _narrowed(share)
+    backlog = [await loop.tick() for _ in range(10)]
+    assert "acme/app" not in store.stored, f"{share} calls a run never read acme's reviews: no score is written"
+    assert "globex/app" in store.stored and not any(backlog), "the others are scored, at the interval"
+
+
+async def test_a_share_large_enough_for_a_whole_read_scores() -> None:
+    loop, store, _ = _narrowed(4)
+    for _ in range(10):
+        await loop.tick()
+    assert "acme/app" in store.stored, "four calls a run read every listing: acme is scored"
+    assert any(e["kind"] == "review" for e in store.event_rows["acme/app"].values()), "with its reviews"
+
+
+async def test_a_repository_whose_share_cuts_its_events_short_keeps_its_previous_score() -> None:
+    loop, store, section = _narrowed(200)
+    await loop.scheduled()
+    scored = store.stored["acme/app"]
+    section.owners["acme"] = {"api_calls_per_tick": 1}
+    loop._last_pass = None  # noqa: SLF001 - the next look is a full run
+    assert await loop.scheduled() == "run"
+    assert store.stored["acme/app"] is scored, "the run its share cut short wrote no score: the previous one stays"
+    section.owners["acme"] = {"api_calls_per_tick": 1, "weights": {"*.py": 2.0}}
+    loop._clock = lambda: NOW + timedelta(minutes=5)  # noqa: SLF001
+    assert await loop.scheduled() is None, "nor does a settings change rescore it from that short read"
+    assert store.stored["acme/app"] is scored
 
 
 async def test_the_credential_s_own_budget_still_holds_the_meter_on_catch_up() -> None:

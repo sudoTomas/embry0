@@ -232,8 +232,10 @@ class Section[M: SectionModel]:
     field's default ones and a layer's after what it inherits, each item once
     (text without regard to case), so no layer takes an item out of the list
     below it. A write counts either kind with what it inherits against the
-    field's ``max_length``; a read past it keeps the document's own entries
-    and the inherited ones that fit (:func:`embry0.settings.layers.merged`).
+    field's ``max_length``, refusing only a write that makes an over-bound
+    total larger; a read past it keeps the most specific entries first: the
+    document's own, then those of the documents below it, nearest first,
+    then the default's (:func:`embry0.settings.layers.merged`).
     ``env`` maps a field to the ``Embry0Config`` attribute its value is
     imported from, once (``embry0.settings.bootstrap``): a string is the
     attribute, an :class:`EnvImport` adds a converter, the parts it drops, or a

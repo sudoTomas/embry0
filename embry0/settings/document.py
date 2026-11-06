@@ -26,7 +26,7 @@ from typing import Any, Final
 import structlog
 import yaml
 
-from embry0.settings.layers import merged, over_default
+from embry0.settings.layers import cap_of, merged, over_default
 from embry0.settings.registry import (
     DOCUMENT_KEYS,
     MANAGED_BY_FILE,
@@ -251,6 +251,22 @@ def _message(section: Section[Any], error: Mapping[str, Any]) -> str:
     return msg
 
 
+def _size(value: Any) -> int:
+    return len(value) if isinstance(value, list | tuple | dict) else 0
+
+
+def _read_before(
+    section: Section[Any], base: Mapping[str, Any], stored_own: Mapping[str, Any], spread: Iterable[str]
+) -> dict[str, Any]:
+    """Each key merged or added to as a reader read it before a write: the document's stored entries over what it
+    inherits, or what it inherits alone."""
+    out: dict[str, Any] = {}
+    for name in spread:
+        own = stored_own.get(name, {} if name in section.merged_keys else [])
+        out[name] = merged(section, base, {name: own}, fit=False)[name]
+    return out
+
+
 def _too_many(section: Section[Any], error: Mapping[str, Any], count: int | None) -> str:
     """A merged or added key that holds ``count`` entries, with what it inherits, more than it may."""
     ctx = error.get("ctx") or {}
@@ -259,7 +275,7 @@ def _too_many(section: Section[Any], error: Mapping[str, Any], count: int | None
         return _message(section, error)
     return (
         f"holds {actual} entries together with the ones it inherits (the default's and those of the documents "
-        f"above this one), more than the {most} it may hold"
+        f"below this one), more than the {most} it may hold"
     )
 
 
@@ -481,10 +497,20 @@ def check(
                 data[key] = clean
             continue
         base = mapping((inherited or {}).get(key)) if layer != "deployment" else {}
-        before = {**base, **{k: v for k, v in kept_section.items() if k in section.model.model_fields}}
+        stored_own = {k: v for k, v in kept_section.items() if k in section.model.model_fields}
+        spread = (section.merged_keys | section.added_keys) & set(section.model.model_fields)
+        # What a reader read before the write: a key merged or added to over what it inherits.
+        before = {**base, **stored_own, **_read_before(section, base, stored_own, spread)}
         # A key merged or added to is checked as its readers read it, over what it inherits, so a count the read
-        # could not hold is refused here, naming the key; what is stored is the document's own entries.
+        # could not hold is refused here, naming the key; what is stored is the document's own entries. A write
+        # that does not make an over-bound total larger than readers read before (a document below grew since,
+        # and this one writes another key) is taken as the read takes it, fitted.
         combined = merged(section, base, known, fit=False)
+        fitted = merged(section, base, known, fit=True)
+        for name in spread & set(known):
+            cap = cap_of(section, name)
+            if cap is not None and _size(combined[name]) > cap and _size(combined[name]) <= _size(before.get(name)):
+                combined[name] = fitted[name]
         try:
             model = section.validate(
                 {**base, **combined}, context=None if context is None else {**context, STORED: before}
@@ -492,8 +518,8 @@ def check(
         except SectionRefused as exc:
             for error in exc.errors:
                 loc = tuple(error.get("loc") or ())
-                spread = loc and str(loc[0]) in known and str(loc[0]) in section.merged_keys | section.added_keys
-                if spread and error.get("type") == "too_long":
+                counted = bool(loc) and str(loc[0]) in known and str(loc[0]) in spread
+                if counted and error.get("type") == "too_long":
                     entries = combined.get(str(loc[0]))
                     count = len(entries) if isinstance(entries, list | tuple | dict) else None
                     problems.append(Problem((key, *loc), "too_long", _too_many(section, error, count)))

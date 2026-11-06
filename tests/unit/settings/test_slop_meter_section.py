@@ -410,3 +410,66 @@ def test_a_layer_keeps_its_own_entries_when_the_document_below_grows_past_the_ca
     weights = widgets.model.weights
     assert len(weights) == 1000 and all(f"proj{i}/**" in weights for i in range(990)), "all of acme's own globs"
     assert widgets.model.lines_per_hour == 20, "and the rest of its layer"
+
+
+def test_a_read_past_the_bound_keeps_the_most_specific_layers_entries_first() -> None:
+    """The deployment grew to the bound after acme's layer and acme/app's were written: each repository keeps its
+    own globs, then acme's, then the deployment's, then the default's, so two repositories of acme agree on
+    acme's globs."""
+    from embry0.services.slop_meter.weights import FileRules
+    from embry0.settings.sections.slop_meter import SLOP_METER
+
+    defaults = len(_section().defaults().weights)
+    snapshot = _snapshot(
+        {
+            "deployment": {"weights": {f"dep{i}/**": 0.5 for i in range(1000 - defaults)}},
+            "organization:acme": {"weights": {f"org{i}/**": 0.0 for i in range(200)}},
+            f"repository:{WIDGETS}": {"weights": {f"repo{i}/**": 0.0 for i in range(100)}},
+        }
+    )
+    for repo in (WIDGETS, "acme/gizmos"):
+        weights = snapshot.resolve(SLOP_METER, repo=repo).model.weights
+        assert sum(name.startswith("org") for name in weights) == 200, f"{repo} keeps all of acme's globs"
+        assert FileRules.of(snapshot.resolve(SLOP_METER, repo=repo).model).weight("org199/x.py") == 0.0, repo
+    widgets = snapshot.resolve(SLOP_METER, repo=WIDGETS).model.weights
+    assert sum(name.startswith("repo") for name in widgets) == 100, "and acme/widgets its own"
+
+
+def _stored_layer(values: Mapping[str, Any], inherited: Mapping[str, Any], stored: Mapping[str, Any]) -> dict[str, str]:
+    """Each key an organization's layer storing ``stored`` and writing ``values`` over ``inherited`` is refused at."""
+    _section()
+    try:
+        check(
+            CATALOG,
+            {"slop_meter": dict(values)},
+            stored={"slop_meter": dict(stored)},
+            layer="organization",
+            inherited={"slop_meter": dict(inherited)},
+            context={},
+        )
+    except DocumentInvalid as exc:
+        return {".".join(str(part) for part in problem.loc[1:]): problem.msg for problem in exc.problems}
+    return {}
+
+
+def test_a_layer_over_the_bound_because_a_document_below_grew_can_still_write() -> None:
+    """Only a write that makes an over-bound total larger is refused: the layer's other keys, or fewer entries,
+    go through; one more entry does not."""
+    bots = {"bots": [f"org-bot-{i}" for i in range(60)]}
+    grown = {"bots": [f"dep-bot-{i}" for i in range(190)]}
+    assert _stored_layer({**bots, "lines_per_hour": 25}, grown, {**bots, "lines_per_hour": 20}) == {}, (
+        "an unrelated key"
+    )
+    assert _stored_layer({"bots": bots["bots"][:50]}, grown, bots) == {}, "fewer of its own"
+    more = _stored_layer({"bots": [*bots["bots"], "one-more"]}, grown, bots)
+    assert "holds 251 entries together with the ones it inherits (the default's and those of the documents below" in (
+        more.get("bots", "")
+    ), more
+    broad = {f"{letter}{i}*": 0.5 for letter in "qr" for i in range(10)}
+    org = dict(list(broad.items())[:10])
+    deployment = dict(list(broad.items())[10:])
+    assert _stored_layer({"weights": org, "lines_per_hour": 25}, {"weights": deployment}, {"weights": org}) == {}, (
+        "20 broad globs because the deployment added ten: acme may still change its pace"
+    )
+    refused = _stored_layer({"weights": {**org, "s1*": 0.5}}, {"weights": deployment}, {"weights": org})
+    assert "checked against every path" in refused.get("weights", ""), "but not add an eleventh of its own"
