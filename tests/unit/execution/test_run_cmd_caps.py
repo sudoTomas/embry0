@@ -3,13 +3,15 @@
 ``DockerClient.run_cmd`` reads at most ``max_bytes`` of a command's stdout,
 ``DEFAULT_MAX_OUTPUT_BYTES`` unless its caller names another cap, and refuses
 one above ``MAX_OUTPUT_CAP_BYTES`` (``test_docker_client.py`` proves the reader
-keeps to it). This module pins the call sites, ``run_cmd`` and the git steps'
-``sandbox_git.run``: each one either names no cap or names one by a constant
-(never a literal), and the sites that name one are exactly the ones listed in
-``NAMED_CAPS``, with the cap each was given. ``run_cmd`` and ``run_cmd_bytes``
-are only ever called directly, so no alias, ``partial`` or ``getattr`` can
-carry a call past this check. A new call site that reads more than the default
-names a constant, says why in that constant's comment, and adds its line here.
+keeps to it). This module pins the call sites, ``run_cmd``, ``run_cmd_status``
+(the same reader, for a caller whose answer is the exit status) and the git
+steps' ``sandbox_git.run``: each one either names no cap or names one by a
+constant (never a literal), and the sites that name one are exactly the ones
+listed in ``NAMED_CAPS``, with the cap each was given. ``run_cmd``,
+``run_cmd_bytes`` and ``run_cmd_status`` are only ever called directly, so no
+alias, ``partial`` or ``getattr`` can carry a call past this check. A new call
+site that reads more than the default names a constant, says why in that
+constant's comment, and adds its line here.
 """
 
 from __future__ import annotations
@@ -76,7 +78,10 @@ NAMED_CAPS: dict[tuple[str, str], list[str]] = {
 # test_a_git_listing_reads_past_the_default_cap_up_to_its_own).
 FORWARDERS = {("embry0.execution.sandbox_git", "run")}
 
-_METHODS = frozenset({"run_cmd", "run_cmd_bytes"})
+_METHODS = frozenset({"run_cmd", "run_cmd_bytes", "run_cmd_status"})
+#: The methods whose call sites are checked for their cap: run_cmd, and run_cmd_status
+#: for a caller whose answer is the exit status.
+_CAPPED = frozenset({"run_cmd", "run_cmd_status"})
 
 
 class _Site:
@@ -89,7 +94,7 @@ class _Site:
 
 
 class _Collector(ast.NodeVisitor):
-    """Every ``<expr>.run_cmd(...)`` call, by the function it is in (``Class.method`` or ``function``)."""
+    """Every ``<expr>.run_cmd(...)`` and ``<expr>.run_cmd_status(...)`` call, by the function it is in."""
 
     def __init__(self, module: str) -> None:
         self.module = module
@@ -112,7 +117,7 @@ class _Collector(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
-        if isinstance(func, ast.Attribute) and func.attr == "run_cmd":
+        if isinstance(func, ast.Attribute) and func.attr in _CAPPED:
             self.sites.append(_Site(self.module, self._function(), node))
         elif _is_git_step(self.module, func):
             self.sites.append(_Site(self.module, self._function(), node))
@@ -163,10 +168,19 @@ def _value(site: _Site, node: ast.expr) -> Any:
 
 
 def _default_cap() -> int:
-    param = inspect.signature(DockerClient.run_cmd).parameters.get("max_bytes")
-    assert param is not None, "run_cmd must cap the stdout it holds (max_bytes), or every call site reads without one"
-    assert isinstance(param.default, int) and param.default > 0, f"run_cmd's default cap must be positive: {param}"
-    return param.default
+    """The cap a call site gets when it names none: one default, the same for every method checked here."""
+    defaults: dict[str, Any] = {}
+    for name in sorted(_CAPPED):
+        method = getattr(DockerClient, name, None)
+        assert method is not None, f"DockerClient.{name} is missing, so its call sites cannot be checked"
+        param = inspect.signature(method).parameters.get("max_bytes")
+        assert param is not None, (
+            f"{name} must cap the stdout it holds (max_bytes), or every call site reads without one"
+        )
+        assert isinstance(param.default, int) and param.default > 0, f"{name}'s default cap must be positive: {param}"
+        defaults[name] = param.default
+    assert len(set(defaults.values())) == 1, f"the checked methods must share one default cap: {defaults}"
+    return defaults["run_cmd"]
 
 
 def test_every_run_cmd_call_takes_the_default_cap_or_names_one() -> None:
