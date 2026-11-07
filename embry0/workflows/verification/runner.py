@@ -3,9 +3,16 @@
 The orchestrator drives this with ``docker exec`` — no agent, no LLM spend.
 Head runs in ``/workspace`` (the developer's checkout); base runs in a
 detached git worktree of the merge-base, so the two never share build
-output. Every command is wrapped so the exec itself always exits 0 and the
-real exit code comes back on a marker line: a red test run is a *result*,
-not a docker failure.
+output.
+
+A run's verdict depends only on that run, read from what the orchestrator
+controls. Its script enters the directory to run in, redirects all of its
+own output to the run's log and exits with the command's own status: that
+status is the result, and the orchestrator times the exec itself. The exec
+therefore prints nothing; anything on its streams came from docker or the
+script's setup, and the run is ``errored``. Every run starts and ends with a
+sweep of the sandbox's processes (``sweep.py``), and the log, read in an exec
+of its own only after the second sweep, gives the failed test names.
 """
 
 from __future__ import annotations
@@ -18,7 +25,7 @@ from typing import Any, Protocol
 import structlog
 
 from embry0.execution import sandbox_git
-from embry0.execution.docker_client import OutputTooLargeError
+from embry0.execution.docker_client import DEFAULT_MAX_OUTPUT_BYTES, OutputTooLargeError
 from embry0.safety.redaction import known_secret_values
 from embry0.workflows.qa._glob_match import compile_glob, match_any
 from embry0.workflows.verification.config import TestTarget, VerificationConfig
@@ -32,36 +39,43 @@ from embry0.workflows.verification.gate import (
     parse_test_output,
 )
 from embry0.workflows.verification.scrub import scrub_output
+from embry0.workflows.verification.sweep import SweepResult, sweep_sandbox
 
 logger = structlog.get_logger(__name__)
 
 HEAD_DIR = "/workspace"
 SCRATCH_DIR = "/tmp/embry0-verify"
 BASE_DIR = f"{SCRATCH_DIR}/base"
+LOG_DIR = f"{SCRATCH_DIR}/logs"
 # Output read back per run for parsing, and the part of it kept in the report.
 PARSE_TAIL_BYTES = 1_048_576
 STORED_TAIL_CHARS = 8000
-# What one run may print back: the log tail and the marker line. More than that
-# came from something else writing into the exec's output, and stops the run.
+# What the log read may print back: the log's tail, with room to spare. More
+# than that came from something else writing into the exec's output, and
+# stops the read.
 RUN_OUTPUT_MAX_BYTES = PARSE_TAIL_BYTES + 64 * 1024
 # `timeout` exits 124 on expiry, 137 when the -k SIGKILL was needed.
 _TIMEOUT_EXIT_CODES = frozenset({124, 137})
-_RESULT_RE = re.compile(r"^EMBRY0_VERIFY_RESULT exit=(\d+) ms=(\d+)$")
-_SHA_RE = re.compile(r"^EMBRY0_VERIFY_(HEAD|BASE)=([0-9a-f]{40})$", re.MULTILINE)
+# docker exec exits 255 with nothing printed when it lost the daemon: the
+# status is the command's own only if the sandbox still answers afterwards.
+_LOST_EXEC_EXIT = 255
+_MARKER_KEYS = ("EMBRY0_VERIFY_HEAD", "EMBRY0_VERIFY_BASE")
+_MARKER_RE = re.compile(r"EMBRY0_VERIFY_(HEAD|BASE)=([0-9a-f]{40})")
+# The one line the run script prints itself, before it redirects its output.
+_NO_RUN_DIR = "EMBRY0_VERIFY_NO_RUN_DIR"
+# The shell the run script runs under. The script is plain POSIX, and the
+# images' /bin/sh (dash) prints nothing when it starts, even when the
+# sandbox's LC_ALL names a locale the image lacks; bash prints a setlocale
+# warning on stderr then, before the script can redirect anything. The test
+# command itself still runs with `bash -c`, its output in the log.
+RUN_SHELL = "sh"
 
 _RUN_SCRIPT = f"""
-mkdir -p {SCRATCH_DIR}/logs
-log={SCRATCH_DIR}/logs/"$EMBRY0_VERIFY_LOG"
-start=$(date +%s%3N)
-if cd "$EMBRY0_VERIFY_DIR" 2>"$log"; then
-  timeout -k 15 "$EMBRY0_VERIFY_TIMEOUT" bash -c "$EMBRY0_VERIFY_CMD" >"$log" 2>&1 </dev/null
-  code=$?
-else
-  code=1
-fi
-end=$(date +%s%3N)
-tail -c {PARSE_TAIL_BYTES} "$log"
-printf '\\nEMBRY0_VERIFY_RESULT exit=%s ms=%s\\n' "$code" "$((end - start))"
+cd "$EMBRY0_VERIFY_DIR" 2>/dev/null || {{ echo {_NO_RUN_DIR}; exit 1; }}
+exec >{LOG_DIR}/"$EMBRY0_VERIFY_LOG" 2>&1 </dev/null || exit 1
+timeout -k 15 "$EMBRY0_VERIFY_TIMEOUT" bash -c "$EMBRY0_VERIFY_CMD"
+code=$?
+exit "$code"
 """.strip()
 
 
@@ -69,6 +83,8 @@ class SandboxDocker(Protocol):
     def build_exec_cmd(self, container: str, command: list[str], *args: Any, **kwargs: Any) -> Any: ...
 
     async def run_cmd(self, cmd: Any, timeout: int = 60, *, max_bytes: int = ...) -> str: ...
+
+    async def run_cmd_status(self, cmd: Any, timeout: int = 60, *, max_bytes: int = ...) -> tuple[int, str, str]: ...
 
 
 def select_targets(targets: list[TestTarget], changed_files: list[str]) -> list[TestTarget]:
@@ -109,72 +125,162 @@ _CLEANUP_SCRIPT = (
 )
 
 
-def _not_run(target: TestTarget, side: Side, attempt: int, why: str) -> TargetRun:
+def _not_run(target: TestTarget, side: Side, attempt: int, why: str, *, duration_ms: int = 0) -> TargetRun:
     return TargetRun(
         target=target.name,
         side=side,
         attempt=attempt,
         outcome="errored",
         exit_code=None,
-        duration_ms=0,
+        duration_ms=duration_ms,
         failed_tests=None,
         summary=None,
         output_tail=why,
     )
 
 
+def parse_prepared(output: str) -> tuple[str, str] | None:
+    """``(head, base)`` from the prepare step's output, or None.
+
+    Strict: every line that names a marker must be exactly
+    ``EMBRY0_VERIFY_HEAD=<sha>`` or ``EMBRY0_VERIFY_BASE=<sha>`` with a full
+    40-hex sha, and each must appear once. A second line, a short sha or a
+    missing one is not something to choose between: the gate errors, and a
+    person merges.
+    """
+    found: dict[str, list[str]] = {"HEAD": [], "BASE": []}
+    for line in output.split("\n"):
+        if not any(key in line for key in _MARKER_KEYS):
+            continue
+        marker = _MARKER_RE.fullmatch(line)
+        if marker is None:
+            return None
+        found[marker.group(1)].append(marker.group(2))
+    if len(found["HEAD"]) != 1 or len(found["BASE"]) != 1:
+        return None
+    return found["HEAD"][0], found["BASE"][0]
+
+
+async def _read_log(docker: SandboxDocker, container_id: str, log_name: str) -> str | None:
+    """The run's log tail, read in an exec of its own; None when it cannot be read."""
+    cmd = docker.build_exec_cmd(container_id, ["tail", "-c", str(PARSE_TAIL_BYTES), "--", f"{LOG_DIR}/{log_name}"])
+    try:
+        code, out, err = await docker.run_cmd_status(cmd, timeout=60, max_bytes=RUN_OUTPUT_MAX_BYTES)
+    except Exception as exc:  # noqa: BLE001 — an unreadable log is recorded, not a crash
+        logger.warning("verify_log_read_failed", log=log_name, error=str(exc)[:300])
+        return None
+    if code != 0 or err:
+        logger.warning("verify_log_read_failed", log=log_name, returncode=code, stderr=_excerpt(err))
+        return None
+    return out
+
+
+def _excerpt(text: str) -> str:
+    """Up to 300 characters of sandbox output for a log line: scrubbed first, so a cut leaves no fragment."""
+    return scrub_output(text, known_values=known_secret_values())[:300]
+
+
+def _sweep_note(when: str, swept: SweepResult) -> str:
+    return f"{when}, {swept.describe()}"
+
+
 async def _run_once(
     docker: SandboxDocker, container_id: str, target: TestTarget, side: Side, attempt: int
 ) -> TargetRun:
+    before = await sweep_sandbox(docker, container_id)
+    if not before.clean:
+        return _not_run(target, side, attempt, _sweep_note("not run: before the run", before))
+
+    log_name = f"{target.name}.{side}.{attempt}.log"
     env = {
         "EMBRY0_VERIFY_DIR": HEAD_DIR if side == "head" else BASE_DIR,
         "EMBRY0_VERIFY_CMD": target.command,
         "EMBRY0_VERIFY_TIMEOUT": str(target.timeout_seconds),
-        "EMBRY0_VERIFY_LOG": f"{target.name}.{side}.{attempt}.log",
+        "EMBRY0_VERIFY_LOG": log_name,
     }
-    cmd = docker.build_exec_cmd(container_id, ["bash", "-c", _RUN_SCRIPT], env=env)
+    cmd = docker.build_exec_cmd(container_id, [RUN_SHELL, "-c", _RUN_SCRIPT], env=env)
+    unusable: TargetRun | None = None
+    code: int | None = None
+    printed = ""
+    started = time.monotonic()
     try:
         # The in-sandbox `timeout` is the real limit; this one only catches a
         # wedged docker exec.
-        raw = await docker.run_cmd(cmd, timeout=target.timeout_seconds + 90, max_bytes=RUN_OUTPUT_MAX_BYTES)
+        code, out, err = await docker.run_cmd_status(cmd, timeout=target.timeout_seconds + 90)
+        printed = out + err
     except TimeoutError:
-        return replace(_not_run(target, side, attempt, "the run did not return in time"), outcome="timed_out")
+        # Past the in-sandbox limit and its grace: the docker client did not
+        # return, which says nothing about the tests. Only 124/137 from the
+        # exec itself is a timed-out run.
+        unusable = _not_run(target, side, attempt, "the run's exec did not return within the orchestrator's limit")
     except OutputTooLargeError:
-        logger.warning("verify_run_output_too_large", target=target.name, side=side, max_bytes=RUN_OUTPUT_MAX_BYTES)
-        return _not_run(
-            target, side, attempt, f"the run printed more than {RUN_OUTPUT_MAX_BYTES} bytes back, so it was stopped"
+        logger.warning("verify_run_output_too_large", target=target.name, side=side)
+        unusable = _not_run(
+            target,
+            side,
+            attempt,
+            f"the run printed more than {DEFAULT_MAX_OUTPUT_BYTES} bytes on its exec, so it was stopped",
         )
     except Exception as exc:  # noqa: BLE001 — a docker failure is a recorded result, not a crash
         logger.warning("verify_run_exec_failed", target=target.name, side=side, error=str(exc)[:300])
-        return _not_run(target, side, attempt, "the command could not be started in the sandbox")
+        unusable = _not_run(target, side, attempt, "the command could not be started in the sandbox")
+    duration_ms = round((time.monotonic() - started) * 1000)
 
-    # rstrip, not strip: the marker is the LAST line, and DockerClient.run_cmd
-    # happening to strip its output is not something to depend on (review of
-    # #341 — a caller that did not strip made every target "errored").
-    body, _, last = (raw or "").rstrip().rpartition("\n")
-    marker = _RESULT_RE.match(last.strip())
-    if marker is None:
-        return _not_run(target, side, attempt, "the run did not report an exit code")
-    exit_code, duration_ms = int(marker.group(1)), int(marker.group(2))
-    parsed = parse_test_output(body)
-    outcome = "passed" if exit_code == 0 else "timed_out" if exit_code in _TIMEOUT_EXIT_CODES else "failed"
+    # Always, whatever the exec did: a run that did not return is still
+    # running in the sandbox until this stops it.
+    after = await sweep_sandbox(docker, container_id)
+    if not after.clean:
+        return _not_run(target, side, attempt, _sweep_note("not judged: after the run", after), duration_ms=duration_ms)
+    if unusable is not None:
+        return replace(unusable, duration_ms=duration_ms)
+    if printed:
+        # The script redirects its own output before it runs anything: only
+        # docker or the script's setup prints on the exec's streams.
+        if printed == f"{_NO_RUN_DIR}\n":
+            why = "the directory to run in could not be entered in the sandbox"
+        else:
+            logger.warning(
+                "verify_run_exec_printed",
+                target=target.name,
+                side=side,
+                returncode=code,
+                output=_excerpt(printed),
+            )
+            why = "the command could not be started in the sandbox"
+        return _not_run(target, side, attempt, why, duration_ms=duration_ms)
+    if code is None or code < 0:
+        # No status, or the docker client itself was ended by a signal: none of the command's.
+        logger.warning("verify_run_exec_without_status", target=target.name, side=side, returncode=code)
+        return _not_run(
+            target, side, attempt, "the command could not be started in the sandbox", duration_ms=duration_ms
+        )
+
+    log = await _read_log(docker, container_id, log_name)
+    if log is None and code == _LOST_EXEC_EXIT:
+        return _not_run(target, side, attempt, "the sandbox stopped answering during the run", duration_ms=duration_ms)
+    parsed = parse_test_output(log or "")
+    outcome = "passed" if code == 0 else "timed_out" if code in _TIMEOUT_EXIT_CODES else "failed"
+    # Command output is unreviewed text from the repo under test, and the
+    # sandbox env holds tokens: scrub before it reaches the database and the
+    # deliverables API (review of #341). Registry secrets have no known
+    # shape; the scrubber also takes them by value (spec 2026-09-29 §5), from
+    # the set seeded at startup. Scrub before cutting the tail: a cut through
+    # a secret would leave a fragment neither signal recognises.
+    tail = (
+        scrub_output(log.strip(), known_values=known_secret_values())[-STORED_TAIL_CHARS:]
+        if log is not None
+        else "the run's log could not be read"
+    )
     return TargetRun(
         target=target.name,
         side=side,
         attempt=attempt,
         outcome=outcome,  # type: ignore[arg-type]
-        exit_code=exit_code,
+        exit_code=code,
         duration_ms=duration_ms,
-        failed_tests=parsed.failed_tests if exit_code != 0 else None,
+        failed_tests=parsed.failed_tests if code != 0 else None,
         summary=parsed.summary,
-        # Command output is unreviewed text from the repo under test, and the
-        # sandbox env holds tokens: scrub before it reaches the database and
-        # the deliverables API (review of #341).
-        # Registry secrets have no known shape; the scrubber also takes them
-        # by value (spec 2026-09-29 §5), from the set seeded at startup.
-        # Scrub before cutting the tail: a cut through a secret would leave
-        # a fragment neither signal recognises.
-        output_tail=scrub_output(body.strip(), known_values=known_secret_values())[-STORED_TAIL_CHARS:],
+        output_tail=tail,
         name_granularity=parsed.granularity or "test",
     )
 
@@ -209,9 +315,10 @@ async def run_gate(
             return GateReport.without_runs("error", note=str(refused))
         logger.warning("verify_prepare_failed", base_ref=base_ref, error=str(exc)[:300])
         return GateReport.without_runs("error", note="the base commit could not be checked out in the sandbox")
-    shas = dict(_SHA_RE.findall(prepared or ""))
-    if "HEAD" not in shas or "BASE" not in shas:
+    shas = parse_prepared(prepared or "")
+    if shas is None:
         return GateReport.without_runs("error", note="the base and head commits could not be resolved")
+    head_sha, base_sha = shas
 
     started = time.monotonic()
     out_of_time = False
@@ -256,8 +363,8 @@ async def run_gate(
     return build_report(
         targets=verdicts,
         runs=runs,
-        base_sha=shas["BASE"],
-        head_sha=shas["HEAD"],
+        base_sha=base_sha,
+        head_sha=head_sha,
         base_ref=base_ref,
         note="the gate's time budget was used up before every run finished" if out_of_time else "",
     )

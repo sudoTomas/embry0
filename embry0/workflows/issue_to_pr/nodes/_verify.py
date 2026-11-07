@@ -3,7 +3,10 @@
 Sits between ``review`` (approved) and whatever the route plan says comes
 next. No agent runs here and nothing is spent on a model:
 
-1. classify the diff into a verification tier (``verification.tiers``);
+1. stop the processes earlier steps left in the dev sandbox
+   (``verification.sweep``), list the change's files with a fresh diff
+   there and classify them into a verification tier
+   (``verification.tiers``);
 2. run the repo's configured test commands on base and head in the dev
    sandbox and compare them (``verification.runner`` / ``.gate``);
 3. store the result (``job_verifications`` + ``state["verification"]``);
@@ -32,6 +35,7 @@ from embry0.workflows.verification.config import VerificationConfig, load_verifi
 from embry0.workflows.verification.gate import GateReport
 from embry0.workflows.verification.result import compose_result
 from embry0.workflows.verification.runner import run_gate
+from embry0.workflows.verification.sweep import sweep_sandbox
 from embry0.workflows.verification.tiers import classify_diff, plan_browser_qa
 
 logger = structlog.get_logger(__name__)
@@ -131,18 +135,25 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
     from embry0.workflows.issue_to_pr.nodes._review import _configured_base_branch
 
     base_ref = str(state.get("base_branch") or "main")
-    changed_files = list(state.get("changed_files") or [])
+    # The change's files come from this sandbox, now, never from the list an
+    # earlier step stored. Unknown is [], the strict reading: every target
+    # runs and the tier is the strictest.
+    changed_files: list[str] = []
     if docker is not None and container_id:
+        swept = await sweep_sandbox(docker, str(container_id))
         base_ref = await resolve_base_branch(
             docker=docker, container_id=container_id, configured=_configured_base_branch(state)
         )
-        if not changed_files:
+        if not swept.clean:
+            logger.warning("verify_changed_files_unknown", job_id=job_id, reason=swept.describe())
+        else:
             try:
                 changed_files = await compute_changed_files_via_diff(
-                    docker=docker, container_id=container_id, base_branch=base_ref
+                    docker=docker, container_id=container_id, base_branch=base_ref, strict=True
                 )
             except Exception:
                 logger.warning("verify_changed_files_diff_failed", job_id=job_id, exc_info=True)
+                changed_files = []
 
     verification_config, config_problem = await _stored_config(configurable, repo)
     tier = classify_diff(changed_files, verification_config.tiers if verification_config else None)
