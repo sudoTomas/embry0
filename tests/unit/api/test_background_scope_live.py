@@ -13,6 +13,7 @@ operator writes it, and repositories are unregistered through
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import os
 from collections.abc import AsyncIterator, Sequence
@@ -31,8 +32,11 @@ from embry0.services.scout import ScoutLoop
 from embry0.services.slop_meter.history import Commit
 from embry0.services.slop_meter.loop import SlopMeterLimits, SlopMeterLoop
 from embry0.services.slop_meter.mirror import GitMirror
+from embry0.settings.sections import CATALOG
+from embry0.settings.store import build_snapshot
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.scout import ScoutRunsRepository
+from tests.fixtures.settings_reads import snapshots_taken
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
 pytestmark = pytest.mark.requires_postgres
@@ -49,6 +53,10 @@ LEDGER = """## Ledger
 """
 
 
+async def _no_ticks(_loop: ScoutLoop) -> None:
+    """The ticker the lifespan starts for the production scout, stopped: it returns before its first tick."""
+
+
 @pytest.fixture
 async def app(
     db_with_migrations: DatabasePool,
@@ -57,7 +65,14 @@ async def app(
     tmp_path: Path,
 ) -> AsyncIterator[Any]:
     """The real app through its real lifespan, with ``acme`` and ``globex`` registered and four of their
-    repositories. The meter's and the leads' schedules are off, so only the ticks a test runs read anything."""
+    repositories. The meter's and the leads' schedules are off and the scout's ticker never runs, so only the
+    ticks a test runs read anything.
+
+    The scout has no schedule to turn off: its ticker ticks at once and then every five minutes. A first tick
+    slowed by a loaded runner came after a test had enrolled acme's repositories and started scouting jobs of
+    its own on them, and the test's tick then found them scouted already (#412).
+    """
+    monkeypatch.setattr(ScoutLoop, "start", _no_ticks)
     monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
     with patch.dict(os.environ, {}, clear=True):
         config = Embry0Config(  # type: ignore[call-arg]
@@ -108,17 +123,53 @@ async def _put(app: Any, text: str, **params: str) -> None:
     assert resp.status_code == 200, f"the settings document took {text!r} at {params or 'the deployment'}: {resp.text}"
 
 
-def _count_snapshots(app: Any, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+async def test_a_tick_s_snapshot_count_leaves_out_a_ticker_reading_meanwhile(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What every snapshot count here rests on (#412): the lifespan's tickers read the same store whenever they
+    tick, so a count takes in the tick's reads and the tasks it starts, and no read of a task started before it."""
     store = app.state.settings
-    read = store.snapshot
-    count = [0]
+    asked, answered = asyncio.Event(), asyncio.Event()
+    fake = build_snapshot(CATALOG, [], log=False)
+    got: list[Any] = []
 
-    async def counted() -> Any:
-        count[0] += 1
-        return await read()
+    async def ticker() -> None:
+        await asked.wait()
+        got.append(await store.snapshot())
+        answered.set()
 
-    monkeypatch.setattr(store, "snapshot", counted)
-    return count
+    background = asyncio.create_task(ticker())  # started before the count, as the lifespan starts its tickers
+
+    async def tick() -> list[Any]:
+        asked.set()
+        await answered.wait()  # the ticker reads the store in the middle of the tick
+        return [await store.snapshot(), await asyncio.create_task(store.snapshot())]
+
+    own, taken = await snapshots_taken(store, monkeypatch, tick(), answer=lambda n: fake)
+    await background
+    assert taken == 2, (
+        f"the tick's own read and the task it started count, and the ticker's read during the tick does not: {taken}"
+    )
+    assert own == [fake, fake] and got[0] is not fake, "an answer goes to the tick's reads only, never the ticker's"
+
+
+async def test_the_production_scout_s_ticker_does_not_run_beside_a_test_s_ticks(app: Any) -> None:
+    """What the scout's test here rests on: with acme's repositories enrolled and a model set, the ticker the
+    lifespan starts returns without a tick, and so scouts nothing of its own."""
+    await _put(
+        app, f"scout:\n  templates: [kintsugi-trace]\n  max_in_flight: 10\nbackground_models:\n  scout: {LOCAL}\n"
+    )
+    await _put(app, "background:\n  scout: true\n", owner="acme")
+    ticker = asyncio.create_task(app.state.scout.start())
+    done, _ = await asyncio.wait({ticker}, timeout=5)
+    ticker.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await ticker
+    runs = await app.state.db.fetchval("SELECT count(*) FROM scout_runs")
+    assert done and runs == 0, (
+        "the production scout's ticker returns before its first tick, so no tick runs beside a test's own: "
+        f"{'it returned' if done else 'it was still ticking 5 seconds on'}, and {runs} scouting jobs were started"
+    )
 
 
 # ---- the scout ----
@@ -180,14 +231,13 @@ async def test_a_repository_opted_out_of_the_scout_is_not_scouted_on_the_next_ti
         submit=submit,
         clock=lambda: clock[0],
     )
-    snapshots = _count_snapshots(app, monkeypatch)
 
-    first = await loop.tick()
+    first, snapshots = await snapshots_taken(app.state.settings, monkeypatch, loop.tick())
     assert jobs.started(first["started"]) == ["acme/gadgets", "acme/widgets"], (
         "acme's layer enrolls its registered repositories in the scout, and nothing enrolls globex's: "
         f"{jobs.started(first['started'])}"
     )
-    assert snapshots[0] == 1, f"one tick reads its enrollment from the one snapshot it takes: {snapshots[0]}"
+    assert snapshots == 1, f"one tick reads its enrollment from the one snapshot it takes: {snapshots}"
 
     await _put(app, "background:\n  scout: false\n", repo="acme/gadgets")
     for row in jobs.rows.values():
@@ -284,13 +334,12 @@ async def test_opting_out_or_unregistering_removes_the_meter_s_mirror_and_contri
     widgets = await _kept(app, "acme/widgets", "widgeteer")
     clock = [NOW]
     loop = _meter(app, clock)
-    snapshots = _count_snapshots(app, monkeypatch)
 
-    await loop.tick()
+    _, snapshots = await snapshots_taken(app.state.settings, monkeypatch, loop.tick())
     assert gadgets.exists() and widgets.exists() and await _rows(db, "acme/gadgets") == 3, (
         "both repositories are in the meter's scope through acme's layer: nothing of them is removed"
     )
-    assert snapshots[0] == 1, f"one tick reads its enrollment and its judge's model from one snapshot: {snapshots[0]}"
+    assert snapshots == 1, f"one tick reads its enrollment and its judge's model from one snapshot: {snapshots}"
 
     await _put(app, "background:\n  slop_meter: false\n", repo="acme/gadgets")
     await loop.tick()
@@ -401,11 +450,11 @@ async def test_one_leads_pass_reads_its_policy_and_its_repositories_from_one_sna
     await app.state.repo_preferences_repo.upsert("acme/widgets", owners=["octo"])
     await _put(app, "background:\n  leads: false\n", owner="globex")
     loop = _leads(app)
-    snapshots = _count_snapshots(app, monkeypatch)
-    assert sorted(await loop.tick()) == ["acme/widgets"]
-    assert snapshots[0] == 1, (
+    read, snapshots = await snapshots_taken(app.state.settings, monkeypatch, loop.tick())
+    assert sorted(read) == ["acme/widgets"]
+    assert snapshots == 1, (
         "one leads pass reads the leads section and background.leads from one snapshot of the settings documents, "
-        f"so a write during the pass cannot hand it two versions: {snapshots[0]} snapshots"
+        f"so a write during the pass cannot hand it two versions: {snapshots} snapshots"
     )
 
 

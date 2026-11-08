@@ -32,6 +32,7 @@ from embry0.settings.sections import CATALOG
 from embry0.settings.store import Snapshot, build_snapshot
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.scout import ScoutRunsRepository
+from tests.fixtures.settings_reads import snapshots_taken
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
 pytestmark = pytest.mark.requires_postgres
@@ -172,20 +173,6 @@ def _loop(
     )
 
 
-def _count_snapshots(app: Any, monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """How many snapshots the settings store has handed out, in a list the test reads after a tick."""
-    store = app.state.settings
-    read = store.snapshot
-    count = [0]
-
-    async def counted() -> Any:
-        count[0] += 1
-        return await read()
-
-    monkeypatch.setattr(store, "snapshot", counted)
-    return count
-
-
 def _snapshot(documents: Mapping[str, Mapping[str, Any]]) -> Snapshot:
     """A snapshot of ``documents``, each stored scope to its values, as the store builds one."""
     rows = [
@@ -204,10 +191,9 @@ async def test_an_organization_s_templates_start_on_its_repositories_only(
     jobs = FakeJobs()
     repos = ["acme/widgets", "acme/gadgets", "quiet/tools", "globex/gizmos", "other/tools"]
     loop = _loop(app, db_with_migrations, repos, jobs=jobs)
-    snapshots = _count_snapshots(app, monkeypatch)
 
-    started = jobs.started((await loop.tick())["started"])
-    taken = snapshots[0]
+    result, taken = await snapshots_taken(app.state.settings, monkeypatch, loop.tick())
+    started = jobs.started(result["started"])
     assert (started.get("acme/widgets"), started.get("acme/gadgets")) == (["garden"], ["garden"]), (
         f"acme's layer names garden only, so only garden starts on acme's repositories: {started}"
     )
@@ -292,9 +278,9 @@ async def test_production_reads_each_repository_s_policy_and_model_from_one_snap
     await _put(app, "scout:\n  templates: [garden]\nbackground_models:\n  scout: custom/acme-model\n", owner="acme")
     jobs = FakeJobs()
     loop = _loop(app, db_with_migrations, ["acme/widgets", "globex/gizmos"], jobs=jobs)
-    snapshots = _count_snapshots(app, monkeypatch)
 
-    started = jobs.pinned((await loop.tick())["started"])
+    result, snapshots = await snapshots_taken(app.state.settings, monkeypatch, loop.tick())
+    started = jobs.pinned(result["started"])
     assert started.get("acme/widgets") == [("garden", "custom/acme-model")], (
         "production reads acme/widgets through acme's layer: garden alone, on acme's model; a reader of the "
         f"deployment's values alone never reads an organization's layer: {started}"
@@ -302,12 +288,16 @@ async def test_production_reads_each_repository_s_policy_and_model_from_one_snap
     assert started.get("globex/gizmos") == [("garden", LOCAL), ("kintsugi-trace", LOCAL)], (
         f"globex has no layer: the deployment's templates, on the deployment's model: {started}"
     )
-    assert snapshots[0] == 1, f"production's tick takes one snapshot of the settings documents: {snapshots[0]}"
+    assert snapshots == 1, f"production's tick takes one snapshot of the settings documents: {snapshots}"
 
 
-#: Before a write: no model for the scout, so nothing starts.
+#: Before a write: acme/widgets enrolled in the scout, but no model for it, so nothing starts.
 BEFORE: dict[str, dict[str, Any]] = {
-    "deployment": {"scout": {"max_in_flight": 10}, "background_models": {"scout": False}}
+    "deployment": {
+        "scout": {"max_in_flight": 10},
+        "background_models": {"scout": False},
+        "background": {"scout": True},
+    }
 }
 #: One write, each way: the documents after it start garden alone, on the model it names.
 AFTER: dict[str, tuple[dict[str, dict[str, Any]], str]] = {
@@ -323,6 +313,7 @@ AFTER: dict[str, tuple[dict[str, dict[str, Any]], str]] = {
             "deployment": {
                 "scout": {"max_in_flight": 10, "templates": ["garden"]},
                 "background_models": {"scout": "custom/m"},
+                "background": {"scout": True},
             }
         },
         "custom/m",
@@ -334,20 +325,22 @@ AFTER: dict[str, tuple[dict[str, dict[str, Any]], str]] = {
 async def test_a_write_landing_during_a_tick_never_mixes_two_versions_of_the_documents(
     app: Any, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch, written: str
 ) -> None:
-    """A write that commits after the tick's first read of the store, as one can at any moment."""
+    """A write that commits after the tick's first read of the store, as one can at any moment. Only the tick's
+    own reads see it: a ticker of the lifespan reading meanwhile would otherwise take the first answer (#412)."""
     after, model = AFTER[written]
-    reads = [0]
-
-    async def snapshot() -> Snapshot:
-        reads[0] += 1
-        return _snapshot(BEFORE if reads[0] == 1 else after)
-
-    monkeypatch.setattr(app.state.settings, "snapshot", snapshot)
     jobs = FakeJobs()
     loop = _loop(app, db_with_migrations, ["acme/widgets"], jobs=jobs)
 
-    started = jobs.pinned((await loop.tick())["started"])
+    result, _ = await snapshots_taken(
+        app.state.settings, monkeypatch, loop.tick(), answer=lambda n: _snapshot(BEFORE if n == 1 else after)
+    )
+    started = jobs.pinned(result["started"])
     assert started in ({}, {"acme/widgets": [("garden", model)]}), (
         f"a tick acts on one version of the documents: the one before the write to {written} starts nothing, the one "
         f"after it garden alone on {model}; a tick that read them twice mixed the two: {started}"
+    )
+    control, _ = await snapshots_taken(app.state.settings, monkeypatch, loop.tick(), answer=lambda n: _snapshot(after))
+    assert jobs.pinned(control["started"]) == {"acme/widgets": [("garden", model)]}, (
+        f"the documents after the write alone start garden on {model}, so the tick above had two versions to mix "
+        f"(#414): {jobs.pinned(control['started'])}"
     )
