@@ -25,6 +25,8 @@ from embry0.services.slop import SLOPMASTER
 from embry0.workflows.issue_to_pr.nodes._common import (
     _extract_ask_user_events,
     _format_user_answers_block,
+    _is_ask_user_event,
+    _kept_event_forwarder,
 )
 
 logger = structlog.get_logger(__name__)
@@ -916,14 +918,9 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     branch_name, taken_branch = await _developer_working_branch(state, configurable)
     branch_name = await _grant_push_branch(state, configurable, branch_name)
 
-    # Collect agent events locally so we can scan for agent_ask_user events
-    # after the agent finishes. We still forward every event to the graph
-    # stream writer for live streaming.
-    collected_events: list[dict[str, Any]] = []
-
-    def _forward_event(event: dict[str, Any]) -> None:
-        collected_events.append(event)
-        writer(event)
+    # Keep the agent's questions to scan after it finishes; every event still
+    # goes to the graph stream writer for live streaming.
+    collected_events, _forward_event = _kept_event_forwarder(writer, _is_ask_user_event)
 
     # Plan C Task 6: load any prior AgentSession for this (job, agent) so the
     # in-sandbox executor can resume the same Claude conversation. Restore

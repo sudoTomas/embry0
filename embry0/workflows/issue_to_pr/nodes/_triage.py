@@ -26,6 +26,8 @@ from embry0.workflows.issue_to_pr.nodes._common import (
     DECIDE_NOW_MAX_TURNS,
     _extract_ask_user_events,
     _format_user_answers_block,
+    _is_ask_user_event,
+    _kept_event_forwarder,
     _max_turns_recovery_session,
 )
 from embry0.workflows.row_behaviour import fixed_route, offered_to_triage, recorded_kind
@@ -304,14 +306,12 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # a step's config applies to its agent.
     triage_template_config = triage_config_of(pinned) if templates_repo is not None else None
 
-    # Collect agent events locally so we can scan for agent_ask_user events
-    # after the agent finishes. We still forward every event to the graph
-    # stream writer for live streaming.
-    collected_events: list[dict[str, Any]] = []
-
-    def _forward_event(event: dict[str, Any]) -> None:
-        collected_events.append(event)
-        writer(event)
+    # Keep the agent's questions and its QA decision to scan after it
+    # finishes; every event still goes to the graph stream writer for live
+    # streaming.
+    collected_events, _forward_event = _kept_event_forwarder(
+        writer, lambda event: _is_ask_user_event(event) or _is_qa_decision_event(event)
+    )
 
     # Plan C Task 7: load any prior AgentSession for this (job, agent) so the
     # in-sandbox executor can resume the same Claude conversation. Restore
@@ -1308,6 +1308,11 @@ def _extract_qa_decision_from_triage_dict(
     }
 
 
+def _is_qa_decision_event(event: Any) -> bool:
+    """A ``set_qa_decision`` tool call: what ``_extract_qa_decision_from_events`` reads."""
+    return isinstance(event, dict) and event.get("type") == "tool_call" and event.get("tool_name") == "set_qa_decision"
+
+
 def _extract_qa_decision_from_events(
     events: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
@@ -1333,11 +1338,7 @@ def _extract_qa_decision_from_events(
 
     matches: list[dict[str, Any]] = []
     for e in events:
-        if not isinstance(e, dict):
-            continue
-        if e.get("type") != "tool_call":
-            continue
-        if e.get("tool_name") != "set_qa_decision":
+        if not _is_qa_decision_event(e):
             continue
         raw_input = e.get("tool_input")
         if not isinstance(raw_input, dict):

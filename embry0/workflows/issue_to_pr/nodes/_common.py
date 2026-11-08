@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import structlog
@@ -166,6 +167,32 @@ def _format_user_answers_block(user_answers: Any) -> str:
     return "The user has answered your prior questions as follows:\n" + "\n\n".join(lines)
 
 
+def _is_ask_user_event(event: Any) -> bool:
+    """An agent's question to the user: what ``_extract_ask_user_events`` reads."""
+    return isinstance(event, dict) and event.get("type") == "agent_ask_user"
+
+
+def _kept_event_forwarder(
+    writer: Callable[[dict[str, Any]], None], keep: Callable[[Any], bool]
+) -> tuple[list[dict[str, Any]], Callable[[dict[str, Any]], None]]:
+    """A callback that streams every agent event, and the list of the events it keeps.
+
+    A node reads a few kinds of event once its agent has finished: the
+    questions it asked, and triage's QA decision. Every event still goes to
+    ``writer`` as it arrives; only those ``keep`` accepts are held, in the
+    order they came, so a long or chatty run does not keep every event it
+    emitted for as long as the node runs.
+    """
+    kept: list[dict[str, Any]] = []
+
+    def forward(event: dict[str, Any]) -> None:
+        if keep(event):
+            kept.append(event)
+        writer(event)
+
+    return kept, forward
+
+
 def _extract_ask_user_events(
     agent_output: dict[str, Any],
     calling_node: str,
@@ -191,7 +218,7 @@ def _extract_ask_user_events(
     events = agent_output.get("events", []) if isinstance(agent_output, dict) else []
     pending: list[dict[str, Any]] = []
     for e in events:
-        if isinstance(e, dict) and e.get("type") == "agent_ask_user":
+        if _is_ask_user_event(e):
             raw_q = e.get("question", "")
             category = e.get("category", "general")
             options = e.get("options", []) or []
