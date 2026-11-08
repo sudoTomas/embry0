@@ -26,6 +26,7 @@ from typing import Any, Protocol
 from embry0.services.slop import SLOPMASTER
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.audit_jobs import AUDITOR, an_audit, is_audit
+from embry0.storage.repositories.jobs import job_repository_sql
 from embry0.storage.schemas import FINISHED_WELL_STATUSES
 from embry0.workflows.row_behaviour import DEFAULT_CODER, WORKFLOW_PIPELINES
 
@@ -290,15 +291,21 @@ class FactFragment(Protocol):
     def params(self) -> Mapping[str, Any]: ...
 
 
+# A job's repository, wherever the progression reads one: its ``repo``, else its git context's, as the jobs routes
+# read it (jobs.job_repository_sql). The fragments below go through ``str.format`` (facts_sql, the runs query's
+# ``{agents}``): what is joined into them must hold no brace, as ``job_repository_sql``'s does not.
+_J_REPO = job_repository_sql("j")
+_E_REPO = job_repository_sql("e")
+
 # Every metric is an outcome (spec 2026-10-25, the achievement diary). A merged
 # pull request is one the forge confirmed merged, or whose job says so. Its
 # ``dispatched_by`` tells a context audit from a finding's fix job (an_audit).
-_FACTS_CTES = """
+_FACTS_CTES = f"""
 WITH merged AS (
-    SELECT j.job_id, j.repo, j.issue_id, j.pr_url, j.pipeline_template, j.leader_agent, j.dispatched_by, j.area,
-           j.total_cost_usd, j.created_at, j.started_at, j.finished_at,
+    SELECT j.job_id, {_J_REPO} AS repo, j.issue_id, j.pr_url, j.pipeline_template, j.leader_agent, j.dispatched_by,
+           j.area, j.total_cost_usd, j.created_at, j.started_at, j.finished_at,
            COALESCE(j.delivery_state_at, j.finished_at, j.updated_at) AS at,
-           COALESCE(j.repo, 'a job') || COALESCE(' #' || substring(j.pr_url from '([0-9]+)/?$'), '') AS label
+           COALESCE({_J_REPO}, 'a job') || COALESCE(' #' || substring(j.pr_url from '([0-9]+)/?$'), '') AS label
     FROM jobs j
     WHERE j.delivery_state = 'merged' OR j.status = 'pr_merged'
 ),
@@ -388,7 +395,9 @@ FRAGMENTS: dict[str, str] = {
     # lore: a context audit that finished its work, with its report; the service reads its claims. A finding's
     # fix job is no audit (an_audit): merged, it counts as the proposal it is (proposal_merged), and only there.
     "audit": """
-        SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, NULL, j.result_summary
+        SELECT COALESCE(j.finished_at, j.updated_at), 1, """
+    + _J_REPO
+    + """, NULL, j.result_summary
         FROM jobs j WHERE """
     + an_audit("j")
     + " AND "
@@ -402,17 +411,21 @@ FRAGMENTS: dict[str, str] = {
         FROM repo_standard_state s WHERE s.score >= {min_score}::int AND s.last_audit_at IS NOT NULL""",
     # guarding
     "reviews": """
-        SELECT t.created_at, 1, COALESCE(j.repo, t.agent_type), j.pr_url, NULL
+        SELECT t.created_at, 1, COALESCE("""
+    + _J_REPO
+    + """, t.agent_type), j.pr_url, NULL
         FROM traces t LEFT JOIN jobs j ON j.job_id = t.job_id
         WHERE t.agent_type = ANY({agents}::text[]) AND t.result = 'success' AND t.error_code IS NULL""",
     "review_posted": """
         SELECT r.posted_at, 1, r.repo || ' #' || r.number, NULL, NULL FROM pr_reviews r WHERE r.posted_at IS NOT NULL""",
     "qa_passed": f"""
-        SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, NULL, NULL
+        SELECT COALESCE(j.finished_at, j.updated_at), 1, {_J_REPO}, NULL, NULL
         FROM jobs j WHERE j.pipeline_template = {_literal(QA_PIPELINE)} AND """
     + finished_well("j"),
     "gate_blocked": """
-        SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, j.pr_url, NULL
+        SELECT COALESCE(j.finished_at, j.updated_at), 1, """
+    + _J_REPO
+    + """, j.pr_url, NULL
         FROM jobs j WHERE j.error_code = 'ERR_VERIFY_NEW_TEST_FAILURES'""",
     "setup_applied": """
         SELECT COALESCE(p.decided_at, p.updated_at), 1, p.repo, NULL, NULL
@@ -424,7 +437,9 @@ FRAGMENTS: dict[str, str] = {
             SELECT 1 FROM jobs f WHERE f.issue_id = m.issue_id AND f.status = 'failed' AND f.created_at < m.created_at
         )""",
     "resumed": """
-        SELECT COALESCE(j.finished_at, j.updated_at), 1, j.repo, j.pr_url, NULL
+        SELECT COALESCE(j.finished_at, j.updated_at), 1, """
+    + _J_REPO
+    + """, j.pr_url, NULL
         FROM jobs j WHERE j.resume_attempts >= {min_resumes}::int AND """
     + finished_well("j"),
     "followup_merged": "SELECT m.at, 1, m.label, m.pr_url, NULL FROM merged m WHERE m.pipeline_template = 'pr-followup'",
@@ -447,7 +462,9 @@ FRAGMENTS: dict[str, str] = {
         WHERE m.finished_at - m.started_at > make_interval(secs => {hours}::float8 * 3600)""",
     "lucky_find": """
         SELECT m.at, 1, m.label, m.pr_url, NULL FROM merged m
-        WHERE m.repo IS NOT NULL AND NOT EXISTS (SELECT 1 FROM jobs e WHERE e.repo = m.repo AND e.created_at < m.created_at)""",
+        WHERE m.repo IS NOT NULL AND NOT EXISTS (SELECT 1 FROM jobs e WHERE """
+    + _E_REPO
+    + """ = m.repo AND e.created_at < m.created_at)""",
 }
 
 
@@ -546,18 +563,23 @@ class Journal:
 
 
 _JOBS_SQL = f"""
-SELECT j.repo, j.issue_id, j.pipeline_template AS template, j.status, j.created_at,
+SELECT {_J_REPO} AS repo, j.issue_id, j.pipeline_template AS template, j.status, j.created_at,
        COALESCE(j.finished_at, j.updated_at) AS finished_at, j.delivery_state_at, j.dispatched_by,
        j.leader_agent AS leader,
        CASE WHEN {an_audit("j")} AND {finished_well("j")} THEN j.result_summary END AS report
 FROM jobs j
-WHERE j.repo IS NOT NULL
+WHERE {_J_REPO} IS NOT NULL
 ORDER BY COALESCE(j.finished_at, j.updated_at)
 """
 
-_RUNS_SQL = """
-SELECT t.agent_type, j.repo, j.issue_id, t.created_at AS at
+_RUNS_SQL = (
+    "\nSELECT t.agent_type, "
+    + _J_REPO
+    + """ AS repo, j.issue_id, t.created_at AS at
 FROM traces t JOIN jobs j ON j.job_id = t.job_id
-WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL AND j.repo IS NOT NULL {agents}
+WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL AND """
+    + _J_REPO
+    + """ IS NOT NULL {agents}
 ORDER BY t.created_at
 """
+)

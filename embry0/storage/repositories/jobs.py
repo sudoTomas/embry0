@@ -20,15 +20,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# What a finished job's decision card reads of the job (embry0/api/v1/decisions.py, done_inputs).
-_CARD_ROWS_SQL = """
-SELECT job_id, repo, area, task, status, delivery_state, pr_url, pipeline_template, created_at, started_at,
-       finished_at, total_cost_usd, error_code, error_message, work_nature, done_when,
-       left(result_summary, $2) AS result_summary
-FROM jobs
-WHERE job_id = ANY($1::text[])
-"""
-
 
 class StatusTransitionConflict(RuntimeError):
     """Raised when a CAS status update finds no matching row.
@@ -181,6 +172,17 @@ def job_repository(job: Mapping[str, Any]) -> str | None:
             return None
     named = context.get("repo") if isinstance(context, Mapping) else None
     return str(named) if named else None
+
+
+# What a finished job's decision card reads of the job (embry0/api/v1/decisions.py, done_inputs). Its ``repo`` is
+# the job's repository (job_repository_sql), which the card shows and the decisions feed's allowlist reads.
+_CARD_ROWS_SQL = f"""
+SELECT job_id, {job_repository_sql()} AS repo, area, task, status, delivery_state, pr_url, pipeline_template,
+       created_at, started_at, finished_at, total_cost_usd, error_code, error_message, work_nature, done_when,
+       left(result_summary, $2) AS result_summary
+FROM jobs
+WHERE job_id = ANY($1::text[])
+"""
 
 
 class JobsRepository:

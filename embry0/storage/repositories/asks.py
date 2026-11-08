@@ -9,14 +9,20 @@ from typing import Any
 
 from embry0.services.asks import LIVE, code_candidates
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.jobs import job_repository_sql
 
-#: The repository of the decision ``{id}`` names, read at the time from the row it comes from: a finished job's,
-#: an issue's, a watcher case's, a lead's, or, for any quest on offer that was answered, its answer's. NULL for an
-#: audit finding no one answered: its id is a digest, so only the open decisions name its repository.
-_DECISION_REPO = """
+#: The repository of the decision ``{id}`` names, read at the time from the row it comes from: a finished job's
+#: (its ``repo``, else its git context's, as the jobs routes read it), an issue's, a watcher case's, a lead's, or,
+#: for any quest on offer that was answered, its answer's. NULL for an audit finding no one answered: its id is a
+#: digest, so only the open decisions name its repository. The text goes through ``.format(id=...)``: what is
+#: joined into it must hold no brace, as ``job_repository_sql``'s does not.
+_DECISION_REPO = (
+    """
 LEFT JOIN LATERAL (
     SELECT COALESCE(
-        (SELECT j.repo FROM jobs j WHERE {id} LIKE 'done:%' AND j.job_id = substr({id}, 6)),
+        (SELECT """
+    + job_repository_sql("j")
+    + """ FROM jobs j WHERE {id} LIKE 'done:%' AND j.job_id = substr({id}, 6)),
         (SELECT i.repo FROM issues i WHERE {id} LIKE 'offer:issue:%' AND i.id = substr({id}, 13)),
         (SELECT c.repo FROM healing_cases c WHERE {id} LIKE 'offer:case:%' AND c.id = substr({id}, 12)),
         (SELECT l.repo FROM leads l WHERE {id} LIKE 'offer:%' AND l.id = substr({id}, 7)),
@@ -25,6 +31,7 @@ LEFT JOIN LATERAL (
     ) AS repo
 ) decision ON TRUE
 """
+)
 
 #: Passes at making the codes a batch lacks: each pass after the first follows another writer taking a code first.
 _CODE_PASSES = 3
