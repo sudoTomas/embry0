@@ -110,12 +110,15 @@ JOB_ROUTES: dict[str, str] = {
         "reads another repository's issue as a missing one (404), and lists only the questions of jobs in the "
         "repositories the key covers (the issue reads)"
     ),
+    "/api/v1/cases/{case_id}": (
+        "reads another repository's case as a missing one (404), and lists only the jobs and pull requests of the "
+        "repositories the key covers (the case reads)"
+    ),
 }
 
 #: GET routes that name a job of another repository inside something else they read, narrowed with that thing as a
 #: whole in a stage of their own, and which.
 ELSEWHERE: dict[str, str] = {
-    "/api/v1/cases/{case_id}": "a case, with its jobs and pull requests: the case reads",
     "/api/v1/traces": "the agents' runs, by job: the trace reads",
 }
 

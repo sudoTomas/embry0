@@ -462,10 +462,12 @@ async def test_the_inventory_calls_a_new_route_that_acts_on_a_case_without_the_r
     ], found
 
 
-async def test_an_organization_need_s_case_filed_on_its_owner_is_closed_by_a_key_covering_the_owner(
+async def test_an_organization_need_s_case_filed_on_its_owner_is_closed_only_by_a_key_without_a_list(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A need covering several repositories files its case on the owner, not on one repository."""
+    """A need covering several repositories files its case on the owner, not on one repository: no key with an
+    allowlist reads it, the owner's covered whole included (the case reads), so closing it answers as closing a case
+    that does not exist, audited naming the owner. A key without a list closes it."""
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
         for owner in OWNER.values():
             await db_with_migrations.execute(
@@ -476,9 +478,17 @@ async def test_an_organization_need_s_case_filed_on_its_owner_is_closed_by_a_key
         body = {"resolution_path": "abandoned"}
         other = await call(app, "POST", f"/api/v1/cases/hc-org-{OWNER[UNCOVERED]}/close", keys.limited, body)
         own = await call(app, "POST", f"/api/v1/cases/hc-org-{OWNER[COVERED]}/close", keys.limited, body)
-    assert (other.status_code, other.json()) == (404, {"detail": "case not found"}), other.text
-    assert own.status_code == 200 and own.json()["stage"] == "closed", own.text
-    assert await _refusals(db_with_migrations) == [f"{OWNER[UNCOVERED]}/*"]
+        stages = [
+            str(await db_with_migrations.fetchval("SELECT stage FROM healing_cases WHERE id = $1", f"hc-org-{o}"))
+            for o in OWNER.values()
+        ]
+        refused = await _refusals(db_with_migrations)
+        opened = await call(app, "POST", f"/api/v1/cases/hc-org-{OWNER[COVERED]}/close", keys.open, body)
+    for answer in (other, own):
+        assert (answer.status_code, answer.json()) == (404, {"detail": "case not found"}), answer.text
+    assert stages == ["tracked", "tracked"], f"a refused close changed nothing: {stages}"
+    assert refused == [f"{OWNER[UNCOVERED]}/*", f"{OWNER[COVERED]}/*"], refused
+    assert opened.status_code == 200 and opened.json()["stage"] == "closed", opened.text
 
 
 async def test_a_key_with_an_allowlist_revokes_only_keys_within_it(

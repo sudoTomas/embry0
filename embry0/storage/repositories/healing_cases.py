@@ -7,8 +7,9 @@ Storage only: which writes are legal is decided by
 
 from __future__ import annotations
 
+import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Collection, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -17,8 +18,65 @@ import asyncpg
 import structlog
 
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.jobs import job_repository_sql
 
 logger = structlog.get_logger(__name__)
+
+# The repository a pull request is in, read from its address: a GitHub pull request's or a GitLab merge request's.
+# The SQL and the Python spellings read it the same way (a test holds them equal); an address of neither shape
+# names no repository. An address that names its repository otherwise (an API URL, a GitLab served under a sub-path,
+# a project GITLAB_REPO_MAP maps to another slug) reads as no repository's or another's, so a reader narrowed to its
+# repositories is shown less than it could be, never more.
+_PR_REPOSITORY = r"^[A-Za-z][A-Za-z0-9+.-]*://[^/]+/(.+)/(?:pull|-/merge_requests)/[0-9]+"
+_PR_REPOSITORY_RE = re.compile(_PR_REPOSITORY)
+
+
+def pr_repository_sql(alias: str = "p") -> str:
+    """The repository the ``healing_case_prs`` row named ``alias`` is in, in SQL: :func:`pr_repository`."""
+    return f"substring({alias}.url from '{_PR_REPOSITORY}')"
+
+
+def pr_repository(url: str | None) -> str | None:
+    """The repository a pull request is in, from its address (``https://github.com/acme/web/pull/7`` is
+    ``acme/web``), or None for an address that is not a pull request's."""
+    match = _PR_REPOSITORY_RE.match(url or "")
+    return match.group(1) if match else None
+
+
+def _within(expression: str, repos: str | None) -> str:
+    """`` AND`` ``expression`` names one of the repositories in the ``text[]`` placeholder ``repos`` (lower-cased
+    slugs; NULL keeps every row), or nothing when there is no placeholder. An expression that names no repository
+    (NULL) is in none."""
+    if repos is None:
+        return ""
+    return f" AND ({repos}::text[] IS NULL OR lower({expression}) = ANY({repos}::text[]))"
+
+
+def _jobs_within(repos: str | None) -> str:
+    """`` AND`` the linked job ``l.job_id`` works on one of the repositories in ``repos`` (as :func:`_within`), a
+    job's repository being :func:`~embry0.storage.repositories.jobs.job_repository_sql`'s."""
+    if repos is None:
+        return ""
+    return (
+        f" AND ({repos}::text[] IS NULL OR EXISTS (SELECT 1 FROM jobs j WHERE j.job_id = l.job_id"
+        f" AND lower({job_repository_sql('j')}) = ANY({repos}::text[])))"
+    )
+
+
+def _repos_arg(repos: Sequence[str] | None) -> list[str] | None:
+    return None if repos is None else list(repos)
+
+
+def _merge_elsewhere(repos: str) -> str:
+    """Whether the case row ``c``'s ``merge_sha`` is the merge of a pull request in none of the repositories in the
+    ``text[]`` placeholder ``repos`` (as :func:`_within` reads them; false when it is NULL): the merge of a pull
+    request the reader of those repositories does not read. A merge no pull request carries is not attributed."""
+    return (
+        f"({repos}::text[] IS NOT NULL AND EXISTS (SELECT 1 FROM healing_case_prs m"
+        f" WHERE m.case_id = c.id AND m.merge_sha = c.merge_sha"
+        f" AND NOT COALESCE(lower({pr_repository_sql('m')}) = ANY({repos}::text[]), FALSE)))"
+    )
+
 
 # Columns LockedCase.update may set. Names are interpolated into SQL, so this
 # is an allowlist, not documentation.
@@ -127,12 +185,14 @@ _FIX_DEPLOYED = (
     " AND c.deployed_at >= c.merged_at)"
 )
 
-# The PR that stands for a case in a one-line view: the merged one, else the
-# newest open one, else the newest.
-_CURRENT_PR = """
+
+def _current_pr(repos: str | None = None) -> str:
+    """The PR that stands for a case in a one-line view: the merged one, else the newest open one, else the newest;
+    with ``repos`` (a ``text[]`` placeholder of lower-cased slugs), of the pull requests in those repositories."""
+    return f"""
     LEFT JOIN LATERAL (
         SELECT p.url AS pr_url, p.number AS pr_number, p.head_sha AS pr_head_sha, p.state AS pr_state
-        FROM healing_case_prs p WHERE p.case_id = c.id
+        FROM healing_case_prs p WHERE p.case_id = c.id{_within(pr_repository_sql("p"), repos)}
         ORDER BY (p.state = 'merged') DESC, (p.state = 'open') DESC, p.id DESC LIMIT 1
     ) pr ON TRUE
 """
@@ -495,31 +555,61 @@ class HealingCasesRepository:
 
     # ------------------------------------------------------------------- reads
 
-    async def get(self, case_id: str) -> dict[str, Any] | None:
-        row = await self._db.fetchrow("SELECT * FROM healing_cases WHERE id = $1", case_id)
+    async def get(self, case_id: str, *, repos: Sequence[str] | None = None) -> dict[str, Any] | None:
+        """One case, or None. ``repos`` (lower-cased slugs) answers None for a case of any other repository, or of
+        none (a case filed on an owner, or on nothing); None reads every case."""
+        row = await self._db.fetchrow(
+            "SELECT * FROM healing_cases WHERE id = $1 AND ($2::text[] IS NULL OR lower(repo) = ANY($2::text[]))",
+            case_id,
+            _repos_arg(repos),
+        )
         return dict(row) if row else None
 
-    async def get_detail(self, case_id: str) -> dict[str, Any] | None:
-        """The case plus its jobs, PRs and history, each oldest first."""
-        case = await self.get(case_id)
+    async def repositories_of(self, case_ids: Collection[str]) -> dict[str, str | None]:
+        """The repository each case in ``case_ids`` that exists is filed on, None for one filed on nothing. A case that
+        does not exist is absent."""
+        if not case_ids:
+            return {}
+        rows = await self._db.fetch(
+            "SELECT id, repo FROM healing_cases WHERE id = ANY($1::text[])", sorted(set(case_ids))
+        )
+        return {str(r["id"]): (str(r["repo"]) if r["repo"] else None) for r in rows}
+
+    async def get_detail(self, case_id: str, *, repos: Sequence[str] | None = None) -> dict[str, Any] | None:
+        """The case plus its jobs, PRs and history, each oldest first.
+
+        ``repos`` (lower-cased slugs) answers None for a case of any other repository, or of none, as :meth:`get`
+        does, and lists only the jobs that work on those repositories and the pull requests in them
+        (:func:`pr_repository_sql`); ``merge_elsewhere`` says whether the case's ``merge_sha`` is the merge of a
+        pull request in none of them. The history is the case's whole. None reads every case and lists everything.
+        """
+        case = await self.get(case_id, repos=repos)
         if case is None:
             return None
+        if repos is not None:
+            case["merge_elsewhere"] = bool(
+                await self._db.fetchval(
+                    f"SELECT {_merge_elsewhere('$2')} FROM healing_cases c WHERE c.id = $1", case_id, list(repos)
+                )
+            )
         jobs = await self._db.fetch(
-            """
+            f"""
             SELECT j.job_id, j.status, j.job_kind, j.pr_url, j.error_code,
                    j.created_at, j.finished_at, l.attached_at
             FROM healing_case_jobs l JOIN jobs j ON j.job_id = l.job_id
-            WHERE l.case_id = $1
+            WHERE l.case_id = $1{_jobs_within("$2")}
             ORDER BY j.created_at, j.job_id
             """,
             case_id,
+            _repos_arg(repos),
         )
         prs = await self._db.fetch(
-            """
+            f"""
             SELECT url, number, head_sha, state, merge_sha, job_id, opened_at, merged_at, closed_at
-            FROM healing_case_prs WHERE case_id = $1 ORDER BY id
+            FROM healing_case_prs p WHERE case_id = $1{_within(pr_repository_sql("p"), "$2")} ORDER BY id
             """,
             case_id,
+            _repos_arg(repos),
         )
         events = await self._db.fetch(
             """
@@ -603,8 +693,15 @@ class HealingCasesRepository:
         awaiting_decision: bool = False,
         limit: int = 50,
         after: tuple[datetime, str] | None = None,
+        repos: Sequence[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """One keyset page, newest first. Returns ``(page, total matching the filters)``.
+
+        ``repos`` (lower-cased slugs) keeps only the cases of those repositories, before the page is cut and the
+        total counted, so a case filed on an owner or on nothing is in none; each row's ``jobs_count``,
+        ``prs_count`` and current pull request count and pick only the jobs that work on those repositories and
+        the pull requests in them, as :meth:`get_detail` lists them, and its ``merge_elsewhere`` says what
+        :meth:`get_detail`'s does. None keeps every case and counts everything.
 
         ``awaiting_decision`` keeps only cases waiting for a person's answer
         (``_AWAITING_DECISION``): watcher drafts nobody has accepted or
@@ -621,6 +718,11 @@ class HealingCasesRepository:
         """
         conditions: list[str] = []
         args: list[Any] = []
+        within: str | None = None
+        if repos is not None:
+            args.append(list(repos))
+            within = f"${len(args)}"
+            conditions.append(f"lower(c.repo) = ANY({within}::text[])")
         filters = (
             ("repo", repo),
             ("stage", stage),
@@ -648,9 +750,11 @@ class HealingCasesRepository:
         rows = await self._db.fetch(
             f"""
             SELECT c.*, pr.*,
-                   (SELECT COUNT(*) FROM healing_case_jobs l WHERE l.case_id = c.id) AS jobs_count,
-                   (SELECT COUNT(*) FROM healing_case_prs p WHERE p.case_id = c.id) AS prs_count
-            FROM healing_cases c {_CURRENT_PR} {where}
+                   (SELECT COUNT(*) FROM healing_case_jobs l WHERE l.case_id = c.id{_jobs_within(within)}) AS jobs_count,
+                   (SELECT COUNT(*) FROM healing_case_prs p
+                    WHERE p.case_id = c.id{_within(pr_repository_sql("p"), within)}) AS prs_count
+                   {f", {_merge_elsewhere(within)} AS merge_elsewhere" if within else ""}
+            FROM healing_cases c {_current_pr(within)} {where}
             ORDER BY c.created_at DESC, c.id DESC
             LIMIT ${len(args) + 1}
             """,

@@ -34,6 +34,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from embry0.api.actor_visibility import Shown, actor_shown, with_actors
+from embry0.api.case_allowlist import without_hidden_cases
 from embry0.api.deps import TIER_MERGE, ensure_admin, request_actor
 from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers, record_refusal
 from embry0.api.schemas.person_name import PersonName
@@ -106,6 +107,8 @@ async def list_merge_approvals(
 ) -> dict[str, Any]:
     service = _service(request)
     rows = await service.list_recent(status=status, limit=limit, repos=covered_slugs(request))
+    # An approval names no case the key does not read (embry0.api.case_allowlist).
+    await without_hidden_cases(request, rows)
     shown = await actor_shown(request)
     return {"items": [_serialize(r, shown) for r in rows], "mode": service.mode}
 
@@ -117,6 +120,7 @@ async def get_merge_approval(approval_id: str, request: Request) -> dict[str, An
     if row is None:
         raise missing
     await hide_unless_covered(request, row.get("repo"), missing)
+    await without_hidden_cases(request, [row])
     return _serialize(row, await actor_shown(request))
 
 

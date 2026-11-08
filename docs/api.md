@@ -1092,8 +1092,7 @@ organization:
 - `POST /orgs/{owner}/context-audit/run` (the `repo` it names; a run that
   names none is refused, since it would start work on any repository under
   the owner);
-- `POST /cases/{id}/accept`,
-  `POST /watcher/run` (the stack ticked; with none named, every watched
+- `POST /watcher/run` (the stack ticked; with none named, every watched
   stack, all checked before any ticks), `POST /qa/images/build`,
   `POST /repos/bootstrap` and `POST /repos/{repo}/-/areas/map` (checked
   before the registration is read, so the answer is the same whether the
@@ -1159,9 +1158,13 @@ The list is also a read boundary: a key reads only its repositories' work
 and data. These routes narrow to the key's repositories today, by one rule
 (`key_covers` in `embry0/api/repo_allowlist.py`, applied to what is stored
 about repositories and owners by `embry0/api/repository_reads.py`, to jobs
-by `embry0/api/job_allowlist.py` and to issues by
-`embry0/api/issue_allowlist.py`); the cases, traces, stats, audit and
-container log reads follow:
+by `embry0/api/job_allowlist.py`, to issues by
+`embry0/api/issue_allowlist.py` and to healing cases by
+`embry0/api/case_allowlist.py`). The trace reads (`GET /traces`), the stats
+(`GET /stats`), the audit log (`GET /audit`, which lists every audit row,
+a case's acceptance and closing among them), the container logs
+(`GET /logs/query`), and the account's and the characters' totals, are not
+narrowed yet and follow in stages of their own:
 
 - `GET /decisions`, `GET /proposals`, `GET /asks/due`, `GET /asks`,
   `GET /leads`, `GET /handoffs`, `GET /world` (its parties, quests, inbox,
@@ -1229,6 +1232,42 @@ container log reads follow:
   `job_answer` tools read through these routes, so they are narrowed too.
   A key with an allowlist cannot create an issue with no repository, so it
   never reads one.
+- Healing cases. A case belongs to the repository it is filed on, its
+  `repo`: a watcher finding's stack, the repository a signal names or is
+  mapped to, the repository of the ticket it was opened from, an
+  organization need's one repository. `GET /cases` (with every filter, its
+  pages, its `total` and its `next_cursor`) lists only the cases of
+  repositories the key covers, narrowed in the query before the page is cut.
+  Another repository's case reads exactly as a case that does not exist,
+  status, headers and body, on `GET /cases/{id}`, and accepting or closing
+  it answers as for a missing case (below). So does a case filed on no
+  repository: the case an organization need covering several repositories,
+  or none, files on its owner, and a case filed on nothing. The title and
+  note of a case filed on an owner are the need's words as stored, counted
+  over every repository the need names, so a key with an allowlist reads the
+  need itself, narrowed, on `GET /orgs/{owner}/needs` (below), where
+  dismissing it closes the case. A need, and a merge approval, names no case
+  the key does not read (its `case_id` is null). A case the key reads lists
+  only the jobs that work on a repository the key covers and the pull
+  requests in one (a pull request is in the repository its GitHub or GitLab
+  address names; an address that names it otherwise, an API URL, a GitLab
+  served under a sub-path or a project `GITLAB_REPO_MAP` maps to another
+  slug, is not read as the key's and is hidden: more is hidden than must be,
+  never less), and its row in `GET /cases` counts (`jobs_count`,
+  `prs_count`) and picks (`pr`) only those; a pull request whose job the key
+  does not read names no job (`job_id` null). Its `issue_id`,
+  `parent_case_id` and `caused_regression_case_id` are null when they name
+  an issue or a case the key does not read, its `merge_sha` is null when it
+  is the merge of a pull request the key does not read (its `stage`, its
+  stage times and `fix_deployed` stay; `stage` and `resolution_path`
+  describe the case's own lifecycle, even when its fix merged in a
+  repository the key does not read), and its history (`events`) leaves out
+  every event that names, in its detail or its key, a job, a pull request,
+  an issue or a case the key does not read. Work crosses repositories this
+  way when an issue moves after its job ran, or a pull request in another
+  repository names the case's ticket. The MCP `case_list`, `case_get`,
+  `case_accept` and `case_close` tools reach these routes, so they are
+  narrowed too.
 - What names a job of another repository. The lists of things that are
   each a job's, `GET /merge-approvals`, `GET /watcher/runs` (with
   `?stack=` another repository, as a stack with no ticks) and a knowledge
@@ -1292,7 +1331,9 @@ container log reads follow:
   them (the webhook hosts it lists are only those their hooks deliver to,
   kept per repository in `hosts_by_repo`), and a need naming none of them, or comparing the owner's record
   with the whole listing (`count_gap`), is not there for it, and dismissing
-  or reopening one answers as a missing need (404); a discovery run's
+  or reopening one answers as a missing need (404); a need names no case
+  the key does not read, such as one filed on the owner (its `case_id` is
+  null, there and in what dismissing and reopening answer); a discovery run's
   counts (`repos_total`, `repos_seen` and its summary's) count only its
   repositories, without the `count_gap`; the organization's `repo_count`
   is its newest finished run's count of them, the forge probe's
@@ -1330,9 +1371,10 @@ container log reads follow:
   `/snooze` and `POST /decisions/{id}/send-to` with 404,
   `POST /handoffs/{id}/return` and `/cancel` with 404,
   `POST /asks/{id}/sent` with 409, `POST /asks/answer` with 404,
-  `POST /cases/{id}/close` with 404 (a case an organization need filed on
-  its owner is checked against the owner, and its refusal names
-  `<owner>/*`), `POST /merge-approvals/{id}/decide` with 404 (after the
+  `POST /cases/{id}/accept` and `/close` with 404 (a case filed on an
+  owner or on no repository is no key's with an allowlist, below; its
+  refusal names `<owner>/*` or `(no repository)`),
+  `POST /merge-approvals/{id}/decide` with 404 (after the
   checks a decision of a missing approval answers first, its form, its
   word and its chat), and every action on one job with the job's 404:
   `POST /jobs/{id}/resume`, `/cancel` and `/inputs/{input_id}/answer`,
@@ -1559,5 +1601,6 @@ The route closes with code 1000 after forwarding `job_finished`, or straight aft
 
 - `GET /api/v1/cases` and `GET /api/v1/cases/{case_id}` — the ledger's read API (#278): one case per finding, from detection to a healed verdict. See `docs/glossary.md`, "Healing case". A watcher case carries the slopometer's `work_nature` when the watcher gave one (`null` otherwise; [slop](glossary.md#slop)).
   - `?awaiting_decision=true` is "what is waiting for a person": watcher drafts with a ticket that nobody has accepted or rejected — the list the dashboard shows as **Proposals** above the issue list. It is the proposal cap's own rule without the age window, so a draft that aged out of the cap is still listed, and a draft whose ticket was finished or deleted in its tracker is not. It also lists a finding a `not_healed` verdict sent back for a retry nobody has accepted yet (#658), which holds no slot of the cap, and an organization need waiting for a person (origin `org`, [ADR 0011](adr/0011-organization-needs.md)), which holds none either and is answered on the needs list, never accepted. `?open_only=true` is a different question (every case not yet `closed`, which includes alerts, findings with no ticket, and merged, deployed and verified cases); `?stage=tracked` is not it either (a person's ticket passes through `tracked`, and a draft whose ticket is gone stays there).
-- `POST /api/v1/cases/{case_id}/accept` — accept a watcher finding and dispatch the pipeline on its draft, exactly as adding the trigger label would; refuses anything that is not a `tracked` watcher finding of an enabled watcher stack of this orchestrator (#378). A GitHub draft is dispatched directly. A Linear draft gets the trigger label put on the ticket and is dispatched through the Linear trigger path (#460); a refusal says what happened to the ticket, and a ticket whose Linear project resolves to another repo than the case's is refused untouched. A GitLab draft is still accepted in GitLab (`409`). A finding a `not_healed` verdict sent back is accepted here whatever its tracker: the retry is a new job on the issue of the failed attempt, which is reopened if its merge closed it, and the ticket is not touched (#658). Body: `{"accepted_by": "<name>"}`. `202` always carries a `job_id`. On the merge-scope allowlist. See `docs/self-watching.md`, "Accepting a finding without the label".
-- `POST /api/v1/cases/{case_id}/close` — settle a case a person has decided: `{"resolution_path": "out_of_band", "note": "…", "closed_by": "<name>"}`, with `resolution_path` required unless the case already carries one; `409` on a closed case. A case whose origin is `org` is an organization need, and closing it dismisses the need, so it needs the admin tier, as `POST /api/v1/orgs/{owner}/needs/{need_id}/dismiss` does; any other case is operator tier.
+  - A key with a [repository allowlist](#repository-allowlist) reads only the cases of the repositories it covers, the list narrowed before its page, `total` and `next_cursor` are taken; any other case, one filed on an owner or on no repository among them, reads as a case that does not exist, and a case it reads names nothing it does not read of the jobs, pull requests, issues, cases, merge and history it links to.
+- `POST /api/v1/cases/{case_id}/accept` — accept a watcher finding and dispatch the pipeline on its draft, exactly as adding the trigger label would; refuses anything that is not a `tracked` watcher finding of an enabled watcher stack of this orchestrator (#378). A GitHub draft is dispatched directly. A Linear draft gets the trigger label put on the ticket and is dispatched through the Linear trigger path (#460); a refusal says what happened to the ticket, and a ticket whose Linear project resolves to another repo than the case's is refused untouched. A GitLab draft is still accepted in GitLab (`409`). A finding a `not_healed` verdict sent back is accepted here whatever its tracker: the retry is a new job on the issue of the failed attempt, which is reopened if its merge closed it, and the ticket is not touched (#658). Body: `{"accepted_by": "<name>"}`. `202` always carries a `job_id`. On the merge-scope allowlist. See `docs/self-watching.md`, "Accepting a finding without the label". A case the calling key's [repository allowlist](#repository-allowlist) does not read answers `404 case not found`, as a missing one, and the refusal is logged and audited.
+- `POST /api/v1/cases/{case_id}/close` — settle a case a person has decided: `{"resolution_path": "out_of_band", "note": "…", "closed_by": "<name>"}`, with `resolution_path` required unless the case already carries one; `409` on a closed case. A case whose origin is `org` is an organization need, and closing it dismisses the need, so it needs the admin tier, as `POST /api/v1/orgs/{owner}/needs/{need_id}/dismiss` does; any other case is operator tier. A case the calling key's [repository allowlist](#repository-allowlist) does not read answers `404 case not found`, as a missing one, and the refusal is logged and audited.

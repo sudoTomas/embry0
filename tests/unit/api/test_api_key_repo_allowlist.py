@@ -241,7 +241,6 @@ ENTRY_POINTS: list[tuple[str, str, str, Any, Any]] = [
         {"title": "t", "repo": ALLOWED, "auto_triage": True},
         {"title": "t", "repo": OTHER, "auto_triage": True},
     ),
-    ("accept a finding", "POST", "/api/v1/cases/{case}/accept", {}, {}),
     ("run the watcher", "POST", "/api/v1/watcher/run?stack={stack}", None, None),
     ("build a QA image", "POST", "/api/v1/qa/images/build", {"repo": ALLOWED}, {"repo": OTHER}),
     ("bootstrap a repo", "POST", "/api/v1/repos/bootstrap", {"repo": ALLOWED}, {"repo": OTHER}),
@@ -271,6 +270,19 @@ ISSUE_ACTIONS: list[tuple[str, str, str, Any, Any]] = [
     ("answer on an issue", "POST", "/api/v1/issues/{issue}/inputs/{input}/answer", _ANSWER, _ANSWER),
     # Stopping or destroying a repository's work is work on that repository.
     ("delete an issue", "DELETE", "/api/v1/issues/{issue}", None, None),
+]
+
+# The routes that act on one case: to a key whose list does not cover the case's repository, the case answers as one
+# that does not exist (embry0.api.case_allowlist), and the refusal is logged and audited all the same.
+CASE_ACTIONS: list[tuple[str, str, str, Any, Any]] = [
+    ("accept a finding", "POST", "/api/v1/cases/{case}/accept", {}, {}),
+    (
+        "close a case",
+        "POST",
+        "/api/v1/cases/{case}/close",
+        {"resolution_path": "abandoned"},
+        {"resolution_path": "abandoned"},
+    ),
 ]
 
 # A merge approval is a job's: another repository's answers as one that does not exist, decided in the service where
@@ -313,7 +325,9 @@ def test_a_restricted_key_is_refused_on_another_repository(app, label, method, t
     _assert_refusal_logged_and_nothing_done(app, label, logs)
 
 
-@pytest.mark.parametrize(("label", "method", "template", "allowed_body", "other_body"), JOB_ACTIONS + ISSUE_ACTIONS)
+@pytest.mark.parametrize(
+    ("label", "method", "template", "allowed_body", "other_body"), JOB_ACTIONS + ISSUE_ACTIONS + CASE_ACTIONS
+)
 def test_a_restricted_key_acting_on_another_repository_s_item_gets_a_missing_item_s_answer(
     app, label, method, template, allowed_body, other_body
 ):
@@ -346,7 +360,7 @@ def _assert_refusal_logged_and_nothing_done(app: Any, label: str, logs: list[dic
 
 @pytest.mark.parametrize(
     ("label", "method", "template", "allowed_body", "other_body"),
-    ENTRY_POINTS + JOB_ACTIONS + ISSUE_ACTIONS + APPROVAL_ACTIONS,
+    ENTRY_POINTS + JOB_ACTIONS + ISSUE_ACTIONS + CASE_ACTIONS + APPROVAL_ACTIONS,
 )
 def test_a_restricted_key_reaches_its_listed_repository(app, label, method, template, allowed_body, other_body):
     response = _call(app, LIMITED_TOKEN, method, template, allowed_body, "allowed")
@@ -358,7 +372,7 @@ def test_a_restricted_key_reaches_its_listed_repository(app, label, method, temp
 @pytest.mark.parametrize("token", [OPEN_TOKEN, "master-key"], ids=["unrestricted-key", "master-key"])
 @pytest.mark.parametrize(
     ("label", "method", "template", "allowed_body", "other_body"),
-    ENTRY_POINTS + JOB_ACTIONS + ISSUE_ACTIONS + APPROVAL_ACTIONS,
+    ENTRY_POINTS + JOB_ACTIONS + ISSUE_ACTIONS + CASE_ACTIONS + APPROVAL_ACTIONS,
 )
 def test_an_unrestricted_caller_is_unaffected(app, token, label, method, template, allowed_body, other_body):
     response = _call(app, token, method, template, other_body, "other")

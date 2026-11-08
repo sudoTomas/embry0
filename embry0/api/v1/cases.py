@@ -35,14 +35,9 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from embry0.api.case_allowlist import hide_case_unless_covered, narrow_detail, without_hidden_links
 from embry0.api.deps import ensure_admin, get_healing_cases_repo, request_actor
-from embry0.api.repo_allowlist import (
-    answer_as_missing,
-    enforce_reach,
-    enforce_repo_allowlist,
-    key_covers,
-    key_covers_organization,
-)
+from embry0.api.repo_allowlist import covered_slugs, enforce_reach
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.cases import CaseDetailResponse, CaseListResponse, CaseSummary
 from embry0.api.schemas.person_name import PersonName
@@ -82,6 +77,7 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
 
 @router.get("/cases")
 async def list_cases(
+    request: Request,
     repo: str | None = None,
     stage: Stage | None = None,
     origin: Origin | None = None,
@@ -108,7 +104,12 @@ async def list_cases(
     anyone can act on here.
 
     To ask "did a fix ship?" filter on ``fix_deployed``, not on ``stage``:
-    ``verified`` and ``closed`` also hold cases that healed with no fix."""
+    ``verified`` and ``closed`` also hold cases that healed with no fix.
+
+    A key with a repository allowlist lists only the cases of the repositories
+    it covers, narrowed in the query before the page, the total and the cursor
+    are taken, and each case counts and names only what it reads of their
+    jobs, pull requests, issues and cases (embry0.api.case_allowlist)."""
     rows, total = await cases.list_page(
         repo=repo,
         stage=stage.value if stage else None,
@@ -121,8 +122,10 @@ async def list_cases(
         # One extra row tells a full last page from a page with more behind it.
         limit=limit + 1,
         after=decode_cursor(cursor) if cursor else None,
+        repos=covered_slugs(request),
     )
     page = rows[:limit]
+    await without_hidden_links(request, page)
     next_cursor = encode_cursor(page[-1]["created_at"], page[-1]["id"]) if len(rows) > limit else None
     return CaseListResponse(
         cases=[CaseSummary.from_row(r) for r in page], total=total, limit=limit, next_cursor=next_cursor
@@ -132,12 +135,19 @@ async def list_cases(
 @router.get("/cases/{case_id}")
 async def get_case(
     case_id: str,
+    request: Request,
     cases: HealingCasesRepository = Depends(get_healing_cases_repo),
 ) -> CaseDetailResponse:
-    """One case with its linked jobs, every PR it had and its full history."""
-    row = await cases.get_detail(case_id)
+    """One case with its linked jobs, every PR it had and its full history.
+
+    To a key with a repository allowlist, a case of another repository, or one
+    filed on an owner or on no repository, answers as a case that does not
+    exist, and a case it reads lists and names only what it reads of the jobs,
+    pull requests, issues and cases it links to (embry0.api.case_allowlist)."""
+    row = await cases.get_detail(case_id, repos=covered_slugs(request))
     if row is None:
         raise HTTPException(status_code=404, detail=f"case {case_id} not found")
+    await narrow_detail(request, row)
     return CaseDetailResponse.from_row(row)
 
 
@@ -204,21 +214,18 @@ async def close_case(
     (403, as dismissing the need is), is already closed (409), or names no
     ``resolution_path`` and has none of its own (422). The path must be one
     the ledger knows; anything else is 422 rather than a row the database
-    would reject at write time. A case in a repository the caller's key does
-    not cover answers as a case that does not exist, and the refusal is
-    logged and audited.
+    would reject at write time. A case the caller's key does not read, in a
+    repository its allowlist does not cover or filed on an owner or on no
+    repository, answers as a case that does not exist, and the refusal is
+    logged and audited (embry0.api.case_allowlist).
     """
     missing = HTTPException(status_code=404, detail="case not found")
     case = await cases.get(case_id)
     if case is None:
         raise missing
-    filed_on = str(case.get("repo") or "")
-    if filed_on and "/" not in filed_on:
-        # An organization need's case covering several repositories is filed on its owner.
-        if not await key_covers_organization(request, filed_on):
-            await answer_as_missing(request, f"{filed_on}/*", missing, action=CLOSE_A_CASE)
-    elif not key_covers(request, filed_on):
-        await answer_as_missing(request, filed_on or "(no repository)", missing, action=CLOSE_A_CASE)
+    # A case filed on an owner (an organization need covering several repositories) or on nothing is no key's
+    # with an allowlist, as a case of another repository is not: the refusal names `<owner>/*` or `(no repository)`.
+    await hide_case_unless_covered(request, case, missing, action=CLOSE_A_CASE)
     if str(case.get("origin")) == Origin.ORG:
         # Closing it dismisses the organization need, which is admin work.
         await ensure_admin(request)
@@ -522,15 +529,18 @@ async def accept_case(
     narrowly scoped key (the chat bot's) hold this route: it can accept this
     deployment's own findings and nothing else. The one exception to "no
     label left" is said in the error itself: a label that went on and could
-    not be removed.
+    not be removed. A case the caller's key does not read answers as a case
+    that does not exist, and the refusal is logged and audited
+    (embry0.api.case_allowlist).
     """
+    missing = HTTPException(status_code=404, detail="case not found")
     case = await cases.get(case_id)
     if case is None:
-        raise HTTPException(status_code=404, detail="case not found")
+        raise missing
+    await hide_case_unless_covered(request, case, missing, action="accept a finding")
     repo = str(case.get("repo") or "")
     tracker = str(case.get("tracker") or "")
     key = str(case.get("tracker_key") or "")
-    await enforce_repo_allowlist(request, repo, action="accept a finding")
     run_with = await checked_run_with(request, body.run_with, repo)
 
     if str(case.get("origin")) != Origin.WATCHER:

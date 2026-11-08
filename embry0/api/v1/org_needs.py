@@ -14,6 +14,7 @@ from typing import Any, cast
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 
+from embry0.api.case_allowlist import without_hidden_cases
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import answer_as_missing, covered_slugs, enforce_owner_allowlist, key_covers
 from embry0.api.repository_reads import owner_hidden
@@ -60,13 +61,16 @@ async def organization_needs(owner: str, request: Request) -> dict[str, Any]:
     a run that finished before its needs were synced.
 
     An owner the caller's key does not cover as a whole is not registered
-    for it (embry0.api.repository_reads).
+    for it (embry0.api.repository_reads), and a need names no case the key
+    does not read (embry0.api.case_allowlist): one filed on the owner.
     """
     if await owner_hidden(request, owner):
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
     owner = await _owner(request, owner)
     service = cast("OrgNeedsService", needs_service(request))
-    return await service.read(owner, keep=_keep(request))
+    listing = await service.read(owner, keep=_keep(request))
+    await without_hidden_cases(request, listing.get("needs") or [])
+    return listing
 
 
 def _keep(request: Request) -> Callable[[str], bool] | None:
@@ -94,9 +98,13 @@ async def _hide_unless_shown(request: Request, service: OrgNeedsService, owner: 
         )
 
 
-def _shown(request: Request, need: dict[str, Any]) -> dict[str, Any]:
+async def _shown(request: Request, need: dict[str, Any]) -> dict[str, Any]:
+    """``need`` as the caller reads it: narrowed to its repositories (:func:`_keep`), naming no case it does not
+    read."""
     keep = _keep(request)
-    return need if keep is None else (narrow_need(need, keep) or need)
+    shown = need if keep is None else (narrow_need(need, keep) or need)
+    await without_hidden_cases(request, [shown])
+    return shown
 
 
 @router.post("/orgs/{owner}/needs/{need_id}/dismiss", dependencies=[require_admin])
@@ -116,7 +124,7 @@ async def dismiss_need(owner: str, need_id: str, request: Request) -> dict[str, 
         actor=request_actor(request),
         details={"owner": owner, "need_id": need_id, "kind": need["kind"]},
     )
-    return _shown(request, need)
+    return await _shown(request, need)
 
 
 @router.post("/orgs/{owner}/needs/{need_id}/reopen", dependencies=[require_admin])
@@ -136,4 +144,4 @@ async def reopen_need(owner: str, need_id: str, request: Request) -> dict[str, A
         actor=request_actor(request),
         details={"owner": owner, "need_id": need_id, "kind": need["kind"]},
     )
-    return _shown(request, need)
+    return await _shown(request, need)
