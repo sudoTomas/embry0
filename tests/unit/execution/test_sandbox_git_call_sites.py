@@ -45,6 +45,12 @@ class Recorder:
         self.stdin.append(stdin_data)
         return self.answer(_text(cmd))
 
+    async def run_cmd_status(self, cmd: list[str], timeout: int = 60, **_kw: Any) -> tuple[int, str, str]:
+        """A command whose answer is its exit status: this one always exits 0, printing the answer."""
+        self.cmds.append(list(cmd))
+        self.stdin.append(None)
+        return 0, self.answer(_text(cmd)), ""
+
     async def copy_bytes_into(self, container: str, data: bytes, path: str) -> None:
         return None
 
@@ -176,7 +182,11 @@ async def test_the_verify_gate_runs_on_embry0s_git():
     def answer(t: str) -> str:
         if "EMBRY0_VERIFY_HEAD" in t:
             return f"EMBRY0_VERIFY_HEAD={'a' * 40}\nEMBRY0_VERIFY_BASE={'b' * 40}\n"
-        return "1 passed\nEMBRY0_VERIFY_RESULT exit=0 ms=5"
+        if "EMBRY0_SWEEP" in t:
+            return "EMBRY0_SWEEP stopped=0 passes=0 survivors=0 unread=0 pids=\n"
+        if " tail -c " in t:
+            return "1 passed\n"
+        return ""  # a run's exec prints nothing; its log is read back on its own
 
     docker = Recorder(answer)
     config = VerificationConfig(test_targets=[TestTarget(name="unit", command="true", paths=[])])

@@ -436,6 +436,80 @@ async def test_run_cmd_bytes_cap_holds_against_a_real_process():
         )
 
 
+@pytest.mark.asyncio
+async def test_run_cmd_status_answers_a_failed_command_with_its_status_instead_of_raising():
+    """A test run's exit status IS its result: a non-zero exit comes back with both outputs, never as an error."""
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(data=b"out\n"), _Pipe(data=b"err\n"), returncode=3)
+        try:
+            result = await _reader(DockerClient(), "run_cmd_status")(["docker", "exec", "c", "false"])
+        except RuntimeError as exc:
+            pytest.fail(f"run_cmd_status raised on a non-zero exit: {exc}")
+    assert result == (3, "out\n", "err\n"), f"(returncode, stdout, stderr), as printed: {result!r}"
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_status_returns_output_as_printed():
+    """Not stripped, so a caller can tell nothing from a newline; a cut character is replaced, not refused (#394)."""
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(data="é\n".encode()[1:]), _Pipe(data=b"\n"))
+        result = await _reader(DockerClient(), "run_cmd_status")(["docker", "exec", "c", "x"])
+    assert result == (0, "\ufffd\n", "\n"), result
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_status_reads_through_the_one_reader(monkeypatch):
+    """No second reader: run_cmd_status reads with collect_output, under the cap its caller names."""
+    from embry0.execution import docker_client
+
+    seen: list[int] = []
+    real = docker_client.collect_output
+
+    async def spy(proc: Any, **kwargs: Any) -> tuple[bytes, bytes]:
+        seen.append(kwargs["max_bytes"])
+        return await real(proc, **kwargs)
+
+    monkeypatch.setattr(docker_client, "collect_output", spy)
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _Proc(_Pipe(data=b"ok"))
+        await _reader(DockerClient(), "run_cmd_status")(["docker", "x"], max_bytes=4096)
+    assert seen == [4096], f"run_cmd_status must read through collect_output with its cap: {seen}"
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_status_never_answers_without_an_exit_status():
+    """A command reaped without a status has no answer to give: not 0, not anything else."""
+
+    class _NoStatus(_Proc):
+        async def wait(self) -> int:
+            return 0  # returncode is left unset
+
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+        mock_proc.return_value = _NoStatus(_Pipe(data=b""))
+        with pytest.raises(RuntimeError, match="without an exit status"):
+            await _reader(DockerClient(), "run_cmd_status")(["docker", "exec", "c", "true"])
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_status_kills_a_command_that_runs_past_its_timeout(monkeypatch):
+    proc = _Proc(_Pipe(hang=True), _Pipe(hang=True))
+
+    async def _fake_create(*args: Any, **kwargs: Any) -> _Proc:
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    with pytest.raises(TimeoutError, match="timed out after 1s"):
+        await _reader(DockerClient(), "run_cmd_status")(["docker", "exec", "c", "sleep", "9"], timeout=1)
+    assert proc.killed and proc.returncode is not None, "a command past its timeout is killed and reaped"
+
+
+def _reader(client: DockerClient, name: str) -> Any:
+    """A DockerClient method that reads a command's output; one that is missing fails with its name."""
+    method = getattr(client, name, None)
+    assert method is not None, f"DockerClient.{name} is missing"
+    return method
+
+
 def _bounded(name: str) -> Any:
     """A constant docker_client must define to bound what a command can make embry0 hold."""
     from embry0.execution import docker_client
@@ -478,7 +552,7 @@ async def test_run_cmd_stops_a_command_that_prints_past_its_cap():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["run_cmd", "run_cmd_bytes"])
+@pytest.mark.parametrize("method", ["run_cmd", "run_cmd_bytes", "run_cmd_status"])
 async def test_a_command_is_bounded_without_a_cap_of_its_own(method: str):
     """A caller that names no cap still gets one: DEFAULT_MAX_OUTPUT_BYTES."""
     default = _bounded("DEFAULT_MAX_OUTPUT_BYTES")
@@ -487,7 +561,7 @@ async def test_a_command_is_bounded_without_a_cap_of_its_own(method: str):
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
         mock_proc.return_value = _Proc(stdout)
         with pytest.raises(OutputTooLargeError):
-            await getattr(DockerClient(), method)(["docker", "exec", "c", "cat", "/x"])
+            await _reader(DockerClient(), method)(["docker", "exec", "c", "cat", "/x"])
     assert stdout.handed <= default + 1, f"{method} read {stdout.handed} bytes; the default cap is {default}"
 
 
@@ -497,9 +571,9 @@ async def test_no_command_runs_without_a_positive_cap(cap: Any):
     """Nothing can ask for an unbounded read: a missing or non-positive cap is refused before the command starts."""
     _run_cmd_takes_a_cap()
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
-        for method in ("run_cmd", "run_cmd_bytes"):
+        for method in ("run_cmd", "run_cmd_bytes", "run_cmd_status"):
             with pytest.raises(ValueError, match="max_bytes"):
-                await getattr(DockerClient(), method)(["docker", "x"], max_bytes=cap)
+                await _reader(DockerClient(), method)(["docker", "x"], max_bytes=cap)
     mock_proc.assert_not_called()
 
 
@@ -510,9 +584,9 @@ async def test_a_cap_above_the_ceiling_is_refused():
     assert ceiling >= _bounded("DAEMON_LISTING_MAX_BYTES"), "every named cap must fit under the ceiling"
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
         mock_proc.return_value = _Proc(_Pipe(data=b"ok\n"))
-        for method in ("run_cmd", "run_cmd_bytes"):
+        for method in ("run_cmd", "run_cmd_bytes", "run_cmd_status"):
             with pytest.raises(ValueError, match="max_bytes"):
-                await getattr(DockerClient(), method)(["docker", "x"], max_bytes=ceiling + 1)
+                await _reader(DockerClient(), method)(["docker", "x"], max_bytes=ceiling + 1)
         assert mock_proc.call_count == 0, "a command with a refused cap must not start"
         assert await DockerClient().run_cmd(["docker", "x"], max_bytes=ceiling) == "ok", "the ceiling itself is a cap"
 
@@ -531,7 +605,7 @@ async def test_a_log_cut_inside_a_character_is_read_not_refused():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["run_cmd", "run_cmd_bytes"])
+@pytest.mark.parametrize("method", ["run_cmd", "run_cmd_bytes", "run_cmd_status"])
 async def test_a_real_process_past_the_cap_is_stopped_and_reaped_at_once(method: str):
     """A real pipe: 8 MiB written, a 1 KiB cap. The killed command is reaped at once, not logged as stuck after 5 s."""
     import time
@@ -543,7 +617,7 @@ async def test_a_real_process_past_the_cap_is_stopped_and_reaped_at_once(method:
     OutputTooLargeError = _too_large_error()
     started = time.monotonic()
     with capture_logs() as logs, pytest.raises(OutputTooLargeError):
-        await getattr(DockerClient(), method)(
+        await _reader(DockerClient(), method)(
             [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x' * (8 << 20))"], timeout=20, max_bytes=1024
         )
     elapsed = time.monotonic() - started
