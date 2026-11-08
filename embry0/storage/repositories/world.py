@@ -11,19 +11,25 @@ from collections.abc import Sequence
 from typing import Any
 
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.jobs import job_repository_sql
 from embry0.storage.repositories.progression import a_cleanup
 
 #: Job statuses a party is still out on.
 LIVE_STATUSES = ("pending", "running", "awaiting_input", "paused")
 
+# A job's repository, wherever the world reads one: its ``repo``, else its git context's, as the jobs routes and
+# their repository allowlist read it (jobs.job_repository_sql).
+_JOB_REPO = job_repository_sql()
+_J_REPO = job_repository_sql("j")
+
 # A region: a repository with owners, a watched stack, or jobs in the last 90
 # days, with how many jobs it had in that time.
-_REGIONS_SQL = """
+_REGIONS_SQL = f"""
 WITH active AS (
-    SELECT repo, COUNT(*) AS jobs, MAX(created_at) AS last_job_at
+    SELECT {_JOB_REPO} AS repo, COUNT(*) AS jobs, MAX(created_at) AS last_job_at
     FROM jobs
-    WHERE repo IS NOT NULL AND created_at > NOW() - INTERVAL '90 days'
-    GROUP BY repo
+    WHERE {_JOB_REPO} IS NOT NULL AND created_at > NOW() - INTERVAL '90 days'
+    GROUP BY 1
 )
 SELECT r.repo,
        COALESCE(a.jobs, 0) AS jobs,
@@ -47,14 +53,14 @@ SELECT repo FROM repos WHERE active ORDER BY repo LIMIT $1
 """
 
 # The parties out now, and those back within the last ``$1`` seconds.
-_JOBS_SQL = """
-SELECT job_id, repo, task, status, pipeline_template, job_kind, created_at, started_at, finished_at,
+_JOBS_SQL = f"""
+SELECT job_id, {_JOB_REPO} AS repo, task, status, pipeline_template, job_kind, created_at, started_at, finished_at,
        pr_url, delivery_state, area, issue_id, dispatched_by, current_stage, error_code, error_message,
        account_wait, coding_agent, leader_agent
 FROM jobs
 WHERE (status = ANY($2::text[])
    OR COALESCE(finished_at, updated_at) > NOW() - make_interval(secs => $1))
-  AND ($4::text[] IS NULL OR lower(repo) = ANY($4::text[]))
+  AND ($4::text[] IS NULL OR lower({_JOB_REPO}) = ANY($4::text[]))
 ORDER BY created_at DESC
 LIMIT $3
 """
@@ -73,11 +79,11 @@ WHERE decision = 'accept' AND job_id = ANY($1::text[])
 """
 
 # The pull requests parties brought back in the last ``$1`` days.
-_LOOT_SQL = """
-SELECT job_id, repo, task, pr_url, delivery_state, delivery_state_at, finished_at, area, pipeline_template
+_LOOT_SQL = f"""
+SELECT job_id, {_JOB_REPO} AS repo, task, pr_url, delivery_state, delivery_state_at, finished_at, area, pipeline_template
 FROM jobs
 WHERE pr_url IS NOT NULL AND COALESCE(finished_at, created_at) > NOW() - make_interval(days => $1)
-  AND ($3::text[] IS NULL OR lower(repo) = ANY($3::text[]))
+  AND ($3::text[] IS NULL OR lower({_JOB_REPO}) = ANY($3::text[]))
 ORDER BY COALESCE(delivery_state_at, finished_at, created_at) DESC
 LIMIT $2
 """
@@ -88,12 +94,12 @@ LIMIT $2
 # A slop cleanup is a job the Slopmaster coded, as plan_route recorded it
 # (#167, progression.a_cleanup).
 _CLEANED_SQL = f"""
-SELECT j.repo, j.area, COUNT(*) AS cleaned
+SELECT {_J_REPO} AS repo, j.area, COUNT(*) AS cleaned
 FROM jobs j
-WHERE {a_cleanup("j")} AND j.repo IS NOT NULL
+WHERE {a_cleanup("j")} AND {_J_REPO} IS NOT NULL
   AND (j.status = 'pr_merged' OR j.delivery_state = 'merged')
   AND COALESCE(j.delivery_state_at, j.finished_at, j.created_at) > NOW() - make_interval(days => $1)
-GROUP BY j.repo, j.area
+GROUP BY 1, j.area
 """
 
 
@@ -102,15 +108,15 @@ SELECT job_id, MAX(created_at) AS at FROM job_logs WHERE job_id = ANY($1::text[]
 """
 
 # One character's quests: every job it ran in, its share of the cost and time, and the player's evaluation.
-_QUEST_LOG_SQL = """
-SELECT j.job_id, j.repo, j.area, j.task, j.status, j.delivery_state, j.pr_url, j.pipeline_template,
+_QUEST_LOG_SQL = f"""
+SELECT j.job_id, {_J_REPO} AS repo, j.area, j.task, j.status, j.delivery_state, j.pr_url, j.pipeline_template,
        j.created_at, j.finished_at, j.error_code, j.dispatched_by,
        SUM(t.cost_usd) AS cost_usd, SUM(t.duration_ms) AS duration_ms, COUNT(*) AS runs,
        r.rating, r.verdict
 FROM traces t
 JOIN jobs j ON j.job_id = t.job_id
 LEFT JOIN job_ratings r ON r.job_id = j.job_id
-WHERE t.agent_type = $1 AND ($3::text[] IS NULL OR lower(j.repo) = ANY($3::text[]))
+WHERE t.agent_type = $1 AND ($3::text[] IS NULL OR lower({_J_REPO}) = ANY($3::text[]))
 GROUP BY j.job_id, r.rating, r.verdict
 ORDER BY j.created_at DESC
 LIMIT $2
@@ -140,8 +146,8 @@ FROM quests q LEFT JOIN job_ratings r ON r.job_id = q.job_id
 GROUP BY q.agent_type
 """
 
-_QUEST_SQL = """
-SELECT j.job_id, j.repo, j.context, j.area, j.task, j.status, j.delivery_state, j.delivery_state_at, j.pr_url,
+_QUEST_SQL = f"""
+SELECT j.job_id, {_J_REPO} AS repo, j.context, j.area, j.task, j.status, j.delivery_state, j.delivery_state_at, j.pr_url,
        j.pipeline_template, j.job_kind, j.created_at, j.started_at, j.finished_at, j.error_code, j.error_message,
        j.total_cost_usd, j.result_summary, j.dispatched_by, j.issue_id, j.account_wait, j.work_nature,
        j.coding_agent, j.leader_agent, r.rating, r.verdict, r.note, r.followup_job_id, r.rated_by, r.rated_at
@@ -155,8 +161,8 @@ FROM traces WHERE job_id = $1 ORDER BY created_at
 """
 
 # Finished quests a person sent (or that brought back a pull request) and nobody evaluated yet.
-_INBOX_SQL = """
-SELECT j.job_id, j.repo, j.area, j.task, j.status, j.delivery_state, j.pr_url, j.pipeline_template,
+_INBOX_SQL = f"""
+SELECT j.job_id, {_J_REPO} AS repo, j.area, j.task, j.status, j.delivery_state, j.pr_url, j.pipeline_template,
        j.created_at, j.finished_at, j.error_code, j.error_message, j.total_cost_usd, j.dispatched_by,
        -- drawn as the character that did the most of it: the costliest run but triage's
        (SELECT t.agent_type FROM traces t WHERE t.job_id = j.job_id AND t.agent_type <> 'triage'
@@ -167,7 +173,7 @@ WHERE j.finished_at > NOW() - make_interval(days => $1)
   AND (j.pr_url IS NOT NULL OR j.dispatched_by IS NULL OR j.dispatched_by NOT LIKE 'embry0:%'
        OR j.dispatched_by = ANY($2::text[]))
   AND NOT EXISTS (SELECT 1 FROM job_ratings r WHERE r.job_id = j.job_id)
-  AND ($4::text[] IS NULL OR lower(j.repo) = ANY($4::text[]))
+  AND ($4::text[] IS NULL OR lower({_J_REPO}) = ANY($4::text[]))
 ORDER BY j.finished_at DESC
 LIMIT $3
 """
