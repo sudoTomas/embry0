@@ -80,7 +80,7 @@ def _target(command: str, timeout_seconds: int = 60) -> TestTarget:
 
 
 async def _run(sandbox: _LocalSandbox, command: str, *, timeout_seconds: int = 60) -> Any:
-    return await runner._run_once(sandbox, "local", _target(command, timeout_seconds), "head", 1)
+    return await runner._run_once(sandbox, "local", _target(command, timeout_seconds), "head", 1, [])
 
 
 @pytest.mark.parametrize(

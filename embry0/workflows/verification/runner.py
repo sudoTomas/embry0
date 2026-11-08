@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, Protocol
 
@@ -26,7 +27,7 @@ import structlog
 
 from embry0.execution import sandbox_git
 from embry0.execution.docker_client import DEFAULT_MAX_OUTPUT_BYTES, OutputTooLargeError
-from embry0.safety.redaction import known_secret_values
+from embry0.safety.redaction import secret_env_values
 from embry0.workflows.qa._glob_match import compile_glob, match_any
 from embry0.workflows.verification.config import TestTarget, VerificationConfig
 from embry0.workflows.verification.gate import (
@@ -161,7 +162,7 @@ def parse_prepared(output: str) -> tuple[str, str] | None:
     return found["HEAD"][0], found["BASE"][0]
 
 
-async def _read_log(docker: SandboxDocker, container_id: str, log_name: str) -> str | None:
+async def _read_log(docker: SandboxDocker, container_id: str, log_name: str, known: list[str]) -> str | None:
     """The run's log tail, read in an exec of its own; None when it cannot be read."""
     cmd = docker.build_exec_cmd(container_id, ["tail", "-c", str(PARSE_TAIL_BYTES), "--", f"{LOG_DIR}/{log_name}"])
     try:
@@ -170,14 +171,49 @@ async def _read_log(docker: SandboxDocker, container_id: str, log_name: str) -> 
         logger.warning("verify_log_read_failed", log=log_name, error=str(exc)[:300])
         return None
     if code != 0 or err:
-        logger.warning("verify_log_read_failed", log=log_name, returncode=code, stderr=_excerpt(err))
+        logger.warning("verify_log_read_failed", log=log_name, returncode=code, stderr=_excerpt(err, known))
         return None
     return out
 
 
-def _excerpt(text: str) -> str:
+def _excerpt(text: str, known: list[str]) -> str:
     """Up to 300 characters of sandbox output for a log line: scrubbed first, so a cut leaves no fragment."""
-    return scrub_output(text, known_values=known_secret_values())[:300]
+    return scrub_output(text, known_values=known)[:300]
+
+
+def _scrubbed_name(name: str, known: list[str]) -> str:
+    """One test name, scrubbed. A name with brackets (pytest's ``test[id]``, a parameterised JUnit
+    ``method[1]``) ends with the runner's own ``]``; the scrubber redacts a whole value to the next
+    space, so when it took that bracket with a value it is put back."""
+    scrubbed = scrub_output(name, known_values=known)
+    if name.endswith("]") and "[" in name and not scrubbed.endswith("]"):
+        return scrubbed + "]"
+    return scrubbed
+
+
+def _scrubbed(names: list[str], known: list[str]) -> list[str]:
+    """Each of ``names`` scrubbed, one entry per name: names that scrub to the same text stay separate entries."""
+    return [_scrubbed_name(name, known) for name in names]
+
+
+def _run_as_reported(run: TargetRun, known: list[str]) -> TargetRun:
+    """``run`` with its failed test names and summary line scrubbed, as ``output_tail`` already is."""
+    return replace(
+        run,
+        failed_tests=None if run.failed_tests is None else _scrubbed(run.failed_tests, known),
+        summary=None if run.summary is None else scrub_output(run.summary, known_values=known),
+    )
+
+
+def _verdict_as_reported(verdict: TargetVerdict, known: list[str]) -> TargetVerdict:
+    """``verdict`` with every test name it lists scrubbed."""
+    return replace(
+        verdict,
+        new_failures=_scrubbed(verdict.new_failures, known),
+        preexisting=_scrubbed(verdict.preexisting, known),
+        flaky=_scrubbed(verdict.flaky, known),
+        fixed=_scrubbed(verdict.fixed, known),
+    )
 
 
 def _sweep_note(when: str, swept: SweepResult) -> str:
@@ -185,9 +221,9 @@ def _sweep_note(when: str, swept: SweepResult) -> str:
 
 
 async def _run_once(
-    docker: SandboxDocker, container_id: str, target: TestTarget, side: Side, attempt: int
+    docker: SandboxDocker, container_id: str, target: TestTarget, side: Side, attempt: int, known: list[str]
 ) -> TargetRun:
-    before = await sweep_sandbox(docker, container_id)
+    before = await sweep_sandbox(docker, container_id, scrub_values=known)
     if not before.clean:
         return _not_run(target, side, attempt, _sweep_note("not run: before the run", before))
 
@@ -228,7 +264,7 @@ async def _run_once(
 
     # Always, whatever the exec did: a run that did not return is still
     # running in the sandbox until this stops it.
-    after = await sweep_sandbox(docker, container_id)
+    after = await sweep_sandbox(docker, container_id, scrub_values=known)
     if not after.clean:
         return _not_run(target, side, attempt, _sweep_note("not judged: after the run", after), duration_ms=duration_ms)
     if unusable is not None:
@@ -244,7 +280,7 @@ async def _run_once(
                 target=target.name,
                 side=side,
                 returncode=code,
-                output=_excerpt(printed),
+                output=_excerpt(printed, known),
             )
             why = "the command could not be started in the sandbox"
         return _not_run(target, side, attempt, why, duration_ms=duration_ms)
@@ -255,19 +291,20 @@ async def _run_once(
             target, side, attempt, "the command could not be started in the sandbox", duration_ms=duration_ms
         )
 
-    log = await _read_log(docker, container_id, log_name)
+    log = await _read_log(docker, container_id, log_name, known)
     if log is None and code == _LOST_EXEC_EXIT:
         return _not_run(target, side, attempt, "the sandbox stopped answering during the run", duration_ms=duration_ms)
     parsed = parse_test_output(log or "")
     outcome = "passed" if code == 0 else "timed_out" if code in _TIMEOUT_EXIT_CODES else "failed"
     # Command output is unreviewed text from the repo under test, and the
     # sandbox env holds tokens: scrub before it reaches the database and the
-    # deliverables API (review of #341). Registry secrets have no known
-    # shape; the scrubber also takes them by value (spec 2026-09-29 §5), from
-    # the set seeded at startup. Scrub before cutting the tail: a cut through
-    # a secret would leave a fragment neither signal recognises.
+    # deliverables API (review of #341). Registry secrets and the job's own
+    # secret values have no known shape; the scrubber also takes them by
+    # value (spec 2026-09-29 §5), from the values run_gate was given. Scrub
+    # before cutting the tail: a cut through a secret would leave a fragment
+    # neither signal recognises.
     tail = (
-        scrub_output(log.strip(), known_values=known_secret_values())[-STORED_TAIL_CHARS:]
+        scrub_output(log.strip(), known_values=known)[-STORED_TAIL_CHARS:]
         if log is not None
         else "the run's log could not be read"
     )
@@ -292,8 +329,15 @@ async def run_gate(
     config: VerificationConfig,
     changed_files: list[str],
     base_ref: str,
+    scrub_values: Sequence[str] | None = None,
 ) -> GateReport:
-    """Run the selected targets on head and base; return the comparison."""
+    """Run the selected targets on head and base; return the comparison.
+
+    ``scrub_values`` are the secrets the runs' output is scrubbed with by value, as well as by shape: the
+    job's own (``job_secret_values``), which the sandbox's environment held. Without them, the registry's
+    and this process's (``secret_env_values``).
+    """
+    known = list(scrub_values) if scrub_values is not None else secret_env_values()
     selected = select_targets(config.test_targets, changed_files)
     if not selected:
         return GateReport.without_runs(
@@ -331,7 +375,7 @@ async def run_gate(
             out_of_time = True
             run = _not_run(target, side, n, "not run: the gate's time budget was used up")
         else:
-            run = await _run_once(docker, container_id, target, side, n)
+            run = await _run_once(docker, container_id, target, side, n, known)
         runs.append(run)
         return run
 
@@ -360,9 +404,15 @@ async def run_gate(
         except Exception:  # noqa: BLE001
             logger.warning("verify_cleanup_failed", container_id=container_id)
 
+    # Test names and summary lines come from the same unreviewed log as the
+    # output tail. They are compared as read, since scrubbing first could
+    # turn two tests whose names differ only in a redacted part into one
+    # name and hide a new failure behind an old one; the report, which is
+    # what is stored, shown and sent, carries them scrubbed, one entry per
+    # name as read.
     return build_report(
-        targets=verdicts,
-        runs=runs,
+        targets=[_verdict_as_reported(verdict, known) for verdict in verdicts],
+        runs=[_run_as_reported(run, known) for run in runs],
         base_sha=base_sha,
         head_sha=head_sha,
         base_ref=base_ref,

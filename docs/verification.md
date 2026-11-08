@@ -152,8 +152,19 @@ mode that killed the seven jobs.
   (`FAIL file > suite > name`). The last 8000 characters are stored,
   **scrubbed** of credential-shaped values and of assignments whose name
   ends in `TOKEN`/`SECRET`/`KEY`/`PASSWORD`/…
-  (`embry0/workflows/verification/scrub.py`). A log that cannot be read
-  leaves the names unknown, so the target is compared by exit code.
+  (`embry0/workflows/verification/scrub.py`). Head and base are compared
+  by the names as read; the report then carries every test name (each run's
+  and each verdict's lists) and each run's summary line through the same
+  scrubber, so the stored result, the job's summary and the pull request
+  comment show them scrubbed. Each test keeps its own entry, and a name's
+  closing `]` is kept: two tests whose names scrub to the same text are
+  listed, and counted, as two. The scrubber also takes, by value, the job's
+  secret-typed env vars and the values of its secret-looking ones (as its
+  sandbox had them), this process's secret-looking ones and the credential
+  registry's, for the tail, the names, the summary and the excerpts in the
+  orchestrator's log lines alike, the process sweep's included. A log that
+  cannot be read leaves the names unknown, so the target is compared by
+  exit code.
 - **The commits come from the prepare step**, which prints
   `EMBRY0_VERIFY_HEAD=<sha>` and `EMBRY0_VERIFY_BASE=<sha>`. Exactly one of
   each, each a full 40-hex sha, or the gate's verdict is `error` and a

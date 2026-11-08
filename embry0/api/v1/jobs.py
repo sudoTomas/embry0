@@ -1,7 +1,6 @@
 """Jobs API — create, list, get, cancel jobs."""
 
 import json
-import os
 import uuid
 from typing import Any
 
@@ -18,7 +17,7 @@ from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, Q
 from embry0.api.schemas.jobs import DoneWhenEditRequest, JobResumeRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
-from embry0.safety.redaction import redact_event, secret_env_values
+from embry0.safety.redaction import job_secret_values, redact_event
 from embry0.services.answer_recorder import record_answer
 from embry0.services.run_with import RunWith, apply_run_with
 from embry0.storage.repositories.jobs import JobsRepository
@@ -483,13 +482,7 @@ async def _job_scrub_values(request: Request, job_id: str) -> list[str]:
                 logger.debug("session_scrub_repo_unresolved", job_id=job_id)
         except Exception:
             logger.debug("session_scrub_env_vars_unavailable", job_id=job_id, exc_info=True)
-    environ = dict(os.environ)
-    secret_typed: list[str] = []
-    for row in rows or []:
-        environ[str(row["key"])] = str(row["value"])
-        if row.get("var_type") == "secret":
-            secret_typed.append(str(row["value"]))
-    return secret_env_values(environ, extra=secret_typed)
+    return job_secret_values(rows)
 
 
 @router.get("/jobs/{job_id}/agents/{agent_type}/session", dependencies=[require_operator])
