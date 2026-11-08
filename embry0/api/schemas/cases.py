@@ -141,9 +141,11 @@ class CaseResponse(BaseModel):
                 if row["tracker"]
                 else None
             ),
-            "fix_deployed": fix_deployed(
-                merge_sha=row["merge_sha"], merged_at=row["merged_at"], deployed_at=row["deployed_at"]
-            ),
+            # Given when the row's merge_sha was taken out for its reader (embry0.api.case_allowlist): a fix is
+            # running whether or not the reader may see which commit it is.
+            "fix_deployed": row["fix_deployed"]
+            if "fix_deployed" in row
+            else fix_deployed(merge_sha=row["merge_sha"], merged_at=row["merged_at"], deployed_at=row["deployed_at"]),
             "deploy_marker": (
                 CaseDeployMarker(sha=row["deploy_sha"], at=row["deploy_marker_at"], services=row["deploy_services"])
                 if row["deploy_sha"]
