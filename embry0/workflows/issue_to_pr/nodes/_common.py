@@ -73,14 +73,15 @@ def _filter_user_env_for_sandbox(user_env: list[dict[str, str]] | dict[str, str]
 
     - scope='app' (or unspecified): always included.
     - scope='qa':  included only when qa_active=True.
-    - Reserved keys/prefixes, and guarded keys whose value is outside their
-      allowed flags: always dropped (defense-in-depth vs API validation, for
-      rows stored before a key was reserved or written around the API).
+    - Keys that are not variable names, reserved keys/prefixes, and guarded
+      keys whose value is outside their allowed flags: always dropped
+      (defense-in-depth vs API validation, for rows stored before a key was
+      reserved or written around the API).
 
     Accepts either the new list-of-dicts shape or the legacy plain dict
     (treated as all scope='app').
     """
-    from embry0.execution.auth_provider import env_override_refusal
+    from embry0.execution.auth_provider import env_name_refusal, env_override_refusal, shown_env_key
 
     # Normalize to list-of-dicts
     if isinstance(user_env, dict):
@@ -91,6 +92,11 @@ def _filter_user_env_for_sandbox(user_env: list[dict[str, str]] | dict[str, str]
     out: dict[str, str] = {}
     for row in rows:
         key = row["key"]
+        name_refusal = env_name_refusal(key)
+        if name_refusal is not None:
+            shown, cut = shown_env_key(key)
+            logger.warning("user_env_invalid_name_dropped", key=shown, key_cut_at_equals=cut, reason=name_refusal)
+            continue
         # The same case-insensitive check the API applies (auth_provider).
         refusal = env_override_refusal(key, row.get("value", ""))
         if refusal is not None:

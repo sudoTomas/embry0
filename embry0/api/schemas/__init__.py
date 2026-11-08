@@ -377,9 +377,10 @@ class SandboxProfileRequest(BaseModel):
 
     @field_validator("env_defaults")
     @classmethod
-    def _env_defaults_not_reserved(cls, v: dict[str, str]) -> dict[str, str]:
-        # #544: the env-var API's check. SandboxManager.create drops a refused
-        # key from stored rows too, but silently — refuse it here with a 422.
+    def _env_defaults_allowed(cls, v: dict[str, str]) -> dict[str, str]:
+        # #544: the env-var API's check, the variable name included.
+        # SandboxManager.create drops a refused key from stored rows too, but
+        # only with a log line: refuse it here with a 422 naming the key.
         for key, value in v.items():
             refusal = env_override_refusal(key, value)
             if refusal is not None:

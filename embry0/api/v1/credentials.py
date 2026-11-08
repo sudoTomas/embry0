@@ -155,8 +155,9 @@ def _xai_oauth_secret(refresh_token: str, client_id: str, token_endpoint: str) -
     return json.dumps({"refresh_token": refresh_token, "client_id": client_id, "token_endpoint": token_endpoint})
 
 
-# Path fragments whose request bodies carry secrets; their 422s never echo input.
-_NO_ECHO_PATH_MARKERS: tuple[str, ...] = ("/credentials", "/environment")
+# Path fragments whose request bodies carry secrets or environment values; their 422s never echo input:
+# credentials, environment variables, sandbox profiles (env_defaults) and agents (an MCP server's env).
+_NO_ECHO_PATH_MARKERS: tuple[str, ...] = ("/credentials", "/environment", "/sandbox-profiles", "/agents")
 
 
 def _not_json(value: Any) -> bool:
@@ -173,10 +174,10 @@ def _not_json(value: Any) -> bool:
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """FastAPI's 422 echoes the offending ``input``, which for a credential body is the secret.
 
-    Credential and environment routes get the same error list without ``input``: an env
-    var's ``value`` may be a secret, and a model-level error's input is the whole variable,
-    value included. Every other route keeps FastAPI's default. Registered app-wide in
-    ``create_app`` (handlers cannot be per-router).
+    Credential, environment, sandbox profile and agent routes get the same error list
+    without ``input``: an env var's ``value`` may be a secret, and a model-level error's
+    input is the whole body, every value included. Every other route keeps FastAPI's
+    default. Registered app-wide in ``create_app`` (handlers cannot be per-router).
     """
     if not any(marker in request.url.path for marker in _NO_ECHO_PATH_MARKERS):
         if not any(_not_json(err.get("input")) for err in exc.errors()):
@@ -188,7 +189,14 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
             for err in exc.errors()
         ]
         return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
-    errors = [{k: v for k, v in err.items() if k not in ("input", "ctx")} for err in exc.errors()]
+    # A dict key in ``loc`` is cut at its first "=": in a variable's name, what follows it is a value.
+    errors = [
+        {
+            **{k: v for k, v in err.items() if k not in ("input", "ctx", "loc")},
+            "loc": [part.partition("=")[0] if isinstance(part, str) else part for part in err.get("loc", ())],
+        }
+        for err in exc.errors()
+    ]
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 

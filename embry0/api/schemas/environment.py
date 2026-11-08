@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from embry0.execution.auth_provider import (  # re-exported
+    ENV_NAME_PATTERN,
     RESERVED_ENV_KEYS,
     RESERVED_ENV_PREFIXES,
     env_key_refusal,
@@ -31,7 +32,7 @@ class EnvVarInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    key: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    key: str = Field(pattern=ENV_NAME_PATTERN)
     value: str
     var_type: str = Field(default="config", pattern=r"^(config|secret)$")
     description: str = ""

@@ -25,7 +25,7 @@ from embry0.cache.volume_ownership import (
     LABEL_SCOPE_KEY,
     volume_labels,
 )
-from embry0.execution.auth_provider import env_override_refusal
+from embry0.execution.auth_provider import env_name_refusal, env_override_refusal, shown_env_key
 from embry0.execution.docker_client import DockerClient
 from embry0.execution.image_registry import qualify_image
 from embry0.execution.profile_isolation import profile_isolation_problems
@@ -693,8 +693,17 @@ class SandboxManager:
         # caller-provided values win — env_defaults are profile baselines.
         # Reserved keys/prefixes are dropped: profiles must not become an
         # unfiltered env-injection path (same defense-in-depth the user
-        # env-var path gets in _filter_user_env_for_sandbox).
+        # env-var path gets in _filter_user_env_for_sandbox). So is a key
+        # that is not a variable name, which the API refuses but a row
+        # stored before that check, or written around the API, can carry.
         for key, value in (p.get("env_defaults") or {}).items():
+            name_refusal = env_name_refusal(key)
+            if name_refusal is not None:
+                shown, cut = shown_env_key(key)
+                logger.warning(
+                    "profile_env_default_invalid_name_dropped", key=shown, key_cut_at_equals=cut, reason=name_refusal
+                )
+                continue
             # The same case-insensitive check the env API applies (auth_provider).
             refusal = env_override_refusal(key, value)
             if refusal is not None:

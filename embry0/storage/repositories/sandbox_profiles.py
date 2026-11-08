@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 
+from embry0.execution.auth_provider import env_override_refusal
 from embry0.storage.database import DatabasePool
 
 logger = structlog.get_logger(__name__)
@@ -49,7 +50,16 @@ class SandboxProfilesRepository:
         function and the /reset endpoint will pass the flag explicitly).
         Inserting a new builtin row is unaffected — the guard only fires when
         the target row already exists with ``is_builtin=True``.
+
+        Every ``env_defaults`` key must pass the env-var API's check, its
+        variable name included (``env_override_refusal``), so the builtin
+        seeds and the /reset endpoint are held to the rule the API applies.
+        Raises ValueError naming the first key refused.
         """
+        for key, value in (env_defaults or {}).items():
+            refusal = env_override_refusal(key, value)
+            if refusal is not None:
+                raise ValueError(f"env_defaults: {refusal}")
         existing = await self.get(name)
         if existing is not None and existing.get("is_builtin") and not _allow_builtin_overwrite:
             raise ValueError(f"Cannot overwrite builtin profile '{name}' without _allow_builtin_overwrite=True")
