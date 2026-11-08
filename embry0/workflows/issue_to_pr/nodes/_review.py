@@ -19,6 +19,8 @@ from embry0.orchestration.nodes.agent import agent_attempt
 from embry0.workflows.issue_to_pr.nodes._common import (
     DECIDE_NOW_MAX_TURNS,
     _extract_ask_user_events,
+    _is_ask_user_event,
+    _kept_event_forwarder,
     _max_turns_recovery_session,
 )
 
@@ -312,14 +314,9 @@ Return ONLY a JSON object:
 }}
 The JSON object is the last thing you output — nothing after it."""
 
-    # Collect agent events locally so we can scan for agent_ask_user events
-    # after the agent finishes. We still forward every event to the graph
-    # stream writer for live streaming.
-    collected_events: list[dict[str, Any]] = []
-
-    def _forward_event(event: dict[str, Any]) -> None:
-        collected_events.append(event)
-        writer(event)
+    # Keep the agent's questions to scan after it finishes; every event still
+    # goes to the graph stream writer for live streaming.
+    collected_events, _forward_event = _kept_event_forwarder(writer, _is_ask_user_event)
 
     # Plan C Task 7: load any prior AgentSession for this (job, agent) so the
     # in-sandbox executor can resume the same Claude conversation. Restore
