@@ -290,7 +290,13 @@ def test_the_prelude_sets_every_pin_and_the_environment():
     text = sandbox_git.prelude()
     for key, value in PINS:
         assert f"embry0_git_pin {key} " in text, key
-    for name in ("GIT_CONFIG_GLOBAL=/run/embry0/git/config", "GIT_ALLOW_PROTOCOL=http:https", "GIT_ASKPASS=''"):
+    for name in (
+        "GIT_CONFIG_GLOBAL=/run/embry0/git/config",
+        "GIT_ALLOW_PROTOCOL=http:https",
+        "GIT_ASKPASS=''",
+        "GIT_NO_REPLACE_OBJECTS=1",
+        "GIT_GRAFT_FILE=/dev/null/no-grafts",
+    ):
         assert name in text, name
     # GIT_CONFIG_GLOBAL has one source: prelude() adds it, ENVIRONMENT does not carry it.
     assert text.count("GIT_CONFIG_GLOBAL=") == 1

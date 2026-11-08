@@ -46,6 +46,7 @@ def _state(files: list[str], **extra: Any) -> dict[str, Any]:
         "sandbox_container_id": "c1",
         "base_branch": "main",
         "base_branch_source": "preference",
+        "branch_name": "feature/lead-timer",
         "changed_files": files,
         "route_plan": FULL_PLAN,
         "route_cursor": 2,  # review approved: the cursor is on the qa step
@@ -359,6 +360,9 @@ class _Sandbox:
         self.diff, self.sweep = diff, sweep
         self.steps: list[str] = []
         self.diff_caps: list[int | None] = []
+        self.checkouts: list[str] = []
+        self.listed: list[str] = []
+        self.run_dirs: list[str] = []
 
     def build_exec_cmd(self, container: str, command: list[str], **kwargs: Any) -> dict[str, Any]:
         return {"command": command, "env": kwargs.get("env") or {}}
@@ -370,6 +374,7 @@ class _Sandbox:
             return self.sweep
         if "EMBRY0_VERIFY_CMD" in env:
             self.steps.append("run")
+            self.run_dirs.append(env["EMBRY0_VERIFY_DIR"])
             return 0, "", ""
         if command[0] == "tail":
             self.steps.append("log")
@@ -386,9 +391,20 @@ class _Sandbox:
             if isinstance(self.diff, Exception):
                 raise self.diff
             return self.diff.strip()
-        if "worktree add" in text:
+        if cmd["command"][:2] == ["sh", "-c"] and "rm -rf" in cmd["command"][-1]:
+            self.steps.append("cleanup")
+            return ""
+        if "EMBRY0_VERIFY_HEAD" in text:
             self.steps.append("prepare")
             return f"EMBRY0_VERIFY_HEAD={PARSED_HEAD}\nEMBRY0_VERIFY_BASE={PARSED_BASE}"
+        if "ls-remote" in text:
+            self.steps.append("delivered")
+            self.listed.append(text)
+            return f"{PARSED_HEAD}\trefs/heads/{text.rsplit('refs/heads/', 1)[-1].strip()}"
+        if "index-pack" in text:
+            self.steps.append("checkout")
+            self.checkouts.append(text)
+            return ""
         if "worktree remove" in text:
             self.steps.append("cleanup")
             return ""
@@ -467,3 +483,120 @@ async def test_the_stored_head_sha_is_the_one_the_gate_parsed() -> None:
     assert gate["verdict"] == "passed", gate
     assert (gate["head_sha"], gate["base_sha"]) == (PARSED_HEAD, PARSED_BASE), (gate["head_sha"], gate["base_sha"])
     assert cmd.update["verification"]["gate"]["head_sha"] == PARSED_HEAD
+
+
+@pytest.mark.asyncio
+async def test_the_stored_head_is_the_commit_the_head_run_tested() -> None:
+    """The head the result names, the tree the head run ran in and the change the targets were picked by agree."""
+    from embry0.execution.sandbox_git import WORKSPACE
+    from embry0.workflows.verification.runner import BASE_DIR, HEAD_DIR
+
+    sandbox = _Sandbox(diff=f"{JAVA}\n")
+    cmd, _, stored = await _run_in(sandbox, _state([TSX]))
+    gate = stored.upsert.await_args.kwargs["result"]["gate"]
+    assert WORKSPACE not in sandbox.run_dirs, f"the head run tests the commit, not the working copy: {sandbox.run_dirs}"
+    assert sandbox.run_dirs == [HEAD_DIR, BASE_DIR], sandbox.run_dirs
+    assert sandbox.checkouts, f"each run's tree is built from its commit: {sandbox.steps}"
+    head_checkout = sandbox.checkouts[0]
+    assert (
+        f"git init --quiet --template= {HEAD_DIR};" in head_checkout and f"--no-walk {PARSED_HEAD} " in head_checkout
+    ), f"the head tree is a checkout of the stored head {PARSED_HEAD[:7]}: {head_checkout[:300]}"
+    listing = "ls-remote https://github.com/acme/backend.git refs/heads/feature/lead-timer"
+    assert sandbox.listed and sandbox.listed[0].rstrip().endswith(listing), (
+        f"the stored head is the tip of the job's branch on the forge: {sandbox.listed}"
+    )
+    assert gate["head_sha"] == PARSED_HEAD, gate["head_sha"]
+    assert cmd.update["verification"]["tier"]["backend"] == [JAVA], "the tier is the fresh diff's"
+
+
+@pytest.mark.asyncio
+async def test_a_repository_without_test_targets_checks_nothing_out() -> None:
+    config, _ = _config(verification=None)
+    sandbox = _Sandbox(diff=f"{JAVA}\n")
+    config["configurable"]["docker"] = sandbox
+    with patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _e: None):
+        cmd = await verify_node(_state([JAVA]), config)  # type: ignore[arg-type]
+    assert cmd.update["verification"]["gate"]["verdict"] == "not_configured"
+    assert sandbox.steps == ["sweep", "fetch", "diff"], f"no worktree and no run without a test target: {sandbox.steps}"
+
+
+@pytest.mark.asyncio
+async def test_the_node_gives_the_gate_the_jobs_branch() -> None:
+    """Without it the gate cannot check that the head it tests is the one the pull request carries."""
+    config, _ = _config()
+    _, run_gate = await _run(_state([JAVA]), config, _gate("passed", "passed"))
+    assert run_gate.await_args.kwargs.get("branch") == "feature/lead-timer", run_gate.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_the_node_gives_the_gate_the_url_embry0_cloned_from() -> None:
+    """The gate reads the forge there, not through a remote the repository's own config names."""
+    config, _ = _config()
+    repos = MagicMock()
+    repos.forge_for = AsyncMock(return_value="gitlab")
+    config["configurable"]["repos_repo"] = repos
+    config["configurable"]["embry0_config"] = SimpleNamespace(
+        verification_mode="on", gitlab_url="https://gitlab.example"
+    )
+    _, run_gate = await _run(_state([JAVA]), config, _gate("passed", "passed"))
+    assert run_gate.await_args.kwargs.get("forge_url") == "https://gitlab.example/acme/backend.git", (
+        f"the gate reads the forge where the clone did: {run_gate.await_args.kwargs}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_nodes_base_and_diff_read_the_forge_at_the_clone_url() -> None:
+    from embry0.services.base_branch import FALLBACK_SOURCE
+
+    config, _ = _config()
+    resolved = AsyncMock(return_value="main")
+    diffed = AsyncMock(return_value=[JAVA])
+    with (
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _e: None),
+        patch(
+            "embry0.workflows.issue_to_pr.nodes._verify.run_gate", new=AsyncMock(return_value=_gate("passed", "passed"))
+        ),
+        patch("embry0.workflows.issue_to_pr.nodes._verify.sweep_sandbox", new=_swept()),
+        patch("embry0.execution.workspace_diff.resolve_base_branch", new=resolved),
+        patch("embry0.execution.workspace_diff.compute_changed_files_via_diff", new=diffed),
+    ):
+        await verify_node(_state([JAVA], base_branch_source=FALLBACK_SOURCE), config)  # type: ignore[arg-type]
+    url = "https://github.com/acme/backend.git"
+    assert resolved.await_args.kwargs.get("forge_url") == url, (
+        f"the base branch comes from the forge: {resolved.await_args}"
+    )
+    assert diffed.await_args.kwargs.get("forge_url") == url, (
+        f"the diff's base comes from the forge: {diffed.await_args}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_without_a_forge_url_the_change_is_unknown() -> None:
+    config, _ = _config()
+    diffed = AsyncMock(return_value=[JAVA])
+    run_gate = AsyncMock(return_value=_gate("passed", "passed"))
+    with (
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _e: None),
+        patch("embry0.workflows.issue_to_pr.nodes._verify.run_gate", new=run_gate),
+        patch("embry0.workflows.issue_to_pr.nodes._verify.sweep_sandbox", new=_swept()),
+        patch("embry0.workflows.issue_to_pr.nodes._verify._forge_url", new=AsyncMock(return_value="")),
+        patch("embry0.execution.workspace_diff.compute_changed_files_via_diff", new=diffed),
+    ):
+        cmd = await verify_node(_state([JAVA]), config)  # type: ignore[arg-type]
+    diffed.assert_not_awaited()
+    assert run_gate.await_args.kwargs["changed_files"] == [], "no diff from anywhere else: the change is unknown"
+    assert cmd.update["verification"]["tier"]["tier"] == "frontend"
+
+
+@pytest.mark.asyncio
+async def test_the_forge_url_names_the_repository_the_sandbox_cloned() -> None:
+    """The clone takes the job context's repository first (``job_repository``); so does the forge URL."""
+    from embry0.workflows.issue_to_pr.nodes._common import job_repository
+
+    config, _ = _config()
+    state = _state([JAVA], context={"type": "git", "repo": "acme/backend-fork"})
+    assert job_repository(state) == "acme/backend-fork" and job_repository(_state([JAVA])) == "acme/backend"
+    _, run_gate = await _run(state, config, _gate("passed", "passed"))
+    assert run_gate.await_args.kwargs.get("forge_url") == "https://github.com/acme/backend-fork.git", (
+        f"the gate reads the repository the sandbox cloned: {run_gate.await_args.kwargs.get('forge_url')}"
+    )

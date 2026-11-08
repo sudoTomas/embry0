@@ -5,6 +5,8 @@ this host, with only the log directory and the directory to run in moved into
 ``tmp_path``, and reads the log back with the gate's own ``tail`` exec. The
 process sweep is replaced by a clean result for the whole module: its script
 is only ever run against a process table a test writes (``test_sweep.py``).
+The checkout is replaced by a ready tree, the directory the test runs in;
+``test_head_checkout.py`` builds real ones.
 """
 
 from __future__ import annotations
@@ -30,13 +32,18 @@ MISSING_LOCALE = "en_ZZ.UTF-8"
 
 
 @pytest.fixture(autouse=True)
-def _no_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clean_sweep_and_a_ready_tree(monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
     async def clean(*_args: Any, **_kwargs: Any) -> Any:
         return SimpleNamespace(clean=True, describe=lambda: "the sandbox was cleared")
 
     monkeypatch.setattr(runner, "sweep_sandbox", clean)
+
+    async def ready(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(runner, "_check_out", ready)
 
 
 class _LocalSandbox:
@@ -80,7 +87,7 @@ def _target(command: str, timeout_seconds: int = 60) -> TestTarget:
 
 
 async def _run(sandbox: _LocalSandbox, command: str, *, timeout_seconds: int = 60) -> Any:
-    return await runner._run_once(sandbox, "local", _target(command, timeout_seconds), "head", 1, [])
+    return await runner._run_once(sandbox, "local", _target(command, timeout_seconds), "head", 1, "a" * 40, [])
 
 
 @pytest.mark.parametrize(

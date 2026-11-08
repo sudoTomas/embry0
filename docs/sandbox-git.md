@@ -3,8 +3,8 @@
 embry0 runs git in a job's sandbox for steps of its own: the clone, a
 salvage commit and the rescue push of a developer's branch, the changed-file
 diff that scopes review and QA, the QA run's default-branch lookup, a pull
-request review's checkout, the verify gate's base worktree, and the commit and
-push of an areas or audit delivery.
+request review's checkout, the verify gate's checkouts of the head and base
+commits, and the commit and push of an areas or audit delivery.
 They run as the agent user, in the agent's workspace. This page says what
 those commands read, what they never read, and what happens when embry0
 refuses to run one.
@@ -49,7 +49,11 @@ outranks every config file:
   `--ignore-submodules=all` / `--no-recurse-submodules` on status, fetch and
   push; `git add` leaves every gitlink in the index out of its pathspec;
 - `GIT_ALLOW_PROTOCOL=http:https`: no other transport, whatever a config file
-  allows.
+  allows;
+- `GIT_NO_REPLACE_OBJECTS=1` and `GIT_GRAFT_FILE` set to a path that cannot
+  exist: no `refs/replace/*` entry stands one object in for another and no
+  graft file rewrites a commit's parents, so every object and commit reads as
+  it is stored. A shallow clone's own boundary still applies.
 
 ## The repository's own config
 

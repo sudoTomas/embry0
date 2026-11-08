@@ -39,7 +39,9 @@ class TestTarget(BaseModel):
     ``changed_paths``); the target runs when any changed file matches. An
     empty list means "always". ``command`` runs with ``bash -c`` from the
     root of the checkout under test, so it must not depend on an absolute
-    ``/workspace`` path — the base run happens in a separate worktree.
+    ``/workspace`` path: each run happens in a fresh checkout of its commit,
+    and ``/workspace`` is the job's working copy, which no run tests. It
+    installs its own dependencies into that tree.
     """
 
     __test__ = False  # not a pytest class, despite the name
@@ -103,8 +105,9 @@ class VerificationConfig(BaseModel):
     # A target that looks newly broken is re-run on head this many times; a
     # passing re-run records the failure as flaky instead of blocking.
     head_reruns: int = Field(default=1, ge=0, le=2)
-    # Wall-clock budget for the whole gate. Runs that do not fit are recorded
-    # as not run (verdict "error": never blocking, never a silent pass).
+    # Wall-clock budget for the gate's runs, each with its own checkout; it
+    # starts after the prepare step. Runs that do not fit are recorded as
+    # not run (verdict "error": never blocking, never a silent pass).
     total_timeout_seconds: int = Field(default=3600, ge=60, le=14400)
     tiers: TierRules = Field(default_factory=TierRules)
 

@@ -18,8 +18,9 @@ from anything the agent can write:
 * **Pinned keys** (:data:`PINS`) are set at command scope, which outranks
   every file: hooks, the fsmonitor, signing, credential helpers, editors,
   pagers and submodule recursion are off. The environment
-  (:data:`ENVIRONMENT`) limits transports to http and https and empties
-  ``GIT_ASKPASS``.
+  (:data:`ENVIRONMENT`) limits transports to http and https, empties
+  ``GIT_ASKPASS``, and turns off replacement objects and grafts, so a
+  commit reads as it is stored.
 * **The repository's own configuration** is read, never rewritten: before a
   step the script checks that ``.git`` is a real directory with no
   ``commondir``, and that every key in ``.git/config`` (read without its
@@ -46,6 +47,7 @@ local configuration and hooks keep working for the commands it runs itself.
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import re
 import shlex
@@ -222,6 +224,12 @@ ENVIRONMENT: tuple[tuple[str, str], ...] = (
     ("GIT_PAGER", "cat"),
     # git status writes no index, so no index-change hook is ever due.
     ("GIT_OPTIONAL_LOCKS", "0"),
+    # Objects and commits are read as they are stored: refs/replace/* does
+    # not stand one object in for another, and no graft file rewrites a
+    # commit's parents (the path cannot exist, so git reads no grafts and
+    # prints no deprecation hint). A shallow clone's own boundary is kept.
+    ("GIT_NO_REPLACE_OBJECTS", "1"),
+    ("GIT_GRAFT_FILE", "/dev/null/no-grafts"),
 )
 
 #: Subcommands rendered as a prelude function of their own instead of ``embry0_git``.
@@ -598,6 +606,50 @@ def refusal_of(exc: BaseException | None) -> SandboxGitRefused | None:
         exc = exc.__cause__ or exc.__context__
         seen += 1
     return None
+
+
+# ---- reads from the forge ---------------------------------------------------------
+
+#: A git step that reads from the forge (a fetch, an ``ls-remote``) is tried
+#: this many times, with these pauses between, so a short outage of the forge
+#: or the git-proxy does not decide what the step was for.
+FORGE_ATTEMPTS = 3
+FORGE_RETRY_PAUSES_SECONDS = (2.0, 5.0)
+
+
+async def _pause(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
+async def run_from_forge(
+    docker: Any,
+    container: str,
+    argv: list[str],
+    *,
+    step: GitStep,
+    timeout: int = 60,
+    on_retry: Callable[[int, BaseException], None] | None = None,
+) -> str:
+    """:func:`run` for a step that reads from the forge, tried up to :data:`FORGE_ATTEMPTS` times.
+
+    A refusal is not tried again (the repository's config refused it, and
+    would again), nor is a step that ran out of time; anything else is,
+    after a short pause, and ``on_retry(attempt, error)`` is told first. The
+    last failure is raised. The output takes ``docker.run_cmd``'s default
+    cap: a forge read prints a ref or two.
+    """
+    for attempt in range(1, FORGE_ATTEMPTS + 1):
+        try:
+            return await run(docker, container, argv, step=step, timeout=timeout)
+        except TimeoutError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - tried again, then raised to the caller
+            if refusal_of(exc) is not None or attempt == FORGE_ATTEMPTS:
+                raise
+            if on_retry is not None:
+                on_retry(attempt, exc)
+            await _pause(FORGE_RETRY_PAUSES_SECONDS[min(attempt, len(FORGE_RETRY_PAUSES_SECONDS)) - 1])
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 # ---- embry0's configuration and the agent's -------------------------------------

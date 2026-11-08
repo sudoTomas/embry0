@@ -15,7 +15,7 @@ from langchain_core.runnables import RunnableConfig
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
 from embry0.workflows.issue_to_pr.evidence import log_scope
-from embry0.workflows.issue_to_pr.nodes._common import _filter_user_env_for_sandbox
+from embry0.workflows.issue_to_pr.nodes._common import _filter_user_env_for_sandbox, job_repository
 
 logger = structlog.get_logger(__name__)
 
@@ -153,7 +153,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     writer(events.node_started(node="init"))
 
     job_id = state.get("job_id", "")
-    repo = context.get("repo") or state.get("repo", "")
+    repo = job_repository({**state, "context": context})
 
     sandbox_mgr = config["configurable"].get("sandbox_manager")
     docker = config["configurable"].get("docker")

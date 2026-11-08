@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -11,7 +12,8 @@ import pytest
 
 from embry0.execution.docker_client import OutputTooLargeError
 from embry0.workflows.verification.config import VerificationConfig
-from embry0.workflows.verification.runner import BASE_DIR, HEAD_DIR, run_gate, select_targets
+from embry0.workflows.verification.runner import BASE_DIR, HEAD_DIR, RUN_DIRS, run_gate, select_targets
+from tests.fixtures.sandbox_git_local import readable
 
 HEAD_SHA = "a" * 40
 BASE_SHA = "b" * 40
@@ -50,7 +52,15 @@ class FakeDocker:
     exec of its own. Codes below zero are docker failing: -1 a daemon error,
     -2 an exec that never returns, -3 one that prints past its cap.
     ``sweeps`` answers the process sweeps in turn, as (code, stdout, stderr);
-    once used up, every sweep reports a clean sandbox.
+    once used up, every sweep reports a clean sandbox. The git steps are told
+    apart by what they do: the prepare step prints the commits, the delivered
+    step lists the job's branch on the forge (``delivered`` is its tip, the
+    parsed head unless given; ``ls_remote_fails`` makes it fail every time,
+    ``ls_remote_failures`` the first that many times), and a
+    checkout indexes one commit's pack into a fresh repository
+    (``checkout_fails`` names the sides whose checkout exits 128).
+    ``git_steps`` keeps each one's git, as read, and ``git_timeouts`` the
+    timeout it was given. The cleanup is a plain ``sh -c`` exec.
 
     ``run_cmd`` raises on a non-zero exit and strips, as DockerClient's does;
     ``run_cmd_status`` returns the status and both outputs as printed.
@@ -63,7 +73,14 @@ class FakeDocker:
         results: dict[tuple[str, str], list[tuple[int, str]]],
         *,
         prepare_fails: bool = False,
+        prepare_failures: int = 0,
+        checkout_fails: tuple[str, ...] = (),
         prepared: str | None = None,
+        delivered: str | None = None,
+        ls_remote_fails: bool = False,
+        ls_remote_failures: int = 0,
+        refuse_forge_reads: bool = False,
+        forge_reads_time_out: bool = False,
         printed: dict[tuple[str, str], tuple[str, str]] | None = None,
         sweeps: list[tuple[int, str, str]] | None = None,
         log_read_fails: bool = False,
@@ -71,9 +88,16 @@ class FakeDocker:
     ) -> None:
         self.results = {k: list(v) for k, v in results.items()}
         self.prepare_fails = prepare_fails
+        self.checkout_fails = checkout_fails
         self.prepared = (
             prepared if prepared is not None else f"EMBRY0_VERIFY_HEAD={HEAD_SHA}\nEMBRY0_VERIFY_BASE={BASE_SHA}"
         )
+        heads = re.findall(r"^EMBRY0_VERIFY_HEAD=(\S+)$", self.prepared, re.M)
+        self.delivered = delivered if delivered is not None else (heads[0] if heads else HEAD_SHA)
+        self.ls_remote_fails = ls_remote_fails
+        self.failures = {"prepare": prepare_failures, "delivered": ls_remote_failures}
+        self.refuse_forge_reads = refuse_forge_reads
+        self.forge_reads_time_out = forge_reads_time_out
         self.printed = printed or {}
         self.sweeps = list(sweeps or [])
         self.log_read_fails = log_read_fails
@@ -86,15 +110,19 @@ class FakeDocker:
         self.sweep_users: list[str | None] = []
         self.logs: dict[str, str] = {}
         self.cleaned = False
+        self.git_steps: list[tuple[str, str]] = []
+        self.git_timeouts: dict[str, list[int]] = {}
+        self.run_execs: list[dict[str, Any]] = []
 
     def build_exec_cmd(self, container: str, command: list[str], workdir: Any = None, env: Any = None, **kw: Any):
         return {"container": container, "command": command, "env": env or {}, "user": kw.get("user")}
 
-    def _answer(self, cmd: dict[str, Any], max_bytes: int | None) -> tuple[int, str, str]:
+    def _answer(self, cmd: dict[str, Any], max_bytes: int | None, timeout: int = 60) -> tuple[int, str, str]:
         env, command = cmd["env"], cmd["command"]
         script = command[-1]
         if "EMBRY0_VERIFY_CMD" in env:
             self.steps.append("run")
+            self.run_execs.append(cmd)
             key = (env["EMBRY0_VERIFY_DIR"], env["EMBRY0_VERIFY_CMD"])
             self.runs.append(key)
             self.timeouts.append(int(env["EMBRY0_VERIFY_TIMEOUT"]))
@@ -124,19 +152,50 @@ class FakeDocker:
             self.sweep_users.append(cmd["user"])
             self.clock.now += STEP_SECONDS
             return self.sweeps.pop(0) if self.sweeps else (0, CLEAN_SWEEP, "")
-        if "worktree add" in script:
-            self.steps.append("prepare")
+        if command[:2] == ["sh", "-c"] and "rm -rf" in script:
+            self.steps.append("cleanup")
+            self.git_steps.append(("cleanup", script))
+            self.cleaned = True
+            return 0, "", ""
+        git = readable(command)
+        step = (
+            "prepare"
+            if "EMBRY0_VERIFY_HEAD" in script
+            else "delivered"
+            if "ls-remote" in git
+            else "checkout"
+            if "index-pack" in git
+            else None
+        )
+        if step is None:
+            raise AssertionError(f"unexpected exec: {script[:80]}")
+        self.steps.append(step)
+        self.git_steps.append((step, git))
+        self.git_timeouts.setdefault(step, []).append(timeout)
+        if step in self.failures and self.forge_reads_time_out:
+            raise TimeoutError("docker command timed out")
+        if step in self.failures and self.refuse_forge_reads:
+            return 86, "", "embry0-git-refused: keys url.https://elsewhere.example/.insteadof\n"
+        if step in self.failures and self.failures[step] > 0:
+            self.failures[step] -= 1
+            return 128, "", "fatal: unable to access the remote: the server answered 503\n"
+        if step == "prepare":
+            self.clock.now += STEP_SECONDS
             if self.prepare_fails:
                 return 128, "", "fatal: not a git repository\n"
             return 0, self.prepared, ""
-        if "worktree remove" in script:
-            self.steps.append("cleanup")
-            self.cleaned = True
-            return 0, "", ""
-        raise AssertionError(f"unexpected exec: {script[:80]}")
+        if step == "delivered":
+            if self.ls_remote_fails:
+                return 128, "", "fatal: unable to access the remote\n"
+            branch = git.rsplit("refs/heads/", 1)[-1].strip()
+            return 0, f"{self.delivered}\trefs/heads/{branch}\n", ""
+        side = "head" if f"init --quiet --template= {HEAD_DIR}" in git else "base"
+        if side in self.checkout_fails:
+            return 128, "", "fatal: bad object\n"
+        return 0, "", ""
 
     async def run_cmd(self, cmd: dict[str, Any], timeout: int = 60, *, max_bytes: int | None = None) -> str:
-        code, out, err = self._answer(cmd, max_bytes)
+        code, out, err = self._answer(cmd, max_bytes, timeout)
         if code != 0:
             raise RuntimeError(f"Docker command failed: {err.strip() or out.strip()[-2000:] or f'exit code {code}'}")
         return out.strip()
@@ -161,8 +220,34 @@ def _config(**overrides: Any) -> VerificationConfig:
 JVM = "cd platform && ./mvnw -q test"
 
 
+BRANCH = "feature/widgets"
+FORGE_URL = "https://forge.example/acme/widgets.git"
+
+
+@pytest.fixture(autouse=True)
+def pauses(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """The pauses between forge retries, recorded instead of slept."""
+    from embry0.execution import sandbox_git
+
+    taken: list[float] = []
+
+    async def pause(seconds: float) -> None:
+        taken.append(seconds)
+
+    monkeypatch.setattr(sandbox_git, "_pause", pause, raising=False)
+    return taken
+
+
 async def _gate(docker: FakeDocker, config: VerificationConfig, changed: list[str]):
-    return await run_gate(docker=docker, container_id="c1", config=config, changed_files=changed, base_ref="main")
+    return await run_gate(
+        docker=docker,
+        container_id="c1",
+        config=config,
+        changed_files=changed,
+        base_ref="main",
+        branch=BRANCH,
+        forge_url=FORGE_URL,
+    )
 
 
 def test_targets_are_selected_by_changed_paths() -> None:
@@ -296,6 +381,7 @@ async def test_no_matching_target_runs_nothing() -> None:
     report = await _gate(docker, _config(), ["docs/x.md"])
     assert report.verdict == "no_matching_targets"
     assert docker.runs == []
+    assert docker.steps == [], f"a gate with nothing to run checks nothing out: {docker.steps}"
 
 
 @pytest.mark.asyncio
@@ -431,8 +517,18 @@ async def test_a_run_whose_log_tail_starts_inside_a_character_still_passes() -> 
     prepared = f"EMBRY0_VERIFY_HEAD={HEAD_SHA}\nEMBRY0_VERIFY_BASE={BASE_SHA}\n".encode()
     sweep = CLEAN_SWEEP.encode()
     log = "✓ 12 tests passed\n".encode()[1:]
-    # prepare, a sweep, the head run, a sweep, its log, cleanup
-    procs = [_process(prepared), _process(sweep), _process(b""), _process(sweep), _process(log), _process(b"")]
+    delivered = f"{HEAD_SHA}\trefs/heads/{BRANCH}\n".encode()
+    # prepare, the branch on the forge, a sweep, the head's checkout, its run, a sweep, its log, cleanup
+    procs = [
+        _process(prepared),
+        _process(delivered),
+        _process(sweep),
+        _process(b""),
+        _process(b""),
+        _process(sweep),
+        _process(log),
+        _process(b""),
+    ]
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=procs):
         report = await run_gate(
             docker=DockerClient(),
@@ -440,6 +536,8 @@ async def test_a_run_whose_log_tail_starts_inside_a_character_still_passes() -> 
             config=_config(base_run="on_head_failure"),
             changed_files=["platform/api/Foo.java"],
             base_ref="main",
+            branch=BRANCH,
+            forge_url=FORGE_URL,
         )
     assert [r.outcome for r in report.runs] == ["passed"], [(r.outcome, r.output_tail) for r in report.runs]
     assert report.verdict == "passed"
@@ -635,8 +733,8 @@ async def test_every_run_is_swept_before_and_after_and_its_log_read_last() -> No
     docker = FakeDocker({(HEAD_DIR, JVM): [red], (BASE_DIR, JVM): [(0, "ok")]})
     report = await _gate(docker, _config(head_reruns=1), ["platform/api/Foo.java"])
     assert [(r.side, r.attempt) for r in report.runs] == [("head", 1), ("base", 1), ("head", 2)]
-    one = ["sweep", "run", "sweep", "log"]
-    assert docker.steps == ["prepare", *one, *one, *one, "cleanup"], (
+    one = ["sweep", "checkout", "run", "sweep", "log"]
+    assert docker.steps == ["prepare", "delivered", *one, *one, *one, "cleanup"], (
         f"every run (head, base, each attempt) is swept before and after, and its log read after the sweep: "
         f"{docker.steps}"
     )
@@ -670,7 +768,7 @@ async def test_a_process_that_survives_the_sweep_after_a_run_voids_its_result() 
 async def test_a_wedged_run_is_still_swept_after() -> None:
     docker = FakeDocker({(HEAD_DIR, JVM): [(-2, "")], (BASE_DIR, JVM): [(0, "ok")]})
     await _gate(docker, _config(head_reruns=0), ["platform/api/Foo.java"])
-    assert docker.steps[:4] == ["prepare", "sweep", "run", "sweep"], (
+    assert docker.steps[:6] == ["prepare", "delivered", "sweep", "checkout", "run", "sweep"], (
         f"a run that did not return is still running in the sandbox: the sweep after it stops it: {docker.steps}"
     )
 
@@ -724,3 +822,251 @@ async def test_the_head_sha_reported_is_the_one_the_prepare_step_parsed() -> Non
     report = await _gate(docker, _config(), ["platform/api/Foo.java"])
     assert (report.head_sha, report.base_sha) == (OTHER_SHA, BASE_SHA), (report.head_sha, report.base_sha)
     assert report.to_dict()["head_sha"] == OTHER_SHA, "the stored result carries the parsed head"
+
+
+# ── each run tests a fresh tree of its commit, not the working copy ──
+
+_CHECKOUT = re.compile(
+    r"git init --quiet --template= (\S+);.*git rev-list --objects --no-object-names --no-walk ([0-9a-f]{40})"
+)
+
+
+def _checkouts(docker: FakeDocker) -> list[tuple[str, str]]:
+    """(tree, commit) of each checkout, in order."""
+    found = []
+    for step, git in docker.git_steps:
+        if step == "checkout":
+            match = _CHECKOUT.search(git)
+            assert match, f"a checkout names its tree and its commit: {git[:300]}"
+            found.append((match.group(1), match.group(2)))
+    return found
+
+
+@pytest.mark.asyncio
+async def test_each_run_tests_a_fresh_tree_of_its_parsed_commit_not_the_workspace() -> None:
+    from embry0.execution.sandbox_git import WORKSPACE
+
+    prepared = f"EMBRY0_VERIFY_BASE={BASE_SHA}\nEMBRY0_VERIFY_HEAD={OTHER_SHA}\n"
+    red = (1, "FAILED tests/test_a.py::test_a - boom")
+    docker = FakeDocker({(HEAD_DIR, JVM): [red], (BASE_DIR, JVM): [(0, "ok")]}, prepared=prepared)
+    report = await _gate(docker, _config(head_reruns=1), ["platform/api/Foo.java"])
+    dirs = [d for d, _ in docker.runs]
+    assert WORKSPACE not in dirs, f"no run happens in the job's working copy: {dirs}"
+    assert dirs == [HEAD_DIR, BASE_DIR, HEAD_DIR], dirs
+    assert _checkouts(docker) == [(HEAD_DIR, OTHER_SHA), (BASE_DIR, BASE_SHA), (HEAD_DIR, OTHER_SHA)], (
+        f"every run, the re-run included, gets a fresh tree of the commit the prepare step printed: {_checkouts(docker)}"
+    )
+    one = ["sweep", "checkout", "run", "sweep", "log"]
+    assert docker.steps == ["prepare", "delivered", *one, *one, *one, "cleanup"], (
+        f"each tree is built after the sweep, right before its run: {docker.steps}"
+    )
+    assert report.head_sha == OTHER_SHA, "the head reported is the commit the head runs tested"
+
+
+@pytest.mark.asyncio
+async def test_head_and_base_are_checked_out_and_run_the_same_way() -> None:
+    red = (1, "FAILED tests/test_a.py::test_a - boom")
+    docker = FakeDocker({(HEAD_DIR, JVM): [red], (BASE_DIR, JVM): [(0, "ok")]})
+    await _gate(docker, _config(head_reruns=0), ["platform/api/Foo.java"])
+    scripts = [git for step, git in docker.git_steps if step == "checkout"]
+    assert len(scripts) == 2, f"one checkout per run: {[step for step, _ in docker.git_steps]}"
+    shapes = [
+        text.replace(tree, "<tree>").replace(sha, "<sha>")
+        for text, (tree, sha) in zip(scripts, [(HEAD_DIR, HEAD_SHA), (BASE_DIR, BASE_SHA)], strict=True)
+    ]
+    assert shapes[0] == shapes[1], "head and base trees are built by the same command"
+
+    def without_side(cmd: dict[str, Any]) -> dict[str, Any]:
+        env = {k: v for k, v in cmd["env"].items() if k not in ("EMBRY0_VERIFY_DIR", "EMBRY0_VERIFY_LOG")}
+        return {**cmd, "env": env}
+
+    head, base = docker.run_execs
+    assert without_side(head) == without_side(base), "the two runs differ only in their tree and their log"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failing", "head_result"),
+    [(("head",), (0, "ok")), (("base",), (1, "FAILED tests/test_a.py::test_a - boom"))],
+    ids=["head", "base"],
+)
+async def test_a_tree_that_cannot_be_checked_out_is_an_error_never_a_pass(
+    failing: tuple[str, ...], head_result: tuple[int, str]
+) -> None:
+    from embry0.workflows.verification.result import compose_result
+    from embry0.workflows.verification.tiers import classify_diff, plan_browser_qa
+
+    side = failing[0]
+    docker = FakeDocker({(HEAD_DIR, JVM): [head_result], (BASE_DIR, JVM): [(0, "ok")]}, checkout_fails=failing)
+    report = await _gate(docker, _config(head_reruns=0), ["platform/api/Foo.java"])
+    assert report.verdict == "error", f"a {side} that could not be checked out is not judged: {report.verdict}"
+    recorded = [(r.outcome, r.output_tail) for r in report.runs_for(side)]
+    assert recorded == [("errored", f"not run: the {side} commit could not be checked out in the sandbox")], (
+        f"the {side} run is recorded as not run, with why: {recorded}"
+    )
+    assert RUN_DIRS[side] not in [d for d, _ in docker.runs], f"nothing runs without its tree: {docker.runs}"
+    assert docker.steps[-1] == "cleanup", f"the scratch directory is removed after a failed checkout: {docker.steps}"
+    tier = classify_diff(["platform/api/Foo.java"])
+    plan = plan_browser_qa(tier=tier.tier, needs_qa=False, managed_apps=[], deployed_apps=[])
+    result = compose_result(mode="on", tier=tier, gate=report, plan=plan)
+    assert result["human_merge_only"] and result["human_merge_reasons"] == ["gate_error"], result
+
+
+@pytest.mark.asyncio
+async def test_the_checkout_has_its_own_time_limit() -> None:
+    from embry0.workflows.verification.runner import CHECKOUT_TIMEOUT_SECONDS
+
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]})
+    await _gate(docker, _config(), ["platform/api/Foo.java"])
+    assert CHECKOUT_TIMEOUT_SECONDS >= 300, "a large repository's checkout takes minutes on a loaded host"
+    assert docker.git_timeouts.get("checkout") == [CHECKOUT_TIMEOUT_SECONDS] * 2, (
+        f"each checkout is given the checkout's own limit, not a default one: {docker.git_timeouts}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_time_budget_counts_the_runs_not_the_prepare_step() -> None:
+    """A slow prepare step (a fetch on a slow link) does not use up the budget the runs have."""
+
+    class SlowPrepare(FakeDocker):
+        def _answer(self, cmd: dict[str, Any], max_bytes: int | None, timeout: int = 60) -> tuple[int, str, str]:
+            answer = super()._answer(cmd, max_bytes, timeout)
+            if self.steps[-1] == "prepare":
+                self.clock.now += 120.0
+            return answer
+
+    docker = SlowPrepare({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]})
+    report = await _gate(docker, _config(total_timeout_seconds=60), ["platform/api/Foo.java"])
+    assert [(r.side, r.outcome) for r in report.runs] == [("head", "passed"), ("base", "passed")], (
+        f"the budget starts with the runs: {[(r.side, r.outcome, r.output_tail) for r in report.runs]}"
+    )
+    assert report.verdict == "passed"
+
+
+@pytest.mark.asyncio
+async def test_the_cleanup_removes_the_scratch_directory_whatever_is_in_it() -> None:
+    from embry0.workflows.verification.runner import SCRATCH_DIR
+
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]})
+    await _gate(docker, _config(), ["platform/api/Foo.java"])
+    cleanups = [script for step, script in docker.git_steps if step == "cleanup"]
+    assert len(cleanups) == 1 and docker.steps[-1] == "cleanup", docker.steps
+    assert f"chmod -R u+rwX {SCRATCH_DIR}" in cleanups[0] and f"rm -rf {SCRATCH_DIR}" in cleanups[0], cleanups[0]
+    assert HEAD_DIR.startswith(f"{SCRATCH_DIR}/") and BASE_DIR.startswith(f"{SCRATCH_DIR}/"), (HEAD_DIR, BASE_DIR)
+
+
+# ── the head under test is the commit the pull request carries ──
+
+
+@pytest.mark.asyncio
+async def test_a_head_that_is_not_the_branch_tip_on_the_forge_is_an_error() -> None:
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]}, delivered=OTHER_SHA)
+    report = await _gate(docker, _config(), ["platform/api/Foo.java"])
+    assert report.verdict == "error", f"a verdict about a commit the pull request does not carry: {report.verdict}"
+    assert report.runs == [] and docker.runs == [], "nothing runs"
+    assert "is not the tip of the job's branch on the forge" in report.note, report.note
+    assert (report.head_sha, report.base_sha) == (HEAD_SHA, BASE_SHA)
+    (listing,) = [git for step, git in docker.git_steps if step == "delivered"]
+    assert listing.rstrip().endswith(f"ls-remote {FORGE_URL} refs/heads/{BRANCH}"), listing
+
+
+@pytest.mark.asyncio
+async def test_a_branch_that_cannot_be_read_from_the_forge_is_an_error() -> None:
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]}, ls_remote_fails=True)
+    report = await _gate(docker, _config(), ["platform/api/Foo.java"])
+    assert (report.verdict, report.note) == ("error", "the job's branch could not be read from the forge"), report
+    assert docker.runs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("branch", ["", "-x", "a b"])
+async def test_a_job_without_a_usable_branch_is_an_error(branch: str) -> None:
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]})
+    report = await run_gate(
+        docker=docker,
+        container_id="c1",
+        config=_config(),
+        changed_files=["platform/x.java"],
+        base_ref="main",
+        branch=branch,
+        forge_url=FORGE_URL,
+    )
+    assert report.verdict == "error" and docker.runs == [], (report.verdict, docker.runs)
+    assert "the job's branch is not known" in report.note, f"the note says why: {report.note!r}"
+    assert "delivered" not in docker.steps, f"{branch!r} is not a branch to ask the forge about: {docker.steps}"
+
+
+# ── the forge is read at the job's own URL, with a bounded number of tries ──
+
+
+@pytest.mark.asyncio
+async def test_both_reads_from_the_forge_go_to_the_jobs_url_not_a_remote_name() -> None:
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]})
+    await _gate(docker, _config(), ["platform/api/Foo.java"])
+    reads = dict((step, git) for step, git in docker.git_steps if step in ("prepare", "delivered"))
+    assert (
+        f"git fetch --no-recurse-submodules {FORGE_URL} +main:refs/remotes/origin/main --depth=50" in reads["prepare"]
+    ), f"the base is fetched from the job's forge URL: {reads['prepare'][-400:]}"
+    assert reads["delivered"].rstrip().endswith(f"ls-remote {FORGE_URL} refs/heads/{BRANCH}"), reads["delivered"]
+    assert "fetch --no-recurse-submodules origin" not in reads["prepare"], "never the remote the repository names"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("forge_url", ["", "origin", "-x", "https://forge.example/a b.git"])
+async def test_a_gate_without_a_usable_forge_url_is_an_error(forge_url: str) -> None:
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]})
+    report = await run_gate(
+        docker=docker,
+        container_id="c1",
+        config=_config(),
+        changed_files=["platform/x.java"],
+        base_ref="main",
+        branch=BRANCH,
+        forge_url=forge_url,
+    )
+    assert (report.verdict, report.note) == ("error", "the job's repository on the forge is not known"), report
+    assert docker.steps == [], f"nothing is asked of the sandbox: {docker.steps}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step", ["prepare", "delivered"])
+async def test_a_forge_read_that_fails_once_is_tried_again(step: str, pauses: list[float]) -> None:
+    failures = {"prepare_failures": 1} if step == "prepare" else {"ls_remote_failures": 1}
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]}, **failures)
+    report = await _gate(docker, _config(), ["platform/api/Foo.java"])
+    assert report.verdict == "passed", (
+        f"one failed {step} read does not decide the gate: {report.verdict} {report.note!r}"
+    )
+    assert docker.steps.count(step) == 2, docker.steps
+    assert pauses == [2.0], f"a short pause before the second try: {pauses}"
+
+
+@pytest.mark.asyncio
+async def test_a_forge_read_that_keeps_failing_is_an_error_after_bounded_tries(pauses: list[float]) -> None:
+    from embry0.execution import sandbox_git
+
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]}, ls_remote_failures=99)
+    report = await _gate(docker, _config(), ["platform/api/Foo.java"])
+    assert (report.verdict, report.note) == ("error", "the job's branch could not be read from the forge"), report
+    tries = docker.steps.count("delivered")
+    assert tries == getattr(sandbox_git, "FORGE_ATTEMPTS", None) == 3, f"three tries, then an error: {docker.steps}"
+    assert pauses == [2.0, 5.0], pauses
+    assert docker.runs == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_forge_read_is_not_tried_again(pauses: list[float]) -> None:
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]}, refuse_forge_reads=True)
+    report = await _gate(docker, _config(), ["platform/api/Foo.java"])
+    assert report.verdict == "error" and "insteadof" in report.note, report.note
+    assert docker.steps.count("prepare") == 1 and pauses == [], (docker.steps, pauses)
+
+
+@pytest.mark.asyncio
+async def test_a_forge_read_that_times_out_is_not_tried_again(pauses: list[float]) -> None:
+    """A read that ran out of time has had its whole limit already: a second try would only double the wait."""
+    docker = FakeDocker({(HEAD_DIR, JVM): [(0, "ok")], (BASE_DIR, JVM): [(0, "ok")]}, forge_reads_time_out=True)
+    report = await _gate(docker, _config(), ["platform/api/Foo.java"])
+    assert report.verdict == "error" and docker.runs == [], (report.verdict, docker.runs)
+    assert docker.steps.count("prepare") == 1, f"one try: {docker.steps}"
+    assert pauses == [], f"and no pause: {pauses}"

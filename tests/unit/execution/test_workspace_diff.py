@@ -190,3 +190,67 @@ async def test_a_change_of_90_000_files_is_listed_whole() -> None:
         except WorkspaceDiffUnavailable as exc:
             pytest.fail(f"a 90,000-file change read as an unavailable diff: {exc}")
     assert len(files) == 90_000, f"listed {len(files)} of 90000 changed files"
+
+
+# ---- with the forge URL: read there only, with bounded tries -------------------------
+
+FORGE = "https://forge.example/acme/widgets.git"
+
+
+def _texts(docker: Mock) -> list[str]:
+    from tests.fixtures.sandbox_git_local import readable
+
+    return [readable(call.args[0]) for call in docker.run_cmd.await_args_list]
+
+
+@pytest.fixture
+def pauses(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    from embry0.execution import sandbox_git
+
+    taken: list[float] = []
+
+    async def pause(seconds: float) -> None:
+        taken.append(seconds)
+
+    monkeypatch.setattr(sandbox_git, "_pause", pause, raising=False)
+    return taken
+
+
+@pytest.mark.asyncio
+async def test_with_the_forge_url_the_base_is_fetched_there_forced(pauses: list[float]) -> None:
+    docker = _docker("")
+    docker.run_cmd = AsyncMock(
+        side_effect=[RuntimeError("Docker command failed: the server answered 503"), "", "a.py\n"]
+    )
+    try:
+        files = await compute_changed_files_via_diff(
+            docker=docker, container_id="c1", base_branch="main", strict=True, forge_url=FORGE
+        )
+    except Exception as exc:  # noqa: BLE001 - the failure is the finding
+        pytest.fail(f"one failed fetch decided the diff: {exc}")
+    assert files == ["a.py"]
+    fetches = [text for text in _texts(docker) if " fetch " in text]
+    assert len(fetches) == 2 and all(
+        f"fetch --no-recurse-submodules {FORGE} +main:refs/remotes/origin/main" in text for text in fetches
+    ), f"the base comes from the forge's URL, forced, tried again after a failure: {fetches}"
+    assert not any("fetch --no-recurse-submodules origin" in text for text in _texts(docker))
+    assert pauses == [2.0], pauses
+
+
+@pytest.mark.asyncio
+async def test_with_the_forge_url_the_default_branch_is_the_forges(pauses: list[float]) -> None:
+    docker = _docker(f"ref: refs/heads/trunk\tHEAD\n{'a' * 40}\tHEAD\n")
+    assert await resolve_base_branch(docker=docker, container_id="c1", forge_url=FORGE) == "trunk"
+    (text,) = _texts(docker)
+    assert text.rstrip().endswith(f"ls-remote --symref {FORGE} HEAD"), text
+    assert "symbolic-ref" not in text, "the workspace's own origin/HEAD is not read"
+
+
+@pytest.mark.asyncio
+async def test_with_the_forge_url_an_unreadable_default_branch_is_main(pauses: list[float]) -> None:
+    from embry0.execution import sandbox_git
+
+    docker = _docker(RuntimeError("Docker command failed: the server answered 503"))
+    assert await resolve_base_branch(docker=docker, container_id="c1", forge_url=FORGE) == "main"
+    tries = docker.run_cmd.await_count
+    assert tries == getattr(sandbox_git, "FORGE_ATTEMPTS", None) == 3, f"tried a bounded number of times: {tries}"

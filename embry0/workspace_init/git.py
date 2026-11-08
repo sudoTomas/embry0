@@ -45,6 +45,11 @@ def clone_origin(forge: str = "github", gitlab_url: str = "") -> str:
     return FORGE_CLONE_HOSTS.get(forge, DEFAULT_CLONE_HOST)
 
 
+def clone_url(repo: str, *, forge: str = "github", gitlab_url: str = "") -> str:
+    """The URL embry0 clones ``repo`` from: the forge's, which embry0's own git config sends to the git-proxy."""
+    return f"{clone_origin(forge, gitlab_url)}/{repo}.git"
+
+
 def build_clone_shell(
     repo: str,
     ref: str | None = None,
@@ -81,7 +86,7 @@ def build_clone_shell(
         )
     # Each value is quoted by sandbox_git.git, so it reaches git as one word
     # even when a caller skipped validate().
-    url = f"{clone_origin(forge, gitlab_url)}/{repo}.git"
+    url = clone_url(repo, forge=forge, gitlab_url=gitlab_url)
     shell = (
         f"{sandbox_git.git('clone', '--depth=50', url, sandbox_git.WORKSPACE)}"
         f" && cd {sandbox_git.WORKSPACE}"
