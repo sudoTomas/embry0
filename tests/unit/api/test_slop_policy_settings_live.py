@@ -408,19 +408,64 @@ async def test_a_write_waits_for_a_delete_of_its_template_and_then_refuses_it(db
     assert "no pipeline template named 'tidy-up'" in str([p.msg for p in refused.value.problems])
 
 
+async def _until(condition: Any, *, deadline: float = 30.0) -> bool:
+    """Whether ``condition()`` comes true within ``deadline`` seconds, looked at every 20 ms."""
+    loop = asyncio.get_running_loop()
+    end = loop.time() + deadline
+    while loop.time() < end:
+        if await condition():
+            return True
+        await asyncio.sleep(0.02)
+    return False
+
+
 async def test_only_a_write_that_may_change_slop_policy_waits_on_a_template(db_with_migrations: DatabasePool) -> None:
-    """A template row held by a change waits a slop_policy write, and no write of another section."""
+    """A template row held by a change waits a slop_policy write, and no write of another section.
+
+    What is asserted is what Postgres says: whether a backend is waiting on
+    a lock the holding transaction has (``pg_blocking_pids``), not how long
+    a task took. The writes of the other section run, and finish, before the
+    slop_policy write starts: all of them write the deployment's document,
+    whose lock a slop_policy write keeps while it waits for the template, so
+    run together they would wait on the document instead.
+    """
     db = db_with_migrations
     templates, tidy = await _seeded(db)
     store = SettingsStore(db)
+    tasks: list[asyncio.Task[Any]] = []
+    others_settled = slop_settled = others_free = slop_waited = False
     async with db.transaction() as conn:
+        holder = await conn.fetchval("SELECT pg_backend_pid()")
         await conn.execute("SELECT 1 FROM pipeline_templates WHERE id = $1 FOR UPDATE", tidy)
+
+        async def blocked() -> bool:
+            """Whether any backend waits on a lock the holding transaction has: the held template row."""
+            sql = "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))"
+            return bool(await db.fetchval(sql, holder))
+
         other = asyncio.create_task(store.set_keys("done_when", {"retries": 2}, actor="t"))
         dry = asyncio.create_task(store.preview_keys("done_when", {"retries": 3}))
-        slop = asyncio.create_task(store.set_keys("slop_policy", {"min_score_to_route": 10}, actor="t"))
-        done, _pending = await asyncio.wait({other, dry}, timeout=5)
-        waiting = not slop.done()
-    await asyncio.wait({other, dry, slop}, timeout=30)
-    assert done == {other, dry}, "a write of another section, and its dry run, take no lock on the templates"
-    assert waiting, "a slop_policy write reads the templates FOR SHARE, so it waits for the held row"
-    slop.result()
+        tasks += [other, dry]
+
+        async def settled() -> bool:
+            return (other.done() and dry.done()) or await blocked()
+
+        others_settled = await _until(settled)
+        others_free = other.done() and dry.done()
+        if others_free:
+            slop = asyncio.create_task(store.set_keys("slop_policy", {"min_score_to_route": 10}, actor="t"))
+            tasks.append(slop)
+
+            async def answered() -> bool:
+                return slop.done() or await blocked()
+
+            slop_settled = await _until(answered)
+            slop_waited = not slop.done() and await blocked()
+    # The held row is let go here, so every task finishes; asserting only now never leaves one waiting on it.
+    await asyncio.wait(tasks, timeout=30)
+    assert others_settled, "a write of another section neither finished nor waited within 30 s"
+    assert others_free, "a write of another section, and its dry run, take no lock on the templates"
+    assert slop_settled, "the slop_policy write neither finished nor waited within 30 s"
+    assert slop_waited, "a slop_policy write reads the templates FOR SHARE, so it waits for the held row"
+    for task in tasks:
+        task.result()
