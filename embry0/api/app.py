@@ -1439,6 +1439,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # #248: env vars that look like a misspelled config field.
     _warn_unknown_env_vars(os.environ)
 
+    # The test gate's cleanup assumes the kernel stops a sandbox process from
+    # tracing another of the same user; warn and audit when it does not.
+    from embry0.execution.runtime.ptrace_scope import warn_if_same_user_ptrace_allowed
+
+    await warn_if_same_user_ptrace_allowed(db, audit_log_path=config.audit_log_path)
+
     # Resolve PROXY_ADMIN_TOKEN before constructing ProxyManager: the constructor
     # raises ValueError on an empty token, so in auth_dev_mode with PROXY_ADMIN_TOKEN
     # unset this call must run first to generate (and set) a valid token.

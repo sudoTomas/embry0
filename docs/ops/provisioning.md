@@ -353,6 +353,30 @@ sudo modprobe br_netfilter
 echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf
 ```
 
+The verify gate's cleanup step assumes the kernel stops a sandbox process
+from tracing another process of the same user: `kernel.yama.ptrace_scope`
+at 1 or more, the kernel's own default when it has Yama; some distributions
+lower it to 0 ([verification.md](../verification.md#what-the-sweep-assumes)).
+The example cloud-init sets it. On a host provisioned some other way, check
+it, and set it when it reads 0:
+
+```bash
+cat /proc/sys/kernel/yama/ptrace_scope                                    # expect 1, 2 or 3
+sudo sysctl kernel.yama.ptrace_scope=1
+echo 'kernel.yama.ptrace_scope = 1' | sudo tee /etc/sysctl.d/99-ptrace-scope.conf
+```
+
+When the file does not exist, the kernel has no Yama and `sysctl` has
+nothing to set: the host needs a kernel with Yama enabled.
+
+The orchestrator starts either way; at 0, without Yama, or with a value it
+cannot read, it logs `ptrace_scope_permissive` at warning and writes a
+`kernel.ptrace_scope.flagged` audit row at every start, with a `reason` and
+the `remedy` for it. A `reason` of `unreadable` while the host reads 1, 2
+or 3 means the orchestrator could not read the file in its container;
+[verification.md](../verification.md#what-the-sweep-assumes) says what to
+check.
+
 Then start the stack:
 
 ```bash

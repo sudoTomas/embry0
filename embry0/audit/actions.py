@@ -33,6 +33,9 @@ AuditAction = Literal[
     "apikey.allowed_repos_changed",
     "apikey.repo_refused",
     "dev_mode_enabled",
+    # The startup check could not establish that the host kernel stops a sandbox process from tracing
+    # another of the same user: Yama ptrace_scope is 0, absent, or could not be read
+    "kernel.ptrace_scope.flagged",
     # Settings
     "provider_config_updated",
     "provider_config_tested",
@@ -159,6 +162,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "apikey.allowed_repos_changed": "API key repositories changed",
     "apikey.repo_refused": "API key refused a repository",
     "dev_mode_enabled": "Dev mode enabled",
+    "kernel.ptrace_scope.flagged": "Kernel ptrace restriction missing or unverified",
     "provider_config_updated": "Provider config updated",
     "provider_config_tested": "Provider tested",
     "provider_connection_tested": "Provider connection tested",
