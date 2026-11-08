@@ -38,13 +38,13 @@ from __future__ import annotations
 
 import re
 import shlex
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
 import structlog
 
-from embry0.safety.redaction import known_secret_values
+from embry0.safety.redaction import secret_env_values
 from embry0.workflows.verification.scrub import scrub_output
 
 logger = structlog.get_logger(__name__)
@@ -271,13 +271,17 @@ def read_report(returncode: int, stdout: str, stderr: str) -> SweepResult:
     )
 
 
-def _excerpt(text: str) -> str:
+def _excerpt(text: str, known: Sequence[str]) -> str:
     """Up to 300 characters of sandbox output for a log line: scrubbed first, so a cut leaves no fragment."""
-    return scrub_output(text, known_values=known_secret_values())[:300]
+    return scrub_output(text, known_values=known)[:300]
 
 
-async def sweep_sandbox(docker: Any, container_id: str) -> SweepResult:
-    """Run the sweep in ``container_id`` as its default user; never raises."""
+async def sweep_sandbox(docker: Any, container_id: str, *, scrub_values: Sequence[str] | None = None) -> SweepResult:
+    """Run the sweep in ``container_id`` as its default user; never raises.
+
+    ``scrub_values`` are the secrets the excerpts of an unreadable report are scrubbed with by value: the job's
+    own, as ``run_gate`` is given them. Without them, the registry's and this process's (``secret_env_values``).
+    """
     try:
         cmd = docker.build_exec_cmd(container_id, ["bash", "-c", SCRIPT], env=dict(EXEC_ENV))
         returncode, stdout, stderr = await docker.run_cmd_status(cmd, timeout=SWEEP_TIMEOUT_SECONDS)
@@ -294,12 +298,13 @@ async def sweep_sandbox(docker: Any, container_id: str) -> SweepResult:
             unread=result.unread,
         )
     elif not result.clean:
+        known = list(scrub_values) if scrub_values is not None else secret_env_values()
         logger.warning(
             "sandbox_sweep_unreadable",
             container_id=container_id,
             returncode=returncode,
-            stdout=_excerpt(stdout),
-            stderr=_excerpt(stderr),
+            stdout=_excerpt(stdout, known),
+            stderr=_excerpt(stderr, known),
         )
     elif result.stopped:
         logger.info("sandbox_sweep_stopped", container_id=container_id, stopped=result.stopped, passes=result.passes)

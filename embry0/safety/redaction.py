@@ -37,7 +37,7 @@ from __future__ import annotations
 import bisect
 import os
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 REDACTED = "***REDACTED***"
@@ -170,6 +170,24 @@ def secret_env_values(environ: dict[str, str] | None = None, *, extra: Iterable[
         if value not in _KNOWN_SECRETS:
             bisect.insort(merged, value, key=_scrub_order)
     return merged
+
+
+def job_secret_values(env_vars: Iterable[Mapping[str, Any]] | Mapping[str, Any] | None) -> list[str]:
+    """The values a job's own output is scrubbed with: ``secret_env_values()`` over this process's
+    environment with the job's env vars added, as its sandbox had them, plus every secret-typed one
+    outright. ``env_vars`` is the job's merged rows (``key``, ``value``, ``var_type``), or the legacy
+    plain ``{key: value}`` dict, or None."""
+    if isinstance(env_vars, Mapping):
+        rows: list[Mapping[str, Any]] = [{"key": k, "value": v} for k, v in env_vars.items()]
+    else:
+        rows = [row for row in env_vars or [] if isinstance(row, Mapping)]
+    environ = dict(os.environ)
+    secret_typed: list[str] = []
+    for row in rows:
+        environ[str(row.get("key"))] = str(row.get("value"))
+        if row.get("var_type") == "secret":
+            secret_typed.append(str(row.get("value")))
+    return secret_env_values(environ, extra=secret_typed)
 
 
 def redact_secrets(text: str, known_values: Iterable[str] = ()) -> str:

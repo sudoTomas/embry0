@@ -9,7 +9,10 @@ fixing a failure needs them.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
+
+from embry0.workflows.verification.scrub import REDACTED
 
 COMMENT_MARKER = "<!-- embry0:verification -->"
 MAX_NAMES_SHOWN = 10
@@ -75,6 +78,18 @@ HUMAN_MERGE_TEXT = (
 )
 
 
+def listed_names(names: Iterable[str]) -> list[str]:
+    """Test names from every target in one sorted list, one entry per test.
+
+    A name the scrubber left whole is listed once, however many targets name
+    it: equal text is the same test. A name it redacted part of is listed
+    each time it appears, since two different tests can scrub to the same
+    text; the report names each test once per target already.
+    """
+    seen = list(names)
+    return sorted([*{n for n in seen if REDACTED not in n}, *(n for n in seen if REDACTED in n)])
+
+
 def _names_block(title: str, names: list[str]) -> list[str]:
     if not names:
         return []
@@ -96,8 +111,8 @@ def render_verification_comment(result: dict[str, Any]) -> str:
     if "gate_base_red_unverified" in reasons:
         lines += ["", BASE_RED_UNVERIFIED_TEXT]
 
-    new = sorted({n for t in targets for n in t.get("new_failures") or []})
-    old = sorted({n for t in targets for n in [*(t.get("preexisting") or []), *(t.get("flaky") or [])]})
+    new = listed_names(n for t in targets for n in t.get("new_failures") or [])
+    old = listed_names(n for t in targets for n in [*(t.get("preexisting") or []), *(t.get("flaky") or [])])
     unnamed = sorted(
         str(t.get("target")) for t in targets if t.get("status") == "new_failures" and not t.get("new_failures")
     )

@@ -31,8 +31,10 @@ from langgraph.types import Command
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
 from embry0.safety.error_codes import ErrorCode
+from embry0.safety.redaction import job_secret_values
 from embry0.workflows.verification.config import VerificationConfig, load_verification_config
 from embry0.workflows.verification.gate import GateReport
+from embry0.workflows.verification.render import listed_names
 from embry0.workflows.verification.result import compose_result
 from embry0.workflows.verification.runner import run_gate
 from embry0.workflows.verification.sweep import sweep_sandbox
@@ -139,8 +141,11 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
     # earlier step stored. Unknown is [], the strict reading: every target
     # runs and the tier is the strictest.
     changed_files: list[str] = []
+    # The sandbox's processes print what its environment held: the sweep's and the gate's output is scrubbed
+    # with the job's secret values too.
+    scrub_values = job_secret_values(state.get("user_env_vars"))
     if docker is not None and container_id:
-        swept = await sweep_sandbox(docker, str(container_id))
+        swept = await sweep_sandbox(docker, str(container_id), scrub_values=scrub_values)
         base_ref = await resolve_base_branch(
             docker=docker, container_id=container_id, configured=_configured_base_branch(state)
         )
@@ -174,6 +179,7 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
                 config=verification_config,
                 changed_files=changed_files,
                 base_ref=base_ref,
+                scrub_values=scrub_values,
             )
         except Exception:
             logger.error("verify_gate_crashed", job_id=job_id, exc_info=True)
@@ -232,7 +238,7 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
         return Command(goto=goto_after_review({**state, **updates}), update=updates)
 
     if gate.blocking:
-        names = sorted({n for t in gate.targets for n in t.new_failures})
+        names = listed_names(n for t in gate.targets for n in t.new_failures)
         groups = sorted(t.target for t in gate.targets if t.blocking)
         detail = ", ".join(names[:10]) if names else "test group(s) " + ", ".join(groups)
         updates.update(
