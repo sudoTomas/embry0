@@ -21,12 +21,21 @@
 vulnerabilities:
   # The compose plugin (#342) is pinned to the release the QA image uses,
   # v5.6.1, which links golang.org/x/net 0.58.0; its Go is fixed (1.26.10).
-  # v5.7.0 links 0.60.0 but reworks how `up` starts containers, so both
-  # images move to it together, deliberately (infra/trivy/sandbox.trivyignore.yaml
-  # accepts the same finding in the QA image). The orchestrator only lists a
-  # QA workspace's services and follows its logs with it, over DinD's socket.
+  # v5.7.0 links 0.60.0, which fixes CVE-2026-78669, but reworks how `up`
+  # starts containers, so both images move to it together, deliberately
+  # (infra/trivy/sandbox.trivyignore.yaml accepts the same findings in the QA
+  # image). CVE-2026-78661 (x/net/html) is fixed in x/net 0.62.0, which no
+  # compose release links yet: v5.7.0 and compose's main branch link 0.60.0;
+  # compose builds no x/net/html code into the binary. Removed by a compose
+  # release that links x/net >= 0.62.0. The orchestrator only lists a QA
+  # workspace's services and follows its logs with it, over DinD's socket.
   - id: CVE-2026-78669
     paths:
       - usr/libexec/docker/cli-plugins/docker-compose
     statement: compose v5.6.1, the QA image's release, links golang.org/x/net 0.58.0; v5.7.0 has the fix, and both images move to it together
+    expired_at: 2026-12-15
+  - id: CVE-2026-78661
+    paths:
+      - usr/libexec/docker/cli-plugins/docker-compose
+    statement: compose v5.6.1, the QA image's release, links golang.org/x/net 0.58.0; the fix is in x/net 0.62.0, which no compose release links yet (v5.7.0 links 0.60.0); removed by a compose release that links >= 0.62.0
     expired_at: 2026-12-15

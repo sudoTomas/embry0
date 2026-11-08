@@ -42,13 +42,23 @@ vulnerabilities:
     statement: npm 12.2.1 vendors undici 6.29.0 and no npm release vendors the fixed 6.29.1 yet; bump npm when one does
     expired_at: 2026-12-15
   # docker compose v5.6.1 (QA image) links golang.org/x/net 0.58.0; its Go
-  # is fixed (1.26.10). v5.7.0 links 0.60.0, but it reworks how `up` creates
-  # and starts containers, which the QA stacks run through, and was one day old
-  # when this was written. Removed by moving to v5.7.0 or later deliberately.
+  # is fixed (1.26.10). v5.7.0 links 0.60.0, which fixes CVE-2026-78669, but
+  # it reworks how `up` creates and starts containers, which the QA stacks run
+  # through, and was one day old when this was written. Removed by moving to
+  # v5.7.0 or later deliberately. CVE-2026-78661 (x/net/html) is fixed in
+  # x/net 0.62.0, which no compose release links yet: v5.7.0 and compose's
+  # main branch link 0.60.0. compose builds no x/net/html code into the binary
+  # (`go tool nm` lists none of its symbols); Trivy matches the module.
+  # Removed by a compose release that links x/net >= 0.62.0.
   - id: CVE-2026-78669
     paths:
       - usr/local/lib/docker/cli-plugins/docker-compose
     statement: compose v5.6.1 links golang.org/x/net 0.58.0; v5.7.0 has the fix but changes how up starts containers; move to it deliberately
+    expired_at: 2026-12-15
+  - id: CVE-2026-78661
+    paths:
+      - usr/local/lib/docker/cli-plugins/docker-compose
+    statement: compose v5.6.1 links golang.org/x/net 0.58.0; the fix is in x/net 0.62.0, which no compose release links yet (v5.7.0 links 0.60.0); removed by a compose release that links >= 0.62.0
     expired_at: 2026-12-15
   # Poetry 1.8.4 and what it holds back (dev-python, dev-jvm-python). Poetry's
   # own fix is in 2.3.3; 1.8.4 requires dulwich <0.22 and virtualenv <21, and
