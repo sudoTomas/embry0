@@ -227,15 +227,51 @@ GUARDED_ENV_KEYS: Final[Mapping[str, EnvValueGuard]] = MappingProxyType(
 )
 
 
+# What a user-set variable may be called: a plain shell variable name. The
+# environment API's key field matches it (EnvVarInput), and env_key_refusal
+# checks it first, so every place that checks a key checks its name too.
+ENV_NAME_PATTERN: Final[str] = r"^[A-Za-z_][A-Za-z0-9_]*$"
+_ENV_NAME: Final[re.Pattern[str]] = re.compile(ENV_NAME_PATTERN)
+
+
+def shown_env_key(key: str) -> tuple[str, bool]:
+    """``key`` as a refusal or a log line may show it, and whether it was cut.
+
+    A container reads ``NAME=VALUE`` at the first ``=``, so in a key that
+    holds one, what follows is a value: only the part before it is shown.
+    """
+    name, cut, _ = key.partition("=")
+    return name, bool(cut)
+
+
+def env_name_refusal(key: str) -> str | None:
+    """Why ``key`` is not a variable name a user may set, or None if it is.
+
+    A key with ``=`` in it is named up to its first ``=`` (``shown_env_key``).
+    """
+    if _ENV_NAME.fullmatch(key) is None:
+        name, cut = shown_env_key(key)
+        shown = f"{name!r} (cut at its first '=')" if cut else repr(name)
+        return (
+            f"Key {shown} is not an environment variable name: "
+            "use letters, digits and underscores, not starting with a digit."
+        )
+    return None
+
+
 def env_key_refusal(key: str) -> str | None:
     """Why ``key`` can never be user-set whatever its value, or None.
 
-    Case-insensitive: ``http_proxy`` is the spelling curl honours, and
-    ``github_token`` must not slip past an exact-match check. The message
-    names the key, never the reserved set (RAV-1070: a refusal is not an
-    inventory).
+    A key that is not a plain variable name (``env_name_refusal``) is
+    refused first. Otherwise case-insensitive: ``http_proxy`` is the
+    spelling curl honours, and ``github_token`` must not slip past an
+    exact-match check. The message names the key, never the reserved set
+    (RAV-1070: a refusal is not an inventory).
     """
-    normalized = key.strip().upper()
+    name_refusal = env_name_refusal(key)
+    if name_refusal is not None:
+        return name_refusal
+    normalized = key.upper()
     if normalized in RESERVED_ENV_KEYS:
         return f"Key {key!r} is reserved for embry0 infrastructure."
     for prefix in RESERVED_ENV_PREFIXES + HOOK_ENV_PREFIXES:
@@ -247,9 +283,11 @@ def env_key_refusal(key: str) -> str | None:
 def env_value_refusal(key: str, value: str) -> str | None:
     """Why ``value`` is not allowed for a guarded ``key``, or None.
 
-    The message never contains the value, which may be a secret.
+    ``key`` has passed the name rule: both callers check it first
+    (``env_override_refusal``, and ``EnvVarInput``'s key field). The message
+    never contains the value, which may be a secret.
     """
-    guard = GUARDED_ENV_KEYS.get(key.strip().upper())
+    guard = GUARDED_ENV_KEYS.get(key.upper())
     if guard is not None and not guard.accepts(value):
         return f"Key {key!r} may only carry {guard.allowed}."
     return None
