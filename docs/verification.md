@@ -226,6 +226,63 @@ or a report that is not exactly that one line makes the run `errored`
 gate's verdict `error`. Processes of other users, root's among them, are
 outside its reach and are left alone.
 
+### What the sweep assumes
+
+Two limits remain, and the gate's guarantees are only as strong as they
+allow.
+
+- **The kernel restricts same-user tracing.** The sweep, each run and each
+  log read run as the sandbox's user, the same user as the processes the
+  sweep is there to stop. The gate assumes none of those processes can
+  trace (`ptrace`) another process of that user: the kernel's Yama setting
+  `kernel.yama.ptrace_scope` is 1 or more (the kernel's own default when it
+  has Yama; some distributions lower it to 0). At 1 a process may trace
+  only its own descendants, unless it holds `CAP_SYS_PTRACE` (which a
+  sandbox never does) or the traced process allows it; 2 and 3 are
+  stricter. At 0, or on a kernel without Yama, that assumption does not
+  hold, and the gate's verdicts rest on less than this page describes.
+  The setting is the host kernel's one value, which every container on the
+  host shares, so the orchestrator reads it at startup from its own
+  `/proc/sys/kernel/yama/ptrace_scope` (sandboxes run under runc, on the
+  host kernel, on either runtime). The check describes the orchestrator's
+  host kernel only: a sandbox daemon on another host, or a runtime with a
+  kernel of its own (gVisor, Kata), reads a different kernel, and the check
+  says nothing about it. When it reads 0, finds no Yama, or cannot read a
+  value from 0 to 3, it logs `ptrace_scope_permissive` at warning and writes
+  a `kernel.ptrace_scope.flagged` audit row, at every start; it starts all
+  the same. Both carry a `reason` and a `remedy`, which differ per reason:
+
+  - **`same_user_ptrace_allowed`: the setting is 0.** On the host:
+
+    ```bash
+    sudo sysctl kernel.yama.ptrace_scope=1
+    echo 'kernel.yama.ptrace_scope = 1' | sudo tee /etc/sysctl.d/99-ptrace-scope.conf
+    ```
+
+    then restart the orchestrator; the warning is gone from its log.
+  - **`yama_absent`: the kernel has no Yama.** There is no
+    `/proc/sys/kernel/yama/ptrace_scope`, so there is no setting for
+    `sysctl` to change. The host needs a kernel with Yama enabled: built
+    with `CONFIG_SECURITY_YAMA`, and named in `lsm=` when the kernel command
+    line sets that list. Boot it, check the setting reads 1 or more (set it
+    as above if it reads 0), then restart the orchestrator.
+  - **`unreadable`: the value could not be established.** The orchestrator
+    could not read the file, or read something other than a value from 0 to
+    3, so it cannot tell whether the kernel restricts tracing; the kernel
+    may well be fine. Compare `cat /proc/sys/kernel/yama/ptrace_scope` on
+    the host with the same read in the orchestrator's container. The host
+    should print 1, 2 or 3 (0 is the first case above); when it does and the
+    container cannot read the file, the container's `/proc` or a security
+    profile stands in the way, and the orchestrator needs read access to
+    that one file. Restart the orchestrator once it can read it.
+- **A repository given its own Docker daemon.** A repository with the
+  Docker grant ([SECURITY.md](../SECURITY.md#what-does-not-hold)) can start
+  containers through the sandbox's daemon. Those are not sandbox processes:
+  the sweep does not see them, so one started earlier in the job can still
+  be running while the tests run, and what it does is outside the gate's
+  view. For such a repository the gate's verdict is weaker than for one
+  without the grant; its code is trusted code already.
+
 ## Tiers
 
 `classify_diff(changed_files, rules)` is pure. Each path is tested

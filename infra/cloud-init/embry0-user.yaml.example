@@ -23,15 +23,22 @@ packages:
   - git
   - curl
   - ca-certificates
-# The sandbox isolation chain needs br_netfilter: without it iptables in DinD
-# does not see traffic between containers on one bridge, and embry0 refuses
-# to create any sandbox. Loaded now and at every boot.
 write_files:
+  # The sandbox isolation chain needs br_netfilter: without it iptables in DinD
+  # does not see traffic between containers on one bridge, and embry0 refuses
+  # to create any sandbox. Loaded now and at every boot.
   - path: /etc/modules-load.d/br_netfilter.conf
     content: |
       br_netfilter
+  # The verify gate's cleanup step assumes the kernel stops a sandbox process
+  # from tracing another process of the same user (docs/verification.md).
+  # Set now and at every boot.
+  - path: /etc/sysctl.d/99-ptrace-scope.conf
+    content: |
+      kernel.yama.ptrace_scope = 1
 runcmd:
   - modprobe br_netfilter
+  - sysctl -p /etc/sysctl.d/99-ptrace-scope.conf
   - systemctl enable --now qemu-guest-agent
   - systemctl enable --now docker
   - systemctl enable --now prometheus-node-exporter
