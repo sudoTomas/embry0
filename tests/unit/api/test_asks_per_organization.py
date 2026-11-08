@@ -13,6 +13,8 @@ last test here runs it on the real store and the real asks table.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 from collections.abc import AsyncIterator, Callable, Iterable
 from datetime import UTC, datetime, timedelta
@@ -47,9 +49,26 @@ DEPLOYMENT_NEXT = datetime(2026, 10, 28, 9, 0, tzinfo=UTC)
 DEPLOYMENT = "asks:\n  enabled: true\n  hours: 09-18\n  weekdays: mon-fri\n  timezone: UTC\n"
 
 
+async def _no_ticks(_loop: AskLoop) -> None:
+    """The ticker the lifespan starts for the production ask loop, stopped: it returns before its first tick."""
+
+
 @pytest.fixture
-async def app(db_with_migrations: DatabasePool, stub_container_runtime: Any) -> AsyncIterator[Any]:  # noqa: F811
-    """The real app through its real lifespan, with ``acme`` and ``globex`` registered."""
+async def app(
+    db_with_migrations: DatabasePool,
+    stub_container_runtime: Any,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[Any]:
+    """The real app through its real lifespan, with ``acme`` and ``globex`` registered.
+
+    The production ask loop's ticker never runs: each test ticks a loop of
+    its own, on its own clock, and counts what that tick did. Left running,
+    the ticker's first tick, slowed by a loaded runner, read the settings
+    after a test had turned asks on and queued asks about the decisions open
+    so far, so the test's own tick found them asked about already and counted
+    fewer (499 of 500 on CI).
+    """
+    monkeypatch.setattr(AskLoop, "start", _no_ticks)
     config = Embry0Config(
         _env_file=None,
         database_url=db_with_migrations._url,  # noqa: SLF001
@@ -75,6 +94,24 @@ async def _put(app: Any, text: str, **params: str) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=HEADERS) as client:
         resp = await client.put(URL, content=text, headers={"Content-Type": "application/yaml"}, params=params)
     assert resp.status_code == 200, f"the settings document took {text!r} at {params or 'the deployment'}: {resp.text}"
+
+
+async def test_the_production_loop_s_ticker_does_not_run_beside_a_test_s_ticks(app: Any) -> None:
+    """What every count asserted on the ``app`` fixture rests on, here and in the modules that share it: with
+    asks on and a decision open, the ticker the lifespan starts returns without a tick."""
+    await _put(app, DEPLOYMENT)
+    await app.state.repo_preferences_repo.upsert("acme/widgets", owners=["ada"])
+    await app.state.issues_repo.create("Widgets break", repo="acme/widgets")
+    ticker = asyncio.create_task(app.state.ask_loop.start())
+    done, _ = await asyncio.wait({ticker}, timeout=5)
+    ticker.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await ticker
+    live = await app.state.asks_repo.live()
+    assert done and not live, (
+        "the production loop's ticker returns before its first tick, so no tick runs beside a test's own: "
+        f"{'it returned' if done else 'it was still ticking 5 seconds on'}, and {len(live)} asks were queued"
+    )
 
 
 class FakeAsks:
