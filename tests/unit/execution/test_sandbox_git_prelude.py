@@ -675,3 +675,30 @@ def test_remote_origin_mirror_is_pinned_off(box):
     result = box.run(g("config", "--get", "remote.origin.mirror"))
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "false", "a mirror remote must be pinned off for embry0's push"
+
+
+# ---- objects and commits read as they are stored ------------------------------------
+
+
+def test_embry0s_git_reads_objects_and_commits_as_stored(box):
+    """A replacement ref and a graft file in the workspace change what the agent's own git reads, not embry0's."""
+    first = box.plain("rev-parse", "HEAD").strip()
+    (box.ws / "a.txt").write_text("two\n")
+    box.plain("commit", "-q", "-am", "two")
+    head = box.plain("rev-parse", "HEAD").strip()
+    blob = box.plain("rev-parse", "HEAD:a.txt").strip()
+    other = box.plain("hash-object", "-w", "--stdin")  # the empty blob
+    box.plain("replace", blob, other.strip())
+    (box.ws / ".git" / "info").mkdir(exist_ok=True)
+    (box.ws / ".git" / "info" / "grafts").write_text(f"{head}\n")
+    assert box.plain("cat-file", "-p", blob) == "" and box.plain("rev-list", "--count", "HEAD").strip() == "1", (
+        "the agent's own git reads the replacement and the graft: the case below would measure nothing"
+    )
+
+    shown = box.run(g("cat-file", "-p", blob))
+    counted = box.run(g("rev-list", "--count", "HEAD"))
+    parent = box.run(g("rev-parse", "HEAD^"))
+    assert shown.returncode == 0 and shown.stdout == "two\n", f"a replacement ref stood in for the blob: {shown}"
+    assert counted.stdout.strip() == "2", f"a graft file rewrote the head's parents: {counted.stdout!r}"
+    assert parent.stdout.strip() == first, parent
+    assert "graft" not in shown.stderr + counted.stderr, "no deprecation hint about a graft file it does not read"

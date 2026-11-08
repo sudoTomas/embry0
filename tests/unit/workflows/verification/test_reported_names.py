@@ -28,6 +28,8 @@ from tests.unit.workflows.issue_to_pr.test_verify_node import JAVA, VERIFICATION
 from tests.unit.workflows.issue_to_pr.test_verify_node import _config as _node_config
 from tests.unit.workflows.verification.test_runner import (  # noqa: F401 - clock is an autouse fixture
     BASE_DIR,
+    BRANCH,
+    FORGE_URL,
     HEAD_DIR,
     JVM,
     FakeDocker,
@@ -253,6 +255,8 @@ async def test_the_gate_scrubs_names_summary_tail_and_excerpts_with_the_values_i
             config=_config(head_reruns=0),
             changed_files=[JAVA, "frontend/src/App.tsx"],
             base_ref="main",
+            branch=BRANCH,
+            forge_url=FORGE_URL,
             scrub_values=[JOB_SECRET, JOB_NAMED, PROCESS_NAMED],
         )
 
@@ -315,6 +319,8 @@ async def test_the_gate_s_sweeps_scrub_their_excerpts_with_the_values_it_is_give
             config=_config(head_reruns=0),
             changed_files=[JAVA],
             base_ref="main",
+            branch=BRANCH,
+            forge_url=FORGE_URL,
             scrub_values=[JOB_SECRET, JOB_NAMED],
         )
 

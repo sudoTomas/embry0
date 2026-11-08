@@ -1,9 +1,18 @@
 """Run the gate's test commands inside the dev sandbox (#299).
 
 The orchestrator drives this with ``docker exec`` — no agent, no LLM spend.
-Head runs in ``/workspace`` (the developer's checkout); base runs in a
-detached git worktree of the merge-base, so the two never share build
-output.
+A prepare step resolves the two commits in the job's repository in
+``/workspace``: head is its ``HEAD``, which must be the tip of the job's
+branch on the forge, and base its merge-base with the base branch fetched
+from the forge. Every run then gets a fresh tree of its commit, built right
+before it: a new repository holding exactly that commit's snapshot, copied
+out of ``/workspace/.git`` as a pack whose object ids ``git index-pack``
+recomputes from their content, and checked out there. The tested tree is
+the commit's content: nothing in ``/workspace`` the commit does not carry
+(build output, a stray or ignored file, an uncommitted edit), and nothing in
+its ``.git`` that changes what a checkout writes (replacement refs, sparse
+checkout settings, an object whose content no longer matches its id), reaches
+it. A run's tree is removed before the next run's is built.
 
 A run's verdict depends only on that run, read from what the orchestrator
 controls. Its script enters the directory to run in, redirects all of its
@@ -18,6 +27,7 @@ of its own only after the second sweep, gives the failed test names.
 from __future__ import annotations
 
 import re
+import shlex
 import time
 from collections.abc import Sequence
 from dataclasses import replace
@@ -27,6 +37,7 @@ import structlog
 
 from embry0.execution import sandbox_git
 from embry0.execution.docker_client import DEFAULT_MAX_OUTPUT_BYTES, OutputTooLargeError
+from embry0.git_refs import valid_ref
 from embry0.safety.redaction import secret_env_values
 from embry0.workflows.qa._glob_match import compile_glob, match_any
 from embry0.workflows.verification.config import TestTarget, VerificationConfig
@@ -44,10 +55,22 @@ from embry0.workflows.verification.sweep import SweepResult, sweep_sandbox
 
 logger = structlog.get_logger(__name__)
 
-HEAD_DIR = "/workspace"
+# The job's repository: embry0's git resolves the commits here and reads
+# their objects from it. No test runs in it.
+WORKSPACE = sandbox_git.WORKSPACE
 SCRATCH_DIR = "/tmp/embry0-verify"
+HEAD_DIR = f"{SCRATCH_DIR}/head"
 BASE_DIR = f"{SCRATCH_DIR}/base"
 LOG_DIR = f"{SCRATCH_DIR}/logs"
+# Where each side runs: a fresh repository of its own commit, built by the
+# same step for both sides, before every run.
+RUN_DIRS: dict[Side, str] = {"head": HEAD_DIR, "base": BASE_DIR}
+# The prepare step fetches the base and resolves both commits. A checkout
+# copies one commit's objects and writes its tree: 50,000 files take a few
+# seconds on a fast disk, far longer on a loaded one.
+PREPARE_TIMEOUT_SECONDS = 180
+DELIVERED_TIMEOUT_SECONDS = 60
+CHECKOUT_TIMEOUT_SECONDS = 600
 # Output read back per run for parsing, and the part of it kept in the report.
 PARSE_TAIL_BYTES = 1_048_576
 STORED_TAIL_CHARS = 8000
@@ -62,6 +85,9 @@ _TIMEOUT_EXIT_CODES = frozenset({124, 137})
 _LOST_EXEC_EXIT = 255
 _MARKER_KEYS = ("EMBRY0_VERIFY_HEAD", "EMBRY0_VERIFY_BASE")
 _MARKER_RE = re.compile(r"EMBRY0_VERIFY_(HEAD|BASE)=([0-9a-f]{40})")
+_SHA_RE = re.compile(r"[0-9a-f]{40}")
+# A URL git takes as one word: a scheme, then no blank; never an option.
+_URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"\\]+")
 # The one line the run script prints itself, before it redirects its output.
 _NO_RUN_DIR = "EMBRY0_VERIFY_NO_RUN_DIR"
 # The shell the run script runs under. The script is plain POSIX, and the
@@ -101,29 +127,75 @@ def select_targets(targets: list[TestTarget], changed_files: list[str]) -> list[
     return selected
 
 
-def _prepare_script(base_ref: str) -> str:
-    """Fetch the base, resolve both commits and check the base out in a worktree (run in ``HEAD_DIR``)."""
+def _prepare_script(base_ref: str, forge_url: str) -> str:
+    """Fetch the base and resolve both commits (run in ``WORKSPACE``). Nothing is checked out here.
+
+    The fetch goes to ``forge_url``, never to a remote the repository's own
+    config names, is forced and must succeed: the base is computed from the
+    base branch as the forge has it, never from a ref left in ``/workspace``.
+    """
     g = sandbox_git.git
     remote = f"origin/{base_ref}"
-    base = sandbox_git.Shell('"$base"')
     return (
         "set -e; "
-        f"{g('fetch', 'origin', f'{base_ref}:refs/remotes/{remote}', '--depth=50')} >/dev/null 2>&1 || true; "
+        f"{g('fetch', forge_url, f'+{base_ref}:refs/remotes/{remote}', '--depth=50')} >/dev/null; "
         f"head=$({g('rev-parse', 'HEAD')}); "
         # A shallow clone may not reach the fork point; the base tip is then
         # the honest second best (it is what the PR will merge into).
         f"base=$({g('merge-base', remote, 'HEAD')} 2>/dev/null || {g('rev-parse', remote)}); "
-        f"{g('worktree', 'remove', '--force', BASE_DIR)} >/dev/null 2>&1 || true; "
-        f"rm -rf {SCRATCH_DIR}; mkdir -p {SCRATCH_DIR}/logs; {g('worktree', 'prune')}; "
-        f"{g('worktree', 'add', '--detach', BASE_DIR, base)} >/dev/null 2>&1; "
         f'echo "EMBRY0_VERIFY_HEAD=$head"; echo "EMBRY0_VERIFY_BASE=$base"'
     )
 
 
-_CLEANUP_SCRIPT = (
-    f"{sandbox_git.git('worktree', 'remove', '--force', BASE_DIR)} >/dev/null 2>&1; "
-    f"rm -rf {SCRATCH_DIR}; {sandbox_git.git('worktree', 'prune')}"
+# Remove the scratch directory whatever a run left in it: a tree with
+# read-only directories (a module cache), or a symlink in its place.
+_CLEAR_SCRATCH = (
+    f"if [ -L {SCRATCH_DIR} ]; then rm -f {SCRATCH_DIR}; "
+    f"elif [ -e {SCRATCH_DIR} ]; then chmod -R u+rwX {SCRATCH_DIR} 2>/dev/null || true; rm -rf {SCRATCH_DIR}; fi"
 )
+
+
+def _checkout_script(side: Side, sha: str) -> str:
+    """Build ``side``'s tree as a fresh repository holding exactly ``sha``'s snapshot (run in ``WORKSPACE``).
+
+    The commit, its trees and its blobs are read out of ``/workspace/.git``
+    as one pack and indexed into a new, empty repository: ``index-pack``
+    computes every object's id from its content, so an object whose content
+    does not match its id cannot pass as the commit's. The commit must then
+    be there, with every object of its snapshot, before it is checked out
+    (``git checkout`` itself leaves out a file whose blob is missing and
+    still exits 0). So whatever the source store holds (packed or loose
+    objects, alternates, a promisor remote), the tree is the commit's exact
+    content or the run errors; and the checkout reads git's defaults and
+    embry0's pinned config only (``GIT_*`` variables are reserved from every
+    sandbox's environment, ``auth_provider.env_override_refusal``).
+    The new repository has git's defaults and nothing else: no sparse
+    checkout, worktree config, hooks, replacement refs or alternates. It is
+    marked shallow, so its one commit stands alone. Gitlinks stay empty
+    directories. One command for both sides; ``set -e`` and ``pipefail``: a
+    step that fails fails the checkout.
+    """
+    g = sandbox_git.git
+    tree = RUN_DIRS[side]
+    # The new repository is embry0's own, made by this same exec: nothing to
+    # check before entering it.
+    enter = f"cd -- {shlex.quote(tree)}"
+    snapshot = g("rev-list", "--objects", "--no-object-names", "--no-walk", sha)
+    pack = g("pack-objects", "--stdout", "--quiet", "--window=0")
+    return (
+        f"set -eo pipefail; {_CLEAR_SCRATCH}; mkdir -p {LOG_DIR}; "
+        f"{g('init', '--quiet', '--template=', tree)}; "
+        f"{snapshot} | {pack} | ({enter}; {g('index-pack', '--stdin')} >/dev/null); "
+        f"({enter}; "
+        f"printf '%s\\n' {sha} > .git/shallow; "
+        # The commit must be there with every object of its snapshot: git
+        # checkout exits 0 when a blob is missing, leaving its file out.
+        f"{g('rev-list', '--objects', '--no-walk', sha + '^{commit}')} >/dev/null; "
+        f"{g('checkout', '--quiet', '--detach', sha)})"
+    )
+
+
+_CLEANUP_SCRIPT = _CLEAR_SCRATCH
 
 
 def _not_run(target: TestTarget, side: Side, attempt: int, why: str, *, duration_ms: int = 0) -> TargetRun:
@@ -221,15 +293,25 @@ def _sweep_note(when: str, swept: SweepResult) -> str:
 
 
 async def _run_once(
-    docker: SandboxDocker, container_id: str, target: TestTarget, side: Side, attempt: int, known: list[str]
+    docker: SandboxDocker,
+    container_id: str,
+    target: TestTarget,
+    side: Side,
+    attempt: int,
+    sha: str,
+    known: list[str],
 ) -> TargetRun:
     before = await sweep_sandbox(docker, container_id, scrub_values=known)
     if not before.clean:
         return _not_run(target, side, attempt, _sweep_note("not run: before the run", before))
+    # After the sweep, so nothing left running can touch the tree before the run starts.
+    problem = await _check_out(docker, container_id, side=side, sha=sha, known=known)
+    if problem is not None:
+        return _not_run(target, side, attempt, f"not run: {problem}")
 
     log_name = f"{target.name}.{side}.{attempt}.log"
     env = {
-        "EMBRY0_VERIFY_DIR": HEAD_DIR if side == "head" else BASE_DIR,
+        "EMBRY0_VERIFY_DIR": RUN_DIRS[side],
         "EMBRY0_VERIFY_CMD": target.command,
         "EMBRY0_VERIFY_TIMEOUT": str(target.timeout_seconds),
         "EMBRY0_VERIFY_LOG": log_name,
@@ -322,6 +404,84 @@ async def _run_once(
     )
 
 
+async def _check_out(docker: SandboxDocker, container_id: str, *, side: Side, sha: str, known: list[str]) -> str | None:
+    """Build ``side``'s tree of ``sha``; None when it is ready, else why not."""
+    try:
+        await sandbox_git.run(
+            docker,
+            container_id,
+            sandbox_git.script(_checkout_script(side, sha), repo=WORKSPACE),
+            step=sandbox_git.GitStep.VERIFY_GATE,
+            timeout=CHECKOUT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001 - a checkout that fails is a recorded error, not a crash
+        refused = sandbox_git.refusal_of(exc)
+        if refused is not None:
+            return str(refused)
+        logger.warning("verify_checkout_failed", side=side, sha=sha, error=_excerpt(str(exc), known))
+        return f"the {side} commit could not be checked out in the sandbox"
+    return None
+
+
+def _branch_tip(listing: str, branch: str) -> str | None:
+    """The sha ``git ls-remote origin refs/heads/<branch>`` names for exactly that ref, when it names one."""
+    ref = f"refs/heads/{branch}"
+    tips = [sha for sha, _, name in (line.partition("\t") for line in listing.splitlines()) if name == ref]
+    if len(tips) != 1 or not _SHA_RE.fullmatch(tips[0]):
+        return None
+    return tips[0]
+
+
+async def _from_forge(
+    docker: SandboxDocker, container_id: str, argv: list[str], *, timeout: int, known: list[str]
+) -> str:
+    """A gate step that reads from the forge, with :func:`sandbox_git.run_from_forge`'s bounded tries."""
+
+    def retried(attempt: int, exc: BaseException) -> None:
+        logger.warning("verify_forge_read_retried", attempt=attempt, error=_excerpt(str(exc), known))
+
+    return await sandbox_git.run_from_forge(
+        docker, container_id, argv, step=sandbox_git.GitStep.VERIFY_GATE, timeout=timeout, on_retry=retried
+    )
+
+
+async def _delivered_problem(
+    docker: SandboxDocker, container_id: str, *, forge_url: str, branch: str, head_sha: str, known: list[str]
+) -> str | None:
+    """Why ``head_sha`` is not the tip of the job's branch on the forge, or None when it is.
+
+    The pull request carries the branch as the forge has it; a verdict about
+    any other commit would not be about the pull request. The forge is
+    ``forge_url``, never a remote the repository's own config names.
+    """
+    if not valid_ref(branch):
+        return "the job's branch is not known, so the commit under test cannot be matched with the pushed one"
+    try:
+        listing = await _from_forge(
+            docker,
+            container_id,
+            sandbox_git.command("ls-remote", forge_url, f"refs/heads/{branch}"),
+            timeout=DELIVERED_TIMEOUT_SECONDS,
+            known=known,
+        )
+    except Exception as exc:  # noqa: BLE001 - an unreadable branch is a recorded error, not a crash
+        refused = sandbox_git.refusal_of(exc)
+        if refused is not None:
+            return str(refused)
+        logger.warning("verify_branch_read_failed", branch=branch, error=_excerpt(str(exc), known))
+        return "the job's branch could not be read from the forge"
+    tip = _branch_tip(listing or "", branch)
+    if tip is None:
+        return "the job's branch is not on the forge"
+    if tip != head_sha:
+        logger.warning("verify_head_not_pushed", branch=branch, head_sha=head_sha, branch_sha=tip)
+        return (
+            f"the commit under test ({head_sha[:12]}) is not the tip of the job's branch on the forge "
+            f"({tip[:12]}), so its verdict would not be about the pull request"
+        )
+    return None
+
+
 async def run_gate(
     *,
     docker: SandboxDocker,
@@ -329,9 +489,16 @@ async def run_gate(
     config: VerificationConfig,
     changed_files: list[str],
     base_ref: str,
+    branch: str,
+    forge_url: str,
     scrub_values: Sequence[str] | None = None,
 ) -> GateReport:
     """Run the selected targets on head and base; return the comparison.
+
+    ``branch`` is the job's branch: the head under test must be its tip on
+    the forge, the commit the pull request carries. ``forge_url`` is the
+    job's repository on the forge, the URL embry0 cloned it from; both reads
+    from the forge go there, whatever the repository's own remotes say.
 
     ``scrub_values`` are the secrets the runs' output is scrubbed with by value, as well as by shape: the
     job's own (``job_secret_values``), which the sandbox's environment held. Without them, the registry's
@@ -343,14 +510,16 @@ async def run_gate(
         return GateReport.without_runs(
             "no_matching_targets", note="no configured test target covers the files this change touches"
         )
+    if not _URL_RE.fullmatch(forge_url):
+        return GateReport.without_runs("error", note="the job's repository on the forge is not known")
 
     try:
-        prepared = await sandbox_git.run(
+        prepared = await _from_forge(
             docker,
             container_id,
-            sandbox_git.script(_prepare_script(base_ref), repo=HEAD_DIR),
-            step=sandbox_git.GitStep.VERIFY_GATE,
-            timeout=180,
+            sandbox_git.script(_prepare_script(base_ref, forge_url), repo=WORKSPACE),
+            timeout=PREPARE_TIMEOUT_SECONDS,
+            known=known,
         )
     except Exception as exc:  # noqa: BLE001
         refused = sandbox_git.refusal_of(exc)
@@ -358,12 +527,21 @@ async def run_gate(
             # The note reaches the job's verdict: say which keys, and how to clear them.
             return GateReport.without_runs("error", note=str(refused))
         logger.warning("verify_prepare_failed", base_ref=base_ref, error=str(exc)[:300])
-        return GateReport.without_runs("error", note="the base commit could not be checked out in the sandbox")
-    shas = parse_prepared(prepared or "")
-    if shas is None:
+        return GateReport.without_runs(
+            "error", note="the base branch could not be fetched, or the commits could not be resolved, in the sandbox"
+        )
+    parsed = parse_prepared(prepared or "")
+    if parsed is None:
         return GateReport.without_runs("error", note="the base and head commits could not be resolved")
-    head_sha, base_sha = shas
+    head_sha, base_sha = parsed
+    shas: dict[Side, str] = {"head": head_sha, "base": base_sha}
+    not_delivered = await _delivered_problem(
+        docker, container_id, forge_url=forge_url, branch=branch, head_sha=head_sha, known=known
+    )
+    if not_delivered is not None:
+        return GateReport(verdict="error", base_sha=base_sha, head_sha=head_sha, base_ref=base_ref, note=not_delivered)
 
+    # The budget is for the runs, each with its own checkout.
     started = time.monotonic()
     out_of_time = False
     runs: list[TargetRun] = []
@@ -375,7 +553,7 @@ async def run_gate(
             out_of_time = True
             run = _not_run(target, side, n, "not run: the gate's time budget was used up")
         else:
-            run = await _run_once(docker, container_id, target, side, n, known)
+            run = await _run_once(docker, container_id, target, side, n, shas[side], known)
         runs.append(run)
         return run
 
@@ -393,14 +571,10 @@ async def run_gate(
                 verdict = compare_target(heads, base)
             verdicts.append(verdict)
     finally:
+        # A plain exec, not embry0's git: the scratch directory goes even when
+        # the workspace's repository would be refused.
         try:
-            await sandbox_git.run(
-                docker,
-                container_id,
-                sandbox_git.script(_CLEANUP_SCRIPT, repo=HEAD_DIR),
-                step=sandbox_git.GitStep.VERIFY_GATE,
-                timeout=60,
-            )
+            await docker.run_cmd(docker.build_exec_cmd(container_id, ["sh", "-c", _CLEANUP_SCRIPT]), timeout=60)
         except Exception:  # noqa: BLE001
             logger.warning("verify_cleanup_failed", container_id=container_id)
 

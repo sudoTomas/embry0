@@ -34,6 +34,7 @@ async def resolve_base_branch(
     docker: Any,
     container_id: str,
     configured: str | None = None,
+    forge_url: str | None = None,
 ) -> str:
     """Resolve the diff base for a job's workspace (RAV-1405).
 
@@ -46,10 +47,33 @@ async def resolve_base_branch(
     hardcoded-"main" fallback diffed one repo's branches against an
     unrelated orphan ``main`` (3994 files), which blew the review prompt
     past ARG_MAX and killed the job.
+
+    With ``forge_url`` (the URL embry0 cloned from), the answer comes from
+    the forge only: neither the workspace's ``origin/HEAD`` nor the remote
+    its config names is read, and the lookup is tried a bounded number of
+    times (:func:`sandbox_git.run_from_forge`).
     """
     if configured:
         return str(configured)
     g = sandbox_git.git
+    if forge_url is not None:
+        try:
+            raw = await sandbox_git.run_from_forge(
+                docker,
+                container_id,
+                sandbox_git.command("ls-remote", "--symref", forge_url, "HEAD"),
+                step=sandbox_git.GitStep.BASE_BRANCH,
+                timeout=30,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("base_branch_resolve_failed", error=str(exc))
+            return "main"
+        named = [
+            line.removeprefix("ref: refs/heads/").removesuffix("\tHEAD")
+            for line in (raw or "").splitlines()
+            if line.startswith("ref: refs/heads/") and line.endswith("\tHEAD")
+        ]
+        return named[0] if len(named) == 1 and valid_ref(named[0]) else "main"
     # Local first (free), remote second: ls-remote prints
     # "ref: refs/heads/<name>\tHEAD" for the symref.
     cmd = sandbox_git.script(
@@ -75,6 +99,7 @@ async def compute_changed_files_via_diff(
     container_id: str,
     base_branch: str,
     strict: bool = False,
+    forge_url: str | None = None,
 ) -> list[str]:
     """Run `git diff --name-only origin/<base_branch>...HEAD` in the sandbox.
 
@@ -97,12 +122,28 @@ async def compute_changed_files_via_diff(
 
     The base branch must exist remotely. We `git fetch origin <base_branch>
     --depth=50` first (depth covers most short-lived PRs).
+
+    With ``forge_url`` (the URL embry0 cloned from), the base is fetched
+    from there, forced, never from the remote the repository's config
+    names, and the fetch is tried a bounded number of times
+    (:func:`sandbox_git.run_from_forge`): the diff is then the branch's
+    change against the base branch as the forge has it.
     """
     step = sandbox_git.GitStep.CHANGED_FILES
     # Step 1: fetch base ref (best-effort; failures fall through to empty diff).
-    fetch_cmd = sandbox_git.command("fetch", "origin", f"{base_branch}:refs/remotes/origin/{base_branch}", "--depth=50")
+    if forge_url is not None:
+        fetch_cmd = sandbox_git.command(
+            "fetch", forge_url, f"+{base_branch}:refs/remotes/origin/{base_branch}", "--depth=50"
+        )
+    else:
+        fetch_cmd = sandbox_git.command(
+            "fetch", "origin", f"{base_branch}:refs/remotes/origin/{base_branch}", "--depth=50"
+        )
     try:
-        await sandbox_git.run(docker, container_id, fetch_cmd, step=step, timeout=60)
+        if forge_url is not None:
+            await sandbox_git.run_from_forge(docker, container_id, fetch_cmd, step=step, timeout=60)
+        else:
+            await sandbox_git.run(docker, container_id, fetch_cmd, step=step, timeout=60)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "workspace_diff_fetch_failed",

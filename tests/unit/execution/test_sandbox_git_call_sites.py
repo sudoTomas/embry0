@@ -184,13 +184,23 @@ async def test_the_verify_gate_runs_on_embry0s_git():
             return f"EMBRY0_VERIFY_HEAD={'a' * 40}\nEMBRY0_VERIFY_BASE={'b' * 40}\n"
         if "EMBRY0_SWEEP" in t:
             return "EMBRY0_SWEEP stopped=0 passes=0 survivors=0 unread=0 pids=\n"
+        if " ls-remote " in t:
+            return f"{'a' * 40}\trefs/heads/feature/x\n"
         if " tail -c " in t:
             return "1 passed\n"
         return ""  # a run's exec prints nothing; its log is read back on its own
 
     docker = Recorder(answer)
     config = VerificationConfig(test_targets=[TestTarget(name="unit", command="true", paths=[])])
-    await run_gate(docker=docker, container_id="c1", config=config, changed_files=["a.py"], base_ref="main")
+    await run_gate(
+        docker=docker,
+        container_id="c1",
+        config=config,
+        changed_files=["a.py"],
+        base_ref="main",
+        branch="feature/x",
+        forge_url="https://github.com/acme/widgets.git",
+    )
     _assert_protected(docker, "the verify gate")
 
 
@@ -313,7 +323,15 @@ async def test_a_refused_verify_gate_says_which_keys_and_how_to_clear_them():
     from embry0.workflows.verification.runner import run_gate
 
     config = VerificationConfig(test_targets=[TestTarget(name="unit", command="true", paths=[])])
-    report = await run_gate(docker=_Refusing(), container_id="c1", config=config, changed_files=[], base_ref="main")
+    report = await run_gate(
+        docker=_Refusing(),
+        container_id="c1",
+        config=config,
+        changed_files=[],
+        base_ref="main",
+        branch="feature/x",
+        forge_url="https://github.com/acme/widgets.git",
+    )
     assert report.verdict == "error"
     assert "filter.x.clean" in report.note and "include.path" in report.note, (
         f"the gate's note must name the keys that stopped it: {report.note!r}"

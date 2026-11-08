@@ -32,6 +32,7 @@ import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
 from embry0.safety.error_codes import ErrorCode
 from embry0.safety.redaction import job_secret_values
+from embry0.workflows.issue_to_pr.nodes._common import job_repository
 from embry0.workflows.verification.config import VerificationConfig, load_verification_config
 from embry0.workflows.verification.gate import GateReport
 from embry0.workflows.verification.render import listed_names
@@ -122,6 +123,27 @@ async def _stored_config(configurable: dict[str, Any], repo: str) -> tuple[Verif
     return config, problem
 
 
+async def _forge_url(configurable: dict[str, Any], repo: str, job_id: str) -> str:
+    """The URL embry0 cloned ``repo`` from (``job_repository``), resolved as the clone resolved it; "" when it
+    cannot be.
+
+    The gate reads the forge through it, never through a remote the
+    repository's own config names.
+    """
+    from embry0.services.forge_resolver import resolve_forge
+    from embry0.workspace_init.git import clone_url
+
+    if not repo:
+        return ""
+    try:
+        forge = await resolve_forge(configurable.get("repos_repo"), repo, job_id=job_id)
+    except Exception:
+        logger.warning("verify_forge_unresolved", job_id=job_id, repo=repo, exc_info=True)
+        return ""
+    gitlab_url = getattr(configurable.get("embry0_config"), "gitlab_url", "") or ""
+    return clone_url(repo, forge=forge, gitlab_url=str(gitlab_url))
+
+
 async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
     writer = _nodes.get_stream_writer()
     writer(events.node_started(node="verify"))
@@ -137,6 +159,10 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
     from embry0.workflows.issue_to_pr.nodes._review import _configured_base_branch
 
     base_ref = str(state.get("base_branch") or "main")
+    # Every read from the forge on this path (the base branch, the base for
+    # the diff, the gate's own two) goes to the URL embry0 cloned from, never
+    # to a remote the repository's config names.
+    forge_url = await _forge_url(configurable, job_repository(state), job_id)
     # The change's files come from this sandbox, now, never from the list an
     # earlier step stored. Unknown is [], the strict reading: every target
     # runs and the tier is the strictest.
@@ -146,15 +172,18 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
     scrub_values = job_secret_values(state.get("user_env_vars"))
     if docker is not None and container_id:
         swept = await sweep_sandbox(docker, str(container_id), scrub_values=scrub_values)
-        base_ref = await resolve_base_branch(
-            docker=docker, container_id=container_id, configured=_configured_base_branch(state)
-        )
+        if forge_url:
+            base_ref = await resolve_base_branch(
+                docker=docker, container_id=container_id, configured=_configured_base_branch(state), forge_url=forge_url
+            )
         if not swept.clean:
             logger.warning("verify_changed_files_unknown", job_id=job_id, reason=swept.describe())
+        elif not forge_url:
+            logger.warning("verify_changed_files_unknown", job_id=job_id, reason="the forge URL is not known")
         else:
             try:
                 changed_files = await compute_changed_files_via_diff(
-                    docker=docker, container_id=container_id, base_branch=base_ref, strict=True
+                    docker=docker, container_id=container_id, base_branch=base_ref, strict=True, forge_url=forge_url
                 )
             except Exception:
                 logger.warning("verify_changed_files_diff_failed", job_id=job_id, exc_info=True)
@@ -179,6 +208,9 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
                 config=verification_config,
                 changed_files=changed_files,
                 base_ref=base_ref,
+                # The pull request carries this branch; the head under test must be its tip.
+                branch=str(state.get("branch_name") or ""),
+                forge_url=forge_url,
                 scrub_values=scrub_values,
             )
         except Exception:

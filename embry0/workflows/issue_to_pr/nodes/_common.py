@@ -20,6 +20,17 @@ logger = structlog.get_logger(__name__)
 DECIDE_NOW_MAX_TURNS = 4
 
 
+def job_repository(state: dict[str, Any]) -> str:
+    """The repository the job's sandbox cloned: its git context's ``repo``, else the job's.
+
+    One expression for the clone (``init_node``) and for every later read
+    of that repository on the forge (the verify node), so the two always
+    name the same one.
+    """
+    context = state.get("context") or {}
+    return str((context.get("repo") if isinstance(context, dict) else None) or state.get("repo") or "")
+
+
 def _max_turns_recovery_session(
     result: dict[str, Any],
     *,

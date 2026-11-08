@@ -10,11 +10,18 @@ on a model. It does two things (#298, #299):
 
 Both read the change's file list from the dev sandbox at the start of the
 node: the node first stops every process earlier steps left running there
-(the [process sweep](#the-process-sweep)), then runs a fresh
-`git diff --name-only origin/<base>...HEAD`. It never reuses the list the
-review step stored. When the sweep cannot clear the sandbox or the diff
-fails, the list is unknown, `[]`, the strict reading: every target runs and
-the tier is `frontend`.
+(the [process sweep](#the-process-sweep)), then fetches the base branch
+from the forge, forced, and runs a fresh
+`git diff --name-only origin/<base>...HEAD`, the committed change, which is
+what the head run tests. It never reuses the list the review step stored.
+The base branch is the job's; when none was chosen for it, the forge's
+default branch (`git ls-remote --symref`), never the workspace's
+`origin/HEAD`. Like the gate's own reads, these go to the URL embry0 cloned
+the repository from, never to a remote the repository's config names, and
+are tried up to three times. When the sweep cannot clear the sandbox, the
+forge URL is not known or the diff fails (a repository-local `url.*`
+rewrite is refused, so it fails too), the list is unknown, `[]`, the
+strict reading: every target runs and the tier is `frontend`.
 
 Code: `embry0/workflows/verification/` (pure logic + the sandbox runner),
 `embry0/workflows/issue_to_pr/nodes/_verify.py` (the node),
@@ -46,11 +53,11 @@ Code: `embry0/workflows/verification/` (pure logic + the sandbox runner),
 |---|---|---|
 | `test_targets[].name` | — | `[A-Za-z0-9][A-Za-z0-9._-]{0,59}`, unique. |
 | `test_targets[].paths` | `[]` | Globs (qa.yaml `changed_paths` grammar). The target runs when a changed file matches; `[]` = always; an unknown diff runs every target. |
-| `test_targets[].command` | — | Run with `bash -c` from the root of the checkout under test. Must not hard-code `/workspace` (base runs in a separate worktree) and must do its own dependency install. Max 2000 characters — a longer command is **refused**, never cut. |
+| `test_targets[].command` | — | Run with `bash -c` from the root of a fresh checkout of the commit under test. Must not hard-code `/workspace` (`/workspace` is the job's working copy, which no run tests) and must install its own dependencies into that tree: see [What a test target needs](#what-a-test-target-needs). Max 2000 characters — a longer command is **refused**, never cut. |
 | `test_targets[].timeout_seconds` | `1200` | 30–7200. Enforced by `timeout` inside the sandbox. |
 | `base_run` | `always` | `on_head_failure` skips the base run for targets that pass on head (same verdict, faster). |
 | `head_reruns` | `1` | 0–2. Only a would-be blocker is re-run. |
-| `total_timeout_seconds` | `3600` | Budget for the whole gate. Runs that do not fit are recorded as not run → verdict `error`. |
+| `total_timeout_seconds` | `3600` | Budget for the gate's runs, each with its own checkout; it starts after the prepare step and the branch-tip read, which sit outside it. Runs that do not fit are recorded as not run → verdict `error`. |
 | `tiers.*_paths` | built-in | Each list REPLACES the built-in list of that class; omit to keep it; `[]` = "no such paths". |
 
 A preferences `PUT` is a partial update (#350): only the fields in the body
@@ -91,28 +98,72 @@ mode that killed the seven jobs.
 
 ## The gate
 
-- **Where:** the job's dev sandbox, via `docker exec`. Head runs in
-  `/workspace`; base runs in a detached `git worktree` of
-  `merge-base(origin/<base>, HEAD)` under `/tmp/embry0-verify/base` (the base
-  tip when the shallow clone does not reach the fork point). The worktree and
-  logs are removed afterwards.
-- **What is isolated, and what is not.** Only the *working tree*: the two runs
-  never share checked-out sources or in-tree build output (`target/`,
-  `node_modules/` under each tree, `.pytest_cache`). Everything the container
-  shares is still shared — packages installed by the command itself (`pip
-  install`, global `npm`, `~/.m2`, `~/.cache`) and the filesystem outside the
-  two trees. A process a run starts in the sandbox does not outlive it: the
-  sweep after the run stops it. So a test that needs a service (a database, a
-  dev server) must start it itself, and a build daemon (Gradle, sbt, Bloop)
-  starts afresh on every run. Containers a test starts through the sandbox's
-  Docker daemon, on repositories that are given one, are not sandbox
-  processes and are not stopped. Combined with the run order
-  (head #1 → base → head #2), a **head re-run executes against dependencies
-  the base run may have installed**, so a re-run that passes for that reason
-  is recorded as `flaky` and does not block — the gate fails open there. A
-  target that installs its own dependencies deterministically (`npm ci`,
-  `poetry install`, `./mvnw -o`) is unaffected; one that relies on ambient
-  state is not something this gate can make reliable.
+- **Where:** the job's dev sandbox, via `docker exec`. **The tested tree is
+  the commit's content.** A prepare step resolves the two commits in the
+  job's repository at `/workspace`: head is its `HEAD`, base is
+  `merge-base(origin/<base>, HEAD)` (the base tip when the shallow clone
+  does not reach the fork point), computed after a forced fetch of the base
+  branch, so a remote-tracking ref left in `/workspace` does not choose it.
+  The fetch must succeed, or the gate's verdict is `error`. The head must be
+  the tip of the job's branch on the forge (`git ls-remote`), the commit
+  the pull request carries; otherwise, or when the branch cannot be read,
+  the verdict is `error` and nothing runs. Both reads go to the URL embry0
+  cloned the repository from, never to a remote the repository's own config
+  names, and a repository-local `url.*.insteadOf` or `pushInsteadOf` is
+  refused like any other key outside embry0's allowlist
+  ([sandbox-git.md](sandbox-git.md)). Each read is tried up to three times,
+  2 s and 5 s apart, so a short outage of the forge does not decide the
+  gate.
+- **A fresh tree for every run.** Right before each run, after the sweep, a
+  checkout step builds that side's tree: a new, empty repository under
+  `/tmp/embry0-verify/head` or `/tmp/embry0-verify/base`, into which embry0's
+  git copies exactly the commit's snapshot (the commit, its trees, its
+  blobs; no history) out of `/workspace/.git` as one pack. `git index-pack`
+  recomputes every object id from its content, so an object whose content
+  does not match its id cannot pass as the commit's; the commit and every
+  object of its snapshot must then be there, and the commit is checked out.
+  The new repository has git's defaults and nothing of `/workspace/.git`:
+  no sparse checkout, worktree config, hooks, replacement refs, grafts or
+  alternates (embry0's git also ignores replacement refs and grafts
+  everywhere, [sandbox-git.md](sandbox-git.md)). It holds that one commit,
+  marked shallow, so `git log` and `git describe` answer there, and has no
+  remote; submodule directories stay empty. Whatever the source store
+  holds (packed or loose objects, alternates, a promisor remote), every
+  object the pack carries gets its id from its content, and the check
+  wants the commit's whole snapshot under the ids the commit names: the
+  tree is that exact content, or the run errors. The checkout reads only
+  git's defaults and embry0's pinned config, and `GIT_*` variables cannot
+  be set in a sandbox's environment (the reserved-variable check refuses
+  them). The
+  same command builds both sides, head re-runs included, and the previous
+  run's tree is removed first, so no run starts from what an earlier one
+  left in its tree or wrote into the other side's. A checkout that fails
+  makes that run `errored` and the gate's verdict `error`, never a pass: a
+  person merges. The scratch directory is removed after the gate, whatever
+  is in it (a read-only module cache, a symlink in its place).
+- **What is isolated, and what is not.** The tree is: what `/workspace`
+  holds and the commit does not (build output, a stray or ignored file, a
+  local config, an uncommitted edit) is in no run's tree, and no two runs
+  share checked-out sources or in-tree build output (`target/`,
+  `node_modules/`, `.pytest_cache`). Everything outside the tree is still
+  shared — packages and caches installed earlier in the job or by an
+  earlier run (`pip install`, global `npm`, `~/.m2`, `~/.cache`) and the
+  rest of the filesystem. An editable install made earlier in the job that
+  points at `/workspace/src` still imports the working copy's code, so a
+  target must install into its own tree (or reinstall from it) rather than
+  rely on what is installed. A process a run starts in the sandbox does not
+  outlive it: the sweep after the run stops it. So a test that needs a
+  service (a database, a dev server) must start it itself, and a build
+  daemon (Gradle, sbt, Bloop) starts afresh on every run. Containers a test
+  starts through the sandbox's Docker daemon, on repositories that are
+  given one, are not sandbox processes and are not stopped. Combined with
+  the run order (head #1 → base → head #2), a **head re-run executes
+  against dependencies the base run may have installed outside its tree**,
+  so a re-run that passes for that reason is recorded as `flaky` and does
+  not block — the gate fails open there. A target that installs its own
+  dependencies deterministically into its tree (`npm ci`, `poetry install`
+  into an in-tree venv, `./mvnw -o`) is unaffected; one that relies on
+  ambient state is not something this gate can make reliable.
 - **Order per target:** head → base → head re-run(s) only if the target looks
   newly broken.
 - **How a result is read: from the run's exit status alone.** A run is one
@@ -169,7 +220,9 @@ mode that killed the seven jobs.
   `EMBRY0_VERIFY_HEAD=<sha>` and `EMBRY0_VERIFY_BASE=<sha>`. Exactly one of
   each, each a full 40-hex sha, or the gate's verdict is `error` and a
   person merges. The head sha stored with the result, the one a merge
-  approval compares with the PR's head, is that parsed value.
+  approval compares with the PR's head, is that parsed value, which the
+  forge has confirmed as the branch's tip, and every checkout is made from
+  these two values.
 - **Granularity is recorded, not assumed.** A `FAIL <file>` line with no test
   path (jest, and vitest's file-level line) names a *file*: it can show a
   whole file turning red, but it can never show that nothing new broke inside
@@ -178,8 +231,25 @@ mode that killed the seven jobs.
   `preexisting_failures` verdict — at either granularity — marks the PR
   human-merge-only (`gate_base_red_unverified`). The gate never claims
   "nothing new" from a comparison that could not have seen it.
-- **Cost:** no model spend. Wall-clock only: at most
-  `total_timeout_seconds`.
+- **Cost:** no model spend. Wall-clock: the prepare step and the
+  branch-tip read, then at most `total_timeout_seconds` for the runs, each
+  with its checkout. Each forge read is tried up to three times, 2 s and
+  5 s apart (one that runs out of time is not tried again, but one that
+  fails just short of it is), so the prepare step's worst case outside the
+  budget is about three times its 180 s timeout plus 7 s, and the
+  branch-tip read's three times its 60 s plus 7 s. A checkout
+  takes about twice as long as a `git worktree add` of the same commit
+  (3.3–3.9 s against 1.4–1.9 s for a synthetic repository of 50,000 files,
+  245 MB of text in a 165 MB pack, on a fast disk), and the tree's
+  repository holds a pack of the snapshot besides the files, about the
+  size of the compressed snapshot. Every run checks out and installs from
+  an empty tree: base always did, and now head and every head re-run do
+  too, instead of reusing whatever the job or an earlier run left
+  installed. That is the price of a verdict about the commit. Only one
+  tree exists at a time, but with `read_only_root: true` in the sandbox
+  profile `/tmp` is a tmpfs, whose contents count against the sandbox's
+  memory limit: the tree, its pack and its install must fit there beside
+  the tests.
 
 Per-target status:
 
@@ -207,6 +277,38 @@ Gate verdict = the worst target: `new_failures` > `error` > `unstable`
 (pre-existing and/or flaky) > `passed`; or `not_configured` /
 `no_matching_targets` when nothing ran. Only `new_failures` fails the job —
 `ERR_VERIFY_NEW_TEST_FAILURES`, stage `verify_failed`.
+
+### What a test target needs
+
+Each run starts in a fresh tree of its commit, with nothing installed in it.
+A command that relied on what the job had already installed or generated in
+`/workspace` now gets different verdicts:
+
+| The command | Before | Now |
+|---|---|---|
+| runs the tests without installing, both sides' failures unreadable | head green from `/workspace`'s installs | both sides red, names unreadable: `unstable`, a person merges |
+| runs the tests without installing, the change adds a test whose name both sides print | head green | the new name fails only on head: `new_failures`, which ends the job in `on` mode |
+| installs cold within a `timeout_seconds` sized for a warm run, `head_reruns: 0` | head green | head `timed_out`, base green: `new_failures`, blocking |
+
+So a test target's command should:
+
+- install its dependencies into the tree from the commit's own manifests
+  (`npm ci && npm test`; `python -m venv .venv && .venv/bin/pip install -e
+  . && .venv/bin/pytest`; `./mvnw -q test`), not rely on anything already
+  installed, and not on an editable install that points at `/workspace`;
+- generate whatever ignored files its tests read (`cp .env.example .env`,
+  code generation);
+- initialise submodules itself if it needs them, with absolute URLs: the
+  tree's repository has no remote;
+- not depend on git history or tags: the tree's repository holds the one
+  commit (`git describe` finds no tag);
+- set `timeout_seconds` to cover a cold install and the tests;
+- set `total_timeout_seconds` to about two to three times one target's
+  head, base and re-run together, for every target a change can select.
+
+**Before switching `VERIFICATION_MODE` to `on`, check every stored
+`test_targets[].command`** against this list: a command that worked against
+`/workspace` can block jobs now.
 
 ### The process sweep
 
