@@ -24,7 +24,9 @@ from embry0.services.issue_executor import IssueExecutor
 from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import run_migrations
 
-pytestmark = pytest.mark.requires_postgres
+# changes_schema: clean_database_url drops and migrates the schema, and the checkpointer creates its tables in
+# it (#437). Unmarked, the check after the test failed it whenever a database test ran before it in its process.
+pytestmark = [pytest.mark.requires_postgres, pytest.mark.changes_schema]
 
 JOB = "job-drain-1"
 CONTAINER = "sandbox-job-drain-1"
