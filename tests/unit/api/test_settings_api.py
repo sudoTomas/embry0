@@ -163,6 +163,57 @@ async def test_a_bad_value_is_a_422_that_names_the_key(client, text: str, loc: l
     assert (await client.get(URL)).json()["generation"] == 1, "a refused document stores nothing"
 
 
+LONG = "9" * 5_000
+
+
+@pytest.mark.parametrize(
+    ("body", "content_type", "loc", "kind"),
+    [
+        (f"sample:\n  per_tick: {LONG}\n", "application/yaml", ["sample", "per_tick"], "number_too_long"),
+        (f"sample:\n  per_tick: 0x{'f' * 5_000}\n", "application/yaml", ["sample", "per_tick"], "number_too_long"),
+        (f"sample:\n  ? {LONG}\n  : 1\n", "application/yaml", ["sample"], "number_too_long"),
+        (f"sample:\n  labels: [a, {LONG}]\n", "application/yaml", ["sample", "labels", 1], "number_too_long"),
+        (f'{{"sample": {{"labels": ["a", {LONG}]}}}}', "application/json", ["sample", "labels", 1], "number_too_long"),
+        ("sample:\n  per_tick: 0x_\n", "application/yaml", ["sample", "per_tick"], "invalid_number"),
+        ("sample:\n  per_tick: !!int abc\n", "application/yaml", ["sample", "per_tick"], "invalid_number"),
+        ('sample:\n  per_tick: !!int ""\n', "application/yaml", ["sample", "per_tick"], "invalid_number"),
+        ("sample:\n  per_tick: !!float abc\n", "application/yaml", ["sample", "per_tick"], "invalid_number"),
+        ("sample:\n  enabled: !!bool abc\n", "application/yaml", ["sample", "enabled"], "invalid_value"),
+        ("sample:\n  labels: [!!timestamp abc]\n", "application/yaml", ["sample", "labels", 0], "invalid_value"),
+    ],
+    ids=[
+        "yaml",
+        "yaml hex",
+        "yaml key",
+        "yaml in a list",
+        "json",
+        "0x_",
+        "!!int abc",
+        "!!int empty",
+        "!!float abc",
+        "!!bool abc",
+        "!!timestamp abc",
+    ],
+)
+async def test_a_number_yaml_or_json_cannot_read_is_a_422_that_names_the_key(
+    app, body: str, content_type: str, loc: list[Any], kind: str
+) -> None:
+    """#424: reading a whole number past the interpreter's digit limit raised a plain ValueError past the
+    document's "invalid" path, a 500; a hex number that long read, and could not be stored. A typed scalar
+    the safe loader cannot read (``!!int ""``, ``!!float abc``, ``!!bool abc``, ``!!timestamp abc``) raised
+    ``IndexError``, ``ValueError``, ``KeyError`` or ``AttributeError``, a 500 too."""
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=_as(ADMIN)) as client:
+        for dry_run in (1, 0):
+            resp = await client.put(
+                URL, content=body, headers={"Content-Type": content_type}, params={"dry_run": dry_run}
+            )
+            assert resp.status_code == 422, f"dry_run={dry_run}: {resp.status_code} {resp.text[:200]}"
+            assert [(d["loc"], d["type"]) for d in resp.json()["detail"]] == [(loc, kind)], resp.text
+            assert not any(word in resp.text for word in ("99999", "fffff", "abc")), "the value is never echoed"
+        assert (await client.get(URL)).json()["generation"] == 1, "a refused document stores nothing"
+
+
 async def test_one_422_names_every_bad_key(client) -> None:
     resp = await _put(client, "sample:\n  per_tik: 4\n  enabled: maybe\n  per_tick: 50\nsampel: {per_tick: 1}\n")
     assert resp.status_code == 422, resp.text

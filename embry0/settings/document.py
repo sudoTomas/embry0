@@ -41,7 +41,7 @@ from embry0.settings.registry import (
 )
 from embry0.settings.scope import LAYER_NOUNS
 from embry0.text_documents import NO_NEWLINE as NO_NEWLINE  # re-exported: the settings tests and API name it here
-from embry0.text_documents import DuplicateKey, refuse_duplicate_keys, structure_problems
+from embry0.text_documents import DuplicateKey, load_json, structure_problems
 from embry0.text_documents import text_diff as shared_text_diff
 
 logger = structlog.get_logger(__name__)
@@ -112,8 +112,8 @@ def load_yaml(text: str) -> dict[str, Any]:
     """The document ``text`` as a mapping; an empty or comment-only text is ``{}``.
 
     Raises :class:`DocumentInvalid` for a syntax error, an alias, a merge
-    key, a key written twice, a document nested too deeply, or a top level
-    that is not a mapping.
+    key, a key written twice, a whole number too long to convert, a document
+    nested too deeply, or a top level that is not a mapping.
     """
     if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
         raise DocumentTooLarge(f"the settings document is larger than {MAX_TEXT_BYTES} bytes")
@@ -142,10 +142,11 @@ def _utf8(body: bytes, what: str) -> str:
         raise DocumentInvalid([Problem((), "encoding", f"The {what} must be UTF-8 text.")]) from None
 
 
-def _json_object(text: str, not_an_object: str) -> dict[str, Any]:
-    """``text`` as a JSON object; empty text is ``{}``. A key written twice is refused, not dropped."""
+def _json_object(text: str, not_an_object: str, *, at: Loc = ()) -> dict[str, Any]:
+    """``text`` as a JSON object; empty text is ``{}``. A key written twice is refused, not dropped, and so is a
+    whole number too long to convert (#424), at its key under ``at``."""
     try:
-        values = json.loads(text, object_pairs_hook=refuse_duplicate_keys) if text.strip() else {}
+        values, too_long = load_json(text) if text.strip() else ({}, [])
     except DuplicateKey as exc:
         raise DocumentInvalid([Problem((), "duplicate_key", str(exc))]) from None
     except json.JSONDecodeError as exc:
@@ -154,6 +155,8 @@ def _json_object(text: str, not_an_object: str) -> dict[str, Any]:
         ) from None
     except RecursionError:
         raise DocumentInvalid([_TOO_DEEP]) from None
+    if too_long:
+        raise DocumentInvalid([Problem((*at, *p.loc), p.type, p.msg) for p in too_long])
     if not isinstance(values, dict):
         raise DocumentInvalid([Problem((), "not_a_mapping", not_an_object)])
     return values
@@ -173,15 +176,17 @@ def parse_body(body: bytes, content_type: str) -> tuple[str | None, dict[str, An
     return text, load_yaml(text)
 
 
-def parse_keys(body: bytes) -> dict[str, Any]:
-    """A request body naming keys of one section, a JSON object ``{key: value}``; empty is ``{}``.
+def parse_keys(body: bytes, section: str | None = None) -> dict[str, Any]:
+    """A request body naming keys of ``section``, a JSON object ``{key: value}``; empty is ``{}``.
 
     ``null`` takes a key out (:func:`patch_section`). Refused as a document
     body is: text that is not UTF-8 JSON, a key written twice, nesting too
     deep, anything but an object, each a :class:`DocumentInvalid` at ``loc``
-    ``[]``; past :data:`MAX_TEXT_BYTES`, :class:`DocumentTooLarge`.
+    ``[]``; a whole number too long to convert, at ``[section, key, ...]``;
+    past :data:`MAX_TEXT_BYTES`, :class:`DocumentTooLarge`.
     """
-    return _json_object(_utf8(body, "body"), "The body must be a JSON object of the section's keys.")
+    text = _utf8(body, "body")
+    return _json_object(text, "The body must be a JSON object of the section's keys.", at=(section,) if section else ())
 
 
 # ---- checking a write -----------------------------------------------------------

@@ -453,13 +453,18 @@ def _read_value(key: str, raw: str) -> Any:
     is never another value. Refused, as a usage error naming the key: a
     number with a leading zero or colons (``010``, ``1:30``), which could be
     meant either way; a list or mapping that is not JSON; a JSON key written
-    twice; ``NaN`` and ``Infinity``.
+    twice; ``NaN`` and ``Infinity``; a whole number too long to convert.
     """
-    from embry0.text_documents import DuplicateKey, refuse_duplicate_keys
+    from embry0.text_documents import DuplicateKey, load_json
 
     text = raw.strip()
     try:
-        return json.loads(text, object_pairs_hook=refuse_duplicate_keys, parse_constant=_not_finite)
+        value, too_long = load_json(text, parse_constant=_not_finite)
+        if too_long:
+            # #424: decoding such a number raised a plain ValueError, and a traceback.
+            _err(f"{key}: {too_long[0].msg[:1].lower()}{too_long[0].msg[1:]}")
+            raise _Exit(USAGE)
+        return value
     except DuplicateKey:
         _err(f"{key}: the value writes a key twice")
         raise _Exit(USAGE) from None

@@ -383,6 +383,18 @@ async def test_a_body_that_is_not_one_object_of_keys_is_a_422(app: Any, body: by
     assert [d["type"] for d in resp.json()["detail"]] == [kind]
 
 
+async def test_a_whole_number_too_long_to_convert_is_a_422_at_its_key(app: Any) -> None:
+    """#424: a section key's value of 5,000 digits raised a plain ValueError reading the body, a 500."""
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=_as(ADMIN)) as client:
+        resp = await client.patch(
+            f"{URL}/sample", content='{"per_tick": ' + "9" * 5_000 + "}", headers={"Content-Type": "application/json"}
+        )
+    assert resp.status_code == 422, f"{resp.status_code} {resp.text[:200]}"
+    assert [(d["loc"], d["type"]) for d in resp.json()["detail"]] == [(["sample", "per_tick"], "number_too_long")]
+    assert "99999" not in resp.text, "the rejected value is never echoed"
+
+
 async def test_a_change_that_makes_the_document_too_large_is_a_413(app: Any) -> None:
     async with _client(app) as client:
         await _put(client, "# " + "x" * (200 * 1024) + "\nsample:\n  per_tick: 4\n")

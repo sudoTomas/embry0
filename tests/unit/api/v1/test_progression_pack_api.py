@@ -275,6 +275,37 @@ async def test_an_invalid_pack_is_refused_by_key_without_its_values(client: Asyn
     assert (await client.get(PACK)).json()["version"] == 0 and (await client.get(f"{PACK}/draft")).status_code == 404
 
 
+async def test_a_number_yaml_or_json_cannot_read_is_a_422_at_its_key(client: AsyncClient) -> None:
+    """#424: a whole number past the digit limit raised a plain ValueError past the pack's "invalid" path, a
+    500, and so did ``!!int ""`` (IndexError) and ``!!float abc`` (ValueError)."""
+    from httpx import ASGITransport
+
+    long = "9" * 5_000
+    as_yaml = COPPER.replace("max_level: 99", f"max_level: {long}")
+    unreadable = {
+        "invalid_number": [COPPER.replace("max_level: 99", f"max_level: {tag}") for tag in ('!!int ""', "!!float abc")]
+    }
+    document = (await client.get(PACK)).json()["document"]
+    as_json = json.dumps(document).replace('"max_level": 99', f'"max_level": {long}')
+    assert long in as_yaml and long in as_json, "the test's number never went in"
+    transport = ASGITransport(app=client.app, raise_app_exceptions=False)  # type: ignore[attr-defined]
+    async with AsyncClient(transport=transport, base_url="http://test", headers=client.headers) as raw:
+        for path in (PACK, f"{PACK}/draft"):
+            for body, content_type in ((as_yaml, "application/yaml"), (as_json, "application/json")):
+                resp = await raw.put(path, content=body, headers={"Content-Type": content_type})
+                assert resp.status_code == 422, f"{path} {content_type}: {resp.status_code} {resp.text[:200]}"
+                detail = resp.json()["detail"]
+                assert [(d["loc"], d["type"]) for d in detail] == [(["curve", "max_level"], "number_too_long")], detail
+                assert "99999" not in resp.text, "a refusal never echoes a value"
+        for kind, bodies in unreadable.items():
+            for body in bodies:
+                resp = await raw.put(PACK, content=body, headers={"Content-Type": "application/yaml"})
+                assert resp.status_code == 422, f"{kind}: {resp.status_code} {resp.text[:200]}"
+                detail = resp.json()["detail"]
+                assert [(d["loc"], d["type"]) for d in detail] == [(["curve", "max_level"], kind)], detail
+    assert (await client.get(PACK)).json()["version"] == 0, "a refused pack stores nothing"
+
+
 async def test_a_timezone_postgres_does_not_know_is_a_422_on_timezone(client: AsyncClient) -> None:
     resp = await client.put(PACK, content=COPPER.replace("timezone: UTC", "timezone: localtime"), headers=YAML)
     assert resp.status_code == 422, resp.text

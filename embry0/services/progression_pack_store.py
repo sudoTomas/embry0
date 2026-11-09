@@ -67,7 +67,7 @@ from embry0.storage.repositories.progression_packs import (
     ProgressionPacksRepository,
     StoredPack,
 )
-from embry0.text_documents import DuplicateKey, refuse_duplicate_keys
+from embry0.text_documents import DuplicateKey, load_json
 from embry0.text_documents import text_diff as shared_text_diff
 
 logger = structlog.get_logger(__name__)
@@ -188,7 +188,7 @@ def read_body(body: bytes, content_type: str) -> Submitted:
     if content_type.split(";", 1)[0].strip().lower() != "application/json":
         return read_text(text)
     try:
-        data = json.loads(text, object_pairs_hook=refuse_duplicate_keys)
+        data, too_long = load_json(text)
     except DuplicateKey as exc:
         raise PackInvalid([Problem((), "duplicate_key", str(exc))]) from None
     except json.JSONDecodeError as exc:
@@ -197,6 +197,8 @@ def read_body(body: bytes, content_type: str) -> Submitted:
         ) from None
     except RecursionError:
         raise PackInvalid([Problem((), "too_deep", "the document is nested too deeply")]) from None
+    if too_long:
+        raise PackInvalid([Problem(p.loc, p.type, p.msg) for p in too_long])
     if not isinstance(data, dict):
         raise PackInvalid([Problem((), "dict_type", "a pack is a mapping of sections")])
     pack = parse(data)

@@ -201,6 +201,8 @@ def test_a_document_kept_in_a_file_is_named_before_the_change(capsys: pytest.Cap
         (['map={"a": 1, "a": 2}'], "map: the value writes a key twice"),
         (["x=NaN"], "x: use a finite number"),
         (["x=[-Infinity]"], "x: use a finite number"),
+        (["per_tick=" + "9" * 5_000], "per_tick: a whole number can have at most 4300 digits"),
+        (['map={"a": [1, ' + "9" * 5_000 + "]}"], "map: a whole number can have at most 4300 digits"),
     ],
     ids=[
         "no equals sign",
@@ -217,6 +219,8 @@ def test_a_document_kept_in_a_file_is_named_before_the_change(capsys: pytest.Cap
         "a JSON key twice",
         "not a number",
         "an infinity in a list",
+        "a number too long to convert",
+        "a number too long to convert in a mapping",
     ],
 )
 def test_a_bad_assignment_is_a_usage_error_and_sends_nothing(
