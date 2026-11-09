@@ -356,3 +356,55 @@ async def test_dismissing_a_job_takes_it_out_of_the_inbox_with_no_rating(app: An
         early = await client.post("/api/v1/jobs/job-1/dismiss", headers=HEADERS)
     assert dismissed.status_code == 200 and early.status_code == 409, (dismissed.status_code, early.status_code)
     assert app.state.world_repo.ratings == [{"job_id": "job-1", "rated_by": dismissed.json()["by"]}]
+
+
+async def test_the_evaluation_reads_as_it_stands(app: Any) -> None:
+    """``GET /jobs/{job_id}/evaluation``: nulls and an empty note before anyone reviewed the job, then the review."""
+    async with await _client(app) as client:
+        before = await client.get("/api/v1/jobs/job-1/evaluation")
+        app.state.world_repo.job_row.update(
+            rating="needs_work", verdict="sent_back", note="Name the edge case.", followup_job_id="job-2"
+        )
+        app.state.world_repo.job_row.update(rated_by="ada@example.com", rated_at=NOW)
+        after = await client.get("/api/v1/jobs/job-1/evaluation")
+        missing = await client.get("/api/v1/jobs/job-404/evaluation")
+    assert before.status_code == 200, f"GET /jobs/job-1/evaluation answered {before.status_code}: {before.text}"
+    assert before.json() == {
+        "job_id": "job-1",
+        "rating": None,
+        "verdict": None,
+        "note": "",
+        "followup_job_id": None,
+        "by": None,
+        "at": None,
+    }, f"a job nobody reviewed reads as nulls, with an empty note: {before.json()}"
+    assert after.json() == {
+        "job_id": "job-1",
+        "rating": "needs_work",
+        "verdict": "sent_back",
+        "note": "Name the edge case.",
+        "followup_job_id": "job-2",
+        "by": "ada@example.com",
+        "at": NOW.isoformat(),
+    }, f"the evaluation reads as the review routes answer it: {after.json()}"
+    assert missing.status_code == 404 and missing.json()["detail"] == "no job job-404", missing.text
+    assert app.state.db.actions == [] and app.state.world_repo.ratings == [], "reading records nothing"
+    assert app.state.handoffs_repo.closed == [], "reading settles no hand-off"
+
+
+async def test_the_evaluation_reads_while_the_job_runs(app: Any) -> None:
+    """Only answering waits for the job to finish; what was said about it so far reads at any time."""
+    app.state.world_repo.job_row["status"] = "running"
+    async with await _client(app) as client:
+        resp = await client.get("/api/v1/jobs/job-1/evaluation")
+    assert resp.status_code == 200 and resp.json()["by"] is None, f"{resp.status_code} {resp.text}"
+
+
+def test_reading_the_evaluation_has_no_world_alias() -> None:
+    """It never had a path under the world, so it gets no deprecated one."""
+    app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
+    routes = _review_routes(app)
+    assert ("GET", "/api/v1/jobs/{job_id}/evaluation") in routes, "GET /jobs/{job_id}/evaluation is not served"
+    assert ("GET", "/api/v1/world/quests/{job_id}/evaluation") not in routes, (
+        "a world alias was built for the evaluation's read, which never had a world path"
+    )

@@ -173,6 +173,10 @@ async def test_with_the_game_off_its_reads_answer_404_and_review_works(app: Any,
         rated = await client.put(path, json={"rating": "good", "note": "clean"})
         assert rated.status_code == 200, f"reviewing a job is core work, never the game's: PUT {path} {rated.text}"
     assert [r["rating"] for r in app.state.world_repo.rated] == ["good", "good"]
+    read = await client.get("/api/v1/jobs/job-1/evaluation")
+    assert read.status_code == 200 and read.json()["job_id"] == "job-1", (
+        f"a job's evaluation reads with the game off, though its quest's scroll does not: {read.status_code} {read.text}"
+    )
 
     pack = await client.get("/api/v1/progression/pack")
     assert pack.status_code == 200, f"the content pack is the game's configuration, kept while it is off: {pack.text}"

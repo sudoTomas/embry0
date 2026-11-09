@@ -1,5 +1,7 @@
 """Unit tests for embry0.mcp_server.server — tool registry, confirm-gates, log tailing."""
 
+import re
+
 import pytest
 
 from embry0.mcp_server import server
@@ -21,6 +23,12 @@ EXPECTED_TOOLS = {
     "job_cancel",
     "job_logs",
     "job_deliverables",
+    "job_evaluation",
+    "job_evaluate",
+    "job_send_back",
+    "job_run_again",
+    "job_dismiss",
+    "job_reject",
     "agent_list",
     "agent_get",
     "agent_create",
@@ -105,6 +113,11 @@ CONFIRM_GATED = {
     "job_resume",
     "job_answer",
     "job_cancel",
+    "job_evaluate",
+    "job_send_back",
+    "job_run_again",
+    "job_dismiss",
+    "job_reject",
     "agent_create",
     "agent_update",
     "agent_delete",
@@ -165,6 +178,33 @@ def fake_client(monkeypatch):
 async def test_all_expected_tools_registered():
     tools = {tool.name for tool in await server.mcp.list_tools()}
     assert tools == EXPECTED_TOOLS
+
+
+async def _confirm_gated() -> set[str]:
+    """The tools whose schema takes ``confirm``: the destructive or mutating ones."""
+    return {
+        tool.name for tool in await server.mcp.list_tools() if "confirm" in (tool.input_schema.get("properties") or {})
+    }
+
+
+async def test_confirm_gated_names_every_tool_that_takes_confirm():
+    gated = await _confirm_gated()
+    assert CONFIRM_GATED == gated, (
+        f"CONFIRM_GATED drifted from the tools that take confirm: missing {sorted(gated - CONFIRM_GATED)}, "
+        f"stale {sorted(CONFIRM_GATED - gated)}"
+    )
+
+
+async def test_the_module_docstring_names_every_tool_that_takes_confirm():
+    """The docstring's list is what a reader of the server learns needs confirm=true."""
+    doc = server.__doc__ or ""
+    listed = set(
+        re.findall(r"``(\w+)``", doc.split("Destructive or mutating-sensitive tools", 1)[1].split(") require", 1)[0])
+    )
+    gated = await _confirm_gated()
+    assert listed == gated, (
+        f"the server docstring's confirm-gated list drifted: missing {sorted(gated - listed)}, stale {sorted(listed - gated)}"
+    )
 
 
 async def test_confirm_gated_tools_refuse_without_confirm(fake_client):

@@ -1,5 +1,7 @@
 """Reviewing a finished job: a person's verdict on its work, and what they do with it.
 
+- ``GET /jobs/{job_id}/evaluation``: the evaluation as it stands, so far as
+  anyone has reviewed the job.
 - ``PUT /jobs/{job_id}/evaluation``: a rating (good, needs work, bad) with a
   note, or that the person merged the pull request.
 - ``POST /jobs/{job_id}/send-back``: a follow-up on the job's pull request
@@ -12,7 +14,8 @@
 Each answer is stored as the job's evaluation (``job_ratings``, one row per
 job), recorded as a ``job.review.*`` audit row, and settles the job's
 decision hand-off when it has one. Reviewing is core work: the guild (the
-game layer, ``embry0/api/v1/world.py``) only reads the evaluation. The rows
+game layer, ``embry0/api/v1/world.py``) only shows the evaluation, and it is
+read here whether the game is on or off. The rows
 are still read and written through ``WorldRepository`` (``quest`` and
 ``rate``). These routes were the world's, under ``/world/quests/{job_id}/…``;
 those paths stay as deprecated aliases (:data:`deprecated_router`) until
@@ -24,6 +27,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -93,14 +97,15 @@ def _json_field(value: Any) -> Any:
     return value
 
 
-async def _job_or_404(request: Request, job_id: str) -> dict[str, Any]:
-    """The job with its evaluation so far; 404 for an unknown job, and for one outside the key's repositories,
-    whose refusal is logged and audited (``embry0.api.job_allowlist``)."""
+async def _job_or_404(request: Request, job_id: str, *, action: str | None = "review a job") -> dict[str, Any]:
+    """The job with its evaluation so far; 404 for an unknown job, and for one outside the key's repositories
+    (``embry0.api.job_allowlist``), whose refusal is logged and audited when the caller acts on it (``action``) and
+    not when it only reads (``action`` None)."""
     job = await _state(request, "world_repo").quest(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"no job {job_id}")
     await hide_job_unless_covered(
-        request, job, HTTPException(status_code=404, detail=f"no job {job_id}"), action="review a job"
+        request, job, HTTPException(status_code=404, detail=f"no job {job_id}"), action=action
     )
     return dict(job)
 
@@ -127,6 +132,12 @@ async def _audit(request: Request, action: AuditAction, job_id: str, **fields: A
         details={"job_id": job_id, **{k: v for k, v in fields.items() if k != "note"}},
         audit_log_path=getattr(getattr(request.app.state, "config", None), "audit_log_path", None),
     )
+    return _evaluation(job_id, row)
+
+
+def _evaluation(job_id: str, row: Mapping[str, Any]) -> dict[str, Any]:
+    """The evaluation in ``row`` (``job_ratings``' columns, alone or beside the job's) as every route here answers
+    it: nulls and an empty note while nobody has reviewed the job, whose ``by`` is then null."""
     return {
         "job_id": job_id,
         "rating": row.get("rating"),
@@ -136,6 +147,19 @@ async def _audit(request: Request, action: AuditAction, job_id: str, **fields: A
         "by": row.get("rated_by"),
         "at": _iso(row.get("rated_at")),
     }
+
+
+@router.get("/jobs/{job_id}/evaluation")
+async def read_evaluation(job_id: str, request: Request) -> dict[str, Any]:
+    """The job's evaluation as it stands: its rating, verdict and note, the job a send-back or a run-again started
+    (``followup_job_id``), who reviewed it (``by``) and when (``at``).
+
+    All null, with an empty note, while nobody has reviewed the job; a job dismissed before anyone rated it has
+    only ``by`` and ``at``, and one rated before keeps what it was given.
+    A job in a repository the caller's key does not cover answers as one that does not exist (404), as every read
+    of a job does. Read whether the game layer is on or off.
+    """
+    return _evaluation(job_id, await _job_or_404(request, job_id, action=None))
 
 
 class EvaluationBody(BaseModel):
@@ -293,7 +317,7 @@ def _without_issue(launch: dict[str, Any], job: dict[str, Any]) -> dict[str, Any
 
 @router.post("/jobs/{job_id}/dismiss")
 async def dismiss(job_id: str, request: Request) -> dict[str, Any]:
-    """Seen, nothing to do: the job leaves the review inbox without a rating or a verdict."""
+    """Seen, nothing to do: the job leaves the review inbox. It adds no rating or verdict: one given before stays."""
     _refuse_unfinished(await _job_or_404(request, job_id), "dismiss")
     return await _audit(request, "job.review.dismissed", job_id)
 

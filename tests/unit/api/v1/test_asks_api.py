@@ -748,12 +748,39 @@ async def test_a_press_may_not_name_an_embry0_actor(app: Any) -> None:
     assert resp.status_code == 422, f"a press naming an embry0 actor is refused, got {resp.status_code}: {resp.text}"
 
 
+#: The game layer on (nothing written) and off (``ui.game: false``): a chat's answers read the same either way.
+GAME = {"on": {}, "off": {"ui": {"game": False}}}
+
+
 @pytest.mark.asyncio
-async def test_a_chat_cannot_take_an_action_the_dashboard_keeps(app: Any) -> None:
+@pytest.mark.parametrize("game", list(GAME))
+async def test_a_chat_cannot_take_an_action_the_dashboard_keeps(app: Any, game: str) -> None:
+    app.state.settings = FakeSettings({"asks": {"enabled": True}, **GAME[game]})
     resp = await call(
         app, "POST", "/api/v1/asks/answer", json={"code": "WXYZ", "action": "merge", "person": "ada@example.com"}
     )
-    assert resp.status_code == 409 and "not open on that quest from a chat" in resp.text
+    assert resp.status_code == 409 and resp.json()["detail"] == "merge is not open on that decision from a chat", (
+        f"the game {game}: {resp.text}"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("game", list(GAME))
+async def test_a_decision_answered_elsewhere_is_named_without_the_game_s_word(app: Any, game: str) -> None:
+    """A chat relays these answers whether the game layer is on or off, so they say decision, never quest."""
+    app.state.settings = FakeSettings({"asks": {"enabled": True}, **GAME[game]})
+    app.state.open_decisions.pop("offer:crack:1")
+    pressed = await call(
+        app, "POST", "/api/v1/asks/answer", json={"code": "ABCD", "action": "start", "person": "ada@example.com"}
+    )
+    read = await call(app, "GET", "/api/v1/asks/decision/ABCD")
+    for resp in (pressed, read):
+        assert resp.status_code == 409, (
+            f"the game {game}: a decision answered elsewhere: {resp.status_code} {resp.text}"
+        )
+        assert resp.json()["detail"] == "that decision was answered or moved on elsewhere", (
+            f"the game {game}: {resp.text}"
+        )
 
 
 def _decide(app: Any, *decisions: tuple[str, str]) -> None:

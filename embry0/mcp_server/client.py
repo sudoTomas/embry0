@@ -64,6 +64,12 @@ def _seg(value: str) -> str:
     return quote(value, safe="")
 
 
+def _run_with(model: str, credential_id: str) -> dict[str, Any]:
+    """A job's Run with choice as a request body's ``run_with``: nothing when neither is chosen, the usual run."""
+    chosen = {key: value for key, value in (("model", model), ("credential_id", credential_id)) if value}
+    return {"run_with": chosen} if chosen else {}
+
+
 _REPO_SEGMENT = r"(?!\.\.?(?![A-Za-z0-9_.-]))[A-Za-z0-9.][A-Za-z0-9_.-]*"
 _REPO_PATH_RE = re.compile(rf"^{_REPO_SEGMENT}(?:/{_REPO_SEGMENT})+\Z")
 _REPO_PATH_ERROR = "repo must be 'group/name' or 'group/subgroup/name'"
@@ -304,6 +310,32 @@ class Embry0Client:
 
     async def job_cancel(self, job_id: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/jobs/{job_id}/cancel"))
+
+    # ------------------------------------------------- reviewing a finished job
+
+    async def job_evaluation(self, job_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/jobs/{_seg(job_id)}/evaluation"))
+
+    async def job_evaluate(self, job_id: str, *, rating: str = "", verdict: str = "", note: str = "") -> dict[str, Any]:
+        body = {key: value for key, value in (("rating", rating), ("verdict", verdict), ("note", note)) if value}
+        return _as_dict(await self._request("PUT", f"/api/v1/jobs/{_seg(job_id)}/evaluation", body=body))
+
+    async def job_send_back(
+        self, job_id: str, notes: str, *, model: str = "", credential_id: str = ""
+    ) -> dict[str, Any]:
+        body = {"notes": notes, **_run_with(model, credential_id)}
+        return _as_dict(await self._request("POST", f"/api/v1/jobs/{_seg(job_id)}/send-back", body=body))
+
+    async def job_run_again(self, job_id: str, *, model: str = "", credential_id: str = "") -> dict[str, Any]:
+        body = _run_with(model, credential_id)
+        return _as_dict(await self._request("POST", f"/api/v1/jobs/{_seg(job_id)}/run-again", body=body))
+
+    async def job_dismiss(self, job_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", f"/api/v1/jobs/{_seg(job_id)}/dismiss"))
+
+    async def job_reject(self, job_id: str, *, note: str = "", close_pr: bool = False) -> dict[str, Any]:
+        body = {"note": note, "close_pr": close_pr}
+        return _as_dict(await self._request("POST", f"/api/v1/jobs/{_seg(job_id)}/reject", body=body))
 
     async def job_logs(self, job_id: str) -> dict[str, Any]:
         """The whole pipeline event log, read page by page (the API pages at 500, #203)."""

@@ -4,7 +4,8 @@ Run via the ``embry0-mcp`` console script (stdio transport). Configure with
 ``EMBRY0_API_URL`` (default ``http://localhost:8200``) and ``EMBRY0_API_KEY``.
 
 Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
-``job_answer``, ``agent_create``, ``agent_update``, ``agent_delete``,
+``job_answer``, ``job_evaluate``, ``job_send_back``, ``job_run_again``,
+``job_dismiss``, ``job_reject``, ``agent_create``, ``agent_update``, ``agent_delete``,
 ``agent_reset``, ``env_set``, ``env_delete``, ``merge_decide``, ``case_accept``,
 ``case_close``, ``repo_register``, ``org_register``, ``org_update``,
 ``org_webhook_install``, ``org_act``, ``context_audit_run``, ``qa_config_set``,
@@ -13,7 +14,8 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``skill_source_remove``, ``inline_skill_put``, ``inline_skill_remove``,
 ``agent_skill_add``, ``agent_skill_remove``, ``standard_set``,
 ``standard_audit``, ``progression_pack_set``, ``progression_pack_reset``,
-``settings_set``, ``settings_set_keys``, ``settings_undo``) require
+``settings_set``, ``settings_set_keys``, ``settings_undo``, ``proposal_accept``,
+``proposal_decline``, ``proposal_snooze``) require
 ``confirm=true``; without it they return an instructive refusal instead of
 acting. ``progression_pack_set``, ``settings_set`` and ``settings_set_keys``
 with ``dry_run=true`` store nothing and run without it.
@@ -39,7 +41,8 @@ mcp = MCPServer(
     version=importlib.metadata.version("mcp"),
     instructions=(
         "Tools for driving the embry0 issue-to-PR / QA / research automation platform: "
-        "issues, jobs (create/wait/logs/deliverables), agent definitions, pipeline "
+        "issues, jobs (create/wait/logs/deliverables, and reviewing a finished job's work: read its "
+        "evaluation, rate it, send it back, run it again, dismiss or reject it), agent definitions, pipeline "
         "templates, the log watcher, healing cases, merge approvals, per-repo environment "
         "variables, forge credentials (list, resolve, bind), the hosts that run the "
         "code (list, get, probe, import from a tailnet), "
@@ -377,6 +380,79 @@ async def job_cancel(job_id: str, confirm: bool = False) -> dict[str, Any]:
     if not confirm:
         return _confirmation_refusal("job_cancel", f"cancel job {job_id}")
     return await _get_client().job_cancel(job_id)
+
+
+# ------------------------------------------------- reviewing a finished job
+#
+# A person's verdict on a finished job's work and what they do with it, through
+# the job's review routes (/jobs/{job_id}/evaluation, send-back, run-again,
+# dismiss, reject), with the caller's own key. Each write is recorded as the
+# job's evaluation and audited as job.review.*.
+
+
+@_tool
+async def job_evaluation(job_id: str) -> dict[str, Any]:
+    """A job's evaluation as it stands: rating (good|needs_work|bad), verdict (merged|sent_back|rejected),
+    note, followup_job_id (the job a send-back or run-again started), by (who reviewed it) and at. All null,
+    with an empty note, while nobody has reviewed the job. Read-only."""
+    return await _get_client().job_evaluation(job_id)
+
+
+@_tool
+async def job_evaluate(
+    job_id: str, rating: str = "", verdict: str = "", note: str = "", confirm: bool = False
+) -> dict[str, Any]:
+    """Record a person's review of a finished job: rating good|needs_work|bad, and/or verdict "merged" (they
+    merged its pull request), with an optional note; give at least one. Refused (409) while the job has not
+    finished. Answers the evaluation as it now stands. Requires confirm=true (it records the review and
+    settles the job's hand-off)."""
+    if not confirm:
+        return _confirmation_refusal("job_evaluate", f"record a review of job {job_id}")
+    return await _get_client().job_evaluate(job_id, rating=rating, verdict=verdict, note=note)
+
+
+@_tool
+async def job_send_back(
+    job_id: str, notes: str, model: str = "", credential_id: str = "", confirm: bool = False
+) -> dict[str, Any]:
+    """Send a job's work back with notes: starts a follow-up job on the job's own GitHub pull request branch,
+    which carries out the notes. model and credential_id optionally choose what the follow-up runs on (Run
+    with). Refused (409) when the job opened no pull request. Answers the evaluation with followup_job_id.
+    Requires confirm=true (it starts a job)."""
+    if not confirm:
+        return _confirmation_refusal("job_send_back", f"send job {job_id} back with these notes")
+    return await _get_client().job_send_back(job_id, notes, model=model, credential_id=credential_id)
+
+
+@_tool
+async def job_run_again(job_id: str, model: str = "", credential_id: str = "", confirm: bool = False) -> dict[str, Any]:
+    """Start a finished job again as a new job from what started it: the same repository, task, pipeline and
+    settings; model and credential_id optionally replace what it runs on (Run with). Refused (409) while the
+    job has not finished, or for a job with no launch record. Answers the evaluation with followup_job_id, the
+    new job. Requires confirm=true (it starts a job)."""
+    if not confirm:
+        return _confirmation_refusal("job_run_again", f"start job {job_id} again as a new job")
+    return await _get_client().job_run_again(job_id, model=model, credential_id=credential_id)
+
+
+@_tool
+async def job_dismiss(job_id: str, confirm: bool = False) -> dict[str, Any]:
+    """Seen, nothing to do: the finished job leaves the review inbox. It adds no rating or verdict: one given
+    before stays. Refused (409) while the job has not finished. Requires confirm=true (it records the review)."""
+    if not confirm:
+        return _confirmation_refusal("job_dismiss", f"dismiss job {job_id} from the review inbox")
+    return await _get_client().job_dismiss(job_id)
+
+
+@_tool
+async def job_reject(job_id: str, note: str = "", close_pr: bool = False, confirm: bool = False) -> dict[str, Any]:
+    """The job's work is not wanted: records the rejection with an optional note. close_pr=true also closes
+    its open pull request with the note as the last comment, which takes an admin key. Answers the evaluation
+    and closed_pr. Requires confirm=true (it records the review; close_pr acts on the forge)."""
+    if not confirm:
+        action = f"reject job {job_id}" + (" and close its pull request" if close_pr else "")
+        return _confirmation_refusal("job_reject", action)
+    return await _get_client().job_reject(job_id, note=note, close_pr=close_pr)
 
 
 @_tool
