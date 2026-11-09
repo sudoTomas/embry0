@@ -40,7 +40,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
-import json
 import re
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Sequence
@@ -51,6 +50,7 @@ import httpx
 import structlog
 
 from embry0.config_redaction import mask_url_credentials
+from embry0.json_text import json_objects_in
 from embry0.metrics import NULL_METRICS, LoopMetrics
 from embry0.orchestration import dispatch_actors
 from embry0.safety.redaction import redact_bounded, redact_log_text
@@ -279,23 +279,19 @@ def _parse_line_format(text: str, *, kinds: Collection[str] = DEFAULT_KINDS) -> 
 
 
 def _parse_json_fallback(text: str) -> dict[str, Any] | None:
-    """Old-contract JSON object carrying a non-empty title + body, or None."""
-    start = text.find("{")
-    decoder = json.JSONDecoder()
-    while start != -1:
-        try:
-            obj, _ = decoder.raw_decode(text[start:])
-        except (ValueError, RecursionError):  # see embry0.json_text
-            start = text.find("{", start + 1)
-            continue
-        if isinstance(obj, dict) and str(obj.get("title") or "").strip() and str(obj.get("body") or "").strip():
+    """Old-contract JSON object carrying a non-empty title + body, or None.
+
+    The first such object in the text; the scan's cost is bounded
+    (:func:`embry0.json_text.json_objects_in`).
+    """
+    for obj in json_objects_in(text, scanner="watcher_json_fallback"):
+        if str(obj.get("title") or "").strip() and str(obj.get("body") or "").strip():
             return {
                 "title": str(obj["title"]).strip()[:200],
                 "body": str(obj["body"]).strip()[:20000],
                 "severity": str(obj.get("severity") or "medium"),
                 "fingerprint_hint": None,
             }
-        start = text.find("{", start + 1)
     return None
 
 
