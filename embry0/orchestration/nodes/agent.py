@@ -65,6 +65,9 @@ def _env_cap(name: str, default: int) -> int:
 # legitimately need more turns.
 DEFAULT_ASK_USER_CAP = _env_cap("ASK_USER_ROUNDS_CAP", 10)
 BRAINSTORMING_ASK_USER_CAP = max(15, DEFAULT_ASK_USER_CAP)
+#: The questions one agent run may answer itself and have recorded (#410). They count toward no round cap, and
+#: each is an input row, an audit row and a line of the Q&A a resume hands the agent; the rest are dropped, logged.
+MAX_AUTO_ANSWERED_PER_RUN = 20
 # User-initiated retry rounds after max_retries (consumed by the
 # issue_to_pr max_retries node).
 USER_RETRY_ROUNDS_CAP = _env_cap("USER_RETRY_ROUNDS_CAP", 5)
@@ -1308,6 +1311,53 @@ async def run_agent_node(
     return _stamp_loaded_preferences(updates, state, loaded_prefs)
 
 
+def _auto_answered(questions: list[dict[str, Any]], job_id: str | None) -> list[dict[str, Any]]:
+    """The questions a run answered itself, as its update carries them to be recorded (#410).
+
+    Each gets the id its input row will have, here, where the node builds its
+    update: a node's update replayed on a resume (LangGraph streams a finished
+    step's writes again, marked cached, when the step's checkpoint was not
+    committed: a drain, a crash) carries the same id, so the row is written
+    once. At most :data:`MAX_AUTO_ANSWERED_PER_RUN` are kept; the rest are
+    logged and dropped.
+    """
+    if len(questions) > MAX_AUTO_ANSWERED_PER_RUN:
+        logger.warning(
+            "agent_auto_answered_questions_capped",
+            asked=len(questions),
+            kept=MAX_AUTO_ANSWERED_PER_RUN,
+            job_id=job_id,
+        )
+    return [
+        {**question, "input_id": question.get("input_id") or f"inp-{uuid.uuid4().hex[:12]}"}
+        for question in questions[:MAX_AUTO_ANSWERED_PER_RUN]
+    ]
+
+
+def with_cap_updates(update: dict[str, Any], cap_updates: dict[str, Any]) -> dict[str, Any]:
+    """``update`` with :func:`_enforce_ask_user_cap`'s ``cap_updates`` over it, keeping the questions a run
+    answered itself from both (#410).
+
+    A node that calls the cap twice in one run (triage: the agent's own questions, then the question a QA
+    failure makes it ask) gets a list from each call, the second often empty; laid over the first, it would
+    drop questions already folded into ``update``, and they would never be recorded. The two lists are joined,
+    the earlier first, each question once by its ``input_id``.
+    """
+    merged = {**update, **cap_updates}
+    earlier = list(update.get("auto_answered_agent_questions") or [])
+    if earlier:
+        joined: list[dict[str, Any]] = []
+        ids: set[str] = set()
+        for question in [*earlier, *(cap_updates.get("auto_answered_agent_questions") or [])]:
+            key = str(question.get("input_id") or "")
+            if key and key in ids:
+                continue
+            ids.add(key)
+            joined.append(question)
+        merged["auto_answered_agent_questions"] = joined
+    return merged
+
+
 def _enforce_ask_user_cap(
     state: dict[str, Any],
     pending_questions: list[dict[str, Any]],
@@ -1328,8 +1378,10 @@ def _enforce_ask_user_cap(
     Auto-answerable questions (``importance == "auto_answerable"``) are split
     out of the blocking set: they don't pause the workflow and don't count
     toward the round cap. They're returned under
-    ``auto_answered_agent_questions`` so the caller can persist them as
-    ``status='auto_answered'`` rows. If only auto-answerables were emitted the
+    ``auto_answered_agent_questions``, each with its ``input_id``, on every
+    path, the exhausted one included: the executor records them as
+    ``status='auto_answered'`` rows as the node's update streams
+    (``_record_auto_answers``). If only auto-answerables were emitted the
     cap is neither incremented nor checked for exhaustion — the workflow
     proceeds normally.
 
@@ -1344,7 +1396,10 @@ def _enforce_ask_user_cap(
     """
 
     blocking = [q for q in pending_questions if q.get("importance") != "auto_answerable"]
-    auto = [q for q in pending_questions if q.get("importance") == "auto_answerable"]
+    auto = _auto_answered(
+        [q for q in pending_questions if q.get("importance") == "auto_answerable"],
+        job_id_for_log or state.get("job_id"),
+    )
 
     # Auto-answerables alone never pause and never count. Persisted as answers,
     # not as pending questions. The cap-exhaustion check is also skipped — an
@@ -1368,6 +1423,8 @@ def _enforce_ask_user_cap(
             "agent_questions_exhausted": True,
             "error_code": ErrorCode.MAX_AGENT_QUESTIONS.value,
             "errors": [f"Agent exceeded {max_rounds} rounds of asking the user — giving up."],
+            # The run answered these itself whatever happens to its blocking ones: they are still its record.
+            "auto_answered_agent_questions": auto,
         }
     return False, {
         "pending_agent_questions": blocking,

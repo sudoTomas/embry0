@@ -1537,4 +1537,5 @@ class IssueExecutor:
     _broadcast_event = _executor_outcomes._broadcast_event
     _announce_finished = _executor_outcomes._announce_finished
     _handle_needs_info = _executor_outcomes._handle_needs_info
+    _record_auto_answers = _executor_outcomes._record_auto_answers
     _finish_credential_uses = _executor_outcomes._finish_credential_uses

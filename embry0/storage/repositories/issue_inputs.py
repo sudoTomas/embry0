@@ -67,6 +67,44 @@ class IssueInputsRepository:
         logger.info("issue_input_created", input_id=input_id, issue_id=issue_id, status=status)
         return input_id
 
+    async def record_auto_answer(
+        self,
+        *,
+        input_id: str,
+        issue_id: str | None,
+        job_id: str,
+        question: str,
+        asking_node: str,
+        auto_answer: str | None,
+    ) -> bool:
+        """Record a question an agent asked and answered itself (``importance="auto_answerable"``) as ``input_id``.
+
+        The workflow did not wait for it, so the row is ``auto_answered`` whether or not the agent named an
+        answer: it is the record of what the agent went on with, and a person can still answer it (#410).
+        ``input_id`` is the one the node gave the question, so the same question streamed again (a node's update
+        replayed on a resume) writes nothing: True when the row was written, False when it was there already.
+        """
+        written = await self._db.fetchval(
+            """
+            INSERT INTO issue_inputs (
+                id, issue_id, job_id, asking_node, question,
+                importance, auto_answer, status
+            )
+            VALUES ($1, $2, $3, $4, $5, 'auto_answerable', $6, 'auto_answered')
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id
+            """,
+            input_id,
+            issue_id,
+            job_id,
+            asking_node,
+            question,
+            auto_answer,
+        )
+        if written is not None:
+            logger.info("issue_input_auto_answered", input_id=input_id, job_id=job_id, asking_node=asking_node)
+        return written is not None
+
     async def get(self, input_id: str) -> dict[str, Any] | None:
         """Fetch a single issue input by ID."""
         row = await self._db.fetchrow(
