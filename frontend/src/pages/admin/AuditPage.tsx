@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { ScrollText } from "lucide-react";
 import { Link } from "react-router";
+import { Button } from "@/components/ui/Button";
+import { useAuditActions } from "@/hooks/useAuditActions";
 import { useAuditLog } from "@/hooks/useAuditLog";
 import { Card, CardContent } from "@/components/ui/Card";
 import { FilterSelect } from "@/components/ui/FilterSelect";
@@ -11,7 +13,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { formatDateTime } from "@/lib/utils";
-import { ACTION_LABELS, actionIcon, actionLabel, formatDetails } from "@/lib/auditLabels";
+import { formatDetails } from "@/lib/auditLabels";
 
 const WINDOW_OPTIONS = [
   { hours: 0, label: "All time" },
@@ -25,7 +27,12 @@ const LIMIT = 50;
 /**
  * Global audit log (RAV-1056 Phase C). Admin sessions see every row;
  * operator/read callers reaching this page by URL see only their own —
- * the backend enforces row scoping regardless of nav visibility.
+ * the backend enforces row scoping regardless of nav visibility. The
+ * action filter and each row's words come from the action registry
+ * (GET /audit/actions), so an action added there is selectable here
+ * without a dashboard change. The log does not wait for the registry: a
+ * row reads in sentence case until it is read, and if it cannot be, the
+ * page says so above the rows and keeps showing them.
  */
 export function AuditPage() {
   const [offset, setOffset] = useState(0);
@@ -51,6 +58,8 @@ export function AuditPage() {
     [actorFilter, actionFilter, since, offset],
   );
   const audit = useAuditLog(filters);
+  const actions = useAuditActions();
+  const { vocabulary } = actions;
 
   return (
     <div className="space-y-4">
@@ -76,8 +85,8 @@ export function AuditPage() {
               <FilterSelect
                 label="Actions"
                 value={actionFilter}
-                options={Object.keys(ACTION_LABELS)}
-                optionLabel={actionLabel}
+                options={vocabulary.filterOptions}
+                optionLabel={vocabulary.label}
                 onChange={(v) => {
                   setActionFilter(v);
                   setOffset(0);
@@ -109,6 +118,18 @@ export function AuditPage() {
               </div>
             </div>
 
+            {actions.isError && (
+              <div role="status" className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2 text-xs text-warning">
+                <span>
+                  Could not load the action names. Each event is named from its identifier, and the Actions filter
+                  lists no actions until they load.
+                </span>
+                <Button variant="link" size="xs" className="px-0" onClick={actions.refetch}>
+                  Try again
+                </Button>
+              </div>
+            )}
+
             {audit.data.entries.length === 0 ? (
               <EmptyState
                 icon={ScrollText}
@@ -129,14 +150,14 @@ export function AuditPage() {
                   <tbody>
                     {audit.data.entries.map((entry) => {
                       const detail = formatDetails(entry.action, entry.details);
-                      const Icon = actionIcon(entry.action);
+                      const Icon = vocabulary.icon(entry.action);
                       return (
                         <tr key={entry.id}>
                           <td>
                             <div className="flex items-baseline gap-1.5">
                               <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 self-center text-fg-muted" />
                               <span className="whitespace-nowrap font-medium text-white/80">
-                                {actionLabel(entry.action)}
+                                {vocabulary.label(entry.action)}
                               </span>
                               {detail && (
                                 <span className="hidden truncate text-xs font-mono text-muted-foreground sm:inline">{detail}</span>

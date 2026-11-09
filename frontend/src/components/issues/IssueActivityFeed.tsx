@@ -1,5 +1,6 @@
+import { useAuditActions } from "@/hooks/useAuditActions";
 import { formatDate } from "@/lib/utils";
-import { ACTION_LABELS, actionIcon, formatDetails } from "@/lib/auditLabels";
+import { formatDetails } from "@/lib/auditLabels";
 import type { ActivityEntry } from "@/lib/types";
 
 interface IssueActivityFeedProps {
@@ -7,6 +8,7 @@ interface IssueActivityFeedProps {
 }
 
 export function IssueActivityFeed({ entries }: IssueActivityFeedProps) {
+  const { vocabulary } = useAuditActions();
   if (entries.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-4 text-center">No activity yet.</p>
@@ -20,8 +22,8 @@ export function IssueActivityFeed({ entries }: IssueActivityFeedProps) {
 
       <div className="space-y-4">
         {entries.map((entry) => {
-          const Icon = actionIcon(entry.action);
-          const label = ACTION_LABELS[entry.action] ?? entry.action;
+          const Icon = vocabulary.icon(entry.action);
+          const label = vocabulary.label(entry.action);
           const detail = formatDetails(entry.action, entry.details);
 
           return (
