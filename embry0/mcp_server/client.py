@@ -376,6 +376,8 @@ class Embry0Client:
         station: str | None = None,
         quest_template: str | None = None,
         clear_quest_template: bool = False,
+        clear_execution_mode: bool = False,
+        clear_auth_mode: bool = False,
     ) -> dict[str, Any]:
         body = _drop_none(
             {
@@ -396,9 +398,15 @@ class Embry0Client:
                 "tagline": tagline,
             }
         )
+        # _drop_none leaves out every None, so a column is cleared only by the nulls sent here.
         if clear_quest_template:
-            # The one null this tool sends: it takes the agent's task out of the guild (#167).
+            # Takes the agent's task out of the guild (#167).
             body["quest_template"] = None
+        if clear_execution_mode:
+            # The agent inherits its execution mode again, as the form's "inherit" does (#387).
+            body["execution_mode"] = None
+        if clear_auth_mode:
+            body["auth_mode"] = None
         return _as_dict(await self._request("PUT", f"/api/v1/agents/{agent_type}", body=body))
 
     async def agent_create(

@@ -436,10 +436,14 @@ async def agent_update(
     station: str | None = None,
     quest_template: str | None = None,
     clear_quest_template: bool = False,
+    clear_execution_mode: bool = False,
+    clear_auth_mode: bool = False,
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Update an agent definition (only provided fields change). execution_mode: sdk|cli;
-    auth_mode: api_key|oauth; avatar and color are roster and palette ids. skills: only names the agent
+    auth_mode: api_key|oauth; clear_execution_mode=true and clear_auth_mode=true clear the agent's own
+    mode, so it inherits one again (the job's, the repository's or the deployment's).
+    avatar and color are roster and palette ids. skills: only names the agent
     does not have yet are checked, and a bare name (no colon) is the target repository's own skill.
     triage_may_add_skills: the source:skill names triage may add to the agent for a job, each only from a
     source the agent's skills already load; [] lets it add none.
@@ -449,8 +453,13 @@ async def agent_update(
     Requires confirm=true (changes live pipeline behavior)."""
     if not confirm:
         return _confirmation_refusal("agent_update", f"update agent definition {agent_type!r}")
-    if clear_quest_template and quest_template is not None:
-        return {"error": "quest_template and clear_quest_template are each other's opposite: send one"}
+    for field, value, clear in (
+        ("quest_template", quest_template, clear_quest_template),
+        ("execution_mode", execution_mode, clear_execution_mode),
+        ("auth_mode", auth_mode, clear_auth_mode),
+    ):
+        if clear and value is not None:
+            return {"error": f"{field} and clear_{field} are each other's opposite: send one"}
     return await _get_client().agent_update(
         agent_type,
         description=description,
@@ -469,6 +478,8 @@ async def agent_update(
         station=station,
         quest_template=quest_template,
         clear_quest_template=clear_quest_template,
+        clear_execution_mode=clear_execution_mode,
+        clear_auth_mode=clear_auth_mode,
     )
 
 

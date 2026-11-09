@@ -47,6 +47,8 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
         "agent_type: string",
         "auth_mode: string|null = null",
         "avatar: string|null = null",
+        "clear_auth_mode: boolean = false",
+        "clear_execution_mode: boolean = false",
         "clear_quest_template: boolean = false",
         "color: string|null = null",
         "confirm: boolean = false",
