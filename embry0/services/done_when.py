@@ -8,8 +8,9 @@ job page. The developer (or the Slopmaster) gets it as its contract, with
 pacing, and ends its final JSON with a report on each item; embry0 reads that
 report strictly (``check_report``). Review and QA judge against the same list.
 
-Which ticket headings hold a ticket's criteria, and how many times an unmet
-report sends the work back, are the settings document's ``done_when`` section
+Which ticket headings hold a ticket's criteria, how many times an unmet
+report sends the work back, and what the job does once they are spent
+(``on_unmet``), are the settings document's ``done_when`` section
 (``embry0.settings.sections.done_when``), as the job read it when it started
 (``embry0.services.job_settings``). The functions here take them as
 arguments, so none of them can fall back to a value of its own.
@@ -241,12 +242,25 @@ def _item_line(item: Mapping[str, Any]) -> str:
     return f"- [{item['id']}] {item['done']}{shown}"
 
 
-def sent_back(retries: int) -> str:
-    """What an unmet report does, for ``retries`` retries: "sends the work back once, then pauses the job"."""
+#: What a job does once its retries are spent, by ``done_when.on_unmet``: alone, and after "then".
+_THEN: dict[str, tuple[str, str]] = {
+    "pause": ("pauses the job", "pauses the job"),
+    "review": ("hands the work to review as it stands", "hands it to review as it stands"),
+    "fail": ("fails the job", "fails the job"),
+}
+
+
+def sent_back(retries: int, on_unmet: str) -> str:
+    """What an unmet report does: "sends the work back once, then pauses the job".
+
+    ``retries`` is the job's ``done_when.retries`` and ``on_unmet`` what it
+    does once they are spent (``pause``, ``review`` or ``fail``).
+    """
+    alone, after = _THEN[on_unmet]
     if retries <= 0:
-        return "pauses the job"
+        return alone
     times = "once" if retries == 1 else f"up to {retries} times"
-    return f"sends the work back {times}, then pauses the job"
+    return f"sends the work back {times}, then {after}"
 
 
 def after_retries(retries: int) -> str:
@@ -256,11 +270,12 @@ def after_retries(retries: int) -> str:
     return " after a retry" if retries == 1 else f" after {retries} retries"
 
 
-def contract(done_when: Any, *, retries: int, followup: str | None = None) -> str:
+def contract(done_when: Any, *, retries: int, on_unmet: str, followup: str | None = None) -> str:
     """The developer's prompt section: the list as its contract, how it finishes, and the report it ends with.
 
     ``retries`` is the job's ``done_when.retries``: how many times an unmet
-    report sends the work back before the job pauses.
+    report sends the work back; ``on_unmet`` what the job then does, as it
+    will do it (``nodes._done_when.unmet_action``).
     """
     items = items_of(done_when)
     if not items:
@@ -278,7 +293,7 @@ def contract(done_when: Any, *, retries: int, followup: str | None = None) -> st
         f'End your final JSON with "{REPORT_KEY}": one entry per item, '
         '[{"id": "d1", "met": true, "evidence": "<the test, command output, file or section that shows it>"}]. '
         "Say met: false, with what is missing, for any item you did not reach. embry0 checks this report: "
-        f"an unmet or unreported item {sent_back(retries)}.",
+        f"an unmet or unreported item {sent_back(retries, on_unmet)}.",
     ]
     if followup:
         lines += ["", followup]
@@ -329,13 +344,23 @@ def check_report(done_when: Any, output: str, *, now: datetime | None = None) ->
     }
 
 
-def unmet_items(done_when: Any, report: Mapping[str, Any] | None) -> list[dict[str, Any]]:
-    """The items ``report`` left unmet, with what the report said about each."""
-    if not report:
+def unmet_items(done_when: Any, report: Any) -> list[dict[str, Any]]:
+    """The items ``report`` left unmet, with what the report said about each.
+
+    A report of another shape (a stored row a hand or an older release wrote)
+    leaves none: it is read at a job's end, where nothing may raise.
+    """
+    if not isinstance(report, Mapping) or not report:
         return []
-    said = {str(c.get("id")): str(c.get("evidence") or "") for c in report.get("items") or [] if isinstance(c, Mapping)}
-    unmet = set(report.get("unmet") or [])
-    return [{**i, "evidence": said.get(str(i["id"]), "")} for i in items_of(done_when) if i["id"] in unmet]
+    checked = report.get("items")
+    said = {
+        str(c.get("id")): str(c.get("evidence") or "")
+        for c in (checked if isinstance(checked, list) else [])
+        if isinstance(c, Mapping)
+    }
+    listed = report.get("unmet")
+    unmet = {str(u) for u in listed} if isinstance(listed, list) else set()
+    return [{**i, "evidence": said.get(str(i["id"]), "")} for i in items_of(done_when) if str(i["id"]) in unmet]
 
 
 def followup_text(done_when: Any, report: Mapping[str, Any]) -> str:
@@ -353,6 +378,17 @@ def followup_text(done_when: Any, report: Mapping[str, Any]) -> str:
 def unmet_summary(done_when: Any, report: Mapping[str, Any] | None) -> str:
     """The unmet items in one line, for the pause and the status words."""
     return "; ".join(f"{i['done']}" for i in unmet_items(done_when, report))
+
+
+def unmet_block(done_when: Any) -> str:
+    """The items the list's report left unmet, each with how it is shown, for a pull request's body; "" for none."""
+    listed = as_list(done_when)
+    items = unmet_items(listed, (listed or {}).get("report"))
+    if not items:
+        return ""
+    lines = ["Done-when items not met:"]
+    lines += [f"- {i['done']} (shown by: {i['shown_by']})" if i.get("shown_by") else f"- {i['done']}" for i in items]
+    return "\n".join(lines)
 
 
 def review_block(done_when: Any) -> str:

@@ -32,6 +32,10 @@ _STAGE_WORDS: dict[str, str] = {
 #: Why a job paused at max retries, by the stage it arrived from.
 _PAUSE_WORDS: dict[str, str] = {
     "dev_run_unfinished": "the developer ran out of turns; its work is saved on its branch.",
+    # #182: a repository whose salvage.enabled is false gets no salvage commit.
+    "dev_run_uncommitted": (
+        "the developer stopped before committing; its work is uncommitted in the job's sandbox, not on its branch."
+    ),
     "dev_branch_missing": "the developer stopped without pushing its branch, so its work was not saved.",
     "review_errored": "the review failed before it gave a verdict.",
     "review_unparseable": "the review gave no verdict embry0 can act on.",
@@ -43,6 +47,12 @@ _PAUSE_WORDS: dict[str, str] = {
 }
 
 _OPTION_WORDS = {"continue_retrying": "continue", "merge_as_is": "merge it as it is", "abandon": "stop"}
+
+
+def option_words(option: str) -> str:
+    """A pause's choice as a person reads it: "continue", "merge it as it is", "stop"; an unknown one as it is."""
+    return _OPTION_WORDS.get(option, option)
+
 
 _PROVIDERS = {"anthropic": "Claude", "xai": "Grok", "openrouter": "OpenRouter", "custom": "local model"}
 

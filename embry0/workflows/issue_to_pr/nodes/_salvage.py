@@ -17,11 +17,22 @@ settings document, as the job read it when it started; #182), filled with the
 agent and the reason, ``wip: unfinished — <agent> stopped (<reason>)`` unless
 an operator set another. A subject past ``MAX_SUBJECT_CHARS`` has only its
 reason shortened.
+
+A job whose ``salvage.enabled`` is false gets no commit of embry0's (#182):
+the same look at the worktree tells whether the run left changes
+uncommitted, the agent's own commits are pushed as before, and the record
+says the changes stay in the sandbox (``uncommitted``). Such a run pauses
+where a salvage commit would have paused it. It also pauses where salvage on
+could not make its commit (the commit failed, or another branch is checked
+out while the job's branch exists) and so goes on as if the run had left
+nothing: the changes are still in the sandbox, and a cut-off run is never a
+delivery.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from typing import Any
 
 import structlog
@@ -100,35 +111,74 @@ async def preserve_unfinished_work(
     agent: str,
     reason: str,
     subject_template: str,
+    commit: bool,
     diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Commit what a stopped run left uncommitted and push the branch.
 
-    ``subject_template`` is the job's ``salvage.commit_subject``.
+    ``subject_template`` is the job's ``salvage.commit_subject`` and
+    ``commit`` its ``salvage.enabled``.
 
     The record (``{branch, agent, reason, committed}``) when the branch is on
     origin with the run's work, ``committed`` saying whether embry0 made a
     commit for it; None when there was nothing to push or the push failed.
+
+    With ``commit`` false nothing is committed: a run that left changes
+    uncommitted gets a record whether or not its own commits were pushed,
+    with ``uncommitted: True`` and ``pushed`` (:func:`left_in_sandbox`); one
+    that left none takes the path a run with nothing to commit takes.
+
     Never raises: a failure is logged and the job takes its old path.
     """
+    uncommitted = False
     try:
-        committed = await _nodes._commit_unfinished_work(
-            docker=docker,
-            container_id=container_id,
-            branch=branch,
-            job_id=job_id,
-            message=commit_message(agent, reason, template=subject_template),
-        )
+        if commit:
+            committed = await _nodes._commit_unfinished_work(
+                docker=docker,
+                container_id=container_id,
+                branch=branch,
+                job_id=job_id,
+                message=commit_message(agent, reason, template=subject_template),
+            )
+        else:
+            committed = False
+            uncommitted = await _nodes._has_uncommitted_work(
+                docker=docker, container_id=container_id, branch=branch, job_id=job_id
+            )
         pushed = await _nodes._rescue_push_branch(
             docker=docker, container_id=container_id, branch=branch, diagnostics=diagnostics
         )
     except Exception as exc:  # noqa: BLE001 - salvage never fails the job
         logger.warning("dev_salvage_failed", branch=branch, job_id=job_id, error=str(exc))
         return None
+    if uncommitted:
+        logger.info("dev_salvage_off_left_uncommitted", branch=branch, job_id=job_id, agent=agent, reason=reason)
+        record = {"branch": branch, "agent": agent, "reason": reason, "committed": False}
+        return {**record, "uncommitted": True, "pushed": pushed}
     if not pushed:
         return None
     logger.info("dev_salvage_pushed", branch=branch, job_id=job_id, agent=agent, reason=reason, committed=committed)
     return {"branch": branch, "agent": agent, "reason": reason, "committed": committed}
+
+
+def kept(record: Mapping[str, Any] | None) -> bool:
+    """Whether ``record`` keeps work a pause should name: a salvage commit, or changes left in the sandbox."""
+    return bool(record and (record.get("committed") or record.get("uncommitted")))
+
+
+def left_in_sandbox(record: Mapping[str, Any] | None) -> bool:
+    """Whether ``record`` is a stopped run's changes that salvage off left uncommitted in the sandbox (#182).
+
+    Only the sandbox holds them, so nothing that ends the job and destroys
+    it may be offered as a delivery (``max_retries_node`` takes "merge as
+    is" away).
+    """
+    return bool(record and not record.get("committed") and record.get("uncommitted"))
+
+
+def committed_unfinished(record: Mapping[str, Any] | None) -> bool:
+    """Whether ``record`` is a salvage commit: the branch ends in embry0's commit of a run's unfinished work."""
+    return bool(record and record.get("committed"))
 
 
 def _subject_of(record: dict[str, Any], template: str) -> str:
@@ -143,6 +193,14 @@ def prompt_section(record: dict[str, Any] | None, *, subject_template: str) -> s
     commit was made with: the prompt quotes the commit's subject, filled from
     the record exactly as the commit's was.
     """
+    if record and left_in_sandbox(record):
+        why = record.get("reason") or "before it finished"
+        return (
+            f"\nUnfinished work from your earlier run:\nThat run stopped ({why}) before it committed."
+            " This repository's salvage policy keeps embry0 from committing it, so what it "
+            "left is still uncommitted in this working tree. Do not start over: review those changes against the "
+            "task, finish what is missing, run the checks, then commit and push."
+        )
     if not record or not record.get("committed"):
         return None
     branch = record.get("branch") or "the job's branch"
@@ -156,7 +214,13 @@ def prompt_section(record: dict[str, Any] | None, *, subject_template: str) -> s
 
 
 def pause_note(record: dict[str, Any] | None) -> str:
-    """The sentence a pause adds when salvage kept the work; empty without it."""
+    """The sentence a pause adds when salvage kept the work, or left it in the sandbox; empty without either."""
+    if record and left_in_sandbox(record):
+        return (
+            f" The {record.get('agent') or 'developer'}'s changes are UNCOMMITTED in this paused job's sandbox, "
+            "not on its branch: this repository's salvage.enabled is false, so embry0 did not commit them. "
+            "Stopping the job, or letting the pause expire, discards them."
+        )
     if not record or not record.get("committed"):
         return ""
     return (

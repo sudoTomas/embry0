@@ -46,7 +46,7 @@ What happens next:
 
 - **Everything met.** The job moves on: review, then QA.
 - **Something unmet, first time.** The coding step runs once more (`developer` → `developer`), with the unmet items named.
-- **Still unmet after that.** The job pauses (`max_retries`, stage `done_when_unmet`), and the pause names the unmet items.
+- **Still unmet after that.** The job pauses (`max_retries`, stage `done_when_unmet`), and the pause names the unmet items. Since #182 how many retries run and what happens then (pause, review as it stands, or fail) are the settings document's `done_when.retries` and `done_when.on_unmet` (`2026-11-09-done-when-on-unmet-and-salvage-off-design.md`).
 
 The report is saved on the job (`done_when.report`), so the job page shows each item as met or unmet.
 

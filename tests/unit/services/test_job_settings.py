@@ -286,8 +286,9 @@ async def test_without_a_store_or_with_one_that_fails_a_job_runs_on_the_defaults
             "read_concurrency": 8,
             "rate_reserve_percent": 20,
         },
-        "done_when": {"retries": 1, "ticket_sections": ["Acceptance criteria"]},
-        "salvage": {"commit_subject": WIP},
+        # #182: on_unmet and enabled are the job's new keys; their defaults are what a job did before them.
+        "done_when": {"retries": 1, "on_unmet": "pause", "ticket_sections": ["Acceptance criteria"]},
+        "salvage": {"enabled": True, "commit_subject": WIP},
         # #169: what a slop verdict does to the job (tests/unit/settings/test_slop_policy_section.py pins them).
         "slop_policy": SLOP_POLICY.defaults().model_dump(mode="json"),
     }

@@ -132,6 +132,22 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
                 + ". The change is UNFINISHED and was never self-reviewed; continue from that "
                 "branch rather than starting over."
             )
+        elif arrival_stage == "dev_run_uncommitted":
+            # #182: dev_run_unfinished for a repository whose salvage.enabled
+            # is false. embry0 committed nothing, so the work is not on the
+            # branch: it is in this paused job's sandbox, and goes with it.
+            _kept = state.get("unfinished_work") or {}
+            _who = (
+                f"{_kept.get('agent') or 'developer'} stopped ({_kept['reason']})"
+                if _kept.get("reason")
+                else "Developer stopped"
+            )
+            message = (
+                f"{_who[0].upper()}{_who[1:]} before committing. This repository's salvage.enabled is false, so "
+                "embry0 did not commit its work: the changes are UNCOMMITTED in this paused job's sandbox, not on "
+                "its branch. Continue to let the next run finish them; stopping the job, or letting the pause "
+                "expire, discards them."
+            )
         elif arrival_stage == "review_errored":
             # RAV-1260: the review agent ERRORED (turn cap, crash) — it never
             # emitted a verdict. Saying "requested changes" here was the
@@ -172,10 +188,17 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             from embry0.settings.sections.done_when import DONE_WHEN
 
             _list = state.get("done_when") or {}
-            _after = after_retries(job_section(state, DONE_WHEN).retries)
+            _policy = job_section(state, DONE_WHEN)
+            _after = after_retries(_policy.retries)
             message = f"Done-when items still not met{_after}: " + (
                 unmet_summary(_list, _list.get("report")) or "see the job's done-when list"
             )
+            if _policy.on_unmet == "review":
+                # The check pauses a review job only when its route has no
+                # review step left (nodes._done_when.unmet_action).
+                message += (
+                    ". done_when.on_unmet hands such a change to review, but this job's route has no review step left"
+                )
         elif arrival_stage == "review_retries_exhausted":
             message = f"Review requested changes and the retry budget is exhausted ({retry_count} attempts)"
         elif _over_budget(state):
@@ -194,7 +217,7 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             message = f"Review failed after {retry_count} attempts"
         else:
             message = f"Pipeline paused at stage {arrival_stage or 'unknown'}"
-        if arrival_stage != "dev_run_unfinished":
+        if arrival_stage not in ("dev_run_unfinished", "dev_run_uncommitted"):
             # Salvage (spec 2026-10-25): a budget or question stop that kept
             # the coding run's work says where it is.
             from embry0.workflows.issue_to_pr.nodes._salvage import pause_note
@@ -205,6 +228,16 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             options = ["abandon"]
         else:
             options = ["continue_retrying", "merge_as_is", "abandon"]
+
+    # #182: with salvage off, a stopped run's changes are only in this job's
+    # sandbox. "Merge as is" would complete the job, open a pull request from
+    # a branch without them and then destroy the sandbox, so it is not offered.
+    from embry0.workflows.issue_to_pr.nodes._salvage import committed_unfinished, left_in_sandbox
+
+    unfinished = state.get("unfinished_work")
+    in_sandbox = left_in_sandbox(unfinished)
+    if in_sandbox:
+        options = [option for option in options if option != "merge_as_is"]
 
     # A job over its cap: continuing it lets it spend one more cap (or what
     # the deployment's budget section says), so the pause says how much (the
@@ -300,6 +333,10 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         # Not offered: the deployment's ceiling is a hard limit and the job is at it.
         logger.warning("continue_retrying_rejected_at_ceiling", job_id=state.get("job_id"))
         choice = "abandon"
+    if in_sandbox and choice == "merge_as_is":
+        # Not offered (above): read as a stop, as a continue that is not offered is.
+        logger.warning("merge_as_is_rejected_work_uncommitted", job_id=state.get("job_id"))
+        choice = "abandon"
 
     if choice == "continue_retrying":
         user_rounds = int(state.get("user_retry_rounds", 0) or 0)
@@ -335,7 +372,16 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             updates["user_retry_guidance"] = guidance
         return updates
     elif choice == "merge_as_is":
-        return {"current_stage": "completed"}
+        # #182: the job completes as it stands, not by finishing, so its end
+        # never settles an earlier job's "did not finish" note. A resume's
+        # result holds only the nodes' updates, so the facts go with this one.
+        merged: dict[str, Any] = {"current_stage": "completed", "merged_as_is": True}
+        if committed_unfinished(unfinished):
+            # The branch ends in salvage's "Do not merge it as it is" commit:
+            # the job's pull request is opened human-merge-only and says why
+            # (_open_fallback_pr).
+            merged["unfinished_work"] = unfinished
+        return merged
     else:
         return {"current_stage": "abandoned", "errors": [f"Abandoned after {retry_count} retries"]}
 

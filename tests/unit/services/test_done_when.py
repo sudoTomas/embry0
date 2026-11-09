@@ -74,13 +74,15 @@ def test_a_person_s_edit_drops_the_old_report_and_says_who() -> None:
 
 
 def test_the_contract_names_each_item_the_pacing_and_the_report() -> None:
-    text = dw.contract(dw.parse_done_when(TRIAGE), retries=RETRIES)
+    text = dw.contract(dw.parse_done_when(TRIAGE), retries=RETRIES, on_unmet="pause")
     assert "[d1] The boot failure's cause is logged in full (shown by: a test that boots with a bad config)" in text
     assert "Out of scope" in text and "Changing the deploy tooling" in text
     assert "by half of it commit" in text and "three quarters" in text
     assert '"done_when"' in text
-    assert dw.contract(None, retries=RETRIES) == ""
-    assert "Finish d2" in dw.contract(dw.parse_done_when(TRIAGE), retries=RETRIES, followup="Finish d2")
+    assert dw.contract(None, retries=RETRIES, on_unmet="pause") == ""
+    assert "Finish d2" in dw.contract(
+        dw.parse_done_when(TRIAGE), retries=RETRIES, on_unmet="pause", followup="Finish d2"
+    )
     assert dw.pacing_line(40).startswith("Pacing (done when): by turn 20 commit") and "by turn 30" in dw.pacing_line(40)
 
 

@@ -265,14 +265,29 @@ context_audit:
   # never defers. The deployment's alone.
   # rate_reserve_percent: 20
 
-# Where a ticket states a code job's finish line, and how often a coding run
-# goes back to unmet items.
+# Where a ticket states a code job's finish line, how often a coding run goes
+# back to unmet items, and what the job does when they stay unmet.
 done_when:
   # How many times a coding run that reports a done-when item unmet, or none,
-  # goes again on the unmet items before the job pauses at stage
-  # done_when_unmet. 0 pauses at the first such report. Each retry is another
-  # coding run, inside the job's budget.
+  # goes again on the unmet items before on_unmet applies (by default the job
+  # pauses at stage done_when_unmet). 0 applies it at the first such report.
+  # Each retry is another coding run, inside the job's budget.
   # retries: 1
+
+  # What a job does when its coding runs still leave done-when items unmet, or
+  # report none, once its retries are spent. pause: it pauses at stage
+  # done_when_unmet for a person to continue it, merge it as it is or stop it.
+  # review: the change goes on along its route as it stands, and review judges
+  # it against the list, with the developer's report naming the items it did
+  # not meet; the pull request it is delivered in lists them, and a route with
+  # no review step left pauses instead. fail: the job fails with
+  # ERR_DONE_WHEN_UNMET (a run that ended in an error, such as its turn cap,
+  # keeps that error), and its pushed branch gets the pull request of a job
+  # that did not finish, labelled human-merge-only and naming the items not
+  # met; a job that already has a pull request (a follow-up, or one continuing
+  # an earlier job's) gets that label and a comment naming them on it instead,
+  # which a later job that finishes the work there edits to say so.
+  # on_unmet: pause
 
   # The ticket headings under which a ticket states its finish line, at least
   # one and each named once. Triage keeps the bullets there as a code job's
@@ -355,9 +370,20 @@ leads:
   #   - high
   #   - critical
 
-# The subject of the commit that keeps the work of a coding run that stopped
-# before it committed.
+# Whether the work of a coding run that stopped before it committed is
+# committed and pushed, and that commit's subject.
 salvage:
+  # Commit what a coding run that stopped before it committed (its turn cap,
+  # an error, the job's budget, question rounds used up) left in its working
+  # tree, and push it, marked unfinished, so the work survives. false: embry0
+  # commits nothing of its own; commits the agent made are still pushed, as
+  # for any run, and a run that left changes uncommitted pauses with them in
+  # the job's sandbox, which is kept while the job is paused and discarded
+  # when it is stopped, fails or its pause expires (merge as is is not offered
+  # there). It pauses even where salvage on, unable to make its commit (the
+  # commit failed, or another branch is checked out), would let the job go on.
+  # enabled: true
+
   # The subject of the commit that keeps a stopped coding run's work. {agent}
   # is the coding agent that stopped (developer or slopmaster) and {reason}
   # why (turn cap, an error with its code, budget reached, question rounds

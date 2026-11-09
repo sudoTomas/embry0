@@ -44,17 +44,24 @@ def _read(data: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def test_the_section_reads_as_an_operator_writes_it() -> None:
-    text = "done_when:\n  retries: 2\n  ticket_sections:\n    - Definition of done\n    - ' Acceptance criteria '\n"
-    data = _stored(load_yaml(text))
-    assert data == {"done_when": {"retries": 2, "ticket_sections": ["Definition of done", "Acceptance criteria"]}}, (
-        f"stored as written, each heading trimmed: {data}"
+    text = (
+        "done_when:\n  retries: 2\n  on_unmet: review\n"
+        "  ticket_sections:\n    - Definition of done\n    - ' Acceptance criteria '\n"
     )
+    data = _stored(load_yaml(text))
+    assert data == {
+        "done_when": {
+            "retries": 2,
+            "on_unmet": "review",
+            "ticket_sections": ["Definition of done", "Acceptance criteria"],
+        }
+    }, f"stored as written, each heading trimmed: {data}"
     assert _read(data) == data["done_when"], "and read back the same"
 
 
 def test_nothing_written_is_how_a_job_ran_before_the_section() -> None:
-    assert _read({}) == {"retries": 1, "ticket_sections": ["Acceptance criteria"]}, (
-        "the defaults are the code's old values: one retry, the heading Acceptance criteria"
+    assert _read({}) == {"retries": 1, "on_unmet": "pause", "ticket_sections": ["Acceptance criteria"]}, (
+        "the defaults are the code's old values: one retry, then a pause, and the heading Acceptance criteria"
     )
 
 
@@ -104,11 +111,11 @@ def test_a_refusal_never_repeats_the_heading() -> None:
 
 
 @pytest.mark.parametrize("layer", ["organization", "repository"])
-def test_an_organization_and_a_repository_may_set_both_keys(layer: str) -> None:
-    document = {"done_when": {"retries": 0, "ticket_sections": ["Definition of done"]}}
+def test_an_organization_and_a_repository_may_set_every_key(layer: str) -> None:
+    document = {"done_when": {"retries": 0, "on_unmet": "fail", "ticket_sections": ["Definition of done"]}}
     stored = _stored(document, layer)
-    assert stored == document, f"{layer} layer must be able to set retries and ticket_sections: {stored}"
-    assert _section().org_keys == _section().repo_keys == {"retries", "ticket_sections"}
+    assert stored == document, f"{layer} layer must be able to set retries, on_unmet and ticket_sections: {stored}"
+    assert _section().org_keys == _section().repo_keys == {"retries", "on_unmet", "ticket_sections"}
 
 
 def test_a_heading_an_earlier_one_covers_is_refused_and_the_other_order_is_not() -> None:
@@ -129,3 +136,26 @@ def test_a_heading_an_earlier_one_covers_is_refused_and_the_other_order_is_not()
 def test_headings_that_each_can_be_read_are_kept(headings: list[str]) -> None:
     document = {"done_when": {"ticket_sections": headings}}
     assert _stored(document) == document, f"each of {headings} reads a section no earlier one does"
+
+
+# --- #182: on_unmet, what a job does once its retries are spent -------------------------------
+
+
+@pytest.mark.parametrize("value", ["pause", "review", "fail"])
+def test_on_unmet_takes_pause_review_or_fail(value: str) -> None:
+    document = {"done_when": {"on_unmet": value}}
+    assert _stored(document) == document, f"on_unmet {value!r} must be stored as written"
+    assert (_read(document) or {}).get("on_unmet") == value, "and read back the same"
+
+
+@pytest.mark.parametrize("value", ["draft", "Pause", "PAUSE", "", "deliver", "merge", 1, True, None, ["fail"]])
+def test_any_other_on_unmet_is_refused_naming_the_key_and_the_choices(value: Any) -> None:
+    found = _problems({"on_unmet": value})
+    assert found and {loc[:2] for loc, _ in found} == {("done_when", "on_unmet")}, (
+        f"on_unmet {value!r} must be refused as done_when.on_unmet: {found}"
+    )
+    assert all("'pause', 'review' or 'fail'" in msg for _, msg in found), (
+        f"the refusal names the three values on_unmet takes, not an unknown key: {found}"
+    )
+    if isinstance(value, str) and value:
+        assert all(value not in msg for _, msg in found), f"a refusal never repeats the value: {found}"

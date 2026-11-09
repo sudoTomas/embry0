@@ -148,7 +148,37 @@ class GitLabClient(ForgeClient):
         when the notes read or the write is rejected, so a failed read never
         creates a duplicate note.
         """
-        path = self.project_path(repo, f"/issues/{iid}/notes")
+        return await self._upsert_sticky_note(self.project_path(repo, f"/issues/{iid}/notes"), repo, body, marker)
+
+    async def upsert_sticky_mr_note(self, repo: str, iid: int, body: str, *, marker: str) -> int:
+        """Create or update the one note on a merge request whose body carries ``marker``.
+
+        The merge request twin of :meth:`upsert_sticky_issue_note`, with the same
+        rules.
+        """
+        path = self.project_path(repo, f"/merge_requests/{iid}/notes")
+        return await self._upsert_sticky_note(path, repo, body, marker)
+
+    async def edit_sticky_mr_note(self, repo: str, iid: int, body: str, *, marker: str) -> bool:
+        """Replace the body of the note on a merge request that carries ``marker``; False when there is none.
+
+        Never creates a note. Raises ``HTTPStatusError`` when the read or the
+        write is rejected.
+        """
+        path = self.project_path(repo, f"/merge_requests/{iid}/notes")
+        existing = await self._note_with(path, repo, marker)
+        if existing is None:
+            return False
+        resp = await self.put(f"{path}/{existing}", repo=repo, json={"body": body})
+        resp.raise_for_status()
+        return True
+
+    async def _note_with(self, path: str, repo: str, marker: str) -> int | None:
+        """The earliest note under ``path`` (an issue's or a merge request's notes) whose body carries ``marker``.
+
+        Raises ``HTTPStatusError`` when the notes cannot be read, so a failed
+        read is never taken for "no such note".
+        """
         notes = await self.paginate(
             path,
             repo=repo,
@@ -157,10 +187,14 @@ class GitLabClient(ForgeClient):
             max_pages=20,
             strict=True,
         )
-        existing = next(
+        return next(
             (int(note["id"]) for note in notes if isinstance(note, dict) and marker in (note.get("body") or "")),
             None,
         )
+
+    async def _upsert_sticky_note(self, path: str, repo: str, body: str, marker: str) -> int:
+        """Update the earliest note under ``path`` carrying ``marker``, or create one; the note id."""
+        existing = await self._note_with(path, repo, marker)
         if existing is not None:
             resp = await self.put(f"{path}/{existing}", repo=repo, json={"body": body})
             resp.raise_for_status()

@@ -137,7 +137,10 @@ class ErrorCode(StrEnum):
     )
 
     # #358 — a turn-cap death must not discard the run
-    DEV_RUN_UNFINISHED = "ERR_DEV_RUN_UNFINISHED"  # a coding run stopped (its turn cap, any error) before committing; embry0 committed and pushed its work so it survives, but the change is incomplete and was never self-reviewed. Distinct from DEV_BRANCH_NOT_PUSHED, where nothing reached origin at all.
+    DEV_RUN_UNFINISHED = "ERR_DEV_RUN_UNFINISHED"  # a coding run stopped (its turn cap, any error) before committing; embry0 committed and pushed its work so it survives (stage dev_run_unfinished), or, where the repository's salvage.enabled is false, left it uncommitted in the paused job's sandbox (stage dev_run_uncommitted). Either way the change is incomplete and was never self-reviewed. Distinct from DEV_BRANCH_NOT_PUSHED, where the run left nothing to keep.
+
+    # #182 — done_when.on_unmet: fail
+    DONE_WHEN_UNMET = "ERR_DONE_WHEN_UNMET"  # the coding runs left items of the job's done-when list unmet, or unreported, after its done_when.retries, and the repository's done_when.on_unmet is fail: the job fails instead of pausing. Its branch is on origin; the pull request opened for it, or the one it already had, says it did not finish and carries human-merge-only. A run that ended in an error keeps its own code.
 
     # #356 — the review verdict fails closed
     REVIEW_VERDICT_UNPARSEABLE = "ERR_REVIEW_VERDICT_UNPARSEABLE"  # the review agent ran WITHOUT erroring but emitted no verdict the router acts on (empty output, prose, a fenced block with no `decision` key, an unknown decision string, `null`, truncated JSON). Distinct from MAX_RETRIES (a real `changes_requested` out of retry budget) and from an errored review, which has no output at all.
@@ -259,6 +262,9 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.REVIEW_TOOLCHAIN_MISSING: _C.CONFIG,
     # #358: the model ran out of turns — the run itself fell short.
     ErrorCode.DEV_RUN_UNFINISHED: _C.AGENT,
+    # #182: the change was checked against its finish line and fell short,
+    # as a review or QA failure does.
+    ErrorCode.DONE_WHEN_UNMET: _C.VERIFICATION,
 }
 
 
@@ -471,6 +477,7 @@ _STAGE_CODES: dict[str, ErrorCode] = {
     "review_unparseable": ErrorCode.REVIEW_VERDICT_UNPARSEABLE,
     "review_toolchain_missing": ErrorCode.REVIEW_TOOLCHAIN_MISSING,
     "dev_run_unfinished": ErrorCode.DEV_RUN_UNFINISHED,
+    "dev_run_uncommitted": ErrorCode.DEV_RUN_UNFINISHED,
 }
 
 

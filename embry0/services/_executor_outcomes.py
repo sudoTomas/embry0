@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from embry0.services.issue_executor import IssueExecutor
 
 from embry0.orchestration import dispatch_actors
+from embry0.safety.error_codes import ErrorCode
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services.healing.recorder import record_case_event
 from embry0.services.job_events import broadcast_job_event, emit_job_finished
@@ -476,12 +477,141 @@ _STOPPED_BECAUSE: dict[str, str] = {
 }
 
 
+#: A code whose own words say more than its category's.
+_STOPPED_BECAUSE_CODES: dict[str, str] = {
+    # #182: done_when.on_unmet fail. "Did not pass review or QA" would be
+    # wrong: neither ran; the coding runs' own report fell short.
+    ErrorCode.DONE_WHEN_UNMET.value: "its coding runs did not meet every item of its done-when list",
+}
+
+
+def _not_finished_note(why: str) -> str:
+    """The note a change request of a job that did not finish carries (#349), giving ``why``."""
+    return (
+        f"**embry0 did not finish this job:** {why}. "
+        "The work it pushed is here so it is not lost. Review it before merging; "
+        "close it unmerged to let a later run start over."
+    )
+
+
+def _unfinished_delivery(
+    state: Mapping[str, Any], job_row: Mapping[str, Any] | None, error_code: str | None
+) -> tuple[list[str], bool]:
+    """What a job's change request must say about work it delivers unfinished (#182), and whether only a person
+    may merge it.
+
+    - A failed job whose last done-when report left items unmet (its
+      ``done_when.on_unmet`` is ``fail``, or it stopped for another reason):
+      the items not met. The "did not finish" note and ``human-merge-only``
+      come with every failed job's.
+    - A job a person completed with "merge as is" at a pause where salvage
+      had committed its coding run's work: the branch ends in embry0's "Do
+      not merge it as it is" commit, so the note says so, and only a person
+      may merge it.
+    - A job that went on to review with items unmet (``done_when.on_unmet``
+      ``review``, marked on its report) and was delivered: the items, for
+      whoever merges it.
+
+    The list is read from the job row first: a resumed job's state holds only
+    what ran after the pause.
+    """
+    from embry0.services.done_when import as_list, unmet_block
+    from embry0.workflows.issue_to_pr.nodes._salvage import committed_unfinished
+
+    listed = as_list((job_row or {}).get("done_when")) or as_list(state.get("done_when"))
+    report = (listed or {}).get("report")
+    if error_code:
+        # Whatever stopped it, the items its last report left unmet are what a
+        # person picking the work up needs.
+        block = unmet_block(listed)
+        return ([block] if block else []), False
+    parts: list[str] = []
+    record = state.get("unfinished_work")
+    salvaged = committed_unfinished(record)
+    if salvaged and isinstance(record, Mapping):
+        agent = record.get("agent") or "developer"
+        reason = record.get("reason") or "before it finished"
+        parts.append(
+            _not_finished_note(
+                f"its {agent} stopped ({reason}) before it committed, embry0 committed what it left, and a person "
+                "chose to deliver the branch as it is, ending in that unfinished commit"
+            )
+        )
+    if isinstance(report, Mapping) and report.get("on_unmet") == "review":
+        block = unmet_block(listed)
+        if block:
+            parts.append(block)
+    return parts, salvaged
+
+
+def _existing_note(parts: list[str], error_code: str | None) -> list[str]:
+    """``parts`` for a change request the job did not open now: a failed job's comment leads with why it stopped."""
+    return [_not_finished_note(_stopped_because(error_code)), *parts] if error_code else parts
+
+
+def _finished(state: Mapping[str, Any], error_code: str | None) -> bool:
+    """Whether the job finished its work: it completed, and not because a person answered "merge as is" at a pause
+    (``merged_as_is``, set by ``max_retries_node``), which delivers what stood without finishing it."""
+    return not error_code and not state.get("merged_as_is")
+
+
+def _forge_access(self: IssueExecutor) -> Any:
+    from embry0.services.unfinished_note import ForgeAccess
+
+    # getattr: unit tests build the executor via __new__ and set only what their path touches.
+    return ForgeAccess(
+        github_token=getattr(self, "_github_token", None) or "",
+        config=getattr(self, "_config", None),
+        credential_resolver=getattr(self, "_credential_resolver", None),
+    )
+
+
+async def _note_on_existing_change_request(
+    self: IssueExecutor,
+    job_id: str,
+    pr_url: str,
+    parts: list[str],
+    *,
+    error_code: str | None,
+    salvaged: bool,
+    settle: bool,
+) -> None:
+    """Keep the sticky note on a change request the job did not open now (#182; ``embry0.services.unfinished_note``).
+
+    With ``parts``, say them there, labelled ``human-merge-only`` when only a
+    person may merge it (a failed job, or a salvaged "merge as is"). Without,
+    and with ``settle`` (:func:`_finished`), edit a note an earlier job left
+    there to say the work is finished; a change request with no such note
+    gets nothing. Never raises.
+    """
+    from embry0.services.unfinished_note import post_unfinished_note, settle_unfinished_note
+
+    access = _forge_access(self)
+    try:
+        if parts:
+            human_merge_only = salvaged or bool(error_code)
+            noted = await post_unfinished_note(
+                pr_url, _existing_note(parts, error_code), human_merge_only=human_merge_only, access=access
+            )
+            logger.info(
+                "unfinished_note_posted", job_id=job_id, pr_url=pr_url, noted=noted, human_merge_only=human_merge_only
+            )
+        elif settle:
+            settled = await settle_unfinished_note(pr_url, job_id, access=access)
+            if settled:
+                logger.info("unfinished_note_settled", job_id=job_id, pr_url=pr_url)
+    except Exception:
+        logger.warning("unfinished_note_failed", job_id=job_id, pr_url=pr_url, exc_info=True)
+
+
 def _stopped_because(error_code: str | None) -> str:
     """The plain-words reason a failed job's PR body gives (#349)."""
     from embry0.safety.error_codes import ACCOUNT_FAILURE_CODES, category_for_code
 
     if error_code in ACCOUNT_FAILURE_CODES:
         return "the LLM account it ran on refused it (out of usage, rate-limited, or its token was rejected)"
+    if error_code in _STOPPED_BECAUSE_CODES:
+        return _STOPPED_BECAUSE_CODES[error_code]
     return _STOPPED_BECAUSE.get(category_for_code(error_code).value, _STOPPED_BECAUSE["unknown"])
 
 
@@ -544,9 +674,31 @@ async def _open_fallback_pr(
     from embry0.workflows.verification.result import HUMAN_MERGE_LABEL
 
     job_row: dict[str, Any] | None = None
-    if state.get("pr_url") or not state.get("branch_name"):
+    existing = state.get("pr_url")
+    if not existing and not state.get("branch_name"):
         return None, job_row
     try:
+        if existing:
+            # #182: the job delivers onto a change request it already had (a
+            # follow-up's, or an earlier failed job's it continued): say there
+            # what is unfinished, labelled when only a person may merge it, or
+            # that a later job finished what an earlier one left.
+            parts, salvaged = _unfinished_delivery(state, None, error_code)
+            settle = not parts and _finished(state, error_code)
+            if settle:
+                # A clean finish settles a note an earlier job left, which only
+                # a change request the job had from its start can carry: the one
+                # on its row (a follow-up's, or an earlier failed job's).
+                try:
+                    job_row = await self._jobs.get(job_id)
+                except Exception:
+                    logger.warning("pr_fallback_job_fetch_failed", job_id=job_id, exc_info=True)
+                settle = (job_row or {}).get("pr_url") == existing
+            if parts or settle:
+                await _note_on_existing_change_request(
+                    self, job_id, str(existing), parts, error_code=error_code, salvaged=salvaged, settle=settle
+                )
+            return None, job_row
         # RAV-1282: repo/task/issue_number live on the JOB ROW — the state is a
         # merge of node UPDATES, and no node echoes the initial state back.
         try:
@@ -576,6 +728,7 @@ async def _open_fallback_pr(
                 logger.warning("pr_fallback_issue_fetch_failed", issue_id=issue_id, exc_info=True)
         gate_blocked = error_code == ErrorCode.VERIFY_NEW_TEST_FAILURES.value
         body_parts = [f"Closes #{issue_number}"] if issue_number else []
+        unfinished, salvaged = _unfinished_delivery(state, job_row, error_code)
         if gate_blocked:
             body_parts.append(
                 "Opened by the embry0 orchestrator: automated tests on this branch fail "
@@ -585,11 +738,10 @@ async def _open_fallback_pr(
             )
         else:
             if error_code:
-                body_parts.append(
-                    f"**embry0 did not finish this job:** {_stopped_because(error_code)}. "
-                    "The work it pushed is here so it is not lost. Review it before merging; "
-                    "close it unmerged to let a later run start over."
-                )
+                body_parts.append(_not_finished_note(_stopped_because(error_code)))
+            # #182: the items a job's finish line still has unmet, and a branch
+            # that ends in salvage's unfinished commit (_unfinished_delivery).
+            body_parts += unfinished
             # The sandbox cannot open the PR (no token, and the safety policy
             # blocks the credential helper). Say what the developer said the
             # change is, then one line for why the body was written here.
@@ -603,6 +755,8 @@ async def _open_fallback_pr(
         # #163: mark orchestrator-opened PRs. A failed job's also says a person
         # must merge it; a gate-blocked one gets that label from its verdict.
         labels = ["embry0"] if not error_code or gate_blocked else ["embry0", HUMAN_MERGE_LABEL]
+        if salvaged and HUMAN_MERGE_LABEL not in labels:
+            labels.append(HUMAN_MERGE_LABEL)
         # Spec 1A §3.7: the branch init_node resolved and the clone actually
         # fetched. Never empty — see §3.8 and _base_branch_for_change_request.
         target_branch = await _base_branch_for_change_request(self, repo_for_pr, state)
@@ -627,6 +781,18 @@ async def _open_fallback_pr(
                 await self._jobs.update(job_id, area=area.name)
             except Exception:
                 logger.warning("pr_area_record_failed", job_id=job_id, exc_info=True)
+        if url and (job_row or {}).get("pr_url") == url:
+            # The forge found the job's change request from before (a resumed
+            # follow-up's state no longer names it): its body is not this one.
+            await _note_on_existing_change_request(
+                self,
+                job_id,
+                url,
+                unfinished,
+                error_code=error_code,
+                salvaged=salvaged,
+                settle=_finished(state, error_code),
+            )
         return url, job_row
     except Exception:
         logger.warning("pr_fallback_failed", job_id=job_id, exc_info=True)

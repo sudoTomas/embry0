@@ -231,6 +231,27 @@ async def upsert_sticky_comment(
     return -1  # unreachable
 
 
+async def edit_sticky_comment(
+    client: GitHubClient,
+    *,
+    repo: str,
+    issue_number: int,
+    body: str,
+    marker: str,
+) -> bool:
+    """Replace the body of the comment on ``issue_number`` that carries ``marker``; False when there is none.
+
+    Never creates a comment (``upsert_sticky_comment`` does). Raises
+    ``httpx.HTTPStatusError`` when GitHub refuses the read or the edit.
+    """
+    existing_id = await _find_sticky_comment_id(client, repo=repo, issue_number=issue_number, marker=marker)
+    if existing_id is None:
+        return False
+    resp = await client.patch(f"/repos/{repo}/issues/comments/{existing_id}", repo=repo, json={"body": body})
+    resp.raise_for_status()
+    return True
+
+
 async def _find_sticky_comment_id(
     client: GitHubClient,
     *,

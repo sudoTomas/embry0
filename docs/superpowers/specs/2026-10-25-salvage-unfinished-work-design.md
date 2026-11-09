@@ -33,6 +33,8 @@ After a stopped run:
 
 A failure anywhere in salvage is logged and changes nothing: the job takes the path it took without it.
 
+Since #182 a repository can turn the commit off (`salvage.enabled: false`): the job then pauses at `dev_run_uncommitted` with the work left in its sandbox, where the commit would have paused it and where salvage on could not make it (`2026-11-09-done-when-on-unmet-and-salvage-off-design.md`). And "merge as is" after a salvage commit opens the job's pull request labelled `human-merge-only`.
+
 ## What people and the next run see
 
 - **The pause summary** names the agent, the reason and the branch:

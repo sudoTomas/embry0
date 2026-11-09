@@ -1,4 +1,4 @@
-"""The ``salvage`` section: the subject of the commit that keeps a stopped coding run's work.
+"""The ``salvage`` section: whether embry0 commits a stopped coding run's work, and that commit's subject.
 
 A coding run that stops before it commits (its turn cap, an error, the job's
 budget) leaves its work in the sandbox; embry0 commits it on the job's branch
@@ -11,6 +11,19 @@ they accept::
 
     salvage:
       commit_subject: "chore(wip): unfinished — {agent} stopped ({reason})"
+
+``enabled: false`` is for a repository that takes no commit embry0 wrote at
+all (signed commits only, or no unreviewed work pushed in embry0's name):
+embry0 commits nothing for a stopped run. Commits the agent made are still
+pushed, as for any run, and a run that left changes uncommitted pauses with
+them in the job's sandbox (stage ``dev_run_uncommitted``), which is kept
+while the job is paused and discarded when it is stopped, fails or its pause
+expires; "merge as is" is not offered there. That is where a salvage commit
+would have paused the job, and also where salvage on could not make its
+commit (it failed, or another branch is checked out while the job's branch
+exists) and so lets the job go on: off, the changes are still in the
+sandbox, and a cut-off run is never a delivery (spec 2026-11-09, done-when
+on unmet and salvage off).
 
 A subject longer than :data:`MAX_SUBJECT_CHARS` has only its ``{reason}``
 shortened to fit (``embry0.workflows.issue_to_pr.nodes._salvage``). A coding
@@ -57,6 +70,18 @@ def check_commit_subject(text: str) -> str:
 
 
 class SalvageSettings(SectionModel):
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Commit what a coding run that stopped before it committed (its turn cap, an error, the job's budget, "
+            "question rounds used up) left in its working tree, and push it, marked unfinished, so the work "
+            "survives. false: embry0 commits nothing of its own; commits the agent made are still pushed, as for "
+            "any run, and a run that left changes uncommitted pauses with them in the job's sandbox, which is kept "
+            "while the job is paused and discarded when it is stopped, fails or its pause expires (merge as is is "
+            "not offered there). It pauses even where salvage on, unable to make its commit (the commit failed, or "
+            "another branch is checked out), would let the job go on."
+        ),
+    )
     commit_subject: str = Field(
         default=DEFAULT_SUBJECT,
         max_length=80,
@@ -79,10 +104,13 @@ class SalvageSettings(SectionModel):
 SALVAGE = Section(
     name="salvage",
     model=SalvageSettings,
-    summary="The subject of the commit that keeps the work of a coding run that stopped before it committed.",
-    # The commit lands in the repository, so its own commit rules decide the
-    # subject: an organization and a repository may each set it (decision L4
-    # of the settings layers spec).
-    org_keys=frozenset({"commit_subject"}),
-    repo_keys=frozenset({"commit_subject"}),
+    summary=(
+        "Whether the work of a coding run that stopped before it committed is committed and pushed, and that "
+        "commit's subject."
+    ),
+    # The commit lands in the repository, so its own commit rules decide
+    # whether embry0 may make it and its subject: an organization and a
+    # repository may each set both (decision L4 of the settings layers spec).
+    org_keys=frozenset({"enabled", "commit_subject"}),
+    repo_keys=frozenset({"enabled", "commit_subject"}),
 )
