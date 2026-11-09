@@ -430,7 +430,7 @@ async def patch_settings_section(
     expected = if_match_versions(if_match)
     body = await read_capped_body(request, MAX_TEXT_BYTES, f"the body is larger than {MAX_TEXT_BYTES} bytes")
     with _write_refusals():
-        keys = parse_keys(body)
+        keys = parse_keys(body, section)
         if dry_run:
             preview = await store.preview_keys(section, keys, if_generation=expected, scope=scope)
             return {**_previewed(scope, preview), "managed_by": preview.managed_by}
