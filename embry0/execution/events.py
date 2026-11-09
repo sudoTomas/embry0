@@ -817,16 +817,26 @@ def emit_to_stdout(event: dict[str, Any]) -> None:
 
 
 def parse_event(line: str) -> dict[str, Any] | None:
-    """Parse a JSON line into an event dict. Returns None on parse failure."""
+    """Parse a JSON line into an event dict, or None when it holds no event.
+
+    None for an empty line, a line that is not JSON, a line whose JSON is
+    not an object (a number, a list, a string, ``null``, ``true``) and a
+    line Python cannot decode (an integer past its digit limit, nesting
+    past its recursion limit). Never raises: the agent runner's read loop
+    calls ``.get`` on every event, so anything else would end the loop.
+    """
     line = line.strip()
     if not line:
         return None
     try:
-        result: dict[str, Any] = json.loads(line)
-        return result
-    except json.JSONDecodeError:
+        result = json.loads(line)
+    except (ValueError, RecursionError):
+        # ValueError covers json.JSONDecodeError and the int digit limit.
+        result = None
+    if not isinstance(result, dict):
         logger.warning("event_parse_failed", line=line[:200])
         return None
+    return result
 
 
 # --- the contract --------------------------------------------------------------
