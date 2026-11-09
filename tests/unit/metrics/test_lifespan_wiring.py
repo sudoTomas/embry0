@@ -158,7 +158,8 @@ async def test_the_lifespan_hands_one_runtime_to_the_sandbox_manager(
 async def test_the_lifespan_builds_the_db_gauge_snapshot(booted: Any) -> None:
     assert isinstance(booted.state.loop_snapshot, LoopSnapshot)
 
-    await booted.state.loop_snapshot.refresh()
+    # deadline=False: what the sources read, not whether a loaded database answered within the scrape's 2 s (#421).
+    await booted.state.loop_snapshot.refresh(deadline=False)
 
     registry = booted.state.loop_metrics.registry
     # Proof the sources are wired to real repositories, not just constructed.
@@ -249,7 +250,9 @@ async def test_the_cap_gauges_are_each_stacks_own_numbers(
             repo=_SMALL_STACK, origin="watcher", title="aged", tracker=TrackerRef("github", "13")
         )
         await db.execute("UPDATE healing_cases SET detected_at = NOW() - INTERVAL '5 days' WHERE id = $1", aged["id"])
-        await app.state.loop_snapshot.refresh()
+        # deadline=False: the per-stack numbers the sources read, not whether a loaded database answered within the
+        # scrape's 2 s; the deadline is test_snapshot.py's (#421).
+        await app.state.loop_snapshot.refresh(deadline=False)
 
         registry = app.state.loop_metrics.registry
 

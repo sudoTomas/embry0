@@ -121,6 +121,36 @@ async def test_a_hung_query_is_cut_off_at_the_shared_deadline() -> None:
     assert registry.get_sample_value("embry0_loop_snapshot_errors_total", {"source": "queue"}) == 1
 
 
+async def test_without_the_deadline_every_source_is_read_however_long_it_takes() -> None:
+    """#421: a caller that must have every gauge (a test of what the sources read) does not race the scrape's
+    deadline. A deadline of 0 has run out before the first source: with it nothing is read, without it all is."""
+    m, registry = _metrics()
+    clock = Clock()
+    _, queue = _counting({"pending": 2})
+    _, cap = _counting(5)
+    snapshot = LoopSnapshot(
+        m,
+        {"queue": queue_source(m, queue), "cap": gauge_source(m.reconciler_daily_dispatches, cap)},
+        timeout_seconds=0,
+        clock=clock,
+    )
+
+    await snapshot.refresh()
+    assert registry.get_sample_value("embry0_jobs_in_flight", {"status": "pending"}) is None, "the deadline holds"
+
+    clock.now += 31
+    try:
+        await snapshot.refresh(deadline=False)
+    except TypeError as exc:
+        pytest.fail(f"a refresh cannot be asked to read every source: {exc}")
+    read = (
+        registry.get_sample_value("embry0_jobs_in_flight", {"status": "pending"}),
+        registry.get_sample_value("embry0_linear_reconciler_daily_dispatches"),
+    )
+    assert read == (2, 5), f"every source is read without the deadline: {read}"
+    assert registry.get_sample_value("embry0_loop_snapshot_last_success_timestamp_seconds") > 0
+
+
 async def test_a_scrape_during_a_refresh_is_served_at_once() -> None:
     m, _ = _metrics()
     release = asyncio.Event()
