@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from embry0.json_text import json_kind
 from embry0.workspace_providers.provider import (
     WorkspaceApp,
     WorkspacePackage,
@@ -17,10 +18,13 @@ def _read_package_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise WorkspaceProviderError(f"missing package.json at {path}")
     try:
-        parsed: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-        return parsed
+        parsed = json.loads(path.read_text(encoding="utf-8"))
     except (ValueError, RecursionError) as exc:  # see embry0.json_text
         raise WorkspaceProviderError(f"invalid JSON in {path}: {exc}") from exc
+    if not isinstance(parsed, dict):
+        # #425: a package.json is an object; anything else is as unreadable as broken JSON.
+        raise WorkspaceProviderError(f"{path} is valid JSON but not an object: it is {json_kind(parsed)}")
+    return parsed
 
 
 def discover_workspaces(

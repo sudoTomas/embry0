@@ -26,6 +26,7 @@ from langchain_core.runnables import RunnableConfig
 from embry0.execution import events
 from embry0.execution.docker_client import LOG_TAIL_BYTES
 from embry0.execution.runtime.egress import derive_deployed_egress_allowlist
+from embry0.json_text import json_kind
 from embry0.workflows.qa._subtask_boot_phase import (
     _boot_phase_from_state,
     _read_boot_log_tail,
@@ -993,12 +994,19 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
 
     try:
         agent_dump = json.loads(result_json_str)
+        # #425: a result is an object; an array, a string, a number, true, false or null is no more readable
+        # than broken JSON, though it is valid JSON, and the reason says which.
+        problem = (
+            None if isinstance(agent_dump, dict) else f"is valid JSON but not an object: it is {json_kind(agent_dump)}"
+        )
     except (ValueError, RecursionError) as exc:  # see embry0.json_text
+        problem = f"is not valid JSON: {exc}"
+    if problem is not None:
         if _agent_ran(state):
-            return _synthesize_inconclusive_result(state, f"result.json is not valid JSON ({exc})")
+            return _synthesize_inconclusive_result(state, f"result.json {problem}")
         return {
             "status": SubTaskStatus.INFRA_FAILURE,
-            "failure_summary": f"result.json not valid JSON: {exc}",
+            "failure_summary": f"result.json {problem}",
             "completed_at": time.monotonic(),
         }
 

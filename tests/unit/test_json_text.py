@@ -316,3 +316,22 @@ def test_servable_depth_is_where_the_response_serializer_stops() -> None:
     with pytest.raises(PydanticSerializationError):
         serializer.dump_json(_nested(SERVABLE_DEPTH + 1))
     assert STORED_DEPTH < SERVABLE_DEPTH
+
+
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [
+        ("{}", "an object"),
+        ("[1]", "an array"),
+        ('"x"', "a string"),
+        ("4.2", "a number"),
+        ("7", "a number"),
+        ("true", "true"),
+        ("false", "false"),
+        ("null", "null"),
+    ],
+)
+def test_json_kind_names_a_value_in_json_words(text: str, kind: str) -> None:
+    from embry0.json_text import json_kind
+
+    assert json_kind(json.loads(text)) == kind

@@ -90,3 +90,35 @@ async def test_an_unreadable_review_reports_no_readable_verdict(kind: str) -> No
 
     decisions = [e for e in written if e.get("type") == "review_decision"]
     assert [(d["decision"], d["summary"]) for d in decisions] == [(None, "Review emitted no readable verdict")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("output", ["[1, 2]", "42", '"approved"', "null"])
+async def test_a_review_whose_json_is_not_an_object_reports_no_readable_verdict(output: str) -> None:
+    """#425: such output decoded, and ``data.get`` on a list, a number or a string ended the node."""
+    from embry0.workflows.issue_to_pr.nodes import review_node
+
+    written: list[dict[str, Any]] = []
+    with (
+        patch(
+            "embry0.workflows.issue_to_pr.nodes.run_agent_node",
+            new=AsyncMock(return_value=_result("review", output)),
+        ),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=written.append),
+    ):
+        try:
+            await review_node(
+                _state(
+                    branch_name="embry0/test",
+                    pr_url=PR_URL,
+                    pipeline_config={"agent_models": {"review": "claude-sonnet-4-6"}, "budget_usd": 50.0},
+                ),
+                {"configurable": {"agent_runner": object(), "credentials": {}}},
+            )
+        except (AttributeError, TypeError) as exc:
+            pytest.fail(f"review_node ended on a review whose JSON is {output}: {exc}")
+
+    decisions = [e for e in written if e.get("type") == "review_decision"]
+    assert [(d["decision"], d["summary"]) for d in decisions] == [(None, "Review emitted no readable verdict")], (
+        decisions
+    )

@@ -519,6 +519,40 @@ async def test_collect_artifacts_node_result_json_python_cannot_decode(kind):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("boot_outcome", ["passed", None])
+@pytest.mark.parametrize(
+    ("raw", "kind"),
+    [("[]", "an array"), ("42", "a number"), ('"passed"', "a string"), ("null", "null"), ("true", "true")],
+)
+async def test_collect_artifacts_node_result_json_that_is_not_an_object(raw, kind, boot_outcome):
+    """#425: result.json decoded to an array, a number, a string, null or true. After
+    a passed boot the node wrote ``agent_dump["boot"]`` into it and raised TypeError;
+    it is as unreadable as broken JSON and fails the same way, saying in JSON's words
+    what it holds rather than calling valid JSON invalid."""
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
+
+    docker = MagicMock()
+    docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
+    docker.run_cmd = AsyncMock(return_value=raw)
+    state = {
+        "status": None,
+        "resolved": _resolved_app("hub"),
+        "sandbox_id": "cid",
+        "boot_outcome": boot_outcome,
+        "boot_duration_ms": 1200 if boot_outcome else None,
+    }
+    try:
+        out = await collect_artifacts_node(state, {"configurable": {"docker": docker}})
+    except (AttributeError, TypeError) as exc:
+        pytest.fail(f"collect_artifacts_node raised on a result.json holding {raw}: {exc}")
+
+    assert out["status"] == SubTaskStatus.INFRA_FAILURE, out
+    assert out["failure_summary"] == f"result.json is valid JSON but not an object: it is {kind}", out[
+        "failure_summary"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_collect_artifacts_node_short_circuits_on_prior_status():
     from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
 
