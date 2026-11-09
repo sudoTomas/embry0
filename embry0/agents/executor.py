@@ -54,6 +54,9 @@ class AgentExecutor(Protocol):
 
 _ASK_USER_MARKER = '{"type": "agent_ask_user"'
 _MAX_EMBEDDED_ASK_EVENTS = 5
+#: Markers decoded from at most, events or not: bounds the cost of a tool
+#: result that repeats the marker without a readable event after it.
+_MAX_EMBEDDED_ASK_ATTEMPTS = 4 * _MAX_EMBEDDED_ASK_EVENTS
 
 
 def _extract_embedded_ask_user_events(text: str) -> list[dict[str, Any]]:
@@ -68,11 +71,13 @@ def _extract_embedded_ask_user_events(text: str) -> list[dict[str, Any]]:
     """
     events: list[dict[str, Any]] = []
     idx = 0
+    attempts = 0
     decoder = json.JSONDecoder()
-    while len(events) < _MAX_EMBEDDED_ASK_EVENTS:
+    while len(events) < _MAX_EMBEDDED_ASK_EVENTS and attempts < _MAX_EMBEDDED_ASK_ATTEMPTS:
         pos = text.find(_ASK_USER_MARKER, idx)
         if pos == -1:
             break
+        attempts += 1
         try:
             obj, consumed = decoder.raw_decode(text[pos:])
         except (ValueError, RecursionError):  # see embry0.json_text
@@ -81,6 +86,15 @@ def _extract_embedded_ask_user_events(text: str) -> list[dict[str, Any]]:
         if isinstance(obj, dict) and obj.get("question"):
             events.append(obj)
         idx = pos + consumed
+    if attempts >= _MAX_EMBEDDED_ASK_ATTEMPTS and text.find(_ASK_USER_MARKER, idx) != -1:
+        # The same event as embry0.json_text's scans (not importable here): the text is never logged.
+        logger.warning(
+            "json_scan_stopped",
+            scanner="embedded_ask_user_events",
+            bound="attempts",
+            attempts=attempts,
+            text_length=len(text),
+        )
     return events
 
 

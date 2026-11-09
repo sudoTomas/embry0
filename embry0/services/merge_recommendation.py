@@ -57,14 +57,47 @@ class ReviewFacts:
     summary: str = ""
 
 
+#: A ```json fence holding an object. The greedy ``.*`` takes everything up to
+#: the last ``}`` that a fence closes.
+_FENCED_OBJECT = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.S)
+
+
+def _last_fence_close(text: str) -> int | None:
+    """Where the last fence that closes an object ends: the end of the last
+    ```` ``` ```` whose nearest character before it, past whitespace, is ``}``."""
+    fence = text.rfind("```")
+    while fence != -1:
+        before = fence
+        while before > 0 and text[before - 1].isspace():
+            before -= 1
+        if before > 0 and text[before - 1] == "}":
+            return fence + 3
+        fence = text.rfind("```", 0, fence + 2)
+    return None
+
+
+def _fenced_object(text: str) -> str | None:
+    """The object of the first ```json fence, as :data:`_FENCED_OBJECT` reads it, or None.
+
+    Every match of the pattern ends at a fence that closes an object, so a
+    search that stops where the last one ends finds the same match. It also
+    keeps the cost to one pass: over the whole text, the greedy ``.*``
+    backtracks from the end for every opening fence it tries, which costs
+    the square of the length when no fence closes after them.
+    """
+    end = _last_fence_close(text)
+    match = _FENCED_OBJECT.search(text, 0, end) if end is not None else None
+    return match.group(1) if match else None
+
+
 def parse_review(result_summary: str | None) -> ReviewFacts | None:
     """The reviewer's verdict from a job's ``result_summary``, or None when it
     holds no reviewer JSON (a PR no embry0 job reviewed)."""
     text = str(result_summary or "").strip()
     if not text:
         return None
-    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
-    candidate = fenced.group(1) if fenced else text[text.find("{") : text.rfind("}") + 1]
+    fenced = _fenced_object(text)
+    candidate = fenced if fenced is not None else text[text.find("{") : text.rfind("}") + 1]
     data = json_object(candidate)
     if data is None or "decision" not in data:
         return None
