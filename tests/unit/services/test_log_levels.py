@@ -267,3 +267,52 @@ def test_a_quoted_level_inside_an_error_line_is_not_read() -> None:
     another log line in one of its fields keeps its own level."""
     line = '{"stderr": "{\\"event\\": \\"inner\\", \\"level\\": \\"info\\"}", "event": "agent_runner_subprocess_failed", "level": "error"}'
     assert detect_noise_level(line) is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_log_entries_keeps_a_json_line_python_cannot_decode() -> None:
+    """A JSON line nested past the decoder's recursion limit, or holding an
+    integer past the digit limit, is read as plain text: unlevelled, so kept,
+    and the fetch returns the rest of the window with it."""
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    import httpx
+
+    from embry0.services.watcher import WatcherService
+    from tests.fixtures.unreadable_json import handled, unreadable_object
+
+    deep = unreadable_object("deep", {"event": "x", "level": "info"})
+    huge = unreadable_object("huge", {"event": "x", "level": "info"})
+    t0 = int(datetime(2026, 9, 21, 4, 0, tzinfo=UTC).timestamp() * 1e9)
+    streams = [
+        {
+            "stream": {"container_name": "acme-backend"},
+            "values": [[str(t0 + 3), deep], [str(t0 + 2), huge], [str(t0 + 1), ERROR_LINE], [str(t0), INFO_LINE]],
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "success", "data": {"result": streams}})
+
+    svc = WatcherService(
+        config=SimpleNamespace(
+            watcher_loki_url="http://loki.test:3100",
+            watcher_logql='{compose_project="acme"} |~ "(?i)(error|exception|traceback)"',
+            watcher_max_log_lines=50,
+        ),
+        jobs_repo=MagicMock(),
+        watcher_runs_repo=MagicMock(create=AsyncMock()),
+        integration_repo=MagicMock(),
+        executor=MagicMock(),
+        filer=MagicMock(tracker="linear"),
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with handled("_fetch_log_entries"):
+        entries = await svc._fetch_log_entries(
+            datetime(2026, 9, 21, 3, 0, tzinfo=UTC), datetime(2026, 9, 21, 5, 0, tzinfo=UTC)
+        )
+
+    assert [e.line for e in entries] == [deep, huge, ERROR_LINE], "the INFO line is dropped and nothing else is"

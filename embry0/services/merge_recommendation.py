@@ -13,10 +13,11 @@ the same verdict, and every downgrade names its cause.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
+
+from embry0.json_text import json_object
 
 Verdict = Literal["merge", "review_first", "dont_merge"]
 
@@ -64,11 +65,8 @@ def parse_review(result_summary: str | None) -> ReviewFacts | None:
         return None
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     candidate = fenced.group(1) if fenced else text[text.find("{") : text.rfind("}") + 1]
-    try:
-        data = json.loads(candidate)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(data, dict) or "decision" not in data:
+    data = json_object(candidate)
+    if data is None or "decision" not in data:
         return None
 
     validation: dict[str, str] = {}

@@ -13,7 +13,6 @@ algorithm's.
 
 from __future__ import annotations
 
-import json
 import re
 import tomllib
 from collections.abc import Iterable, Mapping
@@ -21,6 +20,7 @@ from functools import lru_cache
 from statistics import quantiles
 from typing import Any
 
+from embry0.json_text import json_object
 from embry0.services.slop_meter.globs import GlobIndex, marked
 from embry0.settings.sections.slop_meter import SLOP_METER, SlopMeterSettings
 
@@ -147,11 +147,7 @@ def ignore_patterns(files: Mapping[str, str | None]) -> list[str]:
     if files.get(".gitattributes"):
         patterns += _attributes(str(files[".gitattributes"]))
     if files.get("biome.json"):
-        try:
-            biome = json.loads(str(files["biome.json"]))
-        except ValueError:
-            biome = {}
-        section = biome.get("files") if isinstance(biome, dict) else None
+        section = (json_object(str(files["biome.json"])) or {}).get("files")
         if isinstance(section, dict):
             patterns += _strings(section.get("ignore"))
     for name, path in (("pyproject.toml", ("tool", "ruff")), ("ruff.toml", ()), (".ruff.toml", ())):
@@ -159,7 +155,7 @@ def ignore_patterns(files: Mapping[str, str | None]) -> list[str]:
             continue
         try:
             data: Any = tomllib.loads(str(files[name]))
-        except (tomllib.TOMLDecodeError, ValueError):
+        except (tomllib.TOMLDecodeError, ValueError, RecursionError):  # RecursionError: nesting past the limit
             continue
         for key in path:
             data = data.get(key) if isinstance(data, dict) else None

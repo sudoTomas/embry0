@@ -17,7 +17,9 @@ def last_object_with(text: str, key: str) -> dict[str, Any] | None:
 
     Every ``{`` is tried, so the object is found bare, fenced, or as the whole
     text. Narration may quote an example object, so the last one is the
-    agent's own. A truncated object does not decode and is not read.
+    agent's own. A truncated object does not decode and is not read, nor
+    does one Python cannot decode (nested past the recursion limit, or an
+    integer past the digit limit).
     """
     decoder = json.JSONDecoder()
     found: dict[str, Any] | None = None
@@ -25,7 +27,7 @@ def last_object_with(text: str, key: str) -> dict[str, Any] | None:
     while start != -1:
         try:
             obj, _ = decoder.raw_decode(text, start)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):  # see embry0.json_text
             obj = None
         if isinstance(obj, dict) and key in obj:
             found = obj

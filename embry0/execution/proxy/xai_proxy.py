@@ -52,7 +52,7 @@ def _normalize_tool_schemas(body: bytes) -> bytes:
     """
     try:
         payload = json.loads(body)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, RecursionError):  # see embry0.json_text; UnicodeDecodeError is a ValueError
         return body
     if not isinstance(payload, dict):
         return body

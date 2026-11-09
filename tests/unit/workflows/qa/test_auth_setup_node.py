@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from embry0.workflows.qa.qa_yaml_v2 import QAAuth, QAAuthStorageState, QAReadyCheck
 from embry0.workflows.qa.subtask_result_schema import SubTaskStatus
 
@@ -141,6 +143,22 @@ async def test_invalid_json_is_inconclusive():
     out = await auth_setup_node(state, config)
     assert out["status"] == SubTaskStatus.INCONCLUSIVE
     assert "auth setup failed" in out["failure_summary"]
+
+
+@pytest.mark.parametrize("kind", ["deep", "huge"])
+async def test_a_storage_state_python_cannot_decode_is_inconclusive(kind):
+    """The storage state comes from the sandbox; one nested past the decoder's
+    recursion limit, or holding an integer past the digit limit, is not JSON
+    to read, like any other: INCONCLUSIVE, not an exception."""
+    from embry0.workflows.qa.subtask_nodes import auth_setup_node
+    from tests.fixtures.unreadable_json import handled, unreadable_object
+
+    config, _docker = _docker_config(["", unreadable_object(kind, {"cookies": [], "origins": []})])
+    state = {"resolved": _resolved_app(auth=_secret_auth()), "sandbox_id": "cid", "status": None}
+    with handled("auth_setup_node"):
+        out = await auth_setup_node(state, config)
+    assert out["status"] == SubTaskStatus.INCONCLUSIVE
+    assert "not valid JSON" in out["failure_summary"]
 
 
 async def test_json_without_cookies_or_origins_is_inconclusive():

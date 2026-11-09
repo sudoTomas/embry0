@@ -1,10 +1,12 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from httpx import ASGITransport, AsyncClient
 
 from embry0.api.v1 import qa_artifacts
 from embry0.execution.runtime import DockerRuntime
@@ -513,6 +515,81 @@ async def test_get_result_502_on_invalid_json(api_with_minio, monkeypatch):
     r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
     assert r.status_code == 502
     assert "non-JSON body" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("kind", ["deep", "huge"])
+async def test_get_result_502_on_json_python_cannot_decode(api_with_minio, monkeypatch, kind):
+    """result.json is written in the sandbox. Nested past the decoder's
+    recursion limit, or holding an integer past the digit limit, it gets the
+    same 502 as any body that is not JSON, not a 500."""
+    from tests.fixtures.unreadable_json import handled, unreadable_object
+
+    body = unreadable_object(kind, {"overall": "passed"}).encode()
+    stream_resp = _make_stream_response(status_code=200, chunks=[body], content_length=str(len(body)))
+
+    import embry0.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
+
+    with handled("GET .../qa/attempts/{n}/result"):
+        r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 502
+    assert "non-JSON body" in r.json()["detail"]
+
+
+def _answering(client):
+    """The same app, answering an error with its status as a server does instead of raising it.
+
+    ``AsyncClient`` is the one this module imported: the tests swap ``httpx.AsyncClient`` itself for a fake.
+    """
+    return AsyncClient(
+        transport=ASGITransport(app=client.app, raise_app_exceptions=False),
+        base_url="http://test",
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("depth", "status", "detail"),
+    [
+        (200, 200, None),
+        (300, 502, "nested deeper than 255 levels"),
+        (5000, 502, "nested deeper than 255 levels"),
+        (20000, 502, "non-JSON body"),
+    ],
+)
+async def test_get_result_serves_only_json_it_can_serialize(api_with_minio, monkeypatch, depth, status, detail):
+    """The response serializer stops at 255 levels: a result.json nested
+    deeper used to read fine and then answer 500. Deeper than the decoder
+    goes, it is not JSON to read at all."""
+    body = ('{"anomalies": ' + "[" * depth + "]" * depth + "}").encode()
+    stream_resp = _make_stream_response(status_code=200, chunks=[body], content_length=str(len(body)))
+
+    import embry0.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
+
+    async with _answering(api_with_minio) as client:
+        r = await client.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == status, r.text[:300]
+    if detail is None:
+        assert r.json() == json.loads(body)
+    else:
+        assert detail in r.json()["detail"]
+
+
+async def test_get_result_502_on_json_that_is_not_an_object(api_with_minio, monkeypatch):
+    body = b"[1, 2]"
+    stream_resp = _make_stream_response(status_code=200, chunks=[body], content_length=str(len(body)))
+
+    import embry0.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
+
+    async with _answering(api_with_minio) as client:
+        r = await client.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 502, r.text[:300]
+    assert "not an object" in r.json()["detail"]
 
 
 async def test_get_result_504_on_upstream_timeout(api_with_minio, monkeypatch):

@@ -22,7 +22,7 @@ from embry0.api.actor_visibility import Shown, actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import covered_slugs, enforce_owner_allowlist, enforce_repo_allowlist, key_covers
 from embry0.api.repository_reads import owner_hidden
-from embry0.api.schemas import RunWithRequest
+from embry0.api.schemas import RunWithRequest, ServableFields
 from embry0.api.schemas.repo_path import REPO_PATH_ERROR, REPO_PATH_PATTERN
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
@@ -49,7 +49,7 @@ Reference = Annotated[str, StringConstraints(min_length=1, max_length=MAX_REFERE
 ExceptionPath = Annotated[str, StringConstraints(min_length=1, max_length=500)]
 
 
-class StandardBody(BaseModel):
+class StandardBody(ServableFields):
     """A complete new version. Every field it leaves out is empty in that version, not carried over."""
 
     model_config = ConfigDict(extra="forbid")

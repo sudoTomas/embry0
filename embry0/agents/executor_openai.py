@@ -136,7 +136,7 @@ def _tool_call(raw: Any, index: int) -> tuple[ToolCall, dict[str, Any]]:
         return ToolCall(call_id, name, arguments), entry
     try:
         parsed = json.loads(arguments) if isinstance(arguments, str) and arguments.strip() else {}
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:  # see embry0.json_text
         return ToolCall(call_id, name, {}, input_error=f"tool call arguments are not valid JSON ({exc})"), entry
     if not isinstance(parsed, dict):
         return ToolCall(call_id, name, {}, input_error="tool call arguments must be a JSON object"), entry

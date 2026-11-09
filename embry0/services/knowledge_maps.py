@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from embry0.json_text import STORED_DEPTH
 from embry0.services.leads import Lead
 
 FORMAT = "embry0.map/1"
@@ -104,14 +105,18 @@ def repo_owner(repo: str | None) -> str | None:
 
 
 def _storable(value: Any) -> str | None:
-    """Why ``value`` cannot be stored as JSON that Postgres reads, or None when it can.
+    """Why ``value`` cannot be stored as JSON that Postgres reads and embry0 serves, or None when it can.
 
     Python's JSON reads ``NaN`` and ``Infinity`` (and ``1e400`` as infinity), a NUL in a string and a lone
-    UTF-16 surrogate; JSONB refuses all of them, so a map carrying one could not be read back as JSONB.
+    UTF-16 surrogate; JSONB refuses all of them, so a map carrying one could not be read back as JSONB. A part
+    is served through a response model, which cannot serialize a document nested too deeply, so a map nested
+    deeper than :data:`~embry0.json_text.STORED_DEPTH` levels is refused too.
     """
-    stack = [value]
+    stack: list[tuple[Any, int]] = [(value, 0)]
     while stack:
-        item = stack.pop()
+        item, depth = stack.pop()
+        if isinstance(item, Mapping | list | tuple) and depth >= STORED_DEPTH:
+            return f"the document nests deeper than {STORED_DEPTH} levels"
         if isinstance(item, str):
             if "\x00" in item:
                 return "a string holds a NUL character"
@@ -123,10 +128,10 @@ def _storable(value: Any) -> str | None:
             if not math.isfinite(item):
                 return "a number is NaN or infinite"
         elif isinstance(item, Mapping):
-            stack.extend(item.keys())
-            stack.extend(item.values())
+            stack.extend((key, depth + 1) for key in item)
+            stack.extend((child, depth + 1) for child in item.values())
         elif isinstance(item, list | tuple):
-            stack.extend(item)
+            stack.extend((child, depth + 1) for child in item)
     return None
 
 

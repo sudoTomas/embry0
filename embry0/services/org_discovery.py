@@ -13,7 +13,6 @@ row, never from a guess; a thing the token cannot see is ``None``.
 from __future__ import annotations
 
 import base64
-import json
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -24,6 +23,7 @@ from urllib.parse import quote, urlsplit
 import structlog
 
 from embry0.execution.forge_client import Listing
+from embry0.json_text import json_object
 
 logger = structlog.get_logger(__name__)
 
@@ -126,11 +126,8 @@ def env_keys(text: str) -> list[str]:
 
 def manifest_facts(package_json: str) -> dict[str, Any]:
     """Boot hint and frontend presence from a package.json, or an empty dict."""
-    try:
-        data = json.loads(package_json)
-    except ValueError:
-        return {}
-    if not isinstance(data, dict):
+    data = json_object(package_json)
+    if data is None:
         return {}
     raw_scripts = data.get("scripts")
     scripts: dict[str, Any] = raw_scripts if isinstance(raw_scripts, dict) else {}

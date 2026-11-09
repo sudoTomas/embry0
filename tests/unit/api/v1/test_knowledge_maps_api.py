@@ -243,6 +243,41 @@ async def test_an_upload_is_stored_and_served_as_it_is_with_an_etag(app: FastAPI
     assert garbled.status_code == 400 and missing.status_code == 404
 
 
+@pytest.mark.parametrize("kind", ["deep", "huge"])
+async def test_a_map_python_cannot_decode_is_a_400(app: FastAPI, kind: str) -> None:
+    """A body nested past the decoder's recursion limit, or holding an integer
+    past the digit limit, gets the same 400 as any body that is not JSON."""
+    from tests.fixtures.unreadable_json import handled, unreadable_object
+
+    async with await _client(app) as client:
+        with handled("PUT /maps/{slug}"):
+            put = await client.put("/api/v1/maps/shop", content=unreadable_object(kind, _doc()), headers=HEADERS)
+    assert put.status_code == 400 and put.json()["detail"] == "the body is not JSON"
+
+
+def _nested(levels: int) -> Any:
+    value: Any = "leaf"
+    for _ in range(levels):
+        value = {"a": value}
+    return value
+
+
+async def test_a_map_nested_deeper_than_its_parts_can_be_served_is_refused(app: FastAPI) -> None:
+    """A part is read back through a response model, which stops at 255 levels:
+    a map whose part details nest 300 levels used to be stored, and every read
+    of that part answered 500. It is refused, naming why; 190 levels is kept and read."""
+    deep = {**_doc(), "details": {PROBE: _nested(300)}}
+    deepest_kept = {**_doc(), "details": {PROBE: _nested(190)}}
+    async with await _client(app) as client:
+        refused = await client.put("/api/v1/maps/shop", content=json.dumps(deep), headers=HEADERS)
+        kept = await client.put("/api/v1/maps/shop", content=json.dumps(deepest_kept), headers=HEADERS)
+        part = await client.get(f"/api/v1/maps/shop/parts/{PROBE}")
+    assert refused.status_code == 422, refused.text[:300]
+    assert "nests deeper than 200 levels" in refused.json()["detail"]
+    assert kept.status_code == 200, kept.text[:300]
+    assert part.status_code == 200 and part.json()["detail"] == _nested(190)
+
+
 async def test_a_slug_that_ends_in_a_newline_names_no_map(app: FastAPI) -> None:
     """#232: ``/maps/shop%0A`` passed the slug check, as Python's ``$`` matches before a final newline."""
     doc = {k: v for k, v in _doc().items() if k != "slug"}

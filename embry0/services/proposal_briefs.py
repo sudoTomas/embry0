@@ -155,7 +155,7 @@ def parse_brief(text: str) -> Brief:
         raw = raw.strip("`").removeprefix("json").strip()
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:  # see embry0.json_text
         raise ValueError(f"not JSON: {exc}") from exc
     if not isinstance(data, dict) or set(data) != {"title", "problem", "fix", "size"}:
         raise ValueError(

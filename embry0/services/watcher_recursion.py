@@ -30,8 +30,9 @@ the tick paid to read it. :data:`LOGQL_LOG_QUERY_EXCLUSION` is its twin.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Iterable
+
+from embry0.json_text import json_object
 
 #: Event-name prefixes the watcher family logs under. ``watcher_`` is the
 #: tick, its scheduling, filing and health probes; the other two are the
@@ -55,15 +56,13 @@ LOGQL_LOG_QUERY_EXCLUSION = f'!= "{LOG_QUERY_URL}" !~ "\\"event\\": \\"(' + "|".
 
 
 def _event(line: str) -> str | None:
-    """The ``event`` of a structured line, or ``None`` for anything else."""
+    """The ``event`` of a structured line, or ``None`` for anything else,
+    a line Python cannot decode included (read as plain text, so kept)."""
     text = (line or "").strip()
     if not text.startswith("{"):
         return None
-    try:
-        parsed = json.loads(text)
-    except ValueError:
-        return None
-    event = parsed.get("event") if isinstance(parsed, dict) else None
+    parsed = json_object(text)
+    event = parsed.get("event") if parsed is not None else None
     return event if isinstance(event, str) else None
 
 

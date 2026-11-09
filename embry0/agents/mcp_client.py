@@ -281,7 +281,9 @@ class McpStdioClient:
                 )
             try:
                 msg = json.loads(line)
-            except json.JSONDecodeError:
+            except (ValueError, RecursionError):
+                # Not JSON, not UTF-8, or JSON Python cannot decode (an integer past
+                # the digit limit, nesting past the recursion limit): skip the line.
                 logger.warning("mcp_non_json_line", server=self.server_name, line=line[:200].decode(errors="replace"))
                 continue
             if not isinstance(msg, dict):

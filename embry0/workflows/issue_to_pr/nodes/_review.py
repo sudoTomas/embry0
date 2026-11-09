@@ -506,7 +506,7 @@ The JSON object is the last thing you output — nothing after it."""
                         duplicates_open_pr=_review_dup if isinstance(_review_dup, dict) else None,
                     )
                 )
-            except (json_mod.JSONDecodeError, TypeError):
+            except (ValueError, RecursionError, TypeError):  # see embry0.json_text
                 # #356: a bare json.loads was the ONLY thing that emitted a
                 # verdict, so an unreadable review used to log nothing at all
                 # while the router had already approved it. Say so — the

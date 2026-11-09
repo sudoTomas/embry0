@@ -676,7 +676,7 @@ async def auth_setup_node(state: SubTaskState, config: RunnableConfig) -> dict[s
 
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:  # see embry0.json_text
         return _inconclusive(f"storage-state file is not valid JSON: {exc}")
 
     if not isinstance(data, dict) or ("cookies" not in data and "origins" not in data):
@@ -993,7 +993,7 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
 
     try:
         agent_dump = json.loads(result_json_str)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:  # see embry0.json_text
         if _agent_ran(state):
             return _synthesize_inconclusive_result(state, f"result.json is not valid JSON ({exc})")
         return {

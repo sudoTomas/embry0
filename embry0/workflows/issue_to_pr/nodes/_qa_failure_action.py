@@ -143,7 +143,7 @@ def extract_repaired_action(raw_answer: str) -> Any:
 
     try:
         data = json.loads(_extract_json_payload(raw_answer))
-    except (json.JSONDecodeError, IndexError):
+    except (ValueError, RecursionError, IndexError):  # see embry0.json_text
         return None
     if not isinstance(data, dict):
         return None

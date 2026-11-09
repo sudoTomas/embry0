@@ -435,6 +435,33 @@ async def test_analysis_task_names_the_watched_repo():
     assert "other/widgets" not in task
 
 
+@pytest.mark.asyncio
+async def test_a_json_line_python_cannot_decode_does_not_fail_the_tick():
+    """A line nested past the decoder's recursion limit, or holding an integer
+    past the digit limit, is read as plain text by the fetch's level filter
+    and by the recursion guard. The tick runs on: here the two lines are all
+    the window holds, so it is a quiet tick, not an error."""
+    from tests.fixtures.unreadable_json import unreadable_object
+
+    lines = [
+        unreadable_object("deep", {"event": "watcher_tick_failed", "level": "info"}),
+        unreadable_object("huge", {"event": "watcher_tick_failed", "level": "info"}),
+    ]
+    streams = [{"stream": {"container_name": "api"}, "values": [[str(i + 1), line] for i, line in enumerate(lines)]}]
+    svc = _service()
+    svc._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"status": "success", "data": {"result": streams}})
+        )
+    )
+    svc._fetch_log_entries = WatcherService._fetch_log_entries.__get__(svc)  # the real fetch, over the mock
+
+    out = await svc.run_once()
+
+    assert out["action"] == "skipped_quiet", out
+    assert svc._runs.create.await_args.kwargs["log_lines"] == 2, "both lines are kept as plain text"
+
+
 # ---- deploy markers ---------------------------------------------------------
 
 

@@ -403,7 +403,7 @@ async def put_map(slug: str, request: Request, owner: OwnerParam = None) -> dict
         parsed = parse_map(json.loads(raw), slug)
     except MapError as exc:  # before ValueError, which it is
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except ValueError as exc:  # json.JSONDecodeError, and UnicodeDecodeError for bytes that are not UTF-8
+    except (ValueError, RecursionError) as exc:  # see embry0.json_text
         raise HTTPException(status_code=400, detail="the body is not JSON") from exc
     target = parsed.owner
     if owner is not None:
