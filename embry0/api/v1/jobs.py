@@ -663,6 +663,26 @@ async def resume_job_as(
         executor.go_on_after_account_wait(job)
         return {"job_id": job_id, "status": "resuming", "choice": "account_ready"}
 
+    offered = await _offered_choices(jobs, job_id)
+    if offered is not None and req.choice not in offered:
+        # A choice the pause did not offer (#182 review): "merge as is" where the
+        # work is only in the sandbox, a continue at a hard budget ceiling or
+        # where the sandbox lacks a toolchain. The job stays paused, its sandbox
+        # kept; max_retries_node still reads such a choice as a stop, should one
+        # reach it by another path. The message is a person's words, which a
+        # chat shows as it is; choice and offered are the ids an API caller sends.
+        from embry0.services.job_status_words import option_words
+
+        words = " or ".join(f'"{option_words(option)}"' for option in offered)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f'This pause does not offer "{option_words(req.choice)}"; it offers {words}.',
+                "choice": req.choice,
+                "offered": offered,
+            },
+        )
+
     if req.extra_budget_usd is not None:
         await _check_extra_budget(request, req.extra_budget_usd)
 
@@ -688,6 +708,25 @@ async def resume_job_as(
     )
 
     return {"job_id": job_id, "status": "resuming", "choice": req.choice}
+
+
+async def _offered_choices(jobs: Any, job_id: str) -> list[str] | None:
+    """The choices the job's pause offered, from its newest ``interrupt`` event (``max_retries_node``'s summary).
+
+    None when that event names none or cannot be read (a pause from before
+    options were recorded, a store that fails): the resume is then let
+    through as before, and the node's own refusal is the only check.
+    """
+    try:
+        event = await jobs.latest_interrupt(job_id)
+    except Exception:  # noqa: BLE001 - the node still refuses what it did not offer
+        logger.warning("job_resume_options_unread", job_id=job_id, exc_info=True)
+        return None
+    summary = event.get("summary") if isinstance(event, dict) else None
+    options = summary.get("options") if isinstance(summary, dict) else None
+    if not isinstance(options, list) or not options:
+        return None
+    return [str(option) for option in options]
 
 
 async def _check_extra_budget(request: Request, extra: float) -> None:

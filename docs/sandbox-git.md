@@ -115,7 +115,7 @@ What the operator sees, by step:
 
 | Step (`step` label) | Effect |
 |---|---|
-| `salvage_commit`, `rescue_push` | The unfinished work is not committed or pushed. The job's failure explains the branch is not on origin and names the refusal. |
+| `salvage_commit`, `rescue_push` | The unfinished work is not committed or pushed. The job's failure explains the branch is not on origin and names the refusal. Where the repository's `salvage.enabled` is false, `salvage_commit` only looks at the worktree (`git status --porcelain`) and never commits. |
 | `branch_probe` | embry0 cannot tell whether the developer's branch is on origin; it carries on as when the probe fails for any other reason. |
 | `verify_gate` | The gate reports `error` ("could not verify"), and its note is the refusal. |
 | `changed_files`, `base_branch`, `diff_lines` | Review and QA run unscoped, and the base falls back to `main`, as for any failed diff. |

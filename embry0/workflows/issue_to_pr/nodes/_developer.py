@@ -557,15 +557,7 @@ async def _commit_unfinished_work(
         return False
     step = sandbox_git.GitStep.SALVAGE_COMMIT
     try:
-        dirty = await sandbox_git.run(
-            docker,
-            container_id,
-            sandbox_git.command("status", "--porcelain"),
-            step=step,
-            timeout=15,
-            job_id=job_id,
-            max_bytes=sandbox_git.GIT_LISTING_MAX_BYTES,
-        )
+        dirty = await _uncommitted_listing(docker=docker, container_id=container_id, job_id=job_id)
         # Nothing uncommitted: either the agent committed (so _rescue_push_branch
         # can push it as it always has) or it truly produced nothing.
         if not (dirty or "").strip():
@@ -584,6 +576,39 @@ async def _commit_unfinished_work(
         return False
     logger.info("dev_rescue_commit_created", branch=branch, job_id=job_id, dirty_entries=entries)
     return True
+
+
+async def _uncommitted_listing(*, docker: Any, container_id: str, job_id: str | None) -> str:
+    """``git status --porcelain`` of the worktree: the salvage step's look at what a run left uncommitted."""
+    listing = await sandbox_git.run(
+        docker,
+        container_id,
+        sandbox_git.command("status", "--porcelain"),
+        step=sandbox_git.GitStep.SALVAGE_COMMIT,
+        timeout=15,
+        job_id=job_id,
+        max_bytes=sandbox_git.GIT_LISTING_MAX_BYTES,
+    )
+    return listing or ""
+
+
+async def _has_uncommitted_work(
+    *,
+    docker: Any,
+    container_id: str | None,
+    branch: str,
+    job_id: str | None = None,
+) -> bool:
+    """Whether a stopped run left changes uncommitted, for a job whose ``salvage.enabled`` is false (#182).
+
+    The look ``_commit_unfinished_work`` takes before it commits, and nothing
+    after it: no branch is switched to and nothing is staged or committed.
+    False where salvage never commits (no sandbox, no branch, ``main``).
+    Raises what the look raises; ``_salvage.preserve_unfinished_work`` logs it.
+    """
+    if not docker or not container_id or not branch or branch == "main":
+        return False
+    return bool((await _uncommitted_listing(docker=docker, container_id=container_id, job_id=job_id)).strip())
 
 
 async def _on_job_branch(*, docker: Any, container_id: str, branch: str, job_id: str | None) -> bool:
@@ -998,13 +1023,17 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     from embry0.services.done_when import current as current_done_when
     from embry0.services.job_settings import job_section
     from embry0.settings.sections.done_when import DONE_WHEN
+    from embry0.workflows.issue_to_pr.nodes._done_when import unmet_action
 
     done_when = await current_done_when(
         configurable.get("jobs_repo"), str(state.get("job_id") or ""), state.get("done_when")
     )
     if done_when:
         terms = done_when_contract(
-            done_when, retries=job_section(state, DONE_WHEN).retries, followup=state.get("done_when_followup")
+            done_when,
+            retries=job_section(state, DONE_WHEN).retries,
+            on_unmet=unmet_action(state),
+            followup=state.get("done_when_followup"),
         )
         prompt = f"{prompt}\n\n{terms}"
 
@@ -1234,20 +1263,25 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     # Salvage (spec 2026-10-25): a run that stops before it pushes keeps its
     # work. Every route below that ends the coding step without a verified
     # push commits what the run left uncommitted and pushes it, unfinished,
-    # under the commit_subject of the job's salvage section (#182).
+    # under the commit_subject of the job's salvage section (#182). With the
+    # section's enabled false, embry0 commits nothing: the changes stay in the
+    # sandbox and the job pauses where the commit would have paused it, and
+    # where salvage on could not make its commit (#182).
+    salvage_policy = job_section(state, SALVAGE)
     salvage: dict[str, Any] = {
         "docker": configurable.get("docker"),
         "container_id": state.get("sandbox_container_id"),
         "branch": branch,
         "job_id": state.get("job_id"),
         "agent": _salvage.coding_agent(result, state),
-        "subject_template": job_section(state, SALVAGE).commit_subject,
+        "subject_template": salvage_policy.commit_subject,
+        "commit": salvage_policy.enabled,
     }
 
     if updates.get("agent_questions_exhausted") or state.get("agent_questions_exhausted"):
         goto = "max_retries"
         kept = await _salvage.preserve_unfinished_work(**salvage, reason=_salvage.QUESTIONS)
-        if kept and kept["committed"]:
+        if _salvage.kept(kept):
             updates["unfinished_work"] = kept
     elif updates.get("pending_agent_questions") or state.get("pending_agent_questions"):
         goto = "ask_user_interrupt"
@@ -1256,7 +1290,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         # raises BudgetOverrunError at the ceiling.
         goto = "max_retries"
         kept = await _salvage.preserve_unfinished_work(**salvage, reason=_salvage.BUDGET)
-        if kept and kept["committed"]:
+        if _salvage.kept(kept):
             updates["unfinished_work"] = kept
     else:
         # Programmatic verification: the LLM is INSTRUCTED to push the branch
@@ -1283,6 +1317,11 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
             kept = await _salvage.preserve_unfinished_work(**salvage, reason=stopped, diagnostics=push_diagnostics)
             push_ok = push_ok or kept is not None
         rescued_unfinished = bool(kept and kept["committed"])
+        # Salvage off (#182): the changes a stopped run left are not committed,
+        # so they stay in the sandbox, and the job pauses below whether or not
+        # its own commits reached origin (its record may be unpushed, which is
+        # why this is decided before push_ok is).
+        left_uncommitted = _salvage.left_in_sandbox(kept)
         if not push_ok and not stopped:
             # Before stranding a finished branch behind a human decision, try
             # the one mechanical step the agent missed (see _rescue_push_branch).
@@ -1323,6 +1362,30 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
             ]
             updates["error_code"] = ErrorCode.DEV_RUN_UNFINISHED.value
             updates["current_stage"] = "dev_run_unfinished"
+            goto = "max_retries"
+        elif left_uncommitted:
+            # Never into review: as for a salvage commit, a cut-off run is not
+            # a delivery. A paused job keeps its sandbox, so continue_retrying
+            # runs the next attempt over the same working tree.
+            from embry0.safety.error_codes import ErrorCode
+
+            logger.warning(
+                "dev_run_unfinished_left_uncommitted",
+                branch=branch,
+                job_id=state.get("job_id"),
+                reason=stopped,
+            )
+            updates["unfinished_work"] = kept
+            # JobState.errors appends: only this run's new entries, never the stored list again.
+            updates["errors"] = [
+                *(updates.get("errors") or []),
+                f"The {salvage['agent']} stopped ({stopped}) before committing. This repository's "
+                "salvage.enabled is false, so embry0 did not commit its work: the changes are UNCOMMITTED in "
+                "this paused job's sandbox. Continue the job to let the next run finish them; stopping it, or "
+                "letting the pause expire, discards them.",
+            ]
+            updates["error_code"] = ErrorCode.DEV_RUN_UNFINISHED.value
+            updates["current_stage"] = "dev_run_uncommitted"
             goto = "max_retries"
         elif not push_ok:
             from embry0.safety.error_codes import ErrorCode

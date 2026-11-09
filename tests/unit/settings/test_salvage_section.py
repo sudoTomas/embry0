@@ -38,18 +38,19 @@ def _stored(document: dict[str, Any], layer: str = "deployment") -> Any:
 
 
 def test_the_section_reads_as_an_operator_writes_it() -> None:
-    data = _stored(load_yaml(f'salvage:\n  commit_subject: " {CONVENTIONAL} "\n'))
-    assert data == {"salvage": {"commit_subject": CONVENTIONAL}}, f"stored as written, trimmed: {data}"
+    data = _stored(load_yaml(f'salvage:\n  enabled: false\n  commit_subject: " {CONVENTIONAL} "\n'))
+    assert data == {"salvage": {"enabled": False, "commit_subject": CONVENTIONAL}}, f"stored as written: {data}"
     model = read_sections(CATALOG, data).models["salvage"]
-    assert model.model_dump(mode="json") == {"commit_subject": CONVENTIONAL}
+    assert model.model_dump(mode="json") == {"enabled": False, "commit_subject": CONVENTIONAL}
 
 
 def test_nothing_written_is_the_old_subject() -> None:
     _section()
     model = read_sections(CATALOG, {}).models.get("salvage")
     assert model is not None and model.model_dump(mode="json") == {
-        "commit_subject": "wip: unfinished — {agent} stopped ({reason})"
-    }, "the default is the subject the code wrote, as a template"
+        "enabled": True,
+        "commit_subject": "wip: unfinished — {agent} stopped ({reason})",
+    }, "the defaults are what the code did: salvage on, and the subject it wrote, as a template"
 
 
 @pytest.mark.parametrize(
@@ -109,7 +110,27 @@ def test_a_subject_out_of_bounds_is_refused_naming_the_key(value: Any) -> None:
 
 
 @pytest.mark.parametrize("layer", ["organization", "repository"])
-def test_an_organization_and_a_repository_may_set_the_subject(layer: str) -> None:
-    document = {"salvage": {"commit_subject": CONVENTIONAL}}
-    assert _stored(document, layer) == document, f"{layer} layer must be able to set commit_subject"
-    assert _section().org_keys == _section().repo_keys == {"commit_subject"}
+def test_an_organization_and_a_repository_may_set_every_key(layer: str) -> None:
+    document = {"salvage": {"enabled": False, "commit_subject": CONVENTIONAL}}
+    assert _stored(document, layer) == document, f"{layer} layer must be able to set enabled and commit_subject"
+    assert _section().org_keys == _section().repo_keys == {"enabled", "commit_subject"}
+
+
+# --- #182: enabled, whether embry0 commits a stopped run's work at all ------------------------
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_enabled_takes_true_or_false(value: bool) -> None:
+    document = {"salvage": {"enabled": value}}
+    assert _stored(document) == document, f"enabled {value} must be stored as written"
+    model = read_sections(CATALOG, document).models["salvage"]
+    assert model.model_dump(mode="json")["enabled"] is value
+
+
+@pytest.mark.parametrize("value", ["false", "no", "off", 0, 1, None, [False]])
+def test_anything_but_a_boolean_is_refused_naming_the_key(value: Any) -> None:
+    found = _stored({"salvage": {"enabled": value}})
+    assert isinstance(found, list) and {loc[:2] for loc, _ in found} == {("salvage", "enabled")}, (
+        f"enabled {value!r} must be refused as salvage.enabled: {found}"
+    )
+    assert all("boolean" in msg for _, msg in found), f"the refusal says it takes true or false: {found}"

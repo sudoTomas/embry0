@@ -347,8 +347,11 @@ async def job_wait(job_id: str, timeout: float = 600.0, poll_interval: float = 5
 
 @_tool
 async def job_resume(job_id: str, choice: str, guidance: str = "", confirm: bool = False) -> dict[str, Any]:
-    """Resume a paused job. choice: continue_retrying | merge_as_is | abandon; optional
-    guidance text for the agents. Requires confirm=true (mutates job state)."""
+    """Resume a paused job. choice: one of the options the pause offers, which job_get's
+    status_words.actions lists (from continue_retrying | merge_as_is | abandon); a choice
+    the pause does not offer is refused (409, with the offered ids in detail.offered) and the
+    job stays paused. Optional guidance
+    text for the agents. Requires confirm=true (mutates job state)."""
     if not confirm:
         return _confirmation_refusal("job_resume", f"resume job {job_id} with choice={choice!r}")
     return await _get_client().job_resume(job_id, choice, guidance=guidance)

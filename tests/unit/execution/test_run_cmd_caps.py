@@ -34,7 +34,7 @@ NAMED_CAPS: dict[tuple[str, str], list[str]] = {
     # A listing of paths grows with the change: git diff --name-only / --numstat, status, a PR's files.
     ("embry0.execution.workspace_diff", "compute_changed_files_via_diff"): ["GIT_LISTING_MAX_BYTES"],
     ("embry0.execution.workspace_diff", "diff_line_counts"): ["GIT_LISTING_MAX_BYTES"],
-    ("embry0.workflows.issue_to_pr.nodes._developer", "_commit_unfinished_work"): ["GIT_LISTING_MAX_BYTES"],
+    ("embry0.workflows.issue_to_pr.nodes._developer", "_uncommitted_listing"): ["GIT_LISTING_MAX_BYTES"],
     ("embry0.workflows.pr_review.nodes", "init_pr_review_node"): ["GIT_LISTING_MAX_BYTES"],
     # A lockfile is a file of the repository; a large monorepo's runs to tens of MiB.
     ("embry0.cache.image_builder", "build_qa_image"): [

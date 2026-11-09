@@ -480,6 +480,11 @@ class JobState(TypedDict, total=False):
     # that read it clears it. MUST stay declared (the merge reducer drops
     # undeclared keys).
     unfinished_work: Annotated[dict[str, Any] | None, FoldingLastValue]
+    # #182: True when a person answered "merge as is" at a pause, so the job
+    # completed as it stood rather than by finishing: its end never settles an
+    # earlier job's "did not finish" note (embry0.services.unfinished_note).
+    # MUST stay declared (the merge reducer drops undeclared keys).
+    merged_as_is: Annotated[bool | None, FoldingLastValue]
     result_summary: Annotated[str | None, FoldingLastValue]
     # RAV-603: typed deliverables collected by finalize_output_node
     # ({type, title, content, url, storage_bucket, storage_key, media_type,

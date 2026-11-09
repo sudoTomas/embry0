@@ -41,6 +41,7 @@ _BY_CODE: dict[str, str] = {
     ErrorCode.SANDBOX_AGENT_START_FAILED: "the sandbox image could not start the agent and has to be checked by an operator",
     ErrorCode.SANDBOX_REQUIRED: "the job could not run because no sandbox was available",
     ErrorCode.DEV_BRANCH_NOT_PUSHED: "the developer agent finished without pushing its branch",
+    ErrorCode.DONE_WHEN_UNMET: "the change did not meet every item of its done-when list within the allowed retries",
     ErrorCode.REPO_UNREGISTERED: "the repository is not registered in embry0",
     ErrorCode.AUTH_REJECTED: "a model provider rejected embry0's credentials",
     ErrorCode.PROVIDER_TOKEN_STALE: "a model provider's sign-in token had gone stale; embry0 refreshes it, so a retry should work",

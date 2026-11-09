@@ -249,6 +249,21 @@ def coding_agent_of(plan: list[dict[str, Any]]) -> str:
     return DEFAULT_CODER
 
 
+def review_ahead(state: Mapping[str, Any]) -> bool:
+    """Whether the route still holds a review step, from the cursor on.
+
+    The cursor is on the coding step that just ran, or parked by a re-entry
+    at the step it re-enters (the review retry loop parks it at the review),
+    so the step it names counts. A job with no plan takes the legacy fixed
+    hop to review, so it has one.
+    """
+    plan = state.get("route_plan") or []
+    if not plan:
+        return True
+    cursor = max(int(state.get("route_cursor", 0) or 0), 0)
+    return any(_step_target(step) == "review" for step in plan[cursor:])
+
+
 def advance(state: dict[str, Any]) -> dict[str, Any]:
     """State fragment that moves the cursor past the current step.
 
