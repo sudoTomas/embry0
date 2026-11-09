@@ -506,6 +506,10 @@ class MergeApprovalService:
             await asyncio.sleep(self.sweep_seconds)
 
     async def _case_id(self, job_id: str | None) -> str | None:
+        """The id of the healing case ``job_id`` works, or None.
+
+        ``find_by_job`` answers the case row itself, so its id is ``id`` (#407).
+        """
         if not job_id or self._cases is None:
             return None
         try:
@@ -513,7 +517,7 @@ class MergeApprovalService:
         except Exception:
             logger.warning("merge_approval_case_lookup_failed", job_id=job_id, exc_info=True)
             return None
-        return str(case["case_id"]) if case and case.get("case_id") else None
+        return str(case["id"]) if case and case.get("id") else None
 
     async def _verification(self, job_id: str | None) -> dict[str, Any] | None:
         if not job_id or self._verifications is None:

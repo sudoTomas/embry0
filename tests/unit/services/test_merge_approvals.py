@@ -8,6 +8,7 @@ with GitHub and the webhook notifier faked.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -22,6 +23,7 @@ from embry0.services.merge_approvals import (
     denylist_hits,
     parse_pr_url,
 )
+from embry0.storage.repositories.healing_cases import HealingCasesRepository
 from embry0.storage.repositories.merge_approvals import MergeApprovalsRepository
 
 REPO = "acme/backend"
@@ -180,9 +182,33 @@ class FakeVerifications:
         return self.row
 
 
-class FakeCases:
-    async def find_by_job(self, job_id: str) -> dict[str, Any] | None:
-        return {"case_id": "case-7"} if job_id == "job-1" else None
+async def linked_case(
+    db: Any,
+    job_id: str = "job-1",
+    *,
+    case_id: str | None = None,
+    stage: str = "tracked",
+    linked_at: datetime | None = None,
+) -> str:
+    """A healing case working ``job_id``, linked as the healing recorder links one; its id.
+
+    The service reads it through the real repository: a fake once answered a
+    shape ``find_by_job`` never answers, and no approval recorded a case (#407).
+    """
+    await db.execute(
+        "INSERT INTO jobs (job_id, repo, task, status) VALUES ($1, $2, 'Fix the rounding', 'completed') "
+        "ON CONFLICT DO NOTHING",
+        job_id,
+        REPO,
+    )
+    cases = HealingCasesRepository(db)
+    columns: dict[str, Any] = {"repo": REPO, "origin": "watcher", "stage": stage, "title": "Rounding"}
+    case = await cases.create_with_history({"id": case_id, **columns} if case_id else columns)
+    assert case is not None
+    async with cases.locked(case["id"]) as locked:
+        assert locked is not None
+        await locked.link_job(job_id, linked_at or datetime.now(UTC))
+    return str(case["id"])
 
 
 def _config(**overrides: Any) -> SimpleNamespace:
@@ -207,7 +233,7 @@ def _svc(db, github, notifier, *, verification=None, sleep=None, **config) -> Me
         notifier=notifier,
         config=_config(**config),
         verifications=FakeVerifications(verification),
-        cases=FakeCases(),
+        cases=HealingCasesRepository(db),
         # #400: never sleep for real in a test; the recorder says how long production would have.
         sleep=sleep or _no_sleep,
     )
@@ -241,11 +267,12 @@ pg = pytest.mark.requires_postgres
 @pg
 async def test_a_pr_is_asked_about_once_pinned_to_its_head(db_with_migrations, github, notifier) -> None:
     github.files = ["platform/common/src/main/resources/db/migration/V1__x.sql", "src/A.java"]
+    case_id = await linked_case(db_with_migrations)
     svc = _svc(db_with_migrations, github, notifier)
     row = await _ask(svc)
     assert row["status"] == "pending"
     assert row["head_sha"] == HEAD
-    assert row["case_id"] == "case-7"
+    assert row["case_id"] == case_id, f"the ask records the case its job works: {row['case_id']!r}"
     assert row["posted_at"] is None
     assert notifier.events == [], "the ask is recorded, not posted, until CI settles"
 
@@ -253,6 +280,7 @@ async def test_a_pr_is_asked_about_once_pinned_to_its_head(db_with_migrations, g
     assert notifier.names() == ["merge.approval_requested"]
     data = notifier.events[0][1]
     assert data["approval_id"] == row["id"]
+    assert data["case_id"] == case_id, data
     assert data["mode"] == "dry_run"
     assert data["denylisted"]["migrations"]["count"] == 1
     assert data["verification"] == {"present": False}
@@ -262,6 +290,26 @@ async def test_a_pr_is_asked_about_once_pinned_to_its_head(db_with_migrations, g
     assert again["id"] == row["id"], "a second ask for the same commit duplicated the row"
     await svc.sweep_once()
     assert notifier.names() == ["merge.approval_requested"], "a second ask for the same commit re-posted it"
+
+
+@pg
+@pytest.mark.parametrize(
+    "links, chosen",
+    [
+        # (case id, stage, minutes since it was linked). The ids run against the choice, so only the rule decides.
+        ((("hc-a", "tracked", 60), ("hc-b", "closed", 5)), "hc-a"),
+        ((("hc-b", "tracked", 60), ("hc-a", "tracked", 5)), "hc-a"),
+    ],
+    ids=["its-open-case-over-a-newer-closed-one", "the-newer-of-two-open-cases"],
+)
+async def test_a_job_linked_to_two_cases_records_the_one_find_by_job_chooses(
+    db_with_migrations, github, notifier, links, chosen
+) -> None:
+    now = datetime.now(UTC)
+    for case_id, stage, minutes in links:
+        await linked_case(db_with_migrations, case_id=case_id, stage=stage, linked_at=now - timedelta(minutes=minutes))
+    row = await _ask(_svc(db_with_migrations, github, notifier))
+    assert row["case_id"] == chosen, f"the job's links {links} record {row['case_id']!r}, not {chosen!r}"
 
 
 @pg
