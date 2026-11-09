@@ -362,9 +362,9 @@ async def answer_ask(body: AnswerBody, request: Request) -> dict[str, Any]:
     except HTTPException:
         if last is not None:
             return {"already": True, "answer": last.get("answer"), "by": last.get("answered_by"), "asks": []}
-        raise HTTPException(status_code=409, detail="that quest was answered or moved on elsewhere") from None
+        raise HTTPException(status_code=409, detail="that decision was answered or moved on elsewhere") from None
     if body.action not in chat_actions(decision):
-        raise HTTPException(status_code=409, detail=f"{body.action} is not open on that quest from a chat")
+        raise HTTPException(status_code=409, detail=f"{body.action} is not open on that decision from a chat")
     if not await _may_decide(request, decision, body.person):
         raise HTTPException(
             status_code=403, detail="it is not theirs to decide: an owner, the person it was sent to, or an admin"
@@ -666,7 +666,7 @@ async def decision_by_code(code: str, request: Request) -> dict[str, Any]:
     try:
         decision = await get_decision(decision_id, request)
     except HTTPException:
-        raise HTTPException(status_code=409, detail="that quest was answered or moved on elsewhere") from None
+        raise HTTPException(status_code=409, detail="that decision was answered or moved on elsewhere") from None
     return {"code": code.strip().upper(), "decision": decision, "actions": chat_actions(decision)}
 
 

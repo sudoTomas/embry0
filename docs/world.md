@@ -31,7 +31,7 @@ A job's report says what it did, the pull request (files and lines changed, the 
 - **Reject**: the work is not wanted; tick "Close the pull request" to close it with your note as its last comment.
 - **Rate it**: good, needs work or bad, with a note. Ratings show in the agent's record and job history; they do not change XP.
 
-Reviewing is not part of the game: these buttons, like the Decisions page's, call the job's own review routes ([API](api.md#reviewing-a-job)).
+Reviewing is not part of the game: these buttons, like the Decisions page's, call the job's own review routes ([API](api.md#reviewing-a-job)), which the MCP review tools (`job_evaluation`, `job_evaluate`, `job_send_back`, `job_run_again`, `job_dismiss`, `job_reject`) call too. A job's evaluation reads at `GET /api/v1/jobs/{job_id}/evaluation` with the game on or off.
 
 Only an admin session reviews, starts and cancels; others see everything read-only.
 

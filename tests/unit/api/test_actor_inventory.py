@@ -43,6 +43,8 @@ COLLABORATION_ROUTES: dict[str, tuple[str, ...]] = {
     "who started a job, set its finish line, answered its questions or acted on its issue: the people on it": (
         "/api/v1/jobs/{job_id}",
         "/api/v1/jobs/{job_id}/inputs",
+        # Who reviewed the job: an evaluation's `by`, a collaboration field (docs/api.md).
+        "/api/v1/jobs/{job_id}/evaluation",
         "/api/v1/issues/{issue_id}",
         "/api/v1/issues/{issue_id}/inputs",
         "/api/v1/issues/{issue_id}/activity",

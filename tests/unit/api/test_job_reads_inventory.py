@@ -60,6 +60,7 @@ JOB_ROUTES: dict[str, str] = {
     "/api/v1/jobs": "lists the jobs of the repositories the key covers, narrowed before the page and the total",
     "/api/v1/jobs/{job_id}": "reads another repository's job as a missing one (404)",
     "/api/v1/jobs/{job_id}/inputs": "has no questions for another repository's job, as for a missing one ([])",
+    "/api/v1/jobs/{job_id}/evaluation": "reads another repository's job's evaluation as a missing job's (404)",
     "/api/v1/jobs/{job_id}/logs/events": "has no events for another repository's job, as for a missing one",
     "/api/v1/jobs/{job_id}/verification": "has no verification for another repository's job (404)",
     "/api/v1/jobs/{job_id}/agents/{agent_type}/session": "has no stored session for another repository's job (404)",

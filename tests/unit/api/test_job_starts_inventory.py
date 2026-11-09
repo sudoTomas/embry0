@@ -1304,6 +1304,8 @@ MCP_STARTS: dict[str, tuple[Callable[[Any, Mapping[str, str]], Awaitable[Any]], 
     "job_create": (lambda s, v: s.job_create(task="Fix it", repo=UNCOVERED), True, None),
     "job_resume": (lambda s, v: s.job_resume(v["job_id"], "abandon", confirm=True), True, _job_paused),
     "job_answer": (lambda s, v: s.job_answer(v["job_id"], v["input_id"], "yes", confirm=True), True, _job_waits),
+    "job_run_again": (lambda s, v: s.job_run_again(v["job_id"], confirm=True), True, _launched),
+    "job_send_back": (lambda s, v: s.job_send_back(v["job_id"], "again", confirm=True), True, _dispatch),
     "watcher_trigger": (lambda s, v: s.watcher_trigger(timeout=5, stack=UNCOVERED), True, _watchers),
     "proposal_accept": (
         lambda s, v: s.proposal_accept(f"issue:{CHILD[UNCOVERED]}", by="ada", confirm=True),
