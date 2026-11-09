@@ -81,3 +81,19 @@ def nested_deeper_than(value: Any, depth: int) -> bool:
             return True
         stack.extend((child, level + 1) for child in children)
     return False
+
+
+def json_kind(value: Any) -> str:
+    """A decoded JSON value's kind in JSON's own words: ``an object``, ``an array``,
+    ``a string``, ``a number``, ``true``, ``false`` or ``null``."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, Mapping):
+        return "an object"
+    if isinstance(value, list | tuple):
+        return "an array"
+    if isinstance(value, str):
+        return "a string"
+    return "a number"

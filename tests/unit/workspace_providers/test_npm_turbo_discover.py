@@ -60,3 +60,29 @@ def test_discover_missing_package_json_raises(tmp_path: Path):
     with pytest.raises(WorkspaceProviderError) as exc:
         provider.discover()
     assert "package.json" in str(exc.value)
+
+
+@pytest.mark.parametrize("where", ["root", "member"])
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [("[]", "an array"), ("42", "a number"), ('"x"', "a string"), ("null", "null"), ("false", "false")],
+)
+def test_discover_refuses_a_package_json_that_is_not_an_object(tmp_path: Path, where: str, text: str, kind: str):
+    """#425: such a package.json decoded and reached ``.get``; it is as unreadable as broken JSON,
+    and the refusal says in JSON's words what it holds rather than calling it invalid JSON."""
+    import json
+
+    from embry0.workspace_providers import WorkspaceProviderError
+
+    (tmp_path / "apps" / "web").mkdir(parents=True)
+    root = {"name": "toy", "workspaces": ["apps/*"]}
+    (tmp_path / "package.json").write_text(text if where == "root" else json.dumps(root))
+    (tmp_path / "apps" / "web" / "package.json").write_text(text if where == "member" else json.dumps({"name": "web"}))
+
+    provider = NpmWorkspacesTurboProvider(tmp_path, {})
+    try:
+        with pytest.raises(WorkspaceProviderError) as exc:
+            provider.discover()
+    except (AttributeError, TypeError) as error:
+        pytest.fail(f"discover raised {type(error).__name__} on a {where} package.json holding {text}: {error}")
+    assert str(exc.value).endswith(f"package.json is valid JSON but not an object: it is {kind}"), exc.value

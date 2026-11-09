@@ -15,6 +15,7 @@ from langgraph.types import Command
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
+from embry0.json_text import json_object
 from embry0.orchestration.nodes.agent import agent_attempt
 from embry0.workflows.issue_to_pr.nodes._common import (
     DECIDE_NOW_MAX_TURNS,
@@ -484,10 +485,11 @@ The JSON object is the last thing you output — nothing after it."""
         last_output = result["agent_outputs"][-1] if isinstance(result.get("agent_outputs"), list) else None
         if last_output:
             output_text = last_output.get("output", "")
-            import json as json_mod
-
-            try:
-                data = json_mod.loads(output_text)
+            # #425: only a JSON object carries a verdict. Text that is not JSON,
+            # JSON that is not an object ([1, 2], 42, "approved") and JSON Python
+            # cannot decode all take the "no readable verdict" path below.
+            data = json_object(output_text) if isinstance(output_text, str) else None
+            if data is not None:
                 writer(events.validation_result(validation=data.get("validation", {})))
                 # RAV-1079: duplicates_open_pr rides the decision event so the
                 # trace/dashboard show the overlap verdict (informational —
@@ -506,7 +508,7 @@ The JSON object is the last thing you output — nothing after it."""
                         duplicates_open_pr=_review_dup if isinstance(_review_dup, dict) else None,
                     )
                 )
-            except (ValueError, RecursionError, TypeError):  # see embry0.json_text
+            else:
                 # #356: a bare json.loads was the ONLY thing that emitted a
                 # verdict, so an unreadable review used to log nothing at all
                 # while the router had already approved it. Say so — the
