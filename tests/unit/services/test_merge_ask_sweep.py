@@ -11,13 +11,13 @@ from typing import Any
 import pytest
 
 from embry0.services.merge_approvals import MergeApprovalService
+from embry0.storage.repositories.healing_cases import HealingCasesRepository
 from embry0.storage.repositories.merge_approvals import MergeApprovalsRepository
 from tests.unit.services.test_merge_approvals import (
     GREEN_RUNS,
     HEAD,
     NEW_HEAD,
     PR_URL,
-    FakeCases,
     FakeGitHub,
     FakeNotifier,
     FakeVerifications,
@@ -46,7 +46,7 @@ def _svc(db, github, notifier, *, jobs=None, **config) -> MergeApprovalService:
         notifier=notifier,
         config=_config(**config),
         verifications=FakeVerifications(None),
-        cases=FakeCases(),
+        cases=HealingCasesRepository(db),
         jobs=jobs if jobs is not None else FakeJobs(),
     )
 
