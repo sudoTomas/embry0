@@ -661,6 +661,22 @@ async def test_stderr_tail_is_size_capped() -> None:
     assert out.stderr_tail.endswith("the real cause")
 
 
+@pytest.mark.asyncio
+async def test_a_line_of_json_that_is_not_an_object_does_not_end_the_read_loop() -> None:
+    """#411: such a line reached ``event.get("type")`` as an int, a list or a
+    string, and the AttributeError ended the run while the agent worked on."""
+    stdout = [b"42\n", b"[1, 2]\n", b'"x"\n', b"null\n", b"true\n", _STARTED, _FINAL_OK]
+    seen: list[dict] = []
+    try:
+        out = await _runner_with_procs([_proc(returncode=0, stdout=stdout)]).run(
+            container="c", config={"agent_type": "qa"}, on_event=seen.append
+        )
+    except AttributeError as exc:
+        pytest.fail(f"a line of JSON that is not an object ended the read loop: {exc}")
+    assert (out.is_error, out.output) == (False, "done"), out
+    assert seen == [json.loads(_STARTED)], seen
+
+
 # --- #281 review: the data-exposure guarantees, each with its own test ------
 
 

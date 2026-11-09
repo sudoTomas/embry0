@@ -6,6 +6,7 @@ import json
 from typing import Any, get_type_hints
 
 import pytest
+import structlog.testing
 
 from embry0.execution import events
 from embry0.execution.events import EVENT_SCHEMAS, EventType, contract, parse_event
@@ -72,6 +73,30 @@ def test_parse_event_round_trips_a_constructor() -> None:
 def test_parse_event_rejects_garbage() -> None:
     assert parse_event("not json") is None
     assert parse_event("") is None
+
+
+@pytest.mark.parametrize("line", ["42", "[1, 2]", '"x"', "null", "true"])
+def test_parse_event_answers_none_for_json_that_is_not_an_object(line: str) -> None:
+    """#411: the agent runner's read loop calls .get on every event."""
+    with structlog.testing.capture_logs() as logs:
+        parsed = parse_event(line)
+    assert parsed is None, f"{line!r} is JSON but not an event object, and parse_event answered {parsed!r}"
+    assert [entry["event"] for entry in logs] == ["event_parse_failed"], logs
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["1" * 5000, '{"type": "progress", "n": ' + "1" * 5000 + "}", "[" * 100_000],
+    ids=["integer-past-the-digit-limit", "object-holding-one", "nesting-past-the-recursion-limit"],
+)
+def test_parse_event_answers_none_for_json_python_cannot_decode(line: str) -> None:
+    try:
+        with structlog.testing.capture_logs() as logs:
+            parsed = parse_event(line)
+    except Exception as exc:  # the point: nothing escapes
+        pytest.fail(f"parse_event raised {type(exc).__name__} on an undecodable line: {exc}")
+    assert parsed is None, parsed
+    assert [entry["event"] for entry in logs] == ["event_parse_failed"], logs
 
 
 def test_emit_to_stdout_writes_one_line(capsys: pytest.CaptureFixture[str]) -> None:
