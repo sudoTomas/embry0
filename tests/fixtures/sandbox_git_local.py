@@ -36,6 +36,24 @@ def localize(argv: list[str], config: Path) -> list[str]:
     return [argv[0], argv[1], local + argv[2][len(production) :], *argv[3:]]
 
 
+#: The sandbox's ``HEAD`` in the fakes: another commit than the job's branch, as after a run that ended on
+#: ``main``, so a check that read ``HEAD`` for the branch's tip would fail (#435).
+MAIN_SHA = "a" * 40
+
+
+def reads_head(cmd: list[str]) -> bool:
+    """Whether a docker exec argv reads the sandbox's ``HEAD``: a fake answers :data:`MAIN_SHA`."""
+    return [str(w) for w in cmd[-3:]] == ["rev-parse", "--verify", "HEAD"]
+
+
+def reads_branch_tip(cmd: list[str]) -> bool:
+    """Whether a docker exec argv is the push check's read of the sandbox's own tip of the job's branch (#435)."""
+    from embry0.workflows.issue_to_pr.nodes._developer import _PROBE_NO_BRANCH
+
+    text = readable(cmd)
+    return "rev-parse --verify --quiet refs/heads/" in text and f"|| echo {_PROBE_NO_BRANCH}" in text
+
+
 def body(argv: list[str]) -> str:
     """The part of a sandbox_git argv after its prelude: the repository check and the step's own shell."""
     production = sandbox_git.prelude()

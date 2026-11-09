@@ -38,7 +38,8 @@ PAUSE_WORDS: dict[str, str] = {
     "dev_run_uncommitted": (
         "the developer stopped before committing; its work is uncommitted in the job's sandbox, not on its branch."
     ),
-    "dev_branch_missing": "the developer stopped without pushing its branch, so its work was not saved.",
+    # #435: not pushed, the forge holding another commit, and a forge embry0 could not read all pause here.
+    "dev_branch_missing": "embry0 could not confirm the developer's work is on its branch on the forge.",
     "review_errored": "the review failed before it gave a verdict.",
     "review_unparseable": "the review gave no verdict embry0 can act on.",
     "review_toolchain_missing": "the sandbox has no compiler or test runner, so the review could not run the tests.",

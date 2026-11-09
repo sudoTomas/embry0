@@ -91,7 +91,7 @@ async def test_the_developer_gets_the_list_as_its_contract_and_an_unreported_run
     from embry0.workflows.issue_to_pr.nodes import developer_node
 
     docker = MagicMock()
-    docker.run_cmd = AsyncMock(side_effect=["", "abc\trefs/heads/embry0/iss-abc12345-test-task"])
+    docker.run_cmd = AsyncMock(side_effect=["", "abc\n", "abc\trefs/heads/embry0/iss-abc12345-test-task"])
     docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
     run = AsyncMock(return_value={**_result(None), "events": [], "total_cost_usd": 0.05})
     with (
@@ -116,7 +116,7 @@ async def test_a_person_s_edit_on_the_row_is_the_next_run_s_contract() -> None:
     mine = parse_done_when({"items": [{"done": "Only the header row"}]}, source="person")
     jobs = MagicMock(get=AsyncMock(return_value={"done_when": mine}), update=AsyncMock())
     docker = MagicMock()
-    docker.run_cmd = AsyncMock(side_effect=["", "abc\trefs/heads/embry0/iss-abc12345-test-task"])
+    docker.run_cmd = AsyncMock(side_effect=["", "abc\n", "abc\trefs/heads/embry0/iss-abc12345-test-task"])
     docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
     met = [{"id": "d1", "met": True, "evidence": "tests/test_export.py passes"}]
     run = AsyncMock(return_value={**_result(met), "events": [], "total_cost_usd": 0.05})
@@ -232,7 +232,7 @@ async def test_the_developer_s_contract_says_how_often_an_unmet_report_goes_back
     from embry0.workflows.issue_to_pr.nodes import developer_node
 
     docker = MagicMock()
-    docker.run_cmd = AsyncMock(side_effect=["", "abc\trefs/heads/embry0/iss-abc12345-test-task"])
+    docker.run_cmd = AsyncMock(side_effect=["", "abc\n", "abc\trefs/heads/embry0/iss-abc12345-test-task"])
     docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
     run = AsyncMock(return_value={**_result(MET), "events": [], "total_cost_usd": 0.05})
     with (

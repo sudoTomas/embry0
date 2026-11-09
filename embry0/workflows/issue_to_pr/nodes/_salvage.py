@@ -112,16 +112,25 @@ async def preserve_unfinished_work(
     reason: str,
     subject_template: str,
     commit: bool,
+    forge_url: str = "",
     diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Commit what a stopped run left uncommitted and push the branch.
 
     ``subject_template`` is the job's ``salvage.commit_subject`` and
-    ``commit`` its ``salvage.enabled``.
+    ``commit`` its ``salvage.enabled``. The push counts only once the forge,
+    read at ``forge_url``, has the branch at the sandbox's own tip of it
+    (:func:`_verify_branch_pushed`).
 
     The record (``{branch, agent, reason, committed}``) when the branch is on
     origin with the run's work, ``committed`` saying whether embry0 made a
     commit for it; None when there was nothing to push or the push failed.
+    A salvage commit keeps its record when the push cannot be confirmed
+    (#435), with ``pushed: False``: the commit is the run's unfinished work
+    whatever the forge says, and the pause and a delivery must name it.
+    When embry0's push itself failed, or never ran, the record says why in
+    ``push_error``: the commit is then only in the sandbox
+    (:func:`not_on_the_forge`).
 
     With ``commit`` false nothing is committed: a run that left changes
     uncommitted gets a record whether or not its own commits were pushed,
@@ -131,6 +140,7 @@ async def preserve_unfinished_work(
     Never raises: a failure is logged and the job takes its old path.
     """
     uncommitted = False
+    diagnostics = {} if diagnostics is None else diagnostics
     try:
         if commit:
             committed = await _nodes._commit_unfinished_work(
@@ -146,7 +156,7 @@ async def preserve_unfinished_work(
                 docker=docker, container_id=container_id, branch=branch, job_id=job_id
             )
         pushed = await _nodes._rescue_push_branch(
-            docker=docker, container_id=container_id, branch=branch, diagnostics=diagnostics
+            docker=docker, container_id=container_id, branch=branch, diagnostics=diagnostics, forge_url=forge_url
         )
     except Exception as exc:  # noqa: BLE001 - salvage never fails the job
         logger.warning("dev_salvage_failed", branch=branch, job_id=job_id, error=str(exc))
@@ -155,6 +165,21 @@ async def preserve_unfinished_work(
         logger.info("dev_salvage_off_left_uncommitted", branch=branch, job_id=job_id, agent=agent, reason=reason)
         record = {"branch": branch, "agent": agent, "reason": reason, "committed": False}
         return {**record, "uncommitted": True, "pushed": pushed}
+    if not pushed and committed:
+        record = {"branch": branch, "agent": agent, "reason": reason, "committed": True, "pushed": False}
+        if not diagnostics.get("rescue_pushed"):
+            record["push_error"] = str(
+                diagnostics.get("push_error") or "embry0 did not push it: it could not tell what the branch had to push"
+            )[:300]
+        logger.warning(
+            "dev_salvage_push_unconfirmed",
+            branch=branch,
+            job_id=job_id,
+            agent=agent,
+            reason=reason,
+            push_error=record.get("push_error"),
+        )
+        return record
     if not pushed:
         return None
     logger.info("dev_salvage_pushed", branch=branch, job_id=job_id, agent=agent, reason=reason, committed=committed)
@@ -174,6 +199,13 @@ def left_in_sandbox(record: Mapping[str, Any] | None) -> bool:
     is" away).
     """
     return bool(record and not record.get("committed") and record.get("uncommitted"))
+
+
+def not_on_the_forge(record: Mapping[str, Any] | None) -> bool:
+    """Whether ``record`` is a salvage commit the forge was not shown to have (#435): its push failed, or could
+    not be confirmed. The commit may be only in the sandbox, so nothing that ends the job and destroys it may be
+    offered as a delivery, as for :func:`left_in_sandbox`."""
+    return bool(record and record.get("committed") and record.get("pushed") is False)
 
 
 def committed_unfinished(record: Mapping[str, Any] | None) -> bool:
@@ -205,10 +237,16 @@ def prompt_section(record: dict[str, Any] | None, *, subject_template: str) -> s
         return None
     branch = record.get("branch") or "the job's branch"
     subject = _subject_of(record, subject_template)
+    if record.get("push_error"):
+        pushed = "but could not push it, so it is only here, checked out"
+    elif record.get("pushed") is False:
+        pushed = "and pushed it, though the forge was not shown to have it; it is checked out here"
+    else:
+        pushed = "and pushed it, so it is checked out here"
     return (
         f"\nUnfinished work from your earlier run:\nThat run stopped ({record.get('reason') or 'before it finished'}) "
         f"before it committed. embry0 committed what it left in the working tree as `{subject}` "
-        f"on {branch} and pushed it, so it is checked out here. Do not start over: review that commit "
+        f"on {branch} {pushed}. Do not start over: review that commit "
         "against the task, finish what is missing, run the checks, then commit and push."
     )
 
@@ -223,7 +261,16 @@ def pause_note(record: dict[str, Any] | None) -> str:
         )
     if not record or not record.get("committed"):
         return ""
+    who = record.get("agent") or "developer"
+    if record.get("push_error"):
+        # #435: the push failed, so the commit is only in this paused job's sandbox.
+        return (
+            f" embry0 committed the {who}'s UNFINISHED work on `{record.get('branch')}` but could not push it "
+            f"({record['push_error']}): it is only in this paused job's sandbox, and stopping the job or letting "
+            "the pause expire discards it."
+        )
     return (
-        f" embry0 kept the {record.get('agent') or 'developer'}'s UNFINISHED work on "
-        f"`{record.get('branch')}`; continue from that branch rather than starting over."
+        f" embry0 kept the {who}'s UNFINISHED work on `{record.get('branch')}`"
+        + (", though it could not confirm the forge has it" if record.get("pushed") is False else "")
+        + "; continue from that branch rather than starting over."
     )

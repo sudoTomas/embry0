@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from tests.fixtures.sandbox_git_local import readable
+from tests.fixtures.sandbox_git_local import readable, reads_branch_tip
 from tests.unit.workflows.test_developer_salvage import (
     _BRANCH,
     _finished,
@@ -86,8 +86,17 @@ async def test_the_agent_s_own_commits_are_still_pushed() -> None:
 class _OtherBranch(_Sandbox):
     """Another branch checked out while the job's branch exists: salvage on refuses to guess where to commit."""
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        # The job's branch is in the sandbox, at its own commit, and on the forge when the run pushed it (#435).
+        self.tips[_BRANCH] = "abc123"
+        if self.on_origin:
+            self.forge_tip = self.tips[_BRANCH]
+
     async def run_cmd(self, cmd: list[str], timeout: float | None = None, **kwargs: Any) -> str:
         joined = readable(cmd)
+        if reads_branch_tip(cmd):
+            return await super().run_cmd(cmd, timeout, **kwargs)
         if "rev-parse" in joined and "--verify" in joined and "refs/heads/" in joined:
             self.calls.append(cmd)
             return "sha\n"

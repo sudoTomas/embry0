@@ -88,7 +88,7 @@ class ErrorCode(StrEnum):
     DISPATCH_FAILED = "ERR_DISPATCH_FAILED"  # API asked for a job and execute() raised before one existed (#284) — response-only, never a jobs.error_code
 
     # Developer pipeline guard
-    DEV_BRANCH_NOT_PUSHED = "ERR_DEV_BRANCH_NOT_PUSHED"  # developer_node finished but its branch was never pushed to origin (LLM forgot the push step) — caught before init_qa hits a generic clone failure
+    DEV_BRANCH_NOT_PUSHED = "ERR_DEV_BRANCH_NOT_PUSHED"  # developer_node could not confirm its branch on the forge (not pushed, another commit there, or the forge unreadable; #435) — caught before init_qa hits a generic clone failure
 
     # RAV-1271 — interrupt hygiene
     EMPTY_INTERRUPT = "ERR_EMPTY_INTERRUPT"  # an ask_user interrupt was reached with zero questions (upstream routing bug) — failed loudly instead of pausing on nothing

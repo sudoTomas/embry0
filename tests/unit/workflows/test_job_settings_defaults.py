@@ -122,7 +122,7 @@ def test_the_developer_s_contract_ends_as_it_did(settings: dict[str, Any]) -> No
     from embry0.workflows.issue_to_pr.nodes import developer_node
 
     docker = MagicMock()
-    docker.run_cmd = AsyncMock(side_effect=["", f"abc\trefs/heads/{_BRANCH}"])
+    docker.run_cmd = AsyncMock(side_effect=["", "abc\n", f"abc\trefs/heads/{_BRANCH}"])
     docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
     run = AsyncMock(return_value={**_unreported(), "events": [], "total_cost_usd": 0.05})
     state = {
