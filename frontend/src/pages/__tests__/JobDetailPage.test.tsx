@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   verification: null as unknown,
   verificationOpts: null as unknown,
   attempts: [] as unknown[],
+  inputs: [] as unknown[],
   refetch: vi.fn(),
   refetchInputs: vi.fn(),
   refetchVerification: vi.fn(),
@@ -32,7 +33,10 @@ vi.mock("@/hooks/useJobLogs", () => ({
     };
   },
 }));
-vi.mock("@/hooks/useInputs", () => ({ useJobInputs: () => ({ data: [], refetch: state.refetchInputs }) }));
+vi.mock("@/hooks/useInputs", () => ({
+  useJobInputs: () => ({ data: state.inputs, refetch: state.refetchInputs }),
+  useAnswerInput: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock("@/hooks/useTraces", () => ({ useTraces: () => ({ data: { traces: [], total: 0 } }) }));
 vi.mock("@/hooks/useRepos", () => ({ useRegisteredRepos: () => ({ data: [] }) }));
 vi.mock("@/hooks/useQaResults", () => ({
@@ -95,6 +99,7 @@ beforeEach(() => {
   state.job = job();
   state.verification = null;
   state.attempts = [];
+  state.inputs = [];
   state.refetch.mockReset();
   state.refetchInputs.mockReset();
   state.refetchVerification.mockReset();
@@ -345,6 +350,22 @@ describe("JobDetailPage", () => {
     rerender(ui());
     expect(state.refetch.mock.calls.length, "a later event batch must not refetch again").toBe(calls);
     expect(state.refetchInputs.mock.calls.length).toBe(calls);
+  });
+
+  it("a finished job lists the question its agent answered itself, with what it went on with and an Override (#410)", () => {
+    state.job = job({ status: "completed", finished_at: "2026-10-20T13:00:00Z" });
+    state.inputs = [
+      {
+        id: "inp-1", issue_id: null, job_id: "j1", asking_node: "developer", question: "Which database should this use?",
+        importance: "auto_answerable", auto_answer: "PostgreSQL, as the rest of the service does", answer: null,
+        answered_by: null, status: "auto_answered", created_at: "2026-10-20T12:30:00Z", answered_at: null,
+      },
+    ];
+    mount();
+    expect(screen.getByText("Which database should this use?")).toBeInTheDocument();
+    expect(screen.getByText("PostgreSQL, as the rest of the service does")).toBeInTheDocument();
+    expect(screen.getByText("Orchestrator answered")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Override" })).toBeInTheDocument();
   });
 
   it("the ledger is collapsed and holds the traces table", () => {

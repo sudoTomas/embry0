@@ -87,6 +87,11 @@ async def _process_stream(
                             # and QA, fresh run and resume — streams through
                             # here. Best-effort: a stage write must never fail
                             # the workflow (same stance as checkpoint purge).
+                            # #410: the questions the node's agent answered itself become the job's
+                            # inputs here, once per node run, as its update streams.
+                            auto_answered = node_output.get("auto_answered_agent_questions")
+                            if auto_answered:
+                                await self._record_auto_answers(issue_id, job_id, list(auto_answered))
                             stage = node_output.get("current_stage")
                             if stage and stage != last_persisted_stage:
                                 last_persisted_stage = stage

@@ -6,6 +6,8 @@ pre-split module.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -1079,6 +1081,59 @@ async def _announce_finished(self: IssueExecutor, job_id: str) -> None:
     """spec 3.5: every terminal transition ends with job_finished. Called right
     after the terminal status write at every site (a guard test enforces it)."""
     await emit_job_finished(self._jobs, getattr(self, "_event_bus", None), getattr(self, "_metrics", None), job_id)
+
+
+def _stable_input_id(job_id: str, asking_node: str, question: str, answer: Any) -> str:
+    digest = hashlib.sha256(json.dumps([job_id, asking_node, question, answer], default=str).encode()).hexdigest()
+    return f"inp-{digest[:12]}"
+
+
+async def _record_auto_answers(
+    self: IssueExecutor, issue_id: str | None, job_id: str, questions: list[dict[str, Any]]
+) -> None:
+    """Store each question an agent asked and answered itself, as an ``auto_answered`` input of the job (#410).
+
+    ``_enforce_ask_user_cap`` splits such questions (``importance="auto_answerable"``) from the blocking ones
+    and puts them on the node's update as ``auto_answered_agent_questions``, each with the ``input_id`` its row
+    takes; the workflow goes on without waiting. Each becomes a row of the job's inputs, with the answer the
+    agent suggested, under its job and the job's issue, so the dashboard shows it with the job's other inputs
+    and a person can override it (the answer routes accept an ``auto_answered`` row). Audited as
+    ``issue.input_created``, as a blocking question is, when the row is new: a node's update replayed on a
+    resume carries the same ids and writes nothing. Best-effort: a write that fails is logged and never fails
+    the workflow, and the questions after it are still tried.
+    """
+    inputs = getattr(self, "_inputs", None)
+    if inputs is None or not questions:
+        return
+    for question in questions:
+        text = str(question.get("question") or "")
+        if not text:
+            continue
+        asking_node = str(question.get("asking_node") or "developer")
+        suggested = question.get("auto_answer")
+        # An update built before questions carried an id (one replayed from a checkpoint written by an older
+        # release) gets one made from what it says, so a second replay still writes nothing.
+        input_id = str(question.get("input_id") or _stable_input_id(job_id, asking_node, text, suggested))
+        try:
+            written = await inputs.record_auto_answer(
+                input_id=input_id,
+                issue_id=issue_id,
+                job_id=job_id,
+                question=text,
+                asking_node=asking_node,
+                auto_answer=None if suggested is None else str(suggested),
+            )
+            if written:
+                await self._emit_audit(
+                    self._db,
+                    "issue.input_created",
+                    actor=asking_node,
+                    details={"input_id": input_id, "question": text, "importance": "auto_answerable"},
+                    audit_log_path=getattr(self, "_audit_log_path", None),
+                    issue_id=issue_id,
+                )
+        except Exception:
+            logger.warning("auto_answer_persist_failed", job_id=job_id, input_id=input_id, exc_info=True)
 
 
 async def _handle_needs_info(self: IssueExecutor, issue_id: str | None, job_id: str, decision: dict[str, Any]) -> None:

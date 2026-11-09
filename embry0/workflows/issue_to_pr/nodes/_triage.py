@@ -533,7 +533,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # the triage agent before processing the needs_info action.
     pending_questions = _extract_ask_user_events({"events": collected_events}, calling_node="triage")
     if pending_questions:
-        from embry0.orchestration.nodes.agent import _enforce_ask_user_cap
+        from embry0.orchestration.nodes.agent import _enforce_ask_user_cap, with_cap_updates
 
         exhausted, cap_updates = _enforce_ask_user_cap(state, pending_questions, job_id_for_log=state.get("job_id"))
         if exhausted:
@@ -550,7 +550,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             )
         # Auto-answerables: fold into the result so downstream nodes can see
         # them, then continue normal triage routing below.
-        result = {**result, **cap_updates}
+        result = with_cap_updates(result, cap_updates)
 
     # Check needs_info → interrupt
     # action lives in triage_decision (the full TriageDecision dict), not in the
@@ -760,7 +760,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         # Enforce the cap again on the re-run's events (state now has updated rounds).
         pending_questions = _extract_ask_user_events({"events": collected_events}, calling_node="triage")
         if pending_questions:
-            from embry0.orchestration.nodes.agent import _enforce_ask_user_cap
+            from embry0.orchestration.nodes.agent import _enforce_ask_user_cap, with_cap_updates
 
             exhausted, cap_updates = _enforce_ask_user_cap(
                 {**state, **result}, pending_questions, job_id_for_log=state.get("job_id")
@@ -776,7 +776,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 )
             # Auto-answerable-only — keep the cap_updates on result and
             # continue the post-triage routing below.
-            result = {**result, **cap_updates}
+            result = with_cap_updates(result, cap_updates)
 
     # Phase 5 Task 4: parse the optional set_qa_decision the triage agent
     # emits per the QA Decision section of the triage system prompt. The prompt
@@ -1009,7 +1009,7 @@ def _route_qa_failure_action(
             },
         )
     # AskUser
-    from embry0.orchestration.nodes.agent import _enforce_ask_user_cap
+    from embry0.orchestration.nodes.agent import _enforce_ask_user_cap, with_cap_updates
 
     question = {
         "question": action.question,
@@ -1021,15 +1021,13 @@ def _route_qa_failure_action(
         writer(
             events.node_completed(node="triage", agent="triage", attempt=attempt, action="qa_ask_user_cap_exhausted")
         )
-        return Command(goto="max_retries", update={**result, **cap_updates})
+        # with_cap_updates: this second cap call's list must not drop the questions the agent answered itself,
+        # folded into result above (#410).
+        return Command(goto="max_retries", update=with_cap_updates(result, cap_updates))
     writer(events.node_completed(node="triage", agent="triage", attempt=attempt, action="qa_ask_user"))
     return Command(
         goto="ask_user_interrupt",
-        update={
-            **result,
-            **cap_updates,
-            "current_stage": "qa_ask_user",
-        },
+        update={**with_cap_updates(result, cap_updates), "current_stage": "qa_ask_user"},
     )
 
 
