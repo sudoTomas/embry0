@@ -794,9 +794,15 @@ ui:
   # the Achievements page, the chat box and the Game content tab. While false
   # the dashboard opens on the Overview, and GET /world, its characters and
   # quests, GET /progression and POST /progression/rebuild answer 404.
-  # Reviewing a job and the content pack's routes work either way.
+  # Reviewing a job and the content pack's routes work either way. An
+  # organization's value is read by API keys whose repository allowlist covers
+  # its repositories: such a key sees the game when any organization it covers
+  # has it on. Every other caller, every SSO session among them, reads the
+  # deployment's.
   # game: true
 
   # The page the dashboard opens on: guild or overview. While `game` is false
-  # it opens on the Overview, whatever this says.
+  # it opens on the Overview, whatever this says. A key whose allowlist covers
+  # several organizations opens on the page those with the game on agree on,
+  # else on the deployment's.
   # home: guild

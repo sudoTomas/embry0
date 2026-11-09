@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { NAV_GROUPS } from "@/components/layout/navGroups";
+import { clearStoredApiKey, setStoredApiKey } from "@/lib/apiKey";
 import { SETTINGS_TABS, settingsTab, settingsTabs } from "@/lib/settingsTabs";
-import { homePage, navGroupsFor, normalizeUiSettings, UI_DEFAULTS, type UiSettings } from "@/lib/uiSettings";
+import {
+  homePage,
+  navGroupsFor,
+  normalizeUiSettings,
+  readStoredUiSettings,
+  storeUiSettings,
+  UI_DEFAULTS,
+  type UiSettings,
+} from "@/lib/uiSettings";
 
 /** Each group's entries as `label path`, the way the sidebar draws them. */
 function nav(ui: UiSettings): Record<string, string[]> {
@@ -50,5 +59,20 @@ describe("the settings document's ui section, as the dashboard reads it (#177)",
     expect(settingsTab("game", true).value).toBe("game");
     expect(settingsTab("game", false).value).toBe("general");
     expect(settingsTab("policy", false).value).toBe("policy");
+  });
+});
+
+describe("the kept ui answer is the caller's (ADR 0029)", () => {
+  it("is forgotten when the browser signs in with another key, or signs out", () => {
+    storeUiSettings({ game: false, home: "guild" });
+    expect(readStoredUiSettings(), "the answer is kept for the next visit").toEqual({ game: false, home: "guild" });
+    setStoredApiKey("key-000000000001");
+    expect(
+      readStoredUiSettings(),
+      "another key may read other organizations' values, so its first view waits for its own answer",
+    ).toBeUndefined();
+    storeUiSettings({ game: true, home: "overview" });
+    clearStoredApiKey();
+    expect(readStoredUiSettings(), "signing out forgets it too").toBeUndefined();
   });
 });

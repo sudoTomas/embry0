@@ -285,6 +285,20 @@ DONE_LABEL = "Quest done"
 DONE_LABEL_PLAIN = "Job done"
 
 
+def done_label(*, game: bool) -> str:
+    """A finished job's card label while the game layer is on (``game``) or off."""
+    return DONE_LABEL if game else DONE_LABEL_PLAIN
+
+
+def labelled(decision: Mapping[str, Any], *, game: bool) -> dict[str, Any]:
+    """``decision``, a card as :meth:`Decision.to_dict` gives it, labelled for a caller who reads the game layer as
+    ``game``: a finished job's card relabelled, any other as it was. For the cards built for no caller (the ask
+    loop's, ``embry0.api.v1.asks.open_decisions``) that a route hands one caller."""
+    if decision.get("stage") != "done":
+        return dict(decision)
+    return {**decision, "kind_label": done_label(game=game)}
+
+
 def done(q: Mapping[str, Any], *, game: bool = True) -> Decision:
     """A quest to review, from a finished job's row and what is known about it.
 
@@ -318,7 +332,7 @@ def done(q: Mapping[str, Any], *, game: bool = True) -> Decision:
         id=f"done:{q['job_id']}",
         stage="done",
         kind=template or "job",
-        kind_label=DONE_LABEL if game else DONE_LABEL_PLAIN,
+        kind_label=done_label(game=game),
         verdict=verdict,
         tone=tone,
         title=str(brief.get("title") or q.get("title") or ""),

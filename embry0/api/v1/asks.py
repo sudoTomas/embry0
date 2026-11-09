@@ -165,6 +165,8 @@ async def asks_due(
     same page and leases and stamps nothing, for a person or a probe that only
     looks."""
     from embry0.api.v1.decisions import listed_to, with_reports
+    from embry0.api.v1.ui import ui_settings
+    from embry0.services.decisions import labelled
 
     section = await ask_policy(request)
     if not section.deployment().enabled:
@@ -202,9 +204,11 @@ async def asks_due(
     # The decisions were read without their reports; the page's cards carry theirs, as GET /decisions shows them.
     cards = {str(d["id"]): d for d in await with_reports(request, [by_id[str(a["decision_id"])] for a, _ in page])}
     known = await asks.ever_sent() if page else set()
+    # The decisions were built for no caller; each card speaks the game's words as the caller reads the game (#177).
+    game = (await ui_settings(request)).game if page else True
     out: list[dict[str, Any]] = []
     for ask, reminder in page:
-        decision = cards[str(ask["decision_id"])]
+        decision = labelled(cards[str(ask["decision_id"])], game=game)
         key = str(ask["recipient"]).lower()
         out.append(
             {
@@ -462,6 +466,8 @@ async def asks_of(
     say how many there are and talk them through. ``waiting`` and ``repos`` count them all, ``asks`` lists ``limit``.
     Through a key with a repository allowlist, only those about decisions in the repositories it covers."""
     from embry0.api.v1.decisions import listed_to
+    from embry0.api.v1.ui import ui_settings
+    from embry0.services.decisions import labelled
 
     asks = _repo(request, "asks_repo")
     who = person.strip().lower()
@@ -478,8 +484,10 @@ async def asks_of(
     mine.sort(key=lambda a: (a.get("state") == "queued", order[str(a["decision_id"])]))
     repos = Counter(str(by_id[str(a["decision_id"])].get("repo") or "") for a in mine)
     out: list[dict[str, Any]] = []
+    # The decisions were built for no caller; each speaks the game's words as the caller reads the game (#177).
+    game = (await ui_settings(request)).game if mine else True
     for ask in mine[:limit]:
-        d = by_id[str(ask["decision_id"])]
+        d = labelled(by_id[str(ask["decision_id"])], game=game)
         out.append(
             {
                 "code": await asks.code(str(ask["decision_id"])),

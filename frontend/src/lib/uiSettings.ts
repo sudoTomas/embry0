@@ -1,4 +1,5 @@
 import type { NavGroup } from "@/components/layout/navGroups";
+import { UI_SETTINGS_STORAGE_KEY } from "@/lib/uiSettingsStorage";
 
 /** A page the dashboard can open on. */
 export type HomePage = "guild" | "overview";
@@ -21,7 +22,7 @@ export function normalizeUiSettings(raw: unknown): UiSettings {
 }
 
 /** Where a browser keeps the last answer, so its next visit draws at once instead of waiting for the read. */
-export const UI_SETTINGS_STORAGE_KEY = "embry0.ui-settings";
+export { UI_SETTINGS_STORAGE_KEY };
 
 /** The last answer this browser kept; undefined when it kept none, or keeps nothing (a private window). */
 export function readStoredUiSettings(): UiSettings | undefined {

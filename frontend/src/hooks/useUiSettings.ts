@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchUiSettings } from "@/api/ui";
 import { SETTINGS_KEY } from "@/hooks/useSettingsDocument";
+import { getApiKey } from "@/lib/apiKey";
 import { readStoredUiSettings, storeUiSettings, UI_DEFAULTS, type UiSettings } from "@/lib/uiSettings";
 
 /** A change made elsewhere shows within a minute; one saved on this dashboard's Policy tab at once. */
@@ -9,6 +10,19 @@ export const UI_SETTINGS_POLL_MS = 60_000;
 
 /** Under the settings document's key, so a save, an undo or a conflict there reads it again at once. */
 export const UI_SETTINGS_KEY = [...SETTINGS_KEY, "ui"] as const;
+
+/**
+ * Read the section and keep the answer for the browser's next visit. The
+ * answer is the caller's (ADR 0029): one that comes back after the browser
+ * signed in with another key, or signed out, is not kept, so it cannot draw
+ * the next caller's first view.
+ */
+export async function readUiSettings(): Promise<UiSettings> {
+  const key = getApiKey();
+  const settings = await fetchUiSettings();
+  if (getApiKey() === key) storeUiSettings(settings);
+  return settings;
+}
 
 /**
  * The read the layout makes before it draws the navigation and the page, so
@@ -28,11 +42,7 @@ export const UI_SETTINGS_KEY = [...SETTINGS_KEY, "ui"] as const;
 export function useUiSettingsQuery(): { settled: boolean; settings: UiSettings } {
   const query = useQuery({
     queryKey: UI_SETTINGS_KEY,
-    queryFn: async () => {
-      const settings = await fetchUiSettings();
-      storeUiSettings(settings);
-      return settings;
-    },
+    queryFn: readUiSettings,
     initialData: readStoredUiSettings,
     // What was kept is drawn, never trusted as fresh: it is read again at once.
     initialDataUpdatedAt: 0,

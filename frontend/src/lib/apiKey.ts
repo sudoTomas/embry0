@@ -9,6 +9,8 @@
  * credentials and the AuthGate prompts for one.
  */
 
+import { forgetStoredUiSettings } from "@/lib/uiSettingsStorage";
+
 const STORAGE_KEY = "embry0.api-key";
 
 // Session-scoped fallback for browsers where localStorage throws
@@ -31,6 +33,8 @@ export function getApiKey(): string | null {
 
 export function setStoredApiKey(key: string): void {
   memoryKey = key;
+  // The dashboard's ui answer is the caller's (ADR 0029): another key may read other organizations' values.
+  forgetStoredUiSettings();
   try {
     window.localStorage.setItem(STORAGE_KEY, key);
   } catch {
@@ -40,6 +44,7 @@ export function setStoredApiKey(key: string): void {
 
 export function clearStoredApiKey(): void {
   memoryKey = null;
+  forgetStoredUiSettings();
   try {
     window.localStorage.removeItem(STORAGE_KEY);
   } catch {

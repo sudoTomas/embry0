@@ -53,7 +53,18 @@ With the game off:
 
 `home: overview` keeps the game on but opens the dashboard on the Overview; the guild is then at `/guild`, and a link into the guild written while it was at `/` (`/?quest=…`, `?character=`, `?lead=`, `?write=`, `?view=`) opens it there, with its query. While `game` is false, `home` is not read.
 
-A change shows on every dashboard within a minute, and at once on the one that saved it. Nothing restarts. A browser keeps the last answer and draws with it at once on its next visit, then reads the section again; so a browser that last saw the game on shows it for the moment that read takes after the game is turned off. A browser's first visit waits for the read, with the header alone, so it never shows the game while it is off; the wait is at most 3 seconds, after which it draws with the defaults. The setting is the deployment's: an organization cannot turn the game off for its own people, because the dashboard has no viewer's organization to read it for: a session carries an email, a name and roles, and an API key at most a repository allowlist, and neither names an organization. The game itself is one account whose characters are the deployment's agents.
+A change shows on every dashboard within a minute, and at once on the one that saved it. Nothing restarts. A browser keeps the last answer and draws with it at once on its next visit, then reads the section again; so a browser that last saw the game on shows it for the moment that read takes after the game is turned off. A browser's first visit waits for the read, with the header alone, so it never shows the game while it is off; the wait is at most 3 seconds, after which it draws with the defaults. Signing in with another API key, or signing out, forgets the kept answer, and an answer still on its way then is not kept, so the next key's first view waits for its own.
+
+### Per organization
+
+An organization's [layer](configuration.md#settings-document) may set `game` and `home` too (`PUT /api/v1/config/settings?owner=acme`, or Settings → Policy with the organization chosen), for the people who see only its work: those signed in with an API key whose [repository allowlist](api.md#repository-allowlist) covers its repositories ([ADR 0029](adr/0029-the-dashboards-organizations.md)).
+
+- A key whose list covers one organization reads that organization's values, its layer over the deployment's document.
+- A key whose list covers several sees the game when any of them has it on, and opens on the page those with the game on agree on, else on the deployment's `home`.
+- Everyone else reads the deployment's values: every SSO session, the master key and every key without a list. A session carries an email, a name and roles, and names no organization.
+- A repository's layer cannot set either key: nobody is shown one repository's dashboard.
+
+The routes follow the same reading, so `GET /api/v1/config/ui`, the game's routes, the Decisions page's words and the cards a chat is handed (`GET /api/v1/asks/due`, `GET /api/v1/asks/of`) always agree with what the caller is shown. An organization's value changes what its people are shown, not what is counted: the game is one account whose characters are the deployment's agents, and the work of every organization earns its experience. A key whose list covers several organizations, one of them with the game on, sees the work of every one of them in the guild, as it would with the game on for all.
 
 ## Art
 
