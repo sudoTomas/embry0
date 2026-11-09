@@ -309,7 +309,7 @@ export function AgentFormPage() {
     }
 
     // mcp_servers rides as JSON — validate before submitting. Empty text
-    // means "no MCP servers" ({}; null on update clears the column).
+    // means "no MCP servers": {} (a null is a 422, #417).
     let mcpServers: Record<string, unknown> = {};
     if (form.mcpServersText.trim()) {
       try {

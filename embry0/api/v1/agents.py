@@ -1,6 +1,6 @@
 """Agent definitions API — CRUD for agent types."""
 
-from typing import Any
+from typing import Any, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -219,6 +219,10 @@ def _voice_problem(voice: str) -> str | None:
     )
 
 
+#: The fields a PUT may send as null: each clears the agent's own value (#417).
+_NULLABLE_ON_UPDATE: Final = frozenset({"execution_mode", "auth_mode", "quest_template"})
+
+
 @router.put("/agents/{agent_type}", dependencies=[require_admin])
 async def update_agent(
     agent_type: str,
@@ -231,10 +235,13 @@ async def update_agent(
     # option for execution_mode/auth_mode needs a way to write NULL; the old
     # `v is not None` filter made clearing impossible over the API).
     updates = req.model_dump(exclude_unset=True)
-    # The identity columns are NOT NULL: unlike execution_mode, null has no meaning there.
-    for key in ("display_name", "avatar", "color", "tagline", "triage_may_add_skills", "station"):
-        if key in updates and updates[key] is None:
-            raise HTTPException(status_code=422, detail=f"{key} cannot be null")
+    # Null means something for these alone: the agent inherits its mode again, or its task leaves the guild.
+    # Anywhere else it has no meaning (#417): description, model and mcp_servers are NOT NULL (a 500), and a
+    # NULL tools column reads as the type's default tools, a grant the tool check never sees. [] and ""
+    # say "none".
+    nulls = [key for key, value in updates.items() if value is None and key not in _NULLABLE_ON_UPDATE]
+    if nulls:
+        raise HTTPException(status_code=422, detail=f"{', '.join(sorted(nulls))} cannot be null")
     await _reject_if_disabled(request, updates.get("model"))
     if "quest_template" in updates:
         current = await repo.get(agent_type) or {}

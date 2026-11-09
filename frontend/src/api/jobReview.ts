@@ -51,7 +51,7 @@ export async function runJobAgain(jobId: string, runWith?: RunWith): Promise<Eva
   return data;
 }
 
-/** Seen, nothing to do: the job leaves the review inbox without a rating. */
+/** Seen, nothing to do: the job leaves the review inbox. A job dismissed before anyone rated it has no rating. */
 export async function dismissJob(jobId: string): Promise<Evaluation> {
   const { data } = await api.post<Evaluation>(reviewPath(jobId, "dismiss"));
   return data;

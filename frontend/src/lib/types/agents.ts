@@ -90,8 +90,9 @@ export interface AgentCreateRequest {
   quest_template?: string | null;
 }
 
-/** PUT semantics (RAV-1058): omitted fields stay untouched; an explicitly-sent
- * null CLEARS the column (backend uses exclude_unset). */
+/** PUT semantics: omitted fields stay untouched. Only execution_mode and auth_mode
+ * (the agent inherits its mode again, RAV-1058) and quest_template take null;
+ * a null for any other field is a 422 (#417). */
 export interface AgentUpdateRequest {
   description?: string;
   model?: string;
@@ -100,7 +101,8 @@ export interface AgentUpdateRequest {
   system_prompt?: string;
   execution_mode?: AgentExecutionMode | null;
   auth_mode?: AgentAuthMode | null;
-  mcp_servers?: Record<string, unknown> | null;
+  /** {} for none: a null is a 422. */
+  mcp_servers?: Record<string, unknown>;
   /** Not nullable on the backend: a null here is a 422. */
   display_name?: string;
   avatar?: string;
