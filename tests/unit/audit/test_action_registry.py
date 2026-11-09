@@ -22,7 +22,7 @@ import embry0
 from embry0.audit.actions import AUDIT_ACTION_LABELS, AUDIT_ACTIONS, RETIRED_AUDIT_ACTIONS, AuditAction
 
 _SRC = pathlib.Path(embry0.__file__).parent
-#: The dashboard's copy of the labels and the renames, which the Audit page reads.
+#: The dashboard's icons per action; its words come from GET /audit/actions.
 _AUDIT_LABELS_TS = _SRC.parent / "frontend" / "src" / "lib" / "auditLabels.ts"
 # Every function that writes an audit row, and the position of its action argument.
 _WRITERS = {"emit_audit": 1, "emit_audit_event": 0, "emit_audit_event_db": 1, "_emit_audit": 1, "_audit": 1, "audit": 1}
@@ -148,22 +148,16 @@ def test_a_retired_name_is_never_written_and_names_the_action_that_replaced_it()
     assert still == [], f"retired audit actions still written: {still}"
 
 
-def _ts_record(source: str, name: str) -> dict[str, str]:
-    """A ``Record<string, string>`` constant of a TypeScript module, as its quoted keys and values."""
-    block = re.search(rf"export const {name}: Record<string, string> = \{{(.*?)\n\}};", source, re.S)
-    assert block, f"auditLabels.ts no longer declares {name} as a Record<string, string>"
-    return dict(re.findall(r'^\s*"?([\w.]+)"?:\s*"([^"]*)",?\s*$', block.group(1), re.M))
-
-
-def test_the_dashboard_reads_each_retired_name_as_the_backend_does() -> None:
-    """The Audit page keeps its own copy of the renames and labels: it must name the same pairs and words."""
-    source = _AUDIT_LABELS_TS.read_text()
-    retired, labels = _ts_record(source, "RETIRED_ACTIONS"), _ts_record(source, "ACTION_LABELS")
-    assert retired == dict(RETIRED_AUDIT_ACTIONS), (
-        f"auditLabels.ts RETIRED_ACTIONS {retired} differs from embry0/audit/actions.py {dict(RETIRED_AUDIT_ACTIONS)}"
+def test_the_dashboard_draws_icons_for_registered_actions_only() -> None:
+    """The dashboard reads every action's words from GET /audit/actions (#409); the one thing per action it keeps is
+    an icon, keyed by name. A key the registry does not list names an action no row carries, so its icon is dead."""
+    block = re.search(
+        r"export const ACTION_ICONS: Record<string, LucideIcon> = \{(.*?)\n\};", _AUDIT_LABELS_TS.read_text(), re.S
     )
-    words = {new: (labels.get(new), AUDIT_ACTION_LABELS[new]) for new in RETIRED_AUDIT_ACTIONS.values()}
-    assert all(ts == py for ts, py in words.values()), f"a renamed action reads otherwise in the dashboard: {words}"
+    assert block, "auditLabels.ts no longer declares ACTION_ICONS as a Record<string, LucideIcon>"
+    keys = re.findall(r'^\s*"?([\w.]+)"?:\s*\w+,?\s*$', block.group(1), re.M)
+    unknown = sorted(set(keys) - AUDIT_ACTIONS)
+    assert keys and unknown == [], f"auditLabels.ts draws an icon for actions the registry does not list: {unknown}"
 
 
 def _writer_functions() -> dict[str, Any]:

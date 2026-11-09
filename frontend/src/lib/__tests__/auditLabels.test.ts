@@ -1,26 +1,46 @@
 import { describe, it, expect } from "vitest";
-import { Dot, KeyRound, Plus } from "lucide-react";
-import { ACTION_ICONS, ACTION_LABELS, actionIcon, actionLabel, formatDetails } from "../auditLabels";
+import { Dot, KeyRound, Plus, Settings } from "lucide-react";
+import { ACTION_ICONS, auditVocabulary, formatDetails } from "../auditLabels";
+
+/** A registry as GET /audit/actions serves one: current actions, then the retired names with their replacements. */
+const REGISTRY = [
+  { action: "issue.created", label: "Created", replaced_by: null },
+  { action: "user.login", label: "Signed in", replaced_by: null },
+  { action: "settings.updated", label: "Settings document changed", replaced_by: null },
+  { action: "credential.bound", label: "Credential bound", replaced_by: null },
+  { action: "job.review.dismissed", label: "Job dismissed", replaced_by: null },
+  { action: "budget_config_updated", label: "Settings document changed", replaced_by: "settings.updated" },
+  { action: "quest.dismissed", label: "Job dismissed", replaced_by: "job.review.dismissed" },
+];
 
 describe("auditLabels", () => {
-  it("labels the issue events lifted from IssueActivityFeed", () => {
-    expect(ACTION_LABELS["issue.created"]).toBe("Created");
-    expect(ACTION_ICONS["issue.created"]).toBe(Plus);
+  it("reads an action in the registry's words, and one it does not list in sentence case, never raw", () => {
+    const vocabulary = auditVocabulary(REGISTRY);
+    expect(vocabulary.label("issue.created")).toBe("Created");
+    expect(vocabulary.label("credential.bound")).toBe("Credential bound");
+    expect(vocabulary.label("organization.need_reopen")).toBe("Organization need reopen");
+    expect(auditVocabulary().label("user.login"), "before the registry is read").toBe("User login");
   });
 
-  it("draws a lucide icon for every labelled action and a dot for an unknown one, never an emoji", () => {
-    for (const action of Object.keys(ACTION_LABELS)) {
-      expect(typeof actionIcon(action), action).not.toBe("string");
+  it("offers the current actions in the registry's order and finds a retired name's rows by its replacement", () => {
+    expect(auditVocabulary(REGISTRY).filterOptions).toEqual([
+      "issue.created",
+      "user.login",
+      "settings.updated",
+      "credential.bound",
+      "job.review.dismissed",
+    ]);
+    expect(auditVocabulary().filterOptions).toEqual([]);
+  });
+
+  it("draws a lucide icon for every action that has one and a dot for any other, never an emoji", () => {
+    const vocabulary = auditVocabulary(REGISTRY);
+    for (const action of Object.keys(ACTION_ICONS)) {
+      expect(typeof vocabulary.icon(action), action).not.toBe("string");
     }
-    expect(actionIcon("user.login")).toBe(KeyRound);
-    expect(actionIcon("something.new")).toBe(Dot);
-  });
-
-  it("labels the Phase A/B/C identity events", () => {
-    expect(ACTION_LABELS["user.login"]).toBe("Signed in");
-    expect(ACTION_LABELS["user.enabled"]).toBe("User enabled");
-    expect(ACTION_LABELS["apikey.revoked"]).toBe("API key revoked");
-    expect(ACTION_LABELS["context_config_deleted"]).toBe("Context deleted");
+    expect(vocabulary.icon("issue.created")).toBe(Plus);
+    expect(vocabulary.icon("user.login")).toBe(KeyRound);
+    expect(vocabulary.icon("something.new")).toBe(Dot);
   });
 
   it("formats issue.status_changed transitions", () => {
@@ -53,10 +73,7 @@ describe("auditLabels", () => {
     expect(out).not.toContain("sk-x");
   });
 
-  it("labels the settings document's actions and names the keys a change touched, never a value", () => {
-    expect(ACTION_LABELS["settings.updated"]).toBe("Settings document changed");
-    expect(ACTION_LABELS["settings.change_undone"]).toBe("Settings change undone");
-    expect(ACTION_LABELS["settings.bootstrapped"]).toBe("Settings imported from the environment");
+  it("names the keys a settings change touched, never a value", () => {
     expect(
       formatDetails("settings.updated", { keys: ["sample.per_tick", "sample.enabled"], reason: "r", revision_id: 9 }),
     ).toBe("sample.per_tick, sample.enabled");
@@ -66,16 +83,12 @@ describe("auditLabels", () => {
     );
   });
 
-  it("reads a job review row by its new name, and an older row under the name it had in the world, the same way", () => {
-    expect(actionLabel("job.review.evaluated")).toBe("Job evaluated");
-    expect(actionLabel("quest.evaluated"), "an older row keeps reading after the rename").toBe("Job evaluated");
-    expect(actionLabel("quest.sent_back")).toBe("Job sent back");
-    expect(actionLabel("quest.rejected")).toBe("Job rejected");
-    expect(actionLabel("quest.restarted")).toBe("Job run again");
-    expect(actionLabel("quest.dismissed")).toBe("Job dismissed");
-    const filters = Object.keys(ACTION_LABELS);
-    expect(filters, "the Audit filter offers the new names").toContain("job.review.dismissed");
-    expect(filters, "the old names are found by the new name's filter, not offered twice").not.toContain("quest.dismissed");
+  it("reads a retired name as the action that replaced it, in words and icon, and never offers it twice", () => {
+    const vocabulary = auditVocabulary(REGISTRY);
+    expect(vocabulary.label("quest.dismissed"), "an older row keeps reading after the rename").toBe("Job dismissed");
+    expect(vocabulary.icon("budget_config_updated")).toBe(Settings);
+    expect(vocabulary.filterOptions, "the Audit filter offers the new name").toContain("job.review.dismissed");
+    expect(vocabulary.filterOptions, "the old name is found by the new name's filter").not.toContain("quest.dismissed");
   });
 
   it("falls back to empty detail for unknown actions", () => {

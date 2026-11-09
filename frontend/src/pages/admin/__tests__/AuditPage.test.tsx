@@ -5,8 +5,10 @@ import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mockFetchAuditLog = vi.fn();
+const mockFetchAuditActions = vi.fn();
 vi.mock("@/api/audit", () => ({
   fetchAuditLog: (...a: unknown[]) => mockFetchAuditLog(...a),
+  fetchAuditActions: (...a: unknown[]) => mockFetchAuditActions(...a),
 }));
 
 import { AuditPage } from "../AuditPage";
@@ -50,8 +52,22 @@ async function auditTable() {
   return within(head.closest("table") as HTMLElement);
 }
 
+/** A registry as GET /audit/actions serves one: the current actions in its order, then a retired name. Two of them
+ * no dashboard map ever held, and one reads otherwise than its name in sentence case. */
+const REGISTRY = [
+  { action: "user.login", label: "Signed in", replaced_by: null },
+  { action: "apikey.created", label: "API key created", replaced_by: null },
+  { action: "apikey.repo_refused", label: "API key refused a repository", replaced_by: null },
+  { action: "issue.created", label: "Created", replaced_by: null },
+  { action: "widget.polished", label: "A widget was polished", replaced_by: null },
+  { action: "job.review.dismissed", label: "Job dismissed", replaced_by: null },
+  { action: "quest.dismissed", label: "Job dismissed", replaced_by: "job.review.dismissed" },
+];
+
 beforeEach(() => {
   mockFetchAuditLog.mockReset();
+  mockFetchAuditActions.mockReset();
+  mockFetchAuditActions.mockResolvedValue(REGISTRY);
 });
 
 describe("AuditPage", () => {
@@ -64,7 +80,7 @@ describe("AuditPage", () => {
     expect(table.getByText("tier admin")).toBeInTheDocument();
   });
 
-  it("reads an action the label map does not know in sentence case, never raw", async () => {
+  it("reads an action the registry does not list in sentence case, never raw", async () => {
     mockFetchAuditLog.mockResolvedValue({
       entries: [
         { ...ENTRY, id: 3, action: "watcher_stack_updated", details: {} },
@@ -85,6 +101,69 @@ describe("AuditPage", () => {
     const select = within(await screen.findByLabelText("Actions"));
     expect(select.getByRole("option", { name: "All actions" })).toBeInTheDocument();
     expect(select.getByRole("option", { name: "API key created" })).toHaveValue("apikey.created");
+  });
+
+  it("offers every current action the registry serves, in its order, and a retired name not as its own", async () => {
+    mockFetchAuditLog.mockResolvedValue({ entries: [ENTRY], total: 1 });
+    renderPage();
+    await auditTable();
+    const offered = within(screen.getByLabelText("Actions"))
+      .getAllByRole("option")
+      .slice(1)
+      .map((option) => [(option as HTMLOptionElement).value, option.textContent]);
+    const current = REGISTRY.filter((entry) => !entry.replaced_by).map((entry) => [entry.action, entry.label]);
+    expect(offered, "the Actions filter lists what GET /audit/actions serves").toEqual(current);
+    expect(mockFetchAuditActions).toHaveBeenCalled();
+  });
+
+  it("reads each row in the registry's words, a retired name as the action that replaced it", async () => {
+    mockFetchAuditLog.mockResolvedValue({
+      entries: [
+        { ...ENTRY, id: 5, action: "apikey.repo_refused", details: {} },
+        { ...ENTRY, id: 6, action: "quest.dismissed", details: {} },
+        { ...ENTRY, id: 7, action: "widget.polished", details: {} },
+      ],
+      total: 3,
+    });
+    renderPage();
+    const table = await auditTable();
+    const events = table
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) => within(row).getAllByRole("cell")[0].textContent);
+    expect(events, "each row reads in the words GET /audit/actions serves").toEqual([
+      "API key refused a repository",
+      "Job dismissed",
+      "A widget was polished",
+    ]);
+  });
+
+  it("keeps showing the rows when the registry cannot be read, says so, and reads it again on request", async () => {
+    mockFetchAuditLog.mockResolvedValue({
+      entries: [
+        { ...ENTRY, details: {} },
+        { ...ENTRY, id: 5, action: "apikey.repo_refused", details: {} },
+      ],
+      total: 2,
+    });
+    mockFetchAuditActions.mockRejectedValueOnce(new Error("boom"));
+    renderPage();
+    const notice = await screen.findByRole("status", {}, { timeout: 4000 });
+    expect(notice).toHaveTextContent("Could not load the action names");
+    expect(screen.queryByText("Could not load the audit log"), "the log itself was read").toBeNull();
+    const table = await auditTable();
+    const events = () =>
+      table
+        .getAllByRole("row")
+        .slice(1)
+        .map((row) => within(row).getAllByRole("cell")[0].textContent);
+    expect(events(), "the rows stay, each named from its identifier").toEqual(["User login", "Apikey repo refused"]);
+    expect(within(screen.getByLabelText("Actions")).getAllByRole("option"), "the filter lists no actions").toHaveLength(1);
+
+    await userEvent.setup().click(within(notice).getByRole("button", { name: "Try again" }));
+    expect(await table.findByText("API key refused a repository")).toBeInTheDocument();
+    expect(screen.queryByRole("status"), "the notice goes once the names are read").toBeNull();
+    expect(mockFetchAuditActions).toHaveBeenCalledTimes(2);
   });
 
   it("links issue-scoped rows to the issue page", async () => {

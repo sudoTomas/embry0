@@ -1,8 +1,9 @@
-// Shared audit-event presentation maps (RAV-1056 Phase C) — lifted from
-// IssueActivityFeed and extended with the global-audit event vocabulary.
-// Backend event names span two conventions (dotted `issue.*`/`user.*` vs
-// snake `*_config_updated`); unknown actions fall back to sentence case
-// (`actionLabel`), never the raw string.
+// Shared audit-event presentation: the words come from the backend's action
+// registry (`GET /audit/actions`, embry0/audit/actions.py), the one list the
+// writers are typed against; this module adds what the registry does not
+// carry, an icon per action and a short rendering of a row's details. An
+// action the registry does not list reads in sentence case, never as its
+// identifier.
 
 import {
   ArrowLeftRight,
@@ -25,23 +26,12 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
+import type { AuditActionEntry } from "@/api/audit";
 import { sentenceCase } from "./status";
 
-/** Names older rows carry and nothing writes any more, each with the action that replaced it (the backend's
- * `RETIRED_AUDIT_ACTIONS`). Such a row reads as its replacement; it is not a filter of its own, because the
- * audit API's filter by the new name finds it too. */
-export const RETIRED_ACTIONS: Record<string, string> = {
-  budget_config_updated: "settings.updated",
-  "quest.evaluated": "job.review.evaluated",
-  "quest.sent_back": "job.review.sent_back",
-  "quest.rejected": "job.review.rejected",
-  "quest.restarted": "job.review.restarted",
-  "quest.dismissed": "job.review.dismissed",
-};
-
-/** One lucide icon per audit action, drawn muted beside its label. Emoji used
- * to stand in here and rendered as empty boxes on a machine without a colour
- * emoji font; every other page already draws lucide icons. */
+/** One lucide icon per audit action, drawn muted beside its label, keyed by the registry's current names. Emoji
+ * used to stand in here and rendered as empty boxes on a machine without a colour emoji font; every other page
+ * already draws lucide icons. */
 export const ACTION_ICONS: Record<string, LucideIcon> = {
   "issue.created": Plus,
   "issue.updated": Pencil,
@@ -49,7 +39,6 @@ export const ACTION_ICONS: Record<string, LucideIcon> = {
   "issue.triaged": Search,
   "issue.decomposed": GitBranch,
   "issue.job_created": Zap,
-  "issue.github_synced": ArrowLeftRight,
   "issue.cancelled": X,
   "user.login": KeyRound,
   "user.disabled": Ban,
@@ -78,56 +67,25 @@ export const ACTION_ICONS: Record<string, LucideIcon> = {
   "progression.pack_reset": ArrowLeftRight,
 };
 
-/** The icon for an audit action; an action the map does not know yet gets a dot. */
-export function actionIcon(action: string): LucideIcon {
-  return ACTION_ICONS[RETIRED_ACTIONS[action] ?? action] ?? Dot;
+/** How the dashboard reads audit actions, made from the registry as `GET /audit/actions` serves it. */
+export interface AuditVocabulary {
+  /** What the Audit filter offers: every current action, in the registry's order. A retired name is not a filter
+   * of its own: the filter by the action that replaced it finds its rows too. */
+  filterOptions: string[];
+  /** The registry's words for an action (a retired name has the label of the action that replaced it); an action
+   * it does not list, or any before it is read, in sentence case. */
+  label: (action: string) => string;
+  /** The action's icon, a retired name drawn as the action that replaced it; a dot for an action with none. */
+  icon: (action: string) => LucideIcon;
 }
 
-export const ACTION_LABELS: Record<string, string> = {
-  "issue.created": "Created",
-  "issue.updated": "Updated",
-  "issue.status_changed": "Status changed",
-  "issue.triaged": "Triaged",
-  "issue.decomposed": "Decomposed",
-  "issue.job_created": "Job created",
-  "issue.github_synced": "GitHub synced",
-  "issue.cancelled": "Cancelled",
-  "user.login": "Signed in",
-  "user.disabled": "User disabled",
-  "user.enabled": "User enabled",
-  "user.force_logout": "Forced logout",
-  "apikey.created": "API key created",
-  "apikey.revoked": "API key revoked",
-  "environment.secret_revealed": "Secret revealed",
-  "job.cancelled": "Job cancelled",
-  "job.budget_raised": "Job budget raised",
-  "merge.decided": "Merge decided",
-  provider_config_updated: "Provider config updated",
-  integration_config_updated: "Integrations updated",
-  context_config_updated: "Context updated",
-  context_config_deleted: "Context deleted",
-  provider_config_tested: "Provider tested",
-  provider_catalog_refreshed: "Provider model list read",
-  watcher_stack_updated: "Watcher stack updated",
-  watcher_stack_deleted: "Watcher stack deleted",
-  "settings.updated": "Settings document changed",
-  "settings.change_undone": "Settings change undone",
-  "settings.bootstrapped": "Settings imported from the environment",
-  "progression.pack_activated": "Game content pack activated",
-  "progression.pack_draft_saved": "Game content draft saved",
-  "progression.pack_draft_deleted": "Game content draft discarded",
-  "progression.pack_reset": "Game content reset to the shipped default",
-  "job.review.evaluated": "Job evaluated",
-  "job.review.sent_back": "Job sent back",
-  "job.review.rejected": "Job rejected",
-  "job.review.restarted": "Job run again",
-  "job.review.dismissed": "Job dismissed",
-};
-
-/** The words for an audit action; a retired name reads as the action that replaced it, and an action this map
- * does not know yet reads in sentence case rather than as its identifier. */
-export function actionLabel(action: string): string {
-  return ACTION_LABELS[RETIRED_ACTIONS[action] ?? action] ?? sentenceCase(action);
+export function auditVocabulary(actions: readonly AuditActionEntry[] = []): AuditVocabulary {
+  const byName = new Map(actions.map((entry) => [entry.action, entry]));
+  return {
+    filterOptions: actions.filter((entry) => !entry.replaced_by).map((entry) => entry.action),
+    label: (action) => byName.get(action)?.label ?? sentenceCase(action),
+    icon: (action) => ACTION_ICONS[byName.get(action)?.replaced_by ?? action] ?? Dot,
+  };
 }
 
 export function formatDetails(action: string, details: Record<string, unknown>): string {
@@ -140,10 +98,6 @@ export function formatDetails(action: string, details: Record<string, unknown>):
     const fields = details.fields ?? details.changed_fields;
     if (Array.isArray(fields) && fields.length > 0) return fields.join(", ");
     if (typeof fields === "string") return fields;
-  }
-  if (action === "issue.github_synced") {
-    const direction = details.direction ?? details.sync_direction;
-    if (direction) return String(direction);
   }
   if (action === "user.login" && details.tier) {
     return `tier ${details.tier}`;
