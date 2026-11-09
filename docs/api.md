@@ -324,6 +324,8 @@ Agent definitions: the model, tools, skills and prompt each agent type runs with
 
 The roster, the palette and the builtins' own values are in [`docs/contracts/identity.json`](contracts/identity.json), written from `embry0/agents/identity.py`; an id outside them is a 422 that lists the allowed ones. These columns are not nullable, so a `PUT` that sends one as `null` is a 422. `POST /agents/{type}/reset` restores a builtin's identity with the rest of the row.
 
+**Null on `PUT`.** A field left out of a `PUT` keeps its value. `null` clears only `execution_mode` and `auth_mode` (the agent inherits its mode again, as the agent form's *inherit* and the MCP `agent_update` tool's `clear_execution_mode` and `clear_auth_mode` do) and `quest_template` (below). For any other field it is a 422 naming the fields, `"<field>, ... cannot be null"`, and nothing is written: `[]` empties `tools`, `skills` and `triage_may_add_skills`, `""` empties `system_prompt`, and `{}` empties `mcp_servers`.
+
 **In the guild.** Two columns say how the [guild](world.md) treats the agent (#167), which `POST` accepts, `PUT` changes, both reads return, and the MCP tools `agent_create` and `agent_update` take; the agent form edits them under *Guild*:
 
 | Field | Default | Rule |
