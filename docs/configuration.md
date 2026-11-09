@@ -627,7 +627,7 @@ Later levels win:
 4. **Per-agent-type** — `agent_definitions.execution_mode`, `.auth_mode` columns.
 5. **Pipeline config (triage output)** — `pipeline_config.execution_modes[agent_type]`, `.auth_modes[agent_type]`.
 
-NULL at any level falls through to the previous level.
+NULL at any level falls through to the previous level. An agent's own modes are cleared back to NULL with `null` on `PUT /api/v1/agents/{type}` (*inherit* on the agent form), or with `clear_execution_mode=true` and `clear_auth_mode=true` on the MCP `agent_update` tool, which leaves out every field it is not given.
 
 ### What triage may change about an agent
 
