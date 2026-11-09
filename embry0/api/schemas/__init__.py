@@ -14,6 +14,7 @@ from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.execution.auth_provider import env_override_refusal
 from embry0.execution.profile_isolation import ISOLATION_FIELDS, field_problem
 from embry0.git_refs import REF_RULE, valid_ref
+from embry0.json_text import STORED_DEPTH, nested_deeper_than
 from embry0.services.tool_catalog import check_agent_tools
 from embry0.workflows._validation import FIXED_NODE_TYPES
 from embry0.workflows.row_behaviour import (
@@ -33,6 +34,26 @@ _SAFE_QA_PATH = re.compile(r"^[A-Za-z0-9._:\-]+(/[A-Za-z0-9._:\-]+)*$")
 _HOSTNAME_PATTERN = re.compile(
     r"^[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*$"
 )
+
+
+class ServableFields(BaseModel):
+    """A request whose free-form fields embry0 stores and serves back: none nests deeper than ``STORED_DEPTH``.
+
+    The response serializer stops at 255 levels (``embry0.json_text``). A
+    deeper value used to be stored, and every read that shows it answered
+    500, a list of every row included; it is refused here, with a 422 whose
+    ``loc`` and message name the field as the API does (its alias).
+    """
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _servable(cls, value: Any, info: ValidationInfo) -> Any:
+        if nested_deeper_than(value, STORED_DEPTH):
+            field = info.field_name or ""
+            alias = cls.model_fields[field].alias if field in cls.model_fields else None
+            name = alias or field
+            raise ValueError(f"{name} nests deeper than {STORED_DEPTH} levels, more than embry0 can serve back")
+        return value
 
 
 class QAJobOverrides(BaseModel):
@@ -172,7 +193,7 @@ class RunWithRequest(BaseModel):
     )
 
 
-class JobCreateRequest(BaseModel):
+class JobCreateRequest(ServableFields):
     repo: str | None = Field(default=None, max_length=200)
     # ``task`` is required for the legacy issue-to-pr flow but optional for
     # ``pipeline='qa'`` (which has no LLM-author task to summarize). Validated
@@ -424,7 +445,7 @@ class BudgetConfigResponse(BaseModel):
 _AGENT_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
-class AgentCreateRequest(BaseModel):
+class AgentCreateRequest(ServableFields):
     type: str = Field(..., min_length=1, max_length=50)
     description: str
     model: str
@@ -495,7 +516,7 @@ class AgentCreateRequest(BaseModel):
         return self
 
 
-class AgentUpdateRequest(BaseModel):
+class AgentUpdateRequest(ServableFields):
     description: str | None = None
     model: str | None = None
     tools: list[str] | None = None
@@ -588,7 +609,7 @@ class InlineSkillRequest(BaseModel):
 # --- Pipeline Templates ---
 
 
-class _TemplateWriteRequest(BaseModel):
+class _TemplateWriteRequest(ServableFields):
     """#468: a template carries its models on its steps, not in a side map.
 
     ``agent_models`` used to be accepted and stored, and nothing read it. A

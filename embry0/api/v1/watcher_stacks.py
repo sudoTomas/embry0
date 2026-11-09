@@ -10,10 +10,11 @@ from __future__ import annotations
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers
+from embry0.api.schemas import ServableFields
 from embry0.audit.helpers import emit_audit
 from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack, check_settings
 from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
@@ -21,7 +22,7 @@ from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
 router = APIRouter()
 
 
-class StackBody(BaseModel):
+class StackBody(ServableFields):
     logql: str = Field(min_length=1, description="the stack's Loki selector")
     tracker: str = Field(default="linear", pattern="^(linear|github|gitlab)$")
     tracker_target: dict[str, Any] = Field(

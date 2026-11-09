@@ -75,6 +75,15 @@ _FAKE_SERVER = textwrap.dedent(
             elif name == "boom":
                 send({"jsonrpc": "2.0", "id": mid, "result": {
                     "content": [{"type": "text", "text": "boom happened"}], "isError": True}})
+            elif name == "unreadable_lines":
+                # JSON Python cannot decode, then bytes that are not UTF-8, then the reply.
+                sys.stdout.write('{"jsonrpc": "2.0", "deep": ' + "[" * 100000 + "]" * 100000 + "}\\n")
+                sys.stdout.write('{"jsonrpc": "2.0", "id": ' + str(mid) + ', "huge": ' + "9" * 5000 + "}\\n")
+                sys.stdout.flush()
+                sys.stdout.buffer.write(b"\\xff\\xfe\\xfd not utf-8\\n")
+                sys.stdout.buffer.flush()
+                send({"jsonrpc": "2.0", "id": mid, "result": {
+                    "content": [{"type": "text", "text": "read past them"}], "isError": False}})
             elif name == "echo_env":
                 send({"jsonrpc": "2.0", "id": mid, "result": {
                     "content": [{"type": "text", "text": os.environ.get("FAKE_ENV_PROBE", "")}],
@@ -126,6 +135,17 @@ async def test_call_tool_image_blocks_pass_through(client):
     assert content[0] == {"type": "text", "text": "screenshot taken"}
     assert content[1]["type"] == "image"
     assert content[1]["source"] == {"type": "base64", "media_type": "image/png", "data": "aWJhc2U2NA=="}
+
+
+async def test_lines_python_cannot_decode_are_skipped(client):
+    """A server line nested past the decoder's recursion limit, holding an
+    integer past the digit limit, or not UTF-8 is skipped like any other
+    non-JSON line, and the reply after it is read."""
+    from tests.fixtures.unreadable_json import handled
+
+    with handled("McpStdioClient"):
+        content, is_error = await client.call_tool("unreadable_lines", {})
+    assert (content, is_error) == ("read past them", False)
 
 
 async def test_jsonrpc_error_raises(client):

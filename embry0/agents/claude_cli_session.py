@@ -113,7 +113,7 @@ def restored_cost_usd(session_file: Path) -> float:
                     continue
                 try:
                     entry = json.loads(line)
-                except ValueError:
+                except (ValueError, RecursionError):  # see embry0.json_text
                     continue
                 if not isinstance(entry, dict) or entry.get("type") != "cost-state":
                     continue

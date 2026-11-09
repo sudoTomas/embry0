@@ -285,7 +285,7 @@ def _parse_json_fallback(text: str) -> dict[str, Any] | None:
     while start != -1:
         try:
             obj, _ = decoder.raw_decode(text[start:])
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):  # see embry0.json_text
             start = text.find("{", start + 1)
             continue
         if isinstance(obj, dict) and str(obj.get("title") or "").strip() and str(obj.get("body") or "").strip():

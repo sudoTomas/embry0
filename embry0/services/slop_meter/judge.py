@@ -61,7 +61,10 @@ def parse_judgment(text: str) -> tuple[bool, str]:
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end < start:
         raise ValueError("no JSON object in the answer")
-    data = json.loads(text[start : end + 1])
+    try:
+        data = json.loads(text[start : end + 1])
+    except (ValueError, RecursionError) as exc:  # see embry0.json_text
+        raise ValueError(f"the answer's JSON cannot be read: {exc}") from exc
     if not isinstance(data, dict) or not isinstance(data.get("slop"), bool):
         raise ValueError("the answer has no boolean slop")
     return data["slop"], str(data.get("reason") or "").strip()[:300]

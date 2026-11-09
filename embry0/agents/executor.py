@@ -75,7 +75,7 @@ def _extract_embedded_ask_user_events(text: str) -> list[dict[str, Any]]:
             break
         try:
             obj, consumed = decoder.raw_decode(text[pos:])
-        except ValueError:
+        except (ValueError, RecursionError):  # see embry0.json_text
             idx = pos + 1
             continue
         if isinstance(obj, dict) and obj.get("question"):

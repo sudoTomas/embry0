@@ -229,8 +229,10 @@ def main() -> None:
             continue
         try:
             msg = json.loads(line)
-        except ValueError:
-            # No id recoverable — nothing meaningful to reply to.
+        except (ValueError, RecursionError):
+            # Not JSON, or JSON Python cannot decode (an integer past the digit
+            # limit, nesting past the recursion limit). No id recoverable —
+            # nothing meaningful to reply to.
             print(f"context_mcp: unparseable message: {line[:200]!r}", file=sys.stderr, flush=True)
             continue
         if not isinstance(msg, dict):

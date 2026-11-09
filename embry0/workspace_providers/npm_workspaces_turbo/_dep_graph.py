@@ -55,7 +55,7 @@ def _read_package_json(path: Path) -> dict[str, Any] | None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):  # see embry0.json_text
         return None
     if not isinstance(data, dict):
         return None

@@ -222,3 +222,23 @@ def test_main_loop_round_trip(provisioned, monkeypatch, capsys):
     replies = [json.loads(line) for line in out.out.strip().splitlines()]
     assert [r["id"] for r in replies] == [1, 2]
     assert "unparseable" in out.err
+
+
+def test_main_loop_skips_lines_python_cannot_decode(provisioned, monkeypatch, capsys):
+    """A message nested past the decoder's recursion limit, or holding an
+    integer past the digit limit, is skipped like any unparseable line: the
+    server keeps serving and answers the next request."""
+    from tests.fixtures.unreadable_json import KINDS, handled, unreadable_object
+
+    messages = [
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}),
+        *(unreadable_object(kind, {"jsonrpc": "2.0", "id": 9, "method": "ping"}) for kind in KINDS),
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    ]
+    monkeypatch.setattr(context_mcp.sys, "stdin", io.StringIO("\n".join(messages) + "\n"))
+    with handled("context_mcp.main"):
+        context_mcp.main()
+    out = capsys.readouterr()
+    replies = [json.loads(line) for line in out.out.strip().splitlines()]
+    assert [r["id"] for r in replies] == [1, 2]
+    assert out.err.count("unparseable") == len(KINDS)

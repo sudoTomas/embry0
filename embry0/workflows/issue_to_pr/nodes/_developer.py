@@ -1103,7 +1103,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                         pr_url = data.get("pr_url")
                         branch = data.get("branch", branch)
                         break
-            except (json_mod.JSONDecodeError, TypeError):
+            except (ValueError, RecursionError, TypeError):  # see embry0.json_text
                 pass
             # Fallback: search for GitHub PR URL pattern
             if not pr_url:

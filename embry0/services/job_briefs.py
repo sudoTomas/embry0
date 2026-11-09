@@ -219,7 +219,7 @@ def parse_job_brief(text: str) -> JobBrief:
         raw = raw.strip("`").removeprefix("json").strip()
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:  # see embry0.json_text
         raise ValueError(f"not JSON: {exc}") from exc
     if not isinstance(data, dict) or set(data) != set(_KEYS):
         got = sorted(data) if isinstance(data, dict) else type(data).__name__

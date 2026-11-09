@@ -47,9 +47,10 @@ and leaves the exact check to this module.
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Callable, Iterable
+
+from embry0.json_text import json_object
 
 #: Level tokens that must never reach the analysis prompt. Ordered longest-first
 #: within each family so the alternation reads in the obvious way; the trailing
@@ -99,14 +100,15 @@ JSON_NOISE_LEVELS: tuple[str, ...] = ("trace", "debug", "info")
 
 def _structured_level(line: str) -> str | None:
     """The ``level`` field of a JSON line, lower-cased; ``None`` when the line
-    is not a JSON object or carries no string level."""
+    is not a JSON object or carries no string level.
+
+    A line Python cannot decode (nested past the recursion limit, or an
+    integer past the digit limit) is read as plain text: unlevelled, so kept.
+    """
     if not line.startswith("{"):
         return None
-    try:
-        parsed = json.loads(line)
-    except ValueError:
-        return None
-    level = parsed.get("level") if isinstance(parsed, dict) else None
+    parsed = json_object(line)
+    level = parsed.get("level") if parsed is not None else None
     return level.lower() if isinstance(level, str) else None
 
 

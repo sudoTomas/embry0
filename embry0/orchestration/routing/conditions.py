@@ -38,7 +38,7 @@ def _json_from_markdown(output_text: str) -> Any:
             block = block[4:].strip()
         try:
             return json.loads(block)
-        except (json.JSONDecodeError, TypeError):
+        except (ValueError, RecursionError, TypeError):  # see embry0.json_text
             continue
     return None
 
@@ -81,7 +81,7 @@ def _review_payload(output_text: Any) -> dict[str, Any] | None:
     text = output_text if isinstance(output_text, str) else ""
     try:
         data: Any = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
+    except (ValueError, RecursionError, TypeError):  # see embry0.json_text
         data = _json_from_markdown(text)
         if data is None:
             data = _last_verdict_object(text)

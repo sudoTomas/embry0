@@ -92,7 +92,7 @@ def unwrap_smee_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(inner, str):
         try:
             decoded = json_module.loads(inner)
-        except (json_module.JSONDecodeError, ValueError):
+        except (ValueError, RecursionError):  # see embry0.json_text
             return payload
         if isinstance(decoded, dict):
             return decoded
@@ -103,7 +103,7 @@ def parse_webhook_body(body: bytes) -> dict[str, Any]:
     """Decode a delivery body to a dict, unwrapping a smee envelope."""
     try:
         payload = json_module.loads(body)
-    except (json_module.JSONDecodeError, ValueError):
+    except (ValueError, RecursionError):  # see embry0.json_text
         raise HTTPException(status_code=400, detail="Invalid JSON payload") from None
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid JSON payload")

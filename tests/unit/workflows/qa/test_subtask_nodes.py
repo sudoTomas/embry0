@@ -493,6 +493,32 @@ async def test_collect_artifacts_node_malformed_json():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["deep", "huge"])
+async def test_collect_artifacts_node_result_json_python_cannot_decode(kind):
+    """result.json is written in the sandbox. Nested past the decoder's
+    recursion limit, or holding an integer past the digit limit, it is not
+    valid JSON to read, like any other: a failure summary, not an exception."""
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
+    from tests.fixtures.unreadable_json import handled, unreadable_object
+
+    docker = MagicMock()
+    docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
+    docker.run_cmd = AsyncMock(return_value=unreadable_object(kind, {"acceptance_results": []}))
+    state = {
+        "status": None,
+        "resolved": _resolved_app("hub"),
+        "sandbox_id": "cid",
+        "boot_outcome": None,
+        "boot_duration_ms": None,
+    }
+    with handled("collect_artifacts_node"):
+        out = await collect_artifacts_node(state, {"configurable": {"docker": docker}})
+
+    assert out["status"] == SubTaskStatus.INFRA_FAILURE
+    assert "not valid JSON" in out["failure_summary"]
+
+
+@pytest.mark.asyncio
 async def test_collect_artifacts_node_short_circuits_on_prior_status():
     from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
 

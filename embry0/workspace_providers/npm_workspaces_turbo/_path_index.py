@@ -80,7 +80,7 @@ def build_path_index(
                 continue
             try:
                 data = json.loads(pkg_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
+            except (ValueError, RecursionError):  # see embry0.json_text
                 continue
             name = data.get("name") if isinstance(data, dict) else None
             if not isinstance(name, str) or not name:

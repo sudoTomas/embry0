@@ -31,6 +31,7 @@ from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from embry0.api.deps import authenticate_stream, get_qa_minio, get_runtime
 from embry0.api.job_allowlist import artifact_job, job_hidden, stream_scope
 from embry0.api.scoped_tokens import mint_scoped_token, signing_material
+from embry0.json_text import SERVABLE_DEPTH, nested_deeper_than
 
 router = APIRouter()
 
@@ -495,10 +496,19 @@ async def get_result(
     # if a misconfigured bucket policy intercepts the GET, or an LB serves an
     # HTML error page). Catch JSONDecodeError and return a clear 502 instead
     # of letting it propagate as a 500 from FastAPI's response serializer.
+    # The same for JSON this route cannot serve: not an object, or nested
+    # deeper than the response serializer goes.
     try:
-        return cast(dict[str, Any], json.loads(bytes(buf)))
-    except (json.JSONDecodeError, ValueError) as exc:
+        result = json.loads(bytes(buf))
+    except (ValueError, RecursionError) as exc:  # see embry0.json_text
         raise HTTPException(status_code=502, detail=f"upstream returned non-JSON body: {exc}") from exc
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=502, detail="upstream returned JSON that is not an object")
+    if nested_deeper_than(result, SERVABLE_DEPTH):
+        raise HTTPException(
+            status_code=502, detail=f"upstream returned JSON nested deeper than {SERVABLE_DEPTH} levels"
+        )
+    return cast(dict[str, Any], result)
 
 
 # ---------------------------------------------------------------------------

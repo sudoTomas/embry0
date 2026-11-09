@@ -65,7 +65,7 @@ def parse_areas(text: str | None) -> list[Area]:
         return []
     try:
         data = yaml.safe_load(text)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError, RecursionError):  # an int past the digit limit, a bad date, deep nesting
         return []
     entries = data.get("areas") if isinstance(data, dict) else None
     areas: list[Area] = []

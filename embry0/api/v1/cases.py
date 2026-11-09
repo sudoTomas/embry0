@@ -66,7 +66,7 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
     try:
         raw_created_at, case_id = json.loads(base64.urlsafe_b64decode(cursor.encode()))
         created_at = datetime.fromisoformat(raw_created_at)
-    except (ValueError, TypeError, binascii.Error) as exc:
+    except (ValueError, TypeError, RecursionError, binascii.Error) as exc:
         raise HTTPException(status_code=400, detail="cursor is not one this endpoint issued") from exc
     if created_at.tzinfo is None:
         # Issued cursors are always timezone-aware; a naive one would be

@@ -17,6 +17,7 @@ from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, Q
 from embry0.api.schemas.jobs import DoneWhenEditRequest, JobResumeRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
+from embry0.json_text import STORED_DEPTH, nested_deeper_than
 from embry0.safety.redaction import job_secret_values, redact_event
 from embry0.services.answer_recorder import record_answer
 from embry0.services.run_with import RunWith, apply_run_with
@@ -429,6 +430,10 @@ async def get_job_log_events(
         if isinstance(row_id, int):
             next_since_seq = max(next_since_seq, row_id)
         payload = e.get("payload", {})
+        if nested_deeper_than(payload, STORED_DEPTH):
+            # An agent's event (a tool call's input, say) nested deeper than the
+            # answer can serialize is shown as its text, as an unreadable one is.
+            payload = {"type": "raw", "message": str(e.get("text") or "")}
         if isinstance(payload, dict):
             if isinstance(row_id, int):
                 payload = {**payload, "event_seq": row_id}

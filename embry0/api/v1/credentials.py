@@ -55,6 +55,7 @@ from embry0.api.schemas.credentials import (
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
+from embry0.json_text import STORED_DEPTH, nested_deeper_than
 from embry0.safety.redaction import register_known_secrets
 from embry0.services.credentials.discovery import ForgeCredentialEntry, forge_credential_entries
 from embry0.services.credentials.import_env import import_from_env
@@ -161,13 +162,22 @@ _NO_ECHO_PATH_MARKERS: tuple[str, ...] = ("/credentials", "/environment", "/sand
 
 
 def _not_json(value: Any) -> bool:
-    """Whether ``value`` holds a float JSON cannot write (NaN, Infinity), at any depth."""
-    if isinstance(value, float):
-        return not math.isfinite(value)
-    if isinstance(value, dict):
-        return any(_not_json(v) for v in value.values())
-    if isinstance(value, list | tuple):
-        return any(_not_json(v) for v in value)
+    """Whether an answer cannot echo ``value``: it holds a float JSON cannot write (NaN, Infinity), or nests
+    deeper than ``STORED_DEPTH`` levels, past what encoding the answer can walk.
+
+    Walked without recursion, so a body nested thousands of levels deep is answered too.
+    """
+    if nested_deeper_than(value, STORED_DEPTH):
+        return True
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, float) and not math.isfinite(item):
+            return True
+        if isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, list | tuple):
+            stack.extend(item)
     return False
 
 

@@ -465,7 +465,7 @@ def parse_triage_response(raw: str) -> TriageDecision:
     try:
         text = _extract_json_payload(raw)
         data = json.loads(text)
-    except (json.JSONDecodeError, IndexError) as exc:
+    except (ValueError, RecursionError, IndexError) as exc:  # see embry0.json_text
         logger.warning("triage_parse_failed_json", raw=raw[:500])
         raise TriageParseError(f"Invalid JSON: {exc}") from exc
 

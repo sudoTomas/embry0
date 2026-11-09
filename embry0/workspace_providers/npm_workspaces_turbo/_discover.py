@@ -19,7 +19,7 @@ def _read_package_json(path: Path) -> dict[str, Any]:
     try:
         parsed: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         return parsed
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:  # see embry0.json_text
         raise WorkspaceProviderError(f"invalid JSON in {path}: {exc}") from exc
 
 
