@@ -5,8 +5,9 @@ quests to review (the world's inbox), each as a decision
 (:mod:`embry0.services.decisions`). The actions a decision lists stay on their
 own endpoints; this module only reads.
 
-While the settings document turns the game layer off (``ui.game``, #177), a
-finished job's card is labelled ``Job done`` instead of ``Quest done``.
+While the settings document turns the game layer off for the caller
+(``ui.game``, #177, read as ``embry0/api/v1/ui.py`` reads it), a finished
+job's card is labelled ``Job done`` instead of ``Quest done``.
 """
 
 from __future__ import annotations

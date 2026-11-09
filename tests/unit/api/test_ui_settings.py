@@ -49,6 +49,8 @@ SETTINGS = "/api/v1/config/settings"
 UI = "/api/v1/config/ui"
 ADMIN = "emb_" + "a" * 43
 READER = "emb_" + "r" * 43
+#: A read key whose repository allowlist covers one of acme's repositories, the one the world's rows are in.
+ACME = "emb_" + "m" * 43
 CSRF = {"X-Requested-With": "XMLHttpRequest"}
 #: What a route of the game says while the game is off, so a client tells it from a missing record.
 GAME_OFF = "The game layer is off: ui.game is false in the settings document."
@@ -74,13 +76,17 @@ class Quests(FakeRepo):
         self.rated.append({"job_id": job_id, **fields})
         return {"rated_by": rated_by, **{k: v for k, v in fields.items() if v is not None}}
 
+    async def merge_approvals(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+        """No finished job has a merge approval: what the Decisions page reads beside the inbox."""
+        return {}
+
 
 def _key(token: str) -> ApiKeyRow | None:
-    scope = {ADMIN: "admin", READER: "read"}.get(token)
+    scope = {ADMIN: "admin", READER: "read", ACME: "read"}.get(token)
     if scope is None:
         return None
     return ApiKeyRow(
-        id=f"key-{scope}0000001",
+        id="key-acme0000001" if token == ACME else f"key-{scope}0000001",
         user_id="usr-admin",
         name=f"{scope}-key",
         prefix="emb_xxxxxxxx",
@@ -90,7 +96,7 @@ def _key(token: str) -> ApiKeyRow | None:
         expires_at=None,
         last_used_at=None,
         revoked_at=None,
-        allowed_repos=None,
+        allowed_repos=["acme/web"] if token == ACME else None,
     )
 
 
@@ -108,7 +114,7 @@ async def app(db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch)
     app.state.progression_packs = PackStore(ProgressionPacksRepository(db_with_migrations))
     keys = MagicMock()
     keys.get_by_hash = AsyncMock(
-        side_effect=lambda h: next((_key(t) for t in (ADMIN, READER) if hash_token(t) == h), None)
+        side_effect=lambda h: next((_key(t) for t in (ADMIN, READER, ACME) if hash_token(t) == h), None)
     )
     keys.touch_last_used = AsyncMock()
     app.state.api_keys_repo = keys
@@ -206,17 +212,115 @@ async def test_a_change_applies_on_the_next_request_with_no_restart(client: Asyn
     assert (await client.get(UI)).json() == {"game": True, "home": "overview"}
 
 
-async def test_an_organization_cannot_turn_the_game_off(app: Any, client: AsyncClient) -> None:
+async def _organization(app: Any, client: AsyncClient, owner: str, text: str) -> Any:
+    """Register ``owner`` and write its layer of the settings document."""
     app.state.organizations_repo = OrganizationsRepository(app.state.db)
-    await app.state.organizations_repo.register("acme", "github")
+    if await app.state.organizations_repo.get(owner) is None:
+        await app.state.organizations_repo.register(owner, "github")
+    return await client.put(
+        SETTINGS, params={"owner": owner}, content=text, headers={"Content-Type": "application/yaml"}
+    )
+
+
+async def _as(app: Any, token: str, method: str, path: str) -> Any:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as caller:
+        return await caller.request(method, path, headers={"Authorization": f"Bearer {token}", **CSRF})
+
+
+async def test_an_organization_turns_the_game_off_for_the_keys_over_its_repositories(
+    app: Any, client: AsyncClient
+) -> None:
+    """ADR 0029: a key whose allowlist covers only acme's repositories reads acme's layer; every caller no list
+    restricts, an admin key here, reads the deployment's."""
+    saved = await _organization(app, client, "acme", "ui:\n  game: false\n")
+    assert saved.status_code == 200, f"an organization's layer takes ui.game: false: {saved.text}"
+
+    shown = await _as(app, ACME, "GET", UI)
+    assert shown.status_code == 200 and shown.json() == {"game": False, "home": "guild"}, (
+        f"a key over acme's repositories reads acme's game: false: {shown.text}"
+    )
+    for method, path in GAME_READS[:4]:
+        resp = await _as(app, ACME, method, path)
+        assert (resp.status_code, resp.json().get("detail")) == (404, GAME_OFF), (
+            f"{method} {path} answers the game off to a key over acme's repositories: {resp.status_code} {resp.text}"
+        )
+    rated = await _as(app, ACME, "GET", "/api/v1/decisions?stage=done")
+    labels = [d["kind_label"] for d in rated.json()["decisions"]] if rated.status_code == 200 else rated.text
+    assert labels == ["Job done"], f"the Decisions page's words follow the same reading: {labels}"
+    one = await _as(app, ACME, "GET", "/api/v1/decisions/done:job-1")
+    assert one.status_code == 200 and one.json()["kind_label"] == "Job done", (
+        f"and so does one decision read by its id: {one.status_code} {one.text[:200]}"
+    )
+
+    assert (await client.get(UI)).json() == {"game": True, "home": "guild"}, "an unrestricted key reads the deployment"
+    assert (await client.get("/api/v1/world")).status_code == 200, "and the guild answers it"
+    everyone = await client.get("/api/v1/decisions?stage=done")
+    assert [d["kind_label"] for d in everyone.json()["decisions"]] == ["Quest done"], everyone.text
+    assert (await client.get("/api/v1/decisions/done:job-1")).json()["kind_label"] == "Quest done"
+
+
+#: Who a chat asks about the finished job: a group, so no person needs a users row here.
+REVIEWERS = "group:reviewers"
+
+
+async def test_the_chat_feeds_speak_the_game_s_words_as_the_caller_reads_the_game(
+    app: Any, client: AsyncClient
+) -> None:
+    """GET /asks/due and GET /asks/of hand out decisions built for no caller (the ask loop's); each card is labelled
+    as the caller reads ui.game, as GET /decisions labels it."""
+    from datetime import UTC, datetime
+
+    from embry0.storage.repositories.asks import AsksRepository
+
+    every_hour = 'asks:\n  enabled: true\n  hours: "00-24"\n  weekdays: mon-sun\n'
+    assert (await _put(client, every_hour)).status_code == 200
+    assert (await _organization(app, client, "acme", "ui:\n  game: false\n")).status_code == 200
+    app.state.asks_repo = AsksRepository(app.state.db)
+    await app.state.asks_repo.queue([("done:job-1", REVIEWERS, datetime.now(UTC))])
+
+    async def labels(token: str) -> dict[str, list[str]]:
+        due = await _as(app, token, "GET", "/api/v1/asks/due?peek=1")
+        of = await _as(app, token, "GET", f"/api/v1/asks/of?person={REVIEWERS}")
+        assert due.status_code == 200 and of.status_code == 200, (due.text[:300], of.text[:300])
+        return {
+            "due": [a["decision"]["kind_label"] for a in due.json()["asks"]],
+            "of": [a["kind"] for a in of.json()["asks"]],
+        }
+
+    assert await labels(ACME) == {"due": ["Job done"], "of": ["Job done"]}, (
+        "a key over acme's repositories, whose game is off, is handed a finished job as a job"
+    )
+    assert await labels(ADMIN) == {"due": ["Quest done"], "of": ["Quest done"]}, (
+        "a caller no list restricts reads the deployment's words, the game's"
+    )
+
+
+async def test_an_organization_s_change_applies_to_its_keys_on_the_next_request(app: Any, client: AsyncClient) -> None:
+    saved = await _organization(app, client, "acme", "ui:\n  home: overview\n")
+    assert saved.status_code == 200, f"an organization's layer takes ui.home: {saved.text}"
+    assert (await _as(app, ACME, "GET", UI)).json() == {"game": True, "home": "overview"}
+    assert (await _organization(app, client, "acme", "ui:\n  game: off\n")).status_code == 200
+    assert (await _as(app, ACME, "GET", UI)).json() == {"game": False, "home": "guild"}, "off, with no restart"
+    assert (await _as(app, ACME, "GET", "/api/v1/world")).status_code == 404
+
+
+async def test_a_repository_cannot_set_the_game(app: Any, client: AsyncClient) -> None:
+    from embry0.storage.repositories.repos import ReposRepository
+
+    await _organization(app, client, "acme", "")
+    app.state.repos_repo = ReposRepository(app.state.db)
+    await app.state.repos_repo.register("acme/web")
     resp = await client.put(
         SETTINGS,
-        params={"owner": "acme"},
-        content="ui:\n  game: false\n",
-        headers={"Content-Type": "application/yaml", "If-Match": '"0"'},
+        params={"repo": "acme/web"},
+        content="ui:\n  game: false\n  home: overview\n",
+        headers={"Content-Type": "application/yaml"},
     )
-    assert resp.status_code == 422, f"the game layer is the deployment's: {resp.text}"
-    assert [(p["loc"], p["type"]) for p in resp.json()["detail"]] == [(["ui", "game"], "not_overridable")]
+    assert resp.status_code == 422, f"no caller is one repository's, so its layer may set neither: {resp.text}"
+    assert sorted((tuple(p["loc"]), p["type"]) for p in resp.json()["detail"]) == [
+        (("ui", "game"), "not_overridable"),
+        (("ui", "home"), "not_overridable"),
+    ], f"a repository's layer is refused naming each key it may not set: {resp.text}"
 
 
 def _calls(dependant: Dependant | None) -> set[Any]:

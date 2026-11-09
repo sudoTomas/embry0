@@ -1,10 +1,10 @@
 """The ``ui`` section of the settings document (#177): the game layer and the page the dashboard opens on.
 
 Nothing written keeps the dashboard as it was before the section, the game
-on and the guild its home. The section is the deployment's alone: the
-dashboard knows no viewer's organization to read a layer for. It is read
-through the catalog, so each test fails with its own message on a tree that
-has no ui section.
+on and the guild its home. An organization's layer may set both keys, read
+by the keys whose allowlist covers its repositories (ADR 0029); a
+repository's may set neither. It is read through the catalog, so each test
+fails with its own message on a tree that has no ui section.
 """
 
 from __future__ import annotations
@@ -68,14 +68,23 @@ def test_an_unknown_key_is_refused() -> None:
     assert isinstance(found, list) and [loc for loc, _ in found] == [("ui", "theme")], found
 
 
-@pytest.mark.parametrize("layer", ["organization", "repository"])
-def test_no_layer_may_turn_the_game_off(layer: str) -> None:
-    """The dashboard knows no viewer's organization, so a layer would be read by no one."""
+def test_an_organization_may_set_the_game_and_the_home() -> None:
+    """Read by the keys whose allowlist covers its repositories (ADR 0029)."""
     section = CATALOG.get("ui")
     assert section is not None, "ui is a section of the settings document"
-    assert section.org_keys == frozenset() and section.repo_keys == frozenset()
-    found = _stored({"ui": {"game": False}}, layer=layer)
-    assert found == [(("ui", "game"), "not_overridable")], f"an {layer}'s layer may not set ui.game: {found}"
+    found = _stored({"ui": {"game": False, "home": "overview"}}, layer="organization")
+    assert found == {"ui": {"game": False, "home": "overview"}}, (
+        f"an organization's layer sets ui.game and ui.home for the people who see only its work: {found}"
+    )
+    assert section.org_keys == frozenset({"game", "home"}), sorted(section.org_keys)
+
+
+@pytest.mark.parametrize("key", ["game", "home"])
+def test_a_repository_may_set_neither(key: str) -> None:
+    """No caller is one repository's, so a repository's layer would be read by no one."""
+    value: Any = {"game": False, "home": "overview"}[key]
+    found = _stored({"ui": {key: value}}, layer="repository")
+    assert found == [(("ui", key), "not_overridable")], f"a repository's layer may not set ui.{key}: {found}"
 
 
 def test_no_variable_is_imported_into_it() -> None:
