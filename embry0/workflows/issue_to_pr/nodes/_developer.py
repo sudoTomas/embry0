@@ -1190,7 +1190,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
 
     if pending_questions:
         from embry0.agents.resolver import resolve_agent_config
-        from embry0.orchestration.nodes.agent import _enforce_ask_user_cap
+        from embry0.orchestration.nodes.agent import _enforce_ask_user_cap, with_cap_updates
 
         # Brainstorming sessions can legitimately need many turns of design
         # back-and-forth. Bump the cap when the developer's effective skills
@@ -1211,7 +1211,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
             max_rounds=ask_cap,
             job_id_for_log=state.get("job_id"),
         )
-        updates.update(cap_updates)
+        # Joined, not laid over: the cap's failure goes beside the run's own error (#434).
+        updates = with_cap_updates(updates, cap_updates)
         if exhausted:
             pass  # current_stage and error fields already set in updates
         elif updates.get("pending_agent_questions"):
@@ -1355,10 +1356,12 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 reason=stopped,
             )
             updates["unfinished_work"] = kept
-            updates["errors"] = (state.get("errors") or []) + [
+            # JobState.errors appends (#434): this run's entries only, never the stored list again.
+            updates["errors"] = [
+                *(updates.get("errors") or []),
                 f"The {salvage['agent']} stopped ({stopped}) before committing. embry0 committed its work and "
                 f"pushed it to {branch!r} so the run is not lost, but the change is UNFINISHED "
-                f"and was never self-reviewed. Continue from that branch rather than starting over."
+                f"and was never self-reviewed. Continue from that branch rather than starting over.",
             ]
             updates["error_code"] = ErrorCode.DEV_RUN_UNFINISHED.value
             updates["current_stage"] = "dev_run_unfinished"
@@ -1400,7 +1403,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 reason=push_diagnostics.get("probe") or "not_probed",
                 unpushed_commits=push_diagnostics.get("unpushed_commits"),
             )
-            updates["errors"] = (state.get("errors") or []) + [_branch_missing_explanation(branch, push_diagnostics)]
+            updates["errors"] = [*(updates.get("errors") or []), _branch_missing_explanation(branch, push_diagnostics)]
             updates["error_code"] = ErrorCode.DEV_BRANCH_NOT_PUSHED.value
             updates["current_stage"] = "dev_branch_missing"
             goto = "max_retries"
@@ -1416,7 +1419,11 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
             checked, held = await check_done_when(
                 state, configurable, result, done_when, writer=writer, agent=coding_agent
             )
+            # Joined, not replaced: the run's own errors are this update's too (#434).
+            run_errors = list(updates.get("errors") or [])
             updates.update(checked)
+            if "errors" in checked:
+                updates["errors"] = [*run_errors, *checked["errors"]]
             # RAV-601: forward progression follows the route plan. Jobs
             # without one (pre-RAV-601 checkpoints resumed mid-flight) keep
             # the legacy fixed hop to review.

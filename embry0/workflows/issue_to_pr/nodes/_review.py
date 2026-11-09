@@ -547,10 +547,11 @@ The JSON object is the last thing you output — nothing after it."""
     # the job-wide cap before routing.
     pending_questions = _extract_ask_user_events({"events": collected_events}, calling_node="review")
     if pending_questions:
-        from embry0.orchestration.nodes.agent import _enforce_ask_user_cap
+        from embry0.orchestration.nodes.agent import _enforce_ask_user_cap, with_cap_updates
 
         exhausted, cap_updates = _enforce_ask_user_cap(state, pending_questions, job_id_for_log=state.get("job_id"))
-        updates.update(cap_updates)
+        # Joined, not laid over: the cap's failure goes beside the run's own error (#434).
+        updates = with_cap_updates(updates, cap_updates)
         if exhausted:
             pass  # terminal failure shape already in updates
         elif updates.get("pending_agent_questions"):

@@ -175,5 +175,6 @@ async def check_done_when(
             # agent output, as every failed run is, not as a missed finish line.
             updates["error_code"] = ErrorCode.DONE_WHEN_UNMET.value
         return updates, END
-    updates["errors"] = (state.get("errors") or []) + [entry]
+    # JobState.errors appends (#434): the new entry alone.
+    updates["errors"] = [entry]
     return updates, "max_retries"
