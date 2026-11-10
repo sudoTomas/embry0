@@ -411,7 +411,7 @@ async def preview_pack_draft(request: Request) -> dict[str, Any]:
         after = await service.compute(rules)
     return {
         # As GET /progression is, under the draft: narrowed to the repositories the caller's key covers.
-        **await covered_progression(request, after, after.to_dict()),
+        **await covered_progression(request, after),
         "draft": {
             "version": row.version,
             "hash": rules.hash,

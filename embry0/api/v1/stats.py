@@ -1,30 +1,65 @@
-"""Stats API — aggregated metrics compatible with frontend dashboard."""
+"""Stats API — aggregated metrics compatible with frontend dashboard.
 
+Every number here adds up work. A key with a repository allowlist reads each
+one counted over the repositories its list covers only
+(``embry0.api.repo_allowlist.covered_slugs``), narrowed in its query: the jobs
+and their costs by the repository each job works on (``job_repository_sql``:
+its ``repo``, else its git context's), the agents' runs by their job's, the
+issues and the background features' model calls by their own ``repo``, an
+issue's jobs and costs by theirs too, the pre-built QA images of those
+repositories, and the credentials the key reads as ``GET /credentials`` lists
+them, without the environment's. Work of no repository is counted by no such
+key. Sessions, the master key and keys without an allowlist read the
+deployment's totals, by the same queries as before.
+"""
+
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, Request
 
 from embry0.api.deps import get_db
+from embry0.api.repo_allowlist import covered_slugs, key_covers, restricted_key_name
+from embry0.api.v1.credentials import readable_credentials
 from embry0.cache.prebaked_staleness import summarize_prebuilt_images
 from embry0.orchestration import dispatch_actors
 from embry0.safety.error_codes import failure_categories
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.jobs import job_repository_sql
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
 
 
+#: A job's repository, as the jobs routes and their allowlist read it: its ``repo``, else its git context's.
+_JOB_REPO = job_repository_sql()
+
+
+def _only(repos: Sequence[str] | None, column: str, *, keyword: str = "AND", n: int = 1) -> str:
+    """``keyword`` the condition that the repository ``column`` (SQL) names is one of ``repos``, bound as ``$n``;
+    nothing for None, so a caller without an allowlist runs each query as before."""
+    return "" if repos is None else f"\n        {keyword} lower({column}) = ANY(${n}::text[])"
+
+
+def _bound(repos: Sequence[str] | None) -> tuple[list[str], ...]:
+    """The bind value :func:`_only` refers to, when it adds a condition."""
+    return () if repos is None else (list(repos),)
+
+
 async def _qa_prebuilt_images(request: Request) -> dict[str, object] | None:
     """#334: which repos' pre-built QA images sit on a rebuilt base. None when
     the stack has no docker handle (tests, degraded start) or the summary
-    fails — an optional field must not take /stats down."""
+    fails — an optional field must not take /stats down. A key with an
+    allowlist reads its repositories' images only."""
     state = request.app.state
     try:
         return await summarize_prebuilt_images(
             getattr(state, "qa_image_tags_repo", None),
             getattr(state, "qa_base_digest_resolver", None),
+            keep=partial(key_covers, request),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("stats_qa_prebuilt_images_failed", error=str(exc)[:200])
@@ -48,14 +83,18 @@ def _quarantine_active(row: dict[str, object]) -> bool:
 async def _credentials_summary(request: Request) -> dict[str, object] | None:
     """Spec 2026-09-29 §3.8: registry size, quarantined/disabled counts and which
     env keys the fallback is still serving. None when the registry is not wired
-    or the read fails — an optional field must not take /stats down."""
+    or the read fails — an optional field must not take /stats down.
+
+    A key with an allowlist counts the credentials it reads, as ``GET /credentials``
+    lists them, and no environment key: those are the deployment's, never its own."""
     state = request.app.state
-    repo = getattr(state, "credentials_repo", None)
-    if repo is None:
+    if getattr(state, "credentials_repo", None) is None:
         return None
     try:
-        rows = await repo.list_all()
+        rows = await readable_credentials(request)
         resolver = getattr(state, "credential_resolver", None)
+        if restricted_key_name(request) is not None:
+            resolver = None  # the environment's keys are the deployment's, never a key's with an allowlist
         return {
             "count": len(rows),
             "quarantined": sum(1 for r in rows if _quarantine_active(r)),
@@ -76,27 +115,42 @@ _BACKGROUND_JOB_ACTORS: dict[str, str] = {
 
 # The jobs the background features dispatched this month, read as a range of
 # idx_jobs_dispatched_by_created_at (dispatched_by, created_at): a job counts
-# in the month, and the day, it was created in.
-_BACKGROUND_JOBS_SQL = """
+# in the month, and the day, it was created in. ``{repos}`` narrows them to a
+# key's repositories, bound as $2 (:func:`_background_jobs_sql`).
+_BACKGROUND_JOBS = """
 SELECT
     dispatched_by,
     COUNT(*) AS jobs,
     COALESCE(SUM(total_cost_usd) FILTER (WHERE created_at >= date_trunc('day', NOW())), 0) AS daily_usd,
     COALESCE(SUM(total_cost_usd), 0) AS monthly_usd
 FROM jobs
-WHERE dispatched_by = ANY($1::text[]) AND created_at >= date_trunc('month', NOW())
+WHERE dispatched_by = ANY($1::text[]) AND created_at >= date_trunc('month', NOW()){repos}
 GROUP BY dispatched_by
 """
 
 
-# Every background call's spend since the table began, for the lifetime total: a
-# scalar subquery of the stats query, so it costs no round-trip of its own, and
-# an index-only scan of idx_background_spend_at, which INCLUDEs cost_usd. The
-# table gets a row per brief or judgment, a few a day.
-_BACKGROUND_TOTAL_SQL = "(SELECT COALESCE(SUM(b.cost_usd), 0) FROM background_spend b)"
+def _background_jobs_sql(repos: Sequence[str] | None) -> str:
+    return _BACKGROUND_JOBS.format(repos=_only(repos, _JOB_REPO, n=2))
 
 
-async def _background_spend(db: DatabasePool) -> dict[str, Any]:
+_BACKGROUND_JOBS_SQL = _background_jobs_sql(None)
+
+
+def _background_total_sql(repos: Sequence[str] | None) -> str:
+    """Every background call's spend since the table began, for the lifetime total: a
+    scalar subquery of the stats query, so it costs no round-trip of its own, and
+    an index-only scan of idx_background_spend_at, which INCLUDEs cost_usd. The
+    table gets a row per brief or judgment, a few a day. For a key's repositories
+    (``$1``) it reads the rows too, for their ``repo``."""
+    return (
+        "(SELECT COALESCE(SUM(b.cost_usd), 0) FROM background_spend b" + _only(repos, "b.repo", keyword="WHERE") + ")"
+    )
+
+
+_BACKGROUND_TOTAL_SQL = _background_total_sql(None)
+
+
+async def _background_spend(db: DatabasePool, repos: Sequence[str] | None) -> dict[str, Any]:
     """What each background feature spent today and this month (#164), the windows the budget caps count.
 
     ``daily_usd`` and ``monthly_usd`` are the calls the briefs and the
@@ -107,11 +161,12 @@ async def _background_spend(db: DatabasePool) -> dict[str, Any]:
     as jobs (``source`` says which). Both reads are bounded by the month, so
     they stay a range of an index however long the history grows. The
     lifetime total is read with the stats query (:data:`_BACKGROUND_TOTAL_SQL`).
+    ``repos`` counts only the calls and jobs of those repositories.
     """
     from embry0.storage.repositories.background_spend import BackgroundSpendRepository
 
-    calls = await BackgroundSpendRepository(db).this_month()
-    job_rows = await db.fetch(_BACKGROUND_JOBS_SQL, list(_BACKGROUND_JOB_ACTORS))
+    calls = await BackgroundSpendRepository(db).this_month(repos)
+    job_rows = await db.fetch(_background_jobs_sql(repos), list(_BACKGROUND_JOB_ACTORS), *_bound(repos))
     features = [{**c, "source": "calls"} for c in calls]
     features += [
         {
@@ -132,6 +187,8 @@ async def _background_spend(db: DatabasePool) -> dict[str, Any]:
 
 @router.get("/stats")
 async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dict[str, object]:
+    # Each number over the repositories the caller's key covers; None for every repository (the module's docstring).
+    repos = covered_slugs(request)
     # Aggregate job counts + lifetime cost + live state
     row = await db.fetchrow(
         """
@@ -172,10 +229,11 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
             ), 0) AS monthly_cost,
             -- #164: what background calls spent outside any job, ever.
             """
-        + _BACKGROUND_TOTAL_SQL
+        + _background_total_sql(repos)
         + """ AS background_total
-        FROM jobs
-        """
+        FROM jobs"""
+        + _only(repos, _JOB_REPO, keyword="WHERE"),
+        *_bound(repos),
     )
     total_jobs = row["total_jobs"] if row else 0
     completed = row["completed"] if row else 0
@@ -185,7 +243,7 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
     queued = row["queued"] if row else 0
     awaiting_input = row["awaiting_input"] if row else 0
     paused = row["paused"] if row else 0
-    background = await _background_spend(db)
+    background = await _background_spend(db, repos)
     # #164: what background features spent outside any job counts in every
     # spend reported: the lifetime total, and the day's and the month's, as
     # the budget caps count them.
@@ -235,12 +293,17 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
         # Of the PRs that reached an outcome, the share that merged.
         "merge_rate": prs_merged / settled_prs if settled_prs > 0 else 0.0,
     }
-    total_issues = await db.fetchval("SELECT COUNT(*) FROM issues") or 0
+    total_issues = (
+        await db.fetchval("SELECT COUNT(*) FROM issues" + _only(repos, "repo", keyword="WHERE"), *_bound(repos)) or 0
+    )
 
     # #281: failed jobs grouped by failure category. The code → category map
     # lives next to the codes; NULL / unrecognised codes land in "unknown".
     failure_rows = await db.fetch(
-        "SELECT error_code, COUNT(*) AS n FROM jobs WHERE status = 'failed' GROUP BY error_code"
+        "SELECT error_code, COUNT(*) AS n FROM jobs WHERE status = 'failed'"
+        + _only(repos, _JOB_REPO)
+        + " GROUP BY error_code",
+        *_bound(repos),
     )
     failures_by_category = failure_categories((r["error_code"], r["n"]) for r in failure_rows)
 
@@ -248,9 +311,9 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
     # Each row names its issue (title, tracker key) and keeps the issue's own
     # status apart from its latest job's: `status` blends the two and
     # `issue_number` is 0 for every non-GitHub tracker, so both stay only for
-    # older clients.
+    # older clients. An issue of a key's repository shows only its jobs of those repositories.
     recent_rows = await db.fetch(
-        """
+        f"""
         SELECT
             i.id          AS trace_id,
             COALESCE(CASE WHEN i.tracker = 'github' THEN i.tracker_key::integer END, 0) AS issue_number,
@@ -268,13 +331,14 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
         LEFT JOIN LATERAL (
             SELECT started_at, status, total_cost_usd
             FROM jobs
-            WHERE jobs.issue_id = i.id
-            ORDER BY started_at DESC NULLS LAST
+            WHERE jobs.issue_id = i.id{_only(repos, job_repository_sql("jobs"))}
+            ORDER BY started_at DESC NULLS LAST, job_id DESC
             LIMIT 1
-        ) j ON true
-        ORDER BY COALESCE(j.started_at, i.created_at) DESC
+        ) j ON true{_only(repos, "i.repo", keyword="WHERE")}
+        ORDER BY COALESCE(j.started_at, i.created_at) DESC, i.id DESC
         LIMIT 10
-        """
+        """,
+        *_bound(repos),
     )
     recent_issues = [
         {
@@ -294,9 +358,9 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
         for r in recent_rows
     ]
 
-    # Top 5 most expensive issues (sum of all jobs per issue)
+    # Top 5 most expensive issues (sum of all jobs per issue; of a key's repositories, of its jobs there)
     expensive_rows = await db.fetch(
-        """
+        f"""
         SELECT
             i.id          AS trace_id,
             COALESCE(CASE WHEN i.tracker = 'github' THEN i.tracker_key::integer END, 0) AS issue_number,
@@ -305,12 +369,13 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
             COALESCE(SUM(j.total_cost_usd), 0.0) AS cost_usd,
             COUNT(j.job_id) AS job_count
         FROM issues i
-        LEFT JOIN jobs j ON j.issue_id = i.id
+        LEFT JOIN jobs j ON j.issue_id = i.id{_only(repos, job_repository_sql("j"))}{_only(repos, "i.repo", keyword="WHERE")}
         GROUP BY i.id, i.tracker, i.tracker_key, i.title, i.repo
         HAVING COALESCE(SUM(j.total_cost_usd), 0.0) > 0
         ORDER BY cost_usd DESC
         LIMIT 5
-        """
+        """,
+        *_bound(repos),
     )
     top_expensive_issues = [
         {
@@ -326,18 +391,19 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
 
     # Cost breakdown per repo (top 8 by cost)
     repo_rows = await db.fetch(
-        """
+        f"""
         SELECT
             repo,
             COALESCE(SUM(total_cost_usd), 0.0) AS cost_usd,
             COUNT(*) AS job_count
         FROM jobs
-        WHERE repo IS NOT NULL
+        WHERE repo IS NOT NULL{_only(repos, _JOB_REPO)}
         GROUP BY repo
         HAVING COALESCE(SUM(total_cost_usd), 0.0) > 0
         ORDER BY cost_usd DESC
         LIMIT 8
-        """
+        """,
+        *_bound(repos),
     )
     cost_by_repo = [
         {
@@ -348,9 +414,16 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
         for r in repo_rows
     ]
 
-    # EMB-35: token usage + cache-hit rate by agent phase, from traces.
+    # EMB-35: token usage + cache-hit rate by agent phase, from traces; a key's, of its repositories' jobs.
+    of_jobs = (
+        ""
+        if repos is None
+        else "\n        WHERE EXISTS (SELECT 1 FROM jobs j WHERE j.job_id = traces.job_id"
+        + _only(repos, job_repository_sql("j"))
+        + ")"
+    )
     token_rows = await db.fetch(
-        """
+        f"""
         SELECT
             agent_type,
             COUNT(*) AS runs,
@@ -359,10 +432,11 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
             COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
             COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
             COALESCE(SUM(cost_usd), 0.0) AS cost_usd
-        FROM traces
+        FROM traces{of_jobs}
         GROUP BY agent_type
         ORDER BY cost_usd DESC
-        """
+        """,
+        *_bound(repos),
     )
 
     def _cache_hit_rate(cache_read: int, uncached_input: int) -> float:

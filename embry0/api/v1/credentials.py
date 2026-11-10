@@ -240,15 +240,20 @@ def _creating_key(request: Request) -> str | None:
 
 @router.get("/credentials", response_model=list[CredentialOut])
 async def list_credentials(request: Request) -> list[CredentialOut]:
-    """Every credential; to a key with an allowlist, its own (:func:`_standing`): those only its repositories use,
-    and those nothing uses that it created."""
+    """Every credential; to a key with an allowlist, its own (:func:`readable_credentials`)."""
+    return [_out(r) for r in await readable_credentials(request)]
+
+
+async def readable_credentials(request: Request) -> list[dict[str, Any]]:
+    """The registry's rows the caller reads: every one; to a key with an allowlist, its own (:func:`_standing`),
+    those only its repositories use and those nothing uses that it created."""
     repo = _state(request).credentials_repo
-    rows = await repo.list_all()
+    rows: list[dict[str, Any]] = await repo.list_all()
     if restricted_key_name(request) is None:
-        return [_out(r) for r in rows]
+        return rows
     holders = await repo.all_holders()
     return [
-        _out(r)
+        r
         for r in rows
         if await _standing(request, Held(r.get("created_by_key_id"), holders.get(str(r["id"]), []))) == OWN
     ]

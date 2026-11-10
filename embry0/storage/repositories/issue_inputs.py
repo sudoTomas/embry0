@@ -119,7 +119,7 @@ class IssueInputsRepository:
         """Return all inputs for an issue, ordered by created_at ASC. ``repos`` (lower-cased slugs) keeps only the
         questions of those repositories: asked by a job working on one, about an issue of one."""
         rows = await self._db.fetch(
-            f"SELECT x.* FROM issue_inputs x WHERE x.issue_id = $1 AND {_covered('$2')} ORDER BY x.created_at ASC",
+            f"SELECT x.* FROM issue_inputs x WHERE x.issue_id = $1 AND {_covered('$2')} ORDER BY x.created_at ASC, x.id ASC",
             issue_id,
             None if repos is None else list(repos),
         )
@@ -129,7 +129,7 @@ class IssueInputsRepository:
         """Return all inputs for a job. ``repos`` (lower-cased slugs) keeps only the questions of those
         repositories, as :meth:`list_by_issue` does."""
         rows = await self._db.fetch(
-            f"SELECT x.* FROM issue_inputs x WHERE x.job_id = $1 AND {_covered('$2')} ORDER BY x.created_at ASC",
+            f"SELECT x.* FROM issue_inputs x WHERE x.job_id = $1 AND {_covered('$2')} ORDER BY x.created_at ASC, x.id ASC",
             job_id,
             None if repos is None else list(repos),
         )
@@ -285,7 +285,7 @@ class IssueInputsRepository:
             """
             SELECT * FROM issue_inputs
             WHERE job_id = $1 AND status IN ('answered', 'auto_answered')
-            ORDER BY created_at ASC
+            ORDER BY created_at ASC, id ASC
             """,
             job_id,
         )
@@ -312,7 +312,7 @@ class IssueInputsRepository:
             SELECT * FROM issue_inputs
             WHERE issue_id = $1
               AND status IN ('answered', 'auto_answered')
-            ORDER BY created_at ASC
+            ORDER BY created_at ASC, id ASC
             """,
             issue_id,
         )

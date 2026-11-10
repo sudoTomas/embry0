@@ -61,7 +61,7 @@ FROM jobs
 WHERE (status = ANY($2::text[])
    OR COALESCE(finished_at, updated_at) > NOW() - make_interval(secs => $1))
   AND ($4::text[] IS NULL OR lower({_JOB_REPO}) = ANY($4::text[]))
-ORDER BY created_at DESC
+ORDER BY created_at DESC, job_id DESC
 LIMIT $3
 """
 
@@ -84,7 +84,7 @@ SELECT job_id, {_JOB_REPO} AS repo, task, pr_url, delivery_state, delivery_state
 FROM jobs
 WHERE pr_url IS NOT NULL AND COALESCE(finished_at, created_at) > NOW() - make_interval(days => $1)
   AND ($3::text[] IS NULL OR lower({_JOB_REPO}) = ANY($3::text[]))
-ORDER BY COALESCE(delivery_state_at, finished_at, created_at) DESC
+ORDER BY COALESCE(delivery_state_at, finished_at, created_at) DESC, job_id DESC
 LIMIT $2
 """
 
@@ -118,17 +118,19 @@ JOIN jobs j ON j.job_id = t.job_id
 LEFT JOIN job_ratings r ON r.job_id = j.job_id
 WHERE t.agent_type = $1 AND ($3::text[] IS NULL OR lower({_J_REPO}) = ANY($3::text[]))
 GROUP BY j.job_id, r.rating, r.verdict
-ORDER BY j.created_at DESC
+ORDER BY j.created_at DESC, j.job_id DESC
 LIMIT $2
 """
 
-# Each character's totals over all its quests (``$1`` names one, or NULL for all).
-_STATS_SQL = """
+# Each character's totals over all its quests (``$1`` names one, or NULL for all), in the repositories ``$2`` names
+# (lower-cased slugs; NULL for every repository), by the job's repository as the jobs routes read it.
+_STATS_SQL = f"""
 WITH quests AS (
     SELECT t.agent_type, j.job_id, j.status, j.delivery_state,
            SUM(t.cost_usd) AS cost_usd, SUM(t.duration_ms) AS duration_ms, MAX(t.created_at) AS last_at
     FROM traces t JOIN jobs j ON j.job_id = t.job_id
     WHERE t.agent_type IS NOT NULL AND ($1::text IS NULL OR t.agent_type = $1)
+      AND ($2::text[] IS NULL OR lower({_J_REPO}) = ANY($2::text[]))
     GROUP BY t.agent_type, j.job_id, j.status, j.delivery_state
 )
 SELECT q.agent_type,
@@ -157,7 +159,7 @@ WHERE j.job_id = $1
 
 _QUEST_RUNS_SQL = """
 SELECT agent_type, model, cost_usd, duration_ms, result, error_code, created_at, tools_called, skill_actions, fallback
-FROM traces WHERE job_id = $1 ORDER BY created_at
+FROM traces WHERE job_id = $1 ORDER BY created_at, trace_id
 """
 
 # Finished quests a person sent (or that brought back a pull request) and nobody evaluated yet.
@@ -166,7 +168,7 @@ SELECT j.job_id, {_J_REPO} AS repo, j.area, j.task, j.status, j.delivery_state, 
        j.created_at, j.finished_at, j.error_code, j.error_message, j.total_cost_usd, j.dispatched_by,
        -- drawn as the character that did the most of it: the costliest run but triage's
        (SELECT t.agent_type FROM traces t WHERE t.job_id = j.job_id AND t.agent_type <> 'triage'
-        ORDER BY t.cost_usd DESC, t.created_at DESC LIMIT 1) AS agent_type
+        ORDER BY t.cost_usd DESC, t.created_at DESC, t.trace_id DESC LIMIT 1) AS agent_type
 FROM jobs j
 WHERE j.finished_at > NOW() - make_interval(days => $1)
   AND j.status NOT IN ('pending', 'running', 'awaiting_input', 'paused', 'cancelled')
@@ -174,19 +176,19 @@ WHERE j.finished_at > NOW() - make_interval(days => $1)
        OR j.dispatched_by = ANY($2::text[]))
   AND NOT EXISTS (SELECT 1 FROM job_ratings r WHERE r.job_id = j.job_id)
   AND ($4::text[] IS NULL OR lower({_J_REPO}) = ANY($4::text[]))
-ORDER BY j.finished_at DESC
+ORDER BY j.finished_at DESC, j.job_id DESC
 LIMIT $3
 """
 
 _MERGE_APPROVAL_SQL = """
-SELECT id, status, pr_url, pr_number, ask FROM merge_approvals WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1
+SELECT id, status, pr_url, pr_number, ask FROM merge_approvals WHERE job_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1
 """
 
 # Each job's newest merge approval, as _MERGE_APPROVAL_SQL reads one job's.
 _MERGE_APPROVALS_SQL = """
 SELECT DISTINCT ON (job_id) job_id, id, status, pr_url, pr_number, ask
 FROM merge_approvals WHERE job_id = ANY($1::text[])
-ORDER BY job_id, created_at DESC
+ORDER BY job_id, created_at DESC, id DESC
 """
 
 _RATE_SQL = """
@@ -277,9 +279,13 @@ class WorldRepository:
     ) -> list[dict[str, Any]]:
         return [dict(r) for r in await self._db.fetch(_QUEST_LOG_SQL, agent_type, limit, _slugs(repos))]
 
-    async def stats(self, agent_type: str | None = None) -> dict[str, dict[str, Any]]:
-        """Each character's quest totals, by agent type: one character's, or every one's."""
-        return {str(r["agent_type"]): dict(r) for r in await self._db.fetch(_STATS_SQL, agent_type)}
+    async def stats(
+        self, agent_type: str | None = None, *, repos: Sequence[str] | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """Each character's quest totals, by agent type: one character's, or every one's. ``repos`` (lower-cased
+        slugs) counts only the quests in those repositories, as the world's lists are narrowed."""
+        rows = await self._db.fetch(_STATS_SQL, agent_type, _slugs(repos))
+        return {str(r["agent_type"]): dict(r) for r in rows}
 
     async def quest(self, job_id: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow(_QUEST_SQL, job_id)

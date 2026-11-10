@@ -85,7 +85,8 @@ async def readiness_inputs(
     latest = await app_state.repo_setup_proposals_repo.latest(repo)
     proposal = (await settle(app_state, latest))[0] if latest is not None else None
     pr_url = await app_state.db.fetchval(
-        "SELECT pr_url FROM jobs WHERE repo = $1 AND pr_url IS NOT NULL ORDER BY created_at DESC LIMIT 1", repo
+        "SELECT pr_url FROM jobs WHERE repo = $1 AND pr_url IS NOT NULL ORDER BY created_at DESC, job_id DESC LIMIT 1",
+        repo,
     )
     return ReadinessInputs(
         repo=repo,

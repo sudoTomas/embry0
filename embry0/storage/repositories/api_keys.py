@@ -117,12 +117,12 @@ class ApiKeysRepository:
         return _row(row) if row else None
 
     async def list_all(self) -> list[ApiKeyRow]:
-        rows = await self._db.fetch("SELECT * FROM api_keys ORDER BY created_at DESC")
+        rows = await self._db.fetch("SELECT * FROM api_keys ORDER BY created_at DESC, id DESC")
         return [_row(r) for r in rows]
 
     async def list_for_user(self, user_id: str) -> list[ApiKeyRow]:
         rows = await self._db.fetch(
-            "SELECT * FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC",
+            "SELECT * FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC, id DESC",
             user_id,
         )
         return [_row(r) for r in rows]

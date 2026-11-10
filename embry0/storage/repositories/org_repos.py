@@ -267,14 +267,14 @@ class OrgReposRepository:
 
     async def running_run(self, owner: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow(
-            f"SELECT {_RUN_COLUMNS} FROM org_discovery_runs WHERE owner = $1 AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+            f"SELECT {_RUN_COLUMNS} FROM org_discovery_runs WHERE owner = $1 AND status = 'running' ORDER BY started_at DESC, id DESC LIMIT 1",
             owner.lower(),
         )
         return _run(row) if row else None
 
     async def list_runs(self, owner: str, *, limit: int = 20) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
-            f"SELECT {_RUN_COLUMNS} FROM org_discovery_runs WHERE owner = $1 ORDER BY started_at DESC LIMIT $2",
+            f"SELECT {_RUN_COLUMNS} FROM org_discovery_runs WHERE owner = $1 ORDER BY started_at DESC, id DESC LIMIT $2",
             owner.lower(),
             limit,
         )

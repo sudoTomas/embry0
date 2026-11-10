@@ -80,8 +80,11 @@ async def _audit(request: Request, action: AuditAction, details: dict[str, Any])
 
 @router.get("/repos/{full_repo:repo}/-/setup/cost")
 async def get_setup_cost(full_repo: str, request: Request) -> dict[str, Any]:
-    # A repository the caller's key does not cover has no account resolved for it (embry0.api.repository_reads).
-    return await cost_facts(request.app.state, full_repo, resolve_account=key_covers(request, full_repo))
+    # A repository the caller's key does not cover has no account resolved for it (embry0.api.repository_reads), and
+    # the recorded runs are those of the repositories the key covers.
+    return await cost_facts(
+        request.app.state, full_repo, resolve_account=key_covers(request, full_repo), repos=covered_slugs(request)
+    )
 
 
 @router.post("/repos/{full_repo:repo}/-/setup/propose")

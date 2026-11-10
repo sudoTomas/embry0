@@ -322,7 +322,7 @@ class JobsRepository:
             FROM jobs j
             LEFT JOIN issues i ON i.id = j.issue_id
             WHERE LOWER(j.dispatched_by) = LOWER($1) AND j.status IN ('paused', 'awaiting_input')
-            ORDER BY j.updated_at DESC
+            ORDER BY j.updated_at DESC, j.job_id DESC
             LIMIT 50
             """,
             person,
@@ -380,7 +380,7 @@ class JobsRepository:
 
         args.extend([limit, offset])
         rows = await self._db.fetch(
-            f"SELECT * FROM jobs {where} ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
+            f"SELECT * FROM jobs {where} ORDER BY created_at DESC, job_id DESC LIMIT ${idx} OFFSET ${idx + 1}",
             *args,
         )
         return [dict(r) for r in rows], int(total or 0)

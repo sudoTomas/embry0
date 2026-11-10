@@ -11,6 +11,7 @@ run would stop on, or when a warning that needs a person was not ticked.
 from __future__ import annotations
 
 import statistics
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Final
 
@@ -19,7 +20,7 @@ import structlog
 from embry0.services.bootstrap import render_starter_qa_yaml
 from embry0.services.qa_config_check import check_qa_config
 from embry0.settings.sections.budget import BUDGET
-from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES
+from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES, job_repository_sql
 from embry0.storage.repositories.repo_qa_configs import SetupChanged
 
 logger = structlog.get_logger(__name__)
@@ -57,20 +58,29 @@ async def medium_model(app_state: Any) -> str:
     return str(provider_cfg.get("model_medium") or app_state.config.model_medium)
 
 
-async def cost_facts(app_state: Any, repo: str, *, resolve_account: bool = True) -> dict[str, Any]:
+async def cost_facts(
+    app_state: Any, repo: str, *, resolve_account: bool = True, repos: Sequence[str] | None = None
+) -> dict[str, Any]:
     """What setup runs cost on this embry0, the per-job budget, the model and
     the AI account that would pay. Recorded facts only, never an estimate.
     Without ``resolve_account`` no account is resolved for ``repo``, as for a
     caller that may not read what it would use: ``paid_from`` is None, as
-    when none is usable."""
+    when none is usable. ``repos`` (lower-cased slugs) counts only the setup
+    runs on those repositories (``job_repository_sql``), for a caller that
+    reads no other; None counts every one."""
     db = app_state.db
-    recorded_runs = await db.fetchval(
-        "SELECT count(*) FROM jobs WHERE pipeline_template = 'onboard' AND status = 'completed'"
-    )
+
+    def runs(n: int) -> str:
+        """The setup runs that finished, of ``repos`` bound as ``$n`` when given."""
+        narrowed = "" if repos is None else f" AND lower({job_repository_sql()}) = ANY(${n}::text[])"
+        return f"FROM jobs WHERE pipeline_template = 'onboard' AND status = 'completed'{narrowed}"
+
+    bound = () if repos is None else (list(repos),)
+    recorded_runs = await db.fetchval(f"SELECT count(*) {runs(1)}", *bound)
     rows = await db.fetch(
-        "SELECT total_cost_usd FROM jobs WHERE pipeline_template = 'onboard' AND status = 'completed' "
-        "ORDER BY created_at DESC LIMIT $1",
+        f"SELECT total_cost_usd {runs(2)} ORDER BY created_at DESC, job_id DESC LIMIT $1",
         _COST_RUNS,
+        *bound,
     )
     costs = [float(row["total_cost_usd"]) for row in rows]
     policy = getattr(app_state, "budget_policy", None)

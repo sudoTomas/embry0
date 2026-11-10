@@ -234,7 +234,7 @@ class QAAppResultsRepository:
                 j.repo,
                 j.job_id,
                 j.started_at,
-                ROW_NUMBER() OVER (PARTITION BY j.repo ORDER BY j.started_at DESC) AS rn
+                ROW_NUMBER() OVER (PARTITION BY j.repo ORDER BY j.started_at DESC, j.job_id DESC) AS rn
             FROM jobs j
             WHERE j.started_at IS NOT NULL
               AND EXISTS (SELECT 1 FROM qa_app_results q WHERE q.job_id = j.job_id)
@@ -254,7 +254,7 @@ class QAAppResultsRepository:
         JOIN qa_app_results q ON q.job_id = l.job_id
         WHERE l.rn = 1
         GROUP BY l.repo, l.job_id, l.started_at
-        ORDER BY l.started_at DESC
+        ORDER BY l.started_at DESC, l.repo
         LIMIT $1
         """
         rows = await self.db.fetch(sql, limit, _slugs(repos))
@@ -295,7 +295,7 @@ class QAAppResultsRepository:
         JOIN qa_app_results q ON q.job_id = j.job_id
         WHERE j.repo = $1 AND {_narrowed(4)}
         GROUP BY j.job_id, j.repo, j.started_at
-        ORDER BY j.started_at DESC NULLS LAST
+        ORDER BY j.started_at DESC NULLS LAST, j.job_id DESC
         LIMIT $2 OFFSET $3
         """
         rows = await self.db.fetch(sql, repo, limit, offset, _slugs(repos))
@@ -361,7 +361,7 @@ class QAAppResultsRepository:
         FROM qa_app_results q
         JOIN jobs j ON j.job_id = q.job_id
         WHERE j.repo = $1 AND q.app_name = $2 AND {_narrowed(4)}
-        ORDER BY j.started_at DESC NULLS LAST
+        ORDER BY j.started_at DESC NULLS LAST, q.id DESC
         LIMIT $3
         """
         rows = await self.db.fetch(sql, repo, app_name, limit, _slugs(repos))

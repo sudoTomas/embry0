@@ -233,14 +233,14 @@ class KnowledgeMapsRepository:
         if node_id is None:
             rows = await self._db.fetch(
                 "SELECT node_id, marked_by, verdict, note, marked_at FROM knowledge_map_marks"
-                " WHERE map_slug = $1 AND map_owner IS NOT DISTINCT FROM $2 ORDER BY marked_at",
+                " WHERE map_slug = $1 AND map_owner IS NOT DISTINCT FROM $2 ORDER BY marked_at, node_id, marked_by",
                 slug,
                 owner,
             )
         else:
             rows = await self._db.fetch(
                 "SELECT node_id, marked_by, verdict, note, marked_at FROM knowledge_map_marks"
-                " WHERE map_slug = $1 AND map_owner IS NOT DISTINCT FROM $2 AND node_id = $3 ORDER BY marked_at",
+                " WHERE map_slug = $1 AND map_owner IS NOT DISTINCT FROM $2 AND node_id = $3 ORDER BY marked_at, marked_by",
                 slug,
                 owner,
                 node_id,

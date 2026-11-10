@@ -120,7 +120,9 @@ class LeadsRepository:
         return [_row(r) for r in rows]
 
     async def open_leads(self) -> list[dict[str, Any]]:
-        rows = await self._db.fetch(f"SELECT {_COLUMNS} FROM leads WHERE state = 'open' ORDER BY first_seen DESC")
+        rows = await self._db.fetch(
+            f"SELECT {_COLUMNS} FROM leads WHERE state = 'open' ORDER BY first_seen DESC, id DESC"
+        )
         return [_row(r) for r in rows]
 
     async def get(self, lead_id: str) -> dict[str, Any] | None:
@@ -149,6 +151,6 @@ class LeadsRepository:
         args.append(limit)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = await self._db.fetch(
-            f"SELECT {_COLUMNS} FROM leads {where} ORDER BY last_seen DESC LIMIT ${len(args)}", *args
+            f"SELECT {_COLUMNS} FROM leads {where} ORDER BY last_seen DESC, id DESC LIMIT ${len(args)}", *args
         )
         return [_row(r) for r in rows]

@@ -21,14 +21,14 @@ FROM healing_cases c
 WHERE c.origin = 'watcher' AND c.stage = 'tracked'
   AND (c.tracker_key IS NOT NULL OR c.issue_id IS NOT NULL)
   AND EXISTS (SELECT 1 FROM watcher_stacks s WHERE s.repo = c.repo AND s.enabled)
-ORDER BY c.created_at DESC
+ORDER BY c.created_at DESC, c.id DESC
 """
 
 _ISSUES_SQL = """
 SELECT i.id, i.repo, i.title, i.body, i.labels, i.tracker_url, i.created_at
 FROM issues i
 WHERE i.status = 'open' AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.issue_id = i.id)
-ORDER BY i.created_at DESC
+ORDER BY i.created_at DESC, i.id DESC
 """
 
 # The audit whose findings each repository offers, with its report: its newest context audit
@@ -56,7 +56,7 @@ FROM (
            COALESCE(j.finished_at, j.updated_at) AS finished_at, j.result_summary
     FROM jobs j
     WHERE {an_audit("j")} AND j.status = ANY($1::text[]) AND j.repo IS NOT NULL
-    ORDER BY j.repo, COALESCE(j.finished_at, j.updated_at) DESC
+    ORDER BY j.repo, COALESCE(j.finished_at, j.updated_at) DESC, j.job_id DESC
 ) newest
 WHERE newest.status <> $2
   AND NOT EXISTS (
