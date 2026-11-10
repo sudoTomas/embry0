@@ -28,6 +28,14 @@ name them.
 - A route answering nothing but 422 to the walk takes its subject in the
   query: it is in :data:`QUERIES`, or :data:`NOT_A_REPOSITORY_QUERY` says
   why not, so no route is passed over for want of a query.
+- The deployment's own credentials, the forge host's and the global pool's,
+  are every repository's: no route shows one to the limited key, whatever
+  repository it names, its own included, nor to a key listing ``LONE``
+  alone, a repository bound nothing whose every credential, and whose
+  failed job's error, is the deployment's; but those
+  :data:`DEPLOYMENT_SHOWN` lists with why. Every route that shows one to a
+  key without a list is listed, in :data:`DEPLOYMENT_SHOWN` or
+  :data:`DEPLOYMENT_READS`.
 
 :data:`NO_ANSWER_HERE` lists the routes that cannot answer in this app; any
 other route that does not answer fails the walk.
@@ -49,15 +57,21 @@ from embry0.settings.scope import Scope
 from embry0.storage.database import DatabasePool
 from tests.fixtures.job_reads import APP, JOB, deliverable_id
 from tests.fixtures.repository_reads import (
+    DEPLOYMENT_MARK,
     HOST,
+    LONE,
+    LONE_JOB,
     MARK,
     MISSING,
     MISSING_OWNER,
     OWNER_MARK,
     OWNERS,
+    POOL_PROVIDER,
     SIBLING,
     repository_reads_app,
     same_answer,
+    seed_lone,
+    shows_deployment,
     shows_hidden,
 )
 from tests.fixtures.repository_writes import COVERED, UNCOVERED, call
@@ -195,9 +209,14 @@ QUERIES: dict[str, tuple[str, ...]] = {
     "/api/v1/credentials/bindings": (
         "?scope_kind=repo&scope_value={repo}",
         "?scope_kind=owner&scope_value=github:{owner}",
+        "?scope_kind=host&scope_value=github.com",
         "?scope_kind=global",
     ),
-    "/api/v1/credentials/resolve": ("?repo={repo}", "?repo={repo}&role=llm&provider=anthropic"),
+    "/api/v1/credentials/resolve": (
+        "?repo={repo}",
+        "?repo={repo}&role=llm&provider=anthropic",
+        f"?repo={{repo}}&role=llm&provider={POOL_PROVIDER}",
+    ),
     "/api/v1/config/settings": ("?repo={repo}", "?owner={owner}"),
     "/api/v1/config/settings/effective": ("?repo={repo}", "?owner={owner}"),
     "/api/v1/config/settings/revisions": ("?repo={repo}", "?owner={owner}"),
@@ -233,6 +252,11 @@ MISSING_DIFFERS: dict[str, str] = {
         "deployment's credentials; nothing is resolved for a repository the key does not cover"
     ),
     "/api/v1/repos/{full_repo:repo}/credentials": "the old path of the same handler",
+    "/api/v1/repos/{full_repo:repo}/-/setup/cost": (
+        "a key without a list sees the account a repository nobody bound would pay with, the global pool's; no "
+        "account is resolved for a repository the key does not cover"
+    ),
+    "/api/v1/repos/{full_repo:repo}/setup/cost": "the old path of the same handler",
     "/api/v1/config/settings/effective": (
         "a repository nobody registered under an owner the key covers in part reads that organization's layer, "
         "which the key may not read, as one nobody wrote"
@@ -240,6 +264,42 @@ MISSING_DIFFERS: dict[str, str] = {
     "/api/v1/credentials/resolve": "refused (403) whatever is stored, as GET /run-with/keys",
     "/api/v1/run-with/keys": "refused (403) whatever is stored, since #309",
     "/api/v1/leads": "?repo= another repository is refused (403) whatever is stored, since #297",
+}
+
+#: GET routes that show the limited key one of the deployment's own credentials, or an owner's it does not cover as a
+#: whole, in a read of its own repository, and why.
+DEPLOYMENT_SHOWN: dict[str, str] = {
+    "/api/v1/run-with/keys": (
+        "the keys a job on a repository the key covers may run with, its owner's and the global pool's included, by "
+        "label and status: the key chooses one by its id (Run with)"
+    ),
+}
+
+#: GET routes that show the deployment's own credentials to a key without an allowlist and none to the limited key,
+#: and how.
+DEPLOYMENT_READS: dict[str, str] = {
+    "/api/v1/credentials": "lists to the limited key its own credentials only, since #308",
+    "/api/v1/credentials/bindings": "the forge host's and the global pool's bindings are none to the limited key",
+    "/api/v1/credentials/resolve": (
+        "a step at a scope the limited key does not read names no credential; one resolved there is the deployment's"
+    ),
+    "/api/v1/repos/{full_repo:repo}/-/credentials": "resolves as GET /credentials/resolve does",
+    "/api/v1/repos/{full_repo:repo}/credentials": _OLD_PATH,
+    "/api/v1/repos/{full_repo:repo}/-/readiness": "a forge account of a scope the key does not read is the deployment's",
+    "/api/v1/repos/{full_repo:repo}/readiness": _OLD_PATH,
+    "/api/v1/repos/{full_repo:repo}/-/setup/cost": "an account of a scope the key does not read pays as the deployment's",
+    "/api/v1/repos/{full_repo:repo}/setup/cost": _OLD_PATH,
+}
+
+#: Reads of the key's own repository that answer the limited key otherwise than a key without a list where that
+#: answer shows the deployment's credentials, or an owner's the limited key does not cover as a whole, and why.
+OWN_DIFFERS: dict[str, str] = {
+    path: "a resolution passing its owner's binding or reaching the global pool names neither to the limited key"
+    for path in (
+        "/api/v1/credentials/resolve",
+        "/api/v1/repos/{full_repo:repo}/-/credentials",
+        "/api/v1/repos/{full_repo:repo}/credentials",
+    )
 }
 
 #: GET routes that stream until the client leaves, read elsewhere.
@@ -507,7 +567,118 @@ async def test_a_key_reads_its_own_repository_as_a_key_without_an_allowlist_does
                     continue
                 limited, everyone = await _read(app, url, keys.limited), await _read(app, url, keys.open)
                 read += 1
+                # Where a key without a list reads the deployment's credentials, or an owner's the limited key does
+                # not cover as a whole, the limited key reads less: what, test_no_route_shows_a_key_... checks.
+                hides = shows_deployment(everyone.text) or shows_hidden(everyone.text)
+                if path in OWN_DIFFERS and hides:
+                    continue
                 if limited.status_code != everyone.status_code or limited.content != everyone.content:
                     differ[url] = (limited.status_code, limited.text[:200], everyone.status_code, everyone.text[:200])
     assert read > 40, f"the walk read the key's own repository {read} times: it measures little"
     assert differ == {}, f"reads of the key's own repository that differ from a key's without a list: {differ}"
+
+
+#: The repositories a walk reads as the reading key's own: the limited key's, and the one the key ``seed_lone`` mints
+#: lists alone.
+_OWN = (COVERED, LONE)
+
+
+async def deployment_walk(
+    app: FastAPI, scenarios: list[Scenario], token: str, *, own_reads: bool = True
+) -> dict[str, tuple[str, int]]:
+    """Every GET route read through ``token`` for each scenario: each route that showed one of the deployment's own
+    credentials, or, with ``own_reads``, in a read of the key's own repository (a scenario of :data:`_OWN`)
+    anything a repository or an owner it does not cover holds, with the first URL that did and its status."""
+    shown: dict[str, tuple[str, int]] = {}
+    for path in get_routes(app):
+        for scenario in scenarios:
+            for url in urls(path, scenario):
+                response = await _read(app, url, token)
+                text = response.text + str(response.headers)
+                if shows_deployment(text) or (own_reads and scenario.repo in _OWN and shows_hidden(text)):
+                    shown.setdefault(path, (url, response.status_code))
+    return shown
+
+
+async def _deployment_scenarios(app: FastAPI, values: Mapping[str, Mapping[str, str]]) -> list[Scenario]:
+    own = Scenario(COVERED, owner_hidden=False, values=scenario_values(values, COVERED, await _revisions(app.state.db)))
+    return [own, *await _scenarios(app, values)]
+
+
+async def _lone_scenario(app: FastAPI, values: Mapping[str, Mapping[str, str]]) -> Scenario:
+    """``LONE`` with its failed job, read as the own repository of the key ``seed_lone`` mints."""
+    base = scenario_values(values, COVERED, await _revisions(app.state.db))
+    lone = {
+        "full_repo": [LONE],
+        "repo": [LONE],
+        "owner": [OWNERS[LONE]],
+        "name": [LONE.split("/", 1)[1]],
+        "job_id": [LONE_JOB],
+        "run_id": [LONE_JOB],
+        "decision_id": [f"done:{LONE_JOB}"],
+    }
+    return Scenario(LONE, owner_hidden=False, values={**base, **lone})
+
+
+async def _walk_both(
+    app: FastAPI, values: Mapping[str, Mapping[str, str]], limited: str, lone: str
+) -> dict[str, tuple[str, int]]:
+    """:func:`deployment_walk` through the limited key, then through the key listing ``LONE`` alone; the first URL
+    that showed something per route."""
+    found = await deployment_walk(app, await _deployment_scenarios(app, values), limited)
+    for path, seen in (await deployment_walk(app, [await _lone_scenario(app, values)], lone)).items():
+        found.setdefault(path, seen)
+    return found
+
+
+async def test_no_route_shows_a_key_the_deployment_s_own_credentials(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The forge host's and the global pool's credentials are every repository's. Read through the limited key, and
+    through a key listing ``LONE`` alone (bound nothing, so its forge account, the account a setup run would pay
+    with and its failed job's error are all the deployment's), no route shows one, nor, in a read of the key's own
+    repository, an owner's it does not cover as a whole, but those :data:`DEPLOYMENT_SHOWN` lists; read through a
+    key without a list, every route that shows one is listed."""
+    async with repository_reads_app(db_with_migrations, monkeypatch) as (app, keys, values):
+        lone = await seed_lone(app, db_with_migrations, monkeypatch)
+        limited = await _walk_both(app, values, keys.limited, lone)
+        scenarios = [*await _deployment_scenarios(app, values), await _lone_scenario(app, values)]
+        everyone = await deployment_walk(app, scenarios, keys.open, own_reads=False)
+    shown = {path: seen for path, seen in limited.items() if path not in ELSEWHERE and path not in DEPLOYMENT_SHOWN}
+    assert shown == {}, (
+        f"routes that showed a key covering only {COVERED} a credential of the deployment's ({DEPLOYMENT_MARK}), or "
+        f"of an owner it does not cover as a whole, in a read of its own repository: {shown}. The forge host's and "
+        "the global pool's bindings are none to such a key, and a resolution names no credential of a scope it does "
+        "not read (embry0.api.resolution_view)"
+    )
+    quiet = sorted(set(DEPLOYMENT_SHOWN) - set(limited))
+    assert quiet == [], f"listed in DEPLOYMENT_SHOWN but showed the limited key nothing of the deployment's: {quiet}"
+    unplaced = sorted(set(everyone) - set(DEPLOYMENT_SHOWN) - set(DEPLOYMENT_READS) - set(ELSEWHERE))
+    assert unplaced == [], (
+        f"routes that show the deployment's own credentials and are not listed: {unplaced}. Show the limited key none "
+        "and list each in DEPLOYMENT_READS with how, or list it in DEPLOYMENT_SHOWN with why it must"
+    )
+    unmeasured = sorted(set(DEPLOYMENT_READS) - set(everyone))
+    assert unmeasured == [], (
+        f"listed in DEPLOYMENT_READS but showed a key without a list nothing of the deployment's: {unmeasured}; seed "
+        "what they read in tests/fixtures/repository_reads.py, or take them out"
+    )
+
+
+async def test_the_deployment_walk_finds_a_new_route_that_shows_the_deployment_s_credentials(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not quiet by construction: a route listing the global pool's bindings as stored is reported, unlisted."""
+    async with repository_reads_app(db_with_migrations, monkeypatch) as (app, keys, values):
+        extra = APIRouter()
+
+        @extra.get("/pool-for-a-test")
+        async def pool(request: Request) -> list[dict[str, Any]]:
+            return await request.app.state.credentials_repo.bindings_for_scope("global", "")
+
+        app.include_router(extra, prefix="/api/v1")
+        found = await _walk_both(app, values, keys.limited, await seed_lone(app, db_with_migrations, monkeypatch))
+    assert "/api/v1/pool-for-a-test" in found and set(found) - set(ELSEWHERE) == {
+        "/api/v1/pool-for-a-test",
+        *DEPLOYMENT_SHOWN,
+    }, f"the walk reports the new route and no route that hides the deployment's credentials: {found}"

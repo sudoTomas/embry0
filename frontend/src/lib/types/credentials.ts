@@ -71,7 +71,9 @@ export interface ResolveResult {
   label: string;
   provider: string;
   host: string;
-  source: "registry" | "env";
+  /** "deployment": resolved, for a key with a repository allowlist, from the host's, the global pool's or the
+   * environment's credentials, which it does not read; `id` is null and `label` names none. */
+  source: "registry" | "env" | "deployment";
   trace: string[];
 }
 

@@ -15,7 +15,20 @@ results and proposed YAML, a standard's state with an audit score, findings
 and an exception, and a map. Each owner gets what an owner's reads serve:
 its organization's name and forge probe, a discovery run, the facts of a
 repository not registered, a need, a forge credential bound to the owner, a
-standard, a settings layer and a map of no repository.
+standard, a settings layer and a map of no repository. Each owner also binds a
+model account, disabled, so a resolution of one of its repositories passes it
+by, naming it, on its way to the global pool.
+
+The deployment binds a forge credential to the forge's host and a model
+account of each provider to the global pool, each labelled with
+:data:`DEPLOYMENT_MARK`: what every repository may fall back to, which a key
+with an allowlist does not read (:func:`shows_deployment`).
+
+:func:`seed_lone` adds :data:`LONE`, alone under its owner and bound nothing,
+so everything it uses is the deployment's: its forge account, the model
+account a setup run would pay with, and the job :data:`LONE_JOB` that failed
+for want of a model account, its error and its events as the executor stores
+them. A key listing it alone reads it as its own.
 
 Everything stored for a repository carries its :data:`MARK`, and everything
 stored for an owner its :data:`OWNER_MARK`, so an answer that shows any of
@@ -39,10 +52,16 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from embry0.api.deps import bust_api_key_cache
 from embry0.api.middleware.rate_limit import RateLimitMiddleware
+from embry0.execution import events
+from embry0.execution.sandbox_manager import SandboxInitError
+from embry0.safety.error_codes import ErrorCode
 from embry0.services.context_audit import RepoContext, _Reading
+from embry0.services.credentials.resolver import CredentialMissingError
 from embry0.services.instruction_files import DEFAULT_RULES
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.api_keys import ApiKeysRepository
 from tests.fixtures.job_reads import MARK as JOB_MARK
 from tests.fixtures.job_reads import job_reads_app
 from tests.fixtures.repository_writes import COVERED, MASTER, NOW, OWNER, UNCOVERED, Keys, call
@@ -50,7 +69,11 @@ from tests.fixtures.repository_writes import COVERED, MASTER, NOW, OWNER, UNCOVE
 #: A repository under the covered repository's owner that the limited key does not cover.
 SIBLING = f"{OWNER[COVERED]}/api"
 REPOS = (COVERED, UNCOVERED, SIBLING)
-OWNERS = {repo: repo.split("/", 1)[0] for repo in REPOS}
+#: A repository alone under its owner, bound nothing: every credential it uses is the deployment's (:func:`seed_lone`).
+LONE = "initech/app"
+#: Its job that failed for want of a model account.
+LONE_JOB = "job-lone-failed"
+OWNERS = {repo: repo.split("/", 1)[0] for repo in (*REPOS, LONE)}
 #: What everything stored for each repository carries.
 MARK = {COVERED: "widget-repo-data", UNCOVERED: "gizmo-repo-data", SIBLING: "sprocket-repo-data"}
 #: What everything stored for each owner as a whole carries.
@@ -63,6 +86,10 @@ MISSING_OWNER = {"acme": "zzzz", "globex": "zyxwvu"}
 HOST = "host-000000000001"
 #: Each owner's repository on the forge that nobody registered.
 UNLISTED = {owner: f"{owner}/unlisted" for owner in OWNER_MARK}
+#: What the labels of the deployment's own credentials, the forge host's and the global pool's, carry.
+DEPLOYMENT_MARK = "deployment-wide-data"
+#: The model provider whose accounts the owners and the global pool bind, and no repository binds.
+POOL_PROVIDER = "xai"
 
 for _repo, _missing in MISSING.items():
     assert len(_missing) == len(_repo), "a missing repository's slug is as long as the one it stands for"
@@ -230,6 +257,9 @@ async def _seed_owner(app: FastAPI, db: DatabasePool, owner: str) -> None:
         [hidden, UNLISTED[owner]],
     )
     credential = await _credential(app, f"{mark}-forge")
+    # Disabled: a resolution of one of the owner's repositories names it, skipped, and goes on to the global pool.
+    account = await _credential(app, f"{mark}-llm", kind="llm_api_key", provider=POOL_PROVIDER)
+    await _ok(app, "PUT", f"/api/v1/credentials/{account}", {"status": "disabled"})
     await _ok(
         app,
         "PUT",
@@ -237,7 +267,10 @@ async def _seed_owner(app: FastAPI, db: DatabasePool, owner: str) -> None:
         {
             "scope_kind": "owner",
             "scope_value": f"github:{owner}",
-            "bindings": [{"role": "forge", "credential_id": credential}],
+            "bindings": [
+                {"role": "forge", "credential_id": credential},
+                {"role": "llm", "credential_id": account},
+            ],
         },
     )
     await _ok(app, "PUT", f"/api/v1/standards/{owner}/design", {"schema": {"roles": {}}, "values": {}, "prose": mark})
@@ -249,6 +282,67 @@ async def _seed_owner(app: FastAPI, db: DatabasePool, owner: str) -> None:
         f"Map of {mark}",
         '{"nodes": [{"id": "n1", "kind": "system", "label": "' + mark + '"}], "edges": []}',
     )
+
+
+async def _seed_deployment(app: FastAPI) -> None:
+    """The forge host's credential and the global pool's model accounts, each labelled with :data:`DEPLOYMENT_MARK`:
+    the pool provider's, and Anthropic's, which a setup run pays with where no repository binds one."""
+    forge = await _credential(app, f"{DEPLOYMENT_MARK}-host-forge")
+    await _ok(
+        app,
+        "PUT",
+        "/api/v1/credentials/bindings",
+        {"scope_kind": "host", "scope_value": "github.com", "bindings": [{"role": "forge", "credential_id": forge}]},
+    )
+    account = await _credential(app, f"{DEPLOYMENT_MARK}-global-llm", kind="llm_api_key", provider=POOL_PROVIDER)
+    anthropic = await _credential(app, f"{DEPLOYMENT_MARK}-global-anthropic", kind="llm_api_key", provider="anthropic")
+    await _ok(
+        app,
+        "PUT",
+        "/api/v1/credentials/bindings",
+        {
+            "scope_kind": "global",
+            "scope_value": "",
+            "bindings": [{"role": "llm", "credential_id": account}, {"role": "llm", "credential_id": anthropic}],
+        },
+    )
+
+
+async def seed_lone(app: FastAPI, db: DatabasePool, monkeypatch: pytest.MonkeyPatch) -> str:
+    """:data:`LONE`, registered and bound nothing, and :data:`LONE_JOB`, which failed for want of the pool provider's
+    account while the global pool's was disabled: its error is the resolver's own message, as the executor stores
+    an error (``str(exc)``), and its event the sandbox's, as the init node writes it. Answers an admin key whose list
+    is :data:`LONE` alone."""
+    await db.execute("INSERT INTO repos (repo, active) VALUES ($1, true)", LONE)
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    pool = await db.fetchval("SELECT id FROM credentials WHERE label = $1", f"{DEPLOYMENT_MARK}-global-llm")
+    await db.execute("UPDATE credentials SET status = 'disabled' WHERE id = $1", pool)
+    try:
+        await app.state.credential_resolver.resolve_llm(LONE, POOL_PROVIDER)
+        raise AssertionError(f"{LONE} resolved a {POOL_PROVIDER} account with the global pool's disabled")
+    except CredentialMissingError as exc:
+        failure = exc
+    finally:
+        await db.execute("UPDATE credentials SET status = 'ok' WHERE id = $1", pool)
+    # As the sandbox raises it, the executor stores it and the init node writes its event.
+    sandbox = SandboxInitError(str(failure), error_code=ErrorCode.CREDENTIAL_MISSING)
+    await db.execute(
+        "INSERT INTO jobs (job_id, repo, task, status, pipeline_template, created_at, finished_at, error_message, "
+        "error_code) VALUES ($1, $2, 'Set it up', 'failed', 'full-magnum-opus', $3, $3, $4, $5)",
+        LONE_JOB,
+        LONE,
+        NOW - timedelta(minutes=10),
+        str(sandbox),
+        ErrorCode.CREDENTIAL_MISSING.value,
+    )
+    await app.state.jobs_repo.append_log_event(
+        LONE_JOB, events.error(message=f"Sandbox init failed: {sandbox}", node="init")
+    )
+    _row, token = await ApiKeysRepository(db).create(
+        name="lone", scope="admin", user_id=None, created_by="tests", allowed_repos=[LONE]
+    )
+    bust_api_key_cache()
+    return str(token)
 
 
 @asynccontextmanager
@@ -267,6 +361,7 @@ async def repository_reads_app(
             await _seed_repository(app, db, repo)
         for owner in OWNER_MARK:
             await _seed_owner(app, db, owner)
+        await _seed_deployment(app)
         # The context-audit schedule has read the sibling already, as the job fixture's two, so it reads no forge.
         context = RepoContext(
             repo=SIBLING, head_sha="abc123", files=("AGENTS.md",), fingerprint=f"fp-{SIBLING}", rules=DEFAULT_RULES
@@ -294,6 +389,12 @@ def shows_hidden(text: str) -> bool:
             JOB_MARK[UNCOVERED],
         )
     )
+
+
+def shows_deployment(text: str) -> bool:
+    """Whether an answer shows one of the deployment's own credentials, the forge host's or the global pool's, by
+    its label (:data:`DEPLOYMENT_MARK`): every repository's, which a key with an allowlist does not read."""
+    return DEPLOYMENT_MARK in text.lower()
 
 
 def placeholders(text: bytes, names: Mapping[str, str]) -> bytes:

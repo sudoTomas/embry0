@@ -138,7 +138,7 @@ Every route that starts agent work takes an optional `run_with`: `{"model": "<mo
 - Taken by `POST /jobs` (every pipeline), `POST /issues/{id}/triage`, `POST /cases/{id}/accept`, `POST /proposals/{id}/accept`, `POST /repos/{repo}/-/setup/propose`, `POST /standards/{owner}/{kind}/audit/{repo}`, `POST /orgs/{owner}/context-audit/run`, `POST /orgs/{owner}/actions` (onboard) and `POST /watcher/run`.
 - Refused with 422, before anything starts, when the model is unpriced or disabled, the key is not a usable LLM key, it is not bound to the repository, its owner or the global pool, or it is not of the model's provider.
 - The job's `pipeline_config.run_with` says what was chosen (`model`, `credential_id`, `provider`, `credential_label`); the job page shows it.
-- `GET /api/v1/run-with/keys?repo=` (read): the keys a job on `repo` may use, `{"keys": [{"id", "label", "provider", "scope", "status"}]}`, each once from its most specific binding (`repo`, `owner`, `global`). Without `repo`, the global ones. Never a secret. To a key with a repository allowlist, a `run_with` key that is neither its own nor one of these, for a repository its list covers, answers as a key that does not exist ([Repository allowlist](#repository-allowlist)).
+- `GET /api/v1/run-with/keys?repo=` (read): the keys a job on `repo` may use, `{"keys": [{"id", "label", "provider", "scope", "status"}]}`, each once from its most specific binding (`repo`, `owner`, `global`). Without `repo`, the global ones; a key with a repository allowlist must name one of its repositories, and is refused (403) without one. Never a secret. To a key with a repository allowlist, a `run_with` key that is neither its own nor one of these, for a repository its list covers, answers as a key that does not exist ([Repository allowlist](#repository-allowlist)).
 
 ## Runtime configuration
 
@@ -1348,6 +1348,37 @@ narrowed yet and follow in stages of their own:
   under any owner. A repository's own effective settings
   (`GET /config/settings/effective?repo=`) still show what its
   organization's layer sets for it.
+- The deployment's credentials. What the forge's host and the global pool
+  bind is every repository's: `GET /credentials/bindings` with
+  `scope_kind=host` or `global` has no bindings for a key with an
+  allowlist, whatever its list covers, as an owner it does not cover as a
+  whole has none. A resolution of a repository the key covers is held to
+  the same rule wherever it is read: `GET /repos/{repo}/-/credentials`
+  (`effective`) and `GET /credentials/resolve` keep the trace's steps at
+  the repository, and at its owner when the key covers the owner as a
+  whole, and put one line, `(the deployment's credentials)`, for the steps
+  at the host, the global pool, the environment or an owner the key does
+  not cover as a whole. A credential resolved there is the deployment's,
+  unnamed: `"id": null`, `"label": "(the deployment's)"`, `"host": ""` and
+  `"source": "deployment"`; the checklist (`GET /repos/{repo}/-/readiness`)
+  says the repository uses the deployment's forge account, and
+  `GET /repos/{repo}/-/setup/cost` says a setup run is `paid_from`
+  `(the deployment's)`. A missing credential's message ends with that
+  trace. An unavailable credential pinned at a scope the key does not read
+  answers it as nothing resolving does, 404 with the missing credential's
+  message (and `/-/environment/detect` as a template nothing it may use can
+  read), so the answer does not tell that the scope pins one. The key still
+  reads whether its repository resolves. A job's error, its events and
+  what is posted about it name no credential and carry no trace, whoever
+  reads them: a resolution that found nothing says so and names the
+  provider, and a pinned credential of the owner or the deployment that
+  cannot be used is not named; `GET /credentials/resolve` shows why. The one
+  exception is the choice of a model account for a job: `GET /run-with/keys`
+  lists, by id, label and status, the owner's and the global pool's model
+  accounts a job on the repository may run with
+  ([Run with](#run-with)). It answers such a key only for a repository its
+  list covers: without `repo` it is refused, as work with no repository
+  is. `GET /credentials` lists only its own credentials.
 - Repository discovery. `GET /github/discoverable-repos`,
   `GET /gitlab/discoverable-projects` and `GET /github/repos` list, to a key
   with an allowlist, with the credentials that are its own only (as
