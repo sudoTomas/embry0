@@ -152,6 +152,9 @@ READ_ROUTES: dict[str, str] = {
     "/api/v1/maps/{slug}/marks": "reads any other map as one that does not exist (404)",
     "/api/v1/maps/{slug}/parts/{node_id:path}": "reads any other map as one that does not exist (404)",
     "/api/v1/maps/{slug}/work": "reads any other map as one that does not exist (404); sends narrowed since #318",
+    "/api/v1/audit": (
+        "lists the rows about the repositories the key covers, and its own about none, narrowed in the query"
+    ),
     # Earlier stages.
     "/api/v1/credentials": "lists the key's own credentials, since #308 and #309",
     "/api/v1/run-with/keys": "refuses another repository (403), since #309",
@@ -200,7 +203,6 @@ READ_ROUTES: dict[str, str] = {
 ELSEWHERE: dict[str, str] = {
     "/api/v1/traces": "the trace reads",
     "/api/v1/stats": "the stats reads",
-    "/api/v1/audit": "the audit reads",
 }
 
 #: Each route that names a repository or an owner in its query, and the queries that name them: ``{repo}`` and
@@ -221,6 +223,8 @@ QUERIES: dict[str, tuple[str, ...]] = {
     "/api/v1/config/settings/effective": ("?repo={repo}", "?owner={owner}"),
     "/api/v1/config/settings/revisions": ("?repo={repo}", "?owner={owner}"),
     "/api/v1/run-with/keys": ("?repo={repo}",),
+    # Every row, page by page: a row about another repository on any page shows.
+    "/api/v1/audit": ("?limit=200", "?limit=200&offset=200", "?limit=200&offset=400"),
     "/api/v1/jobs": ("?repo={repo}",),
     "/api/v1/leads": ("?repo={repo}",),
     "/api/v1/decisions": ("?repo={repo}",),

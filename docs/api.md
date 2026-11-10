@@ -578,6 +578,13 @@ gets a 403. The one read-scope key they admit is the context-proxy's own
 service key (`svc-context-proxy`, rotated at every boot), which forwards
 allowlisted queries for the sandboxes enrolled with it.
 
+The logs are the deployment's: a line cannot be told to belong to one
+repository. So a key with a [repository allowlist](#repository-allowlist),
+whatever its tier, reads none of them: both routes, and the MCP `logs_query`
+tool that reaches them with its key, answer it a 403 `repo_not_allowed`
+naming `(the deployment)` before Loki is asked, logged and audited as a
+refused deployment-wide write is.
+
 Every line returned goes through the log-text redactor
 (`embry0/safety/redaction.py`), whoever asks: secrets, e-mail addresses, long
 opaque runs and the values of the `LOG_REDACTION_FIELDS` fields
@@ -1165,10 +1172,9 @@ and data. These routes narrow to the key's repositories today, by one rule
 about repositories and owners by `embry0/api/repository_reads.py`, to jobs
 by `embry0/api/job_allowlist.py`, to issues by
 `embry0/api/issue_allowlist.py` and to healing cases by
-`embry0/api/case_allowlist.py`). The trace reads (`GET /traces`), the stats
-(`GET /stats`), the audit log (`GET /audit`, which lists every audit row,
-a case's acceptance and closing among them), the container logs
-(`GET /logs/query`), and the account's and the characters' totals, are not
+`embry0/api/case_allowlist.py`, and to the audit log by
+`embry0/api/audit_allowlist.py`). The trace reads (`GET /traces`), the stats
+(`GET /stats`), and the account's and the characters' totals, are not
 narrowed yet and follow in stages of their own:
 
 - `GET /decisions`, `GET /proposals`, `GET /asks/due`, `GET /asks`,
@@ -1389,6 +1395,32 @@ narrowed yet and follow in stages of their own:
   caller shares. With no credential of its own it is answered as a
   deployment with none: `400 No GitHub token configured`, or GitLab's
   `configured: false`.
+- The audit log. A row is about the repositories its action names it by
+  (`embry0/audit/subjects.py`): the repository in its details, its issue's,
+  its job's (and its follow-up job's), its merge approval's, its
+  hand-off's, a repository's settings layer or credential binding.
+  `GET /audit` (with every filter, its pages and its `total`) lists to a key
+  with an allowlist only the rows about repositories its list covers, every
+  one the row names, whoever wrote them, narrowed in the query before the
+  page is cut. A row about no repository it reads only when it wrote it
+  itself: an owner's row (an organization's change, its settings layer, an
+  owner's credential binding, a map moved between owners) when it covers
+  each owner the row names as a whole, and a row of the deployment's when
+  it is a change such a key may make itself (to a credential only its
+  repositories use, or revoking a key within its list). The rest of the
+  deployment's rows (a key, a person, a credential, a host, a model, an
+  agent, a skill, the deployment's or the global settings) and every row
+  about another repository are not there for it, even under its own actor:
+  a key a person mints from a session is recorded under the person's email,
+  as the person's own changes are. A refusal's row it never reads (below).
+  `GET /audit/actions`, the Audit filter's list, offers it only the actions
+  of the rows it reads (a current action whose rows, under its name or one
+  it replaced, it reads, and a retired name such a row carries); the actor
+  filter is matched within those rows.
+- The container logs. `GET /logs/query` and `GET /logs/containers` are
+  refused to a key with an allowlist, whatever its tier
+  ([Container logs](#container-logs)): a line cannot be told to belong to
+  one repository.
 - A job's streams. `POST /jobs/{id}/events-token`,
   `POST /jobs/{id}/qa/log-stream-token` and `POST /qa/runs/{id}/events-token`
   mint, for another repository's job, a token like any other, as they do for
@@ -1500,11 +1532,13 @@ before and after.
 ## Audit log
 
 ```bash
-# Newest-first rows; admins see every row, other callers the rows they wrote
+# Newest-first rows; admins see every row, other callers the rows they wrote, and a key with a repository
+# allowlist only the rows about its repositories and its own about none
 curl "http://localhost:8200/api/v1/audit?action=qa.job_created&limit=50" \
   -H "Authorization: Bearer $EMBRY0_API_KEY"
 
-# Every action a row can carry, with its label (the dashboard's filter list)
+# Every action a row can carry, with its label (the dashboard's filter list); to a key with a repository
+# allowlist, the actions of the rows it reads
 curl http://localhost:8200/api/v1/audit/actions \
   -H "Authorization: Bearer $EMBRY0_API_KEY"
 # -> {"actions": [{"action": "user.login", "label": "Signed in", "replaced_by": null}, ...]}
