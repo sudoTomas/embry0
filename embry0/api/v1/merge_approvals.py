@@ -38,10 +38,11 @@ from embry0.api.case_allowlist import without_hidden_cases
 from embry0.api.deps import TIER_MERGE, ensure_admin, request_actor
 from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers, record_refusal
 from embry0.api.schemas.person_name import PersonName
+from embry0.api.served import ServedRoute
 from embry0.audit.helpers import emit_audit
 from embry0.services.merge_approvals import DASHBOARD_CHANNEL, DecisionRefused, MergeApprovalService
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 #: Route template a merge-scope key may POST to (see deps.MERGE_SCOPE_MUTATIONS).
 DECIDE_PATH = "/merge-approvals/{approval_id}/decide"

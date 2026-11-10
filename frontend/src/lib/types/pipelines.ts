@@ -114,7 +114,10 @@ export interface PipelineTemplate {
   template_id: string;
   name: string;
   description: string;
-  graph: PipelineGraph;
+  /** None when the stored graph is too deeply nested for the API to send as an object: see ``graph_text``. */
+  graph: PipelineGraph | null;
+  /** The stored graph's JSON text when the API sent that instead of the graph (#431); shown read-only. */
+  graph_text?: string | null;
   created_at: string;
   /** Write responses only: non-fatal problems the backend found (e.g. a skill whose source is not ready). */
   warnings?: string[];

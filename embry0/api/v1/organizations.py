@@ -33,6 +33,7 @@ from embry0.api.repo_allowlist import (
 from embry0.api.repository_reads import covered, owner_hidden
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.repo_path import validate_repo_path
+from embry0.api.served import ServedRoute
 from embry0.api.v1.credentials import key_owns_credential
 from embry0.api.v1.run_with import checked_run_with
 from embry0.api.v1.settings import set_section_keys
@@ -46,7 +47,7 @@ from embry0.storage.repositories.org_repos import OrgReposRepository
 from embry0.storage.repositories.organizations import OrganizationsRepository
 
 logger = structlog.get_logger(__name__)
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 
 class OrganizationBody(BaseModel):

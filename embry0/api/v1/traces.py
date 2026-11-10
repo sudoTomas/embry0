@@ -12,9 +12,10 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from embry0.api.deps import get_traces_repo
 from embry0.api.repo_allowlist import covered_slugs
+from embry0.api.served import ServedRoute
 from embry0.storage.repositories.traces import TracesRepository
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 
 @router.get("/traces")

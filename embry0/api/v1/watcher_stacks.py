@@ -15,11 +15,12 @@ from pydantic import Field
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers
 from embry0.api.schemas import ServableFields
+from embry0.api.served import ServedRoute
 from embry0.audit.helpers import emit_audit
 from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack, check_settings
 from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 
 class StackBody(ServableFields):

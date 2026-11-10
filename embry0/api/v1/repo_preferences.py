@@ -15,10 +15,11 @@ from embry0.api.schemas.repo_preferences import (
     RepoPreferencesResponse,
     RepoPreferencesUpdateRequest,
 )
+from embry0.api.served import ServedRoute
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 
 async def _audit(request: Request, action: AuditAction, details: dict[str, Any]) -> None:

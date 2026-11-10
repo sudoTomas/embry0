@@ -8,6 +8,7 @@ from embry0.agents.skills import is_repository_skill, skill_source, triage_may_a
 from embry0.api.deps import get_agent_defs_repo, require_admin
 from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.schemas import AgentCreateRequest, AgentUpdateRequest
+from embry0.api.served import ServedRoute
 from embry0.api.v1._audit import audit
 from embry0.api.v1._skill_writes import check_added_skills
 from embry0.services import job_briefs, proposal_briefs
@@ -29,7 +30,7 @@ from embry0.storage.repositories.agent_definitions import AgentDefinitionsReposi
 from embry0.workflows.row_behaviour import CODING_AGENT_TYPES, quest_template_problem, untemplated_task_problem
 
 # Agent definitions run in every repository's jobs: not a key with a repository allowlist's to change.
-router = APIRouter(dependencies=[deployment_writes("change the deployment's agents")])
+router = APIRouter(dependencies=[deployment_writes("change the deployment's agents")], route_class=ServedRoute)
 
 
 async def _reject_if_disabled(request: Request, model: str | None) -> None:

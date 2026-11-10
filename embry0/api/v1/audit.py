@@ -18,12 +18,13 @@ from pydantic import BaseModel
 from embry0.api.actor_visibility import caller_scope
 from embry0.api.deps import get_audit_repo
 from embry0.api.repo_allowlist import restricted_key_name
+from embry0.api.served import ServedRoute
 from embry0.api.session import TIER_ADMIN
 from embry0.audit.actions import AUDIT_ACTION_LABELS, RETIRED_AUDIT_ACTIONS
 from embry0.orchestration.dispatch_actors import REPO_ALLOWLIST
 from embry0.storage.repositories.audit import AuditRepository
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 _SENSITIVE_KEY_PARTS = ("key", "token", "secret", "password")
 

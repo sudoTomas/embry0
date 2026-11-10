@@ -685,3 +685,23 @@ describe("AgentFormPage — the guild (#167)", () => {
     expect(screen.getByLabelText("Task from the guild")).toHaveValue("gone-route");
   });
 });
+
+describe("AgentFormPage — MCP servers stored as text (#431)", () => {
+  it("shows them read-only, and a save keeps them as they are", async () => {
+    const user = userEvent.setup();
+    const text = '{"docs": {"command": "x", "v": {"a": {"a": "leaf"}}}}';
+    mockUseAgent.mockReturnValue({ data: { ...EXISTING, mcp_servers: text }, isLoading: false });
+    renderEdit();
+
+    const shown = screen.getByTestId("stored-as-text");
+    expect(shown).toHaveTextContent("Too deeply nested to show; stored as text.");
+    expect(shown).toHaveTextContent('"command": "x"');
+    expect(screen.queryByLabelText("MCP servers (JSON)"), "no editor to save a string back through").toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate, "the save goes through").toHaveBeenCalledTimes(1);
+    expect(mockUpdateMutate.mock.calls[0][0], "and leaves the stored servers as they are").not.toHaveProperty(
+      "mcp_servers",
+    );
+  });
+});

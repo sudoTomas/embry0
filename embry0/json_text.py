@@ -24,7 +24,8 @@ load) or ``tests/unit/execution/proxy/test_dockerfile_copies_every_proxy.py``.
 
 A document that reads fine can still be too deep to serve:
 :data:`SERVABLE_DEPTH` and :func:`nested_deeper_than` are the check a reader
-applies before it keeps or relays one.
+applies before it keeps or relays one, and :func:`served` is what a read
+shows of a stored one past :data:`STORED_DEPTH`.
 """
 
 from __future__ import annotations
@@ -83,6 +84,28 @@ def nested_deeper_than(value: Any, depth: int) -> bool:
             return True
         stack.extend((child, level + 1) for child in children)
     return False
+
+
+#: What a read shows of a stored document too deep even to write as JSON text.
+UNSERVABLE_TEXT = "[a document nested too deep to show]"
+
+
+def served(value: Any) -> Any:
+    """``value`` as a read serves it: as it is, or as its JSON text when it nests deeper than :data:`STORED_DEPTH`.
+
+    The write paths refuse such a document (``ServableFields``), but a row
+    stored before they did, or written by something other than the API, can
+    still hold one; served as it is, it would make its read answer 500, and a
+    list would lose every row with it (#431). Its text is what the job events
+    page shows of an event too deep to serve. ``value`` itself, never a copy,
+    when it is shallow enough.
+    """
+    if not nested_deeper_than(value, STORED_DEPTH):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except (ValueError, RecursionError):
+        return UNSERVABLE_TEXT
 
 
 def json_kind(value: Any) -> str:

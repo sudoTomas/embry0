@@ -16,9 +16,10 @@ from fastapi.responses import Response
 
 from embry0.api.deps import get_deliverables_repo, get_qa_minio
 from embry0.api.job_allowlist import job_hidden
+from embry0.api.served import ServedRoute
 from embry0.storage.repositories.deliverables import DeliverablesRepository
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 # Collection caps artifacts at 10MB (plan_route.MAX_ARTIFACT_BYTES); this is a
 # defensive ceiling for the in-memory passthrough in case rows ever arrive by

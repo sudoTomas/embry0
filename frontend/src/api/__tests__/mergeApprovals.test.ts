@@ -34,6 +34,16 @@ describe("merge approvals api", () => {
     await expect(fetchMergeApproval("ma-1")).resolves.toBeNull();
   });
 
+  it("keeps an ask sent as its JSON text (#431) apart from the ask, in the list and by id", async () => {
+    const text = '{"title": "Fix", "notes": {"a": {"a": "leaf"}}}';
+    get.mockResolvedValueOnce({ status: 200, data: { items: [{ id: "ma-1", ask: text }, { id: "ma-2", ask: { title: "Two" } }] } });
+    const list = await fetchMergeApprovals("all");
+    expect(list?.items[0]).toMatchObject({ ask: null, ask_text: text });
+    expect(list?.items[1]).toEqual({ id: "ma-2", ask: { title: "Two" } });
+    get.mockResolvedValueOnce({ status: 200, data: { id: "ma-1", ask: text } });
+    await expect(fetchMergeApproval("ma-1")).resolves.toEqual({ id: "ma-1", ask: null, ask_text: text });
+  });
+
   it("decides with the dashboard's form: the decision word alone", async () => {
     post.mockResolvedValueOnce({ data: { outcome: "rejected", status: "rejected", dry_run: true, pr_url: "", head_sha: "" } });
     await expect(decideMergeApproval("ma-1", "reject")).resolves.toMatchObject({ outcome: "rejected" });

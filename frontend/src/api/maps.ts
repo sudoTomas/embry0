@@ -123,11 +123,13 @@ export interface PartDetail {
 
 export interface PartView {
   map: { slug: string; owner?: string | null; title: string; repo: string | null };
-  node: MapNode;
+  /** Its JSON text when the stored part is too deeply nested to send as an object (#431). */
+  node: MapNode | string;
   repo: string | null;
   /** A file or folder in a repository: an agent can remove it. A whole system or repository cannot be. */
   removable: boolean;
-  detail: PartDetail | null;
+  /** Its JSON text when too deeply nested to send as an object (#431). */
+  detail: PartDetail | string | null;
   marks: MarkView[];
   work: WorkView | null;
   lead: { id: string; state: string } | null;

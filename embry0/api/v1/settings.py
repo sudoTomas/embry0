@@ -40,6 +40,7 @@ from embry0.api.deps import request_actor, require_admin
 from embry0.api.document_requests import if_match_versions, read_capped_body
 from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers, refusal_detail
 from embry0.api.repository_reads import owner_hidden
+from embry0.api.served import ServedRoute
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.settings.document import (
@@ -67,7 +68,7 @@ from embry0.settings.store import (
     Snapshot,
 )
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 _WRITE_ACTION = "change the settings document"
 _BOTH = "Name one layer: owner or repo, not both."

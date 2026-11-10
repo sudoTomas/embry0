@@ -53,6 +53,7 @@ from embry0.api.schemas.credentials import (
     XaiDeviceLoginStarted,
 )
 from embry0.api.schemas.repo_path import validate_repo_path
+from embry0.api.served import ServedRoute
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.json_text import STORED_DEPTH, nested_deeper_than
@@ -71,7 +72,7 @@ from embry0.storage.repositories.credentials import (
 )
 from embry0.storage.repositories.repos import UnregisteredRepoError
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 TAILNET_API_HOST = urlparse(TAILNET_API_BASE).hostname or ""
 

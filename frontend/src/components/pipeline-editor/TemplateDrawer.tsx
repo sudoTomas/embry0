@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { Copy, Pencil, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { fetchTemplate } from "@/api/pipelines";
 import { formatDay } from "@/lib/utils";
 import { useTemplates, useTemplate, useRenameTemplate, useCreateTemplate, useDeleteTemplate } from "@/hooks/usePipelines";
 import type { PipelineTemplate, PipelineTemplateSummary } from "@/lib/types";
 import { toastApiError } from "@/api/errorToast";
+import { STORED_AS_TEXT_NOTE } from "@/lib/storedAsText";
 import { Dialog } from "@/components/ui/Dialog";
 import { Menu } from "@/components/ui/Menu";
 
@@ -74,6 +76,10 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
       full = await fetchTemplate(t.template_id);
     } catch (e) {
       toastApiError(e, "Failed to duplicate");
+      return;
+    }
+    if (!full.graph) {
+      toast.error(`${t.name}: ${STORED_AS_TEXT_NOTE} It cannot be copied.`);
       return;
     }
     createMutation.mutate(

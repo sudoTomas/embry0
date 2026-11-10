@@ -16,11 +16,12 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers
+from embry0.api.served import ServedRoute
 from embry0.services.leads import LEAD_KINDS, as_utc_iso
 from embry0.services.leads.tasks import lead_task
 from embry0.services.run_with import RunWith, apply_run_with
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 
 def _repo(request: Request) -> Any:

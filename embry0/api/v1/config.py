@@ -24,6 +24,7 @@ from embry0.api.schemas import (
     IntegrationConfigUpdate,
     ProviderConfigUpdate,
 )
+from embry0.api.served import ServedRoute
 from embry0.api.v1.settings import set_section_keys
 from embry0.audit.helpers import emit_audit
 from embry0.config import Embry0Config
@@ -32,7 +33,7 @@ from embry0.storage.repositories.context_config import ContextConfigRepository
 from embry0.storage.repositories.integration_config import _SECRET_FIELDS, IntegrationConfigRepository
 from embry0.storage.repositories.provider_config import ProviderConfigRepository
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 
 @router.get("/config/models")

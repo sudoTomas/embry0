@@ -11,6 +11,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DashboardSkeleton } from "@/components/ui/PageSkeleton";
 import { MergeApprovalsOff } from "@/components/merge-approvals/MergeApprovalsOff";
 import { PageError } from "@/components/PageError";
+import { StoredAsText } from "@/components/StoredAsText";
 import { CHECKS_TONES, VERDICT_LABELS, VERDICT_TONES, approvalTitle, decidedVia, detailSentence } from "@/lib/mergeApprovals";
 import { sentenceCase, statusLabel, statusTone } from "@/lib/status";
 import { actorInText } from "@/lib/actors";
@@ -272,6 +273,8 @@ export function MergeApprovalPage() {
             </Section>
           )}
         </div>
+      ) : row.ask_text ? (
+        <StoredAsText text={row.ask_text} what="The ask's details" />
       ) : (
         <p className="text-sm text-fg-muted">This ask was recorded without its details.</p>
       )}

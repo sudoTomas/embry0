@@ -41,6 +41,7 @@ from embry0.api.repo_allowlist import covered_slugs, enforce_reach
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.cases import CaseDetailResponse, CaseListResponse, CaseSummary
 from embry0.api.schemas.person_name import PersonName
+from embry0.api.served import ServedRoute
 from embry0.api.trigger_context import current_linear_sync, linear_trigger_context
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
@@ -54,7 +55,7 @@ from embry0.trackers.models import TrackerIssue
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 
 def encode_cursor(created_at: datetime, case_id: str) -> str:
