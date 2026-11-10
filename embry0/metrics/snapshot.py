@@ -63,21 +63,29 @@ class LoopSnapshot:
         self._refreshed_at: float | None = None
         self._refreshing = False
 
-    async def refresh(self) -> None:
-        """Bring the gauges up to date if they are stale. Never raises."""
+    async def refresh(self, *, deadline: bool = True) -> None:
+        """Bring the gauges up to date if they are stale. Never raises.
+
+        ``deadline=False`` reads every source to its end, however long it takes, instead of giving the sources
+        ``timeout_seconds`` between them: the gauges as the sources stand, for a caller that must have every
+        one (a test of what the sources read). A scrape never waits so.
+        """
         now = self._clock()
         if self._refreshing or (self._refreshed_at is not None and now - self._refreshed_at < self._ttl):
             return
         self._refreshing = True
         try:
-            deadline = now + self._timeout
+            until = now + self._timeout
             failed = False
             for name, source in self._sources.items():
                 try:
-                    remaining = deadline - self._clock()
-                    if remaining <= 0:
-                        raise TimeoutError
-                    data = await asyncio.wait_for(source.fetch(), timeout=remaining)
+                    if deadline:
+                        remaining = until - self._clock()
+                        if remaining <= 0:
+                            raise TimeoutError
+                        data = await asyncio.wait_for(source.fetch(), timeout=remaining)
+                    else:
+                        data = await source.fetch()
                     source.apply(data)
                 except Exception as exc:
                     failed = True
