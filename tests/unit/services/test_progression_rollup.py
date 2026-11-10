@@ -27,6 +27,7 @@ import yaml
 from httpx import ASGITransport, AsyncClient
 
 from embry0.execution.skill_actions import ACTION_KEYS, LEGACY_ACTION_KEYS
+from embry0.services.achievements import evaluate
 from embry0.services.progression import Progression, ProgressionService, compute
 from embry0.services.progression_pack import Rules, default_rules, default_text, parse, rules_for
 from embry0.services.progression_rollup import (
@@ -198,24 +199,74 @@ class MemoryWriter:
 # ---- comparing two answers ----
 
 
+def _differing(actual: Any, expected: Any, path: str) -> list[str]:
+    """Each place ``actual`` differs from ``expected``: its path, down to the field, and both values in full.
+
+    A list item that is a dict with an ``id`` is named by it as well as by
+    its index, so an achievement or quest that differs is named.
+    """
+    if actual == expected:
+        return []
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        found: list[str] = []
+        for key in sorted(set(actual) | set(expected), key=repr):
+            where = f"{path}[{key!r}]"
+            if key not in actual:
+                found.append(f"{where} is missing; expected {expected[key]!r}")
+            elif key not in expected:
+                found.append(f"{where} = {actual[key]!r} is not expected")
+            else:
+                found += _differing(actual[key], expected[key], where)
+        return found
+    if isinstance(actual, list) and isinstance(expected, list):
+        found = []
+        for index, (a, e) in enumerate(zip(actual, expected, strict=False)):
+            named = isinstance(a, dict) and isinstance(e, dict) and "id" in a and a.get("id") == e.get("id")
+            name = f" id={a['id']!r}" if named else ""
+            found += _differing(a, e, f"{path}[{index}{name}]")
+        if len(actual) != len(expected):
+            found.append(
+                f"{path} has {len(actual)} items, expected {len(expected)}; past the shorter: "
+                f"{actual[len(expected) :]!r} != {expected[len(actual) :]!r}"
+            )
+        return found
+    return [f"{path} differs: {actual!r} != {expected!r}"]
+
+
 def differences(actual: Progression, expected: Progression) -> list[str]:
-    """Every field in which ``actual`` differs from ``expected``: totals, levels, milestones at their exact times."""
-    problems: list[str] = []
+    """Every field in which ``actual`` differs from ``expected``: totals, levels, milestones at their exact times.
+
+    Each names the field that differs, down to the key, and shows both values in full (#443).
+    """
     a, e = actual.to_dict(recent=1_000_000), expected.to_dict(recent=1_000_000)
     for body in (a, e):
         body.pop("computed_at")
         body.pop("rollup")
-    for key in sorted(set(a) | set(e)):
-        if a.get(key) != e.get(key):
-            problems.append(f"to_dict()[{key!r}] differs: {str(a.get(key))[:300]} != {str(e.get(key))[:300]}")
+    problems = _differing(a, e, "to_dict()")
     for name in ("level_ups", "agent_level_ups", "drops"):
-        if getattr(actual, name) != getattr(expected, name):
-            problems.append(f"{name} differ")
+        problems += _differing(getattr(actual, name), getattr(expected, name), name)
     stat_xp = {k: c.stat_xp for k, c in actual.characters.items()}
     expected_xp = {k: c.stat_xp for k, c in expected.characters.items()}
-    if stat_xp != expected_xp:
-        problems.append(f"stat_xp differs: {stat_xp} != {expected_xp}")
-    return problems
+    return problems + _differing(stat_xp, expected_xp, "stat_xp")
+
+
+def test_a_difference_names_its_field_and_shows_both_values_in_full() -> None:
+    """A rollup's answer that differs from a full read's says where, and what each holds, cut nowhere (#443)."""
+    pull = "https://forge/acme/widgets/pull/" + "4" * 400
+
+    def merged_once(url: str) -> Progression:
+        progression = compute([], rules=RULES)
+        progression.achievements, progression.unlocks = evaluate(
+            [Fact("merged", START, 1.0, "acme/widgets", url)], rules=RULES
+        )
+        return progression
+
+    problems = differences(merged_once(pull + "1"), merged_once(pull + "2"))
+
+    wanted = (
+        f"to_dict()['achievements'][0 id='forged_in_fire']['evidence']['url'] differs: {pull + '1'!r} != {pull + '2'!r}"
+    )
+    assert wanted in problems, f"the difference must name the field and show both values in full: {problems}"
 
 
 # ---- a random history ----

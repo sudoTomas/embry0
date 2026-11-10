@@ -12,8 +12,8 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-from collections.abc import Collection
-from dataclasses import replace
+from collections.abc import Awaitable, Callable, Collection, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
@@ -502,3 +502,173 @@ async def test_a_job_keeps_what_it_earned_when_its_pull_request_merges_after_its
     assert rebuilt.rollup is not None and rebuilt.rollup["rebuilt_at"] == clock[0].astimezone(UTC).isoformat()
     assert _earned(rebuilt, template)[0] == xp, f"the nightly rebuild took back the {template} job's experience"
     _same(rebuilt, await reference.read(), f"the {template} job's pull request merged, after the nightly rebuild")
+
+
+# ---- rows at one time read the same, however Postgres stores them (#443) ----
+
+TIED = datetime(2026, 3, 1, 10, tzinfo=UTC)
+
+
+@dataclass(frozen=True)
+class _Metric:
+    """One metric of the facts query, filed under its fragment's name."""
+
+    fragment: str
+    params: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def key(self) -> str:
+        return self.fragment
+
+
+async def _write_tied(db: DatabasePool, order: str) -> None:
+    """Two jobs merged on one issue of one repo, two runs of a resumed job, and runs in two other repos, at one time.
+
+    ``order`` is the order the rows are written in, which is the order
+    Postgres stores them in: ``"ab"`` or ``"ba"``.
+    """
+    for name in order:
+        await _job(
+            db,
+            f"j-{name}",
+            status="pr_merged",
+            issue_id="iss-2",
+            pipeline_template="map-areas",
+            pr_url=f"https://forge/acme/widgets/pull/{name}",
+            dispatched_by=f"user-{name}",
+            at=TIED,
+        )
+    await _job(db, "j-resumed", status="completed", resume_attempts=1, at=TIED)
+    for name in order:
+        await _trace(db, f"trc-{name}", "j-resumed", {"a": "review", "b": "qa"}[name], TIED)
+    # A run of one agent in each of two other repos.
+    for name in order:
+        await _job(db, f"j-{name}-elsewhere", repo=f"acme/{name}", at=TIED)
+        await _trace(db, f"trc-{name}-elsewhere", f"j-{name}-elsewhere", "developer", TIED)
+
+
+async def _tied_setup(db: DatabasePool) -> None:
+    for agent in ("developer", "review", "qa"):
+        await db.execute(
+            "INSERT INTO agent_definitions (type, description, model) VALUES ($1, 'd', 'm') ON CONFLICT DO NOTHING",
+            agent,
+        )
+    await db.execute("INSERT INTO issues (id, title, repo) VALUES ('iss-1', 'Parent', 'acme/widgets')")
+    await db.execute(
+        "INSERT INTO issues (id, title, repo, parent_issue_id) VALUES ('iss-2', 'Child', 'acme/widgets', 'iss-1')"
+    )
+
+
+async def _urls(repo: ProgressionRepository, metric: _Metric) -> list[str | None]:
+    return [fact.url for fact in await repo.facts([metric], "UTC")]
+
+
+async def _resumed_by(repo: ProgressionRepository) -> list[str | None]:
+    return [event.agent_type for event in await repo.events() if event.source == "resumed"]
+
+
+async def _journal_jobs(repo: ProgressionRepository) -> list[tuple[str, str | None]]:
+    return [(job.repo, job.dispatched_by) for job in (await repo.journal()).jobs]
+
+
+async def _journal_runs(repo: ProgressionRepository) -> list[tuple[str, str]]:
+    return [(run.agent_type, run.repo) for run in (await repo.journal()).runs]
+
+
+#: Each read that lists rows at one time, or keeps one of them: the facts of a metric in order (a metric's
+#: evidence is its last), the one row a DISTINCT ON keeps, the agent a resumed job credits, the journal.
+TIED_READS: dict[str, Callable[[ProgressionRepository], Awaitable[list[Any]]]] = {
+    "merged, in order": lambda repo: _urls(repo, _Metric("merged")),
+    "repo_hopper keeps one": lambda repo: _urls(repo, _Metric("repo_hopper")),
+    "issue_done keeps one": lambda repo: _urls(repo, _Metric("issue_done")),
+    "side_quest keeps one": lambda repo: _urls(repo, _Metric("side_quest")),
+    "areas_mapped keeps one": lambda repo: _urls(repo, _Metric("areas_mapped")),
+    "merged_on_attempt keeps one": lambda repo: _urls(repo, _Metric("merged_on_attempt", {"min_attempts": 1})),
+    "the resumed job's last run": _resumed_by,
+    "the journal's jobs": _journal_jobs,
+    "the journal's runs": _journal_runs,
+}
+
+
+#: Each pair of rows at one time that _write_tied writes: its table, its key column, the a row and the b row.
+TIED_PAIRS = (
+    ("jobs", "job_id", "j-a", "j-b"),
+    ("traces", "trace_id", "trc-a", "trc-b"),
+    ("jobs", "job_id", "j-a-elsewhere", "j-b-elsewhere"),
+    ("traces", "trace_id", "trc-a-elsewhere", "trc-b-elsewhere"),
+)
+
+
+async def _stored_first(db: DatabasePool, pairs: tuple[tuple[str, str, str, str], ...] = TIED_PAIRS) -> list[str]:
+    """Which row of each pair Postgres stores first ("a" or "b"), by its place on disk (``ctid``): the order a scan
+    meets them in. A test of what a different order reads measures nothing unless this differs."""
+    first: list[str] = []
+    for table, key, a, b in pairs:
+        rows = await db.fetch(f"SELECT {key} FROM {table} WHERE {key} = ANY($1::text[]) ORDER BY ctid", [a, b])
+        assert len(rows) == 2, f"{table} holds {len(rows)} of {a} and {b}"
+        first.append("a" if rows[0][key] == a else "b")
+    return first
+
+
+@pytest.mark.parametrize("read", sorted(TIED_READS))
+async def test_rows_at_one_time_read_the_same_whatever_order_they_were_stored_in(
+    db_with_migrations: DatabasePool, read: str
+) -> None:
+    """The rollup folds a day in one read and a full read reads it again: both must keep the same of tied rows."""
+    db = db_with_migrations
+    await _tied_setup(db)
+    repo = ProgressionRepository(db)
+    answers: dict[str, list[Any]] = {}
+    stored: dict[str, list[str]] = {}
+    for order in ("ab", "ba"):
+        await db.execute("DELETE FROM traces")
+        await db.execute("DELETE FROM jobs")
+        await _write_tied(db, order)
+        stored[order] = await _stored_first(db)
+        answers[order] = await TIED_READS[read](repo)
+    assert stored == {"ab": ["a"] * len(TIED_PAIRS), "ba": ["b"] * len(TIED_PAIRS)}, (
+        f"the rows were not stored in the order they were written, so the two reads saw one order: {stored}"
+    )
+    assert answers["ab"] == answers["ba"], (
+        f"{read}: the same rows stored in another order read {answers['ba']}, not {answers['ab']}"
+    )
+
+
+async def _store_again(db: DatabasePool, table: str, key: str, value: str) -> None:
+    """Delete the row and write it back unchanged: Postgres now stores it after the rows written since."""
+    await db.execute(
+        f"WITH gone AS (DELETE FROM {table} WHERE {key} = $1 RETURNING *) INSERT INTO {table} SELECT * FROM gone", value
+    )
+
+
+async def test_the_rollup_and_a_full_read_keep_the_same_of_rows_at_one_time(db_with_migrations: DatabasePool) -> None:
+    """#443: the same rows answer the same, through the rollup or not, however Postgres happens to store them."""
+    db = db_with_migrations
+    await _tied_setup(db)
+    await _write_tied(db, "ab")
+    clock = [TIED + timedelta(days=5)]
+    packs = Packs(RULES)
+    service = ProgressionService(
+        ProgressionRepository(db),
+        packs=packs,
+        rollups=ProgressionRollupRepository(db),
+        ttl_seconds=0,
+        now=lambda: clock[0],
+    )
+    reference = ProgressionService(WholeJournal(db), packs=packs, rollups=None, ttl_seconds=0)
+    await service.read()
+    await service.settle()
+    folded = await service.read()
+    assert folded.rollup is not None and datetime.fromisoformat(folded.rollup["boundary"]) > TIED, folded.rollup
+
+    # Nothing changes but where Postgres keeps the first row of each pair.
+    moved = TIED_PAIRS[:2]
+    assert await _stored_first(db, moved) == ["a", "a"], "the rows were written a first"
+    await _store_again(db, "jobs", "job_id", "j-a")
+    await _store_again(db, "traces", "trace_id", "trc-a")
+    assert await _stored_first(db, moved) == ["b", "b"], (
+        "storing a again must put it after b on disk, or the reads below compare one order with itself"
+    )
+
+    _same(folded, await reference.read(), "the same rows, stored again")
+    _same(await service.read(), await reference.read(), "the rollup's folded day, after its rows were stored again")
