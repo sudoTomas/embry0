@@ -793,7 +793,9 @@ async def logs_query(
     search: regex line filter (e.g. "(?i)error|exception"); since_minutes: lookback
     window (max 1440); limit: max lines (default 200, max 1000); logql: raw LogQL
     override for advanced queries. Keep limit modest — lines land in your context.
-    Needs an operate-scope key or above. Lines come back redacted (secrets, e-mail
+    Needs an operate-scope key or above, without a repository allowlist: the logs
+    are the deployment's, so a key limited to some repositories is refused (403
+    repo_not_allowed). Lines come back redacted (secrets, e-mail
     addresses and the operator's personal-data fields replaced) and cut at 2000
     characters."""
     return await _get_client().logs_query(
