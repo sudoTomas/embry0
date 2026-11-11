@@ -493,7 +493,9 @@ async def agent_list() -> list[dict[str, Any]]:
 
 @_tool
 async def agent_get(agent_type: str) -> dict[str, Any]:
-    """Get one agent definition, including its system prompt and MCP server config."""
+    """Get one agent definition, including its system prompt and MCP server config. Unless the caller's key is an
+    admin key without a repository allowlist, the servers' env and header values, and any value named like a
+    credential, read as "****"."""
     return await _get_client().agent_get(agent_type)
 
 
