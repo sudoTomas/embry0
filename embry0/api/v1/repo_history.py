@@ -29,6 +29,7 @@ from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers
 from embry0.api.schemas.repo_preferences import RepoPreferencesUpdateRequest
+from embry0.api.v1.qa_config import enforce_shared_cache_kept
 from embry0.audit.helpers import emit_audit
 from embry0.services.areas_document import DocumentInvalid, DocumentTooLarge, areas_of, changes, problem_list
 from embry0.storage.repositories.repo_areas import AreasChanged
@@ -235,6 +236,8 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
             raise HTTPException(status_code=409, detail=WHY_NOT) from None
     elif surface == "qa_config":
         configs = request.app.state.qa_configs_repo
+        # The setup the undo replaces is the one this change wrote (checked above).
+        await enforce_shared_cache_kept(request, before["yaml_text"] if before is not None else None, revision["after"])
         if before is None:
             new_revision_id = await configs.delete_recorded(full_repo, actor=actor, source="restore", reason=reason)
         else:
