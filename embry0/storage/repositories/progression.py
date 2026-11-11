@@ -151,8 +151,52 @@ FROM audit_log a WHERE a.action = 'issue.input_created'""",
 )
 
 
-def events_sql(*, since: bool = False, until: bool = False) -> str:
-    """The events query: every source, from ``$1`` on with ``since``, before the next bind with ``until``.
+def scope_ctes(n: int) -> str:
+    """The ``WITH`` items that read every table progression reads as a deployment holding only the repositories bound
+    as ``$n`` (lower-cased slugs) would: each is named for its table, so a query after them reads them instead of it.
+
+    A job is a repository's by ``job_repository_sql``, an agent's run by its job's, an issue, a healing case, an
+    owner's answer to a proposal, a standard's state, a pull request review, a setup proposal and an areas proposal
+    by their own ``repo``, a case's history by its case's, an agent's question by its job's and, when it names one, its issue's,
+    and an audit row of a question asked by its question's. Work of no repository is no scope's. Inside each item a
+    table's name still names the table, and an item names the items before it, so a question reads the scope's jobs.
+    Each is inlined where it is read (``NOT MATERIALIZED``), so a read keeps the table's indexes.
+    """
+    of = f"lower({{}}) = ANY(${n}::text[])"
+    return f"""
+    jobs AS NOT MATERIALIZED (SELECT * FROM jobs WHERE {of.format(job_repository_sql())}),
+    traces AS NOT MATERIALIZED (SELECT * FROM traces WHERE job_id IN (SELECT job_id FROM jobs)),
+    issues AS NOT MATERIALIZED (SELECT * FROM issues WHERE {of.format("repo")}),
+    issue_inputs AS NOT MATERIALIZED (
+        SELECT * FROM issue_inputs
+        WHERE job_id IN (SELECT job_id FROM jobs) AND (issue_id IS NULL OR issue_id IN (SELECT id FROM issues))
+    ),
+    healing_cases AS NOT MATERIALIZED (SELECT * FROM healing_cases WHERE {of.format("repo")}),
+    healing_case_events AS NOT MATERIALIZED (SELECT * FROM healing_case_events WHERE case_id IN (SELECT id FROM healing_cases)),
+    proposal_decisions AS NOT MATERIALIZED (SELECT * FROM proposal_decisions WHERE {of.format("repo")}),
+    repo_standard_state AS NOT MATERIALIZED (SELECT * FROM repo_standard_state WHERE {of.format("repo")}),
+    pr_reviews AS NOT MATERIALIZED (SELECT * FROM pr_reviews WHERE {of.format("repo")}),
+    repo_setup_proposals AS NOT MATERIALIZED (SELECT * FROM repo_setup_proposals WHERE {of.format("repo")}),
+    repo_areas_proposals AS NOT MATERIALIZED (SELECT * FROM repo_areas_proposals WHERE {of.format("repo")}),
+    audit_log AS NOT MATERIALIZED (
+        SELECT * FROM audit_log
+        WHERE action = 'issue.input_created' AND details->>'input_id' IN (SELECT id FROM issue_inputs)
+    )"""
+
+
+def _scoped(sql: str, n: int | None) -> str:
+    """``sql``, a query that starts with ``SELECT`` or ``WITH``, reading the scope bound as ``$n``; as it is for None."""
+    if n is None:
+        return sql
+    body = sql.lstrip()
+    if body.upper().startswith("WITH "):
+        return "WITH" + scope_ctes(n) + ",\n" + body[len("WITH ") :]
+    return "WITH" + scope_ctes(n) + "\n" + body
+
+
+def events_sql(*, since: bool = False, until: bool = False, repos: bool = False) -> str:
+    """The events query: every source, from ``$1`` on with ``since``, before the next bind with ``until``, and with
+    ``repos`` of the repositories bound after them (:func:`scope_ctes`).
 
     Each bound is put on the source's own time, so a read of the last few
     days reaches ``traces`` through its ``created_at`` index (migration 131).
@@ -165,7 +209,8 @@ def events_sql(*, since: bool = False, until: bool = False) -> str:
         if until:
             bounds.append(f"{at} < ${len(bounds) + 1}")
         parts.append(branch + "".join(f"\n  AND {bound}" for bound in bounds))
-    return "\nUNION ALL\n".join(parts) + "\nORDER BY at, branch, key"
+    sql = "\nUNION ALL\n".join(parts) + "\nORDER BY at, branch, key"
+    return _scoped(sql, int(since) + int(until) + 1 if repos else None)
 
 
 @dataclass(frozen=True)
@@ -185,13 +230,22 @@ class ProgressionRepository:
     def __init__(self, db: DatabasePool) -> None:
         self._db = db
 
-    async def events(self, *, since: datetime | None = None, until: datetime | None = None) -> list[ProgressEvent]:
-        """The events that happened from ``since`` (inclusive) to ``until`` (exclusive), every one without either.
+    async def events(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        repos: Collection[str] | None = None,
+    ) -> list[ProgressEvent]:
+        """The events that happened from ``since`` (inclusive) to ``until`` (exclusive), every one without either;
+        with ``repos`` (lower-cased slugs), only those of the work of those repositories (:func:`scope_ctes`).
 
         Events at the same time come in one fixed order, whatever the bounds.
         """
-        bounds = [b for b in (since, until) if b is not None]
-        sql = events_sql(since=since is not None, until=until is not None)
+        bounds: list[Any] = [b for b in (since, until) if b is not None]
+        if repos is not None:
+            bounds.append(sorted(repos))
+        sql = events_sql(since=since is not None, until=until is not None, repos=repos is not None)
         rows: list[Any] = await self._db.fetch(sql, *bounds)
         return [
             ProgressEvent(
@@ -216,14 +270,15 @@ class ProgressionRepository:
         no other (``quests.run_agents``), and the read stays on the
         ``idx_traces_success_agent`` index (migration 131). With ``repos``
         (lower-cased slugs), only the jobs, and the runs of the jobs, working
-        on those repositories: the journal of a caller that reads no other.
+        on those repositories (:func:`scope_ctes`): the journal of a caller
+        that reads no other.
         """
         of_repos: list[Any] = [] if repos is None else [sorted(repos)]
-        jobs: list[Any] = await self._db.fetch(_JOBS_SQL.format(repos=_of_repos(1) if of_repos else ""), *of_repos)
+        jobs: list[Any] = await self._db.fetch(_scoped(_JOBS_SQL, 1 if of_repos else None), *of_repos)
         args = ([sorted(agents)] if agents is not None else []) + of_repos
         of_agents = "AND t.agent_type = ANY($1::text[])" if agents is not None else ""
         runs: list[Any] = await self._db.fetch(
-            _RUNS_SQL.format(agents=of_agents + (_of_repos(len(args)) if of_repos else "")), *args
+            _scoped(_RUNS_SQL.format(agents=of_agents), len(args) if of_repos else None), *args
         )
         return Journal(
             jobs=[
@@ -251,8 +306,11 @@ class ProgressionRepository:
         rows = await self._db.fetch("SELECT type FROM agent_definitions WHERE runs_in_jobs ORDER BY type")
         return [str(r["type"]) for r in rows]
 
-    async def facts(self, queries: Iterable[FactFragment], timezone: str) -> list[Fact]:
-        """Every step of every metric ``queries`` asks for, with its evidence, oldest first.
+    async def facts(
+        self, queries: Iterable[FactFragment], timezone: str, *, repos: Collection[str] | None = None
+    ) -> list[Fact]:
+        """Every step of every metric ``queries`` asks for, with its evidence, oldest first; with ``repos``
+        (lower-cased slugs), of the work of those repositories alone (:func:`scope_ctes`).
 
         Each fact's ``metric`` is its query's key, so two achievements that
         count one metric with different parameters count apart.
@@ -261,6 +319,9 @@ class ProgressionRepository:
         if not queries:
             return []
         sql, args = facts_sql(queries, timezone)
+        if repos is not None:
+            args.append(sorted(repos))
+            sql = _scoped(sql, len(args))
         rows: list[Any] = await self._db.fetch(sql, *args)
         return [
             Fact(queries[r["fragment"]].key, r["at"], float(r["value"]), r["label"], r["url"], r["report"])
@@ -583,15 +644,14 @@ class Journal:
     runs: list[RunRow]
 
 
-# The journal's jobs and runs, through ``str.format``: the jobs' ``{repos}`` keeps only those of some repositories
-# (:func:`_of_repos`), and the runs' ``{agents}`` only some agents' runs, and of some repositories.
+# The journal's jobs and runs; the runs' ``{agents}`` (through ``str.format``) keeps only some agents' runs.
 _JOBS_SQL = f"""
 SELECT {_J_REPO} AS repo, j.issue_id, j.pipeline_template AS template, j.status, j.created_at,
        COALESCE(j.finished_at, j.updated_at) AS finished_at, j.delivery_state_at, j.dispatched_by,
        j.leader_agent AS leader,
        CASE WHEN {an_audit("j")} AND {finished_well("j")} THEN j.result_summary END AS report
 FROM jobs j
-WHERE {_J_REPO} IS NOT NULL{{repos}}
+WHERE {_J_REPO} IS NOT NULL
 ORDER BY COALESCE(j.finished_at, j.updated_at), j.job_id
 """
 
@@ -606,8 +666,3 @@ WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL
 ORDER BY t.created_at, t.trace_id
 """
 )
-
-
-def _of_repos(n: int) -> str:
-    """The condition that the job ``j`` works on one of the repositories bound as ``$n`` (lower-cased slugs)."""
-    return f"\n  AND lower({_J_REPO}) = ANY(${n}::text[])"

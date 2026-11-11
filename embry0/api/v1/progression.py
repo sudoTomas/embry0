@@ -39,7 +39,7 @@ async def read_progression(request: Request) -> dict[str, Any]:
     traces, healing cases and answers. The answer carries the pack's names,
     colours, words and art too, so the dashboard keeps no copy of them.
     """
-    progression = await _service(request).read()
+    progression = await _service(request).read(covered_slugs(request))
     result = await covered_progression(request, progression)
     packs = getattr(request.app.state, "progression_packs", None)
     if packs is not None:
@@ -52,20 +52,17 @@ async def read_progression(request: Request) -> dict[str, Any]:
 async def covered_progression(request: Request, progression: Any) -> dict[str, Any]:
     """``progression.to_dict()`` as the caller's key may read it.
 
-    The quests, the quest points and the repo diaries of a key with a
-    repository allowlist are evaluated from the work of the repositories it
-    covers alone (``ProgressionService.narrowed``), so a quest's steps are
-    the ones that work took. A repository's diary and the tiers it completed
-    among the latest unlocks only to a key that covers it. An achievement's
-    evidence, the step that last moved it, only when it names a repository the
-    key covers, or when it names characters rather than work (a level, a cape,
-    a rare drop). A quest's ``where``, a repository or an issue, only when the
-    key covers it. The levels, the experience and the achievements are the
-    account's, the same for every caller.
+    A key with a repository allowlist is given the progression of the work of
+    the repositories it covers alone (``ProgressionService.read`` with its
+    slugs): its experience, levels, achievements, quests and diaries are those
+    a deployment holding only them would have. What is read here is filtered
+    once more: a repository's diary and the tiers it completed among the latest
+    unlocks only to a key that covers it; an achievement's evidence, the step
+    that last moved it, only when it names a repository the key covers, or
+    when it names characters rather than work (a level, a cape, a rare drop); a
+    quest's ``where``, a repository or an issue, only when the key covers it.
     """
     slugs = covered_slugs(request)
-    if slugs is not None:
-        progression = await _service(request).narrowed(progression, slugs)
     result: dict[str, Any] = progression.to_dict()
     result["diaries"] = covered_entries(request, result.get("diaries", []))
     result["recent"] = covered_entries(request, result.get("recent", []))

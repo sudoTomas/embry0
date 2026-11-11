@@ -169,7 +169,7 @@ async def test_the_rollup_answers_what_every_raw_row_answers(db_with_migrations:
         answer = await service.read()
         used += answer.rollup is not None
         _same(answer, await reference.read(), context + ", after the write")
-        stored = [r["pack_hash"] for r in await db.fetch("SELECT pack_hash FROM progression_rollups")]
+        stored = [r["pack_hash"] for r in await db.fetch("SELECT pack_hash FROM progression_scope_rollups")]
         assert stored == [packs.rules.hash], f"{context}: the rollups stored are {stored}, not the active pack's alone"
         # Time passes; what happens now is recorded now, after every boundary so far.
         clock[0] += timedelta(hours=rng.uniform(5, 40))
@@ -269,7 +269,7 @@ async def test_two_writers_build_once(db_with_migrations: DatabasePool) -> None:
     actions = sorted(str(d.action) if not isinstance(d, BaseException) else repr(d) for d in done)
     assert actions == ["None", "built"], f"two writers did not build exactly once: {actions}"
     assert len(SlowSource.reads) == 1, f"the history was read {len(SlowSource.reads)} times: {SlowSource.reads}"
-    heads = await db.fetch("SELECT pack_hash, boundary FROM progression_rollups")
+    heads = await db.fetch("SELECT pack_hash, boundary FROM progression_scope_rollups")
     assert [(r["pack_hash"], r["boundary"]) for r in heads] == [(RULES.hash, closed_through(now, RULES)[1])]
 
 
@@ -367,7 +367,7 @@ async def test_a_read_is_one_snapshot_even_when_a_write_commits_between_its_quer
     assert before is not None and before.xp and before.milestones
     real_load = rollup_repo._load
 
-    async def load_with_a_write_between(conn: Any, pack_hash: str) -> Any:
+    async def load_with_a_write_between(conn: Any, pack_hash: str, scope: str) -> Any:
         class Between:
             """The connection, committing a rebuild that empties the rollup after the head is read."""
 
@@ -383,7 +383,7 @@ async def test_a_read_is_one_snapshot_even_when_a_write_commits_between_its_quer
                         await w.replace(replace(before.head, built_at=now + timedelta(hours=1)), [], [])
                 return await conn.fetch(*args)
 
-        return await real_load(Between(), pack_hash)
+        return await real_load(Between(), pack_hash, scope)
 
     monkeypatch.setattr(rollup_repo, "_load", load_with_a_write_between)
     during = await store.load(RULES.hash)
