@@ -68,11 +68,12 @@ What belongs to the deployment as a whole is held to it by
 records as a deployment that has none would answer them.
 What belongs to the deployment and cannot be told apart by repository, the
 container logs, is refused to such a key as a deployment-wide write is
-(:func:`deployment_reads`).
+(:func:`refuse_deployment_read`).
 """
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable
 from typing import Any, NoReturn
 
@@ -230,12 +231,35 @@ def deployment_writes(action: str) -> Any:
     return Depends(refuse)
 
 
-def deployment_reads(action: str) -> Any:
+#: How long one key's repeated refusal of one deployment-wide read leaves one audit row: a page that polls (the Logs
+#: page tails every few seconds) is on record once a minute, not once a poll. Every request is still refused.
+READ_REFUSAL_WINDOW_SECONDS = 60.0
+#: When each (key, path) was last refused a deployment-wide read and audited, by :data:`_clock`.
+_read_refusals: dict[tuple[str, str], float] = {}
+_READ_REFUSALS_KEPT = 4096
+#: The clock the window is measured on.
+_clock = time.monotonic
+
+
+def refuse_deployment_read(action: str) -> Any:
     """A dependency for a router or a route that serves what belongs to the deployment and cannot be told apart by
     repository, such as the container logs: refuses :func:`enforce_deployment_allowlist` ``action`` on every request,
-    a read included. It runs after the authentication the router is included with."""
+    a read included. A key's refusals of one path within :data:`READ_REFUSAL_WINDOW_SECONDS` are logged and audited
+    once; each is answered the same 403. It runs after the authentication the router is included with."""
 
     async def refuse(request: Request) -> None:
+        if restricted_key_name(request) is None:
+            return
+        principal = request.state.principal
+        seen = (str(principal.key_id), request.url.path)
+        now = _clock()
+        last = _read_refusals.get(seen)
+        if last is not None and now - last < READ_REFUSAL_WINDOW_SECONDS:
+            raise HTTPException(status_code=403, detail=_detail(principal, DEPLOYMENT, action))
+        if len(_read_refusals) >= _READ_REFUSALS_KEPT:
+            for stale in [k for k, at in _read_refusals.items() if now - at >= READ_REFUSAL_WINDOW_SECONDS]:
+                del _read_refusals[stale]
+        _read_refusals[seen] = now
         await enforce_deployment_allowlist(request, action=action)
 
     return Depends(refuse)

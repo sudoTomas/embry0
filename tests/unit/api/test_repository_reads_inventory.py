@@ -156,9 +156,7 @@ READ_ROUTES: dict[str, str] = {
     "/api/v1/maps/{slug}/marks": "reads any other map as one that does not exist (404)",
     "/api/v1/maps/{slug}/parts/{node_id:path}": "reads any other map as one that does not exist (404)",
     "/api/v1/maps/{slug}/work": "reads any other map as one that does not exist (404); sends narrowed since #318",
-    "/api/v1/audit": (
-        "lists the rows about the repositories the key covers, and its own about none, narrowed in the query"
-    ),
+    "/api/v1/audit": ("lists only the rows about the repositories the key covers, narrowed in the query"),
     # Earlier stages.
     "/api/v1/credentials": "lists the key's own credentials, since #308 and #309",
     "/api/v1/run-with/keys": "refuses another repository (403), since #309",
@@ -300,6 +298,10 @@ DEPLOYMENT_READS: dict[str, str] = {
     "/api/v1/repos/{full_repo:repo}/credentials": _OLD_PATH,
     "/api/v1/repos/{full_repo:repo}/-/readiness": "a forge account of a scope the key does not read is the deployment's",
     "/api/v1/repos/{full_repo:repo}/readiness": _OLD_PATH,
+    "/api/v1/audit": (
+        "a credential's rows (made, bound to the host or the global pool) name no repository, so the limited key "
+        "reads none of them, whoever wrote them (audit_allowlist)"
+    ),
 }
 
 #: Reads of the key's own repository that answer the limited key otherwise than a key without a list where that

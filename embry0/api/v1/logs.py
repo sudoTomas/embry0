@@ -12,7 +12,7 @@ with the operator's ``LOG_REDACTION_FIELDS``) whoever asks.
 The logs are the deployment's: a line cannot be told to belong to one
 repository, so a key with a repository allowlist reads none of them. Every
 route here refuses it, as a deployment-wide write is refused
-(``embry0.api.repo_allowlist.deployment_reads``): a 403 ``repo_not_allowed``
+(``embry0.api.repo_allowlist.refuse_deployment_read``): a 403 ``repo_not_allowed``
 naming the deployment, logged and audited.
 """
 
@@ -25,12 +25,12 @@ import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from embry0.api.repo_allowlist import deployment_reads
+from embry0.api.repo_allowlist import refuse_deployment_read
 from embry0.safety.redaction import redact_bounded, redact_log_text, secret_env_values
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(tags=["logs"], dependencies=[deployment_reads("read the deployment's container logs")])
+router = APIRouter(tags=["logs"], dependencies=[refuse_deployment_read("read the deployment's container logs")])
 
 # Per-line ceiling applied before redaction, so the cost of one response does
 # not depend on how long a line Loki happens to hold (up to `limit` lines).

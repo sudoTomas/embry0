@@ -108,7 +108,6 @@ CUT: dict[str, tuple[str, ...]] = {
 #: GET routes, or the fields of one, that still count every repository's work, and the work that narrows them.
 #: ``*`` is the whole answer.
 ELSEWHERE: dict[str, dict[str, str]] = {
-    "/api/v1/audit": {"*": "every audit row: the audit reads"},
     "/api/v1/progression": {**_EXPERIENCE, "body.achievements": _TOTALS_STAGE},
     "/api/v1/progression/preview": {
         **_EXPERIENCE,
@@ -121,6 +120,11 @@ ELSEWHERE: dict[str, dict[str, str]] = {
 
 #: Fields that differ between two reads of the same rows, and why: the walk does not compare them.
 VOLATILE: dict[str, dict[str, str]] = {
+    # The audit log grows with the walk's own reads (a revealed secret is audited), so no two reads of it match. It
+    # holds to the allowlist in its query (embry0.api.audit_allowlist), which test_audit_reads_narrowed.py reads with
+    # rows of every action about another repository, and test_repository_reads_inventory.py walks page by page.
+    "/api/v1/audit": {"*": "the audit log, which grows with the walk's own reads"},
+    "/api/v1/audit/actions": {"*": "the actions of the audit rows the key reads, which grow with the walk's own reads"},
     "/api/v1/progression": {
         "body.computed_at": "when it was computed",
         "body.rollup": "the rollup the background writer is folding",

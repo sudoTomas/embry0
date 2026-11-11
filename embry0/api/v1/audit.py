@@ -7,9 +7,8 @@ they could have produced via ``request_actor`` (session email, key-owner
 email, or ``key:<name>`` for service keys).
 
 A key with a repository allowlist reads, within that, only the rows about
-the repositories it covers and the rows of its own about no repository
-(:mod:`embry0.api.audit_allowlist`), narrowed in the query; the actions the
-filter offers it are those of the rows it reads.
+the repositories it covers (:mod:`embry0.api.audit_allowlist`), narrowed in
+the query; the actions the filter offers it are those of the rows it reads.
 """
 
 from __future__ import annotations
@@ -130,7 +129,7 @@ async def list_audit_actions(request: Request) -> AuditActionsResponse:
         for old, new in RETIRED_AUDIT_ACTIONS.items()
     ]
     tier, own = await _caller_scope(request)
-    narrowing = await audit_narrowing(request, own)
+    narrowing = audit_narrowing(request)
     if narrowing is not None:
         present = await get_audit_repo(request).actions_present(
             actors=None if tier == TIER_ADMIN else own, hidden_actors=[REPO_ALLOWLIST], narrowing=narrowing
@@ -165,9 +164,9 @@ async def list_audit(
             return AuditListResponse(entries=[], total=0)
         actors = [actor] if actor else own
 
-    # A key with an allowlist reads the rows about its repositories and its own (audit_allowlist), and never a
-    # refusal's row (dispatch_actors.REPO_ALLOWLIST).
-    narrowing = await audit_narrowing(request, own)
+    # A key with an allowlist reads only the rows about its repositories (audit_allowlist), and never a refusal's
+    # row (dispatch_actors.REPO_ALLOWLIST).
+    narrowing = audit_narrowing(request)
     hidden = [REPO_ALLOWLIST] if narrowing is not None else []
     rows = await repo.list_entries(
         actors=actors,
