@@ -25,7 +25,7 @@ from embry0.services.credentials.discovery import ForgeCredentialEntry
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeysRepository
 from tests.fixtures.repository_reads import MARK, repository_reads_app
-from tests.fixtures.repository_writes import COVERED, MASTER, call
+from tests.fixtures.repository_writes import COVERED, MASTER, call, key_id, made_before_its_list
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -144,8 +144,8 @@ async def test_the_create_issue_listing_lists_a_key_s_own_repositories_with_its_
 async def test_gitlab_discovery_lists_a_key_s_own_projects_with_its_own_credentials(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch, forge: list[str]
 ) -> None:
-    """A GitLab credential the key created and nothing uses yet is its own; one the deployment's admin created is not
-    there for it. The key lists its own unregistered project with its own credential alone; a key with none of its
+    """A GitLab credential the key created (while it had no list: a key with one creates none) and nothing uses yet is
+    its own; one the deployment's admin created is not there for it. The key lists its own unregistered project with its own credential alone; a key with none of its
     own is answered as a deployment with no GitLab account."""
     db = db_with_migrations
     async with repository_reads_app(db, monkeypatch) as (app, keys, _values):
@@ -153,7 +153,12 @@ async def test_gitlab_discovery_lists_a_key_s_own_projects_with_its_own_credenti
         await _gitlab_credential(app, MASTER, "deployment-gitlab", "y" * 30)
         bare = await call(app, "GET", "/api/v1/gitlab/discoverable-projects", bot)
         asked_bare, forge[:] = list(forge), []
-        await _gitlab_credential(app, bot, "bot-gitlab", "z" * 30)
+        await made_before_its_list(
+            app,
+            await key_id(app, "discovering"),
+            bot,
+            {"kind": "forge_token", "provider": "gitlab", "label": "bot-gitlab", "secret": "z" * 30},
+        )
         limited = (await call(app, "GET", "/api/v1/gitlab/discoverable-projects", bot)).json()
         asked_by_bot, forge[:] = list(forge), []
         everyone = (await call(app, "GET", "/api/v1/gitlab/discoverable-projects", keys.open)).json()

@@ -36,7 +36,17 @@ from embry0.api.repo_allowlist import DEPLOYMENT
 from embry0.storage.database import DatabasePool
 from embry0.storage.seeds.pipeline_templates_builtin import seed_builtin_pipeline_templates
 from embry0.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
-from tests.fixtures.repository_writes import COVERED, MASTER, OWNER, UNCOVERED, Keys, call, repository_writes_app
+from tests.fixtures.repository_writes import (
+    COVERED,
+    MASTER,
+    OWNER,
+    UNCOVERED,
+    Keys,
+    call,
+    key_id,
+    made_before_its_list,
+    repository_writes_app,
+)
 from tests.unit.api import test_repository_writes_inventory as scoped
 
 _PARAMETER = re.compile(r"\{(\w+)(?::\w+)?\}")
@@ -83,6 +93,13 @@ DEPLOYMENT_WIDE: dict[tuple[str, str], Callable[[Mapping[str, str]], Any]] = {
     ("PUT", "/api/v1/users/{user_id}/disabled"): lambda v: {"disabled": True},
     ("POST", "/api/v1/users/{user_id}/force-logout"): lambda v: None,
     ("PUT", "/api/v1/users/{user_id}/github-login"): lambda v: {"login": "someone-else"},
+    ("POST", "/api/v1/credentials"): lambda v: {
+        "kind": "forge_token",
+        "provider": "github",
+        "label": "probe-forge",
+        "secret": "y" * 24,
+    },
+    ("POST", "/api/v1/credentials/{credential_id}/rotate"): lambda v: {"secret": "w" * 24},
     ("POST", "/api/v1/credentials/import-env"): lambda v: {"replace": False},
     ("POST", "/api/v1/credentials/xai/device-login"): lambda v: {"label": "probe"},
     ("POST", "/api/v1/progression/rebuild"): lambda v: None,
@@ -120,13 +137,11 @@ OTHER_RULES: dict[tuple[str, str], str] = {
             ("POST", "/api/v1/progression/pack/versions/{version}/restore"),
         )
     },
-    ("POST", "/api/v1/credentials"): "creates a credential nothing uses yet: binding it is checked where it is bound",
     **{
         (method, path): "a credential: refused only when something beyond the key's list uses it (test below)"
         for method, path in (
             ("PUT", "/api/v1/credentials/{credential_id}"),
             ("DELETE", "/api/v1/credentials/{credential_id}"),
-            ("POST", "/api/v1/credentials/{credential_id}/rotate"),
             ("POST", "/api/v1/credentials/{credential_id}/verify"),
         )
     },
@@ -200,6 +215,23 @@ async def _deployment(app: FastAPI, db: DatabasePool) -> dict[str, str]:
     await db.execute(
         "INSERT INTO users (id, auth0_sub, email, name, tier) VALUES ('usr-bo', 'auth0|bo', 'bo@example.com', 'bo', 'operator')"
     )
+    # A credential only the key's own repository uses: the key's to rename or bind, never to rotate.
+    credential = await call(
+        app,
+        "POST",
+        "/api/v1/credentials",
+        MASTER,
+        {"kind": "forge_token", "provider": "github", "label": "its-forge", "secret": "z" * 24},
+    )
+    assert credential.status_code == 201, credential.text
+    bound = await call(
+        app,
+        "PUT",
+        f"/api/v1/repos/{COVERED}/-/credentials",
+        MASTER,
+        {"bindings": [{"credential_id": credential.json()["id"], "role": "forge"}]},
+    )
+    assert bound.status_code == 200, bound.text
     return {
         "agent_type": "developer",
         "skill_name": "commit-standard",
@@ -213,6 +245,7 @@ async def _deployment(app: FastAPI, db: DatabasePool) -> dict[str, str]:
         # A key's own repository: the refusal holds there too.
         "full_repo": COVERED,
         "user_id": "usr-bo",
+        "credential_id": str(credential.json()["id"]),
     }
 
 
@@ -265,22 +298,17 @@ async def test_a_key_with_an_allowlist_changes_nothing_of_the_deployment(
 async def test_a_key_with_an_allowlist_changes_a_credential_only_when_nothing_beyond_its_list_uses_it(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Bound only to its own repository, or created by it and bound to nothing, the credential is the key's to
-    change; bound to another repository, to an owner (its own included: an owner's credential reaches repositories
-    registered later), to a host or to every repository, it is the deployment's, refused."""
+    """Bound only to its own repository, or created by it (before it had a list: a key with one creates none) and
+    bound to nothing, the credential is the key's to change; bound to another repository, to an owner (its own
+    included: an owner's credential reaches repositories registered later), to a host or to every repository, it is
+    the deployment's, refused."""
     db = db_with_migrations
     async with repository_writes_app(db, monkeypatch) as (app, keys, values):
+        limited = await key_id(app, "limited")
 
         async def credential(label: str) -> str:
-            made = await call(
-                app,
-                "POST",
-                "/api/v1/credentials",
-                keys.limited,
-                {"kind": "forge_token", "provider": "github", "label": label, "secret": "x" * 24},
-            )
-            assert made.status_code in (200, 201), f"a key with an allowlist creates a credential: {made.text}"
-            return str(made.json()["id"])
+            body = {"kind": "forge_token", "provider": "github", "label": label, "secret": "x" * 24}
+            return await made_before_its_list(app, limited, keys.limited, body)
 
         uses = {
             "nothing": None,
