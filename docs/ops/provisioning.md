@@ -400,8 +400,12 @@ not loaded (above).
 ```bash
 docker compose logs orchestrator 2>&1 | grep -c '"level": "error"'   # expect 0
 docker exec embry0-dind iptables -L EMBRY0-SANDBOX-ISOLATION -n | head -3   # the chain exists
-curl -sS localhost:8200/api/v1/health/ready                          # {"status": "ok"}
+curl -sS localhost:8200/api/v1/health/ready                          # {"status": "ok", ...}
 ```
+
+The readiness check answers its overall state to anyone. Each watched stack's
+state, `checks.watcher_stacks`, is shown only to a caller with a key or a
+session: add `-H "Authorization: Bearer $API_KEY"` to see it.
 
 Migrations run automatically at orchestrator startup — there is no manual step.
 Confirm the tail applied:

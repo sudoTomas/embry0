@@ -245,7 +245,9 @@ deployment's fork or clone of this repository.
    (`watcher_stacks_loaded`); a new or re-enabled row starts ticking after
    the next restart, and a changed setting applies from then on, except
    `signature_masks`, which every tick reads. `GET /api/v1/health/ready` then lists it under
-   `checks.watcher_stacks`, and the per-stack metrics
+   `checks.watcher_stacks` to a caller with a key or a session (send
+   `Authorization: Bearer <key>`; without one the check answers only its
+   overall `checks.watcher`, the worst state across the stacks), and the per-stack metrics
    (`embry0_watcher_ticks_total{stack="<owner>/embry0"}`) appear after its
    first tick.
 

@@ -6,11 +6,14 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
 from fastapi import Depends, Header, HTTPException, Request
 
 from embry0.api.route_table import route_template
 from embry0.api.session import TIER_ADMIN, TIER_OPERATOR, SessionData, request_session
 from embry0.orchestration import dispatch_actors
+
+logger = structlog.get_logger(__name__)
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -445,6 +448,39 @@ async def authenticate_stream(request: Request, scope: str, token: str | None) -
         request.state.principal = READS_NOTHING
         return
     raise HTTPException(status_code=401, detail="Missing or invalid credentials")
+
+
+async def authenticated_reader(request: Request) -> bool:
+    """Whether the caller is one :data:`require_auth` would let read, for a route mounted without it.
+
+    The same callers, in the same order: AUTH_DEV_MODE; else a live key in a
+    ``Bearer`` ``Authorization`` header, any scope (``request.state.principal``
+    is then set, so the key's repository allowlist applies); else, with no
+    such header, an SSO session with an embry0 role that passes the users
+    gate. Refuses no one: anyone else, a header that is not a live key
+    included, is a caller without a key (False), and so is an error while
+    resolving the key or the session, which is logged.
+    """
+    config = request.app.state.config
+    if getattr(config, "auth_dev_mode", False):
+        return True
+    authorization = request.headers.get("authorization", "")
+    try:
+        if authorization:
+            if not authorization.startswith("Bearer "):
+                return False
+            principal = await resolve_bearer_principal(request.app, authorization[7:])
+            if principal is None:
+                return False
+            request.state.principal = principal
+            return True
+        session = request_session(request)
+        if session is None or session.tier not in (TIER_OPERATOR, TIER_ADMIN):
+            return False
+        return await validate_session_user(request.app, session)
+    except Exception:  # noqa: BLE001 — a route without auth answers whoever asks; the caller reads as keyless
+        logger.warning("authenticated_reader_unresolved", exc_info=True)
+        return False
 
 
 # Stricter dependency for admin-tier operations.

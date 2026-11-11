@@ -41,7 +41,8 @@ async def _ready(app, *, watcher_health: str, watcher_enabled: bool = True) -> d
     from unittest.mock import AsyncMock, MagicMock
 
     app.state.db = MagicMock(pool=object(), fetchval=AsyncMock(return_value=1))
-    app.state.config = SimpleNamespace(watcher_enabled=watcher_enabled)
+    # The fixture's AUTH_DEV_MODE, kept: every caller then reads each stack's state.
+    app.state.config = SimpleNamespace(watcher_enabled=watcher_enabled, auth_dev_mode=True)
     app.state.watcher_service = SimpleNamespace(health=watcher_health, _repo=STACK)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

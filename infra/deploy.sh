@@ -163,7 +163,14 @@ echo ">> waiting for http://localhost:$port/health"
 for _ in $(seq 1 60); do
   if curl -fsS -m 3 "http://localhost:$port/health" >/dev/null 2>&1; then
     echo ">> healthy"
-    curl -fsS -m 5 "http://localhost:$port/api/v1/health/ready" 2>/dev/null && echo
+    # With the key, the readiness check also lists each watched stack's state;
+    # without one it answers its overall state alone.
+    ready_url="http://localhost:$port/api/v1/health/ready"
+    if [ -n "$api_key" ]; then
+      curl -fsS -m 5 -H "Authorization: Bearer $api_key" "$ready_url" 2>/dev/null && echo
+    else
+      curl -fsS -m 5 "$ready_url" 2>/dev/null && echo
+    fi
     echo ">> deployed $sha: ${services[*]}"
     push_deploy_marker "$sha" "${services[@]}"
     exit 0
