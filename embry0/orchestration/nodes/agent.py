@@ -1342,8 +1342,13 @@ def with_cap_updates(update: dict[str, Any], cap_updates: dict[str, Any]) -> dic
     failure makes it ask) gets a list from each call, the second often empty; laid over the first, it would
     drop questions already folded into ``update``, and they would never be recorded. The two lists are joined,
     the earlier first, each question once by its ``input_id``.
+
+    The cap's ``errors`` (its exhausted path) are joined after the run's own in ``update`` too: laid over them,
+    they replaced the run's error, and ``JobState.errors`` appends, so only new entries belong here (#434).
     """
     merged = {**update, **cap_updates}
+    if update.get("errors") and cap_updates.get("errors"):
+        merged["errors"] = [*update["errors"], *cap_updates["errors"]]
     earlier = list(update.get("auto_answered_agent_questions") or [])
     if earlier:
         joined: list[dict[str, Any]] = []
