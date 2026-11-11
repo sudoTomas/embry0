@@ -5,7 +5,8 @@ container's lines; a line cannot be told to belong to one repository. So every
 route of the logs router refuses a key with an allowlist, before Loki is
 asked, as a deployment-wide write is refused: a 403 ``repo_not_allowed``
 naming ``(the deployment)``, logged and audited under ``embry0:repo-allowlist``,
-and nothing the key reads back in ``GET /audit``. The MCP ``logs_query`` tool
+and nothing the key reads back in ``GET /audit``; a key polling a route it is
+refused is audited once a minute, not once a poll. The MCP ``logs_query`` tool
 reaches the route with the caller's key, so it is refused too. A key without a
 list reads the logs as before.
 
@@ -23,6 +24,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport
 
+from embry0.api import repo_allowlist
 from embry0.api.deps import bust_api_key_cache
 from embry0.api.repo_allowlist import DEPLOYMENT, REFUSAL_CODE
 from embry0.api.v1 import logs as logs_module
@@ -74,6 +76,7 @@ def loki(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
             return httpx.AsyncClient(*args, **{**kwargs, "transport": httpx.MockTransport(answer)})
 
     monkeypatch.setitem(logs_module._CONTAINERS_CACHE, "values", [])  # noqa: SLF001
+    monkeypatch.setattr(repo_allowlist, "_read_refusals", {}, raising=False)
     monkeypatch.setattr(logs_module, "httpx", _Httpx())
     yield asked
 
@@ -138,3 +141,31 @@ async def test_the_mcp_logs_query_tool_is_refused_to_a_key_with_an_allowlist(
     assert isinstance(limited, tuple) and limited[0] == 403 and DEPLOYMENT in limited[1], limited
     assert isinstance(outcome["open"], dict) and outcome["open"]["count"] == 1, outcome["open"]
     assert loki == ["/loki/api/v1/query_range"], f"Loki was asked for the limited key: {loki}"
+
+
+async def test_a_key_polling_a_refused_log_route_is_audited_once_a_window(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch, loki: list[str]
+) -> None:
+    """The Logs page tails every few seconds: each poll is refused the same way, and one row a minute is enough."""
+    db = db_with_migrations
+    clock = [1000.0]
+    monkeypatch.setattr(repo_allowlist, "_clock", lambda: clock[0], raising=False)
+    window = getattr(repo_allowlist, "READ_REFUSAL_WINDOW_SECONDS", 60.0)
+    async with repository_writes_app(db, monkeypatch) as (app, keys, _values):
+        monkeypatch.setattr(app.state.config, "watcher_loki_url", LOKI)
+        answers = []
+        for step in (0.0, 5.0, window - 6.0):
+            clock[0] += step
+            answers.append(await call(app, "GET", "/api/v1/logs/query?container=web", keys.limited))
+        within = await _refusals(db)
+        other = await call(app, "GET", "/api/v1/logs/containers", keys.limited)
+        clock[0] += 1.0
+        after = await call(app, "GET", "/api/v1/logs/query?container=web", keys.limited)
+        refusals = await _refusals(db)
+    assert {(a.status_code, a.text) for a in [*answers, after]} == {(answers[0].status_code, answers[0].text)}, [
+        a.text for a in [*answers, after]
+    ]
+    assert answers[0].status_code == 403 and other.status_code == 403
+    assert len(within) == 1, f"three polls within the window left {len(within)} rows"
+    assert len(refusals) == 3, f"another route, and a poll past the window, are audited each: {refusals}"
+    assert loki == [], f"Loki was asked: {loki}"

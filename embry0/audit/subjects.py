@@ -20,15 +20,12 @@ every action in the registry (:mod:`embry0.audit.actions`), where they are:
 
 A row that names no repository may name owners instead (``owner``,
 ``before`` and ``after`` in its details, an organization's settings scope,
-an owner's credential binding), and a row that names neither is the
-deployment's: an API key, a person, a credential, a host, a model, a skill,
-an agent. An action listed with no source is always the deployment's.
-
-Of the deployment's rows, a key with an allowlist reads back only its own
-rows of :data:`OWN_ACTIONS`, the changes such a key may make itself. A row of
-any other action about no repository under its actor came from elsewhere: a
-key a person mints from a session is recorded under that person's email, as
-the person's own changes are.
+an owner's credential binding): it is the owner's. A row that names neither
+is the deployment's: an API key, a person, a credential, a host, a model, a
+skill, an agent. An action listed with no source is always the deployment's.
+A key with an allowlist reads neither an owner's row nor the deployment's,
+whoever wrote it; the owners are listed so that every writer's detail that
+names something is accounted for.
 
 ``tests/unit/audit/test_audit_subjects.py`` checks that every action, and
 every retired name, is listed, and that each writer puts its row's subject
@@ -50,7 +47,7 @@ OwnerSource = Literal["owner", "settings_scope", "binding_scope", "before", "aft
 
 @dataclass(frozen=True, slots=True)
 class Subject:
-    """Where an action's rows name the repositories, and failing those the owners, they are about."""
+    """Where an action's rows name the repositories they are about, and the owners they name."""
 
     repos: tuple[RepoSource, ...] = ()
     owners: tuple[OwnerSource, ...] = ()
@@ -184,21 +181,6 @@ AUDIT_ACTION_SUBJECTS: Final[dict[AuditAction, Subject]] = {
 }
 
 
-#: The deployment's actions a key with an allowlist may take itself (``embry0.api.v1.credentials``,
-#: ``embry0.api.v1.api_keys``): a change to a credential only its repositories use, revoking a key within its list.
-#: It reads back its own rows of these, and of no other action about no repository.
-OWN_ACTIONS: Final[frozenset[AuditAction]] = frozenset(
-    {
-        "credential.updated",
-        "credential.status_changed",
-        "credential.rotated",
-        "credential.verified",
-        "credential.deleted",
-        "apikey.revoked",
-    }
-)
-
-
 def subject_of(action: str) -> Subject:
     """What a row of ``action`` is about: a retired name's rows as the action that replaced it, and a name the
     registry does not know as the deployment's."""
@@ -208,15 +190,11 @@ def subject_of(action: str) -> Subject:
     return AUDIT_ACTION_SUBJECTS[cast(AuditAction, current)]
 
 
-def actions_by_source() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """For each repository source and each owner source, the action names (retired ones included) whose rows name
-    their subject there: what the narrowing query reads per action."""
+def actions_by_source() -> dict[str, list[str]]:
+    """For each repository source, the action names (retired ones included) whose rows name a repository there: what
+    the narrowing query reads per action."""
     repos: dict[str, list[str]] = {}
-    owners: dict[str, list[str]] = {}
     for action in sorted({*AUDIT_ACTIONS, *RETIRED_AUDIT_ACTIONS}):
-        subject = subject_of(action)
-        for source in subject.repos:
+        for source in subject_of(action).repos:
             repos.setdefault(source, []).append(action)
-        for owner_source in subject.owners:
-            owners.setdefault(owner_source, []).append(action)
-    return repos, owners
+    return repos

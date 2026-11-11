@@ -19,47 +19,43 @@ from datetime import datetime
 from typing import Any
 
 from embry0.audit.actions import names_of
-from embry0.audit.subjects import OWN_ACTIONS, actions_by_source
+from embry0.audit.subjects import actions_by_source
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.jobs import job_repository_sql
 
 
 @dataclass(frozen=True, slots=True)
 class AuditNarrowing:
-    """What a key with a repository allowlist reads of the audit log.
+    """What a key with a repository allowlist reads of the audit log: the rows about repositories it covers.
 
-    A row about repositories is read when the key covers every one it names
-    (``repos``: the lower-cased slugs it covers, old names included). A row
-    about no repository is read only when the key wrote it itself (``own``:
-    its actor strings): a row about owners when the key covers each of them
-    as a whole (``owners``, lower-cased), a row of the deployment's when its
-    action is one such a key may take itself
-    (:data:`~embry0.audit.subjects.OWN_ACTIONS`). Every other row is not.
+    A row is read when it names at least one repository and the key covers
+    every one it names (``repos``: the lower-cased slugs it covers, old names
+    included), whoever wrote it. A row about no repository, an owner's or the
+    deployment's, is not read, whoever wrote it: an actor string is not one
+    key's (a key minted from a session is recorded under its person's email,
+    and keys of one name share ``key:<name>``).
     """
 
     repos: Sequence[str]
-    owners: Sequence[str]
-    own: Sequence[str]
 
 
 #: A row's details, in the queries below.
 _D = "audit_log.details"
 #: A settings scope is ``repository:<slug>``, ``organization:<owner>`` or ``deployment`` (embry0.settings.scope).
-_REPOSITORY_SCOPE, _ORGANIZATION_SCOPE = "repository:", "organization:"
+_REPOSITORY_SCOPE = "repository:"
 
 
 def _job_repo(field: str) -> str:
     return f"(SELECT {job_repository_sql('j')} FROM jobs j WHERE j.job_id = {_D}->>'{field}')"
 
 
-def _after(prefix: str) -> str:
-    return f"CASE WHEN {_D}->>'scope' LIKE '{prefix}%' THEN substr({_D}->>'scope', {len(prefix) + 1}) END"
-
-
 #: Where a row names a repository, in SQL over the ``audit_log`` row, by :data:`embry0.audit.subjects.RepoSource`.
 _REPO_SQL: dict[str, str] = {
     "repo": f"{_D}->>'repo'",
-    "settings_scope": _after(_REPOSITORY_SCOPE),
+    "settings_scope": (
+        f"CASE WHEN {_D}->>'scope' LIKE '{_REPOSITORY_SCOPE}%'"
+        f" THEN substr({_D}->>'scope', {len(_REPOSITORY_SCOPE) + 1}) END"
+    ),
     "binding_scope": f"CASE WHEN {_D}->>'scope_kind' = 'repo' THEN {_D}->>'scope_value' END",
     # The column, or the details of a row that names an issue without being one of its rows (a case's acceptance).
     "issue": f"(SELECT i.repo FROM issues i WHERE i.id = COALESCE(audit_log.issue_id, {_D}->>'issue_id'))",
@@ -68,48 +64,20 @@ _REPO_SQL: dict[str, str] = {
     "approval": f"(SELECT m.repo FROM merge_approvals m WHERE m.id = {_D}->>'approval_id')",
     "handoff": f"(SELECT h.repo FROM handoffs h WHERE h.id = {_D}->>'handoff_id')",
 }
-#: Where a row names an owner, by :data:`embry0.audit.subjects.OwnerSource`.
-_OWNER_SQL: dict[str, str] = {
-    "owner": f"{_D}->>'owner'",
-    "settings_scope": _after(_ORGANIZATION_SCOPE),
-    "binding_scope": f"CASE WHEN {_D}->>'scope_kind' = 'owner' THEN split_part({_D}->>'scope_value', ':', 2) END",
-    "before": f"{_D}->>'before'",
-    "after": f"{_D}->>'after'",
-}
-
-
-def _named(sources: dict[str, list[str]], sql: dict[str, str], args: list[Any]) -> str:
-    """An array of what each row names in ``sources``, the actions that name something there, lower-cased, without
-    the empty and the missing."""
-    parts = []
-    for source, actions in sorted(sources.items()):
-        args.append(actions)
-        parts.append(
-            f"CASE WHEN audit_log.action = ANY(${len(args)}::text[]) THEN NULLIF(lower({sql[source]}), '') END"
-        )
-    return f"array_remove(ARRAY[{', '.join(parts)}]::text[], NULL)" if parts else "ARRAY[]::text[]"
 
 
 def _narrowed(narrowing: AuditNarrowing, args: list[Any]) -> tuple[str, str]:
-    """The join that reads what each row is about, and the clause keeping the rows ``narrowing`` reads."""
-    repo_sources, owner_sources = actions_by_source()
-    repos, owners = _named(repo_sources, _REPO_SQL, args), _named(owner_sources, _OWNER_SQL, args)
-    join = f" CROSS JOIN LATERAL (SELECT {repos} AS repos, {owners} AS owners) s"
+    """The join reading the repositories each row names (lower-cased, without the empty and the missing), and the
+    clause keeping the rows ``narrowing`` reads."""
+    parts = []
+    for source, actions in sorted(actions_by_source().items()):
+        args.append(actions)
+        parts.append(
+            f"CASE WHEN audit_log.action = ANY(${len(args)}::text[]) THEN NULLIF(lower({_REPO_SQL[source]}), '') END"
+        )
+    join = f" CROSS JOIN LATERAL (SELECT array_remove(ARRAY[{', '.join(parts)}]::text[], NULL) AS repos) s"
     args.append([slug.lower() for slug in narrowing.repos])
-    covered = len(args)
-    args.append([owner.lower() for owner in narrowing.owners])
-    whole = len(args)
-    args.append(list(narrowing.own))
-    own = len(args)
-    args.append(sorted(OWN_ACTIONS))
-    own_actions = len(args)
-    clause = (
-        f"((cardinality(s.repos) > 0 AND s.repos <@ ${covered}::text[])"
-        f" OR (cardinality(s.repos) = 0 AND actor = ANY(${own}::text[]) AND ("
-        f"(cardinality(s.owners) > 0 AND s.owners <@ ${whole}::text[])"
-        f" OR (cardinality(s.owners) = 0 AND action = ANY(${own_actions}::text[])))))"
-    )
-    return join, clause
+    return join, f"(cardinality(s.repos) > 0 AND s.repos <@ ${len(args)}::text[])"
 
 
 def _where(

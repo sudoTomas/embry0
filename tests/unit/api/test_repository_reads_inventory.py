@@ -293,6 +293,10 @@ DEPLOYMENT_READS: dict[str, str] = {
     "/api/v1/repos/{full_repo:repo}/readiness": _OLD_PATH,
     "/api/v1/repos/{full_repo:repo}/-/setup/cost": "an account of a scope the key does not read pays as the deployment's",
     "/api/v1/repos/{full_repo:repo}/setup/cost": _OLD_PATH,
+    "/api/v1/audit": (
+        "a credential's rows (made, bound to the host or the global pool) name no repository, so the limited key "
+        "reads none of them, whoever wrote them (audit_allowlist)"
+    ),
 }
 
 #: Reads of the key's own repository that answer the limited key otherwise than a key without a list where that

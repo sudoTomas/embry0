@@ -1,4 +1,4 @@
-"""``GET /audit`` shows a key with a repository allowlist only the rows about its repositories, and its own.
+"""``GET /audit`` shows a key with a repository allowlist only the rows about the repositories it covers.
 
 On the real app over a real database (:mod:`tests.fixtures.repository_writes`),
 the limited key is admin scope and covers ``acme/web``; ``globex/gizmos`` is a
@@ -7,9 +7,9 @@ a hand-off. A row is about the repositories its action names it by
 (:mod:`embry0.audit.subjects`): its details' repository, its issue's, its
 job's, its approval's, its hand-off's, a repository's settings layer or
 credential binding. The key reads a row about repositories when it covers
-every one the row names, whoever wrote it, and a row about none (the
-deployment's, or an owner's) only when it wrote it itself and covers each
-owner it names as a whole. A refusal's row it never reads. The list is
+every one the row names, whoever wrote it, and no row about none (an owner's
+or the deployment's), whoever wrote it: an actor string is not one key's, so
+its own actor opens nothing. A refusal's row it never reads. The list is
 narrowed in its query, so its pages and its ``total`` hold only those rows,
 and the Audit filter offers it only the actions of those rows.
 
@@ -30,7 +30,7 @@ from embry0.audit.actions import AUDIT_ACTION_LABELS, AUDIT_ACTIONS, RETIRED_AUD
 from embry0.orchestration.dispatch_actors import MASTER_KEY, REPO_ALLOWLIST
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeysRepository
-from tests.fixtures.repository_writes import COVERED, MASTER, OWNER, UNCOVERED, call, repository_writes_app
+from tests.fixtures.repository_writes import COVERED, OWNER, UNCOVERED, call, repository_writes_app
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -126,9 +126,9 @@ async def test_a_row_naming_only_another_repository_is_never_read_whatever_its_a
 async def test_a_row_of_its_own_about_another_repository_or_owner_is_not_read(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The key's own actor does not open a row about another repository, about an owner it does not cover as a
-    whole, or of the deployment's that such a key cannot write: such rows come from a session of the person a key is
-    minted for, recorded under the same actor."""
+    """The key's own actor opens no row about another repository, an owner or the deployment, whatever the owner it
+    covers and whatever the action: such rows come from a session of the person a key is minted for, or from another
+    key of its name, recorded under the same actor."""
     db = db_with_migrations
     async with repository_writes_app(db, monkeypatch) as (app, keys, _values):
         items = await _items(db, UNCOVERED)
@@ -143,7 +143,7 @@ async def test_a_row_of_its_own_about_another_repository_or_owner_is_not_read(
                 db, "credential.bound", LIMITED, {"scope_kind": "repo", "scope_value": UNCOVERED}
             ): "a repository's binding",
             await _row(db, "organization.patch", LIMITED, {"owner": OWNER[UNCOVERED]}): "another owner",
-            await _row(db, "organization.patch", LIMITED, {"owner": OWNER[COVERED]}): "an owner covered in part",
+            await _row(db, "organization.patch", LIMITED, {"owner": OWNER[COVERED]}): "its own repository's owner",
             await _row(db, "settings.updated", LIMITED, {"scope": f"organization:{OWNER[UNCOVERED]}"}): "its layer",
             await _row(
                 db, "credential.bound", LIMITED, {"scope_kind": "owner", "scope_value": f"github:{OWNER[UNCOVERED]}"}
@@ -155,9 +155,14 @@ async def test_a_row_of_its_own_about_another_repository_or_owner_is_not_read(
             await _row(db, "host.created", LIMITED, {"host_id": "host-000000000009"}): "a host",
             await _row(db, "settings.updated", LIMITED, {"scope": "deployment"}): "the deployment's settings",
             await _row(db, "user.login", LIMITED, {"tier": "admin"}): "a sign-in",
+            await _row(
+                db, "credential.updated", LIMITED, {"credential_id": "cred-000000000003"}
+            ): "a credential renamed",
+            await _row(
+                db, "credential.rotated", LIMITED, {"credential_id": "cred-000000000003"}
+            ): "a credential rotated",
+            await _row(db, "apikey.revoked", LIMITED, {"key_id": "key-000000000004", "name": "x"}): "a key revoked",
         }
-        # acme is covered only in part once another repository is registered under it.
-        await db.execute("INSERT INTO repos (repo, active) VALUES ('acme/other', true)")
         limited = await _ids(app, keys.limited)
     read = sorted(own[i] for i in limited & set(own))
     assert read == [], f"the limited key read its own rows about what it does not cover: {read}"
@@ -227,48 +232,83 @@ async def test_the_rows_about_its_repository_are_read_whoever_wrote_them_and_the
     assert read == [], f"rows of the deployment, not the key's own, that the limited key reads: {read}"
 
 
-async def test_the_key_reads_its_own_rows_about_no_repository(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A change of its own to a credential only its repository uses, and a change to an owner it covers as a whole:
-    the deployment's or an owner's rows, read back by the key that wrote them."""
-    db = db_with_migrations
-    async with repository_writes_app(db, monkeypatch) as (app, keys, _values):
-        made = await call(
-            app,
-            "POST",
-            "/api/v1/credentials",
-            MASTER,
-            {"kind": "forge_token", "provider": "github", "label": "web-forge", "secret": "x" * 24},
-        )
-        assert made.status_code == 201, made.text
-        credential = made.json()["id"]
-        bound = await call(
-            app,
+async def _deployment_activity(app: FastAPI, token: str, label: str) -> str:
+    """Through ``token``, a key without a list: the host's credential made, bound, rotated and changed, and a key of
+    another repository revoked. The credential's id."""
+    made = await call(
+        app,
+        "POST",
+        "/api/v1/credentials",
+        token,
+        {"kind": "forge_token", "provider": "github", "label": label, "secret": "y" * 24},
+    )
+    assert made.status_code == 201, made.text
+    credential = str(made.json()["id"])
+    for method, url, body in (
+        (
             "PUT",
-            f"/api/v1/repos/{COVERED}/-/credentials",
-            MASTER,
-            {"bindings": [{"role": "forge", "credential_id": credential}]},
+            "/api/v1/credentials/bindings",
+            {
+                "scope_kind": "host",
+                "scope_value": "github.com",
+                "bindings": [{"credential_id": credential, "role": "forge"}],
+            },
+        ),
+        ("POST", f"/api/v1/credentials/{credential}/rotate", {"secret": "z" * 24}),
+        ("PUT", f"/api/v1/credentials/{credential}", {"label": f"{label}-renamed", "status": "disabled"}),
+    ):
+        done = await call(app, method, url, token, body)
+        assert done.status_code == 200, f"{method} {url}: {done.text}"
+    outside, _secret = await ApiKeysRepository(app.state.db).create(
+        name="outside-ci", scope="admin", user_id=None, created_by="tests", allowed_repos=[UNCOVERED]
+    )
+    revoked = await call(app, "DELETE", f"/api/v1/apikeys/{outside.id}", token)
+    assert revoked.status_code in (200, 204), revoked.text
+    return credential
+
+
+def _deployment_rows(rows: list[dict[str, Any]], credential: str) -> list[tuple[str, str]]:
+    return [
+        (r["action"], r["actor"])
+        for r in rows
+        if r["details"].get("credential_id") == credential or r["details"].get("name") == "outside-ci"
+    ]
+
+
+@pytest.mark.parametrize("shared", ["a person's keys", "two keys of one name"])
+async def test_a_key_does_not_read_what_another_caller_wrote_under_the_same_actor(
+    shared: str, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An actor string is not one key's: the keys a person mints from a session are recorded under the person's email,
+    and keys of one name under ``key:<name>``. A key with a list reads none of the deployment's rows another key of
+    its actor wrote: the host's credential made, bound, rotated and changed, a key of another repository revoked."""
+    db = db_with_migrations
+    async with repository_writes_app(db, monkeypatch) as (app, _keys, _values):
+        keys = ApiKeysRepository(db)
+        if shared == "a person's keys":
+            await db.execute(
+                "INSERT INTO users (id, auth0_sub, email, name, tier) "
+                "VALUES ('usr-ada', 'auth0|ada', 'ada@example.com', 'ada', 'admin')"
+            )
+            owner: str | None = "usr-ada"
+            names = ("ada-open", "ada-bot")
+        else:
+            owner, names = None, ("bot", "bot")
+        _row_open, unrestricted = await keys.create(name=names[0], scope="admin", user_id=owner, created_by="tests")
+        _row_bot, restricted = await keys.create(
+            name=names[1], scope="admin", user_id=owner, created_by="tests", allowed_repos=[COVERED]
         )
-        assert bound.status_code == 200, bound.text
-        renamed = await call(app, "PUT", f"/api/v1/credentials/{credential}", keys.limited, {"label": "web-forge-2"})
-        assert renamed.status_code == 200, f"the limited key changes a credential only its repository uses: {renamed}"
-        own_update = await db.fetchval(
-            "SELECT id FROM audit_log WHERE action = 'credential.updated' AND actor = $1", LIMITED
-        )
-        # A key that covers acme/web and acme/api covers acme as a whole: its own change to the owner is its own.
-        _row_whole, whole = await ApiKeysRepository(db).create(
-            name="whole", scope="admin", user_id=None, created_by="tests", allowed_repos=[COVERED, "acme/api"]
-        )
-        await db.execute("INSERT INTO repos (repo, active) VALUES ('acme/api', true)")
         bust_api_key_cache()
-        owner_row = await _row(db, "organization.patch", "key:whole", {"owner": OWNER[COVERED]})
-        theirs = await _row(db, "organization.patch", OPEN, {"owner": OWNER[COVERED]})
-        limited = await _ids(app, keys.limited)
-        covering = await _ids(app, whole)
-    assert own_update in limited, "the limited key does not read its own change to a credential"
-    assert owner_row in covering, "a key covering an owner as a whole does not read its own change to it"
-    assert theirs not in covering, "a key reads another's change to an owner: the owner's rows are not a repository's"
+        credential = await _deployment_activity(app, unrestricted, "host-forge")
+        everyone, _ = await _read_all(app, unrestricted)
+        read, _ = await _read_all(app, restricted)
+    written = _deployment_rows(everyone, credential)
+    assert len(written) >= 5, f"the unrestricted key's rows were not written: {written}"
+    assert len({actor for _action, actor in written}) == 1, written
+    assert _deployment_rows(read, credential) == [], (
+        f"{shared}: the key with a list read the deployment's rows another key of its actor wrote: "
+        f"{_deployment_rows(read, credential)}"
+    )
 
 
 async def test_the_list_is_narrowed_before_it_pages(
