@@ -95,6 +95,218 @@ def _m71_rules_sql() -> str:
     return ",\n".join(f"            ({lit(pattern)}, {lit(code)})" for pattern, code in _M71_BACKFILL_RULES)
 
 
+# The credential resolver's failure text as it was before #445 wrote it otherwise (embry0/services/credentials/
+# resolver.py). Pinned literals, not imported from the resolver: a migration is history.
+#
+# A resolution that found nothing ended its message with every step it took, ``(trace: <step>; ...; env:<name> ->
+# none)``: credentials' labels, why each was skipped, the environment's variable names. The steps always closed on the
+# environment's, ``env:<name> -> none)``, so a trace is read up to the first such step and never past it (a tempered
+# repetition: no greediness rule decides how far it runs). A writer that cut its value (``str(exc)[:500]``) can have
+# cut a trace before that step: in such a store, a value of exactly that length loses what is left of a trace at its
+# end. A credential pinned at an owner, a host or the deployment named itself (``credential '<label>' is pinned for
+# <repo> but <why>``, ``<why>`` one of the resolver's few reasons): the message now says whose it is instead, and
+# one pinned to the repository itself is written as before. Every such message in a value is rewritten, each by its
+# own scope, wherever it stands: writers join errors with ``; `` and append a provider's words after one.
+#
+# Each message now ends instead with the dry run that shows why: ``; GET /credentials/resolve?repo=<repo> shows why``,
+# with ``&role=llm&provider=<provider>`` for a model account. A forge account's message named its environment variable
+# (``or set GITHUB_TOKEN``); a model account's did not, and named its provider. A pinned credential is a model account
+# by its kind in the registry; one the registry no longer holds is read as a forge account's, as the deployment's pins
+# are. In a store that cuts its values, a value the rewrite makes longer is cut at that length again, as its writer
+# cuts the resolver's message now.
+#
+# Each pattern has a plain-text form and a JSON form: a job's event rows hold the event as JSON text, where a string
+# ends at an unescaped quote and an escape is one unit, so a match never runs from one field into the next.
+_CREDENTIAL_TEXT_FORMS: dict[str, dict[str, str]] = {
+    "text": {
+        "step": r"(?:[^e\n]|e(?!nv:[A-Za-z0-9_.-]+ -> none\)))",
+        "label": r"[^'\n]*",
+    },
+    "json": {
+        "step": r'(?:[^e"\\\n]|\\.|e(?!nv:[A-Za-z0-9_.-]+ -> none\)))',
+        "label": r"""(?:[^'"\\\n]|\\.)*""",
+    },
+}
+#: The words a resolution that found nothing began with, and still does: (1) all of them, (2) the forge or the
+#: provider, (3) the repository.
+_CREDENTIAL_FORGE_WORDS = (
+    r"(no ([a-z0-9_.-]+) credential for '([^'\n]*)': bind one in the registry or set GIT(?:HUB|LAB)_TOKEN)"
+)
+_CREDENTIAL_MODEL_WORDS = r"(no ([a-z0-9_.-]+) credential for '([^'\n]*)': bind one in the registry)"
+_CREDENTIAL_TRACE = r" \(trace: {step}*env:[A-Za-z0-9_.-]+ -> none\)"
+#: What is left of a trace a writer cut, to the end of the value (plain text: the two stores that cut hold no JSON).
+_CREDENTIAL_TRACE_CUT = r" \(trace: [^\n]*$"
+#: What the words end with now, in place of the trace.
+_CREDENTIAL_FORGE_SHOWS_WHY = r"\1; GET /credentials/resolve?repo=\3 shows why"
+_CREDENTIAL_MODEL_SHOWS_WHY = r"\1; GET /credentials/resolve?repo=\3&role=llm&provider=\2 shows why"
+#: The resolver's reasons: ``disabled`` or ``disabled:<reason>`` (``decryption_failed``), ``quarantined:until-<time>``
+#: (an ISO time, which ends with a digit) or ``-cleared``, ``decryption_failed``. Each is read whole: never followed by
+#: more of itself, so no shorter reading of one can end where a longer one does not; and never followed by the dry run
+#: a message names now, so a rewritten message is not read again. (1) the label, (2) the repository.
+_CREDENTIAL_PINNED = (
+    r"credential '({label})' is pinned for ([^ \t\n'\"\\]+) but "
+    r"(?:disabled(?::[a-z_]+)?(?![A-Za-z0-9_:])"
+    r"|quarantined:until-(?:cleared(?![A-Za-z0-9_])|[0-9](?:[0-9T:.+-]*[0-9])?(?![0-9T:+-]|\.[0-9]))"
+    r"|decryption_failed(?![A-Za-z0-9_]))"
+    r"(?!; GET /credentials/resolve\?)"
+)
+#: At most this many pins are rewritten in one value: a bound on what one row can cost.
+_CREDENTIAL_PINS_PER_VALUE = 100
+#: Every stored text that held the resolver's failure, as (table, column, the form its text is in: a SQL boolean,
+#: true for JSON, the length its writer cuts it at or None). A job's error and its events, the setup proposal that
+#: copies its job's error, a healing case's note (an abandoned job's error), and what a watcher tick and a
+#: Slop-O-Meter reading store of an exception a forge call raised (``str(exc)[:500]``).
+_CREDENTIAL_TEXT_STORES: list[tuple[str, str, str, int | None]] = [
+    ("jobs", "error_message", "false", None),
+    ("job_logs", '"text"', "stream = 'pipeline'", None),
+    ("repo_setup_proposals", "failure", "false", None),
+    ("healing_cases", "note", "false", None),
+    ("watcher_runs", "detail", "false", 500),
+    ("slop_meter_repos", "error", "false", 500),
+]
+
+
+def _credential_text_rewrite_sql() -> str:
+    """The SQL that rewrites the resolver's old failure text wherever it was stored (see the patterns above)."""
+
+    def lit(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
+
+    def pattern(template: str, form: str) -> str:
+        out = template
+        for name, value in _CREDENTIAL_TEXT_FORMS[form].items():
+            out = out.replace("{" + name + "}", value)
+        return lit(out)
+
+    forge_text = pattern(_CREDENTIAL_FORGE_WORDS + _CREDENTIAL_TRACE, "text")
+    forge_json = pattern(_CREDENTIAL_FORGE_WORDS + _CREDENTIAL_TRACE, "json")
+    model_text = pattern(_CREDENTIAL_MODEL_WORDS + _CREDENTIAL_TRACE, "text")
+    model_json = pattern(_CREDENTIAL_MODEL_WORDS + _CREDENTIAL_TRACE, "json")
+    forge_cut = lit(_CREDENTIAL_FORGE_WORDS + _CREDENTIAL_TRACE_CUT)
+    model_cut = lit(_CREDENTIAL_MODEL_WORDS + _CREDENTIAL_TRACE_CUT)
+    forge_why, model_why = lit(_CREDENTIAL_FORGE_SHOWS_WHY), lit(_CREDENTIAL_MODEL_SHOWS_WHY)
+    pinned_text, pinned_json = pattern(_CREDENTIAL_PINNED, "text"), pattern(_CREDENTIAL_PINNED, "json")
+
+    def candidate(c: str, cut_at: int | None) -> str:
+        """Only rows that can hold one: a seq scan reads them once, and only these reach the function."""
+        cut = (
+            f" OR (char_length({c}) = {cut_at} AND {c} LIKE '%: bind one in the registry%(trace: %')" if cut_at else ""
+        )
+        return (
+            f"({c} LIKE '%: bind one in the registry%(trace: %env:% -> none)%' "
+            f"OR {c} LIKE '%credential ''%'' is pinned for % but %'{cut})"
+        )
+
+    updates = []
+    for table, column, in_json, cut_at in _CREDENTIAL_TEXT_STORES:
+        changed = f"embry0_rewrite_credential_text({column}, {in_json}, {cut_at or 'NULL'})"
+        updates.append(
+            f"UPDATE {table} SET {column} = {changed}\n"
+            f"        WHERE {candidate(column, cut_at)} AND {changed} IS DISTINCT FROM {column};"
+        )
+    events = "detail::text"
+    updates.append(
+        f"UPDATE healing_case_events SET detail = embry0_rewrite_credential_text({events}, true, NULL)::jsonb\n"
+        f"        WHERE {candidate(events, None)}\n"
+        f"        AND embry0_rewrite_credential_text({events}, true, NULL) IS DISTINCT FROM {events};"
+    )
+    # A rewrite is not an update of the job: its updated_at stays (a paused job's age decides its sandbox's cleanup).
+    jobs_update, *other_updates = updates
+    return f"""
+        CREATE OR REPLACE FUNCTION embry0_rewrite_credential_text(t text, in_json boolean, cut_at integer)
+        RETURNS text LANGUAGE plpgsql AS $rewrite$
+        DECLARE
+            v_out text;
+            v_pinned text := CASE WHEN in_json THEN {pinned_json} ELSE {pinned_text} END;
+            v_pins text[];
+            v_new text[];
+            v_found text[];
+            v_label text;
+            v_repo text;
+            v_scope text;
+            v_kind text;
+            v_provider text;
+        BEGIN
+            IF t IS NULL THEN
+                RETURN NULL;
+            END IF;
+            v_out := regexp_replace(t, CASE WHEN in_json THEN {forge_json} ELSE {forge_text} END, {forge_why}, 'g');
+            v_out := regexp_replace(v_out, CASE WHEN in_json THEN {model_json} ELSE {model_text} END, {model_why}, 'g');
+            -- A value its writer cut at cut_at: what is left of a trace that lost its closing step goes with it.
+            IF cut_at IS NOT NULL AND char_length(t) = cut_at AND NOT in_json THEN
+                v_out := regexp_replace(v_out, {forge_cut}, {forge_why});
+                v_out := regexp_replace(v_out, {model_cut}, {model_why});
+            END IF;
+            -- Each pin the value names, in order: the value is rebuilt from the pieces between them, so each is
+            -- replaced exactly once. One pass finds the pins and one the pieces, whatever their number.
+            v_pins := ARRAY(SELECT m[1] FROM regexp_matches(v_out, '(' || v_pinned || ')', 'g') AS m);
+            IF cardinality(v_pins) > 0 THEN
+                v_new := ARRAY[]::text[];
+                FOR i IN 1..least(cardinality(v_pins), {_CREDENTIAL_PINS_PER_VALUE}) LOOP
+                    v_found := regexp_match(v_pins[i], '^' || v_pinned);
+                    v_label := v_found[1];
+                    v_repo := v_found[2];
+                    IF in_json THEN
+                        BEGIN
+                            v_label := ('"' || v_label || '"')::json #>> '{{}}';
+                        EXCEPTION WHEN others THEN
+                            NULL;
+                        END;
+                    END IF;
+                    -- Whose the pinned credential is, as its bindings say now: the repository's own reads as before;
+                    -- one its owner pins says so; any other, or one no longer bound, is the deployment's and names
+                    -- nothing. Its kind says which dry run shows why.
+                    SELECT found.scope, found.kind, found.provider INTO v_scope, v_kind, v_provider FROM (
+                        SELECT 1 AS rank, 'repo' AS scope, c.kind, c.provider
+                        FROM credential_bindings b JOIN credentials c ON c.id = b.credential_id
+                        WHERE b.pinned AND c.label = v_label AND b.scope_kind = 'repo'
+                          AND lower(b.scope_value) = lower(v_repo)
+                        UNION ALL
+                        SELECT 2, 'owner', c.kind, c.provider
+                        FROM credential_bindings b JOIN credentials c ON c.id = b.credential_id
+                        WHERE b.pinned AND c.label = v_label AND b.scope_kind = 'owner'
+                          AND lower(split_part(b.scope_value, ':', 2))
+                              = translate(lower(split_part(v_repo, '/', 1)), '-.', '__')
+                        UNION ALL
+                        SELECT 3, 'deployment', c.kind, c.provider FROM credentials c WHERE c.label = v_label
+                        UNION ALL
+                        SELECT 4, 'deployment', NULL, NULL
+                    ) AS found
+                    ORDER BY found.rank, found.kind, found.provider
+                    LIMIT 1;
+                    v_new := v_new || (
+                        CASE v_scope
+                            WHEN 'repo' THEN v_pins[i]
+                            WHEN 'owner' THEN 'the owner''s credential pinned for ' || v_repo || ' cannot be used'
+                            ELSE 'the deployment''s credential pinned for ' || v_repo || ' cannot be used'
+                        END
+                        || '; GET /credentials/resolve?repo=' || v_repo
+                        || CASE WHEN v_kind LIKE 'llm\\_%' THEN '&role=llm&provider=' || v_provider ELSE '' END
+                        || ' shows why'
+                    );
+                END LOOP;
+                -- A pin past the bound stays as it is.
+                SELECT string_agg(piece.part || coalesce(v_new[piece.n], v_pins[piece.n], ''), '' ORDER BY piece.n)
+                INTO v_out
+                FROM unnest(regexp_split_to_array(v_out, v_pinned)) WITH ORDINALITY AS piece(part, n);
+            END IF;
+            -- A store that cuts its values: one the rewrite made longer is cut as its writer cuts the message now.
+            IF cut_at IS NOT NULL AND char_length(t) <= cut_at THEN
+                v_out := left(v_out, cut_at);
+            END IF;
+            RETURN v_out;
+        END
+        $rewrite$;
+
+        ALTER TABLE jobs DISABLE TRIGGER trg_jobs_updated_at;
+        {jobs_update}
+        ALTER TABLE jobs ENABLE TRIGGER trg_jobs_updated_at;
+        {chr(10).join("        " + u for u in other_updates).lstrip()}
+
+        DROP FUNCTION embry0_rewrite_credential_text(text, boolean, integer);
+        """
+
+
 # Each migration is (version, description, sql)
 MIGRATIONS: list[tuple[int, str, str]] = [
     (
@@ -4346,6 +4558,15 @@ deliverable under an "Assumptions" heading.$seed$
         COMMENT ON TABLE slop_meter_turns IS
             'the repository each credential''s forge budget is dealt from first, the next run (#396); keyed by a digest of the credential, never the token.';
         """,
+    ),
+    (
+        147,
+        "credential failures: rewrite the resolver's old text wherever it was stored, without its trace",
+        # #445 made the resolver's failure name no credential, step or environment variable a reader of the
+        # job may not read; what it had already written stays in each store it reached. Rewritten to exactly
+        # what the resolver writes now (_credential_text_rewrite_sql); idempotent, as the new text matches no
+        # pattern.
+        _credential_text_rewrite_sql(),
     ),
 ]
 

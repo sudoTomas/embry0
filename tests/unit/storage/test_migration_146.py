@@ -21,10 +21,8 @@ REPO = "acme/widgets"
 AT = datetime(2026, 11, 2, 9, tzinfo=UTC)
 
 
-def test_the_reader_place_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_145.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must add slop_meter_repos.reader_place"
+def test_the_reader_place_migration_is_listed_once() -> None:
+    """ "Is the last entry" passed to tests/unit/storage/test_migration_147.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 
