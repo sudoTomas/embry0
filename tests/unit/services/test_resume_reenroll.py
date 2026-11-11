@@ -124,6 +124,28 @@ async def test_a_resume_reenrolls_the_sandbox_before_the_graph_runs(resume_value
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("context", "scope"),
+    [
+        ({"type": "none", "watcher_log_access": True, "watcher_log_containers": ["acme-web"]}, ["acme-web"]),
+        ({"type": "none", "watcher_log_access": True}, None),
+    ],
+    ids=["its-stack", "none-chosen"],
+)
+async def test_a_resumed_watcher_job_gets_back_only_its_stack_s_containers(context, scope):
+    """A watcher analysis job is re-enrolled as init_node enrolled it: scoped to the containers the watcher chose,
+    never the context proxy's whole allowlist, and with none when it was made without them."""
+    order: list[Any] = []
+    state = {"sandbox_container_id": "cid-1", "repo": "acme/widgets", "watcher_log_tool": True, "context": context}
+    ex = _executor(order, state=state)
+
+    await ex._execute_workflow_stream(Command(resume={"choice": "continue_retrying", "guidance": ""}), "iss-1", "j1")
+
+    _, _container, kwargs = order[0]
+    assert kwargs["context_scope"] == scope, kwargs
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("choice", ["abandon", "merge_as_is"])
 async def test_a_resume_that_runs_no_agent_does_not_reenroll(choice):
     """Abandoning must still work when the sandbox is gone; neither choice runs an agent."""

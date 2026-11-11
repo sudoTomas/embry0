@@ -830,10 +830,12 @@ class ProxyManager:
         RuntimeError if the proxy isn't running or the enrollment exec fails;
         the caller degrades the job to briefing-only rather than failing it.
 
-        ``containers=None`` is the watcher's analysis job: the proxy's full
-        allowlist. A list (SH-P4.4, developer jobs) scopes the sandbox to those
-        containers; the proxy narrows it to its allowlist and echoes what it
-        granted, which is returned. A proxy that does NOT echo a scope is an
+        A list scopes the sandbox to those containers: a developer job's
+        (SH-P4.4), its repository's containers its evidence names, and a
+        watcher analysis job's, its stack's. The proxy narrows it to its
+        allowlist and echoes what it granted, which is returned.
+        ``containers=None`` would grant the proxy's full allowlist; no job is
+        enrolled so any more. A proxy that does NOT echo a scope is an
         image built before scoping existed — it has just granted the full
         allowlist, so the sandbox is unenrolled again and RuntimeError raised.
         """

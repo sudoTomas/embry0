@@ -1496,6 +1496,23 @@ class WatcherService:
             str(getattr(self._config, "context_proxy_container_allowlist", "") or "").strip()
         )
 
+    def _log_scope(self, entries: Sequence[LogEntry]) -> list[str]:
+        """The containers this tick's analysis may query: its stack's ``context_proxy_container_allowlist`` (its own,
+        else the deployment's), as names. An exact entry is one; a pattern entry admits each container the tick's lines
+        came from that it matches, as the drill-down tells the agent to query the full name its excerpts show. The
+        analysis job is enrolled with these alone, never the context proxy's whole allowlist."""
+        if not self._context_proxy_on():
+            return []
+        from embry0.execution.proxy.container_allowlist import ContainerAllowlist, is_pattern
+
+        allowlist = ContainerAllowlist(str(self._config.context_proxy_container_allowlist).split(","))
+        names = {entry for entry in allowlist.entries if not is_pattern(entry)}
+        for entry in entries:
+            name = allowlist.resolve(entry.service or "")
+            if name is not None:
+                names.add(name)
+        return sorted(names)
+
     def _drilldown_section(self) -> str:
         """Rendered {drilldown} block, empty when the context-proxy is off."""
         if not self._context_proxy_on():
@@ -1528,7 +1545,7 @@ class WatcherService:
             logger.warning("watcher_local_first_read_failed", exc_info=True)
             return ""
 
-    async def _run_analysis_job(self, task: str) -> dict[str, Any] | None:
+    async def _run_analysis_job(self, task: str, log_containers: Sequence[str] = ()) -> dict[str, Any] | None:
         """Dispatch an issue-less analysis job and poll it to a terminal state."""
         # #294: this text is the prompt, and the job row stores it. The items
         # cut to a length were redacted before the cut; this pass covers the
@@ -1541,8 +1558,10 @@ class WatcherService:
         # the schema deliberately). init_node reads the flag to provision the
         # mediated log tool.
         context: dict[str, Any] = {"type": "none"}
-        if self._context_proxy_on():
+        if self._context_proxy_on() and log_containers:
             context["watcher_log_access"] = True
+            # The containers its log tool may query: its stack's (_log_scope), not the proxy's whole allowlist.
+            context["watcher_log_containers"] = list(log_containers)
         pipeline_config = apply_run_with(resolve_watcher_job_budget(self._config).as_pipeline_config(), self._run_with)
         local_model = await self._local_first()
         # A model a person chose for the tick (Run with) wins over the preference.
@@ -1634,7 +1653,9 @@ class WatcherService:
         # isinstance, not truthiness: test doubles answer any attribute.
         return wait.record() if isinstance(wait, AccountWait) else None
 
-    async def _analyse(self, task: str, *, kinds: Collection[str] = DEFAULT_KINDS) -> dict[str, Any]:
+    async def _analyse(
+        self, task: str, *, kinds: Collection[str] = DEFAULT_KINDS, log_containers: Sequence[str] = ()
+    ) -> dict[str, Any]:
         """Run the analysis to a parsed verdict, re-running it ONCE on garbage.
 
         SH-P2.4: a completed job whose deliverable matches neither contract
@@ -1650,7 +1671,9 @@ class WatcherService:
         verdict: dict[str, Any] | None = None
         failure: str | None = None
         for attempt in range(1 + _MAX_PARSE_RETRIES):
-            job = await self._run_analysis_job(task if attempt == 0 else _RETRY_NOTE.format(reason=failure) + task)
+            job = await self._run_analysis_job(
+                task if attempt == 0 else _RETRY_NOTE.format(reason=failure) + task, log_containers
+            )
             job_ids.append((job or {}).get("job_id"))
             cost += float((job or {}).get("total_cost_usd") or 0.0)
             if job and job.get("status") == "paused" and isinstance(job.get("account_wait"), dict):
@@ -1970,7 +1993,7 @@ class WatcherService:
                     return await record(
                         "skipped_account_paused", log_lines=len(lines), detail=_account_wait_detail(waiting)
                     )
-                analysis = await self._analyse(task, kinds=policy.kinds)
+                analysis = await self._analyse(task, kinds=policy.kinds, log_containers=self._log_scope(entries))
                 tick_fields.update(analysis["run_fields"])
                 if analysis.get("account_wait"):
                     return await record(
