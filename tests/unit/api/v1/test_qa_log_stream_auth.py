@@ -9,6 +9,7 @@ non-browser clients.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
@@ -17,12 +18,12 @@ _KEY = "test-api-key-32-characters-minimum-x"
 _AUTH = {"Authorization": f"Bearer {_KEY}", "X-Requested-With": "XMLHttpRequest"}
 
 
-class _FakeStdout:
-    def __init__(self, lines: list[bytes]) -> None:
-        self._lines = list(lines)
-
-    async def readline(self) -> bytes:
-        return self._lines.pop(0) if self._lines else b""
+def _printed(lines: list[bytes]) -> asyncio.StreamReader:
+    """The stdout of a process that printed ``lines`` and ended."""
+    stdout = asyncio.StreamReader()
+    stdout.feed_data(b"".join(lines))
+    stdout.feed_eof()
+    return stdout
 
 
 def _make_client() -> TestClient:
@@ -42,7 +43,7 @@ def _make_client() -> TestClient:
 
     async def _log_stream(project: str, service: str, tail: int) -> MagicMock:
         proc = MagicMock()
-        proc.stdout = _FakeStdout([f"{project}/{service} up\n".encode()])
+        proc.stdout = _printed([f"{project}/{service} up\n".encode()])
         proc.returncode = 0
         proc.wait = AsyncMock(return_value=0)
         return proc

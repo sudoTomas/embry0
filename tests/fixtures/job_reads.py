@@ -21,6 +21,7 @@ byte for byte once each id is put back as ``<job>`` (:func:`same_answer`).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -96,15 +97,12 @@ class ArtifactStore:
         return httpx.Response(200, content=body) if body is not None else httpx.Response(404, content=b"NoSuchKey")
 
 
-class _Lines:
-    def __init__(self, lines: list[bytes]) -> None:
-        self._lines = list(lines)
-
-    async def readline(self) -> bytes:
-        return self._lines.pop(0) if self._lines else b""
-
-    async def read(self, _n: int = -1) -> bytes:
-        return b""
+def _printed(lines: list[bytes]) -> asyncio.StreamReader:
+    """The stdout of a process that printed ``lines`` and ended, as the runtime hands it over."""
+    stdout = asyncio.StreamReader()
+    stdout.feed_data(b"".join(lines))
+    stdout.feed_eof()
+    return stdout
 
 
 @dataclass
@@ -113,10 +111,10 @@ class _Process:
 
     lines: list[bytes]
     returncode: int | None = 0
-    stdout: _Lines = field(init=False)
+    stdout: asyncio.StreamReader = field(init=False)
 
     def __post_init__(self) -> None:
-        self.stdout = _Lines(self.lines)
+        self.stdout = _printed(self.lines)
 
     def terminate(self) -> None:
         return None

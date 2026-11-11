@@ -86,6 +86,8 @@ _ARTIFACT_MEDIA_TYPES: dict[str, str] = {
 _MAX_LOG_STREAMS = 8
 _active_log_streams = 0
 _log_stream_lock = asyncio.Lock()
+# What the live log stream sends in place of a line longer than its reader's limit.
+_TRUNCATED_LINE = b"data: [line truncated >64KiB]\n\n"
 
 # Hard cap on the buffered ``result.json`` body in :func:`get_result`. The
 # orchestrator dereferences a presigned URL on the agent's behalf and parses
@@ -300,22 +302,11 @@ async def get_log(
         try:
             assert proc.stdout is not None
             while True:
-                try:
-                    raw = await proc.stdout.readline()
-                except asyncio.LimitOverrunError:
-                    # Default StreamReader limit is 64KiB; chatty services can
-                    # emit a single line longer than that. Drop the rest of the
-                    # offending line and emit a truncation marker so the client
-                    # sees that something was elided rather than the stream
-                    # crashing mid-flight.
-                    yield b"data: [line truncated >64KiB]\n\n"
-                    # Drain whatever bytes are buffered for this overrun line
-                    # so the next readline() starts at the next \n boundary.
-                    try:
-                        await proc.stdout.read(2**20)
-                    except asyncio.LimitOverrunError:
-                        # Successive overruns: keep yielding markers and trying.
-                        continue
+                raw = await _read_log_line(proc.stdout)
+                if raw is None:
+                    # A line longer than the reader's limit: the client sees
+                    # that something was elided, and the stream goes on.
+                    yield _TRUNCATED_LINE
                     continue
                 if not raw:
                     break
@@ -336,6 +327,36 @@ async def get_log(
                 _active_log_streams -= 1
 
     return _event_stream(_stream())
+
+
+async def _read_log_line(reader: asyncio.StreamReader) -> bytes | None:
+    """The next line of ``reader``: ``b""`` at its end, ``None`` for a line over the reader's limit.
+
+    A line longer than the limit (asyncio's default, 64 KiB, which
+    ``compose_log_stream`` keeps) is dropped through its newline, so the next
+    read starts at the line after it. ``readline()`` cannot do that: past the
+    limit it raises ``ValueError``, not ``LimitOverrunError``, and when the
+    newline has not arrived yet it leaves the rest of the long line to be read
+    as a line of its own (#386).
+    """
+    try:
+        return await reader.readuntil(b"\n")
+    except asyncio.IncompleteReadError as exc:
+        return exc.partial  # the last line, without a newline; b"" at the end
+    except asyncio.LimitOverrunError as exc:
+        buffered = exc.consumed
+    # readuntil leaves the long line in the buffer: drop what is buffered of it
+    # (up to its newline when that is there) and look for its end again.
+    while True:
+        await reader.readexactly(buffered)
+        try:
+            await reader.readuntil(b"\n")
+        except asyncio.IncompleteReadError:
+            return None  # the stream ended inside the long line
+        except asyncio.LimitOverrunError as exc:
+            buffered = exc.consumed
+        else:
+            return None
 
 
 def _event_stream(lines: AsyncIterable[bytes] | Iterable[bytes]) -> StreamingResponse:

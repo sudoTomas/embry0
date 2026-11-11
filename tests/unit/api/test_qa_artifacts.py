@@ -285,24 +285,11 @@ async def test_log_stream_streams_lines_and_terminates_on_disconnect(api_with_mi
     """
     api_with_minio.app.state.runtime = _runtime(["docker"])
 
-    class _FakeStdout:
-        """Minimal StreamReader stand-in for the test.
-
-        Implements `readline()` (used by the generator) — returns each
-        configured line in order and an empty bytes object when drained,
-        which the generator treats as EOF.
-        """
-
-        def __init__(self, lines: list[bytes]) -> None:
-            self._lines = list(lines)
-
-        async def readline(self) -> bytes:
-            if self._lines:
-                return self._lines.pop(0)
-            return b""
-
+    stdout = asyncio.StreamReader()
+    stdout.feed_data(b"hello\nworld\n")
+    stdout.feed_eof()
     fake_proc = MagicMock()
-    fake_proc.stdout = _FakeStdout([b"hello\n", b"world\n"])
+    fake_proc.stdout = stdout
     fake_proc.returncode = None
     fake_proc.terminate = MagicMock()
     fake_proc.kill = MagicMock()
@@ -780,3 +767,92 @@ async def test_a_compose_service_ending_in_a_newline_is_not_listed():
     runtime = MagicMock(compose_services=AsyncMock(return_value=["web", "worker\n"]))
     listed = await qa_artifacts.list_qa_services("job-1", request=_unrestricted(), runtime=runtime)
     assert listed == {"services": ["web"]}, f"a service ending in a newline must not be offered: {listed}"
+
+
+# The live log's reader keeps asyncio's default limit (compose_log_stream sets none).
+_LOG_LINE_LIMIT = 64 * 1024
+_TRUNCATED = b"data: [line truncated >64KiB]\n\n"
+
+
+async def _open_log_stream(stdout: asyncio.StreamReader) -> Any:
+    """The live log stream of a workspace service whose output is ``stdout``."""
+    proc = MagicMock(stdout=stdout, returncode=None, terminate=MagicMock(), kill=MagicMock())
+    proc.wait = AsyncMock(return_value=0)
+    runtime = MagicMock(compose_log_stream=AsyncMock(return_value=proc))
+    response = await qa_artifacts.get_log(
+        "job-1", "web", request=_unrestricted(), follow=True, qa_minio=AsyncMock(), runtime=runtime
+    )
+    return response.body_iterator
+
+
+async def _events(stream: Any) -> list[bytes | str]:
+    """Every event ``stream`` sends, and how it ended when that was an exception."""
+    events: list[bytes | str] = []
+    try:
+        async for event in stream:
+            events.append(event)
+    except Exception as exc:
+        events.append(f"the stream ended with {exc!r}")
+    return events
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        pytest.param(
+            b"x" * (_LOG_LINE_LIMIT + 1) + b"\nnext\n",
+            [_TRUNCATED, b"data: next\n\n"],
+            id="then a normal line",
+        ),
+        pytest.param(
+            b"x" * (_LOG_LINE_LIMIT + 1) + b"\n" + b"y" * (3 * _LOG_LINE_LIMIT) + b"\nnext\n",
+            [_TRUNCATED, _TRUNCATED, b"data: next\n\n"],
+            id="twice in a row",
+        ),
+        pytest.param(b"first\n" + b"x" * (_LOG_LINE_LIMIT + 1), [b"data: first\n\n", _TRUNCATED], id="at the end"),
+    ],
+)
+async def test_a_log_line_over_the_limit_is_marked_and_the_stream_goes_on(output, expected):
+    stdout = asyncio.StreamReader()
+    stdout.feed_data(output)
+    stdout.feed_eof()
+
+    events = await _events(await _open_log_stream(stdout))
+
+    assert events == expected, f"a line over the limit must be one marker, and the lines after it must follow: {events}"
+
+
+@pytest.mark.parametrize(
+    "pieces",
+    [
+        pytest.param([b"x" * (_LOG_LINE_LIMIT + 1), b"the rest of the long line\nnext\n"], id="in two pieces"),
+        pytest.param(
+            [b"x" * (_LOG_LINE_LIMIT + 1), b"y" * (_LOG_LINE_LIMIT + 1), b"the rest of the long line\nnext\n"],
+            id="in three pieces, each over the limit",
+        ),
+    ],
+)
+async def test_a_long_line_still_arriving_is_dropped_through_its_newline(pieces):
+    # Each piece arrives after the stream has read the ones before it, so the
+    # long line's newline is not in the reader's buffer when it meets the line.
+    stdout = asyncio.StreamReader()
+    stream = await _open_log_stream(stdout)
+
+    async def first_event() -> Any:
+        try:
+            return await anext(stream)
+        except Exception as exc:
+            return f"the stream ended with {exc!r}"
+
+    first = asyncio.create_task(first_event())
+    for piece in pieces:
+        stdout.feed_data(piece)
+        for _ in range(5):
+            await asyncio.sleep(0)
+    stdout.feed_eof()
+
+    events = [await first, *await _events(stream)]
+
+    assert events == [_TRUNCATED, b"data: next\n\n"], (
+        f"the rest of a long line must be dropped with it, not sent as a line: {events}"
+    )
