@@ -392,6 +392,10 @@ async def test_init_node_unknown_profile_fails_loudly():
 # --- RAV-1140: context-proxy provisioning for watcher analysis jobs ---
 
 
+#: The containers the watcher chose for an analysis job (watcher._log_scope).
+_WATCHER_SCOPE = {"watcher_log_containers": ["acme-backend"]}
+
+
 def _watcher_init_mocks(context_proxy_url="http://context-proxy:9107"):
     sandbox_mgr = MagicMock()
     sandbox_mgr.create = AsyncMock(return_value=("container-abc", "a" * 43))
@@ -434,7 +438,7 @@ async def test_init_node_provisions_context_proxy_for_watcher_job():
     the sandbox token, 0600 token file delivered, watcher_log_tool on state."""
     sandbox_mgr, docker, proxy_mgr = _watcher_init_mocks()
     update = await _run_init(
-        {"job_id": "job-w1", "context": {"type": "none", "watcher_log_access": True}},
+        {"job_id": "job-w1", "context": {"type": "none", "watcher_log_access": True, **_WATCHER_SCOPE}},
         sandbox_mgr,
         docker,
         proxy_mgr,
@@ -442,7 +446,7 @@ async def test_init_node_provisions_context_proxy_for_watcher_job():
 
     _, create_kwargs = sandbox_mgr.create.call_args
     assert create_kwargs["env"].get("EMBRY0_CONTEXT_PROXY_URL") == "http://context-proxy:9107"
-    proxy_mgr.enroll_context.assert_awaited_once_with("container-abc", "a" * 43)
+    proxy_mgr.enroll_context.assert_awaited_once_with("container-abc", "a" * 43, containers=["acme-backend"])
     token_writes = [
         " ".join(str(p) for p in c.args[0])
         for c in docker.run_cmd.await_args_list
@@ -459,7 +463,7 @@ async def test_init_node_enroll_failure_degrades_to_briefing_only():
     sandbox_mgr, docker, proxy_mgr = _watcher_init_mocks()
     proxy_mgr.enroll_context = AsyncMock(side_effect=RuntimeError("proxy exploded"))
     update = await _run_init(
-        {"job_id": "job-w2", "context": {"type": "none", "watcher_log_access": True}},
+        {"job_id": "job-w2", "context": {"type": "none", "watcher_log_access": True, **_WATCHER_SCOPE}},
         sandbox_mgr,
         docker,
         proxy_mgr,
@@ -490,7 +494,7 @@ async def test_init_node_flag_without_running_proxy_is_noop():
     """Flagged job while the proxy isn't running (empty url) degrades silently."""
     sandbox_mgr, docker, proxy_mgr = _watcher_init_mocks(context_proxy_url="")
     update = await _run_init(
-        {"job_id": "job-w4", "context": {"type": "none", "watcher_log_access": True}},
+        {"job_id": "job-w4", "context": {"type": "none", "watcher_log_access": True, **_WATCHER_SCOPE}},
         sandbox_mgr,
         docker,
         proxy_mgr,
@@ -515,6 +519,27 @@ acme-frontend spins.
 """
 
 
+#: The job's repository, and the containers each repository's watched stack names as its own.
+_REPO = "acme/web"
+_STACKS = {_REPO: "acme-backend,acme-frontend"}
+
+
+class _Stacks:
+    """The watched stacks, by repository: a stack's ``context_proxy_container_allowlist``, or None for no stack."""
+
+    def __init__(self, containers: dict[str, str | None]) -> None:
+        self._containers = containers
+
+    async def get(self, repo: str):
+        from embry0.services.watcher_stacks import WatcherStack
+
+        if repo not in self._containers:
+            return None
+        named = self._containers[repo]
+        settings = {} if named is None else {"context_proxy_container_allowlist": named}
+        return WatcherStack(repo=repo, logql='{app="x"}', settings=settings)
+
+
 async def _run_init_with_config(state, sandbox_mgr, docker, proxy_mgr, **cfg):
     from types import SimpleNamespace
 
@@ -526,18 +551,20 @@ async def _run_init_with_config(state, sandbox_mgr, docker, proxy_mgr, **cfg):
         "developer_log_tool_enabled": False,
         "workspace_local_allowlist": "",
     }
+    stacks = cfg.pop("stacks", _STACKS)
     settings.update(cfg)
     orig = nodes_module.get_stream_writer
     nodes_module.get_stream_writer = lambda: lambda _e: None
     try:
         return await init_node(
-            state=state,
+            state={"repo": _REPO, **state},
             config={
                 "configurable": {
                     "sandbox_manager": sandbox_mgr,
                     "docker": docker,
                     "proxy_manager": proxy_mgr,
                     "embry0_config": SimpleNamespace(**settings),
+                    "watcher_stacks_repo": _Stacks(stacks),
                 }
             },
         )
@@ -692,13 +719,14 @@ async def test_init_node_grant_fails_closed_without_a_config():
     nodes_module.get_stream_writer = lambda: lambda _e: None
     try:
         update = await init_node(
-            state={"job_id": "job-e10", "context": {"type": "none"}, "task": _EVIDENCE_TASK},
+            state={"job_id": "job-e10", "repo": _REPO, "context": {"type": "none"}, "task": _EVIDENCE_TASK},
             config={
                 "configurable": {
                     "sandbox_manager": sandbox_mgr,
                     "docker": docker,
                     "proxy_manager": proxy_mgr,
                     "embry0_config": legacy_config,
+                    "watcher_stacks_repo": _Stacks(_STACKS),
                 }
             },
         )
@@ -729,18 +757,119 @@ async def test_init_node_scoped_enroll_failure_degrades_without_the_tool():
 
 
 @pytest.mark.asyncio
-async def test_init_node_watcher_job_stays_unscoped():
-    """The watcher's analysis job keeps the full allowlist even if its task quotes evidence."""
+async def test_init_node_watcher_job_is_scoped_to_its_stack_s_containers():
+    """The watcher's analysis job is enrolled with the containers the watcher chose, whatever its task quotes."""
     sandbox_mgr, docker, proxy_mgr = _watcher_init_mocks()
     update = await _run_init_with_config(
-        {"job_id": "job-e6", "context": {"type": "none", "watcher_log_access": True}, "task": _EVIDENCE_TASK},
+        {
+            "job_id": "job-e6",
+            "context": {"type": "none", "watcher_log_access": True, "watcher_log_containers": ["acme-frontend"]},
+            "task": _EVIDENCE_TASK,
+        },
         sandbox_mgr,
         docker,
         proxy_mgr,
     )
-    proxy_mgr.enroll_context.assert_awaited_once_with("container-abc", "a" * 43)
+    proxy_mgr.enroll_context.assert_awaited_once_with("container-abc", "a" * 43, containers=["acme-frontend"])
     assert update.get("watcher_log_tool") is True
     assert "case_log_containers" not in update
+
+
+@pytest.mark.asyncio
+async def test_init_node_watcher_job_without_its_containers_gets_no_log_tool():
+    """An analysis job made without the stack's containers is not given the proxy's whole allowlist instead."""
+    sandbox_mgr, docker, proxy_mgr = _watcher_init_mocks()
+    update = await _run_init(
+        {"job_id": "job-w5", "context": {"type": "none", "watcher_log_access": True}}, sandbox_mgr, docker, proxy_mgr
+    )
+    _, create_kwargs = sandbox_mgr.create.call_args
+    assert "EMBRY0_CONTEXT_PROXY_URL" not in create_kwargs["env"]
+    proxy_mgr.enroll_context.assert_not_awaited()
+    assert "watcher_log_tool" not in update
+
+
+_ELSEWHERE_TASK = """Fix the checkout error
+
+## Evidence
+
+globex-api logged 3x: payment refused for order 12
+"""
+
+
+@pytest.mark.asyncio
+async def test_init_node_evidence_naming_another_repository_s_container_grants_nothing():
+    """A ticket's evidence names a container the deployment allowlists, but another repository's stack owns it: the
+    job's log tool is not scoped to it, and the prompt does not name it as a service."""
+    sandbox_mgr, docker, proxy_mgr = _watcher_init_mocks()
+    update = await _run_init_with_config(
+        {"job_id": "job-e11", "context": {"type": "none"}, "task": _ELSEWHERE_TASK},
+        sandbox_mgr,
+        docker,
+        proxy_mgr,
+        developer_log_tool_enabled=True,
+        context_proxy_container_allowlist="acme-backend,acme-frontend,globex-api",
+        stacks={_REPO: "acme-backend,acme-frontend", "globex/gizmos": "globex-api"},
+    )
+    proxy_mgr.enroll_context.assert_not_awaited()
+    assert "case_log_containers" not in update
+    assert update["case_evidence"]["services"] == [], update["case_evidence"]
+
+
+@pytest.mark.parametrize(
+    ("stacks", "why"),
+    [
+        ({}, "a repository nobody watches"),
+        ({_REPO: None}, "a stack that names no containers of its own"),
+        ({_REPO: "acme-frontend"}, "a stack that names other containers"),
+        ({_REPO: "acme-backend-old"}, "an entry that is not a prefix"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_init_node_evidence_grants_only_the_repository_s_own_containers(stacks, why):
+    """The deployment's allowlist says which containers an agent may read at all, not whose they are: a job is scoped
+    only to containers its own repository's stack names."""
+    sandbox_mgr, docker, proxy_mgr = _watcher_init_mocks()
+    update = await _run_init_with_config(
+        {"job_id": "job-e12", "context": {"type": "none"}, "task": _EVIDENCE_TASK},
+        sandbox_mgr,
+        docker,
+        proxy_mgr,
+        developer_log_tool_enabled=True,
+        stacks=stacks,
+    )
+    proxy_mgr.enroll_context.assert_not_awaited()
+    assert "case_log_containers" not in update, why
+
+
+@pytest.mark.asyncio
+async def test_init_node_a_stack_pattern_admits_its_slot_names_the_deployment_admits():
+    """A stack naming its slots by pattern admits the slot the evidence names, when the deployment admits it too."""
+    task = "t\n\n## Evidence\nacme-backend-blue logged 2x: 502 Bad Gateway\n"
+    sandbox_mgr, docker, proxy_mgr = _watcher_init_mocks()
+    proxy_mgr.enroll_context = AsyncMock(return_value=["acme-backend-blue"])
+    await _run_init_with_config(
+        {"job_id": "job-e13", "context": {"type": "none"}, "task": task},
+        sandbox_mgr,
+        docker,
+        proxy_mgr,
+        developer_log_tool_enabled=True,
+        context_proxy_container_allowlist="acme-backend*",
+        stacks={_REPO: "acme-backend*"},
+    )
+    proxy_mgr.enroll_context.assert_awaited_once_with("container-abc", "a" * 43, containers=["acme-backend-blue"])
+
+    sandbox_mgr, docker, proxy_mgr = _watcher_init_mocks()
+    update = await _run_init_with_config(
+        {"job_id": "job-e14", "context": {"type": "none"}, "task": task},
+        sandbox_mgr,
+        docker,
+        proxy_mgr,
+        developer_log_tool_enabled=True,
+        context_proxy_container_allowlist="acme-frontend",
+        stacks={_REPO: "acme-backend*"},
+    )
+    proxy_mgr.enroll_context.assert_not_awaited()
+    assert update["case_evidence"]["services"] == [], "a name the deployment does not admit is no service"
 
 
 @pytest.mark.asyncio

@@ -1200,7 +1200,11 @@ async def _reenroll_paused_sandbox(
     xai_credential_id = llm_ids.get("xai") if llm_kinds.get("xai") == "llm_oauth" else None
     context_scope: bool | list[str] | None = None
     if values.get("watcher_log_tool"):
-        context_scope = True
+        # The containers the watcher chose for the analysis, as init_node enrolled it: never the proxy's whole
+        # allowlist. A job made without them is given none back.
+        context = values.get("context")
+        chosen = context.get("watcher_log_containers") if isinstance(context, dict) else None
+        context_scope = [str(c) for c in chosen or [] if str(c).strip()] or None
     elif values.get("case_log_containers"):
         context_scope = list(values["case_log_containers"])
     git_push_branches: list[str] = []
