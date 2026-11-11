@@ -906,6 +906,15 @@ async def _init_app_state(
 
     # ADR 0019: agent-proposed test setups waiting for a person.
     app.state.repo_setup_proposals_repo = RepoSetupProposalsRepository(db)
+    # Spec 2026-11-10: each repository's areas, kept in embry0; the area mapper's maps waiting for a person;
+    # the ledger of the one-time import of each repository's old areas file.
+    from embry0.services.areas_store import AreasStore
+    from embry0.storage.repositories.repo_areas_imports import RepoAreasImportsRepository
+    from embry0.storage.repositories.repo_areas_proposals import RepoAreasProposalsRepository
+
+    app.state.areas = AreasStore(db)
+    app.state.repo_areas_proposals_repo = RepoAreasProposalsRepository(db)
+    app.state.repo_areas_imports_repo = RepoAreasImportsRepository(db)
     app.state.qa_app_results_repo = QAAppResultsRepository(db)
     app.state.qa_image_tags_repo = QAImageTagsRepository(db)
     app.state.qa_volume_state_repo = QAVolumeStateRepository(db)
@@ -1067,8 +1076,50 @@ async def _init_app_state(
         # #182: a coding job reads its done_when and salvage sections when it starts.
         settings=app.state.settings,
         budget_policy=app.state.budget_policy,
+        # Spec 2026-11-10: the areas the pull requests it opens are labelled with, and where a map's
+        # result waits for a person.
+        areas=app.state.areas,
+        areas_proposals=app.state.repo_areas_proposals_repo,
         **executor_kwargs,
     )
+
+
+async def _import_areas(app: FastAPI, config: Any) -> None:
+    """Run the one-time import of each repository's old areas file (:mod:`embry0.services.areas_import`) with the
+    forge credential the resolver picks for each repository, as the pull requests embry0 opens read it: a pass
+    now, and later ones while a read that failed is still to be retried."""
+    from embry0.audit.helpers import emit_audit
+    from embry0.execution.github_client import GitHubClient
+    from embry0.services.areas_import import ACTOR, AREAS_PATH, import_passes
+    from embry0.services.forge_files import read_file
+
+    client = GitHubClient(
+        default_token=str(getattr(config, "github_token", "") or ""),
+        credential_resolver=app.state.credential_resolver,
+    )
+
+    async def read(repo: str) -> tuple[str, str | None] | None:
+        return await read_file(lambda url: client.get(url, repo=repo), repo, AREAS_PATH)
+
+    async def record(repo: str, details: dict[str, Any]) -> None:
+        await emit_audit(
+            app.state.db,
+            "repo.areas_imported",
+            actor=ACTOR,
+            details=details,
+            audit_log_path=getattr(config, "audit_log_path", None),
+        )
+
+    try:
+        await import_passes(
+            ledger=app.state.repo_areas_imports_repo,
+            store=app.state.areas,
+            repos=app.state.repos_repo,
+            read=read,
+            record=record,
+        )
+    except Exception:
+        logger.error("areas_import_unavailable", exc_info=True)
 
 
 @asynccontextmanager
@@ -2478,6 +2529,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             linear=_lead_linear,
             tracked=_lead_tracked,
             trigger_labels=_lead_triggers,
+            # Spec 2026-11-10: the areas embry0 keeps, never a file of the repository.
+            areas_for=app.state.areas.areas_for,
         )
         leads_task = asyncio.create_task(app.state.leads_loop.start())
         app.state.background_tasks.add(leads_task)
@@ -2773,6 +2826,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         bots=_slop_meter_bots,
         calls=app.state.background_calls,
         limits=slop_meter_limits(config),
+        # Spec 2026-11-10: each repository's areas as embry0 keeps them, scored as meters of their own.
+        areas_of=app.state.areas.areas_of,
     )
     slop_meter_task = asyncio.create_task(app.state.slop_meter.start())
     app.state.background_tasks.add(slop_meter_task)
@@ -2788,20 +2843,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # no model is not scouted.
     from embry0.audit.helpers import emit_audit as _scout_audit
     from embry0.orchestration import dispatch_actors as _scout_actors
-    from embry0.services.areas import AREAS as _SCOUT_AREAS
-    from embry0.services.areas import read_contents as _scout_read_contents
     from embry0.services.scout import ScoutLoop, tick_settings, warn_retired_tick
     from embry0.storage.repositories.scout import ScoutRunsRepository
-
-    async def _scout_areas(repo: str) -> list[Any]:
-        client = await _slop_meter_client(repo)
-        if client is None:
-            return []
-
-        async def read(name: str, path: str) -> str | None:
-            return await _scout_read_contents(lambda url: client.get(url, repo=name), name, path)
-
-        return await _SCOUT_AREAS.areas(repo, read)
 
     async def _scout_gate() -> Any:
         executor = getattr(app.state, "issue_executor", None)
@@ -2829,13 +2872,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         leads=app.state.leads_repo,
         # The registered, active repositories; each tick scouts those background.scout enrolls (#165).
         repos=registered_reader(app.state.repos_repo),
-        areas_for=_scout_areas,
+        # Spec 2026-11-10: the areas embry0 keeps, never a file of the repository.
+        areas_for=app.state.areas.areas_for,
         ask_gate=_scout_gate,
         submit=_scout_submit,
     )
     scout_task = asyncio.create_task(app.state.scout.start())
     app.state.background_tasks.add(scout_task)
     scout_task.add_done_callback(app.state.background_tasks.discard)
+
+    # Spec 2026-11-10: the one-time import of each repository's old areas file, for the repositories migration
+    # 145 listed; in the background, as nothing waits on it. Removed by the next minor release.
+    app.state.areas_import = asyncio.create_task(_import_areas(app, config))
+    app.state.background_tasks.add(app.state.areas_import)
+    app.state.areas_import.add_done_callback(app.state.background_tasks.discard)
 
     # Asks (spec 2026-10-27, decisions): keeps one ask per person a decision
     # waits on, for a chat assistant to send. The loop always runs and reads
@@ -3171,7 +3221,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(leads.router, prefix="/api/v1", tags=["leads"], dependencies=auth_deps)
     # The lead-kind catalogue (#166): what each kind of work on offer is called, the game on or off.
     app.include_router(lead_kinds.router, prefix="/api/v1", tags=["leads"], dependencies=auth_deps)
-    # Areas (spec 2026-10-25): a repository's areas file, and mapping it with an agent.
+    # Areas (spec 2026-10-25, 2026-11-10): a repository's areas document, and mapping it with an agent.
     app.include_router(areas.router, prefix="/api/v1", tags=["areas"], dependencies=auth_deps)
     # The Slop-O-Meter (spec 2026-10-26): a repository's score and weekly series.
     app.include_router(slop_meter.router, prefix="/api/v1", tags=["slop-meter"], dependencies=auth_deps)

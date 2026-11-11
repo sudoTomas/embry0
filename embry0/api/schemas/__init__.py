@@ -193,6 +193,12 @@ class RunWithRequest(BaseModel):
     )
 
 
+#: ``pipeline_config`` keys embry0 writes itself, for work it started and checked: a request never sets them. A
+#: map's ``areas_proposal_id`` names the proposal its job finishes; ``proposal_id`` the test setup an onboarding
+#: job proposes; ``run_with`` the model and key a person chose, checked when the job started.
+INTERNAL_PIPELINE_KEYS: tuple[str, ...] = ("areas_proposal_id", "proposal_id", "run_with")
+
+
 class JobCreateRequest(ServableFields):
     repo: str | None = Field(default=None, max_length=200)
     # ``task`` is required for the legacy issue-to-pr flow but optional for
@@ -232,6 +238,15 @@ class JobCreateRequest(ServableFields):
     @classmethod
     def validate_repo_format(cls, v: str | None) -> str | None:
         return None if v is None else validate_repo_path(v)
+
+    @field_validator("pipeline_config")
+    @classmethod
+    def _refuse_internal_keys(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Refused rather than dropped, so a caller never believes it took effect (RAV-1058)."""
+        named = [key for key in INTERNAL_PIPELINE_KEYS if key in (v or {})]
+        if named:
+            raise ValueError(f"pipeline_config cannot set {', '.join(named)}: embry0 sets it for the work it starts")
+        return v
 
     @model_validator(mode="after")
     def _enforce_task_for_non_qa(self) -> "JobCreateRequest":

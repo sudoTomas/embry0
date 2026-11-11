@@ -152,6 +152,17 @@ def test_the_codes_pipelines_are_the_workflows_with_no_template_row() -> None:
 # --- every built-in row answers what the code said by its name --------------------------------------------
 
 
+#: What a built-in template delivers that changed on purpose after #167, and why.
+DELIVERS_SINCE: dict[str, str] = {
+    # Spec 2026-11-10: a map's areas wait for a person in embry0; no pull request is opened (migration 145).
+    "map-areas": "the repository's areas, for a person to apply",
+}
+
+
+def _delivers(name: str, kind: str) -> str:
+    return DELIVERS_SINCE.get(name) or before.delivers(name, kind)
+
+
 @pytest.mark.parametrize("name", sorted(BUILTIN_PIPELINE_TEMPLATES))
 def test_each_builtin_template_says_what_its_name_said(name: str) -> None:
     seed = BUILTIN_PIPELINE_TEMPLATES[name]
@@ -166,9 +177,9 @@ def test_each_builtin_template_says_what_its_name_said(name: str) -> None:
     assert coding_agent_of(plan) == before.coder(name), f"{name}: whom plan_route records its pull request is to"
     for kind in (*rb.JOB_KINDS, ""):
         job = {"pipeline_template": name, "job_kind": kind}
-        assert job_briefs.what_it_delivers(job) == before.delivers(name, kind), f"{name}/{kind}: what it delivers"
+        assert job_briefs.what_it_delivers(job) == _delivers(name, kind), f"{name}/{kind}: what it delivers"
         read = {**job, "template_delivers": rb.delivers(row)}
-        assert job_briefs.what_it_delivers(read) == before.delivers(name, kind), f"{name}/{kind}, read from the row"
+        assert job_briefs.what_it_delivers(read) == _delivers(name, kind), f"{name}/{kind}, read from the row"
 
 
 @pytest.mark.parametrize("name", sorted(rb.WORKFLOW_PIPELINES))

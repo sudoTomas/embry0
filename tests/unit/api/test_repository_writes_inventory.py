@@ -148,6 +148,7 @@ BODIES: dict[str, Any] = {
     "/api/v1/repos/{full_repo:repo}/-/preferences": {"notes": "Small changes."},
     "/api/v1/repos/{full_repo:repo}/-/environment": {"variables": [{"key": "API_URL", "value": "https://e.test"}]},
     "/api/v1/repos/{full_repo:repo}/-/qa-config": _QA_SETUP,
+    "/api/v1/repos/{full_repo:repo}/-/areas": "areas:\n  - name: Web\n    paths: [web/**]\n",
     "/api/v1/repos/{full_repo:repo}/-/setup/propose": {"confirm_spend": True},
     "/api/v1/standards/{owner}/{kind}": {"schema": {}, "values": {}},
     "/api/v1/standards/{owner}/{kind}/audit/{repo:path}": {},
@@ -202,8 +203,13 @@ def kind(path: str) -> str:
 
 
 def address(path: str, values: Mapping[str, str]) -> str:
-    """``path`` naming ``values``' items; a setup proposal is the repository's own, not a proposal of work."""
-    named = dict(values, proposal_id=values["setup_proposal_id"]) if "/setup/proposal/" in path else values
+    """``path`` naming ``values``' items; a setup proposal and a map of areas are the repository's own, not a
+    proposal of work."""
+    named: Mapping[str, str] = values
+    if "/setup/proposal/" in path:
+        named = dict(values, proposal_id=values["setup_proposal_id"])
+    elif "/areas/proposal/" in path:
+        named = dict(values, proposal_id=values["areas_proposal_id"])
     return _PARAMETER.sub(lambda m: named[m.group(1)], path)
 
 

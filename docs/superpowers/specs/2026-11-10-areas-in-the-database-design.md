@@ -1,6 +1,6 @@
 # Areas in the database: a repository's areas stored in embry0, not in the repository
 
-Status: design, with open decisions (section 15) for the maintainer. Refs #159, #175, #179. Line numbers are at `b2668f26`.
+Status: decided (2026-11-11, section 15); pull request 1 builds the backend (section 16). Refs #159, #175, #179. Line numbers are at `b2668f26`.
 
 **Why.** A repository's areas (spec 2026-10-25) are read from `.embry0/areas.yml` on its default branch (`embry0/services/areas.py:36`), and the area mapper changes them by opening a pull request on the repository (`embry0/workflows/issue_to_pr/areas_delivery.py`). The project decided long ago that a target repository carries no embry0 configuration file (ADR 0003, migration 52's comment at `embry0/storage/migrations/runner.py:1231-1239`), and epic #159 restates it: every operator decision is a document in the database with a schema, a 422 naming each problem, revisions with undo, and a write path through the API, the CLI, MCP and the dashboard. Areas are the last feature that reads its configuration from the target repository. Under that design an organization adopting embry0 commits an embry0 file to every monorepo, and area owners, who decide who embry0 asks and who may answer, are edited through pull requests on someone else's code.
 
@@ -75,19 +75,20 @@ The format is today's file with an optional `version`, so an existing file is a 
 - **The refusals every operator document shares** (`embry0/text_documents.py`): aliases, merge keys, keys written twice, keys that are not text, numbers YAML cannot read, NUL, nesting past the stored depth. The text is capped at 256 KiB (413 beyond).
 - **Stored as written.** `yaml_text` is the text as sent, comments included; a JSON body is stored as the YAML it dumps to. `data` holds the validated, normalized values (`@` dropped, `/` expanded), and every reader reads `data`.
 - **Additive within version 1.** A key a later release adds takes a default. A reader ignores keys it does not know, so a rollback past that release still reads the rest; a write by the older release is refused naming the key, as for any unknown key.
-- **Empty is a value.** `PUT` of an empty text, or of `areas: []`, stores a document that names no areas: recorded and undoable. There is no `DELETE`.
+- **Empty is a value.** `PUT` of an empty text over stored areas, or of `areas: []`, stores a document that names no areas: recorded and undoable. An empty text where none is stored changes nothing. There is no `DELETE`.
 
 ## 3. Storage: migration 145
 
 Migration 145 (reserved for this work) creates three tables, widens one CHECK and refreshes two built-in rows. It creates no document: the application imports them (section 7), because SQL cannot validate them.
 
 ```sql
+CREATE SEQUENCE IF NOT EXISTS repo_areas_generation AS BIGINT;
 CREATE TABLE IF NOT EXISTS repo_areas (
     repo            TEXT PRIMARY KEY REFERENCES repos(repo) ON DELETE CASCADE,
     yaml_text       TEXT NOT NULL,
     data            JSONB NOT NULL CHECK (jsonb_typeof(data) = 'object'),
     schema_version  INTEGER NOT NULL DEFAULT 1,
-    generation      BIGINT NOT NULL DEFAULT 1,
+    generation      BIGINT NOT NULL DEFAULT nextval('repo_areas_generation'),
     updated_by      TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -95,7 +96,7 @@ CREATE TABLE IF NOT EXISTS repo_areas (
 
 CREATE TABLE IF NOT EXISTS repo_areas_proposals (
     id               TEXT PRIMARY KEY,
-    repo             TEXT NOT NULL,
+    repo             TEXT NOT NULL REFERENCES repos(repo) ON DELETE CASCADE,
     job_id           TEXT,
     status           TEXT NOT NULL CHECK (status IN
                      ('running', 'pending', 'applied', 'rejected', 'stale', 'failed', 'unchanged')),
@@ -124,8 +125,8 @@ CREATE TABLE IF NOT EXISTS repo_areas_imports (
 INSERT INTO repo_areas_imports (repo, outcome) SELECT repo, 'pending' FROM repos ON CONFLICT DO NOTHING;
 ```
 
-- **`repo_areas`** is keyed as `repo_qa_configs` is (the registry's spelling, removed with the repository; `runner.py:1248-1253`); its history in `repo_config_revisions` outlives it. A registered repository without a row has the empty document at generation 0, so the read path never needs a row and a first write is `If-Match: "0"`. `generation` goes up by one in every write's transaction, as for the settings document (`docs/superpowers/specs/2026-10-28-settings-documents-design.md`, section 4).
-- **`repo_areas_proposals`** is `repo_setup_proposals` (migration 105, `runner.py:3000-3033`) for this document: the same statuses plus `unchanged` (a map whose document equals the stored one, which today "opens nothing"), and the base as a generation instead of a timestamp. The partial unique index is again the lock against two maps of one repository. A table of its own, not a `surface` column on `repo_setup_proposals`: that table's status, readiness and progression readers (`embry0/services/repo_readiness.py`, the `setup_applied` fact at `progression.py:430-432`) would each need a filter, and one wrong reader would count a map as a test setup.
+- **`repo_areas`** is keyed as `repo_qa_configs` is (the registry's spelling, removed with the repository; `runner.py:1248-1253`); its history in `repo_config_revisions` outlives it. A registered repository without a row has the empty document at generation 0, so the read path never needs a row and a first write is `If-Match: "0"`. `generation` is the next value of one sequence in every write's transaction: it only goes up, and no two writes of any repository share one, so a version read before an undo, or before the repository was removed and registered again, never matches a later document. An undo of the write that created a document stores the empty one; a row goes only with its repository.
+- **`repo_areas_proposals`** is `repo_setup_proposals` (migration 105, `runner.py:3000-3033`) for this document, removed with its repository: the same statuses plus `unchanged` (a map whose document equals the stored one, which today "opens nothing"), and the base as a generation instead of a timestamp. The partial unique index is again the lock against two maps of one repository. A table of its own, not a `surface` column on `repo_setup_proposals`: that table's status, readiness and progression readers (`embry0/services/repo_readiness.py`, the `setup_applied` fact at `progression.py:430-432`) would each need a filter, and one wrong reader would count a map as a test setup.
 - **`repo_areas_imports`** is the import's ledger. The migration lists every repository registered when it runs, so the import reads exactly those (section 7).
 - **`repo_config_revisions`** (migration 104, `runner.py:2974-2998`): the `surface` CHECK gains `areas`, and the `source` CHECK gains `import` (the one-time import) and `file` (the CLI's apply, as `config_revisions` has it). `before` and `after` are `{"yaml_text", "data"}`; `KEEP_PER_SURFACE` (100) applies per repository and surface as now.
 - **Built-in rows, only where unchanged:** the `map-areas` template's `delivers` becomes "areas for a person to apply" where it still holds migration 143's text; the `area-mapper` agent's `description` and `system_prompt` become the new seed (section 6) where they still equal the seed at `b2668f26`. A row an operator edited keeps its text, as migration 106 did for identities (`runner.py:3034-3058`). Built-in template descriptions are rewritten by the boot seed already (`embry0/storage/repositories/pipeline_templates.py:166-225`); agents and `delivers` are not, hence the SQL.
@@ -159,7 +160,7 @@ All under `/api/v1`, in `embry0/api/v1/areas.py`, behind the `/-/` separator eve
 
 | Route | Tier | What it does |
 |---|---|---|
-| `GET /repos/{repo}/-/areas` | read | `{repo, yaml_text, areas: [{name, slug, paths, logs, owners}], generation, updated_by, updated_at, imported, latest_job, proposal}` with `ETag: "<generation>"`; `?format=yaml` answers the text alone. `imported` is `{outcome, at, blob_sha}` from the ledger, or null. `proposal` is the newest proposal's `{id, status, job_id, created_at}`, or null. `path` (the file) is gone; `fresh` is ignored |
+| `GET /repos/{repo}/-/areas` | read | `{repo, yaml_text, areas: [{name, slug, paths, logs, owners}], generation, updated_by, updated_at, imported, latest_job, proposal}` with `ETag: "<generation>"`; `?format=yaml` answers the text alone. `imported` is `{outcome, at, blob_sha}` from the ledger, or null. `proposal` is the newest proposal's `{id, status, job_id, at}` (`at` when it was made), or null. `path` (the file) is gone; `fresh` is ignored |
 | `PUT /repos/{repo}/-/areas` | operate (decision OD3) | Replace the document. YAML (`application/yaml`, `text/yaml`, `text/plain`) or a JSON object. Optional `If-Match`, `?reason=`, `?source=person\|file`, `?dry_run=1` (validate and compare; store nothing). Answers `{generation, revision_id, changes}`; `revision_id` is null when the text did not change. `changes` lists areas added, removed and changed, each change by key (paths, logs, owners). 404 for an unregistered repository: the registry is not written by this route (a typo must not register a repository nobody uses) |
 | `POST /repos/{repo}/-/areas/map` | operate | As today, but it first retires a pending proposal (`stale`), creates a `running` one at the current generation, and starts the job with that proposal's id (section 6). 409 while one runs |
 | `GET /repos/{repo}/-/areas/proposal` | read | The newest proposal: `{id, status, job_id, base_generation, stale, proposed_text, changes, text_diff, notes_md, failure, created_by, decided_by, decided_at}`; `stale` is whether the stored generation moved since. 404 when there is none |
@@ -193,7 +194,7 @@ All under `/api/v1`, in `embry0/api/v1/areas.py`, behind the `/-/` separator eve
 - No file: `none`. A file that is not YAML or names nothing usable: `none`, with the reason in `detail` and the log.
 - A file the v1 schema accepts as written: stored byte for byte, source `import`, actor `embry0:areas-import`, reason `imported from .embry0/areas.yml (blob <sha>)`, outcome `imported`.
 - A file the v1 schema refuses: what today's lenient reader reads (`parse_areas`) is what embry0 already acts on, so that is what is imported. Its values are normalised (a leading `/` dropped, a trailing `/` expanded) and checked again, and an entry or value that still fails is left out. The stored text is then written from the values, under a header comment that says it was imported, that the original's comments were lost, and which entries or values were left out and why, as the settings import does when it cannot keep a text (spec 2026-10-28, section 7).
-- A read that fails (network, credential, a 5xx): `failed`, `attempts + 1`, retried at the next boot. A repository with a stored document already is `none`: the import never overwrites a person's write.
+- A read that fails (network, credential, a 5xx, or a 404 for the file when the repository itself does not read, as GitHub answers a private repository the credential cannot see): `failed`, `attempts + 1`, retried an hour later and at the next boot, up to 24 reads. A repository with a stored document already is `none`: the import never overwrites a person's write.
 
 **Not read.** A repository registered after migration 145 ran has no ledger row and is never read: it starts with no areas, and a person maps or writes them. Nothing reads a repository's file after its row leaves `pending` or `failed`.
 
@@ -300,39 +301,37 @@ These follow from the code and the project's decisions, or are cheap to change l
 - The CLI is built (the epic asks for "apply a file"), in its own pull request.
 - Undo restores the previous document, the empty one included.
 
-## 15. Open decisions
+## 15. Decisions (2026-11-11)
 
-Each needs the maintainer. The recommended option is first.
+Taken by the maintainer on 2026-11-11, each the option this spec recommended.
 
-### OD1. One word, and how areas relate to qa.yaml apps and map groups
+- **OD1. Three concepts, three words, one glob grammar.** "Area" is the repository part this document names, qa.yaml apps stay apps, and a knowledge map's `areas` read as "groups" on the Maps page and in `docs/maps.md` while `embry0.map/1` keeps the key; areas and apps share qa.yaml's glob grammar. Why: an app (something that runs) and a scanner's ring (parts without paths) are not partitions of a repository, and a shared grammar is all they have in common. Rejected: apps referring to areas, and map groups being areas.
+- **OD2. A repository's own owners stay in `repo_preferences.owners`;** per-area owners are in the areas document, and one resolver reads both, then `CODEOWNERS`. Why: nothing new to migrate or deprecate, and #179 decides where all owners live. Rejected: a top-level `owners:` in the areas document, and moving per-area owners into #179's `people`.
+- **OD3. Operate tier, with the key's allowlist covering the repository,** for writes, apply and undo. Why: the tier that already sets a repository's owners, with the same rights in asks, and that applies a setup proposal. Rejected: admin only, and admin for owner changes alone.
+- **OD4. A waiting map shows where a waiting test setup does (ADR 0019):** a card with its changes, Apply and Reject in the repository page's Areas section, a line in the dashboard's BriefBar, and a link from the map job's card in the review inbox. Why: the precedent exists and costs no new decision actions. Rejected: `apply` and `reject` on the decision card for chats, and a new owner-proposal kind.
+- **OD5. Import in this release; the next minor release deletes the import,** with an upgrade note. Pull requests 1 to 3 never close #175; a later pull request (4) finishes it. Why: as qa.yaml did (`da57a86e`, then `ff3c3173`), so a deployment that upgrades one release at a time never loses its areas. Rejected: deleting the import in this issue's pull requests, and an import only by hand.
 
-1. **(Recommended) Three concepts, three words, one glob grammar.** "Area" is the repository part this document names; qa.yaml apps stay apps, with their own `when.changed_paths`; a knowledge map's `areas` read as "groups" on the Maps page and in `docs/maps.md`, while `embry0.map/1` keeps the key. Areas and apps share qa.yaml's glob grammar. *Costs:* an app's `changed_paths` and an area's `paths` can name the same directories and drift apart; a wording change on the Maps page. *Risk:* low; nothing stored changes meaning.
-2. **Apps refer to areas.** A deployed app's `when` may say `areas: [billing]` instead of globs, so areas are the one home of a repository's path globs. *Costs:* qa.yaml validation reads a second document, so a test setup can no longer be checked alone (the CLI's offline check included); renaming or removing an area must be refused, or must silently change which QA runs an app takes part in; a qa.yaml schema change. *Risk:* an areas edit by one person changes another's QA coverage.
-3. **Map groups are areas.** A repository map's parts are grouped and coloured by the repository's areas, from their paths, and a scanner's own `areas` are dropped. *Costs:* organization maps and parts without paths lose their grouping; a published upload format changes meaning. *Risk:* scanners already writing `embry0.map/1` render differently.
+## 16. As built (pull request 1)
 
-### OD2. Where a repository's own owners live
+- **The import's reader** is `embry0/services/forge_files.py` (`read_file`, the file and its blob sha, telling "no file" from "could not read"); `read_contents` moved there for `CODEOWNERS`. The lenient old reader `parse_areas` and `AREAS_PATH` live in `embry0/services/areas_import.py` alone. `tests/unit/api/test_areas_wiring.py` fails on any other module naming the old file (the migrations aside, which are history).
+- **The ledger's outcomes:** `none` also for a repository no longer registered, one on another forge, and one whose areas someone wrote first; `imported` records the blob sha. At most four repositories are read at once.
+- **What a map job delivers** is in its pipeline config (`areas_proposal_id`), carried into the graph's state; the output step returns `areas_document` and `areas_notes`, and the executor stores them on the proposal before it marks the job over, on the completion path and on both failure paths (`_run_workflow`, `_fail_resume`). `embry0/workflows/issue_to_pr/areas_delivery.py` became `areas_report.py`; the git step and `GitStep.AREAS_DELIVERY` are gone.
+- **The Slop-O-Meter's version** is `config_version(settings)` for a repository without areas and `config_version(settings)+<digest>` for one with them (`score_version`): a digest of the areas rather than their generation, so an undo back to the same areas rescores nothing.
+- **Migration 145** matches the old seed by md5 of the text frozen in `tests/fixtures/seeds/`, and only on `is_builtin` rows; the new texts are literals in the migration, pinned to this release's seed by its test.
+- **One login pattern** for owners, `embry0/forge_logins.py`, which `repo_preferences` and the areas document both import.
+- **MCP** has `areas_proposal_get` beside the five tools of section 11. The client's decide and undo requests name their paths outright, so the job-starts inventory does not read them as routes that start work.
+- **Read boundary:** `tests/fixtures/repository_reads.py` gives every repository areas, a waiting map and an import record carrying its mark, and the read inventory lists `GET .../areas/proposal` and `GET /areas/proposals`; the write inventory addresses a map by `areas_proposal_id`.
 
-1. **(Recommended) They stay in `repo_preferences.owners`.** The areas document holds per-area owners; the one resolver reads both, then `CODEOWNERS`. *Costs:* "who answers" is edited in two places (Preferences and Areas) until #179 decides where all owners live. *Risk:* none new.
-2. **They move into the areas document** as a top-level `owners:` (the repository's default), migration 145 copying each `repo_preferences.owners` into it, and the preferences field deprecated for a release. *Costs:* changes the preferences API, its History descriptions and the import (two sources merged into one document); a repository with no areas gets an areas document only to hold owners. *Risk:* a client writing owners through preferences during the deprecation release writes a field nobody reads.
-3. **Per-area owners leave the areas document;** #179's `people` document says which areas each person answers for. *Costs:* reverses #179's own text ("the areas document refers to people by login"); the mapper can no longer propose owners; this issue then ships areas without owners until #179. *Risk:* proposals lose their area owners for that time.
+After the two reviews of pull request 1 (#458):
 
-### OD3. Who may write areas and decide a map
-
-1. **(Recommended) Operate tier, with the key's allowlist covering the repository.** The tier of `PUT /preferences`, which already sets repository owners with the same rights in asks, and of applying a setup proposal. *Costs:* any operate key or operator covering the repository can make a login an area owner, and that person can then answer the area's decisions in chat, `merge` included (`embry0/api/v1/asks.py:292-305`); today that took a pull request merged on the repository. *Risk:* the same as `repo_preferences.owners` today, for a narrower set of work.
-2. **Admin, with the allowlist covering the repository** (the tier of a repository's settings layer, ADR 0028). *Costs:* an operator who sets repository owners today cannot set area owners; inconsistent unless `repo_preferences.owners` tightens too, which changes an existing API. *Risk:* low, but most operators can then only map, not apply.
-3. **Operate for names, paths and logs; admin for any change to `owners`.** *Costs:* a field-level check in `PUT`, in apply (a map whose owners differ needs an admin) and in undo; the dashboard must explain why a save was refused. *Risk:* a split rule that the next feature does not copy.
-
-### OD4. Where a waiting map shows up
-
-1. **(Recommended) Where a waiting test setup shows (ADR 0019).** A card in the repository page's Areas section with the changes and Apply and Reject, a line in the dashboard's BriefBar, and a link from the map job's card in the review inbox. *Costs:* someone who works only from chat is not asked; they open the dashboard. *Risk:* a map waits unnoticed; the BriefBar line is the mitigation.
-2. **The first, plus `apply` and `reject` on the map job's decision card**, so asks reach the repository's owners in chat and they answer there. *Costs:* two new decision actions through the decisions model, `AnswerBody.action` (`embry0/api/v1/asks.py:278-289`), `_may_decide` and every deployment's button handler; a chat card has a few lines to show a document diff. *Risk:* an owner applies areas, owners included, from a summary they did not read in full.
-3. **A new owner-proposal kind (`areas`).** *Costs:* owner proposals are work to start; a finished map would read as a quest on offer whose "start" means apply, mixing the two stages the decisions spec keeps apart. *Risk:* confusing words on the quest board.
-
-### OD5. When embry0 stops reading `.embry0/areas.yml`
-
-1. **(Recommended) Import in this release; delete the import in the next minor release,** with an upgrade note, as qa.yaml did (`da57a86e`, then `ff3c3173`) and as the settings document does for a policy variable. *Costs:* #175's first acceptance criterion holds from the next minor release, so #175 stays open, or closes with a follow-up for pull request 4. *Risk:* a deployment that skips this release never imports; the note tells it to `PUT` or map.
-2. **Delete it in pull request 4 of this issue, once this deployment's import has run.** *Costs:* another deployment that upgrades across both pull requests at once never imports, with only the release notes to warn it. *Risk:* silent loss of areas elsewhere.
-3. **No automatic import:** an "Import from the repository" button and route per repository until the removal release. *Costs:* on upgrade every repository loses its areas until someone presses it; one more route to delete later. *Risk:* pull requests and proposals lose their areas in between.
+- **Generations** come from the sequence `repo_areas_generation`, and an undo of the write that created a document stores the empty one (section 3): with a row deleted and its count restarted, an `If-Match` read before the undo matched the next write, and a map started before it applied over a later one.
+- **Globs are matched in bounded time.** `embry0/workflows/qa/_glob_match.py` matches a path a segment at a time and each segment a character at a time over a set of pattern positions, so no glob backtracks; the cost is at most the glob's length times the path's. The regex it replaces took seconds on a glob of repeated `**/*/` and a long path, on the event loop. qa.yaml's stored globs mean what they did, but for a class, which now never matches the `/` between two names.
+- **A literal `[`** is written `[[]`, which the import writes for every `[` of an old file (the old reader matched it as itself), and a glob refuses a leading `!` (no negation) and a space at either end, as qa.yaml refuses it. qa.yaml's own grammar keeps accepting a leading `!`: refusing it there would fail a stored test setup on its next read. A name takes a letter or a digit in any script.
+- **A map's job finishes only its own repository's map:** `finish_map` checks the proposal names the job and the job's repository; the job is attached to its proposal before it is submitted; `POST /jobs` refuses `areas_proposal_id`, `proposal_id` and `run_with` in `pipeline_config`. A map that cannot start puts the map it retired back.
+- **The import** records `imported` in the transaction that stores the document, and the ledger changes only a row still `pending` or `failed`, so two orchestrators reading a repository at once record the one that stored it. A 404 for the file counts as no file only when the repository itself reads; otherwise the read failed, and failed reads are retried an hour apart, up to 24 reads.
+- **Stored globs keep reading.** A class ending in a backslash, which the release before read as one class with whatever followed in its regex, is refused when a test setup or a verification config is written (a 422 that says how to write a backslash) and read as that release read it, through its regex, in one stored before: `read_glob`, and a `stored` validation context for both documents.
+- **Run again on a map job** starts a new map through the path Map takes (`start_map`); a job that could not be submitted is marked failed in the same rollback; names are NFC-normalised and case-folded before they are slugged.
+- **Answers:** the `PUT`, the apply and the undo answer a document with problems with the same 422, a list of `{loc, type, msg}`; a `PUT` answers its generation as `ETag`; a first write without `If-Match` that meets another says so; History lists no change of an unregistered repository's areas as undoable, and its undo is a 404; the owners resolver keeps `CODEOWNERS` as their source.
 
 ## Out of scope
 

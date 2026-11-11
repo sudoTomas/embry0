@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from embry0.workflows.qa._glob_match import compile_glob, match_any
+from embry0.workflows.qa._glob_match import Glob, match_any, read_glob
 from embry0.workflows.verification.config import TierRules
 
 Tier = Literal["neutral_only", "backend_only", "frontend"]
@@ -87,8 +87,8 @@ def _normalise(path: str) -> str:
     return re.sub(r"^(\./)+", "", path.strip().replace("\\", "/")).lstrip("/")
 
 
-def _compiled(override: list[str] | None, default: tuple[str, ...]) -> list[re.Pattern[str]]:
-    return [compile_glob(p) for p in (default if override is None else override)]
+def _compiled(override: list[str] | None, default: tuple[str, ...]) -> list[Glob]:
+    return [read_glob(p) for p in (default if override is None else override)]
 
 
 def classify_diff(changed_files: list[str], rules: TierRules | None = None) -> TierDecision:

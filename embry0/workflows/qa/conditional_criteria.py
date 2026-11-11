@@ -27,7 +27,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from embry0.workflows.qa._glob_match import compile_glob, match_any
+from embry0.workflows.qa._glob_match import match_any, read_glob
 from embry0.workflows.qa.qa_yaml_v2 import ConditionalCriteriaGroup, QAYamlConfigV2
 
 __all__ = ["ConditionalEvaluation", "evaluate_conditional_criteria"]
@@ -69,7 +69,7 @@ def _group_fires(
 ) -> bool:
     when = group.when
     if when.changed_paths:
-        compiled = [compile_glob(p) for p in when.changed_paths]
+        compiled = [read_glob(p) for p in when.changed_paths]
         if not any(match_any(f, compiled) for f in changed_files):
             return False
     if when.affected_apps and not any(a in affected_apps_from_diff for a in when.affected_apps):

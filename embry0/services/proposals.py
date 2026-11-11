@@ -32,6 +32,7 @@ from embry0.orchestration import dispatch_actors
 from embry0.services import lead_kinds
 from embry0.services.areas import Area, area_of_labels, area_of_logs, area_of_path
 from embry0.services.leads import LEAD_KINDS
+from embry0.services.owners import Owners, owners_for
 from embry0.services.slop import is_slop, parse_work_nature
 
 #: Every kind of owner proposal (:mod:`embry0.services.lead_kinds`): case, issue, finding and the leads.
@@ -166,7 +167,7 @@ class Proposal:
     owners: tuple[str, ...] = ()
     url: str | None = None
     extra: Mapping[str, Any] = field(default_factory=dict)
-    #: The repository's area it is about (``.embry0/areas.yml``), None for a repository without areas.
+    #: The repository's area it is about (its areas document), None for a repository without areas.
     area: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -321,18 +322,23 @@ def still_open(proposal_id: str, decisions: Mapping[str, Decision], now: datetim
 
 def with_owners(
     proposals: Iterable[Proposal],
-    owners_of: Mapping[str, Sequence[str]],
+    owners_of: Mapping[str, Owners | Sequence[str]],
     areas_of: Mapping[str, Sequence[Area]] | None = None,
 ) -> list[Proposal]:
-    """Each proposal stamped with its area and its owners: the area's when it names some, else the repository's.
+    """Each proposal stamped with its area and its owners: the area's when it names some, else the repository's
+    (``owners_of``, lower-cased repository to its :class:`~embry0.services.owners.Owners`, which says whether
+    they came from its preference or its ``CODEOWNERS``; a bare list of logins is its preference), by
+    :func:`embry0.services.owners.owners_for`.
 
     A finding is in the area of its file, a case in the area its log
-    signature or title names, an issue in the area a label of it names
-    (``.embry0/areas.yml``). A lead keeps the area its finder stored, else
-    takes the one its files or labels name.
+    signature or title names, an issue in the area a label of it names (the
+    repository's areas document, ``areas_of``). A lead keeps the area its
+    finder stored, else takes the one its files or labels name.
     """
     out = []
     for p in proposals:
+        given = owners_of.get(p.repo.lower(), ())
+        repository = given if isinstance(given, Owners) else Owners(tuple(given), "repository" if given else None)
         areas = (areas_of or {}).get(p.repo.lower(), ())
         area: Area | None = None
         if p.kind in LEAD_KINDS:
@@ -343,8 +349,8 @@ def with_owners(
                 or area_of_labels(areas, p.extra.get("labels") or ())
             )
             if area is None and p.area:
-                # The file changed since: keep the stored name, with the repository's owners.
-                out.append(Proposal(**{**p.__dict__, "owners": tuple(owners_of.get(p.repo.lower(), ()))}))
+                # The areas changed since: keep the stored name, with the repository's owners.
+                out.append(Proposal(**{**p.__dict__, "owners": owners_for(None, repository).logins}))
                 continue
         elif p.kind == "finding" and p.extra.get("path"):
             area = area_of_path(areas, str(p.extra["path"]))
@@ -352,8 +358,8 @@ def with_owners(
             area = area_of_logs(areas, p.extra.get("signature"), p.title)
         elif p.kind == "issue":
             area = area_of_labels(areas, p.extra.get("labels") or ())
-        owners = area.owners if area and area.owners else tuple(owners_of.get(p.repo.lower(), ()))
-        out.append(Proposal(**{**p.__dict__, "owners": tuple(owners), "area": area.name if area else None}))
+        owners = owners_for(area, repository).logins
+        out.append(Proposal(**{**p.__dict__, "owners": owners, "area": area.name if area else None}))
     return out
 
 

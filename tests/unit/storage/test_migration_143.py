@@ -188,7 +188,9 @@ async def test_the_boot_seed_keeps_what_an_operator_changed(db_with_migrations: 
         "delivers": "",
         "leader_agent": "why",
     }, seeded["why"]
-    assert seeded["map-areas"]["delivers"] == before.TEMPLATE_DELIVERS["map-areas"]
+    # What the name said until areas were kept in embry0, which migration 145 and the seed changed (spec 2026-11-10).
+    assert before.TEMPLATE_DELIVERS["map-areas"] == "a pull request that maps the repository's areas"
+    assert seeded["map-areas"]["delivers"] == "the repository's areas, for a person to apply"
 
     changed = {
         "fixed_route": False,

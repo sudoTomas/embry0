@@ -616,20 +616,22 @@ def _stopped_because(error_code: str | None) -> str:
 
 
 async def _area_of_branch(self: IssueExecutor, repo: str, base: str, branch: str) -> Any | None:
-    """The area (``.embry0/areas.yml``) most of the files ``branch`` changes from ``base`` fall in.
+    """The area (the repository's areas document, spec 2026-11-10) most of the files ``branch`` changes from
+    ``base`` fall in.
 
     GitHub only, and best-effort: None whenever the repository names no
     areas or this cannot read them, and the pull request opens as before.
     """
     from embry0.services.areas import area_of_change
 
-    # getattr: unit tests build the executor via __new__; without a reader
-    # they open their PRs without asking GitHub for areas.
-    reader = getattr(self, "_area_reader", None)
-    if reader is None:
+    # getattr: unit tests build the executor via __new__; without a store
+    # they open their PRs without asking for areas.
+    store = getattr(self, "_areas", None)
+    if store is None:
         return None
     try:
-        if await _forge_for(self, repo) != "github":
+        areas = await store.areas_for(repo)
+        if not areas or await _forge_for(self, repo) != "github":
             return None
         from embry0.execution.github_client import GitHubClient
 
@@ -637,10 +639,38 @@ async def _area_of_branch(self: IssueExecutor, repo: str, base: str, branch: str
             default_token=str(getattr(self, "_github_token", "") or ""),
             credential_resolver=getattr(self, "_credential_resolver", None),
         )
-        return await area_of_change(lambda url: client.get(url, repo=repo), repo, base, branch, reader)
+        return await area_of_change(lambda url: client.get(url, repo=repo), repo, base, branch, areas)
     except Exception:
         logger.info("pr_area_unread", repo=repo, branch=branch, exc_info=True)
         return None
+
+
+async def finish_areas_map(
+    self: IssueExecutor, job_id: str, proposal_id: str | None, result: Mapping[str, Any] | None, failure: str | None
+) -> None:
+    """Store how a map of a repository's areas ended on its proposal (spec 2026-11-10): the document its report
+    carries, for a person to apply, or why there is none. Best-effort: the job's own outcome is recorded either
+    way, and a proposal left ``running`` is settled when it is next read."""
+    from embry0.services.areas_proposals import finish_map
+
+    proposals = getattr(self, "_areas_proposals", None)
+    store = getattr(self, "_areas", None)
+    if not proposal_id or proposals is None or store is None:
+        return
+    try:
+        job = await self._jobs.get(job_id)
+        await finish_map(
+            store,
+            proposals,
+            str(proposal_id),
+            job_id=job_id,
+            repo=str((job or {}).get("repo") or ""),
+            document=(result or {}).get("areas_document"),
+            notes=str((result or {}).get("areas_notes") or ""),
+            failure=failure,
+        )
+    except Exception:
+        logger.warning("areas_map_not_recorded", job_id=job_id, proposal_id=proposal_id, exc_info=True)
 
 
 async def _open_fallback_pr(
@@ -1009,6 +1039,15 @@ async def _handle_workflow_result(
             fallback_url, job_row = await _open_fallback_pr(self, issue_id, job_id, result, error_code=error_code)
             if fallback_url:
                 result["pr_url"] = fallback_url
+        # Spec 2026-11-10: a map's document waits on its proposal, recorded before the job ends so a reader
+        # never finds the job over and its proposal still running.
+        await finish_areas_map(
+            self,
+            job_id,
+            result.get("areas_proposal_id"),
+            result,
+            (error_message or "the job failed") if final_status == "failed" else None,
+        )
 
         await self._jobs.update(
             job_id,

@@ -583,24 +583,25 @@ async def test_a_human_dispatched_job_still_emits():
 @pytest.mark.asyncio
 async def test_a_monorepo_pr_names_its_area_in_its_title_and_labels():
     """Spec 2026-10-25: the PR embry0 opens says which area of a monorepo it
-    changes (most of its files), and the job records it for the Jobs pages."""
-    import base64
+    changes (most of its files), and the job records it for the Jobs pages.
+    Spec 2026-11-10: the areas are the ones embry0 keeps; no file of the
+    repository is read for them."""
+    from types import SimpleNamespace
 
     import httpx
 
     from embry0.execution.github_client import GitHubClient
-    from embry0.services.areas import AreaReader
+    from embry0.services.areas import Area
+    from tests.fixtures.areas import areas_for
 
     ex = _executor()
     ex._github_token = "tok"
-    ex._area_reader = AreaReader()
-    areas_file = 'areas:\n  - name: Billing\n    paths: ["services/billing/**"]\n'
+    ex._areas = SimpleNamespace(areas_for=areas_for({"o/r": [Area("Billing", ("services/billing/**",))]}))
     asked: list[str] = []
 
     async def fake_get(self, path, **kwargs):
         asked.append(path)
-        if "/contents/" in path:
-            return httpx.Response(200, json={"content": base64.b64encode(areas_file.encode()).decode()})
+        assert "/contents/" not in path, f"a file of the repository was read for its areas: {path}"
         return httpx.Response(200, json={"files": [{"filename": "services/billing/A.java"}, {"filename": "x.md"}]})
 
     fallback = AsyncMock(return_value="https://github.com/o/r/pull/43")
@@ -629,16 +630,20 @@ async def test_a_monorepo_pr_names_its_area_in_its_title_and_labels():
 
 @pytest.mark.asyncio
 async def test_a_repo_without_areas_opens_its_pr_as_before():
+    from types import SimpleNamespace
+
     import httpx
 
     from embry0.execution.github_client import GitHubClient
-    from embry0.services.areas import AreaReader
+    from tests.fixtures.areas import no_areas_for
 
     ex = _executor()
     ex._github_token = "tok"
-    ex._area_reader = AreaReader()
+    ex._areas = SimpleNamespace(areas_for=no_areas_for)
+    asked: list[str] = []
 
     async def no_file(self, path, **kwargs):
+        asked.append(path)
         return httpx.Response(404, json={"message": "Not Found"})
 
     fallback = AsyncMock(return_value="https://github.com/o/r/pull/44")
@@ -661,3 +666,59 @@ async def test_a_repo_without_areas_opens_its_pr_as_before():
     call = fallback.await_args.kwargs
     assert (call["title"], call["labels"]) == ("fix the widget", ["embry0"])
     assert not [c for c in ex._jobs.update.await_args_list if "area" in c.kwargs]
+    assert not [p for p in asked if "/compare/" in p], "a repository without areas is not asked for the compare"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outputs", "failure"),
+    [([_ok("triage"), _ok("area-mapper")], None), ([_ok("triage"), _err("area-mapper")], "boom")],
+    ids=["completed", "failed"],
+)
+async def test_a_map_s_document_waits_on_its_proposal_before_the_job_ends(outputs, failure):
+    """Spec 2026-11-10: a map of a repository's areas opens no pull request. Its document is stored on its
+    proposal for a person, and recorded before the job is marked over, so a reader never finds the job ended and
+    its proposal still running."""
+    ex = _executor()
+    order: list[str] = []
+    finished: list[dict] = []
+
+    async def finish_map(store, proposals, proposal_id, *, job_id, repo, document, notes, failure):
+        order.append("proposal")
+        finished.append(
+            {"id": proposal_id, "job": job_id, "repo": repo, "document": document, "notes": notes, "failure": failure}
+        )
+        return "pending"
+
+    async def update(job_id, **fields):
+        if "status" in fields:
+            order.append("job")
+
+    ex._jobs.update = AsyncMock(side_effect=update)
+    ex._jobs.get = AsyncMock(return_value={"job_id": "job-1", "repo": "o/r"})
+    ex._areas = MagicMock()
+    ex._areas_proposals = MagicMock()
+    fallback = AsyncMock(return_value=None)
+    with (
+        patch("embry0.services.areas_proposals.finish_map", new=finish_map),
+        patch("embry0.services.github_prs.ensure_pr_for_branch", new=fallback),
+    ):
+        await _run(
+            ex,
+            {
+                "triage_decision": {"action": "proceed"},
+                "current_stage": "output_finalized",
+                "repo": "o/r",
+                "areas_proposal_id": "areas-000000000001",
+                "areas_document": "areas: []\n",
+                "areas_notes": "## Changes",
+                "agent_outputs": outputs,
+                "result_summary": "Areas: 0",
+            },
+        )
+    assert order[:2] == ["proposal", "job"], f"the proposal is recorded before the job ends: {order}"
+    (done,) = finished
+    assert (done["id"], done["document"], done["notes"]) == ("areas-000000000001", "areas: []\n", "## Changes")
+    assert (done["job"], done["repo"]) == ("job-1", "o/r"), "the map is finished as this job's, of its repository"
+    assert (done["failure"] is None) == (failure is None), done
+    fallback.assert_not_awaited()

@@ -4178,6 +4178,153 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'a digest of the slop_meter settings a score was computed from (#169); empty for a score from before it.';
         """,
     ),
+    (
+        145,
+        "repo_areas: a repository's areas stored in embry0, its map's proposals and the one-time import (spec 2026-11-10)",
+        # A repository's areas leave its .embry0 directory (#175, ADR 0030).
+        # repo_areas holds each one's document: the YAML as written and its
+        # checked values (data), which every reader reads. generation is the
+        # next value of one sequence in every write's transaction, for
+        # If-Match and a map's compare-and-set: it only goes up, and no two
+        # writes of any repository share one, so a version read before an
+        # undo, or before the repository was removed and registered again,
+        # never matches a later document. An undo of the write that created
+        # a document stores the empty one: the row stays. A registered
+        # repository without a row names no areas (generation 0).
+        # repo_areas_proposals is repo_setup_proposals (migration 105) for
+        # this document: the area mapper's result waits there for a person
+        # to apply or reject it, and the partial unique index is the lock
+        # against two maps of one repository; a repository removed from the
+        # registry takes its maps with it.
+        # repo_areas_imports is the ledger of the one-time import of each
+        # repository's old file: this migration lists the repositories
+        # registered when it runs, and the import reads only those, once.
+        # repo_config_revisions gains the surface 'areas' and the sources
+        # 'import' and 'file'. The map-areas template's delivers and the
+        # area-mapper's description and prompt change only where they still
+        # hold the text the release before seeded (matched by md5), so an
+        # operator's own text stays; the literals are pinned, as a migration
+        # is history (tests/unit/storage/test_migration_145.py).
+        """
+        CREATE SEQUENCE IF NOT EXISTS repo_areas_generation AS BIGINT;
+        CREATE TABLE IF NOT EXISTS repo_areas (
+            repo            TEXT PRIMARY KEY REFERENCES repos(repo) ON DELETE CASCADE,
+            yaml_text       TEXT NOT NULL,
+            data            JSONB NOT NULL CHECK (jsonb_typeof(data) = 'object'),
+            schema_version  INTEGER NOT NULL DEFAULT 1,
+            generation      BIGINT NOT NULL DEFAULT nextval('repo_areas_generation'),
+            updated_by      TEXT NOT NULL DEFAULT '',
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_areas_lower_repo ON repo_areas (lower(repo));
+
+        CREATE TABLE IF NOT EXISTS repo_areas_proposals (
+            id               TEXT PRIMARY KEY,
+            repo             TEXT NOT NULL REFERENCES repos(repo) ON DELETE CASCADE,
+            job_id           TEXT,
+            status           TEXT NOT NULL CHECK (status IN
+                             ('running', 'pending', 'applied', 'rejected', 'stale', 'failed', 'unchanged')),
+            base_generation  BIGINT NOT NULL DEFAULT 0,
+            proposed_text    TEXT,
+            notes_md         TEXT NOT NULL DEFAULT '',
+            failure          TEXT NOT NULL DEFAULT '',
+            created_by       TEXT NOT NULL DEFAULT '',
+            decided_by       TEXT,
+            decided_at       TIMESTAMPTZ,
+            created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_areas_proposals_repo ON repo_areas_proposals (repo, created_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_repo_areas_proposals_live
+            ON repo_areas_proposals (repo) WHERE status IN ('running', 'pending');
+
+        CREATE TABLE IF NOT EXISTS repo_areas_imports (
+            repo        TEXT PRIMARY KEY,
+            outcome     TEXT NOT NULL CHECK (outcome IN ('pending', 'imported', 'none', 'failed')),
+            detail      TEXT NOT NULL DEFAULT '',
+            blob_sha    TEXT,
+            attempts    INTEGER NOT NULL DEFAULT 0,
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        INSERT INTO repo_areas_imports (repo, outcome) SELECT repo, 'pending' FROM repos ON CONFLICT (repo) DO NOTHING;
+
+        ALTER TABLE repo_config_revisions DROP CONSTRAINT IF EXISTS repo_config_revisions_surface_check;
+        ALTER TABLE repo_config_revisions ADD CONSTRAINT repo_config_revisions_surface_check
+            CHECK (surface IN ('qa_config', 'preferences', 'areas'));
+        ALTER TABLE repo_config_revisions DROP CONSTRAINT IF EXISTS repo_config_revisions_source_check;
+        ALTER TABLE repo_config_revisions ADD CONSTRAINT repo_config_revisions_source_check
+            CHECK (source IN ('person', 'bootstrap', 'onboard', 'proposal', 'restore', 'import', 'file'));
+
+        UPDATE pipeline_templates SET delivers = 'the repository''s areas, for a person to apply'
+         WHERE name = 'map-areas' AND delivers = 'a pull request that maps the repository''s areas';
+        UPDATE agent_definitions SET description = $seed$Reads a repository's tree, workspace manifests, ownership files and deploy configuration, and writes the areas document that names its parts: each area's paths, the names its logs run under, and its owners when the repository says them. embry0 keeps the document for a person to apply. Read-only.$seed$
+         WHERE type = 'area-mapper' AND is_builtin AND md5(description) = '671a03bf7436d25fe11bac5aa51e9ebb';
+        UPDATE agent_definitions SET system_prompt = $seed$You are embry0's area-mapper agent. A monorepo holds several products, services or apps, and the people who answer for one are not the people who answer for the next. embry0 names those parts, its areas, in everything it says about the work there: the proposals it asks owners to answer, the pull requests it opens, the jobs. embry0 keeps each repository's areas itself, as one document; the repository carries no file for them. You write that document from what the repository shows, and a person reviews it and applies it. You never change the repository yourself.
+
+## Workspace
+
+The repository the job names is cloned at /workspace: a shallow clone (the last 50 commits), checked out at the ref the job names, with the repository's base branch fetched as a local branch. The task text says what to look at: a question, a branch or pull request, a path, a standard.
+
+You are read-only. Do not change /workspace: no edits, no new files, no `git commit`, `checkout`, `switch`, `reset`, `stash`, `clean` or `push`. Bash is for reading, searching, measuring and running the repository's own checks. Anything that runs the repository's code or tooling (an install, a lint, a type check, a test, a build, a script that imports its code) writes dependencies, caches or build output, so it never runs in /workspace: make a fresh copy (`cd /tmp && rm -rf run && cp -a /workspace run`; without the `rm`, a second copy lands inside the first) and run it there (`cd /tmp/run && timeout 300 npm test`). Scratch scripts go under /tmp too. The run has a wall-clock limit: wrap anything that may run long in `timeout` and move on when it expires.
+
+Evidence or a label: every claim carries its evidence in the same sentence (a file:line, or the command you ran and what it printed), or is labeled *inferred*. Never invent a file, a caller, a command or an output.
+
+Write plain, direct sentences: no marketing words, no emojis, no filler. The job keeps only the last 10,000 characters of your final message: a longer one loses its beginning, where your report starts. Keep the whole message under 8,000 characters: write it to /tmp/report.md first, measure it (`wc -m /tmp/report.md`), cut it until it fits, and send that text as your final message.
+
+## The document
+
+```yaml
+areas:
+  - name: Billing
+    paths:
+      - "services/billing/**"
+      - "web/apps/billing/"
+    logs: ["billing-api"]
+    owners: ["octo"]
+```
+
+- `name`: what the people working on it call the part. Short, title case, unique; it becomes a pull request title prefix (`[Billing]`) and a label (`area:billing`).
+- `paths`: globs over tracked files, from the repository's root, with no leading `/`. `**` stands alone between slashes and matches any number of directories, `*` and `?` stay inside one name, `[abc]` matches one of the characters, and a trailing `/` means everything below. A `[` in a name is written `[[]` (a route directory `app/[id]/` is `app/[[]id]/`), and no glob starts with `!`: list only the paths an area has. The first area whose glob matches a file has it, so list the specific areas before broad ones, and a shared platform or kernel last.
+- `logs`: strings that appear in this part's production log lines and in no other part's: its container, service or process names. Leave it out when you cannot tell.
+- `owners`: logins of people on the repository's forge (letters, digits and single hyphens), only when the repository itself says who answers for the part (a CODEOWNERS rule for its paths, an ownership table in its docs). Never guess a login; leave it out instead.
+
+Every area needs a name and at least one path. Three to twelve areas is usual; a repository that is one product has one area or none, and then the report says so and carries no document.
+
+## Method
+
+1. Map the tree: the top two levels with their file counts (`git ls-files | awk -F/ 'NF>1{print $1"/"$2}' | sort | uniq -c | sort -rn | head -80`), and the workspace manifests that say where packages and apps live (package.json workspaces, pnpm-workspace.yaml, turbo.json, nx.json, a Cargo or Go workspace, Maven or Gradle modules, pyproject).
+2. Read what the repository says its parts are: the README, CLAUDE.md and AGENTS.md, docs that map paths to products or teams, CODEOWNERS.
+3. Find the run-time names: compose services and container names, Kubernetes manifests, deploy configuration, the names the code logs under. The task may list the containers embry0 reads this repository's logs from; prefer those.
+4. When the task carries the current document, start from it: keep what is right, fix what the tree contradicts, add what is missing, and say what changed. A file of areas in the repository's `.embry0` directory is a leftover that embry0 no longer reads: do not start from it.
+5. Check the document before you report it: every glob matches at least one tracked file (`git ls-files -- ':(glob)<pattern>'`, with a trailing `/` written as `/**`), and list the tracked top-level paths no area covers.
+
+## Deliverable shape
+
+Programs read your report, so its shape is fixed. The first line is `Areas: N` and nothing else. Next comes a `## Areas` heading and one table with exactly these columns:
+
+| Area | Paths | Logs | Owners | Why |
+|---|---|---|---|---|
+
+Why says what in the repository makes it a part (a manifest, a doc, a deploy unit), with a file. Then, in this order:
+- `## Areas file`: the whole document in one yaml code block and nothing else in that block. With no areas, write `No file.` instead.
+- `## Changes`: when the task carried a document, what you changed and why.
+- `## Not covered`: tracked paths no area claims, and why that is right.
+- `## Assumptions`: as the contract below asks.
+
+## Deliverable contract
+
+Your FINAL message is the job's deliverable — it is stored verbatim as the
+job result and shown to the user. Everything before it (tool calls,
+intermediate notes) is discarded. Write the final message as self-contained
+Markdown: no JSON wrapper, no preamble like "Here is the summary".
+
+You cannot ask the user questions mid-run. When something is ambiguous,
+make the most reasonable assumption and state it explicitly in the
+deliverable under an "Assumptions" heading.$seed$
+         WHERE type = 'area-mapper' AND is_builtin AND md5(system_prompt) = 'a7ba6db39d9fcc08bf0dc82309590559';
+        """,
+    ),
 ]
 
 

@@ -43,7 +43,7 @@ from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
-from embry0.services.run_with import apply_run_with, models_with
+from embry0.services.run_with import RunWith, apply_run_with, models_with, run_with_of
 from embry0.storage.repositories.jobs import job_repository
 
 router = APIRouter()
@@ -268,7 +268,12 @@ async def run_again(job_id: str, request: Request, body: RunAgainBody | None = N
         )
     repo = str(job.get("repo") or "")
     run_with = await checked_run_with(request, body.run_with if body else None, repo) if repo else None
-    pipeline_config = apply_run_with(_json_field(job.get("pipeline_config")), run_with)
+    old_config = _json_field(job.get("pipeline_config"))
+    if isinstance(old_config, dict) and old_config.get("areas_proposal_id"):
+        # A map of a repository's areas delivers to a proposal of its own: run again, it is a new map, as Map
+        # starts one (embry0.api.v1.areas.start_map), with the model and key chosen, else the ones it ran with.
+        return await _map_again(request, job_id, repo, run_with or run_with_of(old_config))
+    pipeline_config = apply_run_with(old_config, run_with)
     if run_with is not None and run_with.model and launch.get("runner") in ("qa", "onboard"):
         launch = {**launch, "agent_models": models_with(launch.get("agent_models"), run_with)}
     actor = request_actor(request)
@@ -296,6 +301,19 @@ async def run_again(job_id: str, request: Request, body: RunAgainBody | None = N
     evaluation = await _audit(request, "job.review.restarted", job_id, followup_job_id=new_id)
     _stats_changed(request)
     return {**evaluation, "followup_job_id": new_id, "followup_issue_id": issue_id}
+
+
+async def _map_again(request: Request, job_id: str, repo: str, run_with: RunWith | None) -> dict[str, Any]:
+    from embry0.api.v1.areas import start_map
+
+    registry = _state(request, "repos_repo")
+    registered = await registry.registered_as(repo) if repo else None
+    if registered is None:
+        raise HTTPException(status_code=409, detail=f"{repo} is not a registered repository: there is nothing to map")
+    started = await start_map(request, str(registered), run_with)
+    evaluation = await _audit(request, "job.review.restarted", job_id, followup_job_id=started["job_id"])
+    _stats_changed(request)
+    return {**evaluation, "followup_job_id": started["job_id"], "followup_issue_id": None}
 
 
 #: What a workflow's launch record carries from its issue: the issue itself, and the issue's answered questions

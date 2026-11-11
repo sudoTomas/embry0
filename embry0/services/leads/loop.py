@@ -32,7 +32,7 @@ from typing import Any
 
 import structlog
 
-from embry0.services.areas import AREAS, area_of_labels, area_of_logs, area_of_paths, read_contents
+from embry0.services.areas import Area, area_of_labels, area_of_logs, area_of_paths
 from embry0.services.leads import FinderResult, Lead, by_severity
 from embry0.services.leads.alerts import find_alerts
 from embry0.services.leads.backlog import Tracked, find_github_tickets, linear_leads
@@ -50,15 +50,8 @@ STARTUP_DELAY_SECONDS = 300.0
 TICK_SECONDS = 300.0
 
 
-async def lead_area(repo: str, client: Any, lead: Lead) -> str | None:
+def lead_area(areas: Sequence[Area], lead: Lead) -> str | None:
     """The area of a monorepo a lead is about: its files, else its labels, else what its title names."""
-    if client is None:
-        return None
-
-    async def read(name: str, path: str) -> str | None:
-        return await read_contents(lambda url: client.get(url, repo=name), name, path)
-
-    areas = await AREAS.areas(repo, read)
     area = area_of_paths(areas, lead.paths) or area_of_labels(areas, lead.labels) or area_of_logs(areas, lead.title)
     return area.name if area else None
 
@@ -92,7 +85,8 @@ class LeadsLoop:
     linear: Callable[[], Awaitable[Any]]
     tracked: Tracked
     trigger_labels: Callable[[], Awaitable[Iterable[str]]]
-    area_of: Callable[[str, Any, Lead], Awaitable[str | None]] = lead_area
+    #: A repository's areas as embry0 keeps them (``AreasStore.areas_for`` in production), read once per store.
+    areas_for: Callable[[str], Awaitable[list[Area]]]
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep
     startup_delay: float = STARTUP_DELAY_SECONDS
@@ -193,7 +187,7 @@ class LeadsLoop:
             done: dict[str, Any] = {}
             if run_backlog and "ticket" in policy.finders:
                 result, keep = await self._tickets(repo, client, tickets, linear_read, triggers, policy.offer_min)
-                done["ticket"] = await self._store(repo, "ticket", client, result, now, policy, keep_open=keep)
+                done["ticket"] = await self._store(repo, "ticket", result, now, policy, keep_open=keep)
             for kind, find in self._github_finders(repo, client, now, policy):
                 if kind not in policy.finders:
                     continue
@@ -206,7 +200,7 @@ class LeadsLoop:
                 except Exception as exc:  # noqa: BLE001 - one finder's failure is its own log line
                     logger.warning("leads_finder_failed", repo=repo, kind=kind, error=type(exc).__name__)
                     result = FinderResult([], complete=False)
-                done[kind] = await self._store(repo, kind, client, result, now, policy)
+                done[kind] = await self._store(repo, kind, result, now, policy)
             summary[repo] = done
         logger.info("leads_pass", repos=len(targets), backlog=run_backlog)
         return summary
@@ -255,7 +249,6 @@ class LeadsLoop:
         self,
         repo: str,
         kind: str,
-        client: Any,
         result: FinderResult,
         now: datetime,
         policy: LeadsSettings,
@@ -274,12 +267,12 @@ class LeadsLoop:
         kept = fresh[:allowance]
         record.new, record.capped = len(kept), len(fresh) - len(kept)
         stored = [lead for lead in result.leads if lead.id in known] + kept
-        areas: dict[str, str | None] = {}
-        for lead in stored:
-            try:
-                areas[lead.id] = await self.area_of(repo, client, lead)
-            except Exception:  # noqa: BLE001 - a lead without an area is still a lead
-                areas[lead.id] = None
+        try:
+            repo_areas = await self.areas_for(repo)
+        except Exception:  # noqa: BLE001 - a lead without an area is still a lead
+            logger.warning("leads_areas_unread", repo=repo, exc_info=True)
+            repo_areas = []
+        areas = {lead.id: lead_area(repo_areas, lead) for lead in stored}
         await self.leads.upsert(stored, now=now, areas=areas)
         if result.complete:
             seen = {lead.id for lead in stored} | (keep_open or set())

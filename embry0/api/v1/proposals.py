@@ -26,6 +26,7 @@ from embry0.api.schemas.person_name import PersonName
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.services.leads import LEAD_KINDS
+from embry0.services.owners import Owners, repository_owners
 from embry0.services.proposal_briefs import held_by, with_briefs
 from embry0.services.proposals import (
     ACTOR,
@@ -83,7 +84,7 @@ def _state(request: Request, name: str) -> Any:
 
 def _repo_reader(request: Request) -> Any:
     """Reads a file of a repository's default branch with its organization's credential; None when it cannot."""
-    from embry0.services.areas import read_contents
+    from embry0.services.forge_files import read_contents
 
     organizations = getattr(request.app.state, "organizations_repo", None)
     clients: dict[str, Any] = {}
@@ -131,17 +132,21 @@ async def _codeowners(request: Request, repos: set[str]) -> dict[str, list[str]]
 
 
 async def _areas(request: Request, repos: set[str]) -> dict[str, list[Any]]:
-    """Each repository's areas (``.embry0/areas.yml``), read with its organization's credential and cached."""
-    from embry0.services.areas import AREAS
+    """Each repository's areas as embry0 keeps them (``app.state.areas``), keyed lower-cased; one query."""
+    store = getattr(request.app.state, "areas", None)
+    if store is None:
+        return {}
+    return dict(await store.areas_of(repos))
 
-    reader = _repo_reader(request)
-    gate = asyncio.Semaphore(_CODEOWNERS_READS)
 
-    async def read(repo: str) -> tuple[str, list[Any]]:
-        async with gate:
-            return repo, await AREAS.areas(repo, reader)
-
-    return dict(await asyncio.gather(*(read(r) for r in repos)))
+async def owner_sources(request: Request, repos: set[str]) -> tuple[dict[str, Owners], dict[str, list[Any]]]:
+    """Each of ``repos``' own owners (preference, else ``CODEOWNERS``) and its areas, both keyed lower-cased:
+    what :func:`embry0.services.owners.owners_for` reads for the feed and the decisions alike."""
+    proposals_repo = _state(request, "proposals_repo")
+    preferences = await proposals_repo.owners()
+    unowned = {r.lower() for r in repos} - set(preferences)
+    codeowners, areas = await asyncio.gather(_codeowners(request, unowned), _areas(request, repos))
+    return repository_owners(repos, preferences, codeowners), areas
 
 
 async def open_proposals(state: Any) -> list[Proposal]:
@@ -171,13 +176,10 @@ async def feed(request: Request) -> list[Proposal]:
     """Every proposal still asked, newest first, with its owners."""
     # The repository first: a 503 raised while the gather's arguments are built
     # would leave open_proposals' coroutine created and never awaited.
-    proposals_repo = _state(request, "proposals_repo")
-    proposals, owners = await asyncio.gather(open_proposals(request.app.state), proposals_repo.owners())
-    repos = {p.repo.lower() for p in proposals}
-    unowned = repos - set(owners)
-    codeowners, areas = await asyncio.gather(_codeowners(request, unowned), _areas(request, repos))
-    owners = {**owners, **codeowners}
-    return sorted(with_owners(proposals, owners, areas), key=lambda p: p.created_at, reverse=True)
+    _state(request, "proposals_repo")
+    proposals = await open_proposals(request.app.state)
+    repository, areas = await owner_sources(request, {p.repo.lower() for p in proposals})
+    return sorted(with_owners(proposals, repository, areas), key=lambda p: p.created_at, reverse=True)
 
 
 #: What reading a proposal that is not open answers, and one in a repository the caller's key does not cover.

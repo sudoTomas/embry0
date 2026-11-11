@@ -123,6 +123,7 @@ async def check_setup(app_state: Any, repo: str, text: str) -> dict[str, Any]:
         profiles_repo=app_state.profiles_repo,
         env_keys=env_keys,
         docker_access=await app_state.repos_repo.docker_access(repo),
+        writing=True,  # a proposal's setup is stored as written
     )
 
 

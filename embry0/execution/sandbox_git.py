@@ -2,7 +2,7 @@
 
 embry0 runs git in a job's sandbox for its own steps: the clone, the salvage
 commit and the rescue push, the changed-file diff, a review's checkout, the
-verify gate, an areas or audit delivery. Those commands run as the agent user,
+verify gate, an audit delivery. Those commands run as the agent user,
 in the agent's workspace, and git would read everything the agent can write:
 ``~/.gitconfig``, ``~/.config/git/config``, ``.git/config`` and whatever it
 includes, ``.git/hooks``, attributes that select a filter, diff or merge
@@ -95,7 +95,6 @@ class GitStep(StrEnum):
     DEFAULT_BRANCH = "default_branch"
     CHANGED_FILES = "changed_files"
     DIFF_LINES = "diff_lines"
-    AREAS_DELIVERY = "areas_delivery"
     AUDIT_DELIVERY = "audit_delivery"
     REVIEW_CHECKOUT = "review_checkout"
     VERIFY_GATE = "verify_gate"

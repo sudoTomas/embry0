@@ -114,7 +114,7 @@ def render_starter_qa_yaml(
             "    apps: {}\n"
             "qa_required: never\n"
         )
-    parse_qa_yaml_v2(text)  # never ship a template the validator would reject
+    parse_qa_yaml_v2(text, writing=True)  # never ship a template the validator would reject
     return text
 
 

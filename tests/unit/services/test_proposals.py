@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import pytest
 
 from embry0.services.areas import Area
 from embry0.services.proposals import (
@@ -172,3 +175,35 @@ def test_an_answer_closes_a_proposal_and_a_snooze_until_it_ends() -> None:
     assert not still_open("issue:i-1", decided("decline"), T0)
     assert not still_open("issue:i-1", decided("snooze", T0 + timedelta(days=1)), T0)
     assert still_open("issue:i-1", decided("snooze", T0 + timedelta(days=1)), T0 + timedelta(days=2))
+
+
+async def test_the_feed_passes_codeowners_on_as_codeowners(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#458's review: the feed handed CODEOWNERS' logins to the resolver labelled as the repository's preference."""
+    from types import SimpleNamespace
+
+    from embry0.api.v1 import proposals as route
+    from embry0.services import proposals as module
+    from embry0.services.owners import Owners
+
+    issue = issue_proposal({"id": "i-1", "repo": "Acme/App", "title": "Fix login", "created_at": T0})
+
+    async def open_proposals(_state: Any) -> list[Any]:
+        return [issue]
+
+    async def owner_sources(_request: Any, _repos: set[str]) -> tuple[dict[str, Owners], dict[str, list[Any]]]:
+        return {"acme/app": Owners(("hubot",), "codeowners")}, {}
+
+    seen: list[Owners] = []
+    real = module.owners_for
+
+    def spy(area: Any, repository: Owners) -> Owners:
+        seen.append(repository)
+        return real(area, repository)
+
+    monkeypatch.setattr(route, "open_proposals", open_proposals)
+    monkeypatch.setattr(route, "owner_sources", owner_sources)
+    monkeypatch.setattr(module, "owners_for", spy)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(proposals_repo=object())))
+    stamped = await route.feed(request)  # type: ignore[arg-type]
+    assert stamped[0].owners == ("hubot",)
+    assert [o.source for o in seen] == ["codeowners"], f"CODEOWNERS' logins reached the resolver as {seen}"

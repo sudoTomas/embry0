@@ -18,6 +18,7 @@ from httpx import ASGITransport, AsyncClient
 from embry0.api.deps import bust_api_key_cache
 from embry0.api.v1.repo_history import WHY_NOT, change_what
 from embry0.config import Embry0Config
+from embry0.services.areas_store import AreasStore
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 from embry0.storage.repositories.repo_config_revisions import RepoConfigRevisionsRepository
@@ -88,6 +89,7 @@ async def client(db_with_migrations: DatabasePool) -> AsyncIterator[AsyncClient]
     state.qa_configs_repo = RepoQAConfigsRepository(db_with_migrations)
     state.repo_preferences_repo = RepoPreferencesRepository(db_with_migrations)
     state.repo_config_revisions_repo = RepoConfigRevisionsRepository(db_with_migrations)
+    state.areas = AreasStore(db_with_migrations)
     keys = MagicMock()
     keys.get_by_hash = AsyncMock(side_effect=lambda h: KEYS.get(h))
     keys.touch_last_used = AsyncMock()

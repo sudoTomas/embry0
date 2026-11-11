@@ -256,7 +256,7 @@ async def test_a_brief_says_what_the_jobs_template_row_delivers(db_with_migratio
     }
     assert said == {
         "j-own": "a list of dead flags",
-        "j-map": "a pull request that maps the repository's areas",
+        "j-map": "the repository's areas, for a person to apply",
         "j-qa": "a test report",
         "j-none": "a pull request with the change",
     }, said

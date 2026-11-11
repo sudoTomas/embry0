@@ -12,16 +12,18 @@ off the event loop.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
 
+from embry0.services.areas import Area
 from embry0.services.background_scope import Enrollment, Registered
 from embry0.services.slop_meter import loop as loop_mod
 from embry0.services.slop_meter.loop import MeterRead, SlopMeterLoop
 from embry0.settings.sections import CATALOG
+from tests.fixtures.areas import no_areas_of
 from tests.unit.services.slop_meter import test_loop as fakes
 
 REPO = fakes.REPO
@@ -76,6 +78,7 @@ def _loop(
     forges: Mapping[str, Any] | None = None,
     model: str = "",
     calls: Any = None,
+    areas: Mapping[str, list[Area]] | None = None,
 ) -> SlopMeterLoop:
     _settings({})  # fails with its own message on a tree with no slop_meter section
 
@@ -103,8 +106,18 @@ def _loop(
         bots=bots,
         calls=calls if calls is not None else fakes.FakeCalls(),
         limits=loop_mod.SlopMeterLimits(commits_per_tick=500, event_pages=100),
+        areas_of=_areas_reader(areas) if areas is not None else no_areas_of,
         clock=lambda: clock[0],
     )
+
+
+def _areas_reader(areas: Mapping[str, list[Area]]) -> Any:
+    """An ``areas_of`` that reads ``areas`` as it stands at each call, so a test can change a repository's areas."""
+
+    async def read(repos: Iterable[str]) -> dict[str, list[Area]]:
+        return {repo.lower(): list(areas.get(repo.lower(), [])) for repo in repos}
+
+    return read
 
 
 def _sql_history() -> tuple[dict[str, str], list[str]]:
@@ -169,6 +182,31 @@ async def test_a_changed_weight_rescores_only_the_repository_it_touches_with_no_
     clock[0] = NOW + timedelta(hours=24, minutes=1)
     assert await loop.scheduled() == "run", "the full run keeps its interval from the last one"
     assert len(mirror.synced) == fetched + 2
+
+
+async def test_a_change_to_a_repository_s_areas_rescores_it_alone_with_no_fetch() -> None:
+    """Spec 2026-11-10: a repository's areas are what its area meters are scored by, so a change to them rescores
+    it at the next look, as a change of its settings does; one whose areas are the same is not rescored."""
+    acme, globex = "acme/web", "globex/web"
+    records, order = _sql_history()
+    forges = {name: fakes.FakeForge(repo=name) for name in (acme, globex)}
+    store, mirror, clock = fakes.FakeStore(), Mirrors(records, order), [NOW]
+    areas: dict[str, list[Area]] = {globex: [Area("Db", ("db/**",))]}
+    loop = _loop(Section(), store, mirror, clock, repos=(acme, globex), forges=forges, areas=areas)
+    assert await loop.scheduled() == "run"
+    assert set(store.stored[acme]) == {""} and set(store.stored[globex]) == {"", "Db"}
+    first = dict(store.versions_of)
+    assert first[acme] == _version({}) and first[globex].startswith(_version({}) + "+"), first
+    fetched = len(mirror.synced)
+
+    areas[acme] = [Area("Db", ("db/**",)), Area("Src", ("src/**",))]
+    clock[0] += timedelta(minutes=5)
+    assert await loop.scheduled() == "rescore", "acme's areas changed: the next look rescores"
+    assert len(mirror.synced) == fetched, "with no fetch"
+    assert set(store.stored[acme]) == {"", "Db", "Src"}, "acme is scored by the areas it names now"
+    assert store.versions_of[acme] != first[acme] and store.versions_of[globex] == first[globex]
+    clock[0] += timedelta(minutes=5)
+    assert await loop.scheduled() is None, "once rescored, the next look does nothing"
 
 
 async def test_a_repository_whose_rescore_fails_is_not_tried_again_every_look() -> None:

@@ -1,7 +1,7 @@
 """A repository's change history and undo (ADR 0019).
 
-GET lists the revisions the storage layer records for a repo's test setup and
-preferences (``repo_config_revisions``), each described in plain words. POST
+GET lists the revisions the storage layer records for a repo's test setup,
+preferences and areas (``repo_config_revisions``), each described in plain words. POST
 undo puts back what one change replaced: only the newest change of its
 surface, and only while the stored document is still what that change wrote.
 An undo is itself recorded, with source ``restore``, so it can be undone too.
@@ -29,12 +29,17 @@ from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers
 from embry0.api.schemas.repo_preferences import RepoPreferencesUpdateRequest
 from embry0.audit.helpers import emit_audit
+from embry0.services.areas_document import DocumentInvalid, DocumentTooLarge, areas_of, changes, problem_list
+from embry0.storage.repositories.repo_areas import AreasChanged
 from embry0.storage.repositories.repo_config_revisions import RevisionSurface
 from embry0.storage.repositories.repo_preferences import preferences_snapshot
+from embry0.workflows.verification.config import STORED as VERIFICATION_STORED
 
 router = APIRouter()
 
 WHY_NOT: Final = "This changed again later. Undo the newer change first."
+#: Why a change of a repository's areas cannot be undone once the repository is not registered.
+NOT_REGISTERED: Final = "This repository is not registered any more, so its areas cannot be put back."
 
 # Plain names for the preference fields, in the order a change lists them.
 _FIELD_NAMES: Final[dict[str, str]] = {
@@ -93,12 +98,33 @@ def _preferences_what(before: Mapping[str, Any] | None, after: Mapping[str, Any]
     return ". ".join(sentences) or "Settings changed"
 
 
+def _names_areas(document: Mapping[str, Any] | None) -> bool:
+    return document is not None and bool(areas_of(document.get("data")))
+
+
+def _areas_what(before: Mapping[str, Any] | None, after: Mapping[str, Any] | None) -> str:
+    # An undo of the change that created a document stores the empty one: it reads as removing them.
+    if not _names_areas(before) and _names_areas(after):
+        return "Areas created"
+    if _names_areas(before) and not _names_areas(after):
+        return "Areas removed"
+    parts: list[str] = []
+    for change in changes((before or {}).get("data"), (after or {}).get("data")):
+        if change["change"] == "changed":
+            parts.append(f"{change['area']} changed ({', '.join(change['keys'])})")
+        else:
+            parts.append(f"{change['area']} {change['change']}")
+    return f"Areas changed: {'; '.join(parts)}" if parts else "Areas changed"
+
+
 def change_what(surface: str, before: Mapping[str, Any] | None, after: Mapping[str, Any] | None) -> str:
     """One change in plain words, as the History panel shows it."""
     if surface == "qa_config":
         if before is None:
             return "Test setup created"
         return "Test setup removed" if after is None else "Test setup changed"
+    if surface == "areas":
+        return _areas_what(before, after)
     return _preferences_what(before, after)
 
 
@@ -107,6 +133,9 @@ async def _current(request: Request, repo: str, surface: RevisionSurface) -> dic
     if surface == "qa_config":
         row = await request.app.state.qa_configs_repo.get(repo)
         return None if row is None else {"yaml_text": row["yaml_text"]}
+    if surface == "areas":
+        areas: dict[str, Any] | None = await request.app.state.areas.current_snapshot(repo)
+        return areas
     prefs = await request.app.state.repo_preferences_repo.get(repo)
     return None if prefs is None else preferences_snapshot(prefs)
 
@@ -120,7 +149,10 @@ async def get_history(full_repo: str, request: Request, limit: int = Query(50, g
     current = {
         "qa_config": await _current(request, full_repo, "qa_config") if reads else None,
         "preferences": await _current(request, full_repo, "preferences") if reads else None,
+        "areas": await _current(request, full_repo, "areas") if reads else None,
     }
+    # Areas are kept only for a registered repository: an undo of theirs would have nowhere to store them.
+    registered = reads and any(row["surface"] == "areas" for row in rows) and await _registered(request, full_repo)
     shown = await actor_shown(request)
     # Newest first, so the first row of a surface is that surface's newest change.
     newest: dict[str, int] = {}
@@ -128,7 +160,11 @@ async def get_history(full_repo: str, request: Request, limit: int = Query(50, g
         newest.setdefault(row["surface"], row["id"])
     entries = []
     for row in rows:
-        undoable = newest[row["surface"]] == row["id"] and row["after"] == current[row["surface"]]
+        why_not: str | None = None
+        if row["surface"] == "areas" and not registered:
+            why_not = NOT_REGISTERED
+        elif newest[row["surface"]] != row["id"] or row["after"] != current[row["surface"]]:
+            why_not = WHY_NOT
         entries.append(
             {
                 "id": row["id"],
@@ -137,8 +173,8 @@ async def get_history(full_repo: str, request: Request, limit: int = Query(50, g
                 "actor": shown(row["actor"]),
                 "source": row["source"],
                 "created_at": row["created_at"].isoformat(),
-                "undoable": undoable,
-                "why_not": None if undoable else WHY_NOT,
+                "undoable": why_not is None,
+                "why_not": why_not,
             }
         )
     before_history = current["qa_config"] is not None and await revisions.latest(full_repo, "qa_config") is None
@@ -147,6 +183,11 @@ async def get_history(full_repo: str, request: Request, limit: int = Query(50, g
 
 def _no_longer_valid(exc: Exception) -> HTTPException:
     return HTTPException(status_code=422, detail=f"That earlier version is no longer valid: {exc}")
+
+
+async def _registered(request: Request, repo: str) -> bool:
+    registry = getattr(request.app.state, "repos_repo", None)
+    return registry is not None and await registry.registered_as(repo) is not None
 
 
 @router.post("/repos/{full_repo:repo}/-/history/{revision_id}/undo")
@@ -158,6 +199,10 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
     if revision is None or revision["repo"] != full_repo:
         raise HTTPException(status_code=404, detail="That change was not found for this repository.")
     surface: RevisionSurface = revision["surface"]
+    if surface == "areas" and not await _registered(request, full_repo):
+        # Areas are kept only for a registered repository, as every write of them: one removed since is answered
+        # as the areas routes answer it.
+        raise HTTPException(status_code=404, detail=f"{full_repo} is not a registered repository")
     latest = await request.app.state.repo_config_revisions_repo.latest(full_repo, surface)
     if (
         latest is None
@@ -170,7 +215,19 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
     reason = f"undo of change {revision_id}"
     before = revision["before"]
     new_revision_id: int | None
-    if surface == "qa_config":
+    if surface == "areas":
+        # Spec 2026-11-10: the areas a change replaced, the empty ones when it created them, put back only while
+        # the stored document is still the one it wrote.
+        try:
+            new_revision_id = await request.app.state.areas.restore(
+                full_repo, before, after=revision["after"], actor=actor, reason=reason
+            )
+        except (DocumentInvalid, DocumentTooLarge) as exc:
+            # The areas routes' 422: every problem, each at its key.
+            raise HTTPException(status_code=422, detail=problem_list(exc)) from exc
+        except AreasChanged:
+            raise HTTPException(status_code=409, detail=WHY_NOT) from None
+    elif surface == "qa_config":
         configs = request.app.state.qa_configs_repo
         if before is None:
             new_revision_id = await configs.delete_recorded(full_repo, actor=actor, source="restore", reason=reason)
@@ -194,11 +251,12 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
         else:
             fields = {k: before[k] for k in RepoPreferencesUpdateRequest.model_fields if k in before}
             try:
-                RepoPreferencesUpdateRequest.model_validate(fields)
+                # Read as stored values are: a glob only the release before wrote still goes back.
+                RepoPreferencesUpdateRequest.model_validate(fields, context=VERIFICATION_STORED)
             except ValidationError as exc:
                 raise _no_longer_valid(exc) from exc
             # The stored values go back as they were; the model only checks
-            # they would still be accepted today.
+            # they would still be read today.
             _, new_revision_id = await prefs.upsert_recorded(
                 full_repo, actor=actor, source="restore", reason=reason, **fields
             )

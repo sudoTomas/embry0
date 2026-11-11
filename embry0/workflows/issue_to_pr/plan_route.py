@@ -716,7 +716,10 @@ async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) ->
     without an ``output`` step, so the executor synthesizes it from
     ``pr_url`` at completion for every job uniformly. A context audit whose
     job asks for one (``open_pr``, ADR 0022) pushes its report's patch here,
-    after the artifacts are collected, and the executor opens that PR.
+    after the artifacts are collected, and the executor opens that PR. A map
+    of a repository's areas (``areas_proposal_id``, spec 2026-11-10) reads the
+    document its report carries into the state instead; the executor stores
+    it on the map's proposal for a person to apply.
     """
     writer = get_stream_writer()
     writer(events.node_started(node="finalize_output"))
@@ -740,16 +743,17 @@ async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) ->
     deliverables.extend(await _collect_artifacts(state, config))
 
     delivered: dict[str, Any] = {}
-    if state.get("open_pr") and report:
-        from embry0.workflows.issue_to_pr import areas_delivery
+    if state.get("areas_proposal_id"):
+        from embry0.workflows.issue_to_pr.areas_report import map_outcome
+
+        # A map of a repository's areas (spec 2026-11-10): the document its report carries waits for a person
+        # on the map's proposal, which the executor stores at completion. Nothing is pushed.
+        delivered = map_outcome(report)
+    elif state.get("open_pr") and report:
         from embry0.workflows.issue_to_pr.audit_delivery import deliver_audit_patch
 
-        # A map-areas job delivers the areas file it wrote; every other one the patch its report carries.
-        template = state.get("pipeline_template") or state.get("pipeline_template_request")
-        if template == areas_delivery.TEMPLATE:
-            delivered = await areas_delivery.deliver_areas_file(state, config, report)
-        else:
-            delivered = await deliver_audit_patch(state, config, report)
+        # ADR 0022: a context audit's job pushes the patch its report carries.
+        delivered = await deliver_audit_patch(state, config, report)
 
     writer(events.node_completed(node="finalize_output", deliverables=len(deliverables)))
     return {

@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from embry0.services.areas import Area
 from embry0.services.slop_meter.history import parse_log
 from embry0.services.slop_meter.loop import Inputs, compute
 from embry0.services.slop_meter.score import Event, meters
@@ -91,9 +92,10 @@ def fixture_inputs() -> Inputs:
     files = {
         ".prettierignore": "web/dist/\n",
         ".gitattributes": "gen/** linguist-generated=true\n",
-        ".embry0/areas.yml": "areas:\n  - name: Api\n    paths: [api/**]\n  - name: Web\n    paths: [web/**]\n",
     }
-    return Inputs(commits, events, {"bo": "bo@example.com"}, {"c0120": True, "c0200": False}, files)
+    # The repository's areas, as embry0 keeps them since spec 2026-11-10 (they were the head's file before).
+    areas = (Area("Api", ("api/**",)), Area("Web", ("web/**",)))
+    return Inputs(commits, events, {"bo": "bo@example.com"}, {"c0120": True, "c0200": False}, files, areas=areas)
 
 
 #: Per scope: score, level, name, provisional, weeks, and the sums of the weeks' cost, capacity and slop, as the

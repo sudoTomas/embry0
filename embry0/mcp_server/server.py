@@ -15,10 +15,11 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``agent_skill_add``, ``agent_skill_remove``, ``standard_set``,
 ``standard_audit``, ``progression_pack_set``, ``progression_pack_reset``,
 ``settings_set``, ``settings_set_keys``, ``settings_undo``, ``proposal_accept``,
-``proposal_decline``, ``proposal_snooze``) require
+``proposal_decline``, ``proposal_snooze``, ``areas_set``, ``areas_map``,
+``areas_proposal_decide``, ``areas_undo``) require
 ``confirm=true``; without it they return an instructive refusal instead of
-acting. ``progression_pack_set``, ``settings_set`` and ``settings_set_keys``
-with ``dry_run=true`` store nothing and run without it.
+acting. ``progression_pack_set``, ``settings_set``, ``settings_set_keys`` and
+``areas_set`` with ``dry_run=true`` store nothing and run without it.
 """
 
 from __future__ import annotations
@@ -1582,6 +1583,86 @@ async def qa_config_set(repo: str, yaml_text: str, confirm: bool = False) -> dic
     if not confirm:
         return _confirmation_refusal("qa_config_set", f"replace the stored QA config for {repo!r}")
     return await _get_client().qa_config_set(repo, yaml_text)
+
+
+@_tool
+async def areas_get(repo: str) -> dict[str, Any]:
+    """A repository's areas as embry0 keeps them: ``yaml_text`` (the document as written, comments kept),
+    ``areas`` (each ``{name, slug, paths, logs, owners}``), ``generation`` (pass it to areas_set as
+    ``expected_generation``), and ``proposal``, the newest map of its areas when there is one. The repository
+    carries no file for its areas; repo is "group/name", or a GitLab subgroup path like "group/subgroup/project".
+    A repository the key does not cover reads as one nobody registered (404)."""
+    return await _get_client().areas_get(repo)
+
+
+@_tool
+async def areas_set(
+    repo: str,
+    text: str,
+    expected_generation: int | None = None,
+    dry_run: bool = False,
+    reason: str = "",
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Replace a repository's WHOLE areas document with ``text``, YAML (comments are kept): an optional
+    ``version: 1`` and ``areas``, a list of ``{name, paths, logs, owners}``. paths are globs from the
+    repository's root (``**`` a whole segment, a trailing ``/`` everything below, ``[[]`` a literal ``[``, and
+    none starting with ``!``); owners are logins, who are
+    asked first about the area's work and may then answer its decisions. Read it with areas_get and send all of
+    it back with ``expected_generation`` set to the ``generation`` that read returned, so a change someone made
+    in between is refused (409). A document with problems is refused with a 422 naming every bad key
+    (``areas.0.paths.1: ...``), never its value. With ``dry_run=true`` nothing is stored and no confirm is
+    needed: the answer lists the areas it would add, remove or change, owners first, and the text diff. A real
+    write is recorded in the repository's history and can be undone with areas_undo. Needs an operate key whose
+    allowlist covers the repository. Requires confirm=true for a real write."""
+    if dry_run:
+        return await _get_client().areas_set(
+            repo, text, dry_run=True, expected_generation=expected_generation, reason=reason
+        )
+    if not confirm:
+        return _confirmation_refusal("areas_set", f"replace the areas of {repo!r}")
+    return await _get_client().areas_set(repo, text, expected_generation=expected_generation, reason=reason)
+
+
+@_tool
+async def areas_map(repo: str, model: str = "", credential_id: str = "", confirm: bool = False) -> dict[str, Any]:
+    """Start the area-mapper, a paid read-only agent job that reads the repository and writes its areas
+    document, on ``model`` and the stored LLM key ``credential_id`` when given (run with). Its document does not apply by itself: it waits for a person to apply or
+    reject it (areas_proposal_decide), and a map already waiting is retired by the new one. 409 while a map
+    runs. Requires confirm=true."""
+    if not confirm:
+        return _confirmation_refusal("areas_map", f"start a paid job that maps the areas of {repo!r}")
+    return await _get_client().areas_map(repo, model=model, credential_id=credential_id)
+
+
+@_tool
+async def areas_proposal_get(repo: str) -> dict[str, Any]:
+    """The newest map of a repository's areas: its ``status`` (``pending`` waits for a person), what applying
+    it would change area by area with the owners it adds or removes first, the text diff, and the agent's
+    notes. 404 when the repository was never mapped."""
+    return await _get_client().areas_proposal_get(repo)
+
+
+@_tool
+async def areas_proposal_decide(repo: str, proposal_id: str, decision: str, confirm: bool = False) -> dict[str, Any]:
+    """Apply (``decision="apply"``) a waiting map as the repository's areas, or reject it
+    (``decision="reject"``). An apply is refused (409) when the areas changed since the map started, and is
+    recorded in the repository's history, so areas_undo puts the earlier areas back. Applying makes the map's
+    owners the people asked about, and able to answer, the area's decisions: say who they are first. Needs an
+    operate key whose allowlist covers the repository. Requires confirm=true."""
+    if not confirm:
+        return _confirmation_refusal("areas_proposal_decide", f"{decision} the map {proposal_id!r} of {repo!r}")
+    return await _get_client().areas_proposal_decide(repo, proposal_id, decision)
+
+
+@_tool
+async def areas_undo(repo: str, revision_id: int, confirm: bool = False) -> dict[str, Any]:
+    """Put back what change ``revision_id`` of a repository's history replaced: its areas before an applied
+    map or a write, or none when that change created them. Only the newest change of the areas can be undone,
+    while it is still what is stored (else 409); the undo is itself recorded. Requires confirm=true."""
+    if not confirm:
+        return _confirmation_refusal("areas_undo", f"undo change {revision_id} of {repo!r}")
+    return await _get_client().areas_undo(repo, revision_id)
 
 
 @_tool

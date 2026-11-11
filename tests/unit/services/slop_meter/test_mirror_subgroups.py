@@ -24,10 +24,12 @@ import pytest
 from structlog.testing import capture_logs
 
 from embry0.api.schemas.repo_path import REPO_PATH_PATTERN
+from embry0.services.areas import Area
 from embry0.services.background_scope import Registered
 from embry0.services.slop_meter import mirror as mirror_mod
 from embry0.services.slop_meter.loop import SlopMeterLimits, SlopMeterLoop
 from embry0.services.slop_meter.mirror import GitError, GitMirror, MirrorRefused
+from tests.fixtures.areas import areas_of
 from tests.unit.services.slop_meter.test_loop import FakeCalls, FakeStore, NoExits, _read, no_audit
 from tests.unit.services.slop_meter.test_prune import GRACE, NOW, Audit, Exits, Store, _pruner
 
@@ -266,7 +268,7 @@ def _refs(repo: Path, home: Path) -> list[str]:
 
 
 def _serve(forge: Path, repo: str, home: Path, *, commits: int) -> None:
-    """A bare repository at ``forge/<repo>.git`` whose ``main`` holds an areas file and ``commits`` commits."""
+    """A bare repository at ``forge/<repo>.git`` whose ``main`` holds ``commits`` commits to ``api/a.py``."""
     bare = _bare(forge, repo)
     bare.parent.mkdir(parents=True, exist_ok=True)
     work = home / "work" / repo.replace("/", "_")
@@ -274,8 +276,6 @@ def _serve(forge: Path, repo: str, home: Path, *, commits: int) -> None:
     env = _git_env(home)
     subprocess.run(["git", "init", "--quiet", "--bare", "-b", "main", str(bare)], env=env, check=True)
     subprocess.run(["git", "init", "--quiet", "-b", "main", str(work)], env=env, check=True)
-    (work / ".embry0").mkdir()
-    (work / ".embry0" / "areas.yml").write_text("areas:\n  - name: Api\n    paths: [api/**]\n")
     (work / "api").mkdir()
     start = datetime(2025, 1, 6, 9, 0, tzinfo=UTC)
     for i in range(commits):
@@ -291,7 +291,7 @@ def _serve(forge: Path, repo: str, home: Path, *, commits: int) -> None:
 
 async def test_subgroup_projects_are_mirrored_read_and_scored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Real git, a local bare repository per project as the forge: the meter clones each into its place,
-    marks it, reads its whole history and its areas file through the mirror, and scores it."""
+    marks it, reads its whole history through the mirror, and scores it with the areas embry0 keeps."""
     home = _isolated(tmp_path, monkeypatch)
     forge = tmp_path / "forge"
     repos = ("acme/widgets", "group/sub/project", "group/sub/deeper/project")
@@ -324,6 +324,7 @@ async def test_subgroup_projects_are_mirrored_read_and_scored(tmp_path: Path, mo
         bots=no_bots,
         calls=FakeCalls(),
         limits=SlopMeterLimits(commits_per_tick=100),
+        areas_of=areas_of({repo: [Area("Api", ("api/**",))] for repo in repos}),
         clock=lambda: datetime(2025, 3, 1, tzinfo=UTC),
     )
     assert await loop.tick() is False, "every history is read in one tick"
@@ -332,9 +333,12 @@ async def test_subgroup_projects_are_mirrored_read_and_scored(tmp_path: Path, mo
         assert state.get("error") is None, f"{repo} is mirrored and read: {state.get('error')}"
         assert state.get("commits_read") == 5, f"its whole history is read through the mirror: {state}"
         assert set(store.stored.get(repo, {})) == {"", "Api"}, (
-            f"{repo} is scored, with the areas its head names, read through the mirror: {set(store.stored.get(repo, {}))}"
+            f"{repo} is scored, with the areas embry0 keeps for it: {set(store.stored.get(repo, {}))}"
         )
     mirror = GitMirror(root)
+    for repo in repos:
+        head = await mirror.read(repo, "api/a.py")
+        assert head is not None and head.startswith("line_0 = 0\n"), f"{repo}'s head is read through its mirror"
     assert (root / "acme" / "widgets.git" / "HEAD").is_file(), "an owner/name mirror is where it always was"
     for repo in repos:
         assert (_where(root, repo) / "HEAD").is_file(), f"{repo} is mirrored at its place"

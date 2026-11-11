@@ -1,0 +1,1 @@
+Reads a repository's tree, workspace manifests, ownership files and deploy configuration, and writes the .embry0/areas.yml that names its parts: each area's paths, the names its logs run under, and its owners when the repository says them. embry0 opens the pull request from its report. Read-only.

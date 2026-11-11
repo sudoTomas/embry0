@@ -436,7 +436,7 @@ achievements:
   - id: cartographer
     name: Cartographer
     category: lore
-    what_counts: "Repositories whose areas map merged"
+    what_counts: "Repositories whose areas map was applied"
     flavour: "You can see the whole world map now."
     icon: map
     metric: areas_mapped

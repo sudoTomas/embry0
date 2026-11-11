@@ -11,9 +11,9 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
-from embry0.workflows.qa._glob_match import GlobPatternError, compile_glob
+from embry0.workflows.qa._glob_match import GlobPatternError, check_glob
 
 # A test command is executable text: it is refused when too long, never cut.
 COMMAND_MAX_CHARS = 2000
@@ -22,11 +22,17 @@ MAX_TARGET_TIMEOUT_SECONDS = 7200
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$")
 
 
-def _validated_globs(patterns: list[str]) -> list[str]:
+#: The validation context a stored config is read with (:func:`load_verification_config`): a glob this grammar no
+#: longer writes, which the release before read, is read as it read it. Without it (a request) a glob must be one
+#: it writes.
+STORED: dict[str, bool] = {"stored": True}
+
+
+def _validated_globs(patterns: list[str], info: ValidationInfo) -> list[str]:
     cleaned = [p.strip() for p in patterns]
     for pattern in cleaned:
         try:
-            compile_glob(pattern)
+            check_glob(pattern, stored=bool((info.context or {}).get("stored")))
         except GlobPatternError as exc:
             raise ValueError(str(exc)) from exc
     return cleaned
@@ -62,8 +68,8 @@ class TestTarget(BaseModel):
 
     @field_validator("paths")
     @classmethod
-    def _paths_are_globs(cls, v: list[str]) -> list[str]:
-        return _validated_globs(v)
+    def _paths_are_globs(cls, v: list[str], info: ValidationInfo) -> list[str]:
+        return _validated_globs(v, info)
 
     @field_validator("command")
     @classmethod
@@ -89,8 +95,8 @@ class TierRules(BaseModel):
 
     @field_validator("frontend_paths", "backend_paths", "neutral_paths")
     @classmethod
-    def _lists_are_globs(cls, v: list[str] | None) -> list[str] | None:
-        return None if v is None else _validated_globs(v)
+    def _lists_are_globs(cls, v: list[str] | None, info: ValidationInfo) -> list[str] | None:
+        return None if v is None else _validated_globs(v, info)
 
 
 class VerificationConfig(BaseModel):
@@ -131,7 +137,7 @@ def load_verification_config(raw: Any) -> tuple[VerificationConfig | None, str |
     if not isinstance(raw, dict):
         return None, "stored verification config is not an object"
     try:
-        return VerificationConfig.model_validate(raw), None
+        return VerificationConfig.model_validate(raw, context=STORED), None
     except ValidationError as exc:
         errors = exc.errors()
         where = ".".join(str(p) for p in errors[0]["loc"]) if errors else ""

@@ -277,7 +277,7 @@ def gate_deployed_apps(
     lets one repo declare several deployed apps without paying for all of them
     on every job.
     """
-    from embry0.workflows.qa._glob_match import compile_glob, match_any
+    from embry0.workflows.qa._glob_match import match_any, read_glob
 
     if not changed_files:
         return list(deployed_apps)
@@ -290,7 +290,7 @@ def gate_deployed_apps(
         if not when or not when.changed_paths:
             kept.append(name)
             continue
-        compiled = [compile_glob(g) for g in when.changed_paths]
+        compiled = [read_glob(g) for g in when.changed_paths]
         if any(match_any(path, compiled) for path in paths):
             kept.append(name)
     return kept

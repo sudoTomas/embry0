@@ -150,7 +150,6 @@ async def test_the_changed_file_diff_and_base_branch_run_on_embry0s_git():
 
 # ---- deliveries -----------------------------------------------------------------------
 
-_AREAS_REPORT = "## Areas file\n\n```yaml\nareas:\n  - name: api\n    paths: [api/]\n```\n"
 _AUDIT_REPORT = (
     "Stale: 1\nFiles: 1\n\n## Pull\n\n```diff\n--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -1 +1 @@\n-old\n+new\n```\n"
 )
@@ -163,15 +162,6 @@ def _delivery_state() -> dict[str, Any]:
         "sandbox_container_id": "c1",
         "context": {"type": "git", "repo": "acme/widgets"},
     }
-
-
-async def test_the_areas_delivery_runs_on_embry0s_git():
-    from embry0.workflows.issue_to_pr.areas_delivery import deliver_areas_file
-
-    docker = Recorder()
-    out = await deliver_areas_file(_delivery_state(), {"configurable": {"docker": docker}}, _AREAS_REPORT)
-    assert out, "the areas file was not delivered"
-    _assert_protected(docker, "the areas delivery")
 
 
 async def test_the_audit_delivery_runs_on_embry0s_git():
@@ -353,16 +343,16 @@ async def test_a_refused_verify_gate_says_which_keys_and_how_to_clear_them():
 async def test_a_refused_delivery_logs_the_keys_and_how_to_clear_them():
     from structlog.testing import capture_logs
 
-    from embry0.workflows.issue_to_pr.areas_delivery import deliver_areas_file
+    from embry0.workflows.issue_to_pr.audit_delivery import deliver_audit_patch
 
     with capture_logs() as logs:
-        out = await deliver_areas_file(_delivery_state(), {"configurable": {"docker": _Refusing()}}, _AREAS_REPORT)
+        out = await deliver_audit_patch(_delivery_state(), {"configurable": {"docker": _Refusing()}}, _AUDIT_REPORT)
     assert out == {}
-    (failed,) = [e for e in logs if e["event"] == "map_areas_pr_not_pushed"]
+    (failed,) = [e for e in logs if e["event"] == "context_audit_pr_not_pushed"]
     assert "filter.x.clean" in failed["error"] and "git config --unset-all" in failed["error"], failed
     refused = [e for e in logs if e["event"] == "sandbox_git_refused"]
     assert refused and refused[0]["log_level"] == "warning", f"a refusal is logged at warning: {logs}"
-    assert refused[0]["step"] == "areas_delivery" and refused[0]["job_id"] == "job-1"
+    assert refused[0]["step"] == "audit_delivery" and refused[0]["job_id"] == "job-1"
     assert refused[0]["keys"] == ["filter.x.clean", "include.path"]
 
 

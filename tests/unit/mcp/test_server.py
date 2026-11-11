@@ -104,6 +104,12 @@ EXPECTED_TOOLS = {
     "proposal_accept",
     "proposal_decline",
     "proposal_snooze",
+    "areas_get",
+    "areas_set",
+    "areas_map",
+    "areas_proposal_get",
+    "areas_proposal_decide",
+    "areas_undo",
 }
 
 CONFIRM_GATED = {
@@ -151,6 +157,10 @@ CONFIRM_GATED = {
     "proposal_accept",
     "proposal_decline",
     "proposal_snooze",
+    "areas_set",
+    "areas_map",
+    "areas_proposal_decide",
+    "areas_undo",
 }
 
 
