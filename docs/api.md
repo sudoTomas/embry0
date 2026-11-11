@@ -1483,15 +1483,35 @@ people (`/users/{id}/…`), the integrations, the models and their providers,
 the credential import and model-account sign-in, the progression rebuild,
 a repository's Docker access (`PUT /repos/{repo}/-/docker-access`, its own
 repository's included: the daemon runs the proxies and every other
-sandbox), and credential bindings for a host or for every repository are
-refused with
+sandbox), credential bindings for a host or for every repository, creating
+a credential (`POST /credentials`) and rotating one
+(`POST /credentials/{id}/rotate`), whoever uses it, are refused with
 a 403 `repo_not_allowed` naming `(the deployment)`, logged and audited as
-the refusals above are. It creates credentials, and binds, changes,
-rotates, verifies, deletes or probes an owner with (`POST /orgs/probe`)
-only its own: one only its repositories use, or one it created that nothing
-uses yet. A credential records the id of the key that created it, so
-another key of the same name never counts as its creator, and one created
-before that id was recorded is no restricted key's. One something else uses
+the refusals above are. A new or rotated secret joins the one set every
+repository's job output, traces and log lines are redacted with, and a new
+account joins every other caller's repository discovery, whatever the
+credential is later bound to; finishing a model account's sign-in
+(`GET /credentials/xai/device-login/{id}`, which stores the account and
+binds it for every repository) is refused the same way, before the login is
+looked up. Parts of a write to its own repository are the deployment's too.
+A watched stack's LogQL selectors (`logql`, `settings.deploy_logql`), the
+containers its analysis may read (`settings.context_proxy_container_allowlist`)
+and its tracker and tracker target choose lines from every container the
+deployment ships and write into a team's tracker: such a key changes only
+the rest of a stack an admin made (`enabled`, thresholds, budget), keeping
+those as stored, and creates none (`PUT /watcher/stacks/{owner}/{name}`).
+A test setup's `cache.turbo_remote` hands the repository's QA sandboxes the
+Turbo remote-cache token every such repository shares: such a key keeps it
+on where an admin turned it on and may turn it off, but never turns it on,
+by `PUT /repos/{repo}/-/qa-config`, applying a setup proposal or undoing a
+change (a save that keeps it on writes only over the setup it read, else
+409). It binds, changes, verifies, deletes or probes an owner with
+(`POST /orgs/probe`) only its own credential: one only its repositories
+use, or one it created that nothing uses yet, which since it creates none
+is one it created before it had a list. A credential records the id of the
+key that created it, so another key of the same name never counts as its
+creator, and one created before that id was recorded is no restricted
+key's. One something else uses
 (another repository, an owner, a host, every repository, an organization, a
 skill source) is refused as the deployment's, and a probe with it answers
 as with a credential that does not exist; one someone else created that

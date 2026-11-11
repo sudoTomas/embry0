@@ -184,9 +184,16 @@ only**, so an absent key inherits the `WATCHER_*` default below.
 
 ```
 GET    /api/v1/watcher/stacks                 # every stack + the overridable keys
-PUT    /api/v1/watcher/stacks/{owner}/{name}  # create or replace (admin)
+PUT    /api/v1/watcher/stacks/{owner}/{name}  # create or replace (admin; see below for a key with an allowlist)
 DELETE /api/v1/watcher/stacks/{owner}/{name}  # stop watching (admin); its runs, signatures and cases stay
 ```
+
+What a stack reads and where it files are the deployment's: an API key with a
+[repository allowlist](api.md#repository-allowlist) creates no stack, and on one
+an admin made for its repository changes only `enabled` and the settings other
+than `deploy_logql` and `context_proxy_container_allowlist`, keeping `logql`,
+those two, `tracker` and `tracker_target` as stored (403 naming the deployment
+otherwise).
 
 A deployment upgrading from the env-var watcher seeds its stack from
 `WATCHER_REPO` / `WATCHER_LOGQL` / `WATCHER_LINEAR_*` at startup, **once, and

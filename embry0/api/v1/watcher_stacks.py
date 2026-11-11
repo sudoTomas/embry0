@@ -3,6 +3,16 @@
 Reads are operator-tier like the rest of the watcher API; writes are
 admin-tier, because adding a stack points embry0's log analysis — and the
 spend behind it — at another deployment.
+
+What a stack reads and where it files are the deployment's, not its
+repository's: its LogQL selectors (``logql``, ``settings.deploy_logql``) choose
+lines from every container the deployment ships to Loki, its
+``context_proxy_container_allowlist`` widens the containers its analysis job
+may read, and its tracker target names a team's tracker. A key with a
+repository allowlist sets none of them: it changes only the rest of a stack an
+admin made for one of its repositories (enabled, thresholds, budget), and
+creating a stack is refused to it as the deployment's
+(:data:`READS_BEYOND_THE_REPOSITORY`).
 """
 
 from __future__ import annotations
@@ -13,7 +23,13 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import Field
 
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers
+from embry0.api.repo_allowlist import (
+    covered_slugs,
+    enforce_deployment_allowlist,
+    enforce_repo_allowlist,
+    key_covers,
+    restricted_key_name,
+)
 from embry0.api.schemas import ServableFields
 from embry0.audit.helpers import emit_audit
 from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack, check_settings
@@ -33,6 +49,23 @@ class StackBody(ServableFields):
         default_factory=dict, description="overrides only; an absent key inherits the global default"
     )
     enabled: bool = True
+
+
+#: The settings of a stack that reach beyond its repository: a selector over every container's logs, and the containers
+#: its analysis job may read through the context proxy.
+READS_BEYOND_THE_REPOSITORY: tuple[str, ...] = ("deploy_logql", "context_proxy_container_allowlist")
+
+
+def _beyond(stack: WatcherStack | None) -> tuple[Any, ...] | None:
+    """What of ``stack`` is the deployment's to choose: its selectors, the containers it reads and where it files."""
+    if stack is None:
+        return None
+    return (
+        stack.logql,
+        stack.tracker,
+        dict(stack.tracker_target),
+        *(stack.settings.get(key) for key in READS_BEYOND_THE_REPOSITORY),
+    )
 
 
 def _repo(request: Request) -> WatcherStacksRepository:
@@ -104,18 +137,18 @@ async def put_stack(owner: str, name: str, body: StackBody, request: Request) ->
         settings = check_settings(body.settings)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    stored = await save_stack(
-        request,
-        WatcherStack(
-            repo=repo,
-            logql=body.logql,
-            tracker=body.tracker,
-            tracker_target=body.tracker_target,
-            settings=settings,
-            enabled=body.enabled,
-        ),
-        ignored_settings=unknown,
+    stack = WatcherStack(
+        repo=repo,
+        logql=body.logql,
+        tracker=body.tracker,
+        tracker_target=body.tracker_target,
+        settings=settings,
+        enabled=body.enabled,
     )
+    if restricted_key_name(request) is not None and _beyond(stack) != _beyond(await _repo(request).get(repo)):
+        # Its selectors read every container's logs, and its tracker files into a team's: the deployment's.
+        await enforce_deployment_allowlist(request, action="choose what a watched stack reads or where it files")
+    stored = await save_stack(request, stack, ignored_settings=unknown)
     return {**stored.to_dict(), "ignored_settings": unknown}
 
 
