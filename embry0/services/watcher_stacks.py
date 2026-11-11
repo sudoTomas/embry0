@@ -24,6 +24,7 @@ from typing import Annotated, Any, Literal
 import structlog
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
+from embry0.services.linear_regex import UnsupportedPattern, compile_linear
 from embry0.services.log_signatures import normalize_line
 
 logger = structlog.get_logger(__name__)
@@ -71,8 +72,8 @@ SETTING_KEYS: frozenset[str] = frozenset(OVERRIDABLE) | frozenset(STACK_ONLY)
 _OWN = {"repo": "watcher_repo", "logql": "watcher_logql"}
 
 #: A stack's signature masks run on every line of every tick, so their number
-#: and size are bounded. Python's ``re`` has no time limit: the pattern length
-#: is the guard against one that backtracks catastrophically.
+#: and size are bounded, and each is matched in time linear in the line
+#: whatever the pattern (``services/linear_regex.py``).
 MAX_SIGNATURE_MASKS = 50
 MAX_MASK_PATTERN_CHARS = 500
 #: A placeholder looks like the built-in ones (``<id>``, ``<uuid>``): lower case
@@ -95,12 +96,13 @@ class SignatureMask(BaseModel):
     @field_validator("pattern")
     @classmethod
     def _compiles(cls, value: str) -> str:
+        """A Python regular expression the linear-time engine runs with ``re``'s meaning, as every tick will."""
         try:
-            compiled = re.compile(value)
+            compile_linear(value)
         except re.error as exc:
             raise ValueError(f"{value[:80]!r} is not a Python regular expression: {exc}") from None
-        if compiled.search("") is not None:
-            raise ValueError(f"{value[:80]!r} matches an empty string, so it would mask between characters")
+        except UnsupportedPattern as exc:
+            raise ValueError(f"{value[:80]!r} cannot be used as a mask: {exc}") from None
         return value
 
     @field_validator("replacement")

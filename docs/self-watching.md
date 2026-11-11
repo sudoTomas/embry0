@@ -173,19 +173,36 @@ failed for record <record>: upstream timeout`.
   other overrides are still read at startup). A row that cannot be read
   keeps the masks of the tick before.
 - **Checked at write.** `pattern` is a Python regular expression of 1 to 500
-  characters that compiles and does not match the empty string.
-  `replacement` is a placeholder like the built-in ones: a lower-case word
-  in angle brackets, at most 32 characters with them, that the built-in
-  masks leave as it is (`<deadbeef>` is hex to them); `<id>` when left out.
-  At most 50 masks. Anything else is a 422 naming the entry, such as
-  `settings.signature_masks.0.pattern: Value error, 'rec_[' is not a Python
-  regular expression: unterminated character set at position 4`. A value
-  stored before these checks that no longer passes is ignored with a
+  characters that compiles, that the mask engine below can match, and that
+  cannot match an empty string anywhere. `replacement` is a placeholder like
+  the built-in ones: a lower-case word in angle brackets, at most 32
+  characters with them, that the built-in masks leave as it is (`<deadbeef>`
+  is hex to them); `<id>` when left out. At most 50 masks. Anything else is a
+  422 naming the entry, such as `settings.signature_masks.0.pattern: Value
+  error, 'rec_[' is not a Python regular expression: unterminated character
+  set at position 4`, or `... 'rec_(?=\d)\w+' cannot be used as a mask:
+  look-ahead and look-behind ((?=, (?!, (?<=, (?<!) are not supported`. A
+  value stored before these checks that no longer passes is ignored with a
   `watcher_stack_setting_invalid` warning, and the built-in masks alone apply.
-- **They run on every line of every tick**, with Python's `re`, which has no
-  time limit. Avoid patterns that backtrack catastrophically, such as nested
-  quantifiers (`(\w+\s?)+$`); start with a literal such as `rec_`. The length
-  limit is the guard.
+- **They run on every line of every tick, in time linear in the line,
+  whatever the pattern.** A mask is read with Python's own parser, so it
+  means what it means to `re`, and matched by RE2 (`google-re2`,
+  `embry0/services/linear_regex.py`), which never backtracks: a pattern such
+  as `(\w+\s?)+$`, which `re` would take exponential time on, costs what
+  any other does. `\d`, `\w`, `\s`, `.` and `(?i)` keep their Unicode
+  meaning, and `^`, `$`, `\A` and `\Z` theirs, in and out of multi-line
+  mode. One difference: `\b` and `\B` count ASCII letters, digits and `_` as
+  word characters, so beside a non-ASCII letter or digit (`é`, `中`, `٣`)
+  they differ from `re`'s; under `(?a)` they are the same. Refused at write,
+  being what RE2 cannot match with `re`'s meaning: look-ahead and
+  look-behind, back-references (`\1`), conditional groups, atomic groups
+  and possessive quantifiers (`(?>...)`, `a++`), a repetition count above
+  1000, `(?a:...)` around part of a pattern (start the pattern with `(?a)`
+  instead), `$` outside multi-line mode together with a multi-line `^` or
+  `$`, and a pattern that compiles to more than 100,000 RE2 instructions.
+  A Unicode class costs about 1,300 of them each time it is repeated
+  (`\w{8}` is about 11,000), an ASCII one a few: write `[A-Za-z0-9_]{64}`,
+  not `\w{64}`, for a long id.
 - **A new or changed mask re-keys the lines it matches.** Their folded
   signature is new to the signature memory, so the next tick reads it as new
   and analyses it; the per-id signatures it replaces go quiet. A case

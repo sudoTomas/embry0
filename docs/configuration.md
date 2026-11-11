@@ -203,7 +203,8 @@ stack's logs carry, so its lines stop becoming one log signature per id.
 The built-in masks it adds to live in code
 (`embry0/services/log_signatures.py`). A stack's masks apply first, at most
 50 of them, each pattern a Python regular expression of at most 500
-characters; every tick reads them, so a change needs no restart. See
+characters, matched in time linear in the line (no look-around or
+back-references); every tick reads them, so a change needs no restart. See
 [self-watching.md](self-watching.md#signature-masks).
 
 | Variable | Default | Description |

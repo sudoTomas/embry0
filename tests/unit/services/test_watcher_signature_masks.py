@@ -12,7 +12,12 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
+import os
 import pathlib
+import subprocess
+import sys
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -125,6 +130,77 @@ async def test_a_bad_stored_value_is_skipped_with_a_warning_and_the_built_in_mas
         f"the built-in masks must still apply when the stack's own are unusable: {[c.template for c in clusters]}"
     )
     assert svc._config.watcher_min_log_lines == 1, "a good neighbour of the bad value still applies"
+
+
+# ---- linear time -------------------------------------------------------------
+
+#: Patterns Python's re backtracks on without end, given a run of one
+#: character and a last character they do not expect: each further character
+#: doubles the time (or worse). A stack's masks are matched in time linear in
+#: the line instead (embry0/services/linear_regex.py), with the same answer.
+_BACKTRACKING = [r"(a+)+$", r"(a|aa)+$", r"^(([a-z])+.)+[A-Z]([a-z])+$", r"(\w+\s?)+$"]
+
+#: How long one line may take, child process start included. The patterns
+#: above take Python's re longer than this on 26 characters, and about four
+#: times as long for each two characters more.
+_DEADLINE_SECONDS = 15.0
+
+_NORMALIZE_IN_A_CHILD = """
+import json, sys
+from embry0.services.log_signatures import compile_masks, normalize_line
+masks = compile_masks([{"pattern": sys.argv[1], "replacement": "<id>"}])
+print(json.dumps(normalize_line(sys.argv[2], masks)))
+"""
+
+
+@pytest.mark.parametrize("pattern", _BACKTRACKING)
+def test_a_mask_python_re_backtracks_on_masks_a_long_line_in_linear_time(pattern: str) -> None:
+    """In a child process, so a line that never finishes is stopped at the deadline and named."""
+    line = "a" * 64 + "!"
+    started = time.monotonic()
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _NORMALIZE_IN_A_CHILD, pattern, line],
+            capture_output=True,
+            text=True,
+            timeout=_DEADLINE_SECONDS,
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(
+            f"the mask {pattern!r} did not mask one line of {len(line)} characters in {_DEADLINE_SECONDS:.0f}s "
+            f"(stopped after {time.monotonic() - started:.1f}s): every tick of its stack would stall on it"
+        )
+    assert done.returncode == 0, done.stderr
+    assert isinstance(json.loads(done.stdout), str), done.stdout
+
+
+@pytest.mark.asyncio
+async def test_a_tick_on_a_stack_whose_mask_python_re_backtracks_on_takes_no_longer() -> None:
+    """The stored mask is accepted, as before (the engine has no reason to refuse it), and the
+    tick that reads it clusters a window of such lines at once."""
+    mask = {"pattern": r"(a+)+$", "replacement": "<run>"}
+    lines = [f"WARN {'a' * 26}! retry {n}" for n in range(3)]
+    svc = _watcher({"signature_masks": [mask]}, lines=lines)
+    started = time.monotonic()
+    clusters = await _tick_clusters(svc)
+    took = time.monotonic() - started
+    assert took < 2.0, f"one tick over {len(lines)} lines took {took:.1f}s with the mask {mask['pattern']!r}"
+    assert len(clusters) == 1, [c.template for c in clusters]
+
+
+@pytest.mark.asyncio
+async def test_a_stored_mask_the_engine_cannot_run_is_skipped_with_a_warning() -> None:
+    """A look-behind stored before masks were matched in linear time no longer checks: the tick
+    leaves it out with the warning every unusable stored setting gets, and the built-in masks apply."""
+    look_behind = {"pattern": r"(?<=record )rec_\w+", "replacement": "<record>"}
+    with structlog.testing.capture_logs() as logs:
+        clusters = await _tick_clusters(_watcher({"signature_masks": [look_behind]}))
+    warned = [e for e in logs if e["event"] == "watcher_stack_setting_invalid" and e.get("key") == "signature_masks"]
+    assert warned, f"a stored mask no tick can match in linear time was applied: {[c.template for c in clusters]}"
+    assert "look-ahead and look-behind" in warned[0]["error"], warned[0]
+    assert len(clusters) == len(IDS), [c.template for c in clusters]
 
 
 # ---- every signature of the stack's lines uses the same masks ----------------

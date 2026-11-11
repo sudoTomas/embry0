@@ -33,7 +33,9 @@ Design notes worth keeping:
   written against the line as it reads in Loki and sees the whole id before
   the number and hex rules cut it into pieces. Every place that turns one of
   that stack's lines into a signature must pass the same masks, or one line
-  gets two signatures.
+  gets two signatures. A stack's pattern is matched in time linear in the
+  line, whatever the pattern (:mod:`embry0.services.linear_regex`); the
+  built-in rules are this module's own and run on ``re``.
 """
 
 from __future__ import annotations
@@ -43,6 +45,8 @@ import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from embry0.services.linear_regex import LinearPattern, compile_linear
 
 
 def _is_opaque_token(token: str) -> bool:
@@ -145,25 +149,20 @@ DEFAULT_SAMPLES_PER_CLUSTER = 2
 
 #: A stack's own masks (#172), compiled: each a pattern and the placeholder
 #: that replaces whatever it matches. Applied before :data:`_RULES`.
-SignatureMasks = tuple[tuple[re.Pattern[str], str], ...]
-
-
-def _literal(placeholder: str) -> Callable[[re.Match[str]], str]:
-    """A replacement that is ``placeholder`` as written: never read for ``\\1`` or ``\\g<name>``."""
-
-    def replace(_match: re.Match[str]) -> str:
-        return placeholder
-
-    return replace
+SignatureMasks = tuple[tuple[LinearPattern, str], ...]
 
 
 def compile_masks(masks: Iterable[Mapping[str, str]] | None) -> SignatureMasks:
     """``[{pattern, replacement}]`` as a stack stores them, compiled in order.
 
-    Raises :class:`re.error` for a pattern that does not compile. A stored
-    set was checked when it was written (``services/watcher_stacks.py``).
+    Each pattern is matched in time linear in the line
+    (:func:`~embry0.services.linear_regex.compile_linear`). Raises
+    :class:`re.error` for a pattern that does not compile, and
+    :class:`~embry0.services.linear_regex.UnsupportedPattern` for one that
+    cannot be matched that way. A stored set was checked when it was written
+    (``services/watcher_stacks.py``).
     """
-    return tuple((re.compile(str(mask["pattern"])), str(mask["replacement"])) for mask in masks or ())
+    return tuple((compile_linear(str(mask["pattern"])), str(mask["replacement"])) for mask in masks or ())
 
 
 def normalize_line(line: str, masks: SignatureMasks = ()) -> str:
@@ -176,8 +175,8 @@ def normalize_line(line: str, masks: SignatureMasks = ()) -> str:
     with group references.
     """
     out = line if isinstance(line, str) else ""
-    for pattern, placeholder in masks:
-        out = pattern.sub(_literal(placeholder), out)
+    for mask, placeholder in masks:
+        out = mask.sub(placeholder, out)
     for pattern, replacement in _RULES:
         out = pattern.sub(replacement, out)
     out = out.strip()

@@ -81,3 +81,13 @@ async def test_a_bad_mask_is_a_422_naming_the_key_and_the_entry(app: Any, masks:
     assert resp.status_code == 422, f"{resp.status_code}: {resp.text}"
     assert named in resp.json()["detail"], resp.json()["detail"]
     assert app.state.watcher_stacks_repo.stacks == {}, "a refused stack was stored"
+
+
+async def test_a_mask_no_tick_could_match_in_linear_time_is_a_422_naming_the_entry(app: Any) -> None:
+    resp = await _put(app, {"signature_masks": [MASK, {"pattern": r"rec_(?=\d)\w+", "replacement": "<record>"}]})
+    assert resp.status_code == 422, (
+        f"a mask no tick can match in linear time was stored: {resp.status_code} {resp.text}"
+    )
+    detail = resp.json()["detail"]
+    assert "settings.signature_masks.1.pattern" in detail and "look-ahead and look-behind" in detail, detail
+    assert app.state.watcher_stacks_repo.stacks == {}, "a refused stack was stored"
