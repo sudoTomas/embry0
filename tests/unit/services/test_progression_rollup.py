@@ -141,7 +141,12 @@ class MemoryStore:
         self.lock = asyncio.Lock()
         self.writes: list[str] = []
 
-    async def load(self, pack_hash: str) -> StoredRollup | None:
+    async def version(self, pack_hash: str, scope: str = "") -> str | None:
+        head = self.heads.get(pack_hash) if scope == "" else None
+        return None if head is None else head.fold_version
+
+    async def load(self, pack_hash: str, scope: str = "") -> StoredRollup | None:
+        assert scope == "", "the store in memory keeps the deployment's fold alone"
         head = self.heads.get(pack_hash)
         if head is None:
             return None
@@ -168,8 +173,8 @@ class MemoryWriter:
     def __init__(self, store: MemoryStore) -> None:
         self._store = store
 
-    async def load(self, pack_hash: str) -> StoredRollup | None:
-        return await self._store.load(pack_hash)
+    async def load(self, pack_hash: str, scope: str = "") -> StoredRollup | None:
+        return await self._store.load(pack_hash, scope)
 
     async def replace(self, head: RollupHead, daily: Sequence[DailyXp], milestones: Sequence[Milestone]) -> None:
         store = self._store
@@ -771,7 +776,7 @@ async def test_shutdown_waits_a_bounded_time_for_a_write_that_will_not_stop(monk
         pass
     finally:
         waited = time_module.monotonic() - began
-        task = service._maintenance
+        task = service._tasks.get("")
         if task is not None:
             task.cancel()
             await asyncio.wait({task}, timeout=1)

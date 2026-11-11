@@ -20,7 +20,6 @@ skill packs.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import json
 import time
 from collections.abc import Callable, Collection, Iterable
@@ -38,7 +37,8 @@ from embry0.services.quests import Reward, evaluate_diaries, evaluate_quests, qu
 from embry0.storage.repositories.progression import Fact, FactFragment, Journal, ProgressEvent
 
 if TYPE_CHECKING:
-    from embry0.services.progression_rollup import Maintained, RollupStore
+    from embry0.services.progression_rollup import Maintained, ProgressionRollup, RollupStore, Scope
+    from embry0.services.progression_workers import FoldWorkers
 
 logger = structlog.get_logger(__name__)
 
@@ -454,77 +454,88 @@ def pack_changes(before: Progression, after: Progression) -> dict[str, Any]:
 
 
 class _Repository(Protocol):
-    async def facts(self, queries: Iterable[FactFragment], timezone: str) -> list[Fact]: ...
+    async def facts(
+        self, queries: Iterable[FactFragment], timezone: str, *, repos: Collection[str] | None = None
+    ) -> list[Fact]: ...
 
     async def journal(
         self, agents: Collection[str] | None = None, *, repos: Collection[str] | None = None
     ) -> Journal: ...
 
-    async def events(self, *, since: datetime | None = None, until: datetime | None = None) -> list[ProgressEvent]: ...
+    async def events(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        repos: Collection[str] | None = None,
+    ) -> list[ProgressEvent]: ...
 
     async def agent_types(self) -> list[str]: ...
 
 
-def _quests_and_diaries(journal: Journal, progression: Progression, rules: Rules) -> tuple[list[Any], list[Any]]:
-    """The repo diaries and the quests ``journal`` completes under ``rules``, with ``progression``'s levels."""
-    diaries = evaluate_diaries(journal, rules=rules)
-    quests = evaluate_quests(
-        journal, diaries, lambda total: first_total(progression.level_ups, total, rules=rules), rules=rules
-    )
-    return diaries, quests
+class Computation:
+    """What a read of the progression does with the rows, and a write of its rollup: read them, fold them, evaluate.
 
-
-class ProgressionService:
-    """Computes progression from the repository under the active pack, at most once per ``ttl_seconds``.
-
-    ``packs`` answers the active pack. A changed pack (another hash) is
-    recomputed at once, whatever the time to live.
-
-    ``rollups`` keeps the closed days folded (``progression_rollup``), so a
-    read folds only the raw events of the last few days; None folds every
-    raw event on every read. Production passes the rollup tables. The
-    rollup is written in the background, never on a read; ``now`` is the
-    wall clock that decides which days are closed.
-
-    Every write of this process, a background one or an admin's rebuild,
-    goes through one lock, so at most one of its pool connections waits on
-    the rollup's advisory lock while the writer holding it needs another. A
-    write that fails is retried after a delay that doubles, from
-    :data:`WRITE_RETRY_FIRST` to :data:`WRITE_RETRY_MAX`, not on every read.
+    The service runs it on the event loop over its own repository, or in a
+    fold worker's process over that process's database pool
+    (:mod:`embry0.services.progression_workers`), which builds one of these
+    over the same tables; either answers the same, from the same rows.
     """
 
-    def __init__(
-        self,
-        repository: _Repository,
-        *,
-        packs: PackSource,
-        rollups: RollupStore | None,
-        ttl_seconds: float = 60.0,
-        clock: Callable[[], float] = time.monotonic,
-        now: Callable[[], datetime] = lambda: datetime.now(UTC),
-    ) -> None:
-        from embry0.services.progression_rollup import ProgressionRollup
-
+    def __init__(self, repository: _Repository, rollup: ProgressionRollup | None) -> None:
         self._repository = repository
-        self._packs = packs
-        self._rollup = None if rollups is None else ProgressionRollup(rollups, repository, now=now)
-        self._ttl = ttl_seconds
-        self._clock = clock
-        self._cached: tuple[float, Progression] | None = None
-        self._lock = asyncio.Lock()
-        #: The background write, and the lock every write of this process takes.
-        self._maintenance: asyncio.Task[None] | None = None
-        self._write_lock = asyncio.Lock()
-        self._write_failures = 0
-        self._write_retry_at = 0.0
-        #: Moves with every rollup write: a read that began before one does not cache what it computed.
-        self._generation = 0
+        self._rollup = rollup
 
-    async def rules(self) -> Rules:
-        """The active pack's rules."""
-        return rules_for(await self._packs.active())
+    async def progression(
+        self, rules: Rules, scope: Scope, *, through_rollup: bool, on_due: Callable[[], None] | None = None
+    ) -> tuple[Progression, bool]:
+        """The progression of ``scope`` under ``rules``, and whether its rollup wants a write.
 
-    async def _facts(self, rules: Rules) -> tuple[list[Fact], str]:
+        ``through_rollup`` reads the levels from the scope's rollup and the
+        events after it, when it is usable; else, and always without it, every
+        raw event is folded. ``on_due`` is called as soon as the rollup is
+        found to want a write, before the rest is read.
+        """
+        from embry0.services.achievements import evaluate
+
+        repos = scope.repos
+        journal = await self._journal(rules, repos)
+        # Quest XP feeds the levels, so the quests that give it are read first.
+        rewards = quest_rewards(journal, rules=rules)
+        agent_types = await self._repository.agent_types()
+        progression: Progression | None = None
+        due = False
+        if through_rollup and self._rollup is not None:
+            levels = await self._rollup.levels(rules, agent_types, rewards, scope)
+            progression, due = levels.progression, levels.due
+            if due and on_due is not None:
+                on_due()
+        if progression is None:
+            progression = compute(await self._events(repos), agent_types, rewards, rules=rules)
+        facts, progression.timezone_applied = await self._facts(rules, repos)
+        progression.achievements, progression.unlocks = evaluate(
+            facts,
+            progression.level_ups,
+            progression.agent_level_ups,
+            progression.drops,
+            rules=rules,
+        )
+        progression.diaries = evaluate_diaries(journal, rules=rules)
+        progression.quests = evaluate_quests(
+            journal,
+            progression.diaries,
+            lambda total: first_total(progression.level_ups, total, rules=rules),
+            rules=rules,
+        )
+        return progression, due
+
+    async def maintain(self, rules: Rules, scope: Scope, *, force_since: datetime | None) -> Maintained:
+        """One write of the scope's rollup (``ProgressionRollup.maintain``)."""
+        if self._rollup is None:
+            raise RuntimeError("this progression service keeps no rollup")
+        return await self._rollup.maintain(rules, force_since=force_since, scope=scope)
+
+    async def _facts(self, rules: Rules, repos: Collection[str] | None) -> tuple[list[Fact], str]:
         """The achievements' facts and the calendar they were read on: the pack's, or UTC's when Postgres refuses it.
 
         The pack's timezone is checked against Python's timezone database,
@@ -539,143 +550,233 @@ class ProgressionService:
         """
         timezone = rules.pack.timezone
         try:
-            return await self._repository.facts(rules.fact_queries, timezone), timezone
+            return await self._read_facts(rules, timezone, repos), timezone
         except asyncpg.InvalidParameterValueError as exc:
             if timezone == "UTC" or "time zone" not in str(exc):
                 raise
             logger.warning("progression_facts_timezone_fallback", timezone=timezone, applied="UTC")
-            return await self._repository.facts(rules.fact_queries, "UTC"), "UTC"
+            return await self._read_facts(rules, "UTC", repos), "UTC"
 
-    async def read(self) -> Progression:
-        async with self._lock:
+    async def _read_facts(self, rules: Rules, timezone: str, repos: Collection[str] | None) -> list[Fact]:
+        # The deployment's read is the call it always was, so a repository without scopes still serves it.
+        if repos is None:
+            return await self._repository.facts(rules.fact_queries, timezone)
+        return await self._repository.facts(rules.fact_queries, timezone, repos=repos)
+
+    async def _journal(self, rules: Rules, repos: Collection[str] | None) -> Journal:
+        if repos is None:
+            return await self._repository.journal(run_agents(rules))
+        return await self._repository.journal(run_agents(rules), repos=repos)
+
+    async def _events(self, repos: Collection[str] | None) -> list[ProgressEvent]:
+        if repos is None:
+            return await self._repository.events()
+        return await self._repository.events(repos=repos)
+
+
+class ProgressionService:
+    """Computes progression from the repository under the active pack, at most once per ``ttl_seconds``.
+
+    ``packs`` answers the active pack. A changed pack (another hash) is
+    recomputed at once, whatever the time to live.
+
+    ``rollups`` keeps the closed days folded (``progression_rollup``), so a
+    read folds only the raw events of the last few days; None folds every
+    raw event on every read. Production passes the rollup tables. The
+    rollup is written in the background, never on a read; ``now`` is the
+    wall clock that decides which days are closed.
+
+    A read names its scope (``progression_rollup.Scope``): every repository's
+    work, the deployment's, or the set of repositories a key with an
+    allowlist covers, whose progression is the one a deployment holding only
+    them would compute. Each scope has its own cache and rollup.
+
+    Every write of this process, a background one or an admin's rebuild,
+    goes through one lock, so at most one of its pool connections waits on
+    the rollup's advisory lock while the writer holding it needs another. A
+    write that fails is retried after a delay that doubles, from
+    :data:`WRITE_RETRY_FIRST` to :data:`WRITE_RETRY_MAX`, not on every read.
+
+    ``workers`` runs every read's computation and every write in worker
+    processes, over the same database (:class:`Computation` there), so a fold
+    of the whole history never holds the event loop; production passes them.
+    Without them the computation runs on the loop, over ``repository``.
+    """
+
+    def __init__(
+        self,
+        repository: _Repository,
+        *,
+        packs: PackSource,
+        rollups: RollupStore | None,
+        ttl_seconds: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        workers: FoldWorkers | None = None,
+    ) -> None:
+        from embry0.services.progression_rollup import ProgressionRollup
+
+        self._repository = repository
+        self._packs = packs
+        self._rollup = None if rollups is None else ProgressionRollup(rollups, repository, now=now)
+        self._local = Computation(repository, self._rollup)
+        self._workers = workers
+        self._ttl = ttl_seconds
+        self._clock = clock
+        self._now = now
+        #: Each scope's last read, by its key, and the lock its reads take.
+        self._cached: dict[str, tuple[float, Progression]] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+        #: Each scope's background write, by its key, and the lock every write of this process takes.
+        self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._write_lock = asyncio.Lock()
+        #: Each scope's failed writes in a row and when it may write again.
+        self._retry: dict[str, tuple[int, float]] = {}
+        #: Moves with every rollup write: a read that began before one does not cache what it computed.
+        self._generation = 0
+
+    async def rules(self) -> Rules:
+        """The active pack's rules."""
+        return rules_for(await self._packs.active())
+
+    async def read(self, repos: Collection[str] | None = None) -> Progression:
+        """The progression of every repository's work, or with ``repos`` (lower-cased slugs) of theirs alone."""
+        from embry0.services.progression_rollup import Scope
+
+        scope = Scope.of(repos)
+        async with self._locks.setdefault(scope.key, asyncio.Lock()):
             rules = await self.rules()
             now = self._clock()
-            cached = self._cached
+            cached = self._cached.get(scope.key)
             if cached is not None and now - cached[0] < self._ttl and cached[1].rules.hash == rules.hash:
                 return cached[1]
             generation = self._generation
-            progression = await self._progression(rules, through_rollup=True)
+            progression, due = await self._computed(rules, scope, through_rollup=True)
+            if due:
+                self._schedule(rules, scope)
             if generation == self._generation:
                 # A write that finished meanwhile (one this read may have started) makes it stale at once.
-                self._cached = (now, progression)
+                self._cached[scope.key] = (now, progression)
             return progression
 
-    async def compute(self, rules: Rules) -> Progression:
+    async def compute(self, rules: Rules, repos: Collection[str] | None = None) -> Progression:
         """The progression under ``rules``, computed now from the rows: never cached, and the cache left as it was.
 
         What a draft pack's preview reads (#176): the same history, priced
         under a pack nobody sees yet. It folds every raw event and never
-        reads or writes a rollup, which belongs to the active pack.
+        reads or writes a rollup, which belongs to the active pack. ``repos``
+        as for :meth:`read`.
         """
-        return await self._progression(rules, through_rollup=False)
+        from embry0.services.progression_rollup import Scope
 
-    async def _progression(self, rules: Rules, *, through_rollup: bool) -> Progression:
-        from embry0.services.achievements import evaluate
+        return (await self._computed(rules, Scope.of(repos), through_rollup=False))[0]
 
-        journal = await self._repository.journal(run_agents(rules))
-        # Quest XP feeds the levels, so the quests that give it are read first.
-        rewards = quest_rewards(journal, rules=rules)
-        agent_types = await self._repository.agent_types()
-        if through_rollup:
-            progression = await self._levels(rules, agent_types, rewards)
-        else:
-            progression = compute(await self._repository.events(), agent_types, rewards, rules=rules)
-        facts, progression.timezone_applied = await self._facts(rules)
-        progression.achievements, progression.unlocks = evaluate(
-            facts,
-            progression.level_ups,
-            progression.agent_level_ups,
-            progression.drops,
-            rules=rules,
-        )
-        progression.diaries, progression.quests = _quests_and_diaries(journal, progression, rules)
-        return progression
+    async def _computed(self, rules: Rules, scope: Scope, *, through_rollup: bool) -> tuple[Progression, bool]:
+        """The computation, in a worker process when the service has them, else here on the loop; and whether the
+        scope's rollup wants a write the caller has not scheduled yet.
 
-    async def narrowed(self, progression: Progression, repos: Collection[str]) -> Progression:
-        """``progression`` as a caller that reads only ``repos`` (lower-cased slugs) reads it: its quests and repo
-        diaries evaluated again from the journal of those repositories' work alone, so the quests' steps, the quest
-        points and the diaries count no other repository's. Its levels, experience and achievements are the
-        deployment's, as computed. Never cached: a key with a repository allowlist reads it through this."""
-        journal = await self._repository.journal(run_agents(progression.rules), repos=repos)
-        narrowed = dataclasses.replace(progression)
-        narrowed.diaries, narrowed.quests = _quests_and_diaries(journal, progression, progression.rules)
-        return narrowed
+        On the loop the write is scheduled the moment the rollup is found to
+        want it, so it runs while the read goes on. A worker's read says so when
+        it is done; and before it is sent, a scope with no rollup of this pack
+        and release has its build scheduled at once, and a read that runs past
+        its limit schedules it as it fails, so a history too long to fold within
+        a read's limit gets its rollup and is read through it next.
+        """
+        from embry0.services.progression_workers import FoldTimeout
 
-    async def _levels(
-        self, rules: Rules, agent_types: list[str], rewards: list[tuple[datetime, Reward]]
-    ) -> Progression:
-        """The levels: from the rollup and the recent raw events, else from every raw event."""
-        if self._rollup is not None:
-            levels = await self._rollup.levels(rules, agent_types, rewards)
-            if levels.due:
-                self._schedule(rules)
-            if levels.progression is not None:
-                return levels.progression
-        return compute(await self._repository.events(), agent_types, rewards, rules=rules)
-
-    def _schedule(self, rules: Rules) -> None:
-        """Write the rollup in the background, unless a write is running or a failed one is waiting to retry."""
-        if self._maintenance is not None and not self._maintenance.done():
-            return
-        if self._clock() < self._write_retry_at:
-            return
-        self._maintenance = asyncio.get_running_loop().create_task(self._background_write(rules))
-
-    async def _background_write(self, rules: Rules) -> None:
+        if self._workers is None:
+            progression, _due = await self._local.progression(
+                rules, scope, through_rollup=through_rollup, on_due=lambda: self._schedule(rules, scope)
+            )
+            return progression, False
+        builds = through_rollup and self._rollup is not None
+        if builds and self._rollup is not None and await self._rollup.unbuilt(rules, scope):
+            self._schedule(rules, scope)
         try:
-            await self._write(rules)
+            return await self._workers.progression(
+                rules, scope, through_rollup=through_rollup, rollup=self._rollup is not None, now=self._now()
+            )
+        except FoldTimeout:
+            if builds:
+                self._schedule(rules, scope)
+            raise
+
+    def _schedule(self, rules: Rules, scope: Scope) -> None:
+        """Write the scope's rollup in the background, unless its write is running or a failed one waits to retry."""
+        task = self._tasks.get(scope.key)
+        if task is not None and not task.done():
+            return
+        if self._clock() < self._retry.get(scope.key, (0, 0.0))[1]:
+            return
+        self._tasks[scope.key] = asyncio.get_running_loop().create_task(self._background_write(rules, scope))
+
+    async def _background_write(self, rules: Rules, scope: Scope) -> None:
+        try:
+            await self._write(rules, scope=scope)
         except Exception:
             # The reads go on from the rollup as it stands, or from the raw rows, and the write waits to retry.
-            self._write_failures += 1
-            delay = min(WRITE_RETRY_FIRST * 2 ** (self._write_failures - 1), WRITE_RETRY_MAX)
-            self._write_retry_at = self._clock() + delay
-            logger.exception("progression_rollup_failed", pack_hash=rules.hash, retry_in_seconds=delay)
+            failures = self._retry.get(scope.key, (0, 0.0))[0] + 1
+            delay = min(WRITE_RETRY_FIRST * 2 ** (failures - 1), WRITE_RETRY_MAX)
+            self._retry[scope.key] = (failures, self._clock() + delay)
+            logger.exception("progression_rollup_failed", pack_hash=rules.hash, scope=scope.key, retry_in_seconds=delay)
 
-    async def _write(self, rules: Rules, *, force_since: datetime | None = None) -> Maintained:
-        """One write of the rollup, after any other write of this process."""
+    async def _write(
+        self, rules: Rules, *, force_since: datetime | None = None, scope: Scope | None = None
+    ) -> Maintained:
+        """One write of the scope's rollup (the deployment's by default), after any other write of this process."""
+        from embry0.services.progression_rollup import EVERY
+
         if self._rollup is None:
             raise RuntimeError("this progression service keeps no rollup")
+        scope = EVERY if scope is None else scope
         async with self._write_lock:
-            done = await self._rollup.maintain(rules, force_since=force_since)
-        self._write_failures, self._write_retry_at = 0, 0.0
+            if self._workers is None:
+                done = await self._local.maintain(rules, scope, force_since=force_since)
+            else:
+                done = await self._workers.maintain(rules, scope, force_since=force_since, now=self._now())
+        self._retry.pop(scope.key, None)
         if done.action is not None:
             self._generation += 1
-            self._cached = None
+            self._cached.clear()
             logger.info(
                 "progression_rollup_written",
                 action=done.action,
                 pack_hash=rules.hash,
+                scope=scope.key,
                 through_day=done.head.through_day.isoformat(),
             )
         return done
 
     async def settle(self) -> None:
-        """Wait for the background rollup write this process started, if one is running."""
-        task = self._maintenance
-        if task is not None:
+        """Wait for the background rollup writes this process started, if any is running."""
+        for task in list(self._tasks.values()):
             await task
 
     async def aclose(self) -> None:
-        """Stop a background rollup write at shutdown: its transaction rolls back, and nothing is half written.
+        """Stop the background rollup writes at shutdown: their transactions roll back, and nothing is half written.
 
-        Waits at most :data:`SHUTDOWN_WAIT` seconds for it to stop, like the lifespan's other tasks.
+        Waits at most :data:`SHUTDOWN_WAIT` seconds for them to stop, like the lifespan's other tasks, then stops the
+        worker processes, whose open transactions roll back with their connections.
         """
-        task = self._maintenance
-        if task is None or task.done():
-            return
-        task.cancel()
-        _done, pending = await asyncio.wait({task}, timeout=SHUTDOWN_WAIT)
-        if pending:
-            logger.warning("progression_rollup_shutdown_timeout", timeout_seconds=SHUTDOWN_WAIT)
+        running = {task for task in self._tasks.values() if not task.done()}
+        for task in running:
+            task.cancel()
+        if running:
+            _done, pending = await asyncio.wait(running, timeout=SHUTDOWN_WAIT)
+            if pending:
+                logger.warning("progression_rollup_shutdown_timeout", timeout_seconds=SHUTDOWN_WAIT)
+        if self._workers is not None:
+            await self._workers.aclose(timeout=SHUTDOWN_WAIT)
 
     async def rebuild(self) -> dict[str, Any]:
-        """Fold every closed day again now and wait for it (``POST /progression/rebuild``).
+        """Fold every closed day of the deployment's work again now and wait for it (``POST /progression/rebuild``).
 
         Reads go on meanwhile, from the rollup as it stands. The call waits
         for a write of this process already running, then rebuilds. A full
         rebuild that started after the call arrived, here or in another
         orchestrator, counts as this one; one that was already running when
-        it arrived does not.
+        it arrived does not. A set of repositories' rollup is rebuilt by its
+        own nightly rebuild.
         """
         if self._rollup is None:
             raise RuntimeError("this progression service keeps no rollup")

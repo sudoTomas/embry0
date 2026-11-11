@@ -26,8 +26,12 @@ def _assigned(target: str) -> set[str]:
 def test_the_service_reads_the_database_through_its_repository() -> None:
     assert _assigned("app.state.progression") == {
         "ProgressionService(ProgressionRepository(db), packs=app.state.progression_packs, "
-        "rollups=ProgressionRollupRepository(db))"
-    }, "production reads the database, the stored content pack and the rollup tables (#176)"
+        "rollups=ProgressionRollupRepository(db), workers=FoldWorkers(database_url, processes=fold_processes(fold_workers), "
+        "json_logs=not app_config.auth_dev_mode) if fold_workers else None)"
+    }, (
+        "production reads the database, the stored content pack and the rollup tables (#176), and computes in "
+        "fold workers over the same database when the lifespan asks for them"
+    )
 
 
 def test_shutdown_stops_a_rollup_write_still_running() -> None:

@@ -4666,6 +4666,82 @@ deliverable under an "Assumptions" heading.$seed$
           FROM owner_binding_fix f WHERE b.id = f.id AND f.new_value <> f.old_value;
         """,
     ),
+    (
+        149,
+        "progression rollup: one fold per scope, the deployment's or a set of repositories a key with an allowlist reads",
+        # A key with a repository allowlist reads the experience, levels and
+        # achievements of its repositories' work alone, as a deployment holding
+        # only them would (embry0/services/progression_rollup.py). Its closed
+        # days are folded once like the deployment's, keyed by its scope: ''
+        # for the deployment's, else a digest of the set of slugs, which
+        # ``repos`` holds. Level-up times, rares and quest rewards do not add up
+        # across repositories, so a set is folded as one, never summed from
+        # per-repository rows. The tables are new, under new names: the rollup
+        # is derived data this release builds again anyway (its fold's code
+        # changed), and migration 131's tables stay as they are, so the
+        # previous release, rolled back to, keeps reading and writing its own
+        # rollup there. A later release drops them.
+        """
+        CREATE TABLE IF NOT EXISTS progression_scope_rollups (
+            scope        TEXT NOT NULL,
+            pack_hash    TEXT NOT NULL,
+            repos        TEXT[],
+            fold_version TEXT NOT NULL,
+            timezone     TEXT NOT NULL,
+            through_day  DATE NOT NULL,
+            boundary     TIMESTAMPTZ NOT NULL,
+            state        JSONB NOT NULL CHECK (jsonb_typeof(state) = 'object'),
+            rewards      JSONB NOT NULL CHECK (jsonb_typeof(rewards) = 'array'),
+            built_at     TIMESTAMPTZ NOT NULL,
+            rebuilt_at   TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (scope, pack_hash),
+            CHECK ((scope = '') = (repos IS NULL))
+        );
+        CREATE TABLE IF NOT EXISTS progression_scope_daily (
+            scope      TEXT NOT NULL,
+            pack_hash  TEXT NOT NULL,
+            day        DATE NOT NULL,
+            agent_type TEXT NOT NULL,
+            skill      TEXT NOT NULL,
+            xp         BIGINT NOT NULL,
+            PRIMARY KEY (scope, pack_hash, day, agent_type, skill),
+            FOREIGN KEY (scope, pack_hash) REFERENCES progression_scope_rollups (scope, pack_hash) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS progression_scope_milestones (
+            scope      TEXT NOT NULL,
+            pack_hash  TEXT NOT NULL,
+            seq        INTEGER NOT NULL,
+            at         TIMESTAMPTZ NOT NULL,
+            kind       TEXT NOT NULL CHECK (kind IN ('level', 'agent_level', 'rare')),
+            agent_type TEXT NOT NULL,
+            skill      TEXT,
+            level      INTEGER,
+            rare       TEXT,
+            PRIMARY KEY (scope, pack_hash, seq),
+            FOREIGN KEY (scope, pack_hash) REFERENCES progression_scope_rollups (scope, pack_hash) ON DELETE CASCADE
+        );
+        COMMENT ON TABLE progression_scope_rollups IS
+            'progression (#176): the closed days of the pack calendar folded once, per scope and pack hash; see progression_rollup.py.';
+        COMMENT ON COLUMN progression_scope_rollups.scope IS
+            'whose fold: empty for the deployment''s, else a digest of the slugs in repos, read by a key with an allowlist.';
+        COMMENT ON TABLE progression_rollups IS
+            'the rollup of the release before migration 149, kept for a rollback to it; progression_scope_rollups replaces it.';
+        """,
+    ),
+    (
+        150,
+        "jobs: an index on the repository a job works on, which a key with an allowlist narrows its reads by",
+        # job_repository_sql (embry0/storage/repositories/jobs.py): a job's
+        # repo, else its git context's, lower-cased as every narrowed read
+        # compares it. Without it a page of a key's runs (GET /traces) walks
+        # the runs newest first until it finds the key's, every run when the
+        # key's are old; with it the key's jobs are found first. Plain CREATE
+        # INDEX, as migration 131's: migrations run at startup, before this
+        # orchestrator writes a job.
+        """
+        CREATE INDEX IF NOT EXISTS idx_jobs_repository ON jobs (lower(COALESCE(repo, context->>'repo')));
+        """,
+    ),
 ]
 
 

@@ -17,7 +17,7 @@ from embry0.storage.repositories.progression import Fact, ProgressEvent
 
 
 class FakeService:
-    async def read(self) -> Any:
+    async def read(self, repos: Any = None) -> Any:
         events = [ProgressEvent("merged", "developer", datetime(2026, 10, 1, tzinfo=UTC))]
         rules = default_rules()
         progression = compute(events, ["developer"], rules=rules)

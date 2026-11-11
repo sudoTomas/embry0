@@ -278,9 +278,7 @@ async def test_an_achievement_s_evidence_shows_a_key_only_its_repositories_and_t
     base = app.state.progression
 
     class Elsewhere:
-        narrowed = base.narrowed
-
-        async def read(self) -> Any:
+        async def read(self, repos: Any = None) -> Any:
             progression = await base.read()
             progression.achievements.append(
                 achievement(progression.rules, "hunt_complete", "Gizmos overheat at noon", "https://tracker.test/T-9")
@@ -314,9 +312,7 @@ async def test_a_quest_done_on_an_issue_shows_where_only_when_the_key_covers_the
     base = app.state.progression
 
     class OnIssues:
-        narrowed = base.narrowed
-
-        async def read(self) -> Any:
+        async def read(self, repos: Any = None) -> Any:
             progression = await base.read()
             progression.quests = [quest("gatekeeper", "iss-widgets"), quest("try_again", "iss-gizmos")]
             return progression

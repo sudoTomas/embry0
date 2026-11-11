@@ -53,8 +53,6 @@ from tests.unit.api.test_job_reads_inventory import address, get_routes
 pytestmark = pytest.mark.requires_postgres
 
 _OLD_PATH = "the old path of the same handler"
-_TOTALS_STAGE = "the progression's experience, levels and achievements, folded per day for the deployment"
-_LATER = "the levels reached, the rares dropped and the achievements unlocked: " + _TOTALS_STAGE
 
 #: Every GET route that adds up, counts or lists work across repositories, and how it holds to a key's allowlist.
 TOTALS: dict[str, str] = {
@@ -64,12 +62,17 @@ TOTALS: dict[str, str] = {
     ),
     "/api/v1/traces": "lists and counts the runs of the jobs the key reads, narrowed before the page",
     "/api/v1/world": (
-        "the characters' quest totals over the key's repositories, and the quest points, cloak trim, quest cloak "
-        "and quests among the recent entries from their work (its lists since #297)"
+        "the account, the characters' experience, levels and quest totals, and the recent entries, from the key's "
+        "repositories' work (its lists since #297)"
     ),
-    "/api/v1/world/characters/{agent_type}": "the character's quest totals and quest log over the key's repositories",
-    "/api/v1/progression": "the quests, the quest points and the repo diaries from the key's repositories' work",
-    "/api/v1/progression/preview": "the quests, the quest points and the repo diaries, as /progression, under the draft",
+    "/api/v1/world/characters/{agent_type}": (
+        "the character's experience, levels, quest totals and quest log over the key's repositories"
+    ),
+    "/api/v1/progression": (
+        "the experience, levels, achievements, quests, quest points and repo diaries of the key's repositories' "
+        "work, folded as a deployment holding only them would fold it"
+    ),
+    "/api/v1/progression/preview": "the same as /progression, under the draft, with the changes the draft makes",
     "/api/v1/repos/{full_repo:repo}/-/setup/cost": "the recorded setup runs, and their typical cost, of the key's",
     "/api/v1/repos/{full_repo:repo}/setup/cost": _OLD_PATH,
 }
@@ -84,39 +87,10 @@ THE_KEY_S: dict[str, dict[str, str]] = {
     },
 }
 
-#: The experience stage's fields of a character, of the account, and of the recent entries (kept apart by kind).
-_CHARACTER = ("xp", "level", "total_level", "best_skill", "skills", "tier", "gear", "capes", "rares")
-_EXPERIENCE = {
-    "body.account.xp": _TOTALS_STAGE,
-    "body.account.total_level": _TOTALS_STAGE,
-    **{f"body.characters[].{name}": _TOTALS_STAGE for name in _CHARACTER},
-    **{f"body.recent[kind={kind}]": _LATER for kind in ("level", "agent_level", "rare", "achievement")},
-    # A character only another repository's work made: the experience a quest it completed rewards.
-    "body.characters[]#": _TOTALS_STAGE,
-    "body.characters[]order": _TOTALS_STAGE,
-    "body.account.characters": _TOTALS_STAGE,
-}
-
-#: The fields of a route that are entries of a list cut to its newest 20, which the experience stage's entries share:
-#: an entry of the key's may leave or join it as levels are reached and achievements unlocked elsewhere, but an entry in
-#: both answers is the same, newest first.
-CUT: dict[str, tuple[str, ...]] = {
-    path: ("body.recent[kind=quest]", "body.recent[kind=diary]")
-    for path in ("/api/v1/progression", "/api/v1/progression/preview", "/api/v1/world")
-}
-
 #: GET routes, or the fields of one, that still count every repository's work, and the work that narrows them.
 #: ``*`` is the whole answer.
 ELSEWHERE: dict[str, dict[str, str]] = {
     "/api/v1/audit": {"*": "every audit row: the audit reads"},
-    "/api/v1/progression": {**_EXPERIENCE, "body.achievements": _TOTALS_STAGE},
-    "/api/v1/progression/preview": {
-        **_EXPERIENCE,
-        "body.achievements": _TOTALS_STAGE,
-        "body.changes": "the levels and experience before and after the draft: " + _TOTALS_STAGE,
-    },
-    "/api/v1/world": _EXPERIENCE,
-    "/api/v1/world/characters/{agent_type}": {f"body.{name}": _TOTALS_STAGE for name in _CHARACTER},
 }
 
 #: Fields that differ between two reads of the same rows, and why: the walk does not compare them.
@@ -294,21 +268,16 @@ def _item_absent(path: str, other: Mapping[str, Any]) -> bool:
     return item is not None and not any(key.startswith(item.group(0)) for key in other)
 
 
-def differing(
-    a: Mapping[str, Any], b: Mapping[str, Any], volatile: Iterable[str] = (), cut: Iterable[str] = ()
-) -> set[str]:
+def differing(a: Mapping[str, Any], b: Mapping[str, Any], volatile: Iterable[str] = ()) -> set[str]:
     """The fields, without identities or positions, in which two answers differ, but the ``volatile`` ones, and those
-    of an item only one answer has. Within ``cut``, the entries of a list cut to its newest, an entry only one answer
-    has is not compared either (the cut moved), and an entry both have must be the same."""
-    loose, cuts = list(volatile), list(cut)
+    of an item only one answer has: the list's length and order say it came or went."""
+    loose = list(volatile)
     out = set()
     for path in set(a) | set(b):
         general = _general(path)
         if a.get(path, ...) == b.get(path, ...) or _covers(loose, general):
             continue
         if path not in a and _item_absent(path, a) or path not in b and _item_absent(path, b):
-            continue
-        if _covers(cuts, general) and (path not in a or path not in b or path.endswith("#")):
             continue
         out.add(general)
     return out
@@ -361,7 +330,7 @@ def compare(
     for path in get_routes(deployment.app):
         loose = VOLATILE.get(path, {})
         for url in urls(path, deployment.values):
-            moved = differing(reads[a][url], reads[b][url], loose, CUT.get(path, ()))
+            moved = differing(reads[a][url], reads[b][url], loose)
             if moved:
                 found.setdefault(path, set()).update(moved)
     return found

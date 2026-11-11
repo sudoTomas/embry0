@@ -35,7 +35,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from embry0.api.actor_visibility import deployment_actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.document_requests import if_match_versions, read_capped_body
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist
 from embry0.api.v1.progression import covered_progression
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
@@ -407,8 +407,10 @@ async def preview_pack_draft(request: Request) -> dict[str, Any]:
         active = await store.effective()
         # Both sides from the raw rows: a preview never reads or builds the active pack's rollup, so a day the
         # rollup holds stale (work recorded late) cannot show up as a change the draft makes.
-        before = await service.compute(await service.rules())
-        after = await service.compute(rules)
+        # A key with an allowlist previews its repositories' progression, as GET /progression reads it.
+        repos = covered_slugs(request)
+        before = await service.compute(await service.rules(), repos)
+        after = await service.compute(rules, repos)
     return {
         # As GET /progression is, under the draft: narrowed to the repositories the caller's key covers.
         **await covered_progression(request, after),
