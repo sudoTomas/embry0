@@ -3,13 +3,20 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PausedBanner } from "../PausedBanner";
 
+describe("PausedBanner title", () => {
+  it("says only that the job is paused: the reason is the brief card's (#436)", () => {
+    render(<PausedBanner jobId="job-1" onResume={vi.fn()} onDiscard={vi.fn()} />);
+    const title = screen.getByText(/^(Paused|Pipeline paused|Max retries)/).textContent;
+    expect(title, "the banner's title says more than that the job is paused").toBe("Paused");
+  });
+});
+
 describe("PausedBanner budget", () => {
   it("says how much more a continue lets a job over its budget spend", async () => {
     const onResume = vi.fn();
     render(
       <PausedBanner
         jobId="job-1"
-        reason="max_retries"
         budget={{ spent: 11.49, cap: 10, continue_adds: 10 }}
         onResume={onResume}
         onDiscard={vi.fn()}
@@ -26,7 +33,6 @@ describe("PausedBanner budget", () => {
     render(
       <PausedBanner
         jobId="job-1"
-        reason="dev_branch_missing"
         onResume={vi.fn()}
         onDiscard={vi.fn()}
       />,

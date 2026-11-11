@@ -29,8 +29,10 @@ _STAGE_WORDS: dict[str, str] = {
     "publish": "Finishing: the result is being delivered.",
 }
 
-#: Why a job paused at max retries, by the stage it arrived from.
-_PAUSE_WORDS: dict[str, str] = {
+#: Why a job paused at max retries, by the stage it arrived from. Every stage the pause node
+#: (``max_retries_node``) names has its words here, and the dashboard's paused banner shows these words
+#: (``status_words`` on ``GET /jobs/{id}``), never the stage itself; a test holds the two lists together (#436).
+PAUSE_WORDS: dict[str, str] = {
     "dev_run_unfinished": "the developer ran out of turns; its work is saved on its branch.",
     # #182: a repository whose salvage.enabled is false gets no salvage commit.
     "dev_run_uncommitted": (
@@ -116,9 +118,11 @@ def _paused(job: Mapping[str, Any], interrupt: Mapping[str, Any] | None) -> dict
         headline = f"Paused: it went over its budget, {_money(budget.get('spent'))} of {_money(budget.get('cap'))}."
     elif reason == "agent_questions_exhausted":
         headline = "Paused: the agents asked more questions than a job may."
-    elif stage in _PAUSE_WORDS:
-        headline = "Paused: " + _PAUSE_WORDS[stage]
-    elif summary.get("message"):
+    elif stage in PAUSE_WORDS:
+        headline = "Paused: " + PAUSE_WORDS[stage]
+    elif summary.get("message") and not (stage and stage in str(summary["message"])):
+        # A pause from a stage with no words names the stage in its message ("Pipeline paused at stage x"): the
+        # identifier is not a sentence (#436).
         headline = f"Paused: {_lower_first(_sentence(str(summary['message'])))}."
     else:
         headline = "Paused."

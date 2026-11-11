@@ -3,10 +3,14 @@ import { Pause, Play, MessageSquare, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import type { PauseBudget } from "@/lib/types";
 
+/**
+ * A paused job's controls. Why it paused and what comes next is the brief card's "Now" line
+ * (`status_words`, one sentence for every pause stage, from embry0/services/job_status_words.py), so the
+ * banner does not say it again (#436): it holds what only it has, how long the pause lasts, the review's
+ * feedback, the budget, and the ways to go on.
+ */
 interface PausedBannerProps {
   jobId: string;
-  reason: string;
-  retryCount?: number;
   latestReview?: string;
   /** A job over its budget: a continue lets it spend `continue_adds` more. */
   budget?: PauseBudget;
@@ -18,8 +22,6 @@ interface PausedBannerProps {
 }
 
 export function PausedBanner({
-  reason,
-  retryCount,
   latestReview,
   budget,
   pausedAt,
@@ -50,26 +52,13 @@ export function PausedBanner({
     return () => clearInterval(interval);
   }, [pausedAt, ttlHours]);
 
-  // `reason` is the interrupt event's reason when the viewer received it live,
-  // otherwise the job's current_stage — never guess, an operator picks their
-  // recovery from this line and the wrong guess sends them the wrong way.
-  const reasonText = reason === "max_retries"
-    ? `Max retries reached${retryCount ? ` (${retryCount}/3)` : ""}`
-    : reason === "budget_exceeded"
-      ? "Budget exceeded"
-      : reason === "dev_branch_missing"
-        ? "Developer pushed no branch — resume to commit and push the existing work"
-        : reason === "review_errored"
-          ? "Review could not complete"
-          : reason || "Pipeline paused";
-
   return (
     <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.06] overflow-hidden">
       {/* Header */}
       <div className="px-4 py-3 flex items-center gap-3">
         <Pause className="w-4 h-4 text-amber-400" />
         <div className="flex-1">
-          <div className="text-sm font-medium text-amber-300">{reasonText}</div>
+          <div className="text-sm font-medium text-amber-300">Paused</div>
           {timeRemaining && (
             <div className="text-xs text-amber-400/60 mt-0.5">{timeRemaining}</div>
           )}

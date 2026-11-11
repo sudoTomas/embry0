@@ -116,3 +116,49 @@ def test_a_failure_uses_the_caller_s_plain_words_else_its_own_message() -> None:
     assert words["actions"] == ["run_again"]
     assert status_words({"status": "failed", "error_message": "boom. trace"})["headline"] == "Failed: boom."
     assert status_words({"status": "failed"})["headline"] == "Failed."
+
+
+def _stages_the_pause_node_names() -> set[str]:
+    """Every stage ``max_retries_node`` compares its arrival stage with (``==``, ``!=``, ``in``, ``not in``)."""
+    import ast
+    import inspect
+
+    from embry0.workflows.issue_to_pr.nodes import _interrupts
+
+    tree = ast.parse(inspect.getsource(_interrupts.max_retries_node))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) and node.left.id == "arrival_stage":
+            for right in node.comparators:
+                values = right.elts if isinstance(right, ast.Tuple | ast.List | ast.Set) else [right]
+                names.update(v.value for v in values if isinstance(v, ast.Constant) and isinstance(v.value, str))
+    return names
+
+
+def test_every_stage_the_pause_node_names_has_words() -> None:
+    """#436: the paused banner shows these words; a stage the pause node handles with none showed as itself."""
+    from embry0.services.job_status_words import PAUSE_WORDS
+
+    named = _stages_the_pause_node_names()
+    assert "dev_run_unfinished" in named, f"the pause node's stages were not read, so this measures nothing: {named}"
+    missing = sorted(named - PAUSE_WORDS.keys())
+    assert missing == [], f"pause stages with no words in job_status_words.PAUSE_WORDS: {missing}"
+
+
+def test_each_pause_stage_reads_as_a_sentence_not_as_itself() -> None:
+    from embry0.services.job_status_words import PAUSE_WORDS
+
+    for stage in sorted(PAUSE_WORDS):
+        headline = status_words(
+            {"status": "paused", "current_stage": stage}, _max_retries(message=f"Pipeline paused at stage {stage}")
+        )["headline"]
+        assert stage not in headline and headline.startswith("Paused: ") and headline.endswith("."), (stage, headline)
+
+
+def test_a_pause_from_a_stage_with_no_words_does_not_show_the_stage() -> None:
+    """A stage a later change routes to the pause without words falls to the pause's message, which names it."""
+    words = status_words(
+        {"status": "paused", "current_stage": "some_new_stage"},
+        _max_retries(message="Pipeline paused at stage some_new_stage", options=["abandon"]),
+    )
+    assert words["headline"] == "Paused.", words["headline"]

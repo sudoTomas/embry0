@@ -368,6 +368,23 @@ describe("JobDetailPage", () => {
     expect(screen.getByRole("button", { name: "Override" })).toBeInTheDocument();
   });
 
+  it("a paused job says why once, in the API's words, and never shows its stage (#436)", () => {
+    const headline = "Paused: the developer ran out of turns; its work is saved on its branch.";
+    state.job = job({
+      status: "paused",
+      current_stage: "dev_run_unfinished",
+      status_words: { state: "paused", headline, next: "Continue or stop.", actions: ["continue_retrying", "abandon"], until: null },
+    });
+    state.events = []; // opened after the pause: no interrupt event reached this viewer
+    mount();
+    expect(screen.queryByText("dev_run_unfinished"), "the page shows the stage itself").toBeNull();
+    expect(screen.getByTestId("job-status-words"), "the brief card says why it paused").toHaveTextContent(headline);
+    expect(
+      screen.queryAllByText(headline, { exact: false }),
+      "the reason is shown more than once: the banner repeats the brief card's",
+    ).toHaveLength(1);
+  });
+
   it("the ledger is collapsed and holds the traces table", () => {
     mount();
     const ledger = screen.getByTestId("ledger") as HTMLDetailsElement;
