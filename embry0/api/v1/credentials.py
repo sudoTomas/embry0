@@ -256,7 +256,14 @@ async def list_credentials(request: Request) -> list[CredentialOut]:
     ]
 
 
-@router.post("/credentials", response_model=CredentialOut, status_code=201, dependencies=[require_admin])
+@router.post(
+    "/credentials",
+    response_model=CredentialOut,
+    status_code=201,
+    # A new secret joins the scrub set every repository's job output and logs are redacted with, and a new account
+    # joins every unrestricted caller's discovery: the deployment's, whatever the credential is later bound to.
+    dependencies=[require_admin, deployment_writes("create a credential")],
+)
 async def create_credential(req: CredentialCreate, request: Request) -> CredentialOut:
     st = _state(request)
     expected = _expected_host(st.config, req.provider, req.metadata)
@@ -626,6 +633,9 @@ async def start_xai_device_login(req: XaiDeviceLoginStart, request: Request) -> 
 async def poll_xai_device_login(login_id: str, request: Request) -> XaiDeviceLoginPoll:
     from embry0.execution.xai_device_login import XaiDeviceLoginError, _pin_xai
 
+    # A read that writes: the finished login stores a credential bound for every repository's jobs. Refused before the
+    # login is looked up, so the answer is the same whether it exists.
+    await enforce_deployment_allowlist(request, action="sign in the deployment's model account")
     st = _state(request)
     pending = _device_logins(st).get(login_id)
     if pending is None:
@@ -728,14 +738,18 @@ async def update_credential(credential_id: str, req: CredentialUpdate, request: 
     return await _out_with_count(request, row)
 
 
-@router.post("/credentials/{credential_id}/rotate", response_model=CredentialOut, dependencies=[require_admin])
+@router.post(
+    "/credentials/{credential_id}/rotate",
+    response_model=CredentialOut,
+    # The new secret joins the deployment's scrub set, as a new credential's does.
+    dependencies=[require_admin, deployment_writes("rotate a credential")],
+)
 async def rotate_credential(credential_id: str, req: CredentialRotate, request: Request) -> CredentialOut:
     st = _state(request)
     secret_ciphertext = await st.secrets_provider.encrypt(req.secret)
-    async with _held(request, credential_id, action="rotate a credential") as conn:
-        row = await st.credentials_repo.rotate(
-            credential_id, secret_ciphertext=secret_ciphertext, masked_preview=masked_preview(req.secret), **_on(conn)
-        )
+    row = await st.credentials_repo.rotate(
+        credential_id, secret_ciphertext=secret_ciphertext, masked_preview=masked_preview(req.secret)
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="credential not found")
     await _audit(request, "credential.rotated", {"credential_id": credential_id})

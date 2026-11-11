@@ -2,7 +2,9 @@
 
 - A credential something beyond the key's list uses is not the key's to bind,
   even to its own repository, nor to change; ``GET /credentials`` lists to it
-  only the credentials within its list.
+  only the credentials within its list. Such a key creates and rotates none
+  (``test_deployment_writes_inventory.py``): its own here are ones it created
+  while it had no list (:func:`tests.fixtures.repository_writes.made_before_its_list`).
 - A key covers an owner only when it covers every repository registered under
   it: an organization's routes change all of them.
 - ``GET /apikeys`` lists to a key with an allowlist only the keys within it.
@@ -22,7 +24,16 @@ from typing import Any
 import pytest
 
 from embry0.storage.database import DatabasePool
-from tests.fixtures.repository_writes import COVERED, MASTER, OWNER, UNCOVERED, call, repository_writes_app
+from tests.fixtures.repository_writes import (
+    COVERED,
+    MASTER,
+    OWNER,
+    UNCOVERED,
+    call,
+    key_id,
+    made_before_its_list,
+    repository_writes_app,
+)
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -42,6 +53,12 @@ async def _credential(app: Any, token: str, label: str, kind: str = "forge_token
     return str(made.json()["id"])
 
 
+async def _own(app: Any, token: str, label: str, kind: str = "forge_token", provider: str = "github") -> str:
+    """A credential the limited key ``token`` created while it had no allowlist: unbound, its own."""
+    body = {"kind": kind, "provider": provider, "label": label, "secret": "x" * 30}
+    return await made_before_its_list(app, await key_id(app, "limited"), token, body)
+
+
 async def test_another_repository_s_credential_is_not_the_key_s_to_bind_list_or_change(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -56,7 +73,7 @@ async def test_another_repository_s_credential_is_not_the_key_s_to_bind_list_or_
             {"bindings": [{"credential_id": llm, "role": "llm"}, {"credential_id": forge, "role": "forge"}]},
         )
         assert bound.status_code == 200, bound.text
-        own = await _credential(app, keys.limited, "own-forge")
+        own = await _own(app, keys.limited, "own-forge")
         listed = await call(app, "GET", "/api/v1/credentials", keys.limited)
         reuse = await call(
             app,
@@ -155,7 +172,7 @@ async def test_the_key_list_shows_a_key_with_an_allowlist_only_the_keys_within_i
     assert sorted(k["name"] for k in everyone.json()["keys"]) == ["limited", "open", "wider", "within"], everyone.text
 
 
-@pytest.mark.parametrize("change", ["rotate", "bind"])
+@pytest.mark.parametrize("change", ["rename", "bind"])
 async def test_a_binding_made_while_a_key_changes_a_credential_waits_and_is_seen(
     change: str, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -164,9 +181,9 @@ async def test_a_binding_made_while_a_key_changes_a_credential_waits_and_is_seen
     transaction on the credential's row."""
     db = db_with_migrations
     async with repository_writes_app(db, monkeypatch) as (app, keys, _values):
-        own = await _credential(app, keys.limited, "own-forge")
+        own = await _own(app, keys.limited, "own-forge")
         request = {
-            "rotate": ("POST", f"/api/v1/credentials/{own}/rotate", {"secret": "w" * 30}),
+            "rename": ("PUT", f"/api/v1/credentials/{own}", {"label": "own-renamed"}),
             "bind": (
                 "PUT",
                 f"/api/v1/repos/{COVERED}/-/credentials",
@@ -235,7 +252,7 @@ async def test_a_credential_for_a_whole_owner_takes_a_key_without_an_allowlist(
     """The key covers every repository of its owner today, yet an owner binding or an organization's credential
     would reach a repository registered tomorrow: it binds per repository instead."""
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
-        own = await _credential(app, keys.limited, "own-forge")
+        own = await _own(app, keys.limited, "own-forge")
         owner_binding = await call(
             app,
             "PUT",
@@ -288,6 +305,10 @@ async def test_a_credential_for_a_whole_owner_takes_a_key_without_an_allowlist(
     assert (stored, owner_bindings) == (values_credential, 0), "the organization keeps the admin's credential"
 
 
+def _forge_body(label: str) -> dict[str, str]:
+    return {"kind": "forge_token", "provider": "github", "label": label, "secret": "x" * 30}
+
+
 def _missing_like(cid: str) -> str:
     """A credential id that does not exist, as long as ``cid``."""
     return "cred-" + "0" * (len(cid) - 5)
@@ -295,7 +316,8 @@ def _missing_like(cid: str) -> str:
 
 async def _changes(app: Any, token: str, cid: str) -> list[tuple[int, str]]:
     """What rotating, renaming, deleting and binding the credential ``cid`` to the covered repository answer, the id
-    written ``<id>``."""
+    written ``<id>``. A key with an allowlist rotates no credential: refused before the credential is read, as the
+    deployment's, whatever it names."""
     out = []
     for method, path, body in (
         ("POST", f"/api/v1/credentials/{cid}/rotate", {"secret": "w" * 30}),
@@ -320,19 +342,19 @@ async def test_another_s_credential_bound_to_nothing_is_not_there_for_the_key(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An admin made it and has not bound it yet: the key does not list it, and changing or binding it answers as a
-    credential that does not exist. One the key made itself is its own."""
+    credential that does not exist. One the key made itself, before it had a list, is its own."""
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
         theirs = await _credential(app, MASTER, "admin-unbound")
-        mine = await _credential(app, keys.limited, "mine-unbound")
+        mine = await _own(app, keys.limited, "mine-unbound")
         missing = _missing_like(theirs)
         listed = await _listed(app, keys.limited)
         hidden, absent = await _changes(app, keys.limited, theirs), await _changes(app, keys.limited, missing)
-        own_rotated = await call(app, "POST", f"/api/v1/credentials/{mine}/rotate", keys.limited, {"secret": "w" * 30})
+        own_renamed = await call(app, "PUT", f"/api/v1/credentials/{mine}", keys.limited, {"label": "mine-renamed"})
         still = await db_with_migrations.fetchval("SELECT label FROM credentials WHERE id = $1", theirs)
     assert listed == ["mine-unbound"], listed
     assert hidden == absent, f"each answers as for a credential that does not exist: {hidden} against {absent}"
-    assert [code for code, _ in hidden] == [404, 404, 404, 422], hidden
-    assert still == "admin-unbound" and own_rotated.status_code == 200, own_rotated.text
+    assert [code for code, _ in hidden] == [403, 404, 404, 422], hidden
+    assert still == "admin-unbound" and own_renamed.status_code == 200, own_renamed.text
 
 
 async def test_a_repository_registered_under_an_old_slug_renamed_into_the_owner_counts_under_it(
@@ -355,7 +377,7 @@ async def test_an_unbound_credential_is_the_key_s_that_created_it_not_another_s_
 ) -> None:
     """Two keys of one name, each covering a repository of its own. An unbound credential one created is that key's
     alone: the other neither lists, changes nor binds it, and each answer is a missing credential's. Each credential
-    records the id of the key that created it."""
+    records the id of the key that created it, here while it had no list."""
     from embry0.storage.repositories.api_keys import ApiKeysRepository
 
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
@@ -366,8 +388,8 @@ async def test_an_unbound_credential_is_the_key_s_that_created_it_not_another_s_
         there_row, there = await made.create(
             name="dispatch-bot", scope="admin", user_id=None, created_by="t", allowed_repos=[UNCOVERED]
         )
-        theirs = await _credential(app, there, "there-unbound")
-        mine = await _credential(app, here, "here-unbound")
+        theirs = await made_before_its_list(app, there_row.id, there, _forge_body("there-unbound"))
+        mine = await made_before_its_list(app, here_row.id, here, _forge_body("here-unbound"))
         listed = await _listed(app, here)
         hidden, absent = await _changes(app, here, theirs), await _changes(app, here, _missing_like(theirs))
         own_bound = await call(
@@ -449,7 +471,7 @@ async def test_a_probe_with_a_credential_not_the_key_s_answers_as_a_missing_one(
             {"bindings": [{"credential_id": beyond, "role": "forge"}]},
         )
         assert bound.status_code == 200, bound.text
-        own = await _credential(app, keys.limited, "own-forge")
+        own = await _own(app, keys.limited, "own-forge")
 
         async def probe(token: str, cid: str) -> tuple[int, bytes, int]:
             before = await db_with_migrations.fetchval(
@@ -584,8 +606,8 @@ async def test_run_with_a_key_the_repository_does_not_resolve_answers_as_a_missi
         theirs = await _llm_credential(app, MASTER, "theirs-llm")
         unbound = await _llm_credential(app, MASTER, "admin-llm")
         pool = await _llm_credential(app, MASTER, "pool-llm")
-        mine = await _llm_credential(app, keys.limited, "mine-llm")
-        mine_unbound = await _llm_credential(app, keys.limited, "mine-spare-llm")
+        mine = await _own(app, keys.limited, "mine-llm", kind="llm_api_key", provider="anthropic")
+        mine_unbound = await _own(app, keys.limited, "mine-spare-llm", kind="llm_api_key", provider="anthropic")
         for token, path, body in (
             (
                 MASTER,

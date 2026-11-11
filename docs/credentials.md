@@ -150,9 +150,9 @@ All under `/api/v1`. Reads need any authenticated principal; every mutation need
 | method and path | tier | purpose |
 |---|---|---|
 | `GET /credentials` | read | list: id, kind, provider, host, label, `masked_preview`, `verified_login`, status, `status_reason`, `quarantined_until`, `binding_count`, timestamps |
-| `POST /credentials` | admin | create: `kind`, `provider`, `host`, `label`, `secret`, `git_author_name`, `git_author_email`. 409 on a duplicate label, 422 on a wrong host |
+| `POST /credentials` | admin | create: `kind`, `provider`, `host`, `label`, `secret`, `git_author_name`, `git_author_email`. 409 on a duplicate label, 422 on a wrong host. Not a key with a [repository allowlist](api.md#repository-allowlist): the new secret joins every repository's scrub set |
 | `PUT /credentials/{id}` | admin | `label`, author fields, `status` in {`ok`, `disabled`}. An omitted field is kept; an author field sent as `null` or blank is cleared, so the author falls back to branding |
-| `POST /credentials/{id}/rotate` | admin | new `secret`; sets `rotated_at`, clears `decryption_failed` |
+| `POST /credentials/{id}/rotate` | admin | new `secret`; sets `rotated_at`, clears `decryption_failed`. Not a key with a repository allowlist, as creating |
 | `POST /credentials/{id}/verify` | admin | forge tokens only: asks the forge `GET /user` and stores `verified_login` |
 | `DELETE /credentials/{id}` | admin | 409 while bindings reference it |
 | `GET /credentials/resolve?repo=&role=forge` | read | dry run: which credential a job on `repo` would get, and why; a key with a repository allowlist only for a repository on its list, and without the deployment's credentials ([below](#a-key-with-a-repository-allowlist)) |
@@ -160,7 +160,7 @@ All under `/api/v1`. Reads need any authenticated principal; every mutation need
 | `PUT /credentials/bindings` | admin | replace the bindings of one owner, host or global scope |
 | `POST /credentials/import-env` | admin | the importer above |
 | `POST /credentials/xai/device-login` | admin | body `{label}`. Starts an xAI device-code login. Returns `login_id`, `user_code`, `verification_uri_complete`, `interval`, `expires_at`. Does not return `device_code` |
-| `GET /credentials/xai/device-login/{login_id}` | admin | `{"status":"pending"}`, `{"status":"expired"}`, or `{"status":"done","credential":...}` after the `llm_oauth` row exists. The response never includes the refresh token |
+| `GET /credentials/xai/device-login/{login_id}` | admin | `{"status":"pending"}`, `{"status":"expired"}`, or `{"status":"done","credential":...}` after the `llm_oauth` row exists. The response never includes the refresh token. Not a key with a repository allowlist, as starting one |
 | `GET /repos/{repo}/-/credentials` | read | the repo's bindings plus the effective forge and model-account resolutions; to a key with a repository allowlist, without the deployment's credentials |
 | `PUT /repos/{repo}/-/credentials` | admin | replace the repo's bindings; registers the repo if unknown, as the QA config write does |
 
