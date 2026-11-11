@@ -100,6 +100,8 @@ async def test_the_rescue_push_runs_on_embry0s_git():
     pushed: list[bool] = []
 
     def answer(t: str) -> str:
+        if "rev-parse --verify --quiet refs/heads/feature/x || echo" in t:
+            return "abc\n"
         if "rev-list" in t:
             return "2\n"
         if re.search(r"\bpush\b", t):
@@ -109,16 +111,25 @@ async def test_the_rescue_push_runs_on_embry0s_git():
         return ""
 
     docker = Recorder(answer)
-    assert await _rescue_push_branch(docker=docker, container_id="c1", branch="feature/x"), "nothing was pushed"
+    assert await _rescue_push_branch(
+        docker=docker, container_id="c1", branch="feature/x", forge_url="https://github.com/o/r.git"
+    ), "nothing was pushed"
     _assert_protected(docker, "the rescue push")
 
 
 async def test_the_branch_probes_run_on_embry0s_git():
     from embry0.workflows.issue_to_pr.nodes._developer import _branch_on_origin, _verify_branch_pushed
 
-    docker = Recorder(lambda t: "abc\trefs/heads/feature/x\n" if "ls-remote" in t else "2026-11-01\tsubject\n")
+    def answer(t: str) -> str:
+        if "ls-remote" in t:
+            return "abc\trefs/heads/feature/x\n"
+        return "abc\n" if "rev-parse --verify --quiet refs/heads/feature/x || echo" in t else "2026-11-01\tsubject\n"
+
+    docker = Recorder(answer)
     assert await _branch_on_origin(docker=docker, container_id="c1", branch="feature/x")
-    assert await _verify_branch_pushed(docker=docker, container_id="c1", branch="feature/x")
+    assert await _verify_branch_pushed(
+        docker=docker, container_id="c1", branch="feature/x", forge_url="https://github.com/o/r.git"
+    )
     _assert_protected(docker, "the branch probes")
 
 
@@ -365,4 +376,41 @@ async def test_a_refused_rescue_explains_itself_in_the_jobs_failure():
     why = _branch_missing_explanation("feature/x", diagnostics)
     assert "filter.x.clean" in why and "git config --unset-all" in why, (
         f"the job's failure must name what stopped embry0's push: {why}"
+    )
+
+
+class _RefusingMany(Recorder):
+    """Refuses every git step for the keys ``git lfs install --local`` and a merge driver write: a long refusal."""
+
+    KEYS = (
+        "filter.lfs.clean filter.lfs.smudge filter.lfs.process filter.lfs.required "
+        "merge.ours.driver merge.lockfile.driver diff.lockb.textconv include.path"
+    )
+
+    async def run_cmd(self, cmd: list[str], timeout: int = 60, stdin_data: bytes | None = None, **_kw: Any) -> str:
+        await super().run_cmd(cmd, timeout, stdin_data)
+        if docker_runs_git(cmd):
+            raise RuntimeError(f"Docker command failed: embry0-git-refused: keys {self.KEYS}")
+        return ""
+
+
+async def test_a_refused_push_check_explains_itself_in_the_jobs_failure():
+    """The push check's git is refused: not known, so not pushed, and the failure says why, whole (#435)."""
+    from embry0.workflows.issue_to_pr.nodes._developer import _branch_missing_explanation, _verify_branch_pushed
+
+    diagnostics: dict[str, Any] = {}
+    try:
+        answer = await _verify_branch_pushed(
+            docker=_RefusingMany(),
+            container_id="c1",
+            branch="feature/x",
+            forge_url="https://github.com/o/r.git",
+            diagnostics=diagnostics,
+        )
+    except TypeError as exc:
+        pytest.fail(f"the push check cannot be told the forge's URL or asked for its diagnostics: {exc}")
+    assert answer is None, f"a refused push check answered {answer!r}"
+    why = _branch_missing_explanation("feature/x", diagnostics)
+    assert "include.path" in why and "git config --unset-all" in why, (
+        f"the job's failure must name every key that stopped embry0's push check, and how to clear them: {why}"
     )

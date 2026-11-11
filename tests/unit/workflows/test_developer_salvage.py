@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tests.fixtures.sandbox_git_local import readable
+from tests.fixtures.sandbox_git_local import MAIN_SHA, readable, reads_branch_tip, reads_head
 
 _BRANCH = "embry0/iss-abc12345-test-task"
 
@@ -64,6 +64,10 @@ class _Sandbox:
         self.head = head
         self.fail_commit = fail_commit
         self.local_commits = 0
+        # Each local branch's tip; HEAD is the checked-out one's, another commit when that is main. The push
+        # check compares the job's branch's tip with the forge's (#435).
+        self.tips = {head: "abc123" if head == _BRANCH else MAIN_SHA}
+        self.forge_tip = self.tips.get(_BRANCH, "") if on_origin else ""
         self.calls: list[list[str]] = []
         self.messages: list[str] = []
 
@@ -73,6 +77,12 @@ class _Sandbox:
     async def run_cmd(self, cmd: list[str], timeout: float | None = None, **_kwargs: Any) -> str:  # noqa: ARG002
         self.calls.append(cmd)
         joined = readable(cmd)
+        if reads_branch_tip(cmd):
+            from embry0.workflows.issue_to_pr.nodes._developer import _PROBE_NO_BRANCH
+
+            return f"{self.tips.get(_BRANCH, _PROBE_NO_BRANCH)}\n"
+        if reads_head(cmd):
+            return f"{self.tips[self.head]}\n"
         if "status" in joined and "--porcelain" in joined:
             return " M src/a.py\n?? src/new.py\n" if self.dirty else ""
         if "rev-list" in joined:
@@ -81,10 +91,11 @@ class _Sandbox:
         if "--abbrev-ref" in joined:
             return f"{self.head}\n"
         if "switch" in joined and "-c" in cmd:
+            self.tips[cmd[-1]] = self.tips[self.head]
             self.head = cmd[-1]
             return ""
         if "rev-parse" in joined and "--verify" in joined and "refs/heads/" in joined:
-            return "sha\n" if self.head == _BRANCH else ""
+            return "sha\n" if _BRANCH in self.tips else ""
         if " add -A" in f" {joined}":
             return ""
         if "commit" in cmd:
@@ -92,15 +103,17 @@ class _Sandbox:
                 raise RuntimeError("Docker command failed: git commit: no identity")
             self.messages.append(cmd[cmd.index("-m") + 1])
             self.local_commits += 1
+            self.tips[self.head] = f"c0ffee{self.local_commits}"
             self.dirty = False
             return "[branch abc1234] wip"
         if "push" in cmd:
             assert "--force" not in cmd and "-f" not in cmd, "salvage never force-pushes"
             self.on_origin = True
+            self.forge_tip = self.tips.get(_BRANCH, self.forge_tip)
             self.local_commits = 0
             return ""
         if "ls-remote" in joined:
-            return f"abc123\trefs/heads/{_BRANCH}" if self.on_origin else ""
+            return f"{self.forge_tip}\trefs/heads/{_BRANCH}" if self.on_origin else ""
         return ""
 
 
@@ -371,3 +384,164 @@ def test_the_commit_helper_has_no_subject_of_its_own():
     assert message.default is inspect.Parameter.empty, (
         "the salvage commit's message must come from the job's salvage.commit_subject, never a wip: default in code"
     )
+
+
+class _ForgeReadsFail(_Sandbox):
+    """The salvage commit is made and pushed, and then every read of the forge fails."""
+
+    async def run_cmd(self, cmd: list[str], timeout: float | None = None, **kwargs: Any) -> str:
+        if "ls-remote" in readable(cmd) and self.on_origin:
+            self.calls.append(cmd)
+            raise RuntimeError("Docker command failed: fatal: unable to access the forge: 502")
+        return await super().run_cmd(cmd, timeout, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_a_salvage_commit_keeps_its_record_when_the_push_cannot_be_confirmed(monkeypatch: Any) -> None:
+    """The run stopped, embry0 committed and pushed its work, and the forge could not be read after (#435, review).
+
+    The pause must still be the unfinished one, naming the commit: without the record, "merge as is" would
+    deliver a branch ending in a "Do not merge it as it is" commit with no human-merge-only note.
+    """
+    import embry0.workflows.issue_to_pr.nodes as nodes_module
+    from embry0.execution import sandbox_git
+    from embry0.workflows.issue_to_pr.nodes import max_retries_node
+
+    async def no_pause(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox_git, "_pause", no_pause, raising=False)
+    sandbox = _ForgeReadsFail()
+    cmd = await _run(_stopped("reached max_turns (120)", error_code="ERR_AGENT_MAX_TURNS"), sandbox)
+    assert sandbox.messages and sandbox.on_origin, "the salvage commit was not made and pushed"
+    assert cmd.update["current_stage"] == "dev_run_unfinished", (
+        f"an unfinished run whose push could not be confirmed lost its unfinished pause: {cmd.update['current_stage']}"
+    )
+    record = cmd.update["unfinished_work"]
+    assert record and record["committed"] and record["pushed"] is False, f"the salvage record was lost: {record}"
+    assert "could not confirm" in cmd.update["errors"][-1], cmd.update["errors"][-1]
+
+    summary: dict[str, Any] = {}
+
+    def _interrupt(value: dict[str, Any]) -> str:
+        summary.update(value)
+        return "abandon"
+
+    with (
+        patch.object(nodes_module, "interrupt", _interrupt),
+        patch.object(nodes_module, "get_stream_writer", return_value=lambda _event: None),
+    ):
+        await max_retries_node({**_make_state(branch_name=_BRANCH), **cmd.update}, config=None)
+    assert "could not confirm the forge has it" in summary["message"], summary["message"]
+    assert "UNFINISHED" in summary["message"], summary["message"]
+    assert "merge_as_is" not in summary["options"], (
+        f"a salvage commit the forge was not shown to have was offered to merge as is: {summary['options']}"
+    )
+
+
+class _PushFails(_Sandbox):
+    """The salvage commit is made, and embry0's push of it is refused: the branch is not on the forge."""
+
+    def __init__(self, *, forge_unreadable: bool = False, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.forge_unreadable = forge_unreadable
+
+    async def run_cmd(self, cmd: list[str], timeout: float | None = None, **kwargs: Any) -> str:
+        if "push" in cmd:
+            self.calls.append(cmd)
+            raise RuntimeError("Docker command failed: remote: rejected by the git proxy (403)")
+        if self.forge_unreadable and "ls-remote" in readable(cmd):
+            self.calls.append(cmd)
+            raise RuntimeError("Docker command failed: fatal: unable to access the forge: 502")
+        return await super().run_cmd(cmd, timeout, **kwargs)
+
+
+async def _pause(state: dict[str, Any], answer: str = "abandon") -> tuple[dict[str, Any], dict[str, Any]]:
+    """The summary ``max_retries_node`` pauses ``state`` with, and what it returns for ``answer``."""
+    import embry0.workflows.issue_to_pr.nodes as nodes_module
+    from embry0.workflows.issue_to_pr.nodes import max_retries_node
+
+    summary: dict[str, Any] = {}
+
+    def _interrupt(value: dict[str, Any]) -> str:
+        summary.update(value)
+        return answer
+
+    with (
+        patch.object(nodes_module, "interrupt", _interrupt),
+        patch.object(nodes_module, "get_stream_writer", return_value=lambda _event: None),
+    ):
+        after = await max_retries_node(state, config=None)
+    return summary, dict(after or {})
+
+
+@pytest.mark.parametrize("forge_unreadable", [False, True], ids=["forge read", "forge unreadable from the start"])
+@pytest.mark.asyncio
+async def test_a_failed_salvage_push_says_so_and_offers_no_merge(monkeypatch: Any, forge_unreadable: bool) -> None:
+    """embry0's own push of the salvage commit is refused (#435, second review).
+
+    The commit is then only in the sandbox: the error and the pause say the push failed, not that it went
+    through unconfirmed; "merge as is", which would end the job and destroy the sandbox, is not offered, and
+    choosing it anyway is a stop. When the forge could not be read either, the push failure is still named.
+    """
+    from embry0.execution import sandbox_git
+
+    async def no_pause(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox_git, "_pause", no_pause, raising=False)
+    sandbox = _PushFails(forge_unreadable=forge_unreadable)
+    cmd = await _run(_stopped("reached max_turns (120)", error_code="ERR_AGENT_MAX_TURNS"), sandbox)
+    assert sandbox.messages and not sandbox.on_origin, "the salvage commit was not made, or reached the forge"
+    record = cmd.update["unfinished_work"]
+    assert record["committed"] and record["pushed"] is False and "403" in str(record.get("push_error")), (
+        f"the record does not say the push failed: {record}"
+    )
+    error = cmd.update["errors"][-1]
+    assert "could not push it" in error and "403" in error and "pushed 'embry0" not in error, (
+        f"the run's error does not say the push failed: {error}"
+    )
+    summary, after = await _pause({**_make_state(branch_name=_BRANCH), **cmd.update, "pr_url": ""}, "merge_as_is")
+    assert "could not push it" in summary["message"] and "403" in summary["message"], (
+        f"the pause does not say the push failed: {summary['message']}"
+    )
+    assert "merge_as_is" not in summary["options"], f"merge as is was offered for an unpushed commit: {summary}"
+    assert after.get("current_stage") == "abandoned" and not after.get("merged_as_is"), (
+        f"a merge as is the pause did not offer was not read as a stop: {after}"
+    )
+
+
+def test_the_next_run_is_told_whether_the_commit_was_pushed() -> None:
+    """The prompt said "and pushed it" for every salvage commit, even one whose push failed (#435)."""
+    from embry0.settings.sections.salvage import DEFAULT_SUBJECT as OLD_SUBJECT
+    from embry0.workflows.issue_to_pr.nodes._salvage import prompt_section
+
+    base = {"branch": _BRANCH, "agent": "developer", "reason": "turn cap", "committed": True}
+    pushed = prompt_section(base, subject_template=OLD_SUBJECT) or ""
+    failed = prompt_section({**base, "pushed": False, "push_error": "403"}, subject_template=OLD_SUBJECT) or ""
+    unconfirmed = prompt_section({**base, "pushed": False}, subject_template=OLD_SUBJECT) or ""
+    assert "and pushed it, so it is checked out here" in pushed, pushed
+    assert "could not push it" in failed and "and pushed it" not in failed, (
+        f"the next run is told a failed push went through: {failed.strip()}"
+    )
+    assert "not shown to have it" in unconfirmed, f"the next run is not told the push was unconfirmed: {unconfirmed}"
+
+
+@pytest.mark.asyncio
+async def test_a_budget_pause_names_an_unpushed_salvage_commit_and_offers_no_merge() -> None:
+    """A budget or question stop's pause adds the salvage note: it says the push failed, and merge is withheld."""
+    record = {
+        "branch": _BRANCH,
+        "agent": "developer",
+        "reason": "budget reached",
+        "committed": True,
+        "pushed": False,
+        "push_error": "remote: rejected by the git proxy (403)",
+    }
+    state = {**_make_state(branch_name=_BRANCH), "current_stage": "max_retries", "unfinished_work": record}
+    state["retry_count"] = 2
+    summary, _after = await _pause(state)
+    assert "could not push it" in summary["message"] and "403" in summary["message"], (
+        f"the pause's salvage note does not say the push failed: {summary['message']}"
+    )
+    assert "merge_as_is" not in summary["options"], f"merge as is was offered for an unpushed commit: {summary}"

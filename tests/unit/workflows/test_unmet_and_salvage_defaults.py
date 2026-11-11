@@ -29,7 +29,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import embry0.workflows.issue_to_pr.nodes as nodes_module
+from embry0.execution import sandbox_git
 from embry0.services.done_when import parse_done_when
+from embry0.workflows.issue_to_pr.nodes._developer import _branch_tip_command
 from tests.fixtures.sandbox_git_local import readable
 from tests.unit.workflows.test_developer_salvage import _BRANCH, _finished, _Sandbox, _stopped
 
@@ -85,6 +87,24 @@ def _clean(value: Any) -> Any:
     if isinstance(value, list | tuple):
         return [_clean(v) for v in value]
     return value
+
+
+def _traced(argv: list[str]) -> str:
+    """``argv`` as a developer run's ``git`` list records it."""
+    return readable(["docker", "exec", "C", *argv])
+
+
+#: #435 changed the developer's push check on purpose: it reads the sandbox's own tip of the job's branch, and reads
+#: the forge at the URL embry0 cloned the repository from instead of through ``origin``. Only those two commands, to
+#: the letter, are put back as the tree before #182 ran them; the route, the updates, the events, the commits and
+#: every other command are compared as they are.
+_BRANCH_TIP_READ = _traced(_branch_tip_command(_BRANCH))
+_FORGE_READ = _traced(sandbox_git.command("ls-remote", "--heads", "https://github.com/o/r.git", _BRANCH))
+_ORIGIN_READ = _traced(sandbox_git.command("ls-remote", "--heads", "origin", _BRANCH))
+
+
+def _push_check_as_before_435(git: list[str]) -> list[str]:
+    return [_ORIGIN_READ if c == _FORGE_READ else c for c in git if c != _BRANCH_TIP_READ]
 
 
 def _output(report: Any, *, is_error: bool = False) -> dict[str, Any]:
@@ -144,7 +164,7 @@ async def _developer(result: dict[str, Any], sandbox: Any, state: dict[str, Any]
             "update": {key: cmd.update[key] for key in _KEPT_UPDATES if key in cmd.update},
             "contract": prompt[at:] if at >= 0 else None,
             "events": [e for e in seen if e.get("type") == "progress"],
-            "git": [readable(c) for c in getattr(sandbox, "calls", [])],
+            "git": _push_check_as_before_435([readable(c) for c in getattr(sandbox, "calls", [])]),
             "commits": list(getattr(sandbox, "messages", [])),
         }
     )

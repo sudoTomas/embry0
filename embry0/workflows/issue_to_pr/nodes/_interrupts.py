@@ -91,16 +91,30 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
                     _dev_err = (o.get("error_message") or "")[:300]
                     _denials = o.get("policy_denials") or {}
                     break
-            message = "Developer finished without pushing its branch to origin"
-            if _dev_err:
-                message += f" ({_dev_err})"
-            if _denials:
-                # A turn-cap death plus blocked tools is not a coincidence: the
-                # agent had no way to learn the tool would never be allowed, so
-                # it retried until the budget ran out. Name the tool it fought.
-                _total = sum(_denials.values())
-                _worst = max(_denials.items(), key=lambda kv: kv[1])[0]
-                message += f" — {_total} tool call(s) blocked by safety policy, mostly: {_worst[:120]}"
+            # #435: the developer explained what its push check found (not pushed, another commit on the forge,
+            # or a forge it could not read); that is the pause's message. A job paused before it says what the
+            # old check meant: the branch was absent.
+            from embry0.workflows.issue_to_pr.nodes._developer import BRANCH_MISSING_TAILS
+
+            _errors = state.get("errors") or []
+            _why = str(_errors[-1]) if _errors else ""
+            _total = sum(_denials.values())
+            _worst = max(_denials.items(), key=lambda kv: kv[1])[0][:120] if _denials else ""
+            if _why.endswith(BRANCH_MISSING_TAILS):
+                message = _why
+                if _dev_err:
+                    message += f" The developer's run ended with: {_dev_err}."
+                if _denials:
+                    message += f" {_total} tool call(s) were blocked by safety policy, mostly: {_worst}."
+            else:
+                message = "Developer finished without pushing its branch to origin"
+                if _dev_err:
+                    message += f" ({_dev_err})"
+                if _denials:
+                    # A turn-cap death plus blocked tools is not a coincidence: the
+                    # agent had no way to learn the tool would never be allowed, so
+                    # it retried until the budget ran out. Name the tool it fought.
+                    message += f" — {_total} tool call(s) blocked by safety policy, mostly: {_worst}"
         elif arrival_stage == "dev_run_unfinished":
             # #358: the opposite of dev_branch_missing — the work is NOT lost.
             # The developer ran out of turns before committing and embry0
@@ -126,12 +140,24 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
                 if _kept.get("reason")
                 else ("Developer hit its turn cap")
             )
-            message = (
-                f"{_who[0].upper()}{_who[1:]} before committing — embry0 preserved its work"
-                + (f" on `{_branch}`" if _branch else "")
-                + ". The change is UNFINISHED and was never self-reviewed; continue from that "
-                "branch rather than starting over."
-            )
+            if _kept.get("push_error"):
+                # #435: embry0 committed the work but its push failed: the commit is only in the sandbox.
+                message = (
+                    f"{_who[0].upper()}{_who[1:]} before committing — embry0 committed its work"
+                    + (f" on `{_branch}`" if _branch else "")
+                    + f" but could not push it ({_kept['push_error']}): the commit is only in this paused job's "
+                    "sandbox, and stopping the job or letting the pause expire discards it. The change is UNFINISHED "
+                    "and was never self-reviewed; continue to let the next run push it."
+                )
+            else:
+                message = (
+                    f"{_who[0].upper()}{_who[1:]} before committing — embry0 preserved its work"
+                    + (f" on `{_branch}`" if _branch else "")
+                    # #435: the commit was made and pushed, but the forge could not be shown to have it.
+                    + (", though it could not confirm the forge has it" if _kept.get("pushed") is False else "")
+                    + ". The change is UNFINISHED and was never self-reviewed; continue from that "
+                    "branch rather than starting over."
+                )
         elif arrival_stage == "dev_run_uncommitted":
             # #182: dev_run_unfinished for a repository whose salvage.enabled
             # is false. embry0 committed nothing, so the work is not on the
@@ -232,11 +258,13 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
     # #182: with salvage off, a stopped run's changes are only in this job's
     # sandbox. "Merge as is" would complete the job, open a pull request from
     # a branch without them and then destroy the sandbox, so it is not offered.
-    from embry0.workflows.issue_to_pr.nodes._salvage import committed_unfinished, left_in_sandbox
+    from embry0.workflows.issue_to_pr.nodes._salvage import committed_unfinished, left_in_sandbox, not_on_the_forge
 
     unfinished = state.get("unfinished_work")
     in_sandbox = left_in_sandbox(unfinished)
-    if in_sandbox:
+    # #435: a salvage commit the forge was not shown to have may be only in the sandbox too.
+    unpushed = not_on_the_forge(unfinished)
+    if in_sandbox or unpushed:
         options = [option for option in options if option != "merge_as_is"]
 
     # A job over its cap: continuing it lets it spend one more cap (or what
@@ -336,6 +364,10 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
     if in_sandbox and choice == "merge_as_is":
         # Not offered (above): read as a stop, as a continue that is not offered is.
         logger.warning("merge_as_is_rejected_work_uncommitted", job_id=state.get("job_id"))
+        choice = "abandon"
+    if unpushed and choice == "merge_as_is":
+        # Not offered (above): read as a stop, as for work left in the sandbox (#435).
+        logger.warning("merge_as_is_rejected_salvage_not_on_forge", job_id=state.get("job_id"))
         choice = "abandon"
 
     if choice == "continue_retrying":

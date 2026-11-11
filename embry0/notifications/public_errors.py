@@ -40,7 +40,7 @@ _BY_CODE: dict[str, str] = {
     ErrorCode.PR_LISTING_FAILED: "the repository's open pull requests could not be listed, so the job stopped rather than risk opening a duplicate",
     ErrorCode.SANDBOX_AGENT_START_FAILED: "the sandbox image could not start the agent and has to be checked by an operator",
     ErrorCode.SANDBOX_REQUIRED: "the job could not run because no sandbox was available",
-    ErrorCode.DEV_BRANCH_NOT_PUSHED: "the developer agent finished without pushing its branch",
+    ErrorCode.DEV_BRANCH_NOT_PUSHED: "embry0 could not confirm the developer agent's branch on the forge",
     ErrorCode.DONE_WHEN_UNMET: "the change did not meet every item of its done-when list within the allowed retries",
     ErrorCode.REPO_UNREGISTERED: "the repository is not registered in embry0",
     ErrorCode.AUTH_REJECTED: "a model provider rejected embry0's credentials",

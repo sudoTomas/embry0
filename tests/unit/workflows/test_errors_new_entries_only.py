@@ -27,6 +27,7 @@ import pytest
 
 import embry0
 from embry0.orchestration.state import JobState
+from tests.fixtures.sandbox_git_local import reads_branch_tip
 from tests.unit.workflows.appended_updates import echoes, graph_nodes
 from tests.unit.workflows.test_developer_branch_verification import _dirty_tree_docker, _make_state, _turn_cap_result
 from tests.unit.workflows.test_done_when_check import _UNMET, LIST, _dev_state, _result, _with
@@ -276,7 +277,10 @@ async def test_a_run_that_errored_keeps_its_error_beside_the_done_when_pause() -
     probes: list[str] = []
 
     def run_cmd(cmd: list[str], **_kwargs: Any) -> str:
-        # The branch is free when the developer starts, and on origin after its push.
+        # The branch is free when the developer starts, and on origin after its push, at the sandbox's own
+        # tip of it (#435).
+        if reads_branch_tip(cmd):
+            return "abc\n"
         if "ls-remote" not in cmd:
             return ""
         probes.append(cmd[-1])

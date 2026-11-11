@@ -482,42 +482,102 @@ def _final_summary(result: dict[str, Any]) -> str:
     return summary.strip()[:4000] if isinstance(summary, str) else ""
 
 
+def _branch_tip_command(branch: str) -> list[str]:
+    """The push check's read of the sandbox's own tip of ``branch``: its sha, or :data:`_PROBE_NO_BRANCH`.
+
+    It exits 0 either way, so a missing branch is an answer, not an error (#402).
+    """
+    g = sandbox_git.git
+    return sandbox_git.script(
+        f"{g('rev-parse', '--verify', '--quiet', f'refs/heads/{branch}')} || echo {_PROBE_NO_BRANCH}"
+    )
+
+
 async def _verify_branch_pushed(
     *,
     docker: Any,
     container_id: str | None,
     branch: str,
-) -> bool:
-    """Verify that the developer's branch exists on the remote.
+    forge_url: str = "",
+    diagnostics: dict[str, Any] | None = None,
+) -> bool | None:
+    """Whether the run's work is on the forge: the forge's branch is the sandbox's branch.
 
-    Returns True if the branch is on remote OR if verification cannot run
-    (no docker / no container / branch is "main" / docker call raised) —
-    the goal is to catch the LLM-forgot-to-push case, not to block on
-    infra failures. False ONLY when we can definitively confirm the
-    branch is missing from origin.
+    True when the forge's ``branch`` points at the sandbox's own tip of it
+    (``refs/heads/<branch>``), the commits the rescue counts and pushes; not
+    at ``HEAD``, which a run may leave elsewhere, on ``main`` after pushing.
+    False when the forge has no such branch, or has it at another commit (an
+    earlier run's, or this run's push did not land), or the sandbox has no
+    such branch (#435). None when it cannot be known: the probe failed after
+    :func:`sandbox_git.run_from_forge`'s retries, the sandbox's branch could
+    not be read, or there is no ``forge_url``. Callers that deliver read None
+    as not pushed; it is not the benefit of the doubt it used to be.
+
+    The forge is read at ``forge_url``, the URL embry0 cloned from
+    (``_verify._forge_url``), never through a remote the repository's own
+    config names. Nothing to check (True): no sandbox, or ``main``.
+    ``diagnostics`` receives ``verify``: ``"absent"``, ``"stale"`` (with
+    ``forge_tip`` and ``local_tip``, None when the sandbox has no such
+    branch) or ``"unknown"`` (with ``verify_error``), for the pause to say
+    which.
     """
     if not docker or not container_id or not branch or branch == "main":
         return True
+
+    def _note(verify: str, **detail: Any) -> None:
+        if diagnostics is not None:
+            diagnostics["verify"] = verify
+            diagnostics.update(detail)
+
+    if not forge_url:
+        logger.warning("dev_branch_verify_failed", branch=branch, error="no forge URL", note="unknown: not pushed")
+        _note("unknown", verify_error="the forge's URL could not be resolved")
+        return None
     try:
-        out = await sandbox_git.run(
+        local = (
+            await sandbox_git.run(
+                docker,
+                container_id,
+                _branch_tip_command(branch),
+                step=sandbox_git.GitStep.BRANCH_PROBE,
+                timeout=15,
+            )
+        ).strip()
+        out = await sandbox_git.run_from_forge(
             docker,
             container_id,
-            sandbox_git.command("ls-remote", "--heads", "origin", branch),
+            sandbox_git.command("ls-remote", "--heads", forge_url, branch),
             step=sandbox_git.GitStep.BRANCH_PROBE,
             timeout=15,
         )
     except Exception as exc:
-        logger.warning(
-            "dev_branch_verify_failed",
-            branch=branch,
-            error=str(exc),
-            note="benefit of doubt — proceeding without blocking",
-        )
-        return True
-    # `git ls-remote --heads origin <branch>` returns:
-    #   - empty stdout if the branch doesn't exist on remote
-    #   - "<sha>\trefs/heads/<branch>\n" if it does
-    return bool(out and branch in out)
+        logger.warning("dev_branch_verify_failed", branch=branch, error=str(exc), note="unknown: not pushed")
+        # A refusal is said whole: it names the keys and how to clear them.
+        refused = sandbox_git.refusal_of(exc)
+        _note("unknown", verify_error=str(refused) if refused is not None else str(exc)[:300])
+        return None
+    # `git ls-remote --heads <url> <branch>` prints "<sha>\trefs/heads/<branch>" per match, nothing when absent.
+    tip = ""
+    for line in (out or "").splitlines():
+        sha, _, ref = line.partition("\t")
+        if ref.strip() == f"refs/heads/{branch}":
+            tip = sha.strip()
+    if not tip:
+        _note("absent")
+        return False
+    if local == _PROBE_NO_BRANCH:
+        logger.warning("dev_branch_tip_stale", branch=branch, forge_tip=tip[:12], local_tip=None)
+        _note("stale", forge_tip=tip[:12], local_tip=None)
+        return False
+    if not local:
+        logger.warning("dev_branch_verify_failed", branch=branch, error="branch unreadable", note="unknown: not pushed")
+        _note("unknown", verify_error="the sandbox's branch could not be read")
+        return None
+    if tip != local:
+        logger.warning("dev_branch_tip_stale", branch=branch, forge_tip=tip[:12], local_tip=local[:12])
+        _note("stale", forge_tip=tip[:12], local_tip=local[:12])
+        return False
+    return True
 
 
 async def _commit_unfinished_work(
@@ -768,6 +828,7 @@ async def _rescue_push_branch(
     container_id: str | None,
     branch: str,
     diagnostics: dict[str, Any] | None = None,
+    forge_url: str = "",
 ) -> bool:
     """Push the developer's branch ourselves when the agent left it local.
 
@@ -779,10 +840,12 @@ async def _rescue_push_branch(
     git command.
 
     Pushing is deterministic, so the orchestrator can simply do it. This runs
-    ONLY after _verify_branch_pushed said the branch is absent, and only when
-    there is something to push: it never overrides the agent, it rescues it.
+    ONLY after _verify_branch_pushed did not find the run's work on the forge,
+    and only when there is something to push: it never overrides the agent,
+    it rescues it.
 
-    Returns True when the branch is on origin afterwards.
+    Returns True when the forge, read at ``forge_url``, has the branch at the
+    sandbox's own tip of it afterwards; an unknown answer is False (#435).
     """
     if not docker or not container_id or not branch or branch == "main":
         return False
@@ -820,17 +883,42 @@ async def _rescue_push_branch(
             diagnostics["push_error"] = str(exc)
         logger.warning("dev_rescue_push_failed", branch=branch, error=str(exc))
         return False
-    return await _verify_branch_pushed(docker=docker, container_id=container_id, branch=branch)
+    if diagnostics is not None:
+        # The push itself went through; whether the forge shows it is the check's to say (#435).
+        diagnostics["rescue_pushed"] = True
+    # Unknown (None) is not pushed: nothing is delivered on a guess (#435).
+    pushed = await _verify_branch_pushed(
+        docker=docker, container_id=container_id, branch=branch, forge_url=forge_url, diagnostics=diagnostics
+    )
+    return pushed is True
+
+
+#: How the explanation ends when the forge was read and has no such branch: QA has nothing to clone.
+_ABSENT_TAIL = (
+    " This breaks the QA handoff: QA cannot clone what was never pushed. "
+    "Restart the job after the dev agent has been corrected."
+)
+#: How it ends when the forge has the branch at another commit, or could not be read (#435): embry0 cannot say
+#: that nothing was pushed, only that it could not confirm this run's work there.
+_UNCONFIRMED_TAIL = " The job goes no further until the branch is confirmed on the forge, where review and QA read it."
+#: Every :func:`_branch_missing_explanation` ends with one of these: the pause node finds the explanation by them.
+BRANCH_MISSING_TAILS = (_ABSENT_TAIL, _UNCONFIRMED_TAIL)
 
 
 def _branch_missing_explanation(branch: str, diagnostics: dict[str, Any]) -> str:
-    """Say, in plain words, why the branch is not on origin (#402).
+    """Say, in plain words, why the branch is not on origin (#402), or could not be confirmed there (#435).
 
     The old single sentence — "did not push … push the branch manually" — was
     wrong for the most common case: when the agent never created the branch
     there is nothing to push manually, and whoever reads the failure spends
     their first minutes looking for a branch that does not exist.
+
+    When the forge has the branch at another commit than the sandbox's, or
+    could not be read, the explanation says what was compared and never that
+    nothing was pushed: the check cannot know that (#435).
     """
+    if diagnostics.get("verify") in ("unknown", "stale"):
+        return _unconfirmed_explanation(branch, diagnostics) + _UNCONFIRMED_TAIL
     probe = diagnostics.get("probe")
     if probe == "no_local_branch":
         why = (
@@ -865,10 +953,38 @@ def _branch_missing_explanation(branch: str, diagnostics: dict[str, Any]) -> str
             + (f" ({push_error})" if push_error else "")
             + ". The work exists in the sandbox only."
         )
-    return (
-        why + " This breaks the QA handoff: QA cannot clone what was never pushed. "
-        "Restart the job after the dev agent has been corrected."
-    )
+    return why + _ABSENT_TAIL
+
+
+def _unconfirmed_explanation(branch: str, diagnostics: dict[str, Any]) -> str:
+    """What the push check compared, when it could not confirm the run's work on the forge (#435)."""
+    if diagnostics.get("verify") == "unknown":
+        why = (
+            f"embry0 could not confirm that branch {branch!r} is on the forge with this run's work "
+            f"({diagnostics.get('verify_error') or 'unknown error'}). The work may or may not be there, "
+            f"so the job is not delivered on a guess."
+        )
+    elif diagnostics.get("local_tip") is None:
+        why = (
+            f"Branch {branch!r} is on the forge at {diagnostics.get('forge_tip')}, but the sandbox has no local "
+            f"branch of that name to compare it with, so embry0 cannot confirm the forge's branch holds this "
+            f"run's work (it may have been pushed from another branch, by an earlier run, or by someone else)."
+        )
+    else:
+        why = (
+            f"Branch {branch!r} is on the forge at {diagnostics.get('forge_tip')}, but the sandbox's branch of "
+            f"that name is at {diagnostics.get('local_tip')}. embry0 compares the two and they differ, so it "
+            f"cannot confirm the forge holds this run's work: the forge may hold an earlier run's commit, a push "
+            f"that did not land, or commits pushed on top since."
+        )
+    probe = diagnostics.get("probe")
+    if diagnostics.get("push_error"):
+        why += f" embry0's own push of the sandbox's branch failed: {diagnostics['push_error']}."
+    elif probe == "failed" and diagnostics.get("refused"):
+        why += f" embry0 did not look for unpushed work in the sandbox: {diagnostics['refused']}."
+    elif probe == "no_local_branch" and diagnostics.get("verify") == "unknown":
+        why += " The sandbox has no branch of that name either."
+    return why
 
 
 def _coding_agent(state: dict[str, Any]) -> str:
@@ -1260,7 +1376,12 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     from embry0.services.job_settings import job_section
     from embry0.settings.sections.salvage import SALVAGE
     from embry0.workflows.issue_to_pr.nodes import _salvage
+    from embry0.workflows.issue_to_pr.nodes._common import job_repository
+    from embry0.workflows.issue_to_pr.nodes._verify import _forge_url
 
+    # #435: whether a push landed is read from the forge at the URL embry0
+    # cloned from, never through a remote the repository's own config names.
+    forge_url = await _forge_url(configurable, job_repository(state), str(state.get("job_id") or ""))
     # Salvage (spec 2026-10-25): a run that stops before it pushes keeps its
     # work. Every route below that ends the coding step without a verified
     # push commits what the run left uncommitted and pushes it, unfinished,
@@ -1277,6 +1398,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         "agent": _salvage.coding_agent(result, state),
         "subject_template": salvage_policy.commit_subject,
         "commit": salvage_policy.enabled,
+        "forge_url": forge_url,
     }
 
     if updates.get("agent_questions_exhausted") or state.get("agent_questions_exhausted"):
@@ -1300,12 +1422,18 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         # "Remote branch not found" clone error after spinning up the QA
         # sandbox — wastes time + cost + obscures the real cause. Verify
         # here and fail fast with a clear error code.
-        push_ok = await _nodes._verify_branch_pushed(
-            docker=configurable.get("docker"),
-            container_id=state.get("sandbox_container_id"),
-            branch=branch,
-        )
+        # #435: the forge's branch must be at the sandbox's own tip of it; unknown is not pushed.
         push_diagnostics: dict[str, Any] = {}
+        push_ok = (
+            await _nodes._verify_branch_pushed(
+                docker=configurable.get("docker"),
+                container_id=state.get("sandbox_container_id"),
+                branch=branch,
+                forge_url=forge_url,
+                diagnostics=push_diagnostics,
+            )
+            is True
+        )
         # #358, widened by salvage: a run that STOPPED (turn cap, any error)
         # typically leaves its work uncommitted, and _rescue_push_branch refuses
         # a branch with no commits of its own, so the run's output was
@@ -1316,7 +1444,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         kept = None
         if stopped:
             kept = await _salvage.preserve_unfinished_work(**salvage, reason=stopped, diagnostics=push_diagnostics)
-            push_ok = push_ok or kept is not None
+            # A record whose push embry0 could not confirm (#435) keeps the work's record, not a push.
+            push_ok = push_ok or bool(kept and kept.get("pushed", True))
         rescued_unfinished = bool(kept and kept["committed"])
         # Salvage off (#182): the changes a stopped run left are not committed,
         # so they stay in the sandbox, and the job pauses below whether or not
@@ -1331,6 +1460,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 container_id=state.get("sandbox_container_id"),
                 branch=branch,
                 diagnostics=push_diagnostics,
+                forge_url=forge_url,
             )
             if push_ok:
                 logger.info(
@@ -1340,7 +1470,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                     note="agent left the branch local; orchestrator pushed it",
                 )
 
-        if push_ok and rescued_unfinished:
+        if rescued_unfinished:
             # The work is safe on origin, but it is admittedly unfinished and
             # never self-reviewed. Advancing it into review/QA would spend more
             # money on a predictable rejection and risk presenting a cut-off run
@@ -1356,12 +1486,28 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 reason=stopped,
             )
             updates["unfinished_work"] = kept
+            if push_ok:
+                kept_where = f"and pushed it to {branch!r} so the run is not lost, but the change is UNFINISHED"
+            elif (kept or {}).get("push_error"):
+                # #435: the push itself failed, so the commit is only in this paused job's sandbox.
+                kept_where = (
+                    f"on {branch!r} but could not push it ({(kept or {})['push_error']}): the commit is only in this "
+                    "paused job's sandbox, and stopping the job or letting the pause expire discards it. "
+                    "The change is UNFINISHED"
+                )
+            else:
+                # #435: pushed, but the forge could not be shown to have the commit. The record and this pause still
+                # name the unfinished commit, so neither a continue nor a merge takes it for a delivery.
+                why = push_diagnostics.get("verify_error") or "the forge does not show that commit"
+                kept_where = (
+                    f"and pushed {branch!r}, though it could not confirm the forge has the commit ({why}); the "
+                    "commit is in this paused job's sandbox either way. The change is UNFINISHED"
+                )
             # JobState.errors appends (#434): this run's entries only, never the stored list again.
             updates["errors"] = [
                 *(updates.get("errors") or []),
-                f"The {salvage['agent']} stopped ({stopped}) before committing. embry0 committed its work and "
-                f"pushed it to {branch!r} so the run is not lost, but the change is UNFINISHED "
-                f"and was never self-reviewed. Continue from that branch rather than starting over.",
+                f"The {salvage['agent']} stopped ({stopped}) before committing. embry0 committed its work "
+                f"{kept_where} and was never self-reviewed. Continue from that branch rather than starting over.",
             ]
             updates["error_code"] = ErrorCode.DEV_RUN_UNFINISHED.value
             updates["current_stage"] = "dev_run_unfinished"
@@ -1402,6 +1548,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 # which read like an unhandled crash.
                 reason=push_diagnostics.get("probe") or "not_probed",
                 unpushed_commits=push_diagnostics.get("unpushed_commits"),
+                verify=push_diagnostics.get("verify"),
             )
             updates["errors"] = [*(updates.get("errors") or []), _branch_missing_explanation(branch, push_diagnostics)]
             updates["error_code"] = ErrorCode.DEV_BRANCH_NOT_PUSHED.value
