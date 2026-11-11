@@ -18,6 +18,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from embry0.api.deployment_reads import deployment_hidden
 from embry0.api.deps import ensure_admin, request_actor
 from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers
 from embry0.api.session import request_session
@@ -65,7 +66,10 @@ async def people_by_email(request: Request) -> dict[str, dict[str, Any]]:
 
 @router.get("/people")
 async def list_people(request: Request) -> dict[str, Any]:
-    """The people a decision can be sent to: everyone who signs in to the dashboard or is named by a GitHub login."""
+    """The people a decision can be sent to: everyone who signs in to the dashboard or is named by a GitHub login. To a
+    key with a repository allowlist, as a deployment with none (embry0.api.deployment_reads)."""
+    if deployment_hidden(request):
+        return {"people": [], "count": 0}
     people = [p for p in (await people_by_email(request)).values() if _can_be_sent(p["tier"], p["github_login"])]
     return {"people": people, "count": len(people)}
 

@@ -32,7 +32,7 @@ from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 
-from embry0.api.actor_visibility import actor_shown
+from embry0.api.actor_visibility import deployment_actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.document_requests import if_match_versions, read_capped_body
 from embry0.api.repo_allowlist import enforce_repo_allowlist
@@ -202,7 +202,7 @@ async def get_pack(
             headers["X-Embry0-Pack-Refused"] = str(effective.version)
         return Response(content=text, media_type="application/yaml", headers=headers)
     response.headers["ETag"] = etag
-    shown = await actor_shown(request)
+    shown = await deployment_actor_shown(request)
     shipped = store.shipped()
     moved = await store.default_moved(row)
     draft = await store.draft()
@@ -278,7 +278,7 @@ async def get_pack_vocabulary(request: Request) -> dict[str, Any]:
 async def list_pack_versions(request: Request, limit: int = Query(50, ge=1, le=100)) -> dict[str, Any]:
     """The active and superseded versions, newest first, without their text."""
     rows = await _store(request).repository.versions(limit)
-    shown = await actor_shown(request)
+    shown = await deployment_actor_shown(request)
     return {"versions": [_version_entry(row, shown) for row in rows]}
 
 
@@ -288,7 +288,7 @@ async def get_pack_version(version: int, request: Request) -> dict[str, Any]:
     row = await _store(request).repository.get(version)
     if row is None or row.status == "draft":
         raise HTTPException(status_code=404, detail="There is no such version of the pack.")
-    return {**_version_entry(row, await actor_shown(request)), "text": row.text}
+    return {**_version_entry(row, await deployment_actor_shown(request)), "text": row.text}
 
 
 @router.get("/progression/pack/draft", response_model=None)
@@ -309,7 +309,7 @@ async def get_pack_draft(request: Request, response: Response) -> dict[str, Any]
     effective = store.resolve(row)
     active = await store.effective()
     return {
-        **_version_entry(row, await actor_shown(request)),
+        **_version_entry(row, await deployment_actor_shown(request)),
         "stale": row.parent_version != active.version,
         "text": row.text,
         "hash": pack_hash(effective.pack) if effective.fallback is None else None,

@@ -7,7 +7,10 @@ the query, so an operator can see the effect of a value before setting it.
 A sweep with neither reports zeros and ``retention_days: null``.
 
 Admin tier: the answer names the QA images and volumes it would remove, and
-the dry run reads every old job event.
+the dry run reads every old job event. A key with a repository allowlist is
+answered as a deployment with nothing to remove, each sweep at the days it
+would run at, and nothing is read: what they would remove is every
+repository's (embry0.api.deployment_reads).
 """
 
 from __future__ import annotations
@@ -16,7 +19,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from embry0.api.deployment_reads import deployment_hidden
 from embry0.api.deps import require_admin
+from embry0.cache.qa_image_retention import QAImageRetentionResult
+from embry0.services.agent_session_retention import AgentSessionRetentionResult
+from embry0.services.job_log_retention import JobLogRetentionResult
 
 router = APIRouter()
 
@@ -34,11 +41,24 @@ async def retention_preview(
     qa_images = getattr(state, "qa_image_retention", None)
     if job_logs is None or sessions is None or qa_images is None:
         raise HTTPException(status_code=503, detail="retention sweeps not initialized")
-    logs = await job_logs.run_once(dry_run=True, retention_days=job_log_days)
-    expired = await sessions.run_once(dry_run=True, retention_days=agent_session_days)
-    images = await qa_images.run_once(dry_run=True, retention_days=qa_image_days)
+    logs: JobLogRetentionResult
+    expired: AgentSessionRetentionResult
+    images: QAImageRetentionResult
+    if deployment_hidden(request):
+        logs = JobLogRetentionResult(_days(job_log_days, job_logs.retention_days))
+        expired = AgentSessionRetentionResult(_days(agent_session_days, sessions.retention_days))
+        images = QAImageRetentionResult(_days(qa_image_days, qa_images.retention_days))
+    else:
+        logs = await job_logs.run_once(dry_run=True, retention_days=job_log_days)
+        expired = await sessions.run_once(dry_run=True, retention_days=agent_session_days)
+        images = await qa_images.run_once(dry_run=True, retention_days=qa_image_days)
     return {
         "job_logs": {"configured_days": job_logs.retention_days, **logs.as_dict()},
         "agent_sessions": {"configured_days": sessions.retention_days, **expired.as_dict()},
         "qa_images": {"configured_days": qa_images.retention_days, **images.as_dict()},
     }
+
+
+def _days(asked: int | None, configured: int | None) -> int | None:
+    """The days a sweep runs at: those asked for, else its configured ones, as ``run_once`` takes them."""
+    return asked if asked is not None else configured

@@ -31,11 +31,11 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 
-from embry0.api.actor_visibility import actor_shown
+from embry0.api.actor_visibility import ActorView, actor_shown, deployment_actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.document_requests import if_match_versions, read_capped_body
 from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers, refusal_detail
@@ -122,6 +122,16 @@ async def _registered(request: Request, scope: Scope) -> bool:
                 continue
         return False
     return True
+
+
+#: The sources of an effective value that a layer, not the deployment's document, set.
+_LAYERS: Final = frozenset({"organization", "repository"})
+
+
+async def _actors_of(request: Request, scope: Scope) -> ActorView:
+    """Who changed ``scope``'s document, as the caller may see it: the deployment's is the deployment's own record
+    (embry0.api.actor_visibility.deployment_actor_shown), a layer is its organization's or repository's."""
+    return await (deployment_actor_shown if scope.layer == "deployment" else actor_shown)(request)
 
 
 async def _hidden(request: Request, scope: Scope) -> bool:
@@ -326,7 +336,7 @@ async def get_settings(
     if format == "yaml":
         return Response(content=row["yaml_text"], media_type="application/yaml", headers={"ETag": etag})
     response.headers["ETag"] = etag
-    shown = await actor_shown(request)
+    shown = await _actors_of(request, scope)
     unknown_sections, unknown_keys = _unknown(store.catalog, scope, row["data"])
     return {
         "scope": scope.view(),
@@ -514,12 +524,13 @@ async def get_effective_settings(
         repo=repo_scope.name if repo_scope is not None else None,
         not_imported=await _not_imported(request, None if org_scope in hidden else org_scope),
     )
-    shown = await actor_shown(request)
+    shown, deployment = await actor_shown(request), await deployment_actor_shown(request)
     for section in view["sections"]:
         for key in section["keys"]:
-            key["set_by"] = shown(key["set_by"])
+            # The deployment's document set it (its source is "document" or "bootstrap"), or a layer did.
+            key["set_by"] = (shown if key["source"] in _LAYERS else deployment)(key["set_by"])
             for layer in key.get("layers") or ():
-                layer["set_by"] = shown(layer["set_by"])
+                layer["set_by"] = (deployment if layer["layer"] == "deployment" else shown)(layer["set_by"])
     return view
 
 
@@ -624,7 +635,7 @@ async def list_settings_revisions(
     rows = [] if await _hidden(request, scope) else await store.revisions(limit=limit, scope=scope)
     current = (await store.document(scope))["yaml_text"] if rows else ""
     newest = rows[0]["id"] if rows else None
-    shown = await actor_shown(request)
+    shown = await _actors_of(request, scope)
     return {"revisions": [_revision_entry(row, newest, current, shown) for row in rows]}
 
 
@@ -640,7 +651,7 @@ async def get_settings_revision(revision_id: int, request: Request) -> dict[str,
     scope = _revision_scope(revision)
     newest = await store.revisions(limit=1, scope=scope)
     current = (await store.document(scope))["yaml_text"]
-    entry = _revision_entry(revision, newest[0]["id"] if newest else None, current, await actor_shown(request))
+    entry = _revision_entry(revision, newest[0]["id"] if newest else None, current, await _actors_of(request, scope))
     before = revision.get("before") or {}
     after = revision.get("after") or {}
     return {
