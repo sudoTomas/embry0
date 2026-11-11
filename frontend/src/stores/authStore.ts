@@ -113,3 +113,16 @@ export function useIsAdmin(): boolean {
     s.authMode === "key" ? s.keyTier == null || s.keyTier === "admin" : s.user?.tier === "admin",
   );
 }
+
+/**
+ * Whether this session may use the API's operate routes: an operator's or an admin's, by key or by SSO. Read the
+ * same way as {@link useIsAdmin}: an unreported tier (an older backend) or auth off keeps the controls, so only a
+ * reported read tier withholds them, and a read key is never offered a click that can only fail with 403.
+ */
+export function useCanOperate(): boolean {
+  return useAuthStore((s) => {
+    const tier = s.authMode === "key" ? s.keyTier : s.user?.tier;
+    if (s.authMode === "key" && tier == null) return true;
+    return tier === "admin" || tier === "operator";
+  });
+}

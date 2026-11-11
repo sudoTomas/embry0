@@ -44,6 +44,8 @@ vi.mock("@/hooks/useProposals", () => ({ useProposals: () => mockProposals() }))
 vi.mock("@/hooks/useMergeApprovals", () => ({ usePendingMergeApprovals: () => mockApprovals() }));
 const mockSetups = vi.fn();
 vi.mock("@/hooks/useSetupProposal", () => ({ usePendingSetupProposals: () => mockSetups() }));
+const mockMaps = vi.fn();
+vi.mock("@/hooks/useRepoAreas", () => ({ usePendingAreasProposals: () => mockMaps() }));
 
 import { BriefBar } from "../BriefBar";
 
@@ -62,6 +64,7 @@ beforeEach(() => {
   );
   mockApprovals.mockReturnValue(ready([{ id: "a1", status: "pending" }]));
   mockSetups.mockReturnValue(ready([]));
+  mockMaps.mockReturnValue(ready([]));
 });
 
 afterEach(() => {
@@ -183,7 +186,32 @@ describe("BriefBar", () => {
     expect(screen.getByTestId("brief-setups")).toHaveTextContent("1 test setup to review");
   });
 
-  it("draws its items together once all four sources have first answered", () => {
+  it("counts one areas map to apply and links to its repository's Areas section", () => {
+    mockMaps.mockReturnValue(ready([pending("areas-abc", "group/sub/project")]));
+    renderBar();
+    const maps = screen.getByTestId("brief-areas-maps");
+    expect(maps).toHaveTextContent("1 areas map to apply");
+    expect(maps).toHaveAttribute("href", "/repos/group/sub/project#advanced-areas");
+  });
+
+  it("counts several areas maps and links to the repositories list, and leaves them out at zero", () => {
+    mockMaps.mockReturnValue(ready([pending("areas-abc", "acme/widgets"), pending("areas-def", "acme/gadgets")]));
+    renderBar();
+    expect(screen.getByTestId("brief-areas-maps")).toHaveTextContent("2 areas maps to apply");
+    expect(screen.getByTestId("brief-areas-maps")).toHaveAttribute("href", "/repos");
+    cleanup();
+    mockMaps.mockReturnValue(failed());
+    renderBar();
+    expect(screen.queryByTestId("brief-areas-maps")).toBeNull();
+  });
+
+  it("waits for the areas maps' first answer too", () => {
+    mockMaps.mockReturnValue(waiting());
+    renderBar();
+    expect(screen.queryByTestId("brief-running")).toBeNull();
+  });
+
+  it("draws its items together once all five sources have first answered", () => {
     const onReady = vi.fn();
     mockSetups.mockReturnValue(waiting());
     const { rerender } = renderBar(onReady);

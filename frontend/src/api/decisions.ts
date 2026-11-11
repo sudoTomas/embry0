@@ -51,7 +51,8 @@ export interface Decision {
   held: boolean;
   /** The open hand-off: who has it to decide, from whom, and the note. */
   assigned_to: Assignee | null;
-  links: { proposal?: string; url?: string; job?: string; pr?: string; merge_approval?: string };
+  /** `areas_map`: a map of the repository's areas that waits for a person on its repository page (spec 2026-11-10). */
+  links: { proposal?: string; url?: string; job?: string; pr?: string; merge_approval?: string; areas_map?: string };
   details: string;
 }
 

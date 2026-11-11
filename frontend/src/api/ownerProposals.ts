@@ -25,7 +25,7 @@ export interface OwnerProposal {
   id: string;
   kind: OwnerProposalKind;
   repo: string;
-  /** The part of a monorepo it is about, from the repository's `.embry0/areas.yml`; null when it names none. */
+  /** The part of a monorepo it is about, from the areas embry0 keeps for the repository; null when it names none. */
   area?: string | null;
   /** GitHub logins: the area's owners, else the repository's owners preference, else its CODEOWNERS. */
   owners: string[];

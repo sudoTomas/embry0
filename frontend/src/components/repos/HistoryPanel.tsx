@@ -13,12 +13,20 @@ const HOW: Record<HistorySource, string> = {
   onboard: "embry0 setup",
   proposal: "Setup proposal",
   restore: "Undo",
+  import: "Imported from the repository's old file",
+  file: "Applied from a file",
 };
+
+/** How a change came in, in words; a proposal of areas is a map, not a setup. */
+function how(entry: HistoryEntry): string {
+  if (entry.surface === "areas" && entry.source === "proposal") return "Areas map";
+  return HOW[entry.source] ?? entry.source;
+}
 
 const UNDO_CONFIRM = "Put back how it was before this change? This is recorded too, so you can undo it again.";
 
 /**
- * Every recorded change to this repository's test setup and preferences,
+ * Every recorded change to this repository's test setup, preferences and areas,
  * newest first. The newest change of each setting can be undone while it
  * is still what is stored; the server says why any other cannot.
  */
@@ -71,7 +79,7 @@ export function HistoryPanel({ repo }: { repo: string }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-fg">{entry.what}</p>
                 <p className="text-xs text-fg-muted" data-testid="history-entry-meta">
-                  {actorLabel(entry.actor)} · {HOW[entry.source] ?? entry.source} · {formatDateTime(entry.created_at)}
+                  {actorLabel(entry.actor)} · {how(entry)} · {formatDateTime(entry.created_at)}
                 </p>
               </div>
               {entry.undoable ? (

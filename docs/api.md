@@ -424,6 +424,7 @@ Every choice waiting on a person, a quest on offer or a quest to review, in one 
   - `facts`: at most six, in a fixed order, with no empty ones.
   - A quest to review's `Checks` fact reads its merge approval's checks (`passing`, `failing`, `running`), else the job's [verification](verification.md) gate verdict: `verified` (`passed`, good), `verification failed` (`new_failures`, bad), `no new failures, some unstable` (`unstable`, warn) or `could not verify` (`error`, warn). A verification that ran no test (`not_configured`, `no_matching_targets`) adds no fact.
   - `actions`: on offer `start`, `decline`, `later`, `send_to`; to review, what the quest allows (`merge`, `send_back`, `reject`, `run_again`, `good`, `bad`, `dismiss`), then `send_to`.
+  - `links`: `proposal` and `url` on offer; to review, `job`, `pr` and `merge_approval` when there is one, and `areas_map`, the map a map of the repository's areas left waiting for a person ([areas](areas.md#map-areas)), which the card links to while it still waits: gone once it is applied, rejected or retired.
   - `owner` keeps the quests on offer a GitHub login owns; `include_held=false` leaves out what a chat does not ask.
 - `GET /api/v1/decisions/{id}`: one decision by its id; 404 for an answered proposal or an unknown job.
 

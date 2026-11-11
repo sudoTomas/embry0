@@ -355,7 +355,12 @@ def done(q: Mapping[str, Any], *, game: bool = True) -> Decision:
         owners=tuple(str(o) for o in q.get("owners") or ()),
         links={
             k: str(v)
-            for k, v in (("job", q.get("job_id")), ("pr", q.get("pr_url")), ("merge_approval", q.get("approval_id")))
+            for k, v in (
+                ("job", q.get("job_id")),
+                ("pr", q.get("pr_url")),
+                ("merge_approval", q.get("approval_id")),
+                ("areas_map", q.get("areas_proposal_id")),
+            )
             if v
         },
         details=str(q.get("report") or ""),

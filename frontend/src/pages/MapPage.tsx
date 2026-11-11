@@ -21,7 +21,8 @@ const COLOR_BY: { id: ColorBy; label: string }[] = [
   { id: "marks", label: "Marks" },
   { id: "work", label: "Agent work" },
   { id: "kind", label: "Kind" },
-  { id: "area", label: "Area" },
+  // A scanner's rings of parts: groups, not a repository's areas, which embry0 keeps (spec 2026-11-10).
+  { id: "area", label: "Group" },
 ];
 
 type Show = "all" | "bloat" | "marked" | "sent";

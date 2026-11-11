@@ -2,10 +2,10 @@ import { api } from "./client";
 import { repoPath } from "./repoPath";
 
 /** Which setting a change touched. */
-export type HistorySurface = "qa_config" | "preferences";
+export type HistorySurface = "qa_config" | "preferences" | "areas";
 
 /** The path a change came in by. */
-export type HistorySource = "person" | "bootstrap" | "onboard" | "proposal" | "restore";
+export type HistorySource = "person" | "bootstrap" | "onboard" | "proposal" | "restore" | "import" | "file";
 
 export interface HistoryEntry {
   id: number;

@@ -71,7 +71,7 @@ export interface JobResponse {
   trace_id?: string | null;
   job_kind?: string | null;
   result_summary?: string | null;
-  /** The part of a monorepo the job's pull request changes (the repository's `.embry0/areas.yml`). */
+  /** The part of a monorepo the job's pull request changes (the areas embry0 keeps for the repository). */
   area?: string | null;
   /** Per-(agent, model) rollup from traces (GET /jobs/{id} only). EMB-35 adds token sums. */
   cost_breakdown?: CostBreakdownEntry[];

@@ -96,10 +96,10 @@ export const SETTING_GUIDE: Record<SettingKey, SettingGuide> = {
     title: "Areas",
     what:
       "The parts of a monorepo embry0 names in its proposals, pull requests and jobs, and who it asks first about each. " +
-      "They live in the repository's .embry0/areas.yml; Map areas has an agent write it as a pull request.",
-    takesEffect: "Within the hour after the file's pull request merges.",
+      "embry0 keeps them here, not in the repository; Map areas has an agent propose them for you to apply.",
+    takesEffect: "At once: the next proposal, pull request or job names the new areas.",
     risk: "check",
-    undo: "Edit or revert the file like any other.",
+    undo: "History puts back the areas a change replaced, an applied map included.",
   },
 };
 

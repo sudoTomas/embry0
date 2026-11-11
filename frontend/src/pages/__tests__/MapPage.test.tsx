@@ -91,6 +91,13 @@ describe("MapPage (knowledge maps, spec 2026-10-27)", () => {
     );
   });
 
+  it("calls a scanner's rings groups, never a repository's areas", () => {
+    renderAt("/maps/shop");
+    const colourBy = screen.getByLabelText("Colour by");
+    expect(within(colourBy).getByRole("option", { name: "Group" })).toBeInTheDocument();
+    expect(within(colourBy).queryByRole("option", { name: "Area" })).toBeNull();
+  });
+
   it("sends everything a filter picked out in one job per repository, leaving out what cannot go", async () => {
     const table = { ...GRAPH.nodes[1], id: "table:old_backup", label: "old_backup", kind: "table", path: null, repo: null, removal: "Drop it in a migration." };
     const host = { ...GRAPH.nodes[1], id: "host:box", label: "box", kind: "host", path: null, repo: null, removal: null };
