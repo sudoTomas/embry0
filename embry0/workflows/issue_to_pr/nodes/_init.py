@@ -14,6 +14,7 @@ from langchain_core.runnables import RunnableConfig
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
+from embry0.services.job_log_access import analysis_job_scope, deployment_allowlist, repository_log_containers
 from embry0.workflows.issue_to_pr.evidence import log_scope
 from embry0.workflows.issue_to_pr.nodes._common import _filter_user_env_for_sandbox, job_repository
 
@@ -88,6 +89,11 @@ async def _job_case_evidence(
     Optional context: any failure here degrades to "no evidence", never to a
     failed job. The ledger is read through HealingCaseService, built lazily
     from the pool like the other per-node repositories.
+
+    The services the evidence names are read against the containers of the
+    job's own repository (:func:`repository_log_containers`), whatever the
+    ticket says: a ticket naming another repository's container names nothing
+    this job may read.
     """
     from embry0.workflows.issue_to_pr.evidence import resolve_case_evidence
 
@@ -103,18 +109,24 @@ async def _job_case_evidence(
             # No ledger → the ticket is still a source.
             logger.warning("case_evidence_ledger_unavailable", job_id=job_id, exc_info=True)
     try:
-        allowlist = str(getattr(embry0_config, "context_proxy_container_allowlist", "") or "")
+        allowlist = await repository_log_containers(job_repository(state), configurable, embry0_config)
         evidence = await resolve_case_evidence(
             job_id=job_id,
             issue_id=state.get("issue_id"),
             ticket_text=str(state.get("task") or ""),
-            allowlist=[name.strip() for name in allowlist.split(",") if name.strip()],
+            allowlist=allowlist,
             cases=cases,
         )
     except Exception:
         logger.warning("case_evidence_unavailable", job_id=job_id, exc_info=True)
         return None
-    return evidence.as_state() if evidence is not None else None
+    if evidence is None:
+        return None
+    out = evidence.as_state()
+    # A name the repository's pattern admits is a name the deployment's allowlist must admit too.
+    deployment = deployment_allowlist(embry0_config)
+    out["services"] = [name for name in out["services"] if deployment.resolve(name) is not None]
+    return out
 
 
 def _job_push_branch(state: dict[str, Any]) -> str:
@@ -213,14 +225,26 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
         # enroll + token delivery happen post-create below.
         context_proxy_url = getattr(proxy_mgr, "context_proxy_url", "") if proxy_mgr else ""
         watcher_job = bool(context.get("watcher_log_access"))
+        # The containers the watcher chose for this analysis (watcher._log_scope) are a ceiling, cut again to what
+        # the stored stack and the deployment admit now: a job started again from an old analysis copies its context,
+        # and gets no more than its stack's containers today. An analysis job made without them gets no log tool
+        # rather than the proxy's whole allowlist.
+        watcher_scope: list[str] = []
+        if watcher_job:
+            watcher_scope = await analysis_job_scope(
+                repo, context.get("watcher_log_containers") or [], config["configurable"], embry0_config
+            )
+            if not watcher_scope:
+                logger.info("watcher_log_scope_empty", job_id=job_id)
 
         # SH-P4.4: the logged failure this job is about (linked healing case,
         # else the ticket's "## Evidence" section) — injected into the
         # developer and reviewer prompts. It also decides least-privilege log
         # access: the tool is scoped to the allowlisted services the evidence
         # names, and only when the evidence also describes a failure to look
-        # for (log_scope). Watcher analysis jobs keep their own briefing and
-        # their unscoped grant.
+        # for (log_scope), and only to its own repository's containers.
+        # Watcher analysis jobs keep their own briefing, scoped to their
+        # stack's containers above.
         case_evidence = (
             None if watcher_job else await _job_case_evidence(state, config["configurable"], embry0_config, job_id)
         )
@@ -254,7 +278,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                     enabled=False,
                 )
 
-        wants_log_tool = (watcher_job or scope is not None) and bool(context_proxy_url)
+        wants_log_tool = ((watcher_job and bool(watcher_scope)) or scope is not None) and bool(context_proxy_url)
         if wants_log_tool:
             env["EMBRY0_CONTEXT_PROXY_URL"] = context_proxy_url
 
@@ -316,12 +340,11 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                 # sandbox_id == container_id everywhere (enroll_sandbox uses it,
                 # and destroy() unenrolls by container_id — the context-proxy
                 # entry must match or revocation misses it).
-                if watcher_job:
-                    await proxy_mgr.enroll_context(container_id, sandbox_token)
-                else:
-                    # Raises when the proxy does not confirm the scope (an
-                    # image built before scoping grants everything).
-                    granted_scope = await proxy_mgr.enroll_context(container_id, sandbox_token, containers=scope)
+                # Scoped, the watcher's analysis too: to its stack's containers. Raises when the proxy does not
+                # confirm the scope (an image built before scoping grants everything).
+                granted_scope = await proxy_mgr.enroll_context(
+                    container_id, sandbox_token, containers=watcher_scope if watcher_job else scope
+                )
                 await docker.run_cmd(
                     docker.build_exec_cmd(container_id, build_context_token_write_cmd(), interactive=True),
                     timeout=10,

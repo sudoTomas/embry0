@@ -90,7 +90,7 @@ class _ContainerScope:
 
     def parse(self, app: web.Application, body: dict[str, Any]) -> list[str] | None:
         if _SCOPE_FIELD not in body:
-            return None  # unscoped: the full allowlist (watcher analysis jobs)
+            return None  # unscoped: the full allowlist (the orchestrator scopes every job it enrolls)
         requested = body[_SCOPE_FIELD]
         if not isinstance(requested, list) or not all(isinstance(c, str) for c in requested):
             raise EnrollRejected(f"{_SCOPE_FIELD} must be a list of container names")
