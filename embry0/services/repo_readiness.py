@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
+from embry0.services.credentials.shown import Read, resolved_where_read
 from embry0.services.qa_config_check import check_qa_config
 from embry0.services.repo_setup import settle
 
@@ -37,7 +38,9 @@ class ReadinessInputs:
     """The stored facts one repository's checklist is built from.
 
     ``forge_account`` is the label of the forge account that resolves, None
-    when none does. ``facts`` is the discovery fact row's ``facts``, None
+    when none does; ``forge_account_named`` is False when the reader does not
+    read the scope it resolves at (``embry0.services.credentials.shown``), so
+    the checklist says it is the deployment's instead of naming it. ``facts`` is the discovery fact row's ``facts``, None
     when there is no row. ``env_keys`` are the setting names stored for the
     repository and globally. ``setup_check`` is the free check of the stored
     test setup (``check_qa_config``), None when none is stored. ``proposal``
@@ -48,6 +51,7 @@ class ReadinessInputs:
     repo: str
     forge: str
     forge_account: str | None = None
+    forge_account_named: bool = True
     facts: Mapping[str, Any] | None = None
     facts_seen_at: str | None = None
     env_keys: frozenset[str] = frozenset()
@@ -58,14 +62,19 @@ class ReadinessInputs:
 
 
 async def readiness_inputs(
-    app_state: Any, repo: str, registered: Mapping[str, Any], *, trigger_label: str
+    app_state: Any, repo: str, registered: Mapping[str, Any], *, trigger_label: str, read: Read = None
 ) -> ReadinessInputs:
     """Gather ``repo``'s facts from embry0's own tables. ``registered`` is its
     repos row. Reads only: the forge account resolves from the registry and
-    the server's environment, and nothing asks the forge."""
+    the server's environment, and nothing asks the forge. ``read`` is the
+    binding scopes the reader reads (None for every scope): an account that
+    resolves at another is not named."""
     forge = str(registered["forge"])
+    named = True
     try:
-        account: str | None = str((await app_state.credential_resolver.resolve_forge(repo.lower(), forge)).label)
+        resolved = await app_state.credential_resolver.resolve_forge(repo.lower(), forge)
+        account: str | None = str(resolved.label)
+        named = resolved_where_read(resolved.trace, read)
     except (CredentialMissingError, CredentialUnavailableError):
         account = None
     fact = await app_state.org_repos_repo.get(repo)
@@ -90,7 +99,8 @@ async def readiness_inputs(
     return ReadinessInputs(
         repo=repo,
         forge=forge,
-        forge_account=account,
+        forge_account=account if named else None,
+        forge_account_named=named,
         facts=fact["facts"] if fact is not None else None,
         facts_seen_at=fact["seen_at"] if fact is not None else None,
         env_keys=frozenset(env_keys),
@@ -169,6 +179,8 @@ def _plural(n: int, one: str, many: str) -> str:
 def _code_access(inputs: ReadinessInputs) -> dict[str, Any]:
     title = "Read your code and open pull requests"
     forge = _forge(inputs)
+    if not inputs.forge_account_named:
+        return _row("code_access", title, "done", f"Uses the deployment's {forge} account.")
     if inputs.forge_account is not None:
         return _row("code_access", title, "done", f"Uses the {forge} account {inputs.forge_account}.")
     return _row(

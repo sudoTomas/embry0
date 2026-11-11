@@ -31,7 +31,9 @@ class StoredStacks:
     async def get(self, repo: str) -> WatcherStack | None:
         return self.stacks.get(repo)
 
-    async def upsert(self, stack: WatcherStack) -> WatcherStack:
+    async def upsert(self, stack: WatcherStack, *, check: Any = None) -> WatcherStack:
+        if check is not None:
+            check(self.stacks.get(stack.repo))
         self.stacks[stack.repo] = stack
         return stack
 

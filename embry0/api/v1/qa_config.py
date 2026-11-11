@@ -8,22 +8,53 @@ pipeline's write. DELETE removes the config row; the repo stays registered.
 Both writes are recorded in the repo's history (ADR 0019) and audited.
 POST .../check runs the free check (services/qa_config_check.py) on a
 document without storing it.
+
+``cache.turbo_remote`` is the deployment's to turn on, not the repository's
+(:mod:`embry0.services.shared_build_cache`). A key with a repository
+allowlist keeps it on where an admin turned it on and may turn it off, but
+never turns it on: not by this PUT, nor by applying a setup proposal or
+undoing a change. The check runs on the stored setup with its row held, so a
+setup saved meanwhile is the one checked.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, NoReturn
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from embry0.api.deps import request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers
+from embry0.api.repo_allowlist import (
+    enforce_deployment_allowlist,
+    enforce_repo_allowlist,
+    key_covers,
+    restricted_key_name,
+)
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services.qa_config_check import check_qa_config
+from embry0.services.shared_build_cache import SharedBuildCacheRefused, keeps_the_shared_cache
+from embry0.storage.repositories.repo_qa_configs import SetupChanged
 from embry0.workflows.qa.qa_yaml_errors import plain_errors
 
 router = APIRouter()
+
+
+#: What a refused write would have done, in the refusal.
+TURN_ON_THE_SHARED_CACHE = "turn on the shared build cache for a repository"
+
+
+def shared_cache_check(request: Request, text: str) -> Callable[[str | None], None] | None:
+    """The check a write of the setup ``text`` hands to the store for the caller (``upsert_recorded``'s ``check``):
+    for a key with an allowlist, that it does not turn the shared build cache on; None for anyone else."""
+    return keeps_the_shared_cache(text) if restricted_key_name(request) is not None else None
+
+
+async def refuse_the_shared_cache(request: Request) -> NoReturn:
+    """Refuse, log and audit a key's write that would turn the shared build cache on, as the deployment's."""
+    await enforce_deployment_allowlist(request, action=TURN_ON_THE_SHARED_CACHE)
+    raise AssertionError("only a key with an allowlist is checked")  # enforce_deployment_allowlist raised
 
 
 async def _audit(request: Request, action: AuditAction, details: dict[str, Any]) -> None:
@@ -62,7 +93,14 @@ async def put_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=detail) from exc
     configs_repo = request.app.state.qa_configs_repo
     try:
-        row, revision_id = await configs_repo.upsert_recorded(full_repo, text, updated_by=request_actor(request))
+        row, revision_id = await configs_repo.upsert_recorded(
+            full_repo, text, updated_by=request_actor(request), check=shared_cache_check(request, text)
+        )
+    except SharedBuildCacheRefused:
+        await refuse_the_shared_cache(request)
+    except SetupChanged:
+        # Checked against no setup, while another's first one was being saved.
+        raise HTTPException(status_code=409, detail="the test setup was saved meanwhile; read it again") from None
     except ValueError as exc:
         # Spec 1A §3.8: on a deployment that refuses to guess a forge, the
         # auto-registration this PUT performs would have to invent one.

@@ -67,6 +67,46 @@ _STACK_ONLY_DEFAULTS: dict[str, Any] = {"watcher_signature_masks": ()}
 #: Every key a stack's ``settings`` may hold; anything else is dropped on write.
 SETTING_KEYS: frozenset[str] = frozenset(OVERRIDABLE) | frozenset(STACK_ONLY)
 
+#: The settings that are the deployment's to choose, never the stack's repository's: an API key with a repository
+#: allowlist keeps them as stored (``PUT /watcher/stacks``). What the stack reads beyond its repository, what bounds
+#: the analyses it pays for from the shared budget (how often, how big, how dear, how long), and the fix jobs it
+#: starts without a person, which draw on the same caps.
+DEPLOYMENT_SETTINGS: frozenset[str] = frozenset(
+    {
+        "deploy_logql",
+        "context_proxy_container_allowlist",
+        "interval_seconds",
+        "job_budget_usd",
+        "job_timeout_seconds",
+        "max_full_cap_analyses_per_day",
+        "max_log_lines",
+        "max_lookback_seconds",
+        "auto_accept",
+        "auto_accept_after_hours",
+        "auto_accept_min_severity",
+        "auto_accept_min_occurrences",
+        "auto_accept_max_per_day",
+    }
+)
+
+#: The settings that are the stack's repository's: what counts as a finding in its own logs, which ticks are worth
+#: an analysis within the ceiling above, and how many drafts it keeps open.
+REPOSITORY_SETTINGS: frozenset[str] = frozenset(
+    {
+        "min_log_lines",
+        "max_open_proposals",
+        "max_deferred_findings",
+        "proposal_window_days",
+        "spike_factor",
+        "spike_min_count",
+        "regression_silence_seconds",
+        "log_clustering_mode",
+        "skip_unchanged_mode",
+        "skip_known_hours",
+        "signature_masks",
+    }
+)
+
 #: Row fields that are the stack's own, never inherited.
 _OWN = {"repo": "watcher_repo", "logql": "watcher_logql"}
 

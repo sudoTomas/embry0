@@ -26,11 +26,13 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor
-from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers
+from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers, restricted_key_name
 from embry0.api.repository_reads import covered
+from embry0.api.resolution_view import scopes_read
 from embry0.api.schemas import RunWithRequest
 from embry0.api.trigger_context import resolve_trigger_labels
 from embry0.api.v1.jobs import CREATE_A_JOB, start_onboard_job
+from embry0.api.v1.qa_config import refuse_the_shared_cache
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
@@ -47,6 +49,7 @@ from embry0.services.repo_setup import (
     skip_testing,
     start_branch,
 )
+from embry0.services.shared_build_cache import SharedBuildCacheRefused, keeps_the_shared_cache
 from embry0.storage.repositories.repo_setup_proposals import LiveProposalExists
 
 router = APIRouter()
@@ -80,8 +83,11 @@ async def _audit(request: Request, action: AuditAction, details: dict[str, Any])
 
 @router.get("/repos/{full_repo:repo}/-/setup/cost")
 async def get_setup_cost(full_repo: str, request: Request) -> dict[str, Any]:
-    # A repository the caller's key does not cover has no account resolved for it (embry0.api.repository_reads).
-    return await cost_facts(request.app.state, full_repo, resolve_account=key_covers(request, full_repo))
+    # A repository the caller's key does not cover has no account resolved for it (embry0.api.repository_reads); for
+    # one it covers, an account of a scope the key does not read is the deployment's, unnamed (resolution_view).
+    covers = key_covers(request, full_repo)
+    read = await scopes_read(request, full_repo) if covers else None
+    return await cost_facts(request.app.state, full_repo, resolve_account=covers, read=read)
 
 
 @router.post("/repos/{full_repo:repo}/-/setup/propose")
@@ -139,6 +145,18 @@ async def apply_setup_proposal(
     full_repo: str, proposal_id: str, request: Request, req: ApplyRequest | None = None
 ) -> dict[str, int | None]:
     await enforce_repo_allowlist(request, full_repo, action="apply a setup proposal")
+    if restricted_key_name(request) is not None:
+        # Over the setup the proposal was drafted from, the only one apply_proposal writes over.
+        proposal = await request.app.state.repo_setup_proposals_repo.get(proposal_id)
+        if proposal is not None and proposal["repo"] == full_repo and proposal["status"] == "pending":
+            stored = await request.app.state.qa_configs_repo.get(full_repo)
+            if (stored["updated_at"] if stored is not None else None) == proposal["base_updated_at"]:
+                try:
+                    keeps_the_shared_cache(str(proposal["proposed_yaml"] or ""))(
+                        stored["yaml_text"] if stored is not None else None
+                    )
+                except SharedBuildCacheRefused:
+                    await refuse_the_shared_cache(request)
     try:
         revision_id = await apply_proposal(
             request.app.state,
@@ -187,7 +205,12 @@ async def get_readiness(full_repo: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="repo not registered")
     labels = await resolve_trigger_labels(request)
     inputs = await readiness_inputs(
-        request.app.state, full_repo, registered, trigger_label=labels[0] if labels else "embry0"
+        request.app.state,
+        full_repo,
+        registered,
+        trigger_label=labels[0] if labels else "embry0",
+        # The forge account names no credential of a scope the caller's key does not read (resolution_view).
+        read=await scopes_read(request, full_repo),
     )
     return build_readiness(inputs)
 

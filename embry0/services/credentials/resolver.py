@@ -58,11 +58,74 @@ class ResolvedCredential:
 
 
 class CredentialMissingError(LookupError):
+    """Nothing resolves. A repository's or a model provider's message names no credential and no environment key, so
+    it may reach whoever reads the job it fails (its error, its events, a tracker comment); the steps the resolution
+    took are in ``trace``, and the resolver logs them (``credential_missing``)."""
+
     error_code = ErrorCode.CREDENTIAL_MISSING
+
+    def __init__(self, *args: object, trace: tuple[str, ...] = ()) -> None:
+        super().__init__(*args)
+        #: The steps the resolution took, as :attr:`ResolvedCredential.trace` holds them.
+        self.trace = trace
 
 
 class CredentialUnavailableError(RuntimeError):
+    """A credential the resolution must use cannot be used. ``detail`` names it and says why. The message does too
+    for a credential pinned to the repository itself; for one its owner or the deployment pins it names neither, as a
+    missing credential's message names none (``credential_pinned_unavailable`` logs it)."""
+
     error_code = ErrorCode.CREDENTIAL_UNAVAILABLE
+
+    def __init__(
+        self,
+        *args: object,
+        scope_kind: str | None = None,
+        detail: str | None = None,
+        trace: tuple[str, ...] = (),
+        missing: str | None = None,
+    ) -> None:
+        super().__init__(*args)
+        #: The binding scope of the pinned credential that is unavailable (``repo``, ``owner``, ``host``, ``global``),
+        #: when a binding's pin raised it; None otherwise.
+        self.scope_kind = scope_kind
+        #: The credential's label and why it cannot be used; the message when nothing else is given.
+        self.detail = detail if detail is not None else " ".join(str(arg) for arg in args)
+        #: The steps the resolution took, the pinned one last.
+        self.trace = trace
+        #: The message the resolution would have given had nothing resolved, for an answer that must not tell the two
+        #: apart; None when the pin raised it outside a binding walk.
+        self.missing = missing
+
+
+#: How a message names an unavailable credential pinned at a scope other than the repository's own.
+_PINNED_AT: dict[str, str] = {"owner": "the owner's credential"}
+
+
+def _forge_missing(repo: str, forge: str) -> str:
+    """What a forge resolution that found nothing for ``repo`` says."""
+    return (
+        f"no {forge} credential for {repo!r}: bind one in the registry or set "
+        f"{'GITLAB_TOKEN' if forge == 'gitlab' else 'GITHUB_TOKEN'}"
+    )
+
+
+def _llm_missing(repo: str, provider: str) -> str:
+    """What a model account resolution that found nothing for ``repo`` says."""
+    return f"no {provider} credential for {repo!r}: bind one in the registry"
+
+
+def _pinned(
+    row: Mapping[str, Any], why: str, repo: str, scope_kind: str, trace: list[str], missing: str
+) -> CredentialUnavailableError:
+    """The error of a credential pinned at ``scope_kind`` that cannot be used (``why``), logged with its label."""
+    detail = f"credential '{row['label']}' is pinned for {repo} but {why}"
+    logger.warning("credential_pinned_unavailable", repo=repo, scope=scope_kind, label=row["label"], reason=why)
+    at = _PINNED_AT.get(scope_kind, "the deployment's credential")
+    message = detail if scope_kind == "repo" else f"{at} pinned for {repo} cannot be used"
+    return CredentialUnavailableError(
+        message, scope_kind=scope_kind, detail=detail, trace=tuple(trace), missing=missing
+    )
 
 
 class CredentialResolver:
@@ -221,16 +284,14 @@ class CredentialResolver:
                     if why:
                         trace.append(f"{scope_kind}:{scope_value} -> {row['label']} skipped ({why})")
                         if row.get("pinned"):
-                            raise CredentialUnavailableError(
-                                f"credential '{row['label']}' is pinned for {repo} but {why}"
-                            )
+                            raise _pinned(row, why, repo, scope_kind, trace, _forge_missing(repo, forge))
                         continue
                     secret = await self._decrypt_or_disable(row)
                     if secret is None:
                         trace.append(f"{scope_kind}:{scope_value} -> {row['label']} skipped (decryption_failed)")
                         if row.get("pinned"):
-                            raise CredentialUnavailableError(
-                                f"credential '{row['label']}' is pinned for {repo} but decryption_failed"
+                            raise _pinned(
+                                row, "decryption_failed", repo, scope_kind, trace, _forge_missing(repo, forge)
                             )
                         continue
                     trace.append(f"{scope_kind}:{scope_value} -> {row['label']}")
@@ -279,10 +340,8 @@ class CredentialResolver:
                 trace=tuple(trace),
             )
         trace.append(f"env:{key or forge.upper() + '_TOKEN'} -> none")
-        raise CredentialMissingError(
-            f"no {forge} credential for {repo!r}: bind one in the registry or set "
-            f"{'GITLAB_TOKEN' if forge == 'gitlab' else 'GITHUB_TOKEN'} (trace: {'; '.join(trace)})"
-        )
+        logger.info("credential_missing", repo=repo, forge=forge, trace=trace)
+        raise CredentialMissingError(_forge_missing(repo, forge), trace=tuple(trace))
 
     async def has_forge_credential(self, forge: str) -> bool:
         self._check_forge(forge)
@@ -556,16 +615,14 @@ class CredentialResolver:
                     if why:
                         trace.append(f"{scope_kind}:{scope_value} -> {row['label']} skipped ({why})")
                         if row.get("pinned") and scope_kind != "global":
-                            raise CredentialUnavailableError(
-                                f"credential '{row['label']}' is pinned for {repo} but {why}"
-                            )
+                            raise _pinned(row, why, repo, scope_kind, trace, _llm_missing(repo, provider))
                         continue
                     secret = await self._decrypt_or_disable(row)
                     if secret is None:
                         trace.append(f"{scope_kind}:{scope_value} -> {row['label']} skipped (decryption_failed)")
                         if row.get("pinned") and scope_kind != "global":
-                            raise CredentialUnavailableError(
-                                f"credential '{row['label']}' is pinned for {repo} but decryption_failed"
+                            raise _pinned(
+                                row, "decryption_failed", repo, scope_kind, trace, _llm_missing(repo, provider)
                             )
                         continue
                     trace.append(f"{scope_kind}:{scope_value} -> {row['label']}")
@@ -608,9 +665,8 @@ class CredentialResolver:
                 metadata=metadata,
             )
         trace.append(f"env:{provider} -> none")
-        raise CredentialMissingError(
-            f"no {provider} credential for {repo!r}: bind one in the registry (trace: {'; '.join(trace)})"
-        )
+        logger.info("credential_missing", repo=repo, provider=provider, trace=trace)
+        raise CredentialMissingError(_llm_missing(repo, provider), trace=tuple(trace))
 
     @staticmethod
     def _resolved_registry(

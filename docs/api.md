@@ -138,7 +138,7 @@ Every route that starts agent work takes an optional `run_with`: `{"model": "<mo
 - Taken by `POST /jobs` (every pipeline), `POST /issues/{id}/triage`, `POST /cases/{id}/accept`, `POST /proposals/{id}/accept`, `POST /repos/{repo}/-/setup/propose`, `POST /standards/{owner}/{kind}/audit/{repo}`, `POST /orgs/{owner}/context-audit/run`, `POST /orgs/{owner}/actions` (onboard) and `POST /watcher/run`.
 - Refused with 422, before anything starts, when the model is unpriced or disabled, the key is not a usable LLM key, it is not bound to the repository, its owner or the global pool, or it is not of the model's provider.
 - The job's `pipeline_config.run_with` says what was chosen (`model`, `credential_id`, `provider`, `credential_label`); the job page shows it.
-- `GET /api/v1/run-with/keys?repo=` (read): the keys a job on `repo` may use, `{"keys": [{"id", "label", "provider", "scope", "status"}]}`, each once from its most specific binding (`repo`, `owner`, `global`). Without `repo`, the global ones. Never a secret. To a key with a repository allowlist, a `run_with` key that is neither its own nor one of these, for a repository its list covers, answers as a key that does not exist ([Repository allowlist](#repository-allowlist)).
+- `GET /api/v1/run-with/keys?repo=` (read): the keys a job on `repo` may use, `{"keys": [{"id", "label", "provider", "scope", "status"}]}`, each once from its most specific binding (`repo`, `owner`, `global`). Without `repo`, the global ones; a key with a repository allowlist must name one of its repositories, and is refused (403) without one. Never a secret. To a key with a repository allowlist, a `run_with` key that is neither its own nor one of these, for a repository its list covers, answers as a key that does not exist ([Repository allowlist](#repository-allowlist)).
 
 ## Runtime configuration
 
@@ -578,6 +578,16 @@ gets a 403. The one read-scope key they admit is the context-proxy's own
 service key (`svc-context-proxy`, rotated at every boot), which forwards
 allowlisted queries for the sandboxes enrolled with it.
 
+The logs are the deployment's: a line cannot be told to belong to one
+repository. So both routes, and the MCP `logs_query` tool that reaches them
+with its key, refuse a key with a
+[repository allowlist](#repository-allowlist), whatever its tier: a 403
+`repo_not_allowed` naming `(the deployment)` before Loki is asked, logged
+and audited as a refused deployment-wide write is. These routes are the
+ones a key calls; a job's own log tool reads through the context proxy
+instead, scoped as the job is (see the context proxy in
+[architecture.md](architecture.md)).
+
 Every line returned goes through the log-text redactor
 (`embry0/safety/redaction.py`), whoever asks: secrets, e-mail addresses, long
 opaque runs and the values of the `LOG_REDACTION_FIELDS` fields
@@ -762,7 +772,7 @@ A repository whose `context_audit.days` is set (the [settings document](configur
 - `register` adds the repository to the repo registry under the organization's forge, the call `POST /repos` makes. A row under any case counts as `already`.
 - `hook` creates a GitHub webhook on the repository posting to `WEBHOOK_PUBLIC_URL` + `/api/v1/webhook` with `GITHUB_WEBHOOK_SECRET`, for issues, issue comments and pull requests ([webhooks.md](webhooks.md#github)). It runs only when the owner's probe found the credential can manage webhooks, and it is skipped while `WEBHOOK_PUBLIC_URL` is unset or a loopback address, or the secret is empty. A hook in the forge's live listing whose URL starts with `WEBHOOK_PUBLIC_URL` is `already`; a hook on the dashboard's origin is not, since that vhost answers 404 on the webhook paths. GitHub only in this release.
 - `onboard` starts the onboard job ([onboarding.md](onboarding.md)) on the repository's default branch through the function `POST /jobs {"pipeline": "onboard"}` uses, so it runs the same checks (the calling key's repository allowlist among them: a repository the key may not start work on is `failed` with `repo_not_allowed`) and starts it under the caller's actor, which its `onboard.job_created` audit row names. A repository that is not registered is skipped (the job would fail `ERR_REPO_UNREGISTERED`); a stored QA config or an onboard job in flight is `already`; a repository whose facts carry no boot hint is skipped. When the newest onboard job completed without storing a QA config, the repository is skipped with that job's id unless the body carries `"force": true`.
-- `watch` adds a watcher stack for the repository, disabled, filing to the organization's forge, with a placeholder LogQL selector to edit before enabling. It stores through the function `PUT /watcher/stacks/{owner}/{name}` uses and writes its `watcher_stack_updated` audit row. A stack under any case counts as `already`.
+- `watch` adds a watcher stack for the repository, disabled, filing to the organization's forge, with a placeholder LogQL selector naming the whole repository (`{repo="acme/widgets"}`) to edit before enabling. A key with a [repository allowlist](#repository-allowlist) is refused it, as the deployment's. It stores through the function `PUT /watcher/stacks/{owner}/{name}` uses and writes its `watcher_stack_updated` audit row. A stack under any case counts as `already`.
 - `deactivate` sets the repository's registry row inactive, the call `PUT /repos/{repo}/-/active` with `{"active": false}` makes: the row stays, hidden from listings, and the same route turns it back on. It answers the `repo_vanished` need, and it reaches an archived repository too: one archived when it was last listed and deleted since is what that need proposes. An inactive row, or no row at all, is `already`.
 
 The MCP tool `org_act(owner, action, repos, dry_run, force, confirm)` calls this endpoint; like every gated tool it needs `confirm=true` on every call, dry runs included.
@@ -1165,10 +1175,9 @@ and data. These routes narrow to the key's repositories today, by one rule
 about repositories and owners by `embry0/api/repository_reads.py`, to jobs
 by `embry0/api/job_allowlist.py`, to issues by
 `embry0/api/issue_allowlist.py` and to healing cases by
-`embry0/api/case_allowlist.py`). The trace reads (`GET /traces`), the stats
-(`GET /stats`), the audit log (`GET /audit`, which lists every audit row,
-a case's acceptance and closing among them), the container logs
-(`GET /logs/query`), and the account's and the characters' totals, are not
+`embry0/api/case_allowlist.py`, and to the audit log by
+`embry0/api/audit_allowlist.py`). The trace reads (`GET /traces`), the stats
+(`GET /stats`), and the account's and the characters' totals, are not
 narrowed yet and follow in stages of their own:
 
 - `GET /decisions`, `GET /proposals`, `GET /asks/due`, `GET /asks`,
@@ -1348,6 +1357,37 @@ narrowed yet and follow in stages of their own:
   under any owner. A repository's own effective settings
   (`GET /config/settings/effective?repo=`) still show what its
   organization's layer sets for it.
+- The deployment's credentials. What the forge's host and the global pool
+  bind is every repository's: `GET /credentials/bindings` with
+  `scope_kind=host` or `global` has no bindings for a key with an
+  allowlist, whatever its list covers, as an owner it does not cover as a
+  whole has none. A resolution of a repository the key covers is held to
+  the same rule wherever it is read: `GET /repos/{repo}/-/credentials`
+  (`effective`) and `GET /credentials/resolve` keep the trace's steps at
+  the repository, and at its owner when the key covers the owner as a
+  whole, and put one line, `(the deployment's credentials)`, for the steps
+  at the host, the global pool, the environment or an owner the key does
+  not cover as a whole. A credential resolved there is the deployment's,
+  unnamed: `"id": null`, `"label": "(the deployment's)"`, `"host": ""` and
+  `"source": "deployment"`; the checklist (`GET /repos/{repo}/-/readiness`)
+  says the repository uses the deployment's forge account, and
+  `GET /repos/{repo}/-/setup/cost` says a setup run is `paid_from`
+  `(the deployment's)`. A missing credential's message ends with that
+  trace. An unavailable credential pinned at a scope the key does not read
+  answers it as nothing resolving does, 404 with the missing credential's
+  message (and `/-/environment/detect` as a template nothing it may use can
+  read), so the answer does not tell that the scope pins one. The key still
+  reads whether its repository resolves. A job's error, its events and
+  what is posted about it name no credential and carry no trace, whoever
+  reads them: a resolution that found nothing says so and names the
+  provider, and a pinned credential of the owner or the deployment that
+  cannot be used is not named; `GET /credentials/resolve` shows why. The one
+  exception is the choice of a model account for a job: `GET /run-with/keys`
+  lists, by id, label and status, the owner's and the global pool's model
+  accounts a job on the repository may run with
+  ([Run with](#run-with)). It answers such a key only for a repository its
+  list covers: without `repo` it is refused, as work with no repository
+  is. `GET /credentials` lists only its own credentials.
 - Repository discovery. `GET /github/discoverable-repos`,
   `GET /gitlab/discoverable-projects` and `GET /github/repos` list, to a key
   with an allowlist, with the credentials that are its own only (as
@@ -1358,6 +1398,30 @@ narrowed yet and follow in stages of their own:
   caller shares. With no credential of its own it is answered as a
   deployment with none: `400 No GitHub token configured`, or GitLab's
   `configured: false`.
+- The audit log. A row is about the repositories its action names it by
+  (`embry0/audit/subjects.py`): the repository in its details, its issue's,
+  its job's (and its follow-up job's), its merge approval's, its
+  hand-off's, a repository's settings layer or credential binding.
+  `GET /audit` (with every filter, its pages and its `total`) lists to a key
+  with an allowlist only the rows about repositories its list covers, every
+  one the row names, whoever wrote them, narrowed in the query before the
+  page is cut. A row about no repository it does not read, whoever wrote
+  it: an owner's (an organization's change, its settings layer, an owner's
+  credential binding, a map moved between owners) and the deployment's (a
+  key, a person, a credential, a host, a model, an agent, a skill, the
+  deployment's or the global settings). Its own actor opens nothing more:
+  an actor is not one key's, since a key a person mints from a session is
+  recorded under the person's email, as the person's own changes are, and
+  keys of one name share `key:<name>`. A refusal's row it never reads
+  (below).
+  `GET /audit/actions`, the Audit filter's list, offers it only the actions
+  of the rows it reads (a current action whose rows, under its name or one
+  it replaced, it reads, and a retired name such a row carries); the actor
+  filter is matched within those rows.
+- The container log routes. `GET /logs/query` and `GET /logs/containers`
+  are refused to a key with an allowlist, whatever its tier
+  ([Container logs](#container-logs)): a line cannot be told to belong to
+  one repository.
 - A job's streams. `POST /jobs/{id}/events-token`,
   `POST /jobs/{id}/qa/log-stream-token` and `POST /qa/runs/{id}/events-token`
   mint, for another repository's job, a token like any other, as they do for
@@ -1419,15 +1483,49 @@ people (`/users/{id}/…`), the integrations, the models and their providers,
 the credential import and model-account sign-in, the progression rebuild,
 a repository's Docker access (`PUT /repos/{repo}/-/docker-access`, its own
 repository's included: the daemon runs the proxies and every other
-sandbox), and credential bindings for a host or for every repository are
-refused with
+sandbox), credential bindings for a host or for every repository, creating
+a credential (`POST /credentials`) and rotating one
+(`POST /credentials/{id}/rotate`), whoever uses it, are refused with
 a 403 `repo_not_allowed` naming `(the deployment)`, logged and audited as
-the refusals above are. It creates credentials, and binds, changes,
-rotates, verifies, deletes or probes an owner with (`POST /orgs/probe`)
-only its own: one only its repositories use, or one it created that nothing
-uses yet. A credential records the id of the key that created it, so
-another key of the same name never counts as its creator, and one created
-before that id was recorded is no restricted key's. One something else uses
+the refusals above are. A new or rotated secret joins the one set every
+repository's job output, traces and log lines are redacted with, and a new
+account joins every other caller's repository discovery, whatever the
+credential is later bound to; finishing a model account's sign-in
+(`GET /credentials/xai/device-login/{id}`, which stores the account and
+binds it for every repository) is refused the same way, before the login is
+looked up. Parts of a write to its own repository are the deployment's too.
+A watched stack's LogQL selectors (`logql`, `settings.deploy_logql`), the
+containers its analysis may read (`settings.context_proxy_container_allowlist`),
+its tracker and tracker target, and the settings that bound what it spends
+from the shared budget (`interval_seconds`, `job_budget_usd`,
+`job_timeout_seconds`, `max_full_cap_analyses_per_day`, `max_log_lines`,
+`max_lookback_seconds`) or start fix jobs without a person (`auto_accept`
+and the other `auto_accept_*`) choose lines from every container the
+deployment ships, write into a team's tracker and draw on the shared caps:
+such a key keeps them as stored, changing only `enabled` and the
+repository's settings, what counts as a finding (`min_log_lines`,
+`max_open_proposals`, `max_deferred_findings`, `proposal_window_days`,
+`spike_factor`, `spike_min_count`, `regression_silence_seconds`,
+`log_clustering_mode`, `skip_unchanged_mode`, `skip_known_hours`,
+`signature_masks`), and creates no stack (`PUT /watcher/stacks/{owner}/{name}`,
+compared with the stored stack while its row is held), nor runs the
+organization's `watch` action (`POST /orgs/{owner}/actions`, a dry run
+included), which makes stacks. A test setup's `cache.turbo_remote` hands
+the repository's QA sandboxes the Turbo remote-cache token every such
+repository shares: such a key keeps it on where an admin turned it on and
+may turn it off, but never turns it on, by `PUT /repos/{repo}/-/qa-config`,
+applying a setup proposal or undoing a change (checked against the stored
+setup while its row is held). An onboarding job such a key starts
+(`POST /jobs {"pipeline": "onboard"}`, the organization's `onboard` action,
+or running one again) stores no draft that turns it on, nor replaces a
+setup that has it on, and fails saying so. It binds, changes, verifies,
+deletes or probes an owner with (`POST /orgs/probe`) only its own
+credential: one only its repositories
+use, or one it created that nothing uses yet, which since it creates none
+is one it created before it had a list. A credential records the id of the
+key that created it, so another key of the same name never counts as its
+creator, and one created before that id was recorded is no restricted
+key's. One something else uses
 (another repository, an owner, a host, every repository, an organization, a
 skill source) is refused as the deployment's, and a probe with it answers
 as with a credential that does not exist; one someone else created that
@@ -1469,11 +1567,13 @@ before and after.
 ## Audit log
 
 ```bash
-# Newest-first rows; admins see every row, other callers the rows they wrote
+# Newest-first rows; admins see every row, other callers the rows they wrote, and a key with a repository
+# allowlist only the rows about its repositories
 curl "http://localhost:8200/api/v1/audit?action=qa.job_created&limit=50" \
   -H "Authorization: Bearer $EMBRY0_API_KEY"
 
-# Every action a row can carry, with its label (the dashboard's filter list)
+# Every action a row can carry, with its label (the dashboard's filter list); to a key with a repository
+# allowlist, the actions of the rows it reads
 curl http://localhost:8200/api/v1/audit/actions \
   -H "Authorization: Bearer $EMBRY0_API_KEY"
 # -> {"actions": [{"action": "user.login", "label": "Signed in", "replaced_by": null}, ...]}

@@ -28,9 +28,12 @@ from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers
 from embry0.api.schemas.repo_preferences import RepoPreferencesUpdateRequest
+from embry0.api.v1.qa_config import refuse_the_shared_cache, shared_cache_check
 from embry0.audit.helpers import emit_audit
+from embry0.services.shared_build_cache import SharedBuildCacheRefused
 from embry0.storage.repositories.repo_config_revisions import RevisionSurface
 from embry0.storage.repositories.repo_preferences import preferences_snapshot
+from embry0.storage.repositories.repo_qa_configs import SetupChanged
 
 router = APIRouter()
 
@@ -181,8 +184,17 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
                 raise _no_longer_valid(exc) from exc
             try:
                 _, new_revision_id = await configs.upsert_recorded(
-                    full_repo, before["yaml_text"], updated_by=actor, source="restore", reason=reason
+                    full_repo,
+                    before["yaml_text"],
+                    updated_by=actor,
+                    source="restore",
+                    reason=reason,
+                    check=shared_cache_check(request, before["yaml_text"]),
                 )
+            except SharedBuildCacheRefused:
+                await refuse_the_shared_cache(request)
+            except SetupChanged:
+                raise HTTPException(status_code=409, detail=WHY_NOT) from None
             except ValueError as exc:
                 # As the PUT: a deployment with no default forge will not
                 # re-register a repository that was removed since.

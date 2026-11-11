@@ -39,6 +39,7 @@ from embry0.api.repo_allowlist import (
     restricted_key_name,
 )
 from embry0.api.repository_reads import owner_hidden
+from embry0.api.resolution_view import scopes_read
 from embry0.api.schemas.credentials import (
     BindingsSet,
     CredentialCreate,
@@ -62,6 +63,7 @@ from embry0.services.credentials.import_env import import_from_env
 from embry0.services.credentials.preview import masked_preview
 from embry0.services.credentials.providers import base_url_host, default_host, llm_providers
 from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
+from embry0.services.credentials.shown import Read, as_missing, error_shown, resolution_shown
 from embry0.services.hosts import TAILNET_API_BASE
 from embry0.storage.repositories.credentials import (
     BindingValidationError,
@@ -254,7 +256,14 @@ async def list_credentials(request: Request) -> list[CredentialOut]:
     ]
 
 
-@router.post("/credentials", response_model=CredentialOut, status_code=201, dependencies=[require_admin])
+@router.post(
+    "/credentials",
+    response_model=CredentialOut,
+    status_code=201,
+    # A new secret joins the scrub set every repository's job output and logs are redacted with, and a new account
+    # joins every unrestricted caller's discovery: the deployment's, whatever the credential is later bound to.
+    dependencies=[require_admin, deployment_writes("create a credential")],
+)
 async def create_credential(req: CredentialCreate, request: Request) -> CredentialOut:
     st = _state(request)
     expected = _expected_host(st.config, req.provider, req.metadata)
@@ -286,8 +295,10 @@ async def create_credential(req: CredentialCreate, request: Request) -> Credenti
     return _out(dict(row, binding_count=0))
 
 
-def _resolve_out(r: Any) -> ResolveOut:
-    return ResolveOut(id=r.id, label=r.label, provider=r.provider, host=r.host, source=r.source, trace=list(r.trace))
+def _resolve_out(r: Any, read: Read) -> ResolveOut:
+    """The resolved credential ``r`` as a caller reading the scopes ``read`` sees it (``credentials.shown``)."""
+    view = {"id": r.id, "label": r.label, "provider": r.provider, "host": r.host, "source": r.source}
+    return ResolveOut(**resolution_shown({**view, "trace": list(r.trace)}, read))
 
 
 @router.get("/credentials/resolve", response_model=ResolveOut)
@@ -302,6 +313,8 @@ async def resolve_credential(
     # Names a repository rather than an item, as GET /run-with/keys does: another repository is refused whatever is
     # stored, so the answer tells nothing about it.
     await enforce_repo_allowlist(request, repo, action="resolve a repository's credential")
+    # To a key with an allowlist, a step at the host's, the global pool's or the environment's names no credential.
+    read = await scopes_read(request, repo)
     if role == "llm":
         if not provider:
             raise HTTPException(status_code=422, detail="provider is required when role=llm")
@@ -309,11 +322,9 @@ async def resolve_credential(
             resolved = await st.credential_resolver.resolve_llm(repo.lower(), provider)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
-        except CredentialMissingError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from None
-        except CredentialUnavailableError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from None
-        return _resolve_out(resolved)
+        except (CredentialMissingError, CredentialUnavailableError) as exc:
+            raise _unresolved(exc, read) from None
+        return _resolve_out(resolved, read)
     if role != "forge":
         raise HTTPException(status_code=422, detail="role must be forge or llm")
     try:
@@ -322,11 +333,16 @@ async def resolve_credential(
         raise HTTPException(status_code=404, detail=str(exc)) from None
     try:
         r = await st.credential_resolver.resolve_forge(repo.lower(), forge)
-    except CredentialMissingError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from None
-    except CredentialUnavailableError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    return _resolve_out(r)
+    except (CredentialMissingError, CredentialUnavailableError) as exc:
+        raise _unresolved(exc, read) from None
+    return _resolve_out(r, read)
+
+
+def _unresolved(exc: Exception, read: Read) -> HTTPException:
+    """A resolution that failed, as the caller reading ``read`` is answered: 404 when nothing resolves, 409 when a
+    pinned credential cannot be used; to a key with an allowlist, a pinned one of a scope it does not read answers as
+    nothing resolving does (``credentials.shown``)."""
+    return HTTPException(status_code=404 if as_missing(exc, read) else 409, detail=error_shown(exc, read))
 
 
 @router.get("/credentials/bindings")
@@ -336,10 +352,13 @@ async def get_bindings(
     scope_value: str = Query(default=""),
 ) -> dict[str, Any]:
     """One scope's bindings. To a key with an allowlist, a repository it does not cover, or an owner it does not
-    cover as a whole, has none (embry0.api.repository_reads); a host's and the global ones are every repository's."""
+    cover as a whole, has none (embry0.api.repository_reads), and neither has a host nor the global pool: what they
+    bind is every repository's, the deployment's. A read: nothing is refused, logged or audited."""
     value = scope_value.strip()
-    hidden = (scope_kind == "repo" and not key_covers(request, value)) or (
-        scope_kind == "owner" and await owner_hidden(request, value.partition(":")[2] or value)
+    hidden = (
+        (scope_kind == "repo" and not key_covers(request, value))
+        or (scope_kind == "owner" and await owner_hidden(request, value.partition(":")[2] or value))
+        or (scope_kind in ("host", "global") and restricted_key_name(request) is not None)
     )
     bindings = [] if hidden else await _state(request).credentials_repo.bindings_for_scope(scope_kind, value)
     return {"bindings": await _bindings_view(request, bindings)}
@@ -614,6 +633,9 @@ async def start_xai_device_login(req: XaiDeviceLoginStart, request: Request) -> 
 async def poll_xai_device_login(login_id: str, request: Request) -> XaiDeviceLoginPoll:
     from embry0.execution.xai_device_login import XaiDeviceLoginError, _pin_xai
 
+    # A read that writes: the finished login stores a credential bound for every repository's jobs. Refused before the
+    # login is looked up, so the answer is the same whether it exists.
+    await enforce_deployment_allowlist(request, action="sign in the deployment's model account")
     st = _state(request)
     pending = _device_logins(st).get(login_id)
     if pending is None:
@@ -716,14 +738,18 @@ async def update_credential(credential_id: str, req: CredentialUpdate, request: 
     return await _out_with_count(request, row)
 
 
-@router.post("/credentials/{credential_id}/rotate", response_model=CredentialOut, dependencies=[require_admin])
+@router.post(
+    "/credentials/{credential_id}/rotate",
+    response_model=CredentialOut,
+    # The new secret joins the deployment's scrub set, as a new credential's does.
+    dependencies=[require_admin, deployment_writes("rotate a credential")],
+)
 async def rotate_credential(credential_id: str, req: CredentialRotate, request: Request) -> CredentialOut:
     st = _state(request)
     secret_ciphertext = await st.secrets_provider.encrypt(req.secret)
-    async with _held(request, credential_id, action="rotate a credential") as conn:
-        row = await st.credentials_repo.rotate(
-            credential_id, secret_ciphertext=secret_ciphertext, masked_preview=masked_preview(req.secret), **_on(conn)
-        )
+    row = await st.credentials_repo.rotate(
+        credential_id, secret_ciphertext=secret_ciphertext, masked_preview=masked_preview(req.secret)
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="credential not found")
     await _audit(request, "credential.rotated", {"credential_id": credential_id})
@@ -840,35 +866,37 @@ async def get_repo_credentials(full_repo: str, request: Request) -> dict[str, An
         # it would fall back to is its owner's and the deployment's, not the key's (embry0.api.repository_reads).
         return {"repo": scope_value, "bindings": [], "effective": {}}
     bindings = await st.credentials_repo.bindings_for_scope("repo", scope_value)
+    # To a key with an allowlist, a step at the host's, the global pool's or the environment's names no credential.
+    read = await scopes_read(request, full_repo)
     effective: dict[str, Any] = {}
     try:
         r = await st.credential_resolver.resolve_forge(scope_value, await st.repos_repo.forge_for(full_repo))
-        effective["forge"] = {
-            "id": r.id,
-            "label": r.label,
-            "provider": r.provider,
-            "source": r.source,
-            "trace": list(r.trace),
-        }
+        effective["forge"] = resolution_shown(
+            {"id": r.id, "label": r.label, "provider": r.provider, "source": r.source, "trace": list(r.trace)}, read
+        )
     except (CredentialMissingError, CredentialUnavailableError, UnregisteredRepoError) as exc:
-        effective["forge"] = {"error": str(exc)}
+        effective["forge"] = {"error": error_shown(exc, read)}
     llm: dict[str, Any] = {}
     for provider in llm_providers():
         try:
             resolved = await st.credential_resolver.resolve_llm(scope_value, provider)
-        except CredentialMissingError:
+        except (CredentialMissingError, CredentialUnavailableError) as exc:
+            # A provider nothing resolves is left out, as is, to a key with an allowlist, one whose pinned account of
+            # a scope it does not read cannot be used.
+            if not as_missing(exc, read):
+                llm[provider] = {"error": error_shown(exc, read)}
             continue
-        except CredentialUnavailableError as exc:
-            llm[provider] = {"error": str(exc)}
-            continue
-        llm[provider] = {
-            "id": resolved.id,
-            "label": resolved.label,
-            "provider": resolved.provider,
-            "host": resolved.host,
-            "source": resolved.source,
-            "trace": list(resolved.trace),
-        }
+        llm[provider] = resolution_shown(
+            {
+                "id": resolved.id,
+                "label": resolved.label,
+                "provider": resolved.provider,
+                "host": resolved.host,
+                "source": resolved.source,
+                "trace": list(resolved.trace),
+            },
+            read,
+        )
     if llm:
         effective["llm"] = llm
     return {"repo": scope_value, "bindings": await _bindings_view(request, bindings), "effective": effective}

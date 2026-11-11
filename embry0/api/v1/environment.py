@@ -312,7 +312,15 @@ async def detect_repo_environment(full_repo: str, request: Request) -> DetectRes
             resolver, full_repo, "github", getattr(request.app.state.config, "github_token", "") or ""
         )
     except CredentialUnavailableError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        from embry0.api.resolution_view import scopes_read
+        from embry0.services.credentials.shown import as_missing, error_shown
+
+        read = await scopes_read(request, full_repo)
+        if not as_missing(exc, read):
+            raise HTTPException(status_code=409, detail=error_shown(exc, read)) from exc
+        # To a key with an allowlist, a pinned credential of a scope it does not read is the deployment's: nothing it
+        # may use reads the template, as when nothing resolves, and the answer does not tell it is pinned.
+        return DetectResponse(source_file="", variables=[], unconfigured_count=0)
 
     content: str | None = None
     source_file = ""

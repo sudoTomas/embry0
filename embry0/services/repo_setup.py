@@ -17,6 +17,7 @@ from typing import Any, Final
 import structlog
 
 from embry0.services.bootstrap import render_starter_qa_yaml
+from embry0.services.credentials.shown import Read, label_shown
 from embry0.services.qa_config_check import check_qa_config
 from embry0.settings.sections.budget import BUDGET
 from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES
@@ -57,12 +58,14 @@ async def medium_model(app_state: Any) -> str:
     return str(provider_cfg.get("model_medium") or app_state.config.model_medium)
 
 
-async def cost_facts(app_state: Any, repo: str, *, resolve_account: bool = True) -> dict[str, Any]:
+async def cost_facts(app_state: Any, repo: str, *, resolve_account: bool = True, read: Read = None) -> dict[str, Any]:
     """What setup runs cost on this embry0, the per-job budget, the model and
     the AI account that would pay. Recorded facts only, never an estimate.
     Without ``resolve_account`` no account is resolved for ``repo``, as for a
     caller that may not read what it would use: ``paid_from`` is None, as
-    when none is usable."""
+    when none is usable. ``read`` is the binding scopes the caller reads (None
+    for every scope): an account that resolves at another is
+    ``(the deployment's)``, not its label (``embry0.services.credentials.shown``)."""
     db = app_state.db
     recorded_runs = await db.fetchval(
         "SELECT count(*) FROM jobs WHERE pipeline_template = 'onboard' AND status = 'completed'"
@@ -81,11 +84,11 @@ async def cost_facts(app_state: Any, repo: str, *, resolve_account: bool = True)
         "typical_cost_usd": statistics.median(costs) if costs else None,
         "per_job_budget_usd": float(budget.max_budget_per_job_usd),
         "model": model,
-        "paid_from": await _paid_from(app_state, repo, model) if resolve_account else None,
+        "paid_from": await _paid_from(app_state, repo, model, read) if resolve_account else None,
     }
 
 
-async def _paid_from(app_state: Any, repo: str, model: str) -> str | None:
+async def _paid_from(app_state: Any, repo: str, model: str, read: Read) -> str | None:
     from embry0.agents.providers import provider_for_model
 
     provider = provider_for_model(model)  # None is a Claude model
@@ -97,7 +100,7 @@ async def _paid_from(app_state: Any, repo: str, model: str) -> str | None:
     except Exception as exc:  # noqa: BLE001
         logger.info("setup_cost_no_llm_account", repo=repo, error=str(exc)[:200])
         return None
-    return str(resolved.label)
+    return label_shown(str(resolved.label), resolved.trace, read)
 
 
 async def start_branch(app_state: Any, repo: str) -> str | None:

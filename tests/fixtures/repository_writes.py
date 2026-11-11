@@ -269,6 +269,34 @@ async def mint(db: DatabasePool) -> Keys:
     return Keys(limited=limited, open=unlimited)
 
 
+async def key_id(app: FastAPI, name: str) -> str:
+    """The id of the one live key named ``name``."""
+    ids = [str(r["id"]) for r in await app.state.db.fetch("SELECT id FROM api_keys WHERE name = $1", name)]
+    assert len(ids) == 1, f"one key named {name}: {ids}"
+    return ids[0]
+
+
+async def made_before_its_list(app: FastAPI, key: str, token: str, body: Mapping[str, Any]) -> str:
+    """The id of a credential the key ``key`` (its id; ``token``) created while it had no repository allowlist, its
+    list then put back: the credential records the key's id, so while nothing uses it, it is that key's own. A key
+    with an allowlist creates none, since a new secret joins the scrub set every repository's output is redacted with.
+
+    The list is lifted and put back through ``PUT /apikeys/{id}/allowed-repos``, as an admin would."""
+    listed = await app.state.api_keys_repo.get(key)
+    assert listed is not None and listed.allowed_repos, f"{key} is a key with an allowlist"
+    lifted = await call(app, "PUT", f"/api/v1/apikeys/{key}/allowed-repos", MASTER, {"allowed_repos": []})
+    assert lifted.status_code == 200, lifted.text
+    try:
+        made = await call(app, "POST", "/api/v1/credentials", token, dict(body))
+        assert made.status_code == 201, made.text
+    finally:
+        back = await call(
+            app, "PUT", f"/api/v1/apikeys/{key}/allowed-repos", MASTER, {"allowed_repos": list(listed.allowed_repos)}
+        )
+        assert back.status_code == 200, back.text
+    return str(made.json()["id"])
+
+
 @asynccontextmanager
 async def repository_writes_app(
     db: DatabasePool, monkeypatch: pytest.MonkeyPatch

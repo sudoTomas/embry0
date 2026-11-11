@@ -150,18 +150,18 @@ All under `/api/v1`. Reads need any authenticated principal; every mutation need
 | method and path | tier | purpose |
 |---|---|---|
 | `GET /credentials` | read | list: id, kind, provider, host, label, `masked_preview`, `verified_login`, status, `status_reason`, `quarantined_until`, `binding_count`, timestamps |
-| `POST /credentials` | admin | create: `kind`, `provider`, `host`, `label`, `secret`, `git_author_name`, `git_author_email`. 409 on a duplicate label, 422 on a wrong host |
+| `POST /credentials` | admin | create: `kind`, `provider`, `host`, `label`, `secret`, `git_author_name`, `git_author_email`. 409 on a duplicate label, 422 on a wrong host. Not a key with a [repository allowlist](api.md#repository-allowlist): the new secret joins every repository's scrub set |
 | `PUT /credentials/{id}` | admin | `label`, author fields, `status` in {`ok`, `disabled`}. An omitted field is kept; an author field sent as `null` or blank is cleared, so the author falls back to branding |
-| `POST /credentials/{id}/rotate` | admin | new `secret`; sets `rotated_at`, clears `decryption_failed` |
+| `POST /credentials/{id}/rotate` | admin | new `secret`; sets `rotated_at`, clears `decryption_failed`. Not a key with a repository allowlist, as creating |
 | `POST /credentials/{id}/verify` | admin | forge tokens only: asks the forge `GET /user` and stores `verified_login` |
 | `DELETE /credentials/{id}` | admin | 409 while bindings reference it |
-| `GET /credentials/resolve?repo=&role=forge` | read | dry run: which credential a job on `repo` would get, and why; a key with a repository allowlist only for a repository on its list |
-| `GET /credentials/bindings?scope_kind=&scope_value=` | read | the bindings of one owner, host or global scope; to a key with a repository allowlist, none of a repository off its list or an owner it does not cover as a whole |
+| `GET /credentials/resolve?repo=&role=forge` | read | dry run: which credential a job on `repo` would get, and why; a key with a repository allowlist only for a repository on its list, and without the deployment's credentials ([below](#a-key-with-a-repository-allowlist)) |
+| `GET /credentials/bindings?scope_kind=&scope_value=` | read | the bindings of one owner, host or global scope; to a key with a repository allowlist, none of a repository off its list, an owner it does not cover as a whole, a host or the global pool |
 | `PUT /credentials/bindings` | admin | replace the bindings of one owner, host or global scope |
 | `POST /credentials/import-env` | admin | the importer above |
 | `POST /credentials/xai/device-login` | admin | body `{label}`. Starts an xAI device-code login. Returns `login_id`, `user_code`, `verification_uri_complete`, `interval`, `expires_at`. Does not return `device_code` |
-| `GET /credentials/xai/device-login/{login_id}` | admin | `{"status":"pending"}`, `{"status":"expired"}`, or `{"status":"done","credential":...}` after the `llm_oauth` row exists. The response never includes the refresh token |
-| `GET /repos/{repo}/-/credentials` | read | the repo's bindings plus the effective forge resolution |
+| `GET /credentials/xai/device-login/{login_id}` | admin | `{"status":"pending"}`, `{"status":"expired"}`, or `{"status":"done","credential":...}` after the `llm_oauth` row exists. The response never includes the refresh token. Not a key with a repository allowlist, as starting one |
+| `GET /repos/{repo}/-/credentials` | read | the repo's bindings plus the effective forge and model-account resolutions; to a key with a repository allowlist, without the deployment's credentials |
 | `PUT /repos/{repo}/-/credentials` | admin | replace the repo's bindings; registers the repo if unknown, as the QA config write does |
 
 **There is no reveal endpoint.** A secret is write-only once created: responses carry `masked_preview` and never the secret; `verify` never echoes the token and reports a rejection as `HTTP <status>` only; a 422 on a `/credentials` path lists the failing fields without the submitted values; logs, audit details and error messages never contain a secret. Every create, rotate, import and delete also refreshes the log scrubbers' set, so a registry token that never entered the environment is still redacted from agent stderr.
@@ -198,6 +198,25 @@ The dry run for `acme/gadgets`, which has no repo binding but whose owner is bou
 ```
 
 On a deployment that has not imported yet, the same call ends in `"source": "env"`, `"id": null`, a label naming the env key, and a trace step such as `env:GITHUB_TOKEN__ACME`. A skipped credential shows as `owner:github:acme -> acme-bot skipped (disabled)`. The call answers 404 for an unregistered repo or when nothing resolves, and 409 when a pinned credential is unavailable.
+
+### A key with a repository allowlist
+
+What the forge's host and the global pool bind is every repository's, and so is the environment's token: an API key with a [repository allowlist](api.md#repository-allowlist) reads none of them, nor an owner's binding unless it covers every repository registered under the owner. `GET /credentials/bindings` has no bindings of those scopes for it. A resolution of a repository it covers, this dry run and the `effective` part of `GET /repos/{repo}/-/credentials`, keeps the steps at the repository (and the owner, when the key covers it as a whole) and puts one line for the rest. A credential resolved there is shown as the deployment's, unnamed. The same dry run for `acme/gadgets`, through a key listing `acme/gadgets` alone while `acme/widgets` is registered too:
+
+```json
+{
+  "id": null,
+  "label": "(the deployment's)",
+  "provider": "github",
+  "host": "",
+  "source": "deployment",
+  "trace": ["repo:acme/gadgets -> none", "(the deployment's credentials)"]
+}
+```
+
+A missing credential's 404 ends with that trace. An unavailable credential pinned at a scope the key does not read answers it as nothing resolving does, 404 with that message, so it does not tell the scope pins one. The repository's checklist says it uses the deployment's forge account, and `/-/setup/cost` says a setup run is paid from `(the deployment's)`. The key still reads whether its repository resolves, and `GET /run-with/keys?repo=` one of its repositories still lists the owner's and the global pool's model accounts a job there may run with, by label, since it chooses one by its id.
+
+A job that fails because no credential resolves, or because a pinned one cannot be used, stores an error that names no credential and carries no trace, for every reader of the job, its events and what is posted about it: `no xai credential for 'acme/gadgets': bind one in the registry`, or `the owner's credential pinned for acme/gadgets cannot be used` (a credential pinned to the repository itself is named, with why). The dry run above shows the steps, and the orchestrator logs them (`credential_missing`, `credential_pinned_unavailable`).
 
 **Discovery.** `GET /api/v1/github/discoverable-repos` and `GET /api/v1/gitlab/discoverable-projects` fan out across every registry credential for that forge that is not `disabled`, then the env tokens (`GITHUB_TOKEN` / `GITHUB_TOKEN__<OWNER>`, or the GitLab pair), and subtract repos already registered. Owner-scoped and repo-scoped credentials are included. The same token stored in the registry and the environment is listed once, as the registry credential. When two different tokens can both see a path, the first one wins: registry accounts are walked in label order, then the env tokens. An API key with a [repository allowlist](api.md#repository-allowlist) is the exception: it lists with the registry credentials that are its own (those `GET /credentials` lists to it) and never the env tokens, sees only the repositories its list covers, and its listing bypasses the shared cache both ways; with no credential of its own it gets the answer of a deployment with none.
 

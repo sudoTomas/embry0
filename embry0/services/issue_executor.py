@@ -752,6 +752,7 @@ class IssueExecutor:
         dispatched_by: str | None = None,
         proposal_id: str | None = None,
         run_with: RunWith | None = None,
+        by_allowlisted_key: bool = False,
     ) -> str:
         """EMB-50: issue-less onboard job — analyze ``repo`` and generate its
         qa.yaml v2 into the external config store. Returns the new job id.
@@ -759,7 +760,11 @@ class IssueExecutor:
         Without a ``branch`` the job analyzes the repo's base branch (its
         preference, else the forge's default branch, else "main"; #29).
         With ``proposal_id`` (propose mode, ADR 0019) the job stores its
-        draft on that setup proposal instead, for a person to apply."""
+        draft on that setup proposal instead, for a person to apply.
+        ``by_allowlisted_key``: a key with a repository allowlist starts it,
+        so it stores no draft that turns the shared build cache on, nor
+        replaces a setup that has it on; kept in the launch record, so a
+        relaunch keeps it."""
         import uuid
 
         if not branch:
@@ -808,6 +813,7 @@ class IssueExecutor:
                 skip_smoke=skip_smoke,
                 agent_models=agent_models,
                 proposal_id=proposal_id,
+                by_allowlisted_key=by_allowlisted_key,
             ),
             kind="onboard_workflow_execute",
             job_id=job_id,
@@ -818,6 +824,7 @@ class IssueExecutor:
                 "skip_smoke": skip_smoke,
                 "agent_models": agent_models,
                 "proposal_id": proposal_id,
+                "by_allowlisted_key": by_allowlisted_key,
             },
         )
         return job_id
@@ -1440,6 +1447,7 @@ class IssueExecutor:
                 skip_smoke=bool(launch.get("skip_smoke")),
                 agent_models=launch.get("agent_models"),
                 proposal_id=launch.get("proposal_id"),
+                by_allowlisted_key=bool(launch.get("by_allowlisted_key")),
             )
             return
         if runner == "pr-review":

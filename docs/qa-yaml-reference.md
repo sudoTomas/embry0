@@ -467,7 +467,11 @@ the shared cache. Turn it on (`turbo_remote: { enabled: true }`) only on a
 deployment running the self-hosted cache, and only for repositories you are
 comfortable sharing that one token across. A stored config that already sets
 `enabled: true` keeps it; only configs that omit `turbo_remote` take the
-default.
+default. Turning it on is the deployment's decision, so an API key with a
+[repository allowlist](api.md#repository-allowlist) never turns it on, by a
+PUT, a setup proposal or an undo; it keeps it on where an admin turned it
+on, and may turn it off. An onboarding job such a key started stores no draft
+that turns it on, nor replaces a setup that has it on.
 
 **Baking from a branch other than the default is admin tier.** A prebaked
 image becomes the repository's QA base, so `POST /qa/images/build` for any

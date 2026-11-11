@@ -230,6 +230,7 @@ async def _run_onboard_workflow(
     skip_smoke: bool,
     agent_models: dict[str, str] | None = None,
     proposal_id: str | None = None,
+    by_allowlisted_key: bool = False,
 ) -> None:
     """Background runner for onboard jobs — mirrors ``_run_qa_workflow``'s
     lifecycle (trace binding, status transitions) minus QA verdict logic:
@@ -281,7 +282,8 @@ async def _run_onboard_workflow(
             "qa_active": True,
             "skip_smoke": skip_smoke,
             "onboard_propose": proposal_id is not None,
-            "onboard": {},
+            # Who started it rides in the pipeline's own state: write_config reads it (embry0.services.shared_build_cache).
+            "onboard": {"by_allowlisted_key": by_allowlisted_key},
         }
         if agent_models:
             initial_state["agent_models_override"] = dict(agent_models)

@@ -460,7 +460,7 @@ async def test_watch_adds_a_disabled_stack_once() -> None:
     stack = ctx.stacks.rows["acme/widgets"]  # type: ignore[union-attr]
     assert stack.enabled is False
     assert stack.tracker == "github"
-    assert stack.logql == '{app="widgets"}'
+    assert stack.logql == '{repo="acme/widgets"}'
 
 
 @pytest.mark.asyncio

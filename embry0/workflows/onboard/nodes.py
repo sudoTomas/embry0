@@ -27,6 +27,7 @@ from langgraph.config import get_stream_writer
 
 from embry0.execution import events
 from embry0.services.account_waits import AccountWait, AccountWaitInterrupt
+from embry0.services.shared_build_cache import SharedBuildCacheRefused, leaves_the_shared_cache
 from embry0.workflows.pipeline_graphs import onboard_pipeline_graph
 
 logger = structlog.get_logger(__name__)
@@ -552,8 +553,17 @@ async def write_config_node(state: dict[str, Any], config: RunnableConfig) -> di
     qa_configs_repo = configurable.get("qa_configs_repo")
     if qa_configs_repo is None:
         return _failed("qa_configs_repo unavailable — cannot persist the config")
+    text = ob["qa_yaml_text"]
+    # A job a key with a repository allowlist started leaves the shared build cache to the deployment: it stores no
+    # draft that turns it on, nor replaces a setup that has it on (checked on the stored setup, its row held).
+    check = leaves_the_shared_cache(text) if ob.get("by_allowlisted_key") else None
     try:
-        await qa_configs_repo.upsert(repo, ob["qa_yaml_text"], updated_by="onboard-pipeline")
+        await qa_configs_repo.upsert(repo, text, updated_by="onboard-pipeline", check=check)
+    except SharedBuildCacheRefused as exc:
+        return _failed(
+            f"not stored: {exc}, which the deployment turns on (cache.turbo_remote), and a key with a repository "
+            "allowlist started this job; an admin can store the setup"
+        )
     except Exception as exc:  # noqa: BLE001
         return _failed(f"config store write failed: {exc}")
 
