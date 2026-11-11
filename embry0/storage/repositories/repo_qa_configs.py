@@ -11,6 +11,7 @@ transaction (ADR 0019), whichever path it came through.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Final
 
@@ -46,9 +47,11 @@ class RepoQAConfigsRepository:
         row = await self._db.fetchrow(f"SELECT {_COLUMNS} FROM repo_qa_configs WHERE repo = $1", repo)
         return dict(row) if row else None
 
-    async def upsert(self, repo: str, yaml_text: str, updated_by: str = "") -> dict[str, Any]:
+    async def upsert(
+        self, repo: str, yaml_text: str, updated_by: str = "", *, check: Callable[[str | None], None] | None = None
+    ) -> dict[str, Any]:
         """Store the config; ``upsert_recorded`` without the revision id."""
-        return (await self.upsert_recorded(repo, yaml_text, updated_by))[0]
+        return (await self.upsert_recorded(repo, yaml_text, updated_by, check=check))[0]
 
     async def upsert_recorded(
         self,
@@ -58,10 +61,16 @@ class RepoQAConfigsRepository:
         *,
         source: RevisionSource | None = None,
         reason: str = "",
+        check: Callable[[str | None], None] | None = None,
     ) -> tuple[dict[str, Any], int | None]:
         """Store the config, auto-registering the repo (the FK requires a row),
         and record the change. Returns the stored row and the new revision's
         id, or None when the text was unchanged and nothing was recorded.
+
+        ``check``, when given, is called with the stored setup's text (None
+        when none is stored) while its row is held, before anything is
+        written; whatever it raises rolls the transaction back, so a setup
+        saved meanwhile is the one it judged.
 
         The forge is written EXPLICITLY, never left to the column's
         ``DEFAULT 'github'``: that default is a correct backfill for rows that
@@ -75,7 +84,7 @@ class RepoQAConfigsRepository:
         ``onboard-pipeline`` (onboard), anything else a person.
         """
         async with self._db.transaction() as conn:
-            return await self._upsert_on(conn, repo, yaml_text, updated_by, source=source, reason=reason)
+            return await self._upsert_on(conn, repo, yaml_text, updated_by, source=source, reason=reason, check=check)
 
     async def upsert_recorded_if_unchanged(
         self,
@@ -115,6 +124,7 @@ class RepoQAConfigsRepository:
         reason: str,
         check_base: bool = False,
         base_updated_at: datetime | None = None,
+        check: Callable[[str | None], None] | None = None,
     ) -> tuple[dict[str, Any], int | None]:
         if not self._default_forge:
             registered = await conn.fetchrow("SELECT 1 FROM repos WHERE repo = $1", repo)
@@ -136,6 +146,8 @@ class RepoQAConfigsRepository:
         )
         if check_base and (stored["updated_at"] if stored is not None else None) != base_updated_at:
             raise SetupChanged(f"the test setup of {repo} changed")
+        if check is not None:
+            check(stored["yaml_text"] if stored is not None else None)
         # With no row there was nothing to lock: another writer's first save
         # can still be uncommitted. The insert then waits for it, and a
         # compare-and-set must not replace it ($4 false).
@@ -153,7 +165,8 @@ class RepoQAConfigsRepository:
             repo,
             yaml_text,
             updated_by,
-            not (check_base and stored is None),
+            # A checked write judged no setup: one saved meanwhile is not replaced unjudged.
+            not ((check_base or check is not None) and stored is None),
         )
         if row is None:
             raise SetupChanged(f"the test setup of {repo} was saved meanwhile")

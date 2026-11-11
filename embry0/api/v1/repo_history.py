@@ -29,12 +29,14 @@ from embry0.api.actor_visibility import actor_shown
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist, key_covers
 from embry0.api.schemas.repo_preferences import RepoPreferencesUpdateRequest
-from embry0.api.v1.qa_config import enforce_shared_cache_kept
+from embry0.api.v1.qa_config import refuse_the_shared_cache, shared_cache_check
 from embry0.audit.helpers import emit_audit
 from embry0.services.areas_document import DocumentInvalid, DocumentTooLarge, areas_of, changes, problem_list
+from embry0.services.shared_build_cache import SharedBuildCacheRefused
 from embry0.storage.repositories.repo_areas import AreasChanged
 from embry0.storage.repositories.repo_config_revisions import RevisionSurface
 from embry0.storage.repositories.repo_preferences import preferences_snapshot
+from embry0.storage.repositories.repo_qa_configs import SetupChanged
 from embry0.workflows.verification.config import STORED as VERIFICATION_STORED
 from embry0.workflows.verification.config import negation_warning as verification_negation_warning
 
@@ -236,8 +238,6 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
             raise HTTPException(status_code=409, detail=WHY_NOT) from None
     elif surface == "qa_config":
         configs = request.app.state.qa_configs_repo
-        # The setup the undo replaces is the one this change wrote (checked above).
-        await enforce_shared_cache_kept(request, before["yaml_text"] if before is not None else None, revision["after"])
         if before is None:
             new_revision_id = await configs.delete_recorded(full_repo, actor=actor, source="restore", reason=reason)
         else:
@@ -251,8 +251,17 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
             warnings += [w for w in (negation, body_regex) if w]
             try:
                 _, new_revision_id = await configs.upsert_recorded(
-                    full_repo, before["yaml_text"], updated_by=actor, source="restore", reason=reason
+                    full_repo,
+                    before["yaml_text"],
+                    updated_by=actor,
+                    source="restore",
+                    reason=reason,
+                    check=shared_cache_check(request, before["yaml_text"]),
                 )
+            except SharedBuildCacheRefused:
+                await refuse_the_shared_cache(request)
+            except SetupChanged:
+                raise HTTPException(status_code=409, detail=WHY_NOT) from None
             except ValueError as exc:
                 # As the PUT: a deployment with no default forge will not
                 # re-register a repository that was removed since.

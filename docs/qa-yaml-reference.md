@@ -470,7 +470,11 @@ comfortable sharing that one token across. A stored config that already sets
 default. Turning it on is the deployment's decision, so an API key with a
 [repository allowlist](api.md#repository-allowlist) never turns it on, by a
 PUT, a setup proposal or an undo; it keeps it on where an admin turned it
-on, and may turn it off.
+on, and may turn it off. Onboarding never turns it on, whoever started the
+job: its draft comes from the repository, so an onboarding job stores a draft
+with `enabled: true` only over a setup that already has it on (a job such a
+key started also replaces no setup that has it on). Turn it on yourself, with
+a PUT of the setup.
 
 **Baking from a branch other than the default is admin tier.** A prebaked
 image becomes the repository's QA base, so `POST /qa/images/build` for any

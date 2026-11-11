@@ -106,7 +106,9 @@ class _FakeConfigsRepo:
     def __init__(self):
         self.rows: dict[str, dict] = {}
 
-    async def upsert(self, repo, yaml_text, updated_by=""):
+    async def upsert(self, repo, yaml_text, updated_by="", *, check=None):
+        if check is not None:
+            check(self.rows[repo]["yaml_text"] if repo in self.rows else None)
         self.rows[repo] = {"repo": repo, "yaml_text": yaml_text, "updated_by": updated_by}
         return self.rows[repo]
 

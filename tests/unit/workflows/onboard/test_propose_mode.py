@@ -44,7 +44,7 @@ class _FakeConfigsRepo:
     def __init__(self) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
 
-    async def upsert(self, repo: str, yaml_text: str, updated_by: str = "") -> dict[str, Any]:
+    async def upsert(self, repo: str, yaml_text: str, updated_by: str = "", *, check: Any = None) -> dict[str, Any]:
         self.rows[repo] = {"repo": repo, "yaml_text": yaml_text, "updated_by": updated_by}
         return self.rows[repo]
 

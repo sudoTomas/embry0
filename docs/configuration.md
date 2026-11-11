@@ -188,12 +188,19 @@ PUT    /api/v1/watcher/stacks/{owner}/{name}  # create or replace (admin; see be
 DELETE /api/v1/watcher/stacks/{owner}/{name}  # stop watching (admin); its runs, signatures and cases stay
 ```
 
-What a stack reads and where it files are the deployment's: an API key with a
-[repository allowlist](api.md#repository-allowlist) creates no stack, and on one
-an admin made for its repository changes only `enabled` and the settings other
-than `deploy_logql` and `context_proxy_container_allowlist`, keeping `logql`,
-those two, `tracker` and `tracker_target` as stored (403 naming the deployment
-otherwise).
+What a stack reads, where it files and what it spends are the deployment's: an
+API key with a [repository allowlist](api.md#repository-allowlist) creates no
+stack (nor runs the organization's `watch` action), and on one an admin made
+for its repository keeps `logql`, `tracker`, `tracker_target` and these
+settings as stored: `deploy_logql`, `context_proxy_container_allowlist`,
+`interval_seconds`, `job_budget_usd`, `job_timeout_seconds`,
+`max_full_cap_analyses_per_day`, `max_log_lines`, `max_lookback_seconds` and
+every `auto_accept*` (403 naming the deployment otherwise). It changes
+`enabled` and the repository's settings: `min_log_lines`,
+`max_open_proposals`, `max_deferred_findings`, `proposal_window_days`,
+`spike_factor`, `spike_min_count`, `regression_silence_seconds`,
+`log_clustering_mode`, `skip_unchanged_mode`, `skip_known_hours` and
+`signature_masks`.
 
 A deployment upgrading from the env-var watcher seeds its stack from
 `WATCHER_REPO` / `WATCHER_LOGQL` / `WATCHER_LINEAR_*` at startup, **once, and
