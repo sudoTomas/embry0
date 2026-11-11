@@ -40,6 +40,7 @@ A write is checked whole, and a 422 names every problem by its key (`areas.0.pat
   - `GET /api/v1/repos/{repo}/-/history` and `POST .../history/{id}/undo`: the areas' changes beside the test setup's and the preferences', and the undo of the newest one, while it is still what is stored. Undoing the change that created the areas stores the empty document. A repository removed from the registry has no areas to put back: its changes are listed, none undoable, and an undo answers 404.
   - The `PUT`, the apply and the undo answer a document with problems alike: 422 with `detail`, a list of `{loc, type, msg}`, one for each problem.
 - **MCP**: `areas_get`, `areas_set`, `areas_undo`, `areas_map`, `areas_proposal_get`, `areas_proposal_decide`.
+- **The CLI**, for areas kept in a file of the operator's own: `embry0 areas check FILE` checks it offline with the API's own checks, every problem by key; `embry0 areas diff REPO FILE` shows what applying it would change; `embry0 areas apply REPO FILE` shows the diff, asks, and stores it against the version it read (source `file`, `--yes` without a terminal, `--reason` for the history); `embry0 areas export REPO [-o FILE]` writes the stored text as written. The exit codes are `embry0 settings`': 0 done, 1 refused, 2 usage, 3 conflict, 4 orchestrator unavailable.
 
 ## Where the area shows
 

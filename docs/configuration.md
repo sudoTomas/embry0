@@ -693,3 +693,14 @@ embry0 settings undo ID                 # Undo the newest change
 ```
 
 Exit codes: 0 done, 1 refused, 2 usage, 3 conflict, 4 orchestrator unavailable. See [From a file, the command line and MCP](#from-a-file-the-command-line-and-mcp).
+
+### A repository's areas (`embry0 areas`)
+
+```bash
+embry0 areas check areas.yaml                 # Validate offline, every problem by key; exit 1 on one
+embry0 areas diff acme/widgets areas.yaml     # What applying it would change (a dry run)
+embry0 areas apply acme/widgets areas.yaml    # Show the diff, then store it (--yes without a terminal)
+embry0 areas export acme/widgets -o areas.yaml # The stored document, comments included
+```
+
+Exit codes as for `embry0 settings`. A repository is `group/name` or `group/subgroup/name`; anything else is a usage error (2) before anything is sent. The repository carries no file for its areas; this keeps them in a file of your own. See [areas.md](areas.md).
