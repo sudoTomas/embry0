@@ -132,7 +132,9 @@ class FakeStacks:
     async def list_all(self, *, enabled_only: bool = False) -> list[WatcherStack]:
         return [self.rows[repo] for repo in sorted(self.rows)]
 
-    async def upsert(self, stack: WatcherStack) -> WatcherStack:
+    async def upsert(self, stack: WatcherStack, *, check: Any = None) -> WatcherStack:
+        if check is not None:
+            check(self.rows.get(stack.repo))
         self.rows[stack.repo] = stack
         return stack
 
@@ -442,7 +444,8 @@ async def test_onboard_honors_the_callers_repository_allowlist(keyed_app: Any) -
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["register", "hook", "watch", "deactivate"])
+# watch is refused whole to a key with an allowlist, as the deployment's (test_repository_writes_beyond_allowlist.py).
+@pytest.mark.parametrize("action", ["register", "hook", "deactivate"])
 async def test_every_action_leaves_alone_a_repository_the_callers_allowlist_does_not_cover(
     keyed_app: Any, action: str
 ) -> None:

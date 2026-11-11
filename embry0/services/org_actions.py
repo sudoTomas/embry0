@@ -147,8 +147,8 @@ def _json(resp: Any) -> Any:
 
 
 def _default_logql(repo: str) -> str:
-    name = repo.rsplit("/", 1)[-1]
-    return f'{{app="{name}"}}'
+    """A placeholder selector naming the whole repository, so it matches no other owner's repository of the name."""
+    return f'{{repo="{repo}"}}'
 
 
 async def _register(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: bool) -> ActionResult:

@@ -772,7 +772,7 @@ A repository whose `context_audit.days` is set (the [settings document](configur
 - `register` adds the repository to the repo registry under the organization's forge, the call `POST /repos` makes. A row under any case counts as `already`.
 - `hook` creates a GitHub webhook on the repository posting to `WEBHOOK_PUBLIC_URL` + `/api/v1/webhook` with `GITHUB_WEBHOOK_SECRET`, for issues, issue comments and pull requests ([webhooks.md](webhooks.md#github)). It runs only when the owner's probe found the credential can manage webhooks, and it is skipped while `WEBHOOK_PUBLIC_URL` is unset or a loopback address, or the secret is empty. A hook in the forge's live listing whose URL starts with `WEBHOOK_PUBLIC_URL` is `already`; a hook on the dashboard's origin is not, since that vhost answers 404 on the webhook paths. GitHub only in this release.
 - `onboard` starts the onboard job ([onboarding.md](onboarding.md)) on the repository's default branch through the function `POST /jobs {"pipeline": "onboard"}` uses, so it runs the same checks (the calling key's repository allowlist among them: a repository the key may not start work on is `failed` with `repo_not_allowed`) and starts it under the caller's actor, which its `onboard.job_created` audit row names. A repository that is not registered is skipped (the job would fail `ERR_REPO_UNREGISTERED`); a stored QA config or an onboard job in flight is `already`; a repository whose facts carry no boot hint is skipped. When the newest onboard job completed without storing a QA config, the repository is skipped with that job's id unless the body carries `"force": true`.
-- `watch` adds a watcher stack for the repository, disabled, filing to the organization's forge, with a placeholder LogQL selector to edit before enabling. It stores through the function `PUT /watcher/stacks/{owner}/{name}` uses and writes its `watcher_stack_updated` audit row. A stack under any case counts as `already`.
+- `watch` adds a watcher stack for the repository, disabled, filing to the organization's forge, with a placeholder LogQL selector naming the whole repository (`{repo="acme/widgets"}`) to edit before enabling. A key with a [repository allowlist](#repository-allowlist) is refused it, as the deployment's. It stores through the function `PUT /watcher/stacks/{owner}/{name}` uses and writes its `watcher_stack_updated` audit row. A stack under any case counts as `already`.
 - `deactivate` sets the repository's registry row inactive, the call `PUT /repos/{repo}/-/active` with `{"active": false}` makes: the row stays, hidden from listings, and the same route turns it back on. It answers the `repo_vanished` need, and it reaches an archived repository too: one archived when it was last listed and deleted since is what that need proposes. An inactive row, or no row at all, is `already`.
 
 The MCP tool `org_act(owner, action, repos, dry_run, force, confirm)` calls this endpoint; like every gated tool it needs `confirm=true` on every call, dry runs included.
@@ -1495,18 +1495,32 @@ credential is later bound to; finishing a model account's sign-in
 binds it for every repository) is refused the same way, before the login is
 looked up. Parts of a write to its own repository are the deployment's too.
 A watched stack's LogQL selectors (`logql`, `settings.deploy_logql`), the
-containers its analysis may read (`settings.context_proxy_container_allowlist`)
-and its tracker and tracker target choose lines from every container the
-deployment ships and write into a team's tracker: such a key changes only
-the rest of a stack an admin made (`enabled`, thresholds, budget), keeping
-those as stored, and creates none (`PUT /watcher/stacks/{owner}/{name}`).
-A test setup's `cache.turbo_remote` hands the repository's QA sandboxes the
-Turbo remote-cache token every such repository shares: such a key keeps it
-on where an admin turned it on and may turn it off, but never turns it on,
-by `PUT /repos/{repo}/-/qa-config`, applying a setup proposal or undoing a
-change (a save that keeps it on writes only over the setup it read, else
-409). It binds, changes, verifies, deletes or probes an owner with
-(`POST /orgs/probe`) only its own credential: one only its repositories
+containers its analysis may read (`settings.context_proxy_container_allowlist`),
+its tracker and tracker target, and the settings that bound what it spends
+from the shared budget (`interval_seconds`, `job_budget_usd`,
+`job_timeout_seconds`, `max_full_cap_analyses_per_day`, `max_log_lines`,
+`max_lookback_seconds`) or start fix jobs without a person (`auto_accept`
+and the other `auto_accept_*`) choose lines from every container the
+deployment ships, write into a team's tracker and draw on the shared caps:
+such a key keeps them as stored, changing only `enabled` and the
+repository's settings, what counts as a finding (`min_log_lines`,
+`max_open_proposals`, `max_deferred_findings`, `proposal_window_days`,
+`spike_factor`, `spike_min_count`, `regression_silence_seconds`,
+`log_clustering_mode`, `skip_unchanged_mode`, `skip_known_hours`,
+`signature_masks`), and creates no stack (`PUT /watcher/stacks/{owner}/{name}`,
+compared with the stored stack while its row is held), nor runs the
+organization's `watch` action (`POST /orgs/{owner}/actions`, a dry run
+included), which makes stacks. A test setup's `cache.turbo_remote` hands
+the repository's QA sandboxes the Turbo remote-cache token every such
+repository shares: such a key keeps it on where an admin turned it on and
+may turn it off, but never turns it on, by `PUT /repos/{repo}/-/qa-config`,
+applying a setup proposal or undoing a change (checked against the stored
+setup while its row is held). An onboarding job such a key starts
+(`POST /jobs {"pipeline": "onboard"}`, the organization's `onboard` action,
+or running one again) stores no draft that turns it on, nor replaces a
+setup that has it on, and fails saying so. It binds, changes, verifies,
+deletes or probes an owner with (`POST /orgs/probe`) only its own
+credential: one only its repositories
 use, or one it created that nothing uses yet, which since it creates none
 is one it created before it had a list. A credential records the id of the
 key that created it, so another key of the same name never counts as its

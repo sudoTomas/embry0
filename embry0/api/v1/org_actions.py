@@ -10,6 +10,8 @@ would happen without touching anything.
 Onboard and watch go through the same functions as ``POST /jobs`` and
 ``PUT /watcher/stacks/{owner}/{name}``, so they run the same checks (the
 caller's repository allowlist among them) and write the same audit rows.
+Watch is refused outright to a key with a repository allowlist: a stack's
+selector, tracker and spend are the deployment's.
 A run that changed anything starts a rediscovery the way
 ``POST /orgs/{owner}/discover`` does, so the needs list catches up.
 """
@@ -24,7 +26,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import enforce_owner_allowlist, enforce_repo_allowlist, refusal_detail
+from embry0.api.repo_allowlist import (
+    enforce_deployment_allowlist,
+    enforce_owner_allowlist,
+    enforce_repo_allowlist,
+    refusal_detail,
+)
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1 import jobs as jobs_api
 from embry0.api.v1.organizations import _facts_repo, _repo, _token_for, start_discovery
@@ -134,6 +141,10 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
     changed something started, or null.
     """
     await enforce_owner_allowlist(request, owner, action=f"run the {body.action} action")
+    if body.action == "watch":
+        # A stack's selector, tracker and spend are the deployment's to choose, and watch makes stacks with a
+        # placeholder for them: refused to a key with an allowlist, a dry run included (embry0.api.v1.watcher_stacks).
+        await enforce_deployment_allowlist(request, action="add watched stacks")
     org = await _repo(request).get(owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")

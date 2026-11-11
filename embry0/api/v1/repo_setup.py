@@ -32,7 +32,7 @@ from embry0.api.resolution_view import scopes_read
 from embry0.api.schemas import RunWithRequest
 from embry0.api.trigger_context import resolve_trigger_labels
 from embry0.api.v1.jobs import CREATE_A_JOB, start_onboard_job
-from embry0.api.v1.qa_config import enforce_shared_cache_kept
+from embry0.api.v1.qa_config import refuse_the_shared_cache
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
@@ -49,6 +49,7 @@ from embry0.services.repo_setup import (
     skip_testing,
     start_branch,
 )
+from embry0.services.shared_build_cache import SharedBuildCacheRefused, keeps_the_shared_cache
 from embry0.storage.repositories.repo_setup_proposals import LiveProposalExists
 
 router = APIRouter()
@@ -150,7 +151,12 @@ async def apply_setup_proposal(
         if proposal is not None and proposal["repo"] == full_repo and proposal["status"] == "pending":
             stored = await request.app.state.qa_configs_repo.get(full_repo)
             if (stored["updated_at"] if stored is not None else None) == proposal["base_updated_at"]:
-                await enforce_shared_cache_kept(request, str(proposal["proposed_yaml"] or ""), stored)
+                try:
+                    keeps_the_shared_cache(str(proposal["proposed_yaml"] or ""))(
+                        stored["yaml_text"] if stored is not None else None
+                    )
+                except SharedBuildCacheRefused:
+                    await refuse_the_shared_cache(request)
     try:
         revision_id = await apply_proposal(
             request.app.state,

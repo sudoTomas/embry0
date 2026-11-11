@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from embry0.api.deps import get_jobs_repo, request_actor, require_operator
 from embry0.api.issue_allowlist import hide_input_unless_covered, without_hidden_issues
 from embry0.api.job_allowlist import hide_job_unless_covered, job_hidden, stream_scope
-from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, refusal_detail
+from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, refusal_detail, restricted_key_name
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
 from embry0.api.schemas.jobs import DoneWhenEditRequest, JobResumeRequest
 from embry0.api.v1.run_with import checked_run_with
@@ -104,6 +104,7 @@ async def start_onboard_job(
             dispatched_by=request_actor(request),
             proposal_id=proposal_id,
             run_with=run_with,
+            by_allowlisted_key=restricted_key_name(request) is not None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

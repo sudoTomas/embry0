@@ -4,15 +4,18 @@ Reads are operator-tier like the rest of the watcher API; writes are
 admin-tier, because adding a stack points embry0's log analysis — and the
 spend behind it — at another deployment.
 
-What a stack reads and where it files are the deployment's, not its
-repository's: its LogQL selectors (``logql``, ``settings.deploy_logql``) choose
-lines from every container the deployment ships to Loki, its
-``context_proxy_container_allowlist`` widens the containers its analysis job
-may read, and its tracker target names a team's tracker. A key with a
-repository allowlist sets none of them: it changes only the rest of a stack an
-admin made for one of its repositories (enabled, thresholds, budget), and
-creating a stack is refused to it as the deployment's
-(:data:`READS_BEYOND_THE_REPOSITORY`).
+What a stack reads, where it files and what it may spend are the
+deployment's, not its repository's: its LogQL selectors (``logql``,
+``settings.deploy_logql``) choose lines from every container the deployment
+ships to Loki, its ``context_proxy_container_allowlist`` widens the containers
+its analysis job may read, its tracker target names a team's tracker, and its
+spend and throttle settings and its auto-accept draw on the shared budget
+(``DEPLOYMENT_SETTINGS`` in :mod:`embry0.services.watcher_stacks`). A key with
+a repository allowlist keeps all of them as stored: it changes only the rest of
+a stack an admin made for one of its repositories (``enabled`` and the
+``REPOSITORY_SETTINGS``, what counts as a finding), and creating a stack is
+refused to it as the deployment's. The comparison runs on the stored stack
+with its row held, so a change an admin made meanwhile is the one compared.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ from embry0.api.repo_allowlist import (
 )
 from embry0.api.schemas import ServableFields
 from embry0.audit.helpers import emit_audit
-from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack, check_settings
+from embry0.services.watcher_stacks import DEPLOYMENT_SETTINGS, SETTING_KEYS, WatcherStack, check_settings
 from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
 
 router = APIRouter()
@@ -51,21 +54,32 @@ class StackBody(ServableFields):
     enabled: bool = True
 
 
-#: The settings of a stack that reach beyond its repository: a selector over every container's logs, and the containers
-#: its analysis job may read through the context proxy.
-READS_BEYOND_THE_REPOSITORY: tuple[str, ...] = ("deploy_logql", "context_proxy_container_allowlist")
+class _TheDeployments(Exception):
+    """A key with an allowlist would change what of a stack is the deployment's."""
 
 
 def _beyond(stack: WatcherStack | None) -> tuple[Any, ...] | None:
-    """What of ``stack`` is the deployment's to choose: its selectors, the containers it reads and where it files."""
+    """What of ``stack`` is the deployment's to choose: its selectors, where it files, and the settings that read
+    beyond its repository or bound its spend (``DEPLOYMENT_SETTINGS``)."""
     if stack is None:
         return None
     return (
         stack.logql,
         stack.tracker,
         dict(stack.tracker_target),
-        *(stack.settings.get(key) for key in READS_BEYOND_THE_REPOSITORY),
+        *(stack.settings.get(key) for key in sorted(DEPLOYMENT_SETTINGS)),
     )
+
+
+def _keeps_the_deployments(stack: WatcherStack) -> Any:
+    """The check of a key's write of ``stack`` against the stored one: what of it is the deployment's stays as
+    stored, and no stack is made."""
+
+    def check(stored: WatcherStack | None) -> None:
+        if _beyond(stack) != _beyond(stored):
+            raise _TheDeployments
+
+    return check
 
 
 def _repo(request: Request) -> WatcherStacksRepository:
@@ -85,10 +99,17 @@ async def save_stack(
 
     The one write path for a stack: ``PUT /watcher/stacks/{owner}/{name}``
     and the organization watch action both store through it. A stack the
-    table refuses is a 422.
+    table refuses is a 422. To a key with a repository allowlist, a write that
+    would make a stack or change what of one is the deployment's is refused as
+    the deployment's (403, audited); the organization watch action, which only
+    makes stacks, is refused to such a key before it gets here.
     """
+    restricted = restricted_key_name(request) is not None
     try:
-        stored = await _repo(request).upsert(stack)
+        stored = await _repo(request).upsert(stack, check=_keeps_the_deployments(stack) if restricted else None)
+    except _TheDeployments:
+        await enforce_deployment_allowlist(request, action="choose what a watched stack reads, files or spends")
+        raise AssertionError("only a key with an allowlist is checked") from None  # the line above raised
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     config = request.app.state.config
@@ -145,9 +166,6 @@ async def put_stack(owner: str, name: str, body: StackBody, request: Request) ->
         settings=settings,
         enabled=body.enabled,
     )
-    if restricted_key_name(request) is not None and _beyond(stack) != _beyond(await _repo(request).get(repo)):
-        # Its selectors read every container's logs, and its tracker files into a team's: the deployment's.
-        await enforce_deployment_allowlist(request, action="choose what a watched stack reads or where it files")
     stored = await save_stack(request, stack, ignored_settings=unknown)
     return {**stored.to_dict(), "ignored_settings": unknown}
 
