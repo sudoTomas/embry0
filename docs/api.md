@@ -1097,11 +1097,10 @@ organization:
 - `POST /orgs/{owner}/context-audit/run` (the `repo` it names; a run that
   names none is refused, since it would start work on any repository under
   the owner);
-- `POST /watcher/run` (the stack ticked; with none named, every watched
-  stack, all checked before any ticks), `POST /qa/images/build`,
-  `POST /repos/bootstrap` and `POST /repos/{repo}/-/areas/map` (checked
-  before the registration is read, so the answer is the same whether the
-  repository is registered or not);
+- `POST /qa/images/build`, `POST /repos/bootstrap` and
+  `POST /repos/{repo}/-/areas/map` (checked before the registration is
+  read, so the answer is the same whether the repository is registered or
+  not);
 - the steps of setting up testing: `POST /repos/{repo}/-/setup/propose`,
   `POST /repos/{repo}/-/setup/proposal/{id}/apply` and `.../reject`,
   `POST /repos/{repo}/-/setup/skip-testing` and
@@ -1297,7 +1296,10 @@ narrowed yet and follow in stages of their own:
   and areas, and their old paths without `/-/`), its agent context
   (`GET /config/context/repos/{repo}`), its standard's state
   (`GET /standards/{owner}/{kind}/repos/{repo}`), its watched stack
-  (`GET /watcher/stacks/{owner}/{name}`) and its settings layer
+  (`GET /watcher/stacks/{owner}/{name}`; ticking it,
+  `POST /watcher/run?stack=`, answers 404 `<stack> is not a watched stack`
+  whether or not it is watched, and the refusal is logged and audited) and
+  its settings layer
   (`GET /config/settings?repo=`, the effective values, the revisions and a
   revision; and undoing one of its changes,
   `POST /config/settings/revisions/{id}/undo`, answers as a change that
@@ -1316,7 +1318,10 @@ narrowed yet and follow in stages of their own:
   refused (403), whatever is stored, as `GET /run-with/keys?repo=` is. The
   lists, `GET /repos`, `GET /setup/proposals`, `GET /config/context/repos`,
   `GET /watcher/stacks` and `GET /config/settings/layers`, hold only the
-  repositories the key covers, narrowed in their query; `GET /hosts` and
+  repositories the key covers, narrowed in their query; `POST /watcher/run`
+  with no stack named ticks only the stacks the key covers, and answers a
+  key that covers none as a deployment watching none (503
+  `watcher not initialized`); `GET /hosts` and
   `GET /hosts/{id}` link each host only to them; `GET /credentials/bindings`
   has no bindings for another repository.
 - Owners. What belongs to an owner as a whole is read only by a key that

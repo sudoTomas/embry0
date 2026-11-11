@@ -810,8 +810,9 @@ async def watcher_trigger(timeout: float = 900.0, stack: str | None = None) -> d
     """Trigger a log-watcher tick now and return its summary. Safe: proposal caps,
     dedup, and the human gate still apply. stack (a watched repo, as watcher_runs
     names it) ticks that stack; omitted while several are watched, every stack
-    ticks and the summary lists each one's result under "stacks" (each may run
-    one paid analysis). A tick runs an LLM analysis job synchronously and takes
+    ticks (for a key with a repository allowlist, every stack it covers) and
+    the summary lists each one's result under "stacks" (each may run one paid
+    analysis). A tick runs an LLM analysis job synchronously and takes
     minutes — timeout (seconds) bounds the wait; the tick keeps running
     server-side even if it elapses."""
     return await _get_client().watcher_trigger(timeout=timeout, stack=stack)

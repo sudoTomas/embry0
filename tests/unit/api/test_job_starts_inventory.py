@@ -167,7 +167,7 @@ SITES: dict[str, str] = {
     "embry0.services.watcher:WatcherService._run_analysis_job": (
         f"{_NOT_A_KEY} here: a stack's own watcher makes its analysis job in the stack's repository, and "
         "POST /watcher/run ticks only the stacks the key covers (the stand-in watchers below, and "
-        "test_api_key_repo_allowlist.py); a real tick needs a log store"
+        "test_watcher_routes_allowlist.py); a real tick needs a log store"
     ),
 }
 
