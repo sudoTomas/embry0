@@ -333,6 +333,11 @@ After the two reviews of pull request 1 (#458):
 - **Run again on a map job** starts a new map through the path Map takes (`start_map`); a job that could not be submitted is marked failed in the same rollback; names are NFC-normalised and case-folded before they are slugged.
 - **Answers:** the `PUT`, the apply and the undo answer a document with problems with the same 422, a list of `{loc, type, msg}`; a `PUT` answers its generation as `ETag`; a first write without `If-Match` that meets another says so; History lists no change of an unregistered repository's areas as undoable, and its undo is a 404; the owners resolver keeps `CODEOWNERS` as their source.
 
+## 17. As built (pull request 3)
+
+- `embry0 areas check|diff|apply|export` (`embry0/cli/areas.py`) has no `--org`, no `set` and no `revisions`: a repository's areas are one document, and History lists and undoes their changes. `diff` and `apply` read the file before the API, so a file that cannot be read is a usage error (2), not an unreachable orchestrator. The command joins `embry0 settings` and `embry0 progression-pack` in the shared exit-code matrix (`tests/unit/cli/test_document_cli_exit_codes.py`).
+- The repository argument is checked by the API's own rule (`embry0.api.schemas.repo_path`) before anything is sent, and each segment of the route is quoted, so `acme/web?format=json` is a usage error, never another route.
+
 ## Out of scope
 
 - Areas for GitLab merge requests (the title and label stay GitHub-only, a non-goal of spec 2026-10-25); the stored document itself is forge-neutral.

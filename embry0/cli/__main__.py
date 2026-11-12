@@ -846,6 +846,21 @@ def cmd_progression_pack(args: argparse.Namespace) -> None:
     sys.exit(progression_pack.run(args, base_url=base, api_key=_resolve_api_key(args.api_key)))
 
 
+def cmd_areas(args: argparse.Namespace) -> None:
+    """Handle ``embry0 areas check|diff|apply|export`` (spec 2026-11-10).
+
+    ``check`` runs offline; the other verbs are thin clients of
+    ``/api/v1/repos/{repo}/-/areas`` on the running orchestrator. The exit
+    codes are in :mod:`embry0.cli.exit_codes`.
+    """
+    from embry0.cli import areas
+
+    if areas.offline(args):
+        sys.exit(areas.run(args))
+    base = (args.api_url or os.environ.get("EMBRY0_API_URL") or "http://localhost:8200").rstrip("/")
+    sys.exit(areas.run(args, base_url=base, api_key=_resolve_api_key(args.api_key)))
+
+
 def cmd_settings(args: argparse.Namespace) -> None:
     """Handle ``embry0 settings check|diff|apply|set|export|import-env|revisions|undo`` (#162).
 
@@ -1104,6 +1119,11 @@ def main() -> None:
 
     add_settings_parser(subparsers)
 
+    # areas (spec 2026-11-10)
+    from embry0.cli.areas import add_parser as add_areas_parser
+
+    add_areas_parser(subparsers)
+
     args = parser.parse_args()
 
     commands = {
@@ -1123,6 +1143,7 @@ def main() -> None:
         "init": cmd_init,
         "progression-pack": cmd_progression_pack,
         "settings": cmd_settings,
+        "areas": cmd_areas,
     }
     commands[args.command](args)
 

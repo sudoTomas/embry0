@@ -1,9 +1,9 @@
 """One set of exit codes for the document CLIs (#237).
 
-``embry0 settings`` and ``embry0 progression-pack`` read a document from a
-file, check it, diff it and write it through the API. A script that drives
-one must be able to drive the other, so each outcome below is run through
-both commands and must exit with the same code. The numbers are written
+``embry0 settings``, ``embry0 progression-pack`` and ``embry0 areas`` read a
+document from a file, check it, diff it and write it through the API. A
+script that drives one must be able to drive the others, so each outcome
+below is run through every command and must exit with the same code. The numbers are written
 out, not read from :mod:`embry0.cli.exit_codes`: they are what scripts
 test, so changing one must fail here.
 """
@@ -23,7 +23,7 @@ from typing import Any
 import httpx
 import pytest
 
-from embry0.cli import progression_pack, settings
+from embry0.cli import areas, progression_pack, settings
 from embry0.services.progression_pack import default_text
 
 #: The scheme scripts rely on.
@@ -37,6 +37,8 @@ class _Cli:
     good: str  # a file ``check`` accepts
     bad: str  # a file ``check`` refuses
     reads: int  # requests ``apply`` sends before its write: the dry run, and for settings the generation first
+    #: The arguments a verb that reads the API takes before its own: the repository, for ``areas``.
+    target: tuple[str, ...] = ()
 
     def __str__(self) -> str:
         return self.command
@@ -50,7 +52,22 @@ PACK = _Cli(
     default_text().replace("version: 1\n", "version: 1\nmystery: 1\n", 1),
     reads=1,
 )
-BOTH = pytest.mark.parametrize("cli", [SETTINGS, PACK], ids=str)
+
+
+def _areas_run(args: Namespace, **kwargs: Any) -> int:
+    """``embry0 areas``, whose verbs that read the API name a repository first."""
+    return areas.run(Namespace(**{"repo": "acme/widgets", **vars(args)}), **kwargs)
+
+
+AREAS = _Cli(
+    "areas",
+    _areas_run,
+    "areas:\n  - name: Web\n    paths: [web/]\n",
+    "areas:\n  - name: Web\n    paths: [/web]\n",
+    reads=2,
+    target=("acme/widgets",),
+)
+BOTH = pytest.mark.parametrize("cli", [SETTINGS, PACK, AREAS], ids=str)
 
 
 def _args(action: str, **kw: Any) -> Namespace:
@@ -185,7 +202,9 @@ def test_an_unreachable_server_exits_4(cli: _Cli, monkeypatch: pytest.MonkeyPatc
     with socket.socket() as probe:  # a port nothing listens on once it is closed
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    got = _main(monkeypatch, cli.command, "export", "--api-url", f"http://127.0.0.1:{port}", "--api-key", "k")
+    got = _main(
+        monkeypatch, cli.command, "export", *cli.target, "--api-url", f"http://127.0.0.1:{port}", "--api-key", "k"
+    )
     assert got == 4, f"`embry0 {cli} export` with no orchestrator listening must exit 4; it exited {got}"
 
 
@@ -200,13 +219,13 @@ def test_the_help_states_the_codes(
     )
 
 
-def test_both_commands_read_the_codes_from_one_module() -> None:
-    """The numbers are written once, so the two commands cannot drift apart."""
+def test_every_command_reads_the_codes_from_one_module() -> None:
+    """The numbers are written once, so the commands cannot drift apart."""
     assert importlib.util.find_spec("embry0.cli.exit_codes") is not None, "the codes belong in embry0.cli.exit_codes"
     from embry0.cli import exit_codes
 
     assert {name: getattr(exit_codes, name) for name in SCHEME} == SCHEME
-    for module in (settings, progression_pack):
+    for module in (settings, progression_pack, areas):
         tree = ast.parse(inspect.getsource(module))
         imports = [
             node for node in tree.body if isinstance(node, ast.ImportFrom) and node.module == exit_codes.__name__
