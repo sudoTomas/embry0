@@ -273,12 +273,17 @@ class QuestState:
 
 
 def _best(candidates: Iterable[tuple[str, list[datetime | None]]]) -> tuple[str | None, list[datetime | None]]:
-    """The candidate furthest along: the most steps done, then the earliest to finish them."""
+    """The candidate furthest along: the most steps done, then the earliest to finish them, then the first by name.
+
+    The name settles a tie, so the answer does not depend on the order the
+    candidates come in: one quest's issues come from a set, whose order
+    changes with the interpreter's hash seed (#464).
+    """
     best: tuple[str | None, list[datetime | None]] = (None, [])
-    best_key: tuple[int, datetime] | None = None
+    best_key: tuple[int, datetime, str] | None = None
     for where, times in candidates:
         done = [t for t in times if t is not None]
-        key = (-len(done), max(done) if done else datetime.max.replace(tzinfo=UTC))
+        key = (-len(done), max(done) if done else datetime.max.replace(tzinfo=UTC), where)
         if best_key is None or key < best_key:
             best, best_key = (where, times), key
     return best
