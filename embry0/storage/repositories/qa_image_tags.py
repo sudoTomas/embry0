@@ -116,7 +116,7 @@ class QAImageTagsRepository:
 
     async def list_active(self) -> list[QAImageTagRow]:
         """Every repo's active image, ordered by repo."""
-        rows = await self.db.fetch(f"SELECT {_COLUMNS} FROM qa_image_tags WHERE is_active ORDER BY repo")
+        rows = await self.db.fetch(f"SELECT {_COLUMNS} FROM qa_image_tags WHERE is_active ORDER BY repo, id")
         return [_to_row(r) for r in rows]
 
     async def list_all(self) -> list[QAImageTagRow]:

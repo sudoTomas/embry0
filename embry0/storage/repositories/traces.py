@@ -275,7 +275,7 @@ class TracesRepository:
             FROM traces
             WHERE job_id = $1
             GROUP BY agent_type, model
-            ORDER BY cost_usd DESC
+            ORDER BY cost_usd DESC, agent_type, model
             """,
             job_id,
         )
@@ -299,7 +299,7 @@ class TracesRepository:
                    COALESCE(SUM(cost_usd), 0.0) as cost_usd
             FROM traces
             GROUP BY agent_type
-            ORDER BY cost_usd DESC
+            ORDER BY cost_usd DESC, agent_type
             """
         )
         return [dict(r) for r in rows]

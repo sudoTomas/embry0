@@ -137,7 +137,7 @@ class UsersRepository:
     async def people(self) -> list[UserRow]:
         """Everyone who can be sent a decision: the users not disabled, by name."""
         rows = await self._db.fetch(
-            "SELECT * FROM users WHERE NOT disabled ORDER BY LOWER(COALESCE(NULLIF(name, ''), email))"
+            "SELECT * FROM users WHERE NOT disabled ORDER BY LOWER(COALESCE(NULLIF(name, ''), email)), id"
         )
         return [_row(r) for r in rows]
 
