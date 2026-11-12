@@ -172,7 +172,7 @@ How the [Slop-O-Meter](slop-meter.md) scores, how often it reads and how hard it
 | `SLOP_METER_CATCHUP_SECONDS` | `300` | How soon the meter comes back while a repository's history is still being read |
 | `SLOP_METER_DATA_PATH` | `/data/embry0/slop-meter` | Where the meter keeps a bare mirror of each repository, inside the orchestrator's data volume |
 | `SLOP_METER_GIT_TIMEOUT_SECONDS` | `900` | The longest one git clone or fetch of a mirror may take |
-| `SLOP_METER_COMMITS_PER_TICK` / `SLOP_METER_EVENT_PAGES` / `SLOP_METER_REVIEWS_PER_TICK` / `SLOP_METER_LOGINS_PER_TICK` | `5000` / `10` / `50` / `20` | What one tick reads at most per repository: commits of its history, pages of forge events, pull requests' reviews, and logins mapped to commit emails. A larger history is read over several ticks |
+| `SLOP_METER_COMMITS_PER_TICK` / `SLOP_METER_EVENT_PAGES` / `SLOP_METER_REVIEWS_PER_TICK` / `SLOP_METER_LOGINS_PER_TICK` | `5000` / `10` / `50` / `20` | What one tick reads at most per repository: commits of its history, pages of forge events, pull requests' reviews, and logins mapped to commit emails. A larger history, or more events, is read over several ticks, and the repository is scored once all of it is read |
 | `SLOP_METER_JUDGMENTS_PER_TICK` | `5` | Outlier commits per repository one tick asks the model to judge (`background_models.slop_judge`, else its default); `0`, or no model, leaves them unjudged and the score provisional |
 
 ### Watched stacks (#378)

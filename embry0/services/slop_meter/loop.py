@@ -312,9 +312,10 @@ class _Work:
     #: Which credential reads it: a digest of its token, never the token. Each
     #: credential has its own rate limit, so each gets its own budget (#185).
     credential: str = ""
-    #: Its events were cut short by the forge budget, its credential's or its organization's share: not scored
-    #: this run, and no reason to come back sooner; the next run goes on from where its reader stopped.
-    held: bool = False
+    #: Why its events were cut short where coming back sooner would not help: the forge budget (its
+    #: credential's or its organization's share), or a call that failed or that the forge stopped (#465). Not
+    #: scored this run; the next run goes on from where its reader stopped. Empty when not held.
+    held: str = ""
 
 
 #: Reads what an organization's own settings still say of a moved key, until its layer has imported it
@@ -418,8 +419,9 @@ class SlopMeterLoop:
         self._backlog = False
         #: Whether the last look found the meter on; None before the first.
         self._enabled: bool | None = None
-        #: The repositories the last full run did not score because their organization's share cut their events
-        #: short: a rescore from what was read would score that short read, so they wait for a run that reads all.
+        #: The repositories the last full run did not score because their reading was cut short (their history or
+        #: events still behind, the forge budget, or a call that failed or the forge stopped): a rescore from what
+        #: was read would score that short read, so they wait for a run that reads all.
         self._held: set[str] = set()
         #: Each repository's configuration version as this process last scored it, or tried to: a look rescores a
         #: repository whose stored score has another version only once per version, so one whose rescoring fails
@@ -472,15 +474,16 @@ class SlopMeterLoop:
                 continue
             if work[repo].more:
                 backlog = True
+                # Not caught up: a rescore from what was read would score a short read (#465).
+                self._held.add(repo)
                 continue
             if work[repo].held:
                 self._held.add(repo)
                 logger.info(
                     "slop_meter_score_held",
                     repo=repo,
-                    reason="the forge budget ran out before its events were read",
-                    hint="its previous score stays, and the next run goes on reading from where it stopped; a "
-                    "larger api_calls_per_tick reads more of them a run",
+                    reason=work[repo].held,
+                    hint="its previous score stays, and the next run goes on reading from where it stopped",
                 )
                 continue
             self._held.discard(repo)
@@ -615,6 +618,16 @@ class SlopMeterLoop:
         the budget stopped, and goes on from there the next run; the
         ``MAX_FAILURES``-th failure in a row at one call moves it past that call
         (:meth:`EventReader.failed`).
+
+        A read a cap cut short (``SLOP_METER_EVENT_PAGES``,
+        ``SLOP_METER_REVIEWS_PER_TICK``, ``SLOP_METER_LOGINS_PER_TICK``) waits
+        like a history: its cursors moved past what it read, so the next pass,
+        ``catchup_seconds`` later, reads on, and it is scored once caught up. A
+        call the forge answers with a status a retry can change raises
+        ``ForgeStopped`` and is a failed call like any other: the read is held
+        at it and passed after ``MAX_FAILURES`` runs in a row. A call the forge
+        refuses otherwise is logged and passed (``slop_meter_events_refused``),
+        and the score counts what the rest read (#465).
         """
         deployment = self._meter.deployment()
         readers: dict[str, EventReader] = {}
@@ -646,7 +659,8 @@ class SlopMeterLoop:
         active = await self._dealing_order(readers, work)
         waiting: list[str] = []
         narrowed: list[str] = []
-        failing: list[str] = []
+        #: Each repository whose read a failed call held this run, with what the call said.
+        failing: dict[str, str] = {}
         while active:
             for repo in list(active):
                 try:
@@ -672,7 +686,7 @@ class SlopMeterLoop:
                         continue
                     logger.warning("slop_meter_events_failed", repo=repo, stage=stage, error=str(exc)[:300])
                     active.remove(repo)
-                    failing.append(repo)
+                    failing[repo] = str(exc)[:300]
                     continue
                 if not going:
                     active.remove(repo)
@@ -699,8 +713,16 @@ class SlopMeterLoop:
             )
             for login, email in batch.logins.items():
                 await self._store.set_login(login, email)
-            if repo in waiting or repo in narrowed or repo in failing:
-                work[repo].held = True
+            if repo in waiting or repo in narrowed:
+                work[repo].held = (
+                    "the forge budget ran out before its events were read; a larger api_calls_per_tick reads more "
+                    "of them a run"
+                )
+            elif repo in failing:
+                work[repo].held = f"a call to the forge failed: {failing[repo]}"
+            elif batch.more:
+                # A cap: the cursors moved past what was read, so the next pass reads on, like a history (#465).
+                work[repo].more = True
 
     async def _dealing_order(self, readers: Mapping[str, EventReader], work: Mapping[str, _Work]) -> list[str]:
         """The repositories in the order the round-robin deals them calls: each credential's in turn from its
