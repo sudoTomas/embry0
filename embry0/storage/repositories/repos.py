@@ -183,6 +183,17 @@ class ReposRepository:
             )
         return self._default_forge
 
+    async def forge_or_none(self, repo: str) -> str | None:
+        """The forge ``repo``'s work is on, or None when nothing says: its registration's forge, matched in any
+        case, else the configured default (:meth:`forge_for`'s answer for a repository nobody registered), else
+        None. What a model account bound to an owner is read on (``CredentialResolver``)."""
+        row = await self._db.fetchrow(
+            "SELECT forge FROM repos WHERE lower(repo) = lower($1) ORDER BY repo = $1 DESC, repo LIMIT 1", repo
+        )
+        if row:
+            return str(row["forge"])
+        return self._default_forge or None
+
     async def registered_as(self, repo: str) -> str | None:
         """The ``repos`` row ``repo`` is registered under, or None (#360).
 

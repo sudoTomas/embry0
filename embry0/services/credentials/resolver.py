@@ -34,6 +34,9 @@ from embry0.storage.repositories.credentials import CredentialsRepository
 logger = structlog.get_logger(__name__)
 
 FORGES = ("github", "gitlab")
+#: The env variable each forge reads an owner's token from, and the characters its name spells as '_' ('_' too).
+_ENV_KEY = {"github": github_tokens.env_key, "gitlab": gitlab_tokens.env_key}
+_ENV_FOLDED = {"github": frozenset("-_"), "gitlab": frozenset("-._")}
 # Short enough that a pagination sweep reuses one lookup; mutations call invalidate() (#439).
 FORGE_CACHE_TTL_SECONDS = 5.0
 
@@ -160,8 +163,11 @@ class CredentialResolver:
         cache_ttl_seconds: float = FORGE_CACHE_TTL_SECONDS,
         clock: Callable[[], float] | None = None,
         job_pins: Callable[[str], Awaitable[Mapping[str, str]]] | None = None,
+        repo_forge: Callable[[str], Awaitable[str | None]] | None = None,
     ) -> None:
         self._repo = repo
+        # The forge a repository's work is on, None when nothing says (ReposRepository.forge_or_none).
+        self._repo_forge = repo_forge
         # A job's chosen keys, provider to credential id (embry0.services.run_with).
         self._job_pins = job_pins
         self._secrets = secrets
@@ -188,14 +194,22 @@ class CredentialResolver:
 
     @staticmethod
     def owner_of(repo: str) -> str:
-        """Owner scope value: the first path segment, lowercased, with '-' and '.' as '_'.
+        """Owner scope value: the first path segment, lowercased and otherwise exact.
 
-        Env keys are lossy (``my-org`` -> ``GITHUB_TOKEN__MY_ORG``), so owner bindings imported from
-        the environment can only be stored in this normalized form; lookups normalize the same way.
-        The repo scope keeps the exact lowercase path.
+        Forges compare owner names without case, and no two owners differ in case alone. Every other
+        character counts: ``my-org``, ``my.org`` and ``my_org`` are three owners, and a binding to one
+        is never another's (``normalize_scope_value`` stores it the same way).
         """
         owner = repo.split("/", 1)[0] if repo and "/" in repo else ""
-        return owner.lower().replace("-", "_").replace(".", "_")
+        return owner.lower()
+
+    async def forge_of(self, repo: str) -> str | None:
+        """The forge ``repo``'s work is on (its registration's, else the configured default), or None when nothing
+        says, or no registry is wired: then no owner's model account serves it (:func:`llm_scopes`)."""
+        if not repo or self._repo_forge is None:
+            return None
+        forge = await self._repo_forge(repo)
+        return forge if forge in FORGES else None
 
     @staticmethod
     def _check_forge(forge: str) -> None:
@@ -212,19 +226,66 @@ class CredentialResolver:
     def env_fallback_keys(self) -> list[str]:
         return sorted(self._env_keys_used)
 
-    def _env_token(self, repo: str, forge: str) -> tuple[str, str]:
-        """(token, env_key) exactly as the pre-registry code resolved it."""
+    async def _env_token(self, repo: str, forge: str, trace: list[str]) -> tuple[str, str]:
+        """(token, env_key) as the pre-registry code resolved it, but for an owner's variable other registered owners
+        read too (:meth:`owner_env_token`)."""
         if forge == "gitlab":
-            default = str(getattr(self._config, "gitlab_token", "") or "")
-            ns = gitlab_tokens.namespace_of(repo)
-            key = "GITLAB_TOKEN__" + ns.upper().replace("-", "_").replace(".", "_") if ns else ""
-            token = self._environ.get(key, "") if key else ""
-            return (token, key) if token else (default, "GITLAB_TOKEN")
-        default = str(getattr(self._config, "github_token", "") or "")
-        owner = repo.split("/", 1)[0] if repo and "/" in repo else ""
-        key = "GITHUB_TOKEN__" + owner.upper().replace("-", "_") if owner else ""
+            owner = gitlab_tokens.namespace_of(repo) or ""
+        else:
+            owner = repo.split("/", 1)[0] if repo and "/" in repo else ""
+        return await self.owner_env_token(owner, forge, trace)
+
+    async def owner_env_token(self, owner: str, forge: str, trace: list[str] | None = None) -> tuple[str, str]:
+        """(token, env_key) the environment holds for ``owner``'s repositories on ``forge``: the owner's variable
+        (``GITHUB_TOKEN__<OWNER>``, ``GITLAB_TOKEN__<GROUP>``), else the forge's default (``GITHUB_TOKEN``,
+        ``GITLAB_TOKEN``).
+
+        A variable's name cannot spell '-' or '.', so it may be read by several owners; when another
+        registered owner reads ``owner``'s too (:meth:`env_key_readers`), it serves none of them, logged
+        as ``credential_env_key_shared`` and noted in ``trace``, and the default is read instead. So is
+        it when the registered owners cannot be read, for an owner whose name could share it.
+        """
+        default_key = "GITLAB_TOKEN" if forge == "gitlab" else "GITHUB_TOKEN"
+        default = str(getattr(self._config, f"{forge}_token", "") or "")
+        key = _ENV_KEY[forge](owner) if owner else ""
         token = self._environ.get(key, "") if key else ""
-        return (token, key) if token else (default, "GITHUB_TOKEN")
+        if token:
+            why = await self._env_key_shared(owner, forge, key)
+            if why:
+                if trace is not None:
+                    trace.append(f"env:{key} -> skipped ({why})")
+                token = ""
+        return (token, key) if token else (default, default_key)
+
+    async def env_key_readers(self, owner: str, forge: str) -> list[str]:
+        """The owners that read ``owner``'s env variable on ``forge``: ``owner``, and each registered owner (a
+        registered repository's or an organization's) whose variable has the same name. Just ``owner``, with no
+        lookup, when its name holds no character the name spells as '_'. Raises when the registry cannot be read."""
+        owner = owner.lower()
+        if not set(owner) & _ENV_FOLDED[forge]:
+            return [owner]
+        key = _ENV_KEY[forge](owner)
+        known = await self._repo.known_owners()
+        return sorted({owner, *(o for o in known.get(forge, set()) if _ENV_KEY[forge](o) == key)})
+
+    async def _env_key_shared(self, owner: str, forge: str, key: str) -> str | None:
+        """Why ``owner``'s variable ``key`` serves none of its readers, or None when it serves ``owner``."""
+        try:
+            readers = await self.env_key_readers(owner, forge)
+        except Exception as exc:  # noqa: BLE001 — unread, the variable may be another owner's: serve the default
+            logger.warning("credential_env_key_unchecked", env_key=key, forge=forge, error=str(exc)[:200])
+            return "the registered owners could not be read"
+        if len(readers) < 2:
+            return None
+        logger.warning(
+            "credential_env_key_shared",
+            env_key=key,
+            forge=forge,
+            owners=readers,
+            msg="several registered owners read this variable, so it serves none of them; bind each owner's "
+            "credential in the registry",
+        )
+        return "read by " + ", ".join(readers)
 
     @staticmethod
     def _availability(row: Mapping[str, Any]) -> str | None:
@@ -336,7 +397,7 @@ class CredentialResolver:
             logger.warning("credential_registry_error", repo=repo, forge=forge, error=str(exc)[:200])
             trace.append(f"registry error: {type(exc).__name__}")
 
-        token, key = self._env_token(repo, forge)
+        token, key = await self._env_token(repo, forge, trace)
         if token:
             if key not in self._env_keys_used:
                 self._env_keys_used.add(key)
@@ -431,7 +492,8 @@ class CredentialResolver:
     # -- llm --------------------------------------------------------------------
 
     async def resolve_llm(self, repo: str, provider: str, *, job_id: str = "") -> ResolvedCredential:
-        """The key chosen for the job, else repo binding, then owner (github scope, then gitlab), then the global pool, then env."""
+        """The key chosen for the job, else repo binding, then its owner's on the repository's forge
+        (:func:`llm_scopes`), then the global pool, then env."""
         self._check_llm_provider(provider)
         if job_id:
             pinned = await self._job_pin(job_id, provider)
@@ -479,14 +541,9 @@ class CredentialResolver:
         """
         if provider not in llm_providers(self._environ):
             return Pause(provider, "not_enabled")
-        owner = self.owner_of(repo)
-        steps: list[tuple[str, str]] = [("repo", repo.lower())] if repo else []
-        if owner:
-            steps += [("owner", f"github:{owner}"), ("owner", f"gitlab:{owner}")]
-        steps.append(("global", ""))
         unusable: list[Mapping[str, Any]] = []
         try:
-            for scope_kind, scope_value in steps:
+            for scope_kind, scope_value in llm_scopes(repo, await self.forge_of(repo)):
                 for row in await self._repo.candidates(
                     scope_kind=scope_kind, scope_value=scope_value, role="llm", provider=provider
                 ):
@@ -617,16 +674,11 @@ class CredentialResolver:
     async def _resolve_llm_fresh(self, repo: str, provider: str, *, job_id: str) -> ResolvedCredential:
         trace: list[str] = []
         owner = self.owner_of(repo)
-        steps: list[tuple[str, str]] = []
-        if repo:
-            steps.append(("repo", repo.lower()))
-        if owner:
-            # The forge is not an LLM concept; a repo may be bound under either owner prefix.
-            steps.append(("owner", f"github:{owner}"))
-            steps.append(("owner", f"gitlab:{owner}"))
-        steps.append(("global", ""))
         try:
-            for scope_kind, scope_value in steps:
+            forge = await self.forge_of(repo)
+            if owner and forge is None:
+                trace.append(f"owner:{owner} -> skipped (the repository's forge is unknown)")
+            for scope_kind, scope_value in llm_scopes(repo, forge):
                 rows = await self._repo.candidates(
                     scope_kind=scope_kind, scope_value=scope_value, role="llm", provider=provider
                 )
@@ -723,6 +775,24 @@ class CredentialResolver:
             logger.warning("credential_registry_error", op="known_secret_values", error=str(exc)[:200])
         self._known_values = [v for v in values if len(v) >= 8]
         return self._known_values
+
+
+def llm_scopes(repo: str | None, forge: str | None) -> list[tuple[str, str]]:
+    """The binding scopes a model account for ``repo`` is read from, most specific first: the repository, its
+    owner on ``forge`` (the forge the repository's work is on), and the global pool.
+
+    An owner binding names one owner on one forge: ``github:acme`` is not the GitLab group ``acme``. A
+    repository whose forge is unknown (``forge`` None) reads no owner's account, since it cannot be said to be
+    under either; its own binding and the global pool still serve it.
+    """
+    scopes: list[tuple[str, str]] = []
+    owner = CredentialResolver.owner_of(repo or "")
+    if repo:
+        scopes.append(("repo", repo.lower()))
+    if owner and forge in FORGES:
+        scopes.append(("owner", f"{forge}:{owner}"))
+    scopes.append(("global", ""))
+    return scopes
 
 
 async def forge_token(resolver: CredentialResolver | None, repo: str, forge: str, env_default: str) -> str:

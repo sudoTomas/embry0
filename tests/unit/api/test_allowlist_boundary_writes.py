@@ -531,21 +531,22 @@ async def test_a_probe_with_the_deployment_s_token_answers_only_at_an_owner_the_
     with an allowlist an owner it does not cover is refused as every change to an owner is, before that token is
     looked up; an owner it covers is probed. A key without a list probes any owner."""
     from embry0.api.v1 import organizations
-    from embry0.execution import github_tokens
+    from embry0.services.credentials.resolver import CredentialResolver
     from embry0.services.organizations import AccessProbe
 
     looked_up: list[str] = []
     probed: list[str] = []
 
-    def resolve_github_token(owner: str, _default: str) -> str:
+    async def owner_env_token(_self: Any, owner: str, forge: str, _trace: Any = None) -> tuple[str, str]:
+        # The deployment's env token for the owner, as the resolver reads it for the probe.
         looked_up.append(owner)
-        return "t" * 20
+        return "t" * 20, f"{forge.upper()}_TOKEN__{owner.upper()}"
 
     async def probe_access(_request: Any, owner: str, _forge: str, _token: str) -> AccessProbe:
         probed.append(owner)
         return AccessProbe("bot", "Organization", True, None, None, 1, f"{owner}/repo", "ok")
 
-    monkeypatch.setattr(github_tokens, "resolve_github_token", resolve_github_token)
+    monkeypatch.setattr(CredentialResolver, "owner_env_token", owner_env_token)
     monkeypatch.setattr(organizations, "probe_access", probe_access)
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
 

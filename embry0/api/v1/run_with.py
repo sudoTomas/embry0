@@ -45,7 +45,9 @@ async def usable_keys(request: Request, repo: str | None) -> list[dict[str, Any]
     if creds is None:
         return []
     keys: dict[str, dict[str, Any]] = {}
-    for scope_kind, scope_value in key_scopes(repo):
+    registry = getattr(request.app.state, "repos_repo", None)
+    forge = await registry.forge_or_none(repo) if registry is not None and repo else None
+    for scope_kind, scope_value in key_scopes(repo, forge):
         for binding in await creds.bindings_for_scope(scope_kind, scope_value):
             if binding.get("role") != "llm" or binding["credential_id"] in keys:
                 continue

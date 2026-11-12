@@ -39,6 +39,10 @@ class FakeRepo:
         self.raise_on_candidates = raise_on_candidates
         self.raise_on_writes = False
         self.lookups = []
+        self.known = {}  # forge -> the owners registered there
+
+    async def known_owners(self):
+        return {forge: set(owners) for forge, owners in self.known.items()}
 
     async def candidates(self, *, scope_kind, scope_value, role, provider):
         self.lookups.append((scope_kind, scope_value))
@@ -310,16 +314,23 @@ async def test_unknown_forge_rejected() -> None:
         await r.has_forge_credential("bitbucket")
 
 
-async def test_owner_scope_is_normalized_like_env_keys() -> None:
-    """Env keys are lossy (my-org -> MY_ORG), so imported owner scopes are stored as my_org."""
-    r = _resolver({("owner", "github:my_org", "forge", "github"): [_row("org")]})
-    assert (await r.resolve_forge("My-Org/Widgets", "github")).label == "org"
+async def test_owner_scope_is_the_owner_lowercased_and_otherwise_exact() -> None:
+    """My-Org's repositories look up github:my-org, never github:my_org, another owner's scope."""
+    r = _resolver(
+        {
+            ("owner", "github:my-org", "forge", "github"): [_row("org")],
+            ("owner", "github:my_org", "forge", "github"): [_row("other")],
+        }
+    )
+    got = {repo: (await r.resolve_forge(repo, "github")).label for repo in ("My-Org/Widgets", "my_org/widgets")}
+    assert got == {"My-Org/Widgets": "org", "my_org/widgets": "other"}, f"each owner reads its own scope: {got}"
 
 
-async def test_gitlab_owner_scope_normalizes_dots() -> None:
+async def test_gitlab_owner_scope_keeps_dots() -> None:
     row = dict(_row("grp"), provider="gitlab", host="gitlab.example.com")
-    r = _resolver({("owner", "gitlab:acme_io", "forge", "gitlab"): [row]})
-    assert (await r.resolve_forge("acme.io/proj", "gitlab")).label == "grp"
+    repo = FakeRepo({("owner", "gitlab:acme.io", "forge", "gitlab"): [row]})
+    r = CredentialResolver(repo, FakeSecrets(), _cfg(gitlab_token="tok-env"), environ={})
+    assert (await r.resolve_forge("acme.io/proj", "gitlab")).label == "grp", f"looked up {repo.lookups}"
 
 
 async def test_a_resolver_without_a_secrets_provider_names_the_cause_and_falls_back_to_env() -> None:

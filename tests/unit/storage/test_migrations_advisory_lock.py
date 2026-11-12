@@ -48,6 +48,12 @@ class _FakeConnection:
     def transaction(self) -> _FakeTransaction:
         return _FakeTransaction()
 
+    def add_log_listener(self, _listener: Any) -> None:
+        """The runner listens for a migration's warnings and notices while it runs it."""
+
+    def remove_log_listener(self, _listener: Any) -> None:
+        return None
+
 
 class _FakePool:
     def __init__(self, conn: _FakeConnection) -> None:

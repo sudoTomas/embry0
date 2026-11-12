@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 import structlog
 from cryptography.fernet import InvalidToken
 
+from embry0.execution import github_tokens, gitlab_tokens
 from embry0.execution.xai_credential import DurableState, XaiCredentialError, XaiCredentialStore
 from embry0.services.credentials.preview import masked_preview
 from embry0.services.credentials.providers import (
@@ -44,11 +45,8 @@ class ImportReport:
 
 
 def _entries(environ: Mapping[str, str], config: Any, report: ImportReport) -> list[tuple[str, str, str, str]]:
-    """(provider, label, token, owner_scope_value_or_empty) in a deterministic order.
-
-    The owner comes from the env key, so it is already in the resolver's normalized form
-    (``CredentialResolver.owner_of``): lowercase, with ``_`` where the owner had ``-`` or ``.``.
-    """
+    """(provider, label, token, env_key_or_empty) in a deterministic order: the default token, with no key, then each
+    owner's ``<PREFIX>__<OWNER>``, labelled with the owner part lowercased."""
     out: list[tuple[str, str, str, str]] = []
     for provider, prefix in (("github", "GITHUB_TOKEN"), ("gitlab", "GITLAB_TOKEN")):
         default = str(getattr(config, f"{provider}_token", "") or "")
@@ -60,8 +58,34 @@ def _entries(environ: Mapping[str, str], config: Any, report: ImportReport) -> l
                 if not owner:
                     report.skipped.append(f"{provider}/: empty owner in env key {key}")
                     continue
-                out.append((provider, owner, environ[key], f"{provider}:{owner}"))
+                out.append((provider, owner, environ[key], key))
     return out
+
+
+#: The env variable each forge reads an owner's token from (the resolver's last step).
+_ENV_KEY = {"github": github_tokens.env_key, "gitlab": gitlab_tokens.env_key}
+
+
+def _owner_of_key(provider: str, label: str, key: str, known: Mapping[str, set[str]]) -> tuple[str | None, str]:
+    """The one owner the env ``key`` holds the token of, or None and why not.
+
+    An env variable cannot spell '-' or '.', so a key whose owner part holds '_' can be read by
+    several owners (``GITLAB_TOKEN__MY_GROUP``: ``my-group``, ``my.group``, ``my_group``), and a
+    binding names one exactly. Such a key names the owner the deployment knows (a registered
+    repository's or an organization's) whose key it is, when there is exactly one. A key with no
+    '_' in its owner part names one owner, the part lowercased.
+    """
+    if "_" not in label:
+        return label, ""
+    owners = sorted(o for o in known.get(provider, set()) if _ENV_KEY[provider](o) == key.upper())
+    if len(owners) == 1:
+        return owners[0], ""
+    if owners:
+        return None, f"{key} is read by {', '.join(owners)}; bind it to the owner it is for"
+    return None, (
+        f"{key} can name more than one owner, and no repository or organization registered here is under one; "
+        "register the owner's repositories and import again, or bind it to its owner"
+    )
 
 
 async def _bind(
@@ -222,7 +246,8 @@ async def import_from_env(
     gitlab_host = urlparse(str(getattr(config, "gitlab_url", "") or "")).hostname or "gitlab.com"
     by_value: dict[tuple[str, str], tuple[str, str]] = {}  # (provider, token) -> (credential id, name)
 
-    for provider, label, token, owner_scope in _entries(env, config, report):
+    known: dict[str, set[str]] | None = None
+    for provider, label, token, env_key in _entries(env, config, report):
         name = f"{provider}/{label}"
         hit = by_value.get((provider, token))
         if hit is None:
@@ -260,8 +285,14 @@ async def import_from_env(
             hit = (str(row["id"]), name)
             by_value[(provider, token)] = hit
         cid, cred_name = hit
-        if owner_scope:
-            await _bind(repo, report, "owner", owner_scope, provider, cid, cred_name, actor)
+        if env_key:
+            if known is None and "_" in label:
+                known = await repo.known_owners()
+            owner, why = _owner_of_key(provider, label, env_key, known or {})
+            if owner is None:
+                report.skipped.append(f"{name}: bound to no owner: {why}")
+                continue
+            await _bind(repo, report, "owner", f"{provider}:{owner}", provider, cid, cred_name, actor)
         else:
             await _bind(repo, report, "global", "", provider, cid, cred_name, actor)
 

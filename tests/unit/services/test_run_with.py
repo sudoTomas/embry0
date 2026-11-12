@@ -53,13 +53,12 @@ def test_every_agent_runs_the_chosen_model_unless_the_job_names_its_own():
 
 
 def test_a_job_on_a_repository_may_use_its_own_its_owner_s_and_the_global_keys():
-    assert key_scopes("Acme/App") == [
-        ("repo", "acme/app"),
-        ("owner", "github:acme"),
-        ("owner", "gitlab:acme"),
-        ("global", ""),
-    ]
-    assert key_scopes(None) == [("global", "")]
+    assert key_scopes("Acme/App", "github") == [("repo", "acme/app"), ("owner", "github:acme"), ("global", "")]
+    assert key_scopes("Acme/App", "gitlab") == [("repo", "acme/app"), ("owner", "gitlab:acme"), ("global", "")]
+    assert key_scopes("Acme/App", None) == [("repo", "acme/app"), ("global", "")], (
+        "a repository whose forge is unknown may use no owner's key"
+    )
+    assert key_scopes(None, "github") == [("global", "")]
 
 
 def test_a_claude_model_runs_on_anthropic(monkeypatch: pytest.MonkeyPatch):

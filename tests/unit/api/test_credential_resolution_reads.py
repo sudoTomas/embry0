@@ -112,10 +112,10 @@ async def test_a_model_account_a_job_may_run_with_reads_to_a_key_with_an_allowli
             stored = "resolved"
         except CredentialUnavailableError as exc:
             stored = str(exc)
+    # A model account is looked up at the owner on the repository's own forge only.
     owner_steps = [
         f"owner:github:acme -> {POOL_MARK}-acme skipped (disabled)",
         "owner:github:acme -> none",
-        "owner:gitlab:acme -> none",
     ]
     pool = views["open"]["effective"]["llm"][POOL_PROVIDER]
     assert pool["label"] == f"{POOL_MARK}-global" and pool["source"] == "registry", pool
@@ -268,7 +268,7 @@ async def test_the_host_s_credential_and_the_environment_s_name_nothing_to_a_key
     messages = {name: [e.get("message") for e in got["events"]] for name, got in job_events.items()}
     assert messages["lone"] == messages["open"] == [f"Sandbox init failed: {stored}"], messages
 
-    llm_steps = [f"repo:{LONE} -> none", "owner:github:initech -> none", "owner:gitlab:initech -> none"]
+    llm_steps = [f"repo:{LONE} -> none", "owner:github:initech -> none"]
     assert env["open"]["label"] == ENV_KEY and env["open"]["source"] == "env", env
     assert env["lone"] == _hidden(POOL_PROVIDER, [*llm_steps, "global: -> none", DEPLOYMENT_STEPS]), (
         f"an account the environment serves is no account a job may be run with by choice: unnamed {env}"

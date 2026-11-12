@@ -773,6 +773,7 @@ def _build_credential_registry(app: FastAPI, db: DatabasePool) -> None:
     from embry0.services.run_with import job_pins_reader
     from embry0.storage.repositories.credentials import CredentialsRepository
     from embry0.storage.repositories.jobs import JobsRepository
+    from embry0.storage.repositories.repos import DEFAULT_FORGE, ReposRepository
 
     app.state.credentials_repo = CredentialsRepository(db)
     app.state.credential_resolver = CredentialResolver(
@@ -781,6 +782,10 @@ def _build_credential_registry(app: FastAPI, db: DatabasePool) -> None:
         app.state.config,
         # The key a person chose for a job serves it (spec 2026-10-25, run with).
         job_pins=job_pins_reader(JobsRepository(db)),
+        # A model account bound to an owner serves the owner's repositories on its forge alone.
+        repo_forge=ReposRepository(
+            db, default_forge=getattr(app.state.config, "default_forge", DEFAULT_FORGE)
+        ).forge_or_none,
     )
 
 
