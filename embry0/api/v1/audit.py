@@ -9,6 +9,11 @@ email, or ``key:<name>`` for service keys).
 A key with a repository allowlist reads, within that, only the rows about
 the repositories it covers (:mod:`embry0.api.audit_allowlist`), narrowed in
 the query; the actions the filter offers it are those of the rows it reads.
+
+An issue's activity (``GET /issues/{id}/activity``) is its rows read the same
+way (:func:`issue_activity`): narrowed for such a key and details redacted.
+It stays a collaboration view: every reader who can see the issue sees who
+acted.
 """
 
 from __future__ import annotations
@@ -106,6 +111,32 @@ def _redact(details: dict[str, Any]) -> dict[str, Any]:
 
 #: The caller's tier and its own actor strings; shared with every route that names an actor.
 _caller_scope = caller_scope
+
+
+async def issue_activity(request: Request, issue_id: str, *, limit: int, offset: int) -> list[AuditEntry]:
+    """``issue_id``'s audit rows, newest first, read as ``GET /audit`` reads rows: a key with a repository allowlist
+    reads only those about the repositories it covers, and no refusal's; every row's details redacted. Who acted is
+    shown to every reader of the issue, as the people working on it (a collaboration field, docs/api.md). The caller
+    must read the issue itself (its route checks)."""
+    narrowing = audit_narrowing(request)
+    rows = await get_audit_repo(request).list_entries(
+        issue_id=issue_id,
+        limit=limit,
+        offset=offset,
+        hidden_actors=[REPO_ALLOWLIST] if narrowing is not None else [],
+        narrowing=narrowing,
+    )
+    return [
+        AuditEntry(
+            id=r["id"],
+            action=r["action"],
+            actor=r["actor"],
+            details=_redact(r["details"] or {}),
+            issue_id=r["issue_id"],
+            created_at=r["created_at"],
+        )
+        for r in rows
+    ]
 
 
 @router.get("/audit/actions")

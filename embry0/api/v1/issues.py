@@ -32,6 +32,7 @@ from embry0.api.schemas.issues import (
     UpdateIssueRequest,
 )
 from embry0.api.served import ServedRoute
+from embry0.api.v1.audit import AuditEntry, issue_activity
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.safety.error_codes import ErrorCode
@@ -501,12 +502,13 @@ async def get_issue_activity(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     issues: IssuesRepository = Depends(get_issues_repo),
-) -> list[dict[str, Any]]:
+) -> list[AuditEntry]:
+    """The issue's audit rows, read as ``GET /audit`` reads rows (:func:`embry0.api.v1.audit.issue_activity`)."""
     existing = await issues.get(issue_id, repos=covered_slugs(request))
     if not existing:
         raise _issue_not_found()
 
-    return await issues.get_activity(issue_id, limit=limit, offset=offset)
+    return await issue_activity(request, issue_id, limit=limit, offset=offset)
 
 
 # ---------------------------------------------------------------------------

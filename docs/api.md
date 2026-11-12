@@ -1544,7 +1544,8 @@ Everything below narrows to the repositories the key covers:
   `GET /audit/actions`, the Audit filter's list, offers it only the actions
   of the rows it reads (a current action whose rows, under its name or one
   it replaced, it reads, and a retired name such a row carries); the actor
-  filter is matched within those rows.
+  filter is matched within those rows. An issue's activity
+  (`GET /issues/{id}/activity`) is its rows read the same way.
 - The container log routes. `GET /logs/query` and `GET /logs/containers`
   are refused to a key with an allowlist, whatever its tier
   ([Container logs](#container-logs)): a line cannot be told to belong to
@@ -1672,6 +1673,18 @@ curl http://localhost:8200/api/v1/audit/actions \
 # -> {"actions": [{"action": "user.login", "label": "Signed in", "replaced_by": null}, ...]}
 ```
 
+An issue's activity is that issue's rows, read as `GET /audit` reads
+rows: newest first, a key with a repository allowlist reads only those
+about its repositories and no refusal's, and every row's `details` are
+redacted. It stays a collaboration view: every reader who can see the
+issue sees who acted, embry0's own actors as before.
+
+```bash
+curl "http://localhost:8200/api/v1/issues/$ISSUE_ID/activity?limit=50" \
+  -H "Authorization: Bearer $EMBRY0_API_KEY"
+# -> [{"id": 41, "action": "issue.triaged", "actor": "sam@example.com", "details": {...}, "issue_id": "...", "created_at": "..."}, ...]
+```
+
 The action names live in one registry, `embry0/audit/actions.py`. Each
 event has one name: a QA, onboard or pull request review job writes one
 `qa.job_created`, `onboard.job_created` or `pr_review.job_created` row,
@@ -1712,10 +1725,10 @@ no person.
 
 Collaboration fields name people working together and stay visible to
 every signed-in key: who started a job (`dispatched_by`) and set its
-done-when list, who answered or skipped a question, an issue's activity,
-who handed a decision over or closed a hand-off, who answered an ask, a
-map part's marks, sends and upload, and who reviewed a job (an
-evaluation's `by`).
+done-when list, who answered or skipped a question, who acted on an issue
+(its activity), who handed a decision over or closed a hand-off, who
+answered an ask, a map part's marks, sends and upload, and who reviewed a
+job (an evaluation's `by`).
 
 ## Sandbox visibility
 
