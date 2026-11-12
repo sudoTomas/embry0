@@ -9,9 +9,11 @@ refuses it with a 422 that says why.
 To a key with a repository allowlist, a key that is neither its own
 (:func:`~embry0.api.v1.credentials.key_owns_credential`) nor one a job on a
 repository its list covers resolves answers as a key that does not exist
-(:func:`_shown_to`). A key the repository resolves, the global pool's
-included, stays offered and choosable, as ``GET /repos/{repo}/-/credentials``
-shows it.
+(:func:`_shown_to`). A key the repository resolves, its owner's and the
+global pool's included, stays offered and choosable by label and status, for
+one of its repositories only (``?repo=`` is required of it). Being the key's
+to choose, such a model account reads to it by label wherever its
+repository resolves one (:data:`embry0.services.credentials.shown.MODEL_SCOPES`).
 """
 
 from __future__ import annotations
@@ -114,7 +116,9 @@ async def checked_run_with(request: Request, body: RunWithRequest | None, repo: 
 
 @router.get("/run-with/keys")
 async def run_with_keys(request: Request, repo: str | None = Query(default=None)) -> dict[str, Any]:
-    """The stored LLM keys a job on ``repo`` may be run with (labels and providers only)."""
-    if repo:
-        await enforce_repo_allowlist(request, repo, action="read the keys a job may use")
+    """The stored LLM keys a job on ``repo`` may be run with (labels and providers only). A key with an allowlist
+    names one of its repositories: without ``repo`` the list is the global pool's alone, a job with no repository's,
+    which such a key cannot start, so it is refused as work with no repository is."""
+    # A no-op for a caller without an allowlist; a key with one is refused another repository, and no repository.
+    await enforce_repo_allowlist(request, repo or None, action="read the keys a job may use")
     return {"repo": repo, "keys": await usable_keys(request, repo)}

@@ -22,6 +22,7 @@ from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services import hosts as hosts_service
 from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
+from embry0.services.credentials.shown import error_shown
 from embry0.services.hosts import LOG_SOURCE_KINDS, SOURCES, STATUSES, TRANSPORTS, Host
 from embry0.storage.repositories.hosts import HostNameTakenError, HostsRepository
 
@@ -164,9 +165,10 @@ async def _tailnet_access(request: Request, credential_id: str | None) -> hosts_
     try:
         resolved = await resolver.resolve_tailnet(credential_id=credential_id)
     except CredentialMissingError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
+        # The routes are the deployment's, refused to a key with an allowlist: the caller reads every step.
+        raise HTTPException(status_code=422, detail=error_shown(exc, None)) from None
     except CredentialUnavailableError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
+        raise HTTPException(status_code=409, detail=error_shown(exc, None)) from None
     tailnet = str((resolved.metadata or {}).get("tailnet") or hosts_service.DEFAULT_TAILNET)
     return hosts_service.TailnetAccess(
         api_key=resolved.secret, tailnet=tailnet, credential_id=resolved.id, label=resolved.label
