@@ -53,21 +53,49 @@ class AuditActionsResponse(BaseModel):
     actions: list[AuditActionEntry]
 
 
+REDACTED = "[redacted]"
+
+
+def _secret_named(key: str) -> bool:
+    lowered = key.lower()
+    return any(part in lowered for part in _SENSITIVE_KEY_PARTS)
+
+
+def _copied(value: Any, stack: list[tuple[Any, Any]]) -> Any:
+    """``value`` itself, or for an object or a list an empty copy, put on ``stack`` for :func:`_redact` to fill."""
+    filled: Any
+    if isinstance(value, dict):
+        filled = {}
+    elif isinstance(value, list):
+        filled = [None] * len(value)
+    else:
+        return value
+    stack.append((value, filled))
+    return filled
+
+
 def _redact(details: dict[str, Any]) -> dict[str, Any]:
-    """Shallow-recursive redaction of secret-shaped values.
+    """``details`` with the whole value of every secret-named key hidden, at any depth.
 
     Historical ``provider_config_updated`` / ``integration_config_updated``
     rows carry raw secrets in their update payloads; never echo those to a
-    browser, even for admins.
+    browser, even for admins. A secret-named key's value is hidden whatever
+    it is (a string, an object, a list), and the walk goes into every object
+    and every list, so ``{"updates": [{"api_key": ...}]}`` is redacted too.
+    It keeps its own stack rather than recursing, so a value nested deeper
+    than the interpreter's recursion limit is walked as well.
     """
     out: dict[str, Any] = {}
-    for k, v in details.items():
-        if isinstance(v, dict):
-            out[k] = _redact(v)
-        elif any(part in k.lower() for part in _SENSITIVE_KEY_PARTS):
-            out[k] = "[redacted]"
+    # Each object or list still to copy, with the copy it fills.
+    stack: list[tuple[Any, Any]] = [(details, out)]
+    while stack:
+        source, copy = stack.pop()
+        if isinstance(source, dict):
+            for key, value in source.items():
+                copy[key] = REDACTED if _secret_named(str(key)) else _copied(value, stack)
         else:
-            out[k] = v
+            for index, value in enumerate(source):
+                copy[index] = _copied(value, stack)
     return out
 
 

@@ -240,6 +240,51 @@ def test_details_redaction_shallow_and_nested():
     assert details["plain"] == "visible"
 
 
+def test_details_redaction_inside_lists_and_of_a_whole_value():
+    """A secret-named key's value is hidden whole, whatever it is, and a list is walked like an object."""
+    app = _app(_config(auth_dev_mode=True))
+    app.state.audit_repo.list_entries = AsyncMock(
+        return_value=[
+            {
+                **ROW,
+                "details": {
+                    "updates": [{"api_key": "fake-000000000002", "name": "kept"}, "plain"],
+                    "token": {"value": "fake-000000000003"},
+                    "secrets": ["fake-000000000004"],
+                    "nested": {"rows": [[{"password": "fake-000000000005", "n": 1}]]},
+                    "counts": [1, 2],
+                    "Auth_Token": "fake-000000000008",
+                },
+            }
+        ]
+    )
+    body = TestClient(app).get("/api/v1/audit").json()
+    details = body["entries"][0]["details"]
+    assert details["updates"] == [{"api_key": "[redacted]", "name": "kept"}, "plain"], details["updates"]
+    assert details["token"] == "[redacted]", details["token"]
+    assert details["secrets"] == "[redacted]", details["secrets"]
+    assert details["nested"] == {"rows": [[{"password": "[redacted]", "n": 1}]]}, details["nested"]
+    assert details["counts"] == [1, 2]
+    assert details["Auth_Token"] == "[redacted]", "a key is matched whatever its case"
+    assert "fake-0000000000" not in str(details), f"a secret came back: {details}"
+
+
+def test_details_redaction_walks_a_value_deeper_than_the_recursion_limit():
+    """5,000 levels, past the interpreter's recursion limit: the walk keeps its own stack."""
+    from embry0.api.v1.audit import _redact
+
+    bottom = {"api_key": "fake-000000000006", "items": [{"token": "fake-000000000007", "n": 1}], "kept": "yes"}
+    value: dict = bottom
+    for _ in range(5_000):
+        value = {"a": value}
+    redacted = _redact({"deep": value})
+    walked, levels = redacted["deep"], 0
+    while "a" in walked:
+        walked, levels = walked["a"], levels + 1
+    assert levels == 5_000, f"the copy is {levels} levels deep, not 5,000"
+    assert walked == {"api_key": "[redacted]", "items": [{"token": "[redacted]", "n": 1}], "kept": "yes"}, walked
+
+
 def test_response_has_no_trace_id():
     app = _app(_config(auth_dev_mode=True))
     body = TestClient(app).get("/api/v1/audit").json()
