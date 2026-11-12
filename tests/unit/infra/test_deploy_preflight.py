@@ -34,6 +34,7 @@ esac
     # STUB_READY_FAIL; every other URL is healthy.
     "curl": """#!/bin/sh
 echo "curl $*" >> "$STUB_LOG"
+case "$*" in *"--config -"*) echo "curl config $(cat)" >> "$STUB_LOG" ;; esac
 case "$*" in
   *"health/ready"*) [ -z "${STUB_READY_FAIL-}" ] || exit 22 ;;
   *"jobs?status=running"*)
@@ -173,13 +174,34 @@ def _ready(calls: list[str]) -> list[str]:
     return [call for call in calls if "/api/v1/health/ready" in call]
 
 
+def _keyed(calls: list[str], url_part: str) -> list[str]:
+    """The header config each curl call reading ``url_part`` was given on its stdin: the stub logs it on the line
+    after the call's arguments, which a ``-w`` format with a newline spreads over two lines."""
+    out = []
+    for n, call in enumerate(calls):
+        if url_part in call and not call.startswith("curl config "):
+            following = next((c for c in calls[n + 1 :] if c.startswith(("curl ", "docker ", "git "))), "")
+            if following.startswith("curl config "):
+                out.append(following)
+    return out
+
+
 def test_the_readiness_check_is_read_with_the_key(deploy) -> None:
     """With the key, the printed check lists each watched stack's state; without one it is the overall state."""
     result, calls = deploy()
     assert result.returncode == 0, result.stderr
-    assert _ready(calls) and all("Authorization: Bearer test-key" in call for call in _ready(calls)), (
-        f"the readiness check is read with the deploy's API_KEY: {_ready(calls)}"
-    )
+    assert _ready(calls) and _keyed(calls, "/api/v1/health/ready") == [
+        'curl config header = "Authorization: Bearer test-key"'
+    ], f"the readiness check is read with the deploy's API_KEY: {calls}"
+
+
+def test_the_key_is_never_on_a_curl_command_line(deploy) -> None:
+    """Each call that sends the key reads its header from stdin, so the process table never shows the key."""
+    result, calls = deploy()
+    assert result.returncode == 0, result.stderr
+    lines = [call for call in calls if call.startswith("curl ") and not call.startswith("curl config ")]
+    assert not [call for call in lines if "test-key" in call], f"the key on a command line: {lines}"
+    assert _keyed(calls, "jobs?status=running") == ['curl config header = "Authorization: Bearer test-key"'], calls
 
 
 def test_without_a_key_the_readiness_check_is_read_without_one(deploy, tmp_path: Path) -> None:

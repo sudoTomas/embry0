@@ -99,3 +99,48 @@ def test_without_a_key_the_command_prints_the_overall_state_and_how_to_see_more(
         f"without a key the command prints the overall state and how to see each stack: {out}"
     )
     assert code == 1, "a degraded check exits 1 without a key too"
+
+
+@pytest.mark.parametrize(
+    ("label", "argv", "env", "dotenv"),
+    [
+        ("--api-key", ["--api-key", f"{MASTER}\r"], {}, None),
+        ("EMBRY0_API_KEY", [], {"EMBRY0_API_KEY": f"{MASTER}\r\n"}, None),
+        ("./.env", [], {}, f"API_KEY={MASTER}\r\n"),
+    ],
+)
+def test_a_key_read_with_a_line_ending_is_sent_as_the_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    label: str,
+    argv: list[str],
+    env: dict[str, str],
+    dotenv: str | None,
+) -> None:
+    """A key saved with a trailing '\\r' or newline is stripped, so it is sent as the key, not refused as a header."""
+    if dotenv is not None:
+        (tmp_path / ".env").write_text(dotenv)
+    _code, sent = _health(monkeypatch, tmp_path, argv, env)
+    out = capsys.readouterr().out
+    assert sent == [{"Authorization": f"Bearer {MASTER}"}], f"{label}: the key is sent stripped: {sent!r}"
+    assert "watcher_stacks" in out, f"{label}: the key reads each stack: {out}"
+
+
+def test_an_error_reading_the_check_never_prints_the_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A request error's text can quote the headers it was sent: the command names the error's type alone."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EMBRY0_API_KEY", MASTER)
+
+    def refuse(url: str, *, headers: dict[str, str] | None = None, **_kwargs: Any) -> httpx.Response:
+        raise httpx.LocalProtocolError(f"Illegal header value b'{(headers or {}).get('Authorization', '')}'")
+
+    monkeypatch.setattr(httpx, "get", refuse)
+    monkeypatch.setattr("sys.argv", ["embry0", "health", "--url", "http://orchestrator.test"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    captured = capsys.readouterr()
+    assert MASTER not in captured.out + captured.err, f"the key is printed: {captured.out}{captured.err}"
+    assert "LocalProtocolError" in captured.out + captured.err and exc.value.code == 1, captured
