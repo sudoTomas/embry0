@@ -915,8 +915,7 @@ on this embry0, the median recorded cost of the newest 20 (`null` when
 there are none), the per-job budget, the model the run uses (the medium
 tier) and the label of the AI account that would pay (`null` when none
 resolves; `"(the deployment's)"` to a key with a [repository
-allowlist](#repository-allowlist) when the account is not bound to the
-repository or to an owner the key covers as a whole). These are recorded facts, not an estimate. With the default
+allowlist](#repository-allowlist) when the environment holds the account). These are recorded facts, not an estimate. With the default
 `BUDGET_OVERRUN_MODE` of `soft`, the per-job budget is not a hard stop
 ([configuration](configuration.md)).
 
@@ -1487,9 +1486,10 @@ Everything below narrows to the repositories the key covers:
   `GET /repos/{repo}/-/environment/resolve`, give each variable's `key`,
   `var_type`, `scope` and `required`, its `value` as `****`, no
   `masked_preview` and an empty `description`; `GET /repos/{repo}/-/setup/cost`
-  of its own repository names the account a setup run is paid from only when
-  it is bound to the repository, or to its owner for a key covering the owner
-  as a whole, and `"(the deployment's)"` otherwise. Who changed the
+  of its own repository names the account a setup run is paid from when it is
+  a model account in the registry that serves the repository (bound to it, to
+  its owner or in the global pool: one it may choose with Run with), and
+  `"(the deployment's)"` when the environment holds it. Who changed the
   deployment's settings document (`updated_by`, a revision's `actor`, an
   effective value's `set_by` from the deployment's document) and the content
   pack (`created_by`) reads as to a caller that is not an admin: `null` for a

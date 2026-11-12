@@ -49,6 +49,7 @@ import pytest
 from fastapi import APIRouter, FastAPI, Request
 
 from embry0.api.repo_allowlist import DEPLOYMENT
+from embry0.services.provider_usage import ProviderUsage
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeysRepository
 from tests.fixtures.deployment_reads import (
@@ -110,7 +111,9 @@ SHARED: dict[str, dict[str, str]] = {
         )
     },
     **{
-        path: {"body.paid_from": "that a setup run of its repository is paid from an account of the deployment's"}
+        path: {
+            "body.paid_from": "the account a setup run of its repository is paid from: a model account it may choose, by label, or the environment's, unnamed"
+        }
         for path in ("/api/v1/repos/{full_repo:repo}/-/setup/cost", "/api/v1/repos/{full_repo:repo}/setup/cost")
     },
     "/api/v1/run-with/keys": {
@@ -449,39 +452,133 @@ async def test_revealing_a_global_variable_is_refused_to_a_key_with_an_allowlist
     assert opened.status_code == 200 and opened.json()["value"] == OWN["a global secret's value"], opened.text
 
 
-async def test_a_setup_run_names_the_account_of_the_key_s_own_repository(
+async def test_a_setup_run_names_every_account_the_key_may_choose(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The account a setup run of the key's repository is paid from is named when it is the repository's own, and is
-    the deployment's, unnamed, when it comes from the global pool or the environment; a key without a list reads
-    every name."""
+    """The account a setup run of the key's repository is paid from is named when it is a model account in the
+    registry that serves the repository, in the global pool or bound to it (one the key may choose for its jobs), and
+    is the deployment's, unnamed, when the environment holds it; a key without a list reads every name."""
     db = db_with_migrations
     async with deployment_reads_app(db, monkeypatch) as deployment:
         await deployment.add_deployment_wide()
         app, keys = deployment.app, deployment.keys
         url = f"/api/v1/repos/{COVERED}/-/setup/cost"
-        pooled = {k: (await call(app, "GET", url, key)).json()["paid_from"] for k, key in vars(keys).items()}
-        own = await call(
-            app,
-            "POST",
-            "/api/v1/credentials",
-            MASTER,
-            {"kind": "llm_api_key", "provider": "anthropic", "label": "widgets-account", "secret": "z" * 24},
-        )
-        bound = await call(
-            app,
-            "PUT",
-            f"/api/v1/repos/{COVERED}/-/credentials",
-            MASTER,
-            {"bindings": [{"credential_id": own.json()["id"], "role": "llm"}]},
-        )
-        assert bound.status_code == 200, bound.text
-        owned = {k: (await call(app, "GET", url, key)).json()["paid_from"] for k, key in vars(keys).items()}
-    environment = "CLAUDE_CODE_OAUTH_TOKEN"
-    assert pooled == {"limited": "(the deployment's)", "open": environment, "master": environment}, (
-        f"paid from the environment's account: {pooled}"
+
+        async def paid_from() -> dict[str, Any]:
+            return {k: (await call(app, "GET", url, key)).json()["paid_from"] for k, key in vars(keys).items()}
+
+        async def account(label: str) -> str:
+            made = await call(
+                app,
+                "POST",
+                "/api/v1/credentials",
+                MASTER,
+                {"kind": "llm_api_key", "provider": "anthropic", "label": label, "secret": "z" * 24},
+            )
+            assert made.status_code in (200, 201), made.text
+            return str(made.json()["id"])
+
+        environment = await paid_from()
+        pooled_account = {"credential_id": await account("pool-model"), "role": "llm"}
+        pool = {"scope_kind": "global", "scope_value": "", "bindings": [pooled_account]}
+        assert (await call(app, "PUT", "/api/v1/credentials/bindings", MASTER, pool)).status_code == 200
+        pooled = await paid_from()
+        own = {"bindings": [{"credential_id": await account("widgets-account"), "role": "llm"}]}
+        assert (await call(app, "PUT", f"/api/v1/repos/{COVERED}/-/credentials", MASTER, own)).status_code == 200
+        owned = await paid_from()
+    held = "CLAUDE_CODE_OAUTH_TOKEN"
+    assert environment == {"limited": "(the deployment's)", "open": held, "master": held}, (
+        f"paid from the environment's account: {environment}"
     )
+    assert pooled == dict.fromkeys(("limited", "open", "master"), "pool-model"), f"paid from the pool: {pooled}"
     assert owned == dict.fromkeys(("limited", "open", "master"), "widgets-account"), f"paid from its own: {owned}"
+
+
+async def test_a_key_with_an_allowlist_reads_no_global_value_preview_or_description(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each global variable reads, to a key with an allowlist, as its name, kind, scope and whether it is required,
+    with its value masked, no preview and no description, in the global list and in a repository's resolved set; a
+    variable of the repository's own reads as before."""
+    db = db_with_migrations
+    async with deployment_reads_app(db, monkeypatch) as deployment:
+        await deployment.add_deployment_wide()
+        app, keys = deployment.app, deployment.keys
+        mine = {"variables": [{"key": "WIDGET_MODE", "value": "fast", "description": "the repository's own"}]}
+        assert (await call(app, "PUT", f"/api/v1/repos/{COVERED}/-/environment", MASTER, mine)).status_code == 200
+        reads = {
+            url: (await call(app, "GET", url, keys.limited)).json()["variables"]
+            for url in (
+                "/api/v1/environment/global",
+                f"/api/v1/repos/{COVERED}/-/environment/resolve",
+                f"/api/v1/repos/{COVERED}/environment/resolve",
+            )
+        }
+        opened = (await call(app, "GET", "/api/v1/environment/global", keys.open)).json()["variables"]
+    names_only = {
+        (GLOBAL_SECRET, "secret"): {"value": "****", "masked_preview": None, "description": ""},
+        ("PIP_INDEX_URL", "config"): {"value": "****", "masked_preview": None, "description": ""},
+    }
+    for url, variables in reads.items():
+        shown = {
+            (v["key"], v["var_type"]): {k: v[k] for k in ("value", "masked_preview", "description")} for v in variables
+        }
+        assert {k: shown.get(k) for k in names_only} == names_only, f"{url}: {variables}"
+        if "resolve" in url:
+            assert shown[("WIDGET_MODE", "config")] == {
+                "value": "fast",
+                "masked_preview": None,
+                "description": "the repository's own",
+            }, f"{url}: the repository's own variable reads as before: {variables}"
+    previews = {v["key"]: v["masked_preview"] for v in opened}
+    assert previews[GLOBAL_SECRET] not in (None, ""), f"a key without a list reads the secret's preview: {opened}"
+
+
+async def test_a_key_with_an_allowlist_asks_no_provider_and_runs_no_sweep(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The spend reads not_configured without asking for the deployment's key or asking the provider, `fresh` or not,
+    and the retention preview reads nothing to remove without running a sweep; a key without a list does both."""
+    asked: list[str] = []
+
+    async def resolve(provider: str) -> str:
+        asked.append(f"key {provider}")
+        return "value-000000000003"
+
+    async def read(_secret: str) -> dict[str, Any]:
+        asked.append("provider")
+        return {"key": {}, "account": None}
+
+    async with deployment_reads_app(db_with_migrations, monkeypatch) as deployment:
+        await deployment.add_deployment_wide()
+        app, keys = deployment.app, deployment.keys
+        app.state.provider_usage = ProviderUsage(resolve, read=read)
+        swept: list[str] = []
+        for name in ("job_log_retention", "agent_session_retention", "qa_image_retention"):
+            sweep = getattr(app.state, name)
+            real = sweep.run_once
+
+            async def run_once(*args: Any, _real: Any = real, _name: str = name, **kwargs: Any) -> Any:
+                swept.append(_name)
+                return await _real(*args, **kwargs)
+
+            monkeypatch.setattr(sweep, "run_once", run_once)
+        limited = {}
+        for url in (
+            "/api/v1/config/providers/openrouter/usage",
+            "/api/v1/config/providers/openrouter/usage?fresh=true",
+        ):
+            limited[url] = (await call(app, "GET", url, keys.limited)).json()["status"]
+        limited["retention"] = (await call(app, "GET", "/api/v1/admin/retention/preview", keys.limited)).status_code
+        asked_limited, swept_limited = list(asked), list(swept)
+        opened = (await call(app, "GET", "/api/v1/config/providers/openrouter/usage?fresh=true", keys.open)).json()
+        await call(app, "GET", "/api/v1/admin/retention/preview", keys.open)
+    assert (asked_limited, swept_limited) == ([], []), (
+        f"the limited key's reads asked {asked_limited}, ran {swept_limited}"
+    )
+    assert set(limited.values()) == {"not_configured", 200}, limited
+    assert opened["status"] == "ok" and asked == ["key openrouter", "provider"], (opened, asked)
+    assert sorted(swept) == ["agent_session_retention", "job_log_retention", "qa_image_retention"], swept
 
 
 async def test_who_changed_a_layer_of_the_key_s_repository_reads_as_before(

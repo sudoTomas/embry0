@@ -20,9 +20,10 @@ and its last connection test (``GET /config/models``, ``GET /config/provider``),
 where notifications go and which tracker team files work on which repository
 (``GET /config/integrations``), what the retention sweeps would remove
 (nothing), the account a setup run of one of its repositories would be paid
-from when that account is the deployment's (:func:`account_shown`), the
-values of the global variables (their names, kinds and scopes read), and who changed what
-belongs to the deployment (an actor shown as to a caller that is not an
+from when the environment holds it (:func:`account_shown`; a model account
+in the registry that serves its repositories is one it may choose, and is
+named), the values of the global variables (their names, kinds and scopes
+read), and who changed what belongs to the deployment (an actor shown as to a caller that is not an
 admin, :func:`~embry0.api.actor_visibility.deployment_actor_shown`). A secret
 of it is refused: revealing a global variable answers the 403 of a
 deployment-wide write (:func:`~embry0.api.repo_allowlist.enforce_deployment_allowlist`),
@@ -40,7 +41,7 @@ from typing import Any, Final
 
 from fastapi import Request
 
-from embry0.api.repo_allowlist import key_covers_organization, restricted_key_name
+from embry0.api.repo_allowlist import restricted_key_name
 
 #: What names a credential of the deployment's to a key with an allowlist, in place of its label: as a repository's
 #: credential resolution names one.
@@ -67,14 +68,20 @@ def nothing_like(value: Any) -> Any:
 
 
 async def account_shown(request: Request, repo: str, label: str, trace: Iterable[str]) -> str:
-    """The account a repository's run is paid from, named ``label`` and resolved along ``trace``, as the caller reads
-    it: its label, unless the caller is a key with an allowlist and the step that resolved it (the trace's last) is
-    not the repository's own binding, nor its owner's for a key that covers the owner as a whole; then
-    :data:`DEPLOYMENT_CREDENTIAL`."""
+    """The account a run on ``repo``, a repository the caller covers, is paid from, named ``label`` and resolved along
+    ``trace``, as the caller reads it.
+
+    A model account in the registry that serves the repository (bound to it, to its owner or in the global pool) is
+    one the caller may choose for its jobs (``GET /run-with/keys`` lists it), so it is named. A key with an allowlist
+    reads an account the environment holds (the trace's last step ``env:``), which no request can choose and whose
+    name says where the deployment's credentials come from, as :data:`DEPLOYMENT_CREDENTIAL`.
+    """
     if restricted_key_name(request) is None:
         return label
     steps = list(trace)
     scope = steps[-1].partition(":")[0] if steps else ""
-    if scope == "repo" or (scope == "owner" and await key_covers_organization(request, repo.split("/", 1)[0])):
-        return label
-    return DEPLOYMENT_CREDENTIAL
+    return label if scope in _REGISTRY_SCOPES else DEPLOYMENT_CREDENTIAL
+
+
+#: The trace scopes of a model account in the registry, by the binding that resolved it.
+_REGISTRY_SCOPES: Final = frozenset({"repo", "owner", "global"})
